@@ -23,7 +23,6 @@
 		B2000000000000000000000E /* CameraControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* CameraControlsView.swift */; };
 		B2000000000000000000000F /* CapturedPhotoPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* CapturedPhotoPreviewView.swift */; };
 		B20000000000000000000010 /* SettingsSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000010 /* SettingsSheetView.swift */; };
-		B20000000000000000000011 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000011 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -198,7 +197,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B20000000000000000000011 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -353,8 +351,6 @@
 		B60000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
 				CODE_SIGN_STYLE = Automatic;
@@ -387,8 +383,6 @@
 		B60000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
 				CODE_SIGN_STYLE = Automatic;
