@@ -5,14 +5,14 @@ public struct AIStatusHUDView: View {
     
     public var body: some View {
         HStack(spacing: 10) {
-            // Scene & AI Status Icon
+            // Scene Icon
             HStack(spacing: 5) {
-                Image(systemName: viewModel.isAIAnalysisActive ? viewModel.detectedScene.iconName : "camera.metering.matrix")
+                Image(systemName: sessionIconName)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(statusColor)
+                    .foregroundColor(viewModel.aiSessionState.accentColor)
                 
-                Text(viewModel.isAIAnalysisActive ? viewModel.detectedScene.rawValue : "Manual")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                Text(sceneLabel)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
             }
             .padding(.horizontal, 8)
@@ -20,22 +20,27 @@ public struct AIStatusHUDView: View {
             .background(Color.white.opacity(0.12))
             .cornerRadius(12)
             
-            // Central Instruction Text
-            Text(statusMessage)
-                .font(.system(size: 13, weight: .medium, design: .default))
+            // Status Text
+            Text(viewModel.aiSessionState.displayMessage)
+                .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             
-            // Active Composition Rule & Preset Pill
+            // AI Color Mode badge + Preset
             HStack(spacing: 4) {
+                if viewModel.isAIFullColorEnabled {
+                    Image(systemName: "wand.and.stars.inverse")
+                        .font(.system(size: 9, weight: .heavy))
+                        .foregroundColor(.cyan)
+                }
                 Text(viewModel.selectedFilmPreset.shortTitle)
                     .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                    .foregroundColor(.yellow)
+                    .foregroundColor(viewModel.isAIFullColorEnabled ? .cyan : .yellow)
                 
                 Circle()
-                    .fill(Color.green)
+                    .fill(viewModel.aiSessionState.accentColor)
                     .frame(width: 5, height: 5)
             }
             .padding(.horizontal, 6)
@@ -50,24 +55,33 @@ public struct AIStatusHUDView: View {
                 .fill(Color.black.opacity(0.65))
                 .overlay(
                     Capsule()
-                        .stroke(statusColor.opacity(0.4), lineWidth: 1)
+                        .stroke(viewModel.aiSessionState.accentColor.opacity(0.45), lineWidth: 1)
                 )
-                .shadow(color: Color.black.opacity(0.3), radius: 10, y: 4)
         )
         .padding(.horizontal, 16)
-        .animation(.easeInOut(duration: 0.25), value: viewModel.alignmentState)
+        .animation(.easeInOut(duration: 0.25), value: viewModel.aiSessionState)
         .animation(.easeInOut(duration: 0.25), value: viewModel.detectedScene)
     }
     
-    private var statusMessage: String {
-        guard viewModel.isAIAnalysisActive else {
-            return "Chế độ máy ảnh tiêu chuẩn"
+    private var sessionIconName: String {
+        switch viewModel.aiSessionState {
+        case .idle: return "camera.viewfinder"
+        case .analyzing: return "cpu"
+        case .targetPlaced: return "scope"
+        case .alignmentPerfect: return "checkmark.circle.fill"
+        case .capturing: return "camera.fill"
+        case .done: return "checkmark.seal.fill"
         }
-        return viewModel.alignmentState.statusDescription
     }
     
-    private var statusColor: Color {
-        guard viewModel.isAIAnalysisActive else { return .white }
-        return viewModel.alignmentState.statusColor
+    private var sceneLabel: String {
+        switch viewModel.aiSessionState {
+        case .idle: return "Sẵn sàng"
+        case .analyzing: return "Đang phân tích"
+        case .targetPlaced: return viewModel.detectedScene.localizedName.components(separatedBy: " (").first ?? viewModel.detectedScene.rawValue
+        case .alignmentPerfect: return "Khớp!"
+        case .capturing: return "Chụp"
+        case .done: return "Xong"
+        }
     }
 }

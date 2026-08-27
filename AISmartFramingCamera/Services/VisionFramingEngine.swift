@@ -191,6 +191,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 
                 result.confidence = 0.92
                 
+                // 5. Estimate luminance from pixel buffer (fast, native)
+                let luma = Self.estimateLuminance(from: pixelBuffer)
+                result.averageLuminance = luma.luminance
+                result.estimatedColorTemp = luma.colorTemp
+                
             } catch {
                 // Fallback graceful degradation
                 result.detectedScene = .general
@@ -202,4 +207,58 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
     }
-}
+    
+    /// Fast luminance & color temperature estimation from a CVPixelBuffer (centre crop)
+    private static func estimateLuminance(from buffer: CVPixelBuffer) -> (luminance: Float, colorTemp: Float) {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
+            return (0.5, 5500)
+        }
+        
+        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
+        
+        // Sample a 16x16 grid from the centre of the image
+        let sampleSize = 16
+        let startX = (width / 2) - (sampleSize / 2)
+        let startY = (height / 2) - (sampleSize / 2)
+        
+        var totalR: Float = 0; var totalG: Float = 0; var totalB: Float = 0
+        var sampleCount: Float = 0
+        
+        for row in 0..<sampleSize {
+            for col in 0..<sampleSize {
+                let px = startX + col
+                let py = startY + row
+                guard px >= 0 && px < width && py >= 0 && py < height else { continue }
+                let offset = py * bytesPerRow + px * 4
+                // BGRA format
+                let b = Float(data[offset]) / 255.0
+                let g = Float(data[offset + 1]) / 255.0
+                let r = Float(data[offset + 2]) / 255.0
+                totalR += r; totalG += g; totalB += b
+                sampleCount += 1
+            }
+        }
+        
+        guard sampleCount > 0 else { return (0.5, 5500) }
+        let avgR = totalR / sampleCount
+        let avgG = totalG / sampleCount
+        let avgB = totalB / sampleCount
+        
+        // Rec. 709 luminance
+        let luma = 0.2126 * avgR + 0.7152 * avgG + 0.0722 * avgB
+        
+        // Rough color temperature: warm (high R, low B) → low K; cool (high B) → high K
+        let rBRatio = avgR > 0 ? avgB / avgR : 1.0
+        // Clamp to 2700K..9000K range
+        let estimatedK = max(2700, min(9000, 3500 + rBRatio * 3000))
+        
+        return (luma, estimatedK)
+    }
+

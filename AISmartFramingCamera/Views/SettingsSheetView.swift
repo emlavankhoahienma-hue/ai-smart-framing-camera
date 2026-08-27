@@ -21,7 +21,7 @@ public struct SettingsSheetView: View {
                     
                     Toggle("Tự động cân chỉnh Zoom (Auto-Zoom)", isOn: $viewModel.isAutoZoomEnabled)
                     
-                    Toggle("Tự động chọn màu theo bối cảnh (Auto-Color)", isOn: $viewModel.isAutoColorTuningEnabled)
+                    Toggle("AI Full Color — AI toàn quyền màu sắc", isOn: $viewModel.isAIFullColorEnabled)
                     
                     Toggle("Hỗ trợ không gian AR (ARKit 3D Alignment)", isOn: $viewModel.isARModeEnabled)
                 }

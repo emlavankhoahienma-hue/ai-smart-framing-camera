@@ -70,18 +70,22 @@ struct TopCameraBar: View {
                     .background(Circle().fill(Color.black.opacity(0.45)))
             }
             
-            // AI Framing Master Toggle
+            // AI Framing Session Button (top bar shortcut)
             Button(action: {
-                viewModel.toggleAIAnalysis()
+                if viewModel.aiSessionState.isSessionActive {
+                    viewModel.cancelAISession()
+                } else {
+                    viewModel.startAISession()
+                }
             }) {
                 HStack(spacing: 4) {
-                    Image(systemName: viewModel.isAIAnalysisActive ? "wand.and.stars" : "wand.and.stars.inverse")
+                    Image(systemName: viewModel.aiSessionState.isSessionActive ? "stop.circle" : "wand.and.stars")
                         .font(.system(size: 15, weight: .bold))
                     
                     Text("AI")
                         .font(.system(size: 12, weight: .heavy, design: .rounded))
                 }
-                .foregroundColor(viewModel.isAIAnalysisActive ? .yellow : .white.opacity(0.6))
+                .foregroundColor(viewModel.aiSessionState.isSessionActive ? .red : .white.opacity(0.75))
                 .padding(.horizontal, 12)
                 .frame(height: 42)
                 .background(Capsule().fill(Color.black.opacity(0.45)))
