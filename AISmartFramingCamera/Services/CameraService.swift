@@ -21,7 +21,7 @@ public final class CameraService: NSObject {
     public weak var delegate: CameraServiceDelegate?
     
     // Core AVFoundation objects
-    private let captureSession = AVCaptureSession()
+    public let captureSession = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "com.alignai.camera.sessionQueue", qos: .userInteractive)
     
     private var activeCamera: AVCaptureDevice?
@@ -183,6 +183,27 @@ public final class CameraService: NSObject {
                 camera.unlockForConfiguration()
             } catch {
                 print("CameraService: Error setting exposure bias \(error)")
+            }
+        }
+    }
+    
+    // MARK: - Focus & Exposure Tap
+    public func focusAndExpose(at point: CGPoint) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let camera = self.activeCamera else { return }
+            do {
+                try camera.lockForConfiguration()
+                if camera.isFocusPointOfInterestSupported && camera.isFocusModeSupported(.autoFocus) {
+                    camera.focusPointOfInterest = point
+                    camera.focusMode = .autoFocus
+                }
+                if camera.isExposurePointOfInterestSupported && camera.isExposureModeSupported(.autoExpose) {
+                    camera.exposurePointOfInterest = point
+                    camera.exposureMode = .autoExpose
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("CameraService: Error setting focus and exposure \(error)")
             }
         }
     }
