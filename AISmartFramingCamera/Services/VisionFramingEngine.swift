@@ -22,6 +22,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
     // Callbacks
     public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)?
     
+    // Gemini Frame Capture
+    /// Set to true to capture the next frame as a CGImage for Gemini analysis
+    public var captureNextFrameForGemini: Bool = false
+    /// The captured CGImage for Gemini — read and set to nil after consuming
+    public var capturedGeminiFrame: CGImage? = nil
+    
     // Vision Requests
     private var faceDetectionRequest: VNDetectFaceRectanglesRequest!
     private var faceLandmarksRequest: VNDetectFaceLandmarksRequest!
@@ -56,7 +62,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
     
     // MARK: - Process Incoming Video PixelBuffer
-    public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer, orientation: CGImagePropertyOrientation = .right) {
+    // orientation .up because we set videoOrientation = .portrait on the AVCaptureConnection
+    public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer, orientation: CGImagePropertyOrientation = .up) {
         let currentTime = CACurrentMediaTime()
         guard currentTime - lastProcessTime >= frameThrottleInterval else { return }
         guard !isProcessingFrame else { return }
@@ -66,6 +73,19 @@ public final class VisionFramingEngine: @unchecked Sendable {
         isProcessingFrame = true
         lastProcessTime = currentTime
         
+        // Capture frame for Gemini if requested
+        let shouldCaptureForGemini = captureNextFrameForGemini
+        if shouldCaptureForGemini {
+            captureNextFrameForGemini = false
+            let ciImg = CIImage(cvPixelBuffer: pixelBuffer)
+            let ciCtx = CIContext(options: [.useSoftwareRenderer: false])
+            if let cgImg = ciCtx.createCGImage(ciImg, from: ciImg.extent) {
+                DispatchQueue.main.async { [weak self] in
+                    self?.capturedGeminiFrame = cgImg
+                }
+            }
+        }
+        
         visionQueue.async { [weak self] in
             guard let self = self else { return }
             defer { self.isProcessingFrame = false }
@@ -73,6 +93,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
             
             var result = SubjectDetectionResult()
+
             
             do {
                 try handler.perform([

@@ -153,7 +153,8 @@ struct MainCaptureButton: View {
                                     .font(.system(size: 18, weight: .bold))
                                     .foregroundColor(.white)
                                 
-                                Text("\(Int((1.0 - viewModel.alignmentDistance / 0.35) * 100))%")
+                                let pct = Int(max(0.0, min(1.0, 1.0 - viewModel.alignmentDistance / 0.35)) * 100)
+                                Text("\(pct)%")
                                     .font(.system(size: 11, weight: .heavy, design: .monospaced))
                                     .foregroundColor(.yellow)
                             }
@@ -235,11 +236,14 @@ struct MainCaptureButton: View {
     }
     
     private var directionArrowIcon: String {
-        guard case .targetPlaced = viewModel.aiSessionState, let result = viewModel.framingResult else {
+        guard case .targetPlaced = viewModel.aiSessionState, let target = viewModel.pinnedTargetPoint else {
             return "scope"
         }
-        let angle = result.angleDegrees
-        switch angle {
+        let dx = target.x - viewModel.trackedSubjectPoint.x
+        let dy = target.y - viewModel.trackedSubjectPoint.y
+        let angle = atan2(dy, dx) * 180 / .pi
+        let normalizedAngle = angle < 0 ? angle + 360 : angle
+        switch normalizedAngle {
         case 315...360, 0..<45: return "arrow.right"
         case 45..<135: return "arrow.down"
         case 135..<225: return "arrow.left"

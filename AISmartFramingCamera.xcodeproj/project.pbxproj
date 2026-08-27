@@ -23,6 +23,7 @@
 		B2000000000000000000000E /* CameraControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* CameraControlsView.swift */; };
 		B2000000000000000000000F /* CapturedPhotoPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* CapturedPhotoPreviewView.swift */; };
 		B20000000000000000000010 /* SettingsSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000010 /* SettingsSheetView.swift */; };
+		B20000000000000000000011 /* GeminiService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000014 /* GeminiService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,6 +46,7 @@
 		B100000000000000000000011 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B100000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B100000000000000000000013 /* AISmartFramingCamera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AISmartFramingCamera.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B100000000000000000000014 /* GeminiService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +107,7 @@
 				B10000000000000000000006 /* FilmFilterEngine.swift */,
 				B10000000000000000000007 /* HapticFeedbackService.swift */,
 				B10000000000000000000008 /* ARCompositionSession.swift */,
+				B100000000000000000000014 /* GeminiService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -223,6 +226,7 @@
 				B2000000000000000000000E /* CameraControlsView.swift in Sources */,
 				B2000000000000000000000F /* CapturedPhotoPreviewView.swift in Sources */,
 				B20000000000000000000010 /* SettingsSheetView.swift in Sources */,
+				B20000000000000000000011 /* GeminiService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -42,7 +42,6 @@ public final class CameraService: NSObject, @unchecked Sendable {
             self.captureSession.beginConfiguration()
             self.captureSession.sessionPreset = .photo
             
-            // Discover best dual/triple or wide camera
             let deviceDiscovery = AVCaptureDevice.DiscoverySession(
                 deviceTypes: [
                     .builtInTripleCamera,
@@ -77,6 +76,15 @@ public final class CameraService: NSObject, @unchecked Sendable {
                     self.videoDataOutput.videoSettings = [
                         kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
                     ]
+                    // Fix orientation: rotate video output to portrait
+                    if let connection = self.videoDataOutput.connection(with: .video) {
+                        if connection.isVideoOrientationSupported {
+                            connection.videoOrientation = .portrait
+                        }
+                        if connection.isVideoMirroringSupported {
+                            connection.isVideoMirrored = false
+                        }
+                    }
                     self.videoDataOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
                 }
                 
@@ -85,6 +93,13 @@ public final class CameraService: NSObject, @unchecked Sendable {
                     self.captureSession.addOutput(self.photoOutput)
                     self.photoOutput.isHighResolutionCaptureEnabled = true
                     self.photoOutput.maxPhotoQualityPrioritization = .quality
+                    
+                    // Fix photo orientation
+                    if let connection = self.photoOutput.connection(with: .video) {
+                        if connection.isVideoOrientationSupported {
+                            connection.videoOrientation = .portrait
+                        }
+                    }
                 }
                 
                 self.captureSession.commitConfiguration()
@@ -203,17 +218,57 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
 // MARK: - AVCapturePhotoCaptureDelegate
 extension CameraService: AVCapturePhotoCaptureDelegate {
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        guard error == nil,
-              let data = photo.fileDataRepresentation(),
-              let uiImage = UIImage(data: data),
-              let cgImage = uiImage.cgImage else {
+        guard error == nil else { return }
+        
+        // ✅ Fix: Properly orient the photo using pixelBuffer for correct upright portrait output
+        guard let pixelBuffer = photo.pixelBuffer else {
+            // Fallback: use fileData with orientation correction
+            guard let data = photo.fileDataRepresentation(),
+                  let uiImage = UIImage(data: data) else { return }
+            
+            // Force upright orientation
+            let uprightImage = Self.fixOrientation(uiImage)
+            guard let cgImage = uprightImage.cgImage else { return }
+            
+            let metadata = photo.metadata
+            let (iso, shutter) = Self.parseExif(metadata)
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
+            }
             return
         }
         
+        // Use CIImage → CGImage pipeline with correct orientation
+        var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        
+        // Apply orientation from photo metadata
+        if let orientationNum = photo.metadata[kCGImagePropertyOrientation as String] as? UInt32,
+           let cgOrientation = CGImagePropertyOrientation(rawValue: orientationNum) {
+            ciImage = ciImage.oriented(cgOrientation)
+        } else {
+            // Default: cameras typically return right-rotation for portrait, force upright
+            ciImage = ciImage.oriented(.right)
+        }
+        
+        let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
+        
         let metadata = photo.metadata
+        let (iso, shutter) = Self.parseExif(metadata)
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
+        }
+    }
+    
+    // MARK: - Helpers
+    
+    private static func parseExif(_ metadata: [String: Any]) -> (iso: Float, shutter: Double) {
         var isoValue: Float = 100.0
         var shutterSpeed: Double = 0.016
-        
         if let exif = metadata["{Exif}"] as? [String: Any] {
             if let isos = exif["ISOSpeedRatings"] as? [NSNumber], let first = isos.first {
                 isoValue = first.floatValue
@@ -222,10 +277,17 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 shutterSpeed = speed.doubleValue
             }
         }
+        return (isoValue, shutterSpeed)
+    }
+    
+    /// Force UIImage to upright orientation by redrawing into a new CGContext
+    private static func fixOrientation(_ image: UIImage) -> UIImage {
+        guard image.imageOrientation != .up else { return image }
         
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: isoValue, shutterSpeed: shutterSpeed)
-        }
+        UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale)
+        image.draw(in: CGRect(origin: .zero, size: image.size))
+        let normalized = UIGraphicsGetImageFromCurrentImageContext() ?? image
+        UIGraphicsEndImageContext()
+        return normalized
     }
 }

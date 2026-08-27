@@ -14,9 +14,9 @@ public final class CameraViewModel: ObservableObject {
     public let filterEngine = FilmFilterEngine.shared
     public let haptics = HapticFeedbackService.shared
     public let arSession = ARCompositionSession.shared
+    public let geminiService = GeminiService.shared
     
     // MARK: - AI Session State Machine
-    /// State tổng thể của AI Framing Session
     @Published public var aiSessionState: AISessionState = .idle
     
     // MARK: - Published UI States
@@ -24,7 +24,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var hasCameraPermission: Bool = false
     @Published public var activeCompositionRule: CompositionRule = .goldenRatio
     @Published public var selectedFilmPreset: FilmPreset = .fujiPro400H
-    @Published public var isAIFullColorEnabled: Bool = false  // AI Full Color Mode
+    @Published public var isAIFullColorEnabled: Bool = false
     @Published public var isAutoZoomEnabled: Bool = false
     
     // Camera Parameters
@@ -38,10 +38,27 @@ public final class CameraViewModel: ObservableObject {
     @Published public var detectedScene: DetectedSceneType = .general
     @Published public var detectedSubjectRects: [CGRect] = []
     @Published public var detectedFaceRects: [CGRect] = []
-    /// Normalized offset distance 0..1 of white center from yellow target
+    
+    // TARGET TRACKING (sniper model)
+    /// The PINNED target position (screen-normalized, 0-1) determined by AI/Gemini
+    /// This is FIXED — it doesn't change until next AI session
+    @Published public var pinnedTargetPoint: CGPoint? = nil
+    
+    /// Current WHITE CROSSHAIR position — FOLLOWS the tracked subject
+    /// As user moves camera, Vision tracks subject and reports its current screen position
+    /// When trackedSubjectPoint == pinnedTargetPoint → CAPTURE
+    @Published public var trackedSubjectPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    
+    /// Distance from trackedSubjectPoint to pinnedTargetPoint (0 = perfect)
     @Published public var alignmentDistance: CGFloat = 1.0
-    /// Is perfect alignment achieved (white overlaps yellow)
     @Published public var isPerfectAlignment: Bool = false
+    
+    // Gemini State
+    @Published public var isGeminiAnalyzing: Bool = false
+    @Published public var geminiError: String? = nil
+    @Published public var geminiExplanation: String = ""
+    @Published public var geminiColorRecipe: GeminiColorRecipe? = nil
+    @Published public var useGeminiForAnalysis: Bool = true  // Toggle Gemini vs local Vision
     
     // Capture & Review
     @Published public var latestCapturedPhoto: CapturedPhotoItem?
@@ -51,23 +68,26 @@ public final class CameraViewModel: ObservableObject {
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
     @Published public var isARModeEnabled: Bool = false
-    @Published public var activeFlashMode2: Bool = false // visual flash overlay
-    
-    // AI Auto-capture countdown
+    @Published public var activeFlashMode2: Bool = false
     @Published public var autoCaptureCountdown: Int = 0
-    
-    // AI Color Parameters (from AI Full Color Mode)
     @Published public var currentAIColorParams: AIColorParameters? = nil
     
     // MARK: - Internal State
     private var previousWasAligned = false
     private var lastAutoZoomTime: TimeInterval = 0
     private var autoCaptureTask: Task<Void, Never>? = nil
-    private var targetLockedDetection: SubjectDetectionResult? = nil
     
-    // Analysis accumulation (AI waits for stable detection before locking target)
+    // Gemini captured frame (one frame taken when button pressed)
+    private var capturedFrameForGemini: CGImage? = nil
+    
+    // Vision analysis accumulation (for local mode fallback)
     private var analysisFrames: [SubjectDetectionResult] = []
-    private let analysisFramesNeeded = 8   // 8 frames (~0.4s) before locking
+    private let analysisFramesNeeded = 6
+    
+    // Subject tracking description (set at lock time) for continuous tracking
+    private var targetSubjectAnchor: CGRect? = nil  // Last known subject position
+    private var trackingLostFrames: Int = 0
+    private let trackingLostThreshold = 20  // frames before fallback
     
     public init() {
         setupCallbacks()
@@ -109,65 +129,137 @@ public final class CameraViewModel: ObservableObject {
     
     // MARK: - AI Session Control
     
-    /// Người dùng nhấn nút AI — bắt đầu phân tích
     public func startAISession() {
         guard aiSessionState == .idle || aiSessionState == .done else { return }
         haptics.triggerSelectionChange()
         
-        // Reset
+        // Reset state
         analysisFrames = []
-        targetLockedDetection = nil
+        pinnedTargetPoint = nil
+        targetSubjectAnchor = nil
+        trackingLostFrames = 0
         framingResult = nil
         detectedSubjectRects = []
         detectedFaceRects = []
         isPerfectAlignment = false
         alignmentDistance = 1.0
+        geminiError = nil
+        geminiExplanation = ""
+        trackedSubjectPoint = CGPoint(x: 0.5, y: 0.5)
+        capturedFrameForGemini = nil
         
         withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
             aiSessionState = .analyzing
         }
+        
+        // Tell Vision engine to capture a frame for Gemini
+        visionEngine.captureNextFrameForGemini = true
     }
     
-    /// Hủy session AI — về idle
     public func cancelAISession() {
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         haptics.triggerSelectionChange()
+        visionEngine.captureNextFrameForGemini = false
         
         withAnimation(.easeInOut(duration: 0.3)) {
             aiSessionState = .idle
+            pinnedTargetPoint = nil
             framingResult = nil
             isPerfectAlignment = false
             alignmentDistance = 1.0
             detectedSubjectRects = []
             detectedFaceRects = []
+            trackedSubjectPoint = CGPoint(x: 0.5, y: 0.5)
         }
     }
     
-    // MARK: - AI Vision Loop Handler
+    // MARK: - Gemini Analysis
+    
+    /// Call Gemini API with a captured frame
+    func callGeminiAnalysis(frame: CGImage) {
+        guard !isGeminiAnalyzing else { return }
+        isGeminiAnalyzing = true
+        
+        geminiService.analyzeForComposition(image: frame) { [weak self] result in
+            guard let self = self else { return }
+            self.isGeminiAnalyzing = false
+            
+            switch result {
+            case .success(let response):
+                self.handleGeminiResponse(response)
+            case .failure(let error):
+                self.geminiError = error.localizedDescription
+                // Fallback to local Vision analysis
+                self.fallbackToLocalAnalysis()
+            }
+        }
+    }
+    
+    private func handleGeminiResponse(_ response: GeminiFramingResponse) {
+        // Store color recipe from Gemini
+        self.geminiColorRecipe = response.colorRecipe
+        self.geminiExplanation = response.explanation
+        self.detectedScene = response.sceneType
+        self.activeCompositionRule = response.compositionRule
+        
+        // Apply Gemini color if AI Full Color enabled
+        if isAIFullColorEnabled {
+            currentAIColorParams = response.colorRecipe.asAIColorParameters
+            // Auto-correct exposure from Gemini's luminance suggestion
+            // (built into color recipe via shadow/highlight parameters)
+        }
+        
+        // PIN the target at Gemini-specified coordinates
+        let targetPoint = CGPoint(x: response.targetX, y: response.targetY)
+        lockTarget(at: targetPoint, detection: nil)
+    }
+    
+    private func fallbackToLocalAnalysis() {
+        // Use accumulated Vision frames if Gemini fails
+        guard !analysisFrames.isEmpty else {
+            // No frames yet — keep collecting
+            return
+        }
+        consolidateAndLockTarget()
+    }
+    
+    // MARK: - Vision Detection Handler
+    
     private func handleVisionDetection(_ detection: SubjectDetectionResult) {
         switch aiSessionState {
         case .idle, .capturing, .done:
-            // Khi idle, vẫn hiển thị face/subject rects cho preview
+            // Preview mode — show faces
             self.detectedScene = detection.detectedScene
             self.detectedFaceRects = detection.faceRectangles
             return
             
         case .analyzing:
-            // Thu thập frames phân tích để ổn định kết quả
             handleAnalyzingPhase(detection)
             
         case .targetPlaced:
-            // Target đã khóa — chỉ theo dõi offset tâm trắng → tâm vàng
-            handleAlignmentTracking(detection)
+            // *** SNIPER MODEL: track subject, update crosshair position ***
+            handleSubjectTracking(detection)
             
         case .alignmentPerfect:
-            // Đang countdown — không cần xử lý thêm
-            break
+            // Keep tracking while countdown
+            handleSubjectTracking(detection)
+        }
+        
+        // Check for captured Gemini frame
+        if let frame = visionEngine.capturedGeminiFrame {
+            visionEngine.capturedGeminiFrame = nil
+            capturedFrameForGemini = frame
+            
+            if useGeminiForAnalysis && geminiService.hasAPIKey {
+                callGeminiAnalysis(frame: frame)
+            }
+            // Local Vision continues collecting frames in parallel
         }
     }
     
-    /// Phase 1: Thu thập frames ổn định để quyết định vị trí mục tiêu vàng
+    // MARK: - Phase 1: Collecting Vision frames (during 'analyzing')
+    
     private func handleAnalyzingPhase(_ detection: SubjectDetectionResult) {
         self.detectedScene = detection.detectedScene
         self.detectedFaceRects = detection.faceRectangles
@@ -177,24 +269,25 @@ public final class CameraViewModel: ObservableObject {
         
         analysisFrames.append(detection)
         
-        // Đủ số frame → tổng hợp và khóa mục tiêu
-        if analysisFrames.count >= analysisFramesNeeded {
+        // If Gemini is being called, wait for it
+        // If not using Gemini OR Gemini is not available → lock after enough frames
+        if (!useGeminiForAnalysis || !geminiService.hasAPIKey) && analysisFrames.count >= analysisFramesNeeded {
+            consolidateAndLockTarget()
+        } else if useGeminiForAnalysis && !geminiService.hasAPIKey && analysisFrames.count >= analysisFramesNeeded {
             consolidateAndLockTarget()
         }
     }
     
-    /// Tổng hợp n frames → tính trung bình → khóa vị trí tâm vàng
+    /// Consolidate Vision frames (local mode) → lock target
     private func consolidateAndLockTarget() {
         guard !analysisFrames.isEmpty else { return }
         
-        // Lấy scene xuất hiện nhiều nhất
+        // Most common scene
         var sceneCounts: [DetectedSceneType: Int] = [:]
-        for frame in analysisFrames {
-            sceneCounts[frame.detectedScene, default: 0] += 1
-        }
+        for f in analysisFrames { sceneCounts[f.detectedScene, default: 0] += 1 }
         let dominantScene = sceneCounts.max(by: { $0.value < $1.value })?.key ?? .general
         
-        // Tính trung bình vị trí chủ thể
+        // Average subject position
         let validFrames = analysisFrames.filter { $0.dominantSubjectRect != nil }
         var avgDetection = SubjectDetectionResult()
         
@@ -204,139 +297,153 @@ public final class CameraViewModel: ObservableObject {
             let avgW = validFrames.compactMap { $0.dominantSubjectRect?.width }.reduce(0, +) / CGFloat(validFrames.count)
             let avgH = validFrames.compactMap { $0.dominantSubjectRect?.height }.reduce(0, +) / CGFloat(validFrames.count)
             avgDetection.dominantSubjectRect = CGRect(x: avgX - avgW/2, y: avgY - avgH/2, width: avgW, height: avgH)
+            avgDetection.detectedScene = dominantScene
+            avgDetection.averageLuminance = analysisFrames.map { $0.averageLuminance }.reduce(0, +) / Float(analysisFrames.count)
+            avgDetection.estimatedColorTemp = analysisFrames.map { $0.estimatedColorTemp }.reduce(0, +) / Float(analysisFrames.count)
         }
         
-        // Tính trung bình luminance & color temp
-        avgDetection.detectedScene = dominantScene
-        avgDetection.averageLuminance = analysisFrames.map { $0.averageLuminance }.reduce(0, +) / Float(analysisFrames.count)
-        avgDetection.estimatedColorTemp = analysisFrames.map { $0.estimatedColorTemp }.reduce(0, +) / Float(analysisFrames.count)
-        
-        // Nếu có faces, lấy frame đầu tiên có face
         if let faceFrame = analysisFrames.first(where: { !$0.faceRectangles.isEmpty }) {
             avgDetection.faceRectangles = faceFrame.faceRectangles
-            avgDetection.primaryEyePosition = faceFrame.primaryEyePosition
-            avgDetection.lookingDirection = faceFrame.lookingDirection
         }
         
-        targetLockedDetection = avgDetection
+        // Compute composition target point
+        let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
+        lockTarget(at: result.targetPoint, detection: avgDetection)
         
-        // Tính target composition
-        let result = calculator.calculateTarget(
-            from: avgDetection,
-            rule: activeCompositionRule,
-            currentZoom: currentZoom
-        )
-        
-        // AI Full Color: áp dụng màu từ scene
+        // AI Full Color (local mode)
         if isAIFullColorEnabled {
-            let colorParams = dominantScene.aiFullColorParameters
-            currentAIColorParams = colorParams
-            // Điều chỉnh exposure bias theo luminance
-            let targetLuminance: Float = 0.50
-            let lumaError = targetLuminance - avgDetection.averageLuminance
-            let exposureCorrection = lumaError * 3.0 // ~±1.5 EV correction
-            setExposure(max(-2.0, min(2.0, exposureCorrection)))
+            currentAIColorParams = dominantScene.aiFullColorParameters
+            let lumaError: Float = 0.50 - avgDetection.averageLuminance
+            setExposure(max(-2.0, min(2.0, lumaError * 3.0)))
         }
         
-        // Cập nhật UI
-        self.framingResult = result
-        self.detectedScene = dominantScene
+        detectedScene = dominantScene
+    }
+    
+    /// Lock the yellow target at a specific screen point, start subject tracking
+    private func lockTarget(at point: CGPoint, detection: SubjectDetectionResult?) {
+        pinnedTargetPoint = point
+        targetSubjectAnchor = detection?.dominantSubjectRect ?? detection?.faceRectangles.first
+        trackingLostFrames = 0
+        
+        // Initial WHITE crosshair = current subject position (if known)
+        if let anchor = targetSubjectAnchor {
+            trackedSubjectPoint = CGPoint(x: anchor.midX, y: anchor.midY)
+        } else {
+            trackedSubjectPoint = CGPoint(x: 0.5, y: 0.5)
+        }
         
         haptics.triggerSelectionChange()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) {
             aiSessionState = .targetPlaced(locked: true)
-            alignmentDistance = result.distance
         }
-        
-        // Feedback rung xác nhận đặt mục tiêu
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.haptics.triggerSuccess()
         }
     }
     
-    /// Phase 2: Camera đã cố định mục tiêu → theo dõi offset và chụp khi trùng
-    private func handleAlignmentTracking(_ detection: SubjectDetectionResult) {
-        guard let locked = targetLockedDetection, let result = framingResult else { return }
+    // MARK: - Phase 2: Subject Tracking (sniper model)
+    // The white CROSSHAIR = current subject position (tracked by Vision)
+    // The yellow TARGET = FIXED pinned position (where AI said to frame)
+    // User moves camera → subject moves on screen → crosshair follows
+    // When crosshair reaches fixed target → CAPTURE
+    
+    private func handleSubjectTracking(_ detection: SubjectDetectionResult) {
+        guard let pinned = pinnedTargetPoint else { return }
         
-        // Tâm trắng luôn là (0.5, 0.5) — bất biến
-        // Target vàng đã được "bake in" từ lần phân tích trước — không thay đổi
-        // Người dùng DI CHUYỂN máy → tâm hiện tại thay đổi so với target
-        // Ta cần tính khoảng cách từ vị trí HIỆN TẠI của chủ thể đến vị trí TARGET
+        // Find current subject screen position from Vision
+        var currentSubjectPos: CGPoint? = nil
         
-        // Cách tính: Nếu người dùng di chuyển máy đúng hướng, chủ thể trong khung sẽ dịch chuyển
-        // gần về vị trí tương đương với target ban đầu ở tọa độ (0.5, 0.5)
-        // Simplified: Tính khoảng cách của chủ thể hiện tại đến tâm màn hình
-        
-        var currentSubjectCenter = CGPoint(x: 0.5, y: 0.5)
-        if let subjectRect = detection.dominantSubjectRect {
-            currentSubjectCenter = CGPoint(x: subjectRect.midX, y: subjectRect.midY)
-        } else if !detection.faceRectangles.isEmpty {
+        if !detection.faceRectangles.isEmpty {
             let face = detection.faceRectangles[0]
-            currentSubjectCenter = CGPoint(x: face.midX, y: face.midY)
+            currentSubjectPos = CGPoint(x: face.midX, y: face.midY)
+        } else if let subjRect = detection.dominantSubjectRect {
+            currentSubjectPos = CGPoint(x: subjRect.midX, y: subjRect.midY)
+        } else if !detection.saliencyPoints.isEmpty {
+            currentSubjectPos = detection.saliencyPoints[0]
         }
         
-        // Target point của kết quả phân tích ban đầu (điểm vàng)
-        let targetPoint = result.targetPoint
-        
-        // Khoảng cách hiện tại từ chủ thể → target
-        let dx = currentSubjectCenter.x - targetPoint.x
-        let dy = currentSubjectCenter.y - targetPoint.y
-        let currentDistance = sqrt(dx * dx + dy * dy)
-        
-        self.alignmentDistance = currentDistance
-        
-        // Cập nhật alignment state
-        let isPerfect = currentDistance <= calculator.alignmentTolerance
-        
-        if isPerfect != self.isPerfectAlignment {
-            self.isPerfectAlignment = isPerfect
-            
-            if isPerfect {
-                // Trùng khớp! → chuyển sang state perfect → auto-capture
-                haptics.triggerMagneticSnap()
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
-                    aiSessionState = .alignmentPerfect
-                    showAlignmentSuccessFlash = true
-                }
-                startAutoCaptureCountdown()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    self.showAlignmentSuccessFlash = false
-                }
+        if let pos = currentSubjectPos {
+            // Subject found — update white crosshair
+            trackingLostFrames = 0
+            withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.8)) {
+                trackedSubjectPoint = pos
+            }
+        } else {
+            // Subject lost — interpolate toward center gradually
+            trackingLostFrames += 1
+            if trackingLostFrames > trackingLostThreshold {
+                // Too many frames lost — slowly drift toward center
+                let alpha: CGFloat = 0.05
+                trackedSubjectPoint = CGPoint(
+                    x: trackedSubjectPoint.x + (0.5 - trackedSubjectPoint.x) * alpha,
+                    y: trackedSubjectPoint.y + (0.5 - trackedSubjectPoint.y) * alpha
+                )
             }
         }
         
-        // Haptic proximity pulse khi gần target
-        if currentDistance < 0.15 && !isPerfect {
-            let pulseIntensity = 1.0 - (currentDistance / 0.15)
-            haptics.triggerProximityPulse(intensity: pulseIntensity)
+        // Distance: crosshair (tracked subject) → pinned target
+        let dx = trackedSubjectPoint.x - pinned.x
+        let dy = trackedSubjectPoint.y - pinned.y
+        let dist = sqrt(dx * dx + dy * dy)
+        
+        self.alignmentDistance = dist
+        
+        // Proximity haptic (soft pulse when getting close)
+        if dist < 0.18 && dist > calculator.alignmentTolerance {
+            let intensity = 1.0 - (dist / 0.18)
+            haptics.triggerProximityPulse(intensity: intensity)
         }
         
-        // Update alignment state
+        let isPerfect = dist <= calculator.alignmentTolerance
+        
+        if isPerfect && !isPerfectAlignment {
+            // Just entered perfect alignment
+            isPerfectAlignment = true
+            haptics.triggerMagneticSnap()
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                aiSessionState = .alignmentPerfect
+                showAlignmentSuccessFlash = true
+            }
+            startAutoCaptureCountdown()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                self.showAlignmentSuccessFlash = false
+            }
+        } else if !isPerfect && isPerfectAlignment {
+            // Left alignment before capture
+            isPerfectAlignment = false
+            autoCaptureTask?.cancel()
+            autoCaptureTask = nil
+            autoCaptureCountdown = 0
+            withAnimation {
+                aiSessionState = .targetPlaced(locked: true)
+            }
+        }
+        
+        // Update alignment guide state
         if !isPerfect {
             let angle = atan2(dy, dx) * 180 / .pi
             let normalizedAngle = angle < 0 ? angle + 360 : angle
-            alignmentState = .guiding(distance: currentDistance, angle: normalizedAngle)
+            alignmentState = .guiding(distance: dist, angle: normalizedAngle)
         } else {
             alignmentState = .aligned(score: 1.0)
         }
     }
     
-    /// Countdown 2s rồi auto-chụp
     private func startAutoCaptureCountdown() {
         autoCaptureTask?.cancel()
         autoCaptureCountdown = 2
         
         autoCaptureTask = Task {
-            for i in stride(from: 2, through: 1, by: -1) {
-                try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s
-                await MainActor.run { self.autoCaptureCountdown = i - 1 }
-            }
-            // Vẫn đang aligned? Chụp!
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            await MainActor.run { self.autoCaptureCountdown = 1 }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            await MainActor.run { self.autoCaptureCountdown = 0 }
+            try? await Task.sleep(nanoseconds: 400_000_000)
             await MainActor.run {
                 if self.isPerfectAlignment {
                     self.executeCapture()
                 } else {
-                    // Người dùng đã lệch ra — reset về guiding
                     self.aiSessionState = .targetPlaced(locked: true)
                     self.autoCaptureCountdown = 0
                 }
@@ -344,26 +451,14 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    /// Thực hiện chụp ảnh
     private func executeCapture() {
         haptics.triggerShutterClick()
-        withAnimation(.easeInOut(duration: 0.05)) {
-            activeFlashMode2 = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            self.activeFlashMode2 = false
-        }
+        withAnimation(.easeInOut(duration: 0.05)) { activeFlashMode2 = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { self.activeFlashMode2 = false }
         
-        withAnimation {
-            aiSessionState = .capturing
-            isShutterPressing = true
-        }
-        
+        withAnimation { aiSessionState = .capturing; isShutterPressing = true }
         cameraService.capturePhoto()
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            self.isShutterPressing = false
-        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
     
     // MARK: - Actions
@@ -391,9 +486,7 @@ public final class CameraViewModel: ObservableObject {
     
     public func selectRule(_ rule: CompositionRule) {
         haptics.triggerSelectionChange()
-        withAnimation(.spring()) {
-            activeCompositionRule = rule
-        }
+        withAnimation(.spring()) { activeCompositionRule = rule }
     }
     
     public func selectPreset(_ preset: FilmPreset) {
@@ -405,6 +498,7 @@ public final class CameraViewModel: ObservableObject {
             } else {
                 isAIFullColorEnabled = false
                 currentAIColorParams = nil
+                geminiColorRecipe = nil
             }
         }
     }
@@ -415,7 +509,8 @@ public final class CameraViewModel: ObservableObject {
             isAIFullColorEnabled.toggle()
             if isAIFullColorEnabled {
                 selectedFilmPreset = .aiFullAuto
-                currentAIColorParams = detectedScene.aiFullColorParameters
+                // Use Gemini recipe if available, otherwise use scene defaults
+                currentAIColorParams = geminiColorRecipe?.asAIColorParameters ?? detectedScene.aiFullColorParameters
             } else {
                 selectedFilmPreset = .fujiPro400H
                 currentAIColorParams = nil
@@ -423,26 +518,22 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
+    public func toggleGemini() {
+        haptics.triggerSelectionChange()
+        useGeminiForAnalysis.toggle()
+    }
+    
     public func toggleARMode() {
         haptics.triggerSelectionChange()
         isARModeEnabled.toggle()
-        if isARModeEnabled {
-            arSession.startSession()
-        } else {
-            arSession.pauseSession()
-        }
+        if isARModeEnabled { arSession.startSession() } else { arSession.pauseSession() }
     }
     
-    /// Manual shutter — chỉ hoạt động khi không trong AI session
     public func takePhotoManual() {
         guard aiSessionState == .idle else { return }
         haptics.triggerShutterClick()
-        withAnimation(.easeInOut(duration: 0.1)) {
-            isShutterPressing = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            self.isShutterPressing = false
-        }
+        withAnimation(.easeInOut(duration: 0.1)) { isShutterPressing = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.isShutterPressing = false }
         cameraService.capturePhoto()
     }
     
@@ -451,59 +542,63 @@ public final class CameraViewModel: ObservableObject {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             if status == .authorized || status == .limited {
                 UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-                DispatchQueue.main.async {
-                    self.haptics.triggerSuccess()
-                }
+                DispatchQueue.main.async { self.haptics.triggerSuccess() }
             }
         }
     }
     
     // MARK: - Computed helpers
-    
-    public var isAISessionActive: Bool {
-        aiSessionState.isSessionActive
-    }
+    public var isAISessionActive: Bool { aiSessionState.isSessionActive }
     
     public var showTargetCircle: Bool {
         switch aiSessionState {
-        case .targetPlaced, .alignmentPerfect: return true
+        case .targetPlaced, .alignmentPerfect: return pinnedTargetPoint != nil
         default: return false
         }
     }
     
     public var showGuidanceRay: Bool {
         switch aiSessionState {
-        case .targetPlaced: return !isPerfectAlignment
+        case .targetPlaced: return !isPerfectAlignment && pinnedTargetPoint != nil
         default: return false
         }
+    }
+    
+    public var geminiStatusText: String {
+        if isGeminiAnalyzing { return "Gemini đang phân tích..." }
+        if let err = geminiError { return "Lỗi: \(err.prefix(60))" }
+        if !geminiExplanation.isEmpty { return geminiExplanation }
+        return ""
     }
 }
 
 // MARK: - CameraServiceDelegate
 extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
-        // Luôn xử lý frames để hiển thị face rects preview
-        // VisionEngine sẽ tự throttle
         visionEngine.processVideoSampleBuffer(sampleBuffer)
     }
     
     public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, iso: Float, shutterSpeed: Double) {
-        let aiParams = isAIFullColorEnabled ? (currentAIColorParams ?? detectedScene.aiFullColorParameters) : nil
+        // Determine color processing
+        let finalColorParams: AIColorParameters?
+        if isAIFullColorEnabled {
+            // Gemini recipe takes priority over local AI recipe
+            finalColorParams = geminiColorRecipe?.asAIColorParameters ?? currentAIColorParams ?? detectedScene.aiFullColorParameters
+        } else {
+            finalColorParams = nil
+        }
         
         let processed: CGImage
-        if let params = aiParams {
-            // AI Full Color Mode
+        if let params = finalColorParams {
             processed = filterEngine.applyAIColorParameters(to: photo, params: params) ?? photo
         } else {
-            // Manual preset
             processed = filterEngine.applyPreset(to: photo, preset: selectedFilmPreset) ?? photo
         }
         
         let alignmentScore: Double
-        if case .alignmentPerfect = aiSessionState {
-            alignmentScore = 1.0
-        } else {
-            alignmentScore = framingResult?.alignmentScore ?? 0.7
+        switch aiSessionState {
+        case .alignmentPerfect, .capturing: alignmentScore = 1.0
+        default: alignmentScore = framingResult?.alignmentScore ?? 0.7
         }
         
         let item = CapturedPhotoItem(
@@ -515,7 +610,7 @@ extension CameraViewModel: CameraServiceDelegate {
             alignmentScore: alignmentScore,
             iso: iso,
             shutterSpeed: shutterSpeed,
-            aiColorParameters: aiParams
+            aiColorParameters: finalColorParams
         )
         
         withAnimation {
