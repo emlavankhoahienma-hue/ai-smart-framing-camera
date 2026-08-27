@@ -114,6 +114,11 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self else { return }
             self.handleVisionDetection(detection)
         }
+        
+        visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence in
+            guard let self = self else { return }
+            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence)
+        }
     }
     
     private func setupMotionCallbacks() {
@@ -154,6 +159,7 @@ public final class CameraViewModel: ObservableObject {
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         motionService.stopTracking()
+        visionEngine.stopTrackingObject()
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
         
@@ -297,18 +303,18 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: result.targetPoint)
     }
     
-    // MARK: - Pin Target & Start Gyro Motion Tracking (Doka mechanism)
+    // MARK: - Pin Target & Start Visual Object Tracking
     
     private func pinTargetAndStartMotion(at target: CGPoint) {
         initialTargetPoint = target
         currentTargetPoint = target
         
-        // Khoảng cách ban đầu từ target tới tâm màn hình (0.5, 0.5)
         let dx = target.x - 0.5
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // Bắt đầu đo con quay hồi chuyển 60Hz
+        // Khởi động Vision Object Tracking bám chặt vào vùng cảnh vật/vật thể/chữ tại điểm target
+        visionEngine.startTrackingObject(at: target)
         motionService.startTracking()
         
         haptics.triggerSelectionChange()
@@ -321,21 +327,36 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 60Hz Gyro Motion Handler (Doka experience)
+    // MARK: - Visual Object Tracking Handler (Bám dính vật thể theo camera)
+    
+    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
+        guard case .targetPlaced = aiSessionState else { return }
+        
+        if let tracked = point {
+            // Target bám chặt theo vùng cảnh vật thực tế trong camera
+            self.currentTargetPoint = tracked
+            evaluateAlignment(at: tracked)
+        }
+    }
+    
+    // MARK: - 60Hz Gyro Motion Handler (Fallback khi vật thể bị khuất)
     
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
         guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
         
-        // Vị trí mục tiêu dịch chuyển trên màn hình theo góc xoay của điện thoại
-        let newX = initial.x - deltaX
-        let newY = initial.y - deltaY
-        
-        let newPoint = CGPoint(x: newX, y: newY)
-        self.currentTargetPoint = newPoint
-        
-        // Khoảng cách từ vị trí target hiện tại đến tâm màn hình cố định (0.5, 0.5)
-        let dx = newX - 0.5
-        let dy = newY - 0.5
+        // Chỉ dùng Gyro fallback nếu Vision tracking tạm thời không có điểm
+        if currentTargetPoint == nil {
+            let newX = initial.x - deltaX
+            let newY = initial.y - deltaY
+            let newPoint = CGPoint(x: newX, y: newY)
+            self.currentTargetPoint = newPoint
+            evaluateAlignment(at: newPoint)
+        }
+    }
+    
+    private func evaluateAlignment(at point: CGPoint) {
+        let dx = point.x - 0.5
+        let dy = point.y - 0.5
         let dist = sqrt(dx * dx + dy * dy)
         self.alignmentDistance = dist
         
@@ -348,7 +369,7 @@ public final class CameraViewModel: ObservableObject {
         let isPerfect = dist <= calculator.alignmentTolerance
         
         if isPerfect && !isPerfectAlignment {
-            // Tâm trắng đã đè khớp lên target vàng!
+            // Tâm trắng đã đè khớp lên vùng target!
             isPerfectAlignment = true
             haptics.triggerMagneticSnap()
             withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
@@ -360,7 +381,6 @@ public final class CameraViewModel: ObservableObject {
                 self.showAlignmentSuccessFlash = false
             }
         } else if !isPerfect && isPerfectAlignment {
-            // Người dùng bị lệch ra khỏi tâm
             isPerfectAlignment = false
             autoCaptureTask?.cancel()
             autoCaptureTask = nil
@@ -400,6 +420,7 @@ public final class CameraViewModel: ObservableObject {
     
     private func executeCapture() {
         motionService.stopTracking()
+        visionEngine.stopTrackingObject()
         haptics.triggerShutterClick()
         
         withAnimation(.easeInOut(duration: 0.05)) { activeFlashMode2 = true }

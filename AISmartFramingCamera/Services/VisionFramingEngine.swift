@@ -17,18 +17,22 @@ public final class VisionFramingEngine: @unchecked Sendable {
     
     private var isProcessingFrame = false
     private var lastProcessTime: TimeInterval = 0
-    private let frameThrottleInterval: TimeInterval = 0.05 // ~20 FPS for optimal battery and Neural Engine throughput
+    private let frameThrottleInterval: TimeInterval = 0.033 // ~30 FPS for ultra-smooth optical tracking
     
     // Callbacks
     public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)?
+    public var onTargetTracked: ((CGPoint?, Double) -> Void)?
     
     // Gemini Frame Capture
-    /// Set to true to capture the next frame as a CGImage for Gemini analysis
     public var captureNextFrameForGemini: Bool = false
-    /// The captured CGImage for Gemini — read and set to nil after consuming
     public var capturedGeminiFrame: CGImage? = nil
     
-    // Vision Requests
+    // Visual Feature Object Tracking (VNTrackObjectRequest)
+    public private(set) var isTrackingTarget: Bool = false
+    private var sequenceHandler = VNSequenceRequestHandler()
+    private var lastTargetObservation: VNDetectedObjectObservation? = nil
+    
+    // Vision Detection Requests
     private var faceDetectionRequest: VNDetectFaceRectanglesRequest!
     private var faceLandmarksRequest: VNDetectFaceLandmarksRequest!
     private var humanPoseRequest: VNDetectHumanBodyPoseRequest!
@@ -61,8 +65,34 @@ public final class VisionFramingEngine: @unchecked Sendable {
         sceneClassificationRequest.revision = VNClassifyImageRequestRevision1
     }
     
+    // MARK: - Visual Object Tracking Control
+    
+    /// Khởi động tracking bám dính vào vùng cảnh vật/vật thể/chữ tại toạ độ mục tiêu
+    public func startTrackingObject(at normalizedPoint: CGPoint, size: CGSize = CGSize(width: 0.18, height: 0.18)) {
+        // Convert UI coordinate (top-left origin) to Vision coordinate (bottom-left origin)
+        let visionY = 1.0 - normalizedPoint.y - (size.height / 2.0)
+        let visionX = normalizedPoint.x - (size.width / 2.0)
+        
+        let clampedRect = CGRect(
+            x: max(0.01, min(0.80, visionX)),
+            y: max(0.01, min(0.80, visionY)),
+            width: size.width,
+            height: size.height
+        )
+        
+        let initialObservation = VNDetectedObjectObservation(boundingBox: clampedRect)
+        self.lastTargetObservation = initialObservation
+        self.sequenceHandler = VNSequenceRequestHandler()
+        self.isTrackingTarget = true
+    }
+    
+    public func stopTrackingObject() {
+        self.isTrackingTarget = false
+        self.lastTargetObservation = nil
+        self.sequenceHandler = VNSequenceRequestHandler()
+    }
+    
     // MARK: - Process Incoming Video PixelBuffer
-    // orientation .up because we set videoOrientation = .portrait on the AVCaptureConnection
     public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer, orientation: CGImagePropertyOrientation = .up) {
         let currentTime = CACurrentMediaTime()
         guard currentTime - lastProcessTime >= frameThrottleInterval else { return }
@@ -90,10 +120,39 @@ public final class VisionFramingEngine: @unchecked Sendable {
             guard let self = self else { return }
             defer { self.isProcessingFrame = false }
             
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
+            // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed) -> Chạy VNTrackObjectRequest bám vật thể
+            if self.isTrackingTarget, let prevObs = self.lastTargetObservation {
+                let trackRequest = VNTrackObjectRequest(detectedObjectObservation: prevObs)
+                trackRequest.trackingLevel = .accurate // Optical flow + deep visual template matching
+                
+                do {
+                    try self.sequenceHandler.perform([trackRequest], on: pixelBuffer, orientation: orientation)
+                    if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first {
+                        if newObs.confidence > 0.25 {
+                            self.lastTargetObservation = newObs
+                            // Convert from Vision (bottom-left) to UI (top-left)
+                            let uiX = newObs.boundingBox.midX
+                            let uiY = 1.0 - newObs.boundingBox.midY
+                            let trackedPoint = CGPoint(x: uiX, y: uiY)
+                            
+                            DispatchQueue.main.async {
+                                self.onTargetTracked?(trackedPoint, Double(newObs.confidence))
+                            }
+                        } else {
+                            DispatchQueue.main.async {
+                                self.onTargetTracked?(nil, Double(newObs.confidence))
+                            }
+                        }
+                    }
+                } catch {
+                    print("Visual tracking frame error: \(error)")
+                }
+                return
+            }
             
+            // 2. Chế độ phát hiện thông thường (Analyzing / Idle)
+            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
             var result = SubjectDetectionResult()
-
             
             do {
                 try handler.perform([
@@ -104,10 +163,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     self.sceneClassificationRequest
                 ])
                 
-                // 1. Parse Faces
+                // Parse Faces
                 if let faces = self.faceDetectionRequest.results as? [VNFaceObservation], !faces.isEmpty {
                     result.faceRectangles = faces.map { face in
-                        // Convert Vision normalized coordinates (bottom-left origin) to UI coordinates (top-left origin)
                         CGRect(
                             x: face.boundingBox.origin.x,
                             y: 1.0 - face.boundingBox.origin.y - face.boundingBox.height,
@@ -126,28 +184,23 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         result.dominantSubjectRect = uiBounding
                         result.detectedScene = .portrait
                         
-                        // Parse Face Landmarks for Looking Direction
                         if let landmarks = primaryFace.landmarks,
                            let leftEye = landmarks.leftEye,
                            let rightEye = landmarks.rightEye,
                            let nose = landmarks.nose {
-                            
                             let leftEyeNorm = leftEye.normalizedPoints.first ?? .zero
                             let rightEyeNorm = rightEye.normalizedPoints.first ?? .zero
                             let noseNorm = nose.normalizedPoints.first ?? .zero
-                            
-                            // Approximate gaze vector
                             let eyeMidX = (leftEyeNorm.x + rightEyeNorm.x) / 2.0
                             let gazeDx = noseNorm.x - eyeMidX
                             result.lookingDirection = CGVector(dx: gazeDx * 5.0, dy: 0)
-                            
                             let primaryEyeY = uiBounding.origin.y + (1.0 - leftEyeNorm.y) * uiBounding.height
                             result.primaryEyePosition = CGPoint(x: uiBounding.midX, y: primaryEyeY)
                         }
                     }
                 }
                 
-                // 2. Parse Human Body Pose
+                // Parse Body Pose
                 if let poses = self.humanPoseRequest.results as? [VNHumanBodyPoseObservation], !poses.isEmpty {
                     for pose in poses {
                         if let recognizedPoints = try? pose.recognizedPoints(.all) {
@@ -165,28 +218,25 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     }
                 }
                 
-                // 3. Parse Saliency if no face or body was found
+                // Parse Saliency
                 if result.dominantSubjectRect == nil,
                    let saliency = self.saliencyRequest.results?.first as? VNSaliencyImageObservation,
                    let salientObjects = saliency.salientObjects, !salientObjects.isEmpty {
-                    
                     let dominant = salientObjects[0]
-                    let salientRect = CGRect(
+                    result.dominantSubjectRect = CGRect(
                         x: dominant.boundingBox.origin.x,
                         y: 1.0 - dominant.boundingBox.origin.y - dominant.boundingBox.height,
                         width: dominant.boundingBox.width,
                         height: dominant.boundingBox.height
                     )
-                    result.dominantSubjectRect = salientRect
                     result.saliencyPoints = salientObjects.map { obj in
                         CGPoint(x: obj.boundingBox.midX, y: 1.0 - obj.boundingBox.midY)
                     }
                 }
                 
-                // 4. Parse Scene Classification
+                // Parse Scene Classification
                 if let classifications = self.sceneClassificationRequest.results as? [VNClassificationObservation], !classifications.isEmpty {
-                    let topLabels = classifications.prefix(5)
-                    for item in topLabels {
+                    for item in classifications.prefix(5) {
                         let id = item.identifier.lowercased()
                         if id.contains("sunset") || id.contains("sunrise") || id.contains("golden hour") || id.contains("twilight") {
                             result.detectedScene = .sunset
@@ -212,13 +262,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 
                 result.confidence = 0.92
                 
-                // 5. Estimate luminance from pixel buffer (fast, native)
                 let luma = Self.estimateLuminance(from: pixelBuffer)
                 result.averageLuminance = luma.luminance
                 result.estimatedColorTemp = luma.colorTemp
                 
             } catch {
-                // Fallback graceful degradation
                 result.detectedScene = .general
                 result.confidence = 0.5
             }
@@ -229,7 +277,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
     }
     
-    /// Fast luminance & color temperature estimation from a CVPixelBuffer (centre crop)
     private static func estimateLuminance(from buffer: CVPixelBuffer) -> (luminance: Float, colorTemp: Float) {
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
@@ -243,8 +290,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
         
         let data = baseAddress.assumingMemoryBound(to: UInt8.self)
-        
-        // Sample a 16x16 grid from the centre of the image
         let sampleSize = 16
         let startX = (width / 2) - (sampleSize / 2)
         let startY = (height / 2) - (sampleSize / 2)
@@ -258,7 +303,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 let py = startY + row
                 guard px >= 0 && px < width && py >= 0 && py < height else { continue }
                 let offset = py * bytesPerRow + px * 4
-                // BGRA format
                 let b = Float(data[offset]) / 255.0
                 let g = Float(data[offset + 1]) / 255.0
                 let r = Float(data[offset + 2]) / 255.0
@@ -271,15 +315,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let avgR = totalR / sampleCount
         let avgG = totalG / sampleCount
         let avgB = totalB / sampleCount
-        
-        // Rec. 709 luminance
         let luma = 0.2126 * avgR + 0.7152 * avgG + 0.0722 * avgB
-        
-        // Rough color temperature: warm (high R, low B) → low K; cool (high B) → high K
         let rBRatio = avgR > 0 ? avgB / avgR : 1.0
-        // Clamp to 2700K..9000K range
         let estimatedK = max(2700, min(9000, 3500 + rBRatio * 3000))
-        
         return (luma, estimatedK)
     }
 }
