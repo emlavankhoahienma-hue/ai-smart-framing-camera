@@ -184,7 +184,6 @@ public final class CompositionCalculator {
     // MARK: - Auto-Zoom Computation
     private func computeOptimalZoom(subjectRect: CGRect, currentZoom: CGFloat) -> CGFloat {
         let subjectArea = subjectRect.width * subjectRect.height
-        let targetArea: CGFloat = 0.25 // Optimal subject area is ~25% of viewport
         
         if subjectArea < 0.04 {
             // Subject is very far

@@ -3,6 +3,7 @@ import Vision
 import CoreMedia
 import CoreImage
 import CoreGraphics
+import QuartzCore
 
 public final class VisionFramingEngine: @unchecked Sendable {
     public static let shared = VisionFramingEngine()
