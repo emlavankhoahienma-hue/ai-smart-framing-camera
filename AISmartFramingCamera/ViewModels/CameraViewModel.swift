@@ -123,11 +123,6 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self else { return }
             self.handleVisionDetection(detection)
         }
-        
-        visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence in
-            guard let self = self else { return }
-            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence)
-        }
     }
     
     private func setupMotionCallbacks() {
