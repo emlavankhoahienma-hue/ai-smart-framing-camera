@@ -59,6 +59,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var geminiExplanation: String = ""
     @Published public var geminiColorRecipe: GeminiColorRecipe? = nil
     @Published public var useGeminiForAnalysis: Bool = true  // Toggle Gemini vs local Vision
+    @Published public var activeModelUsedName: String = ""  // Model used in last analysis
     
     // Capture & Review
     @Published public var latestCapturedPhoto: CapturedPhotoItem?
@@ -202,6 +203,7 @@ public final class CameraViewModel: ObservableObject {
         self.geminiExplanation = response.explanation
         self.detectedScene = response.sceneType
         self.activeCompositionRule = response.compositionRule
+        self.activeModelUsedName = response.modelUsed
         
         // Apply Gemini color if AI Full Color enabled
         if isAIFullColorEnabled {

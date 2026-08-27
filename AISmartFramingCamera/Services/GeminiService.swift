@@ -2,6 +2,60 @@ import Foundation
 import UIKit
 import CoreGraphics
 
+// MARK: - Supported AI Vision Models
+
+public enum AIVisionModel: String, CaseIterable, Identifiable {
+    case autoStrongest = "auto"
+    case gemini25Pro = "gemini-2.5-pro"
+    case gemini20ProExp = "gemini-2.0-pro-exp-02-05"
+    case gemini20FlashThinking = "gemini-2.0-flash-thinking-exp-01-21"
+    case gemini20Flash = "gemini-2.0-flash-exp"
+    case gemini15Pro = "gemini-1.5-pro"
+    case gemini15Flash = "gemini-1.5-flash"
+    
+    public var id: String { rawValue }
+    
+    public var displayName: String {
+        switch self {
+        case .autoStrongest:
+            return "⚡ Tự động chọn Vision mạnh nhất (Khuyên dùng)"
+        case .gemini25Pro:
+            return "💎 Gemini 2.5 Pro Vision (Mạnh nhất)"
+        case .gemini20ProExp:
+            return "🎯 Gemini 2.0 Pro Exp (Chuyên thị giác)"
+        case .gemini20FlashThinking:
+            return "🧠 Gemini 2.0 Flash Thinking (Tư duy bố cục)"
+        case .gemini20Flash:
+            return "⚡ Gemini 2.0 Flash (Tốc độ cao)"
+        case .gemini15Pro:
+            return "🏆 Gemini 1.5 Pro Vision"
+        case .gemini15Flash:
+            return "🚀 Gemini 1.5 Flash (Tiết kiệm)"
+        }
+    }
+    
+    public var technicalModelID: String {
+        switch self {
+        case .autoStrongest:
+            return "gemini-2.0-pro-exp-02-05" // Starting candidate
+        default:
+            return rawValue
+        }
+    }
+    
+    /// Sequence of models to try in autoStrongest mode
+    public static var autoFallbackChain: [String] {
+        [
+            "gemini-2.5-pro",
+            "gemini-2.0-pro-exp-02-05",
+            "gemini-2.0-flash-exp",
+            "gemini-2.0-flash",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash"
+        ]
+    }
+}
+
 // MARK: - Gemini Response Models
 
 public struct GeminiColorRecipe {
@@ -15,13 +69,12 @@ public struct GeminiColorRecipe {
     public let warmthShift: Float      // -1.0 cool, +1.0 warm
     public let colorGrade: AIColorGrade
     
-    /// Convert to AIColorParameters for FilmFilterEngine
     public var asAIColorParameters: AIColorParameters {
         let gradeStr = colorGrade.rawValue.lowercased()
         let grade: AIColorGrade
         switch gradeStr {
         case "softwarm": grade = .softwarm
-        case "coolnatural": grade = .coolnatural
+        case "coolnatural", "cool_natural": grade = .coolnatural
         case "golden": grade = .golden
         case "tealorange", "teal_orange": grade = .tealOrange
         case "moody": grade = .moody
@@ -55,14 +108,13 @@ public struct GeminiColorRecipe {
 }
 
 public struct GeminiFramingResponse {
-    /// Normalized target X (0.0 — 1.0) — where to place the yellow pin
     public let targetX: CGFloat
-    /// Normalized target Y (0.0 — 1.0)
     public let targetY: CGFloat
     public let sceneType: DetectedSceneType
     public let colorRecipe: GeminiColorRecipe
     public let compositionRule: CompositionRule
     public let explanation: String
+    public let modelUsed: String
 }
 
 // MARK: - Errors
@@ -74,15 +126,17 @@ public enum GeminiError: LocalizedError {
     case networkError(Error)
     case invalidResponse
     case parseError(String)
+    case allModelsFailed(String)
     
     public var errorDescription: String? {
         switch self {
-        case .noAPIKey: return "Chưa cấu hình Gemini API Key. Vào Settings để nhập key."
-        case .imageConversionFailed: return "Không thể chuyển đổi ảnh để gửi Gemini."
-        case .invalidURL: return "URL không hợp lệ."
+        case .noAPIKey: return "Chưa cấu hình Gemini API Key. Mở Cài đặt để dán key."
+        case .imageConversionFailed: return "Không thể chuyển đổi ảnh để gửi AI."
+        case .invalidURL: return "URL API không hợp lệ."
         case .networkError(let e): return "Lỗi mạng: \(e.localizedDescription)"
-        case .invalidResponse: return "Gemini trả về dữ liệu không đúng định dạng."
+        case .invalidResponse: return "AI trả về dữ liệu không đúng định dạng."
         case .parseError(let msg): return "Lỗi parse JSON: \(msg)"
+        case .allModelsFailed(let msg): return "Tất cả model Vision đều không phản hồi: \(msg)"
         }
     }
 }
@@ -92,7 +146,7 @@ public enum GeminiError: LocalizedError {
 public final class GeminiService {
     public static let shared = GeminiService()
     
-    // Persistent API Key stored in UserDefaults
+    // Persistent API Key
     public var apiKey: String {
         get { UserDefaults.standard.string(forKey: "gemini_api_key") ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: "gemini_api_key") }
@@ -100,24 +154,28 @@ public final class GeminiService {
     
     public var hasAPIKey: Bool { !apiKey.trimmingCharacters(in: .whitespaces).isEmpty }
     
-    // Gemini 2.0 Flash (multimodal vision) endpoint
-    private let model = "gemini-2.0-flash-exp"
-    private var baseURL: String {
-        "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent"
+    // Selected Model Setting
+    public var selectedModel: AIVisionModel {
+        get {
+            let saved = UserDefaults.standard.string(forKey: "gemini_selected_model") ?? AIVisionModel.autoStrongest.rawValue
+            return AIVisionModel(rawValue: saved) ?? .autoStrongest
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "gemini_selected_model")
+        }
     }
     
     private let urlSession: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60
+        config.timeoutIntervalForRequest = 25
+        config.timeoutIntervalForResource = 50
         return URLSession(configuration: config)
     }()
     
     public init() {}
     
-    // MARK: - Main Analysis Call
+    // MARK: - Main Analysis Call with Auto-Fallback Chain
     
-    /// Analyze a captured frame → return framing target coordinates + color recipe
     public func analyzeForComposition(
         image: CGImage,
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
@@ -133,8 +191,74 @@ public final class GeminiService {
             return
         }
         let base64Image = jpegData.base64EncodedString()
-        
         let prompt = buildPrompt()
+        
+        if selectedModel == .autoStrongest {
+            // Auto mode: try the strongest models in sequence until one succeeds
+            tryModelChain(
+                chain: AIVisionModel.autoFallbackChain,
+                index: 0,
+                base64Image: base64Image,
+                prompt: prompt,
+                completion: completion
+            )
+        } else {
+            // Specific model
+            executeModelCall(
+                modelID: selectedModel.technicalModelID,
+                base64Image: base64Image,
+                prompt: prompt,
+                completion: completion
+            )
+        }
+    }
+    
+    private func tryModelChain(
+        chain: [String],
+        index: Int,
+        base64Image: String,
+        prompt: String,
+        completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
+    ) {
+        guard index < chain.count else {
+            completion(.failure(.allModelsFailed("Đã thử toàn bộ danh sách model")))
+            return
+        }
+        
+        let currentModelID = chain[index]
+        executeModelCall(
+            modelID: currentModelID,
+            base64Image: base64Image,
+            prompt: prompt
+        ) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let response):
+                completion(.success(response))
+            case .failure:
+                // Fallback to next model in chain
+                self.tryModelChain(
+                    chain: chain,
+                    index: index + 1,
+                    base64Image: base64Image,
+                    prompt: prompt,
+                    completion: completion
+                )
+            }
+        }
+    }
+    
+    private func executeModelCall(
+        modelID: String,
+        base64Image: String,
+        prompt: String,
+        completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
+    ) {
+        let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(modelID):generateContent?key=\(apiKey)"
+        guard let url = URL(string: endpoint) else {
+            completion(.failure(.invalidURL))
+            return
+        }
         
         let requestBody: [String: Any] = [
             "contents": [
@@ -152,31 +276,20 @@ public final class GeminiService {
                 ]
             ],
             "generationConfig": [
-                "temperature": 0.25,
+                "temperature": 0.20,
                 "topK": 32,
-                "topP": 1.0,
+                "topP": 0.95,
                 "maxOutputTokens": 768,
                 "responseMimeType": "application/json"
-            ],
-            "safetySettings": [
-                ["category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"],
-                ["category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"]
             ]
         ]
-        
-        guard let url = URL(string: "\(baseURL)?key=\(apiKey)") else {
-            completion(.failure(.invalidURL))
-            return
-        }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            completion(.failure(.parseError("Cannot serialize request body")))
+            completion(.failure(.parseError("Không thể tạo request body")))
             return
         }
         request.httpBody = bodyData
@@ -192,7 +305,19 @@ public final class GeminiService {
                 return
             }
             
-            // Parse Gemini API response
+            // Check HTTP status code
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let errObj = errorJson["error"] as? [String: Any],
+                   let message = errObj["message"] as? String {
+                    DispatchQueue.main.async { completion(.failure(.parseError("\(modelID) [HTTP \(httpResponse.statusCode)]: \(message)"))) }
+                } else {
+                    DispatchQueue.main.async { completion(.failure(.parseError("\(modelID) failed with HTTP \(httpResponse.statusCode)"))) }
+                }
+                return
+            }
+            
+            // Parse response
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let candidates = json["candidates"] as? [[String: Any]],
                   let firstCandidate = candidates.first,
@@ -201,50 +326,42 @@ public final class GeminiService {
                   let textPart = parts.first,
                   let text = textPart["text"] as? String else {
                 
-                // Try to get error message
-                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let errObj = errorJson["error"] as? [String: Any],
-                   let message = errObj["message"] as? String {
-                    DispatchQueue.main.async { completion(.failure(.parseError(message))) }
-                } else {
-                    DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
-                }
+                DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
                 return
             }
             
-            // Parse the JSON text returned by Gemini
             let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let jsonData = cleanText.data(using: .utf8),
                   let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                DispatchQueue.main.async { completion(.failure(.parseError("Cannot parse Gemini JSON: \(text.prefix(200))"))) }
+                DispatchQueue.main.async { completion(.failure(.parseError("JSON không hợp lệ: \(text.prefix(120))"))) }
                 return
             }
             
-            let response = Self.parseGeminiResponse(parsed)
-            DispatchQueue.main.async { completion(.success(response)) }
+            let result = Self.parseGeminiResponse(parsed, modelUsed: modelID)
+            DispatchQueue.main.async { completion(.success(result)) }
         }.resume()
     }
     
     // MARK: - Prompt
     
     private func buildPrompt() -> String {
-        return """
-        You are an expert photography composition AI. Analyze this image and return ONLY a valid JSON object.
+        """
+        You are an elite master photographer & cinematography AI. Analyze this image with deep visual perception and return ONLY a valid JSON object.
         
         Analyze:
-        1. Main subject/focal point
-        2. Best composition target position using photographic rules (Rule of Thirds, Golden Ratio, etc.)
-        3. Ideal cinematic color grading for this specific scene
+        1. Primary visual focal subject (human face, body, pet, architecture, or salient item)
+        2. Optimal framing anchor position based on classical and modern compositional harmony (Rule of Thirds, Golden Ratio, Golden Spiral)
+        3. Scene mood & cinematic color grading recipe
         
-        Return this EXACT JSON structure (no markdown, no explanation, just JSON):
+        Return this EXACT JSON format (no markdown fences, just pure JSON):
         {
           "target_x": 0.618,
           "target_y": 0.382,
           "scene_type": "portrait",
           "composition_rule": "golden_ratio",
-          "explanation": "Main subject should be placed at Golden Ratio intersection",
+          "explanation": "Khóa chủ thể tại giao điểm tỷ lệ vàng phía bên phải",
           "color_recipe": {
-            "temperature_k": 5500,
+            "temperature_k": 5600,
             "saturation": 1.08,
             "contrast": 1.06,
             "shadow_lift": 0.03,
@@ -256,31 +373,30 @@ public final class GeminiService {
           }
         }
         
-        Field constraints:
-        - target_x: 0.0 (left) to 1.0 (right) — X position for optimal framing
-        - target_y: 0.0 (top) to 1.0 (bottom) — Y position for optimal framing
+        Constraints:
+        - target_x: 0.05 to 0.95 (normalized X coordinate for sniper target pin)
+        - target_y: 0.05 to 0.95 (normalized Y coordinate for sniper target pin)
         - scene_type: "portrait" | "landscape" | "sunset" | "architecture" | "night" | "food" | "street" | "general"
         - composition_rule: "rule_of_thirds" | "golden_ratio" | "center_symmetry" | "golden_spiral"
-        - temperature_k: 2700 (very warm candlelight) to 9000 (very cool blue sky)
-        - saturation: 0.50 (desaturated/film) to 1.80 (vivid/HDR)
-        - contrast: 0.80 (flat/matte) to 1.50 (punchy/cinematic)
-        - shadow_lift: 0.00 (deep blacks) to 0.12 (lifted/faded shadows)
-        - highlight_roll: 0.85 (compressed highlights) to 1.00 (preserved highlights)
-        - grain: 0.00 (digital clean) to 0.50 (heavy 35mm grain)
-        - vignette: 0.00 (no vignette) to 0.70 (heavy vignette)
-        - warmth_shift: -1.0 (arctic cool) to 1.0 (golden warm)
+        - temperature_k: 2700 to 9000
+        - saturation: 0.50 to 1.80
+        - contrast: 0.80 to 1.50
+        - shadow_lift: 0.00 to 0.12
+        - highlight_roll: 0.85 to 1.00
+        - grain: 0.00 to 0.50
+        - vignette: 0.00 to 0.70
+        - warmth_shift: -1.0 to 1.0
         - color_grade: "softwarm" | "coolnatural" | "golden" | "tealOrange" | "moody" | "vibrant" | "classic"
-        
-        Be precise and creative. Match the color recipe to the actual mood and content of the scene.
+        - explanation: Short Vietnamese advice (1-2 sentences) on how to angle the camera
         """
     }
     
     // MARK: - Response Parsing
     
-    private static func parseGeminiResponse(_ json: [String: Any]) -> GeminiFramingResponse {
+    private static func parseGeminiResponse(_ json: [String: Any], modelUsed: String) -> GeminiFramingResponse {
         let targetX = parseCGFloat(json["target_x"], defaultVal: 0.618)
         let targetY = parseCGFloat(json["target_y"], defaultVal: 0.382)
-        let explanation = (json["explanation"] as? String) ?? "AI composition analysis complete"
+        let explanation = (json["explanation"] as? String) ?? "AI phân tích bố cục hoàn tất"
         
         let sceneType = parseSceneType((json["scene_type"] as? String) ?? "general")
         let compositionRule = parseCompositionRule((json["composition_rule"] as? String) ?? "golden_ratio")
@@ -308,7 +424,8 @@ public final class GeminiService {
             sceneType: sceneType,
             colorRecipe: colorRecipe,
             compositionRule: compositionRule,
-            explanation: explanation
+            explanation: explanation,
+            modelUsed: modelUsed
         )
     }
     

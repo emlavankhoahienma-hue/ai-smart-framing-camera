@@ -70,6 +70,17 @@ public struct AIStatusHUDView: View {
                     Image(systemName: "sparkle")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.cyan)
+                    
+                    if !viewModel.activeModelUsedName.isEmpty {
+                        Text(viewModel.activeModelUsedName.components(separatedBy: "-").prefix(2).joined(separator: " ").capitalized)
+                            .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.cyan.opacity(0.2))
+                            .cornerRadius(4)
+                    }
+                    
                     Text(viewModel.geminiExplanation)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.white.opacity(0.85))
