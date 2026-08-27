@@ -25,8 +25,8 @@ public final class CameraViewModel: ObservableObject {
     @Published public var hasCameraPermission: Bool = false
     @Published public var activeCompositionRule: CompositionRule = .goldenRatio
     @Published public var selectedFilmPreset: FilmPreset = .fujiPro400H
-    @Published public var isAIFullColorEnabled: Bool = false
-    @Published public var isAutoZoomEnabled: Bool = false
+    @Published public var isAIFullColorEnabled: Bool = true
+    @Published public var isAutoZoomEnabled: Bool = true
     
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
