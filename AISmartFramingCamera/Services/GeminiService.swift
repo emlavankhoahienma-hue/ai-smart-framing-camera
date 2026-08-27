@@ -6,11 +6,10 @@ import CoreGraphics
 
 public enum AIVisionModel: String, CaseIterable, Identifiable {
     case autoStrongest = "auto"
-    case gemini20Flash = "gemini-2.0-flash"
     case gemini15Flash = "gemini-1.5-flash"
     case gemini15Pro = "gemini-1.5-pro"
+    case gemini20FlashExp = "gemini-2.0-flash-exp"
     case gemini20FlashThinking = "gemini-2.0-flash-thinking-exp-01-21"
-    case gemini20ProExp = "gemini-2.0-pro-exp-02-05"
     
     public var id: String { rawValue }
     
@@ -18,23 +17,21 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         switch self {
         case .autoStrongest:
             return "⚡ Tự động chọn Vision tốt nhất (Khuyên dùng)"
-        case .gemini20Flash:
-            return "🚀 Gemini 2.0 Flash (Chuẩn thị giác mới)"
         case .gemini15Flash:
-            return "⚡ Gemini 1.5 Flash (Tốc độ cao & ổn định)"
+            return "🚀 Gemini 1.5 Flash (Chuẩn chính thức Google)"
         case .gemini15Pro:
             return "💎 Gemini 1.5 Pro (Phân tích chiều sâu quang học)"
+        case .gemini20FlashExp:
+            return "🧪 Gemini 2.0 Flash Experimental"
         case .gemini20FlashThinking:
             return "🧠 Gemini 2.0 Flash Thinking (Tư duy bố cục)"
-        case .gemini20ProExp:
-            return "🎯 Gemini 2.0 Pro Exp (Chuyên gia thị giác)"
         }
     }
     
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "gemini-2.0-flash"
+            return "gemini-1.5-flash"
         default:
             return rawValue
         }
@@ -43,11 +40,10 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Sequence of standard verified models to try in auto mode
     public static var autoFallbackChain: [String] {
         [
-            "gemini-2.0-flash",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
             "gemini-2.0-flash-exp",
-            "gemini-2.0-pro-exp-02-05"
+            "gemini-1.5-flash-8b"
         ]
     }
 }
@@ -180,7 +176,7 @@ public final class GeminiService {
     
     public init() {}
     
-    // MARK: - Test API Key Connection (Fast Ping)
+    // MARK: - Test API Key Connection (Fast Ping across standard models)
     
     public func testAPIKey(completion: @escaping (Bool, String) -> Void) {
         let key = apiKey
@@ -189,7 +185,22 @@ public final class GeminiService {
             return
         }
         
-        let testModel = "gemini-2.0-flash"
+        let testCandidates = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+        testModelCandidate(candidates: testCandidates, index: 0, key: key, completion: completion)
+    }
+    
+    private func testModelCandidate(
+        candidates: [String],
+        index: Int,
+        key: String,
+        completion: @escaping (Bool, String) -> Void
+    ) {
+        guard index < candidates.count else {
+            completion(false, "❌ Không thể kết nối với các model Gemini tiêu chuẩn.")
+            return
+        }
+        
+        let testModel = candidates[index]
         guard let url = buildURL(for: testModel, key: key) else {
             completion(false, "URL không hợp lệ.")
             return
@@ -199,7 +210,7 @@ public final class GeminiService {
             "contents": [
                 [
                     "parts": [
-                        ["text": "Ping"]
+                        ["text": "Hi"]
                     ]
                 ]
             ]
@@ -211,7 +222,9 @@ public final class GeminiService {
         request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
-        urlSession.dataTask(with: request) { data, response, error in
+        urlSession.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            
             if let error = error {
                 DispatchQueue.main.async { completion(false, "Lỗi mạng: \(error.localizedDescription)") }
                 return
@@ -224,6 +237,9 @@ public final class GeminiService {
             
             if http.statusCode == 200 {
                 DispatchQueue.main.async { completion(true, "✅ Kết nối thành công với Gemini (\(testModel))!") }
+            } else if http.statusCode == 404 {
+                // Try next model candidate
+                self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
             } else {
                 let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
                 DispatchQueue.main.async { completion(false, "❌ Lỗi (\(http.statusCode)): \(msg)") }
@@ -299,13 +315,13 @@ public final class GeminiService {
             case .success(let response):
                 completion(.success(response))
             case .failure(let error):
-                // If the error is specifically an invalid API key, don't waste time retrying other models
+                // If invalid API key, fail immediately
                 if case .invalidAPIKey = error {
                     completion(.failure(error))
                     return
                 }
                 
-                // Otherwise, try next model in fallback chain
+                // Fallback to next model in chain
                 self.tryModelChain(
                     chain: chain,
                     index: index + 1,
@@ -381,7 +397,6 @@ public final class GeminiService {
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 let errorDetails = Self.extractErrorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)"
                 
-                // Specific check for invalid API key (400 or 403)
                 if httpResponse.statusCode == 400 && (errorDetails.contains("API_KEY_INVALID") || errorDetails.contains("API key not valid")) {
                     DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
                     return
