@@ -10,10 +10,10 @@ public struct ARFramingOverlayView: View {
     public var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
-            let centerPoint = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+            let screenCenter = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
             
             ZStack {
-                // 1. Composition Grid Lines
+                // 1. Composition Grid Lines (hiện khi AI session active)
                 if viewModel.isAISessionActive {
                     CompositionGridLines(rule: viewModel.activeCompositionRule, size: size)
                         .opacity(0.28)
@@ -44,25 +44,24 @@ public struct ARFramingOverlayView: View {
                     }
                 }
                 
-                // 4. YELLOW PIN TARGET (FIXED position — where AI pinned the target)
-                if viewModel.showTargetCircle, let pinned = viewModel.pinnedTargetPoint {
-                    let pinnedScreen = CGPoint(x: pinned.x * size.width, y: pinned.y * size.height)
+                // 4. VÒNG TRÒN TARGET VÀNG (Dịch chuyển theo Gyro khi lia máy về phía mục tiêu)
+                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
+                    let targetScreen = CGPoint(
+                        x: targetPoint.x * size.width,
+                        y: targetPoint.y * size.height
+                    )
                     
-                    // Guidance ray from WHITE crosshair → YELLOW pin
+                    // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
                     if viewModel.showGuidanceRay {
-                        let crosshairScreen = CGPoint(
-                            x: viewModel.trackedSubjectPoint.x * size.width,
-                            y: viewModel.trackedSubjectPoint.y * size.height
-                        )
                         GuidanceRayLine(
-                            from: crosshairScreen,
-                            to: pinnedScreen,
+                            from: screenCenter,
+                            to: targetScreen,
                             dashOffset: dashOffset,
                             distance: viewModel.alignmentDistance
                         )
                     }
                     
-                    // Yellow PIN (fixed)
+                    // Target Vàng
                     TargetCircleView(
                         isAligned: viewModel.isPerfectAlignment,
                         alignmentDistance: viewModel.alignmentDistance,
@@ -70,39 +69,24 @@ public struct ARFramingOverlayView: View {
                         radarOpacity: radarOpacity,
                         countdown: viewModel.autoCaptureCountdown
                     )
-                    .position(pinnedScreen)
+                    .position(targetScreen)
                 }
                 
-                // 5. WHITE CROSSHAIR — tracks the subject (moves with camera)
-                // SNIPER MODEL: This is your "gun sight" — aim it at the yellow pin
-                if viewModel.isAISessionActive {
-                    let crosshairScreen = CGPoint(
-                        x: viewModel.trackedSubjectPoint.x * size.width,
-                        y: viewModel.trackedSubjectPoint.y * size.height
-                    )
-                    CurrentCenterCrosshair(
-                        isAligned: viewModel.isPerfectAlignment,
-                        sessionState: viewModel.aiSessionState,
-                        distance: viewModel.alignmentDistance
-                    )
-                    .position(crosshairScreen)
-                    .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.8), value: viewModel.trackedSubjectPoint)
-                } else {
-                    // Idle: show static center crosshair
-                    CurrentCenterCrosshair(
-                        isAligned: false,
-                        sessionState: .idle,
-                        distance: 1.0
-                    )
-                    .position(centerPoint)
-                }
+                // 5. TÂM TRẮNG GIỮA MÀN HÌNH — LUÔN LUÔN CỐ ĐỊNH Ở CHÍNH GIỮA (0.5, 0.5)
+                // Đây là tâm ngắm của camera. Bạn chỉ việc di chuyển máy để tâm trắng này đè lên Target Vàng.
+                CurrentCenterCrosshair(
+                    isAligned: viewModel.isPerfectAlignment,
+                    sessionState: viewModel.aiSessionState,
+                    distance: viewModel.alignmentDistance
+                )
+                .position(screenCenter)
                 
-                // 6. Countdown overlay
+                // 6. Countdown Overlay khi 2 tâm đã trùng khớp
                 if case .alignmentPerfect = viewModel.aiSessionState {
                     CountdownOverlayView(countdown: viewModel.autoCaptureCountdown)
                 }
                 
-                // 7. Alignment Success Flash border
+                // 7. Success Flash
                 if viewModel.showAlignmentSuccessFlash {
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(Color.green, lineWidth: 5)
@@ -110,12 +94,12 @@ public struct ARFramingOverlayView: View {
                         .transition(.opacity)
                 }
                 
-                // 8. Gemini status toast (when analyzing)
+                // 8. Gemini analyzing toast
                 if viewModel.isGeminiAnalyzing {
                     GeminiAnalyzingBadge()
                 }
                 
-                // 9. Capture flash
+                // 9. Capture Flash
                 if viewModel.activeFlashMode2 {
                     Color.white.opacity(0.55)
                         .ignoresSafeArea()
@@ -178,7 +162,7 @@ struct CompositionGridLines: View {
     }
 }
 
-// MARK: - White Crosshair (Moving subject tracker — "gun sight")
+// MARK: - Center Crosshair (100% CỐ ĐỊNH Ở CHÍNH GIỮA)
 
 struct CurrentCenterCrosshair: View {
     let isAligned: Bool
@@ -187,16 +171,13 @@ struct CurrentCenterCrosshair: View {
     
     var body: some View {
         let color: Color = isAligned ? .green : ringColor
-        // Size pulses when close to target
         let proximityScale: CGFloat = distance < 0.15 ? (1.0 + (0.15 - distance) * 1.2) : 1.0
         
         ZStack {
-            // Outer ring
             Circle()
                 .stroke(color, lineWidth: isAligned ? 2.5 : 1.8)
                 .frame(width: 38, height: 38)
             
-            // 4 tick marks (crosshair arms)
             ForEach([0, 90, 180, 270], id: \.self) { deg in
                 Rectangle()
                     .fill(color.opacity(0.9))
@@ -205,12 +186,10 @@ struct CurrentCenterCrosshair: View {
                     .rotationEffect(.degrees(Double(deg)))
             }
             
-            // Center dot
             Circle()
                 .fill(color)
                 .frame(width: isAligned ? 6 : 4.5, height: isAligned ? 6 : 4.5)
             
-            // Check when aligned
             if isAligned {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .heavy))
@@ -233,7 +212,7 @@ struct CurrentCenterCrosshair: View {
     }
 }
 
-// MARK: - Yellow Target Circle (FIXED pin)
+// MARK: - Target Vàng (Di chuyển theo Gyro để về tâm giữa)
 
 struct TargetCircleView: View {
     let isAligned: Bool
@@ -244,14 +223,12 @@ struct TargetCircleView: View {
     
     var body: some View {
         ZStack {
-            // Radar pulse (not aligned)
             if !isAligned {
                 Circle()
                     .stroke(Color.yellow.opacity(radarOpacity), lineWidth: 1.2)
                     .frame(width: 64 * radarPulse, height: 64 * radarPulse)
             }
             
-            // Proximity progress ring
             let progress = max(0, 1.0 - (alignmentDistance / 0.30))
             Circle()
                 .trim(from: 0, to: progress)
@@ -263,7 +240,6 @@ struct TargetCircleView: View {
                 .rotationEffect(.degrees(-90))
                 .animation(.easeInOut(duration: 0.12), value: alignmentDistance)
             
-            // Main ring
             Circle()
                 .stroke(
                     isAligned ? Color.green : Color.yellow,
@@ -272,7 +248,6 @@ struct TargetCircleView: View {
                 .frame(width: 52, height: 52)
                 .shadow(color: isAligned ? Color.green.opacity(0.9) : Color.yellow.opacity(0.65), radius: isAligned ? 10 : 5)
             
-            // Center: countdown or dot
             if isAligned {
                 if countdown > 0 {
                     Text("\(countdown)")
@@ -284,10 +259,8 @@ struct TargetCircleView: View {
                         .foregroundColor(.green)
                 }
             } else {
-                // Crosshair center in yellow target
                 ZStack {
                     Circle().fill(Color.yellow.opacity(0.75)).frame(width: 8, height: 8)
-                    // mini crosshair
                     Rectangle().fill(Color.yellow.opacity(0.6)).frame(width: 14, height: 1)
                     Rectangle().fill(Color.yellow.opacity(0.6)).frame(width: 1, height: 14)
                 }
@@ -355,7 +328,7 @@ struct GeminiAnalyzingBadge: View {
                             rotation = 360
                         }
                     }
-                Text("Gemini đang phân tích...")
+                Text("Gemini đang phân tích bố cục...")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
             }
             .foregroundColor(.cyan)
@@ -368,7 +341,7 @@ struct GeminiAnalyzingBadge: View {
     }
 }
 
-// MARK: - Other Subviews
+// MARK: - Boxes
 
 struct FaceDetectionBox: View {
     let rect: CGRect

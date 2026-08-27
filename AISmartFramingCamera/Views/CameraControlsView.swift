@@ -236,11 +236,11 @@ struct MainCaptureButton: View {
     }
     
     private var directionArrowIcon: String {
-        guard case .targetPlaced = viewModel.aiSessionState, let target = viewModel.pinnedTargetPoint else {
+        guard case .targetPlaced = viewModel.aiSessionState, let target = viewModel.currentTargetPoint else {
             return "scope"
         }
-        let dx = target.x - viewModel.trackedSubjectPoint.x
-        let dy = target.y - viewModel.trackedSubjectPoint.y
+        let dx = target.x - 0.5
+        let dy = target.y - 0.5
         let angle = atan2(dy, dx) * 180 / .pi
         let normalizedAngle = angle < 0 ? angle + 360 : angle
         switch normalizedAngle {
