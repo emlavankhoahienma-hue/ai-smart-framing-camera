@@ -261,4 +261,4 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         return (luma, estimatedK)
     }
-
+}
