@@ -33,6 +33,14 @@ public enum CompositionRule: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Camera Capture Mode
+public enum CameraCaptureMode: String, CaseIterable, Identifiable {
+    case photo = "ẢNH"
+    case video = "VIDEO"
+    
+    public var id: String { rawValue }
+}
+
 // MARK: - AI Framing Session State Machine
 /// Đây là trạng thái tổng thể của phiên AI — thay thế bool đơn giản
 public enum AISessionState: Equatable {

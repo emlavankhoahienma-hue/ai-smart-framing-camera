@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>VanKhoa AI Cam</string>
+	<string>AlignAI Studio</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<string>AlignAI Studio</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
@@ -23,9 +23,11 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Ứng dụng cần quyền truy cập Camera để phân tích bối cảnh bằng Neural Engine và tính toán góc chụp vàng thời gian thực.</string>
+	<string>AlignAI Studio cần quyền truy cập Camera để phân tích bố cục thị giác Neural Engine và quay video chất lượng cao.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AlignAI Studio cần quyền truy cập Micro để ghi âm thanh khi quay video.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Ứng dụng cần quyền lưu ảnh nghệ thuật đã qua xử lý công thức màu AI vào Thư viện của bạn.</string>
+	<string>AlignAI Studio cần quyền lưu ảnh và video màu sắc AI vào Thư viện của bạn.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

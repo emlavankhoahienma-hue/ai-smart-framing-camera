@@ -1,40 +1,50 @@
 import Foundation
 import AVFoundation
-import UIKit
+import CoreGraphics
 import CoreImage
+import UIKit
+import ImageIO
 
-@MainActor
 public protocol CameraServiceDelegate: AnyObject {
     func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
     func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, iso: Float, shutterSpeed: Double)
-    func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat)
+    func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL)
 }
 
-public final class CameraService: NSObject, @unchecked Sendable {
+public extension CameraServiceDelegate {
+    func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {}
+}
+
+public final class CameraService: NSObject {
     public static let shared = CameraService()
     
     public weak var delegate: CameraServiceDelegate?
     
-    public let captureSession = AVCaptureSession()
-    private let sessionQueue = DispatchQueue(label: "com.aismartframing.cameraSessionQueue")
+    // Core AVFoundation objects
+    private let captureSession = AVCaptureSession()
+    private let sessionQueue = DispatchQueue(label: "com.alignai.camera.sessionQueue", qos: .userInteractive)
     
+    private var activeCamera: AVCaptureDevice?
     private var videoDeviceInput: AVCaptureDeviceInput?
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
+    private let movieFileOutput = AVCaptureMovieFileOutput()
     
-    public private(set) var activeCamera: AVCaptureDevice?
-    public private(set) var currentZoomFactor: CGFloat = 1.0
+    // State
+    public private(set) var isSessionRunning = false
+    public private(set) var currentZoom: CGFloat = 1.0
+    public private(set) var minZoom: CGFloat = 1.0
+    public private(set) var maxZoom: CGFloat = 10.0
+    public private(set) var isRecordingVideo = false
+    
     public var flashMode: AVCaptureDevice.FlashMode = .auto
+    public var isLivePhotoMode = false
     
-    // Zoom limits
-    public var minZoom: CGFloat = 1.0
-    public var maxZoom: CGFloat = 10.0
-    
-    public override init() {
+    private override init() {
         super.init()
     }
     
-    // MARK: - Setup Session
+    // MARK: - Session Setup
     public func setupSession(completion: @escaping (Bool) -> Void) {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
@@ -69,6 +79,14 @@ public final class CameraService: NSObject, @unchecked Sendable {
                     self.videoDeviceInput = videoInput
                 }
                 
+                // Add Audio Input for Video Recording
+                if let audioDevice = AVCaptureDevice.default(for: .audio) {
+                    if let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
+                       self.captureSession.canAddInput(audioInput) {
+                        self.captureSession.addInput(audioInput)
+                    }
+                }
+                
                 // Video Data Output for Real-time Vision
                 if self.captureSession.canAddOutput(self.videoDataOutput) {
                     self.captureSession.addOutput(self.videoDataOutput)
@@ -76,25 +94,22 @@ public final class CameraService: NSObject, @unchecked Sendable {
                     self.videoDataOutput.videoSettings = [
                         kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
                     ]
-                    // Fix orientation: rotate video output to portrait
                     if let connection = self.videoDataOutput.connection(with: .video) {
                         if connection.isVideoOrientationSupported {
                             connection.videoOrientation = .portrait
-                        }
-                        if connection.isVideoMirroringSupported {
-                            connection.isVideoMirrored = false
                         }
                     }
                     self.videoDataOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
                 }
                 
-                // High-resolution Photo Output
+                // Photo Output
                 if self.captureSession.canAddOutput(self.photoOutput) {
                     self.captureSession.addOutput(self.photoOutput)
                     self.photoOutput.isHighResolutionCaptureEnabled = true
                     self.photoOutput.maxPhotoQualityPrioritization = .quality
-                    
-                    // Fix photo orientation
+                    if self.photoOutput.isLivePhotoCaptureSupported {
+                        self.photoOutput.isLivePhotoCaptureEnabled = true
+                    }
                     if let connection = self.photoOutput.connection(with: .video) {
                         if connection.isVideoOrientationSupported {
                             connection.videoOrientation = .portrait
@@ -102,9 +117,21 @@ public final class CameraService: NSObject, @unchecked Sendable {
                     }
                 }
                 
+                // Movie Output for Video Recording
+                if self.captureSession.canAddOutput(self.movieFileOutput) {
+                    self.captureSession.addOutput(self.movieFileOutput)
+                    if let connection = self.movieFileOutput.connection(with: .video) {
+                        if connection.isVideoOrientationSupported {
+                            connection.videoOrientation = .portrait
+                        }
+                        if connection.isVideoStabilizationSupported {
+                            connection.preferredVideoStabilizationMode = .cinematicExtended
+                        }
+                    }
+                }
+                
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(true) }
-                
             } catch {
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(false) }
@@ -112,11 +139,12 @@ public final class CameraService: NSObject, @unchecked Sendable {
         }
     }
     
-    // MARK: - Start / Stop
+    // MARK: - Start / Stop Session
     public func start() {
         sessionQueue.async { [weak self] in
             guard let self = self, !self.captureSession.isRunning else { return }
             self.captureSession.startRunning()
+            self.isSessionRunning = self.captureSession.isRunning
         }
     }
     
@@ -124,78 +152,72 @@ public final class CameraService: NSObject, @unchecked Sendable {
         sessionQueue.async { [weak self] in
             guard let self = self, self.captureSession.isRunning else { return }
             self.captureSession.stopRunning()
+            self.isSessionRunning = false
         }
     }
     
-    // MARK: - Zoom Controls
-    public func setZoomFactor(_ zoom: CGFloat, animated: Bool = true) {
+    // MARK: - Zoom Control
+    public func setZoomFactor(_ factor: CGFloat) {
         sessionQueue.async { [weak self] in
-            guard let self = self, let device = self.activeCamera else { return }
-            
-            let clampedZoom = max(self.minZoom, min(zoom, self.maxZoom))
-            
+            guard let self = self, let camera = self.activeCamera else { return }
+            let clampedZoom = max(self.minZoom, min(factor, self.maxZoom))
             do {
-                try device.lockForConfiguration()
-                if animated {
-                    device.ramp(toVideoZoomFactor: clampedZoom, withRate: 4.0)
-                } else {
-                    device.videoZoomFactor = clampedZoom
-                }
-                device.unlockForConfiguration()
-                
-                DispatchQueue.main.async {
-                    self.currentZoomFactor = clampedZoom
-                    self.delegate?.cameraService(self, didChangeZoomFactor: clampedZoom)
-                }
+                try camera.lockForConfiguration()
+                camera.videoZoomFactor = clampedZoom
+                camera.unlockForConfiguration()
+                self.currentZoom = clampedZoom
             } catch {
-                print("Failed to set zoom: \(error)")
+                print("CameraService: Error setting zoom \(error)")
             }
         }
     }
     
-    // MARK: - Exposure Bias Adjustment
+    // MARK: - Exposure Bias
     public func setExposureBias(_ bias: Float) {
         sessionQueue.async { [weak self] in
-            guard let self = self, let device = self.activeCamera else { return }
+            guard let self = self, let camera = self.activeCamera else { return }
+            let clamped = max(camera.minExposureTargetBias, min(bias, camera.maxExposureTargetBias))
             do {
-                try device.lockForConfiguration()
-                let clampedBias = max(device.minExposureTargetBias, min(bias, device.maxExposureTargetBias))
-                device.setExposureTargetBias(clampedBias, completionHandler: nil)
-                device.unlockForConfiguration()
+                try camera.lockForConfiguration()
+                camera.setExposureTargetBias(clamped, completionHandler: nil)
+                camera.unlockForConfiguration()
             } catch {
-                print("Failed to set exposure bias: \(error)")
+                print("CameraService: Error setting exposure bias \(error)")
             }
         }
     }
     
-    // MARK: - Focus & Exposure Point
-    public func focusAndExpose(at point: CGPoint) {
+    // MARK: - Video Recording
+    public func startRecordingVideo() {
         sessionQueue.async { [weak self] in
-            guard let self = self, let device = self.activeCamera else { return }
-            do {
-                try device.lockForConfiguration()
-                if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(.autoFocus) {
-                    device.focusPointOfInterest = point
-                    device.focusMode = .autoFocus
-                }
-                if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(.autoExpose) {
-                    device.exposurePointOfInterest = point
-                    device.exposureMode = .autoExpose
-                }
-                device.unlockForConfiguration()
-            } catch {
-                print("Failed to focus: \(error)")
+            guard let self = self, !self.movieFileOutput.isRecording else { return }
+            
+            let tempDir = FileManager.default.temporaryDirectory
+            let outputURL = tempDir.appendingPathComponent("AlignAI_Video_\(UUID().uuidString).mov")
+            
+            if FileManager.default.fileExists(atPath: outputURL.path) {
+                try? FileManager.default.removeItem(at: outputURL)
             }
+            
+            self.movieFileOutput.startRecording(to: outputURL, recordingDelegate: self)
+            DispatchQueue.main.async { self.isRecordingVideo = true }
         }
     }
     
-    // MARK: - Photo Capture
+    public func stopRecordingVideo() {
+        sessionQueue.async { [weak self] in
+            guard let self = self, self.movieFileOutput.isRecording else { return }
+            self.movieFileOutput.stopRecording()
+            DispatchQueue.main.async { self.isRecordingVideo = false }
+        }
+    }
+    
+    // MARK: - Capture Photo
     public func capturePhoto() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            
             let photoSettings = AVCapturePhotoSettings()
-            if let device = self.activeCamera, device.hasFlash {
+            if self.activeCamera?.isFlashAvailable == true {
                 photoSettings.flashMode = self.flashMode
             }
             photoSettings.photoQualityPrioritization = .quality
@@ -220,14 +242,16 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         guard error == nil else { return }
         
-        // ✅ Fix: Properly orient the photo using pixelBuffer for correct upright portrait output
+        let zoomAtCapture = self.currentZoom
+        
         guard let pixelBuffer = photo.pixelBuffer else {
-            // Fallback: use fileData with orientation correction
             guard let data = photo.fileDataRepresentation(),
                   let uiImage = UIImage(data: data) else { return }
             
-            // Force upright orientation
-            let uprightImage = Self.fixOrientation(uiImage)
+            var uprightImage = Self.fixOrientation(uiImage)
+            if zoomAtCapture > 1.02, let cropped = Self.cropImageForZoom(uprightImage, zoom: zoomAtCapture) {
+                uprightImage = cropped
+            }
             guard let cgImage = uprightImage.cgImage else { return }
             
             let metadata = photo.metadata
@@ -240,16 +264,24 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             return
         }
         
-        // Use CIImage → CGImage pipeline with correct orientation
         var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         
-        // Apply orientation from photo metadata
         if let orientationNum = photo.metadata[kCGImagePropertyOrientation as String] as? UInt32,
            let cgOrientation = CGImagePropertyOrientation(rawValue: orientationNum) {
             ciImage = ciImage.oriented(cgOrientation)
         } else {
-            // Default: cameras typically return right-rotation for portrait, force upright
             ciImage = ciImage.oriented(.right)
+        }
+        
+        // ✅ CẮT CHUẨN XÁC THEO TỶ LỆ ZOOM CỦA AI VÀ CAMERA (Fix ảnh lưu không zoom)
+        if zoomAtCapture > 1.02 {
+            let fullExtent = ciImage.extent
+            let cropWidth = fullExtent.width / zoomAtCapture
+            let cropHeight = fullExtent.height / zoomAtCapture
+            let cropX = fullExtent.midX - (cropWidth / 2.0)
+            let cropY = fullExtent.midY - (cropHeight / 2.0)
+            let cropRect = CGRect(x: cropX, y: cropY, width: cropWidth, height: cropHeight)
+            ciImage = ciImage.cropped(to: cropRect)
         }
         
         let ciContext = CIContext(options: [.useSoftwareRenderer: false])
@@ -266,6 +298,19 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
     
     // MARK: - Helpers
     
+    private static func cropImageForZoom(_ image: UIImage, zoom: CGFloat) -> UIImage? {
+        guard let cg = image.cgImage else { return image }
+        let width = CGFloat(cg.width)
+        let height = CGFloat(cg.height)
+        let cropW = width / zoom
+        let cropH = height / zoom
+        let cropX = (width - cropW) / 2.0
+        let cropY = (height - cropH) / 2.0
+        let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
+        guard let croppedCG = cg.cropping(to: cropRect) else { return image }
+        return UIImage(cgImage: croppedCG, scale: image.scale, orientation: image.imageOrientation)
+    }
+    
     private static func parseExif(_ metadata: [String: Any]) -> (iso: Float, shutter: Double) {
         var isoValue: Float = 100.0
         var shutterSpeed: Double = 0.016
@@ -280,14 +325,23 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         return (isoValue, shutterSpeed)
     }
     
-    /// Force UIImage to upright orientation by redrawing into a new CGContext
     private static func fixOrientation(_ image: UIImage) -> UIImage {
         guard image.imageOrientation != .up else { return image }
-        
         UIGraphicsBeginImageContextWithOptions(image.size, false, image.scale)
         image.draw(in: CGRect(origin: .zero, size: image.size))
         let normalized = UIGraphicsGetImageFromCurrentImageContext() ?? image
         UIGraphicsEndImageContext()
         return normalized
+    }
+}
+
+// MARK: - AVCaptureFileOutputRecordingDelegate
+extension CameraService: AVCaptureFileOutputRecordingDelegate {
+    public func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
+        guard error == nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.delegate?.cameraService(self, didFinishRecordingVideoAt: outputFileURL)
+        }
     }
 }

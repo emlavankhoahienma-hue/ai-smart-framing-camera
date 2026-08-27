@@ -28,6 +28,13 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isAIFullColorEnabled: Bool = true
     @Published public var isAutoZoomEnabled: Bool = true
     
+    // Camera Mode & Live Photo
+    @Published public var captureMode: CameraCaptureMode = .photo
+    @Published public var isLivePhotoEnabled: Bool = false
+    @Published public var isRecordingVideo: Bool = false
+    @Published public var recordedVideoURL: URL? = nil
+    @Published public var isShowingVideoPreview: Bool = false
+    
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var exposureBias: Float = 0.0
@@ -500,6 +507,24 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
+    public func toggleLivePhoto() {
+        haptics.triggerSelectionChange()
+        isLivePhotoEnabled.toggle()
+        cameraService.isLivePhotoMode = isLivePhotoEnabled
+    }
+    
+    public func toggleVideoRecording() {
+        if isRecordingVideo {
+            haptics.triggerShutterClick()
+            cameraService.stopRecordingVideo()
+            isRecordingVideo = false
+        } else {
+            haptics.triggerShutterClick()
+            cameraService.startRecordingVideo()
+            isRecordingVideo = true
+        }
+    }
+    
     public func toggleARMode() {
         haptics.triggerSelectionChange()
         isARModeEnabled.toggle()
@@ -507,6 +532,11 @@ public final class CameraViewModel: ObservableObject {
     }
     
     public func takePhotoManual() {
+        if captureMode == .video {
+            toggleVideoRecording()
+            return
+        }
+        
         guard aiSessionState == .idle else { return }
         haptics.triggerShutterClick()
         withAnimation(.easeInOut(duration: 0.1)) { isShutterPressing = true }
@@ -545,7 +575,20 @@ public final class CameraViewModel: ObservableObject {
 // MARK: - CameraServiceDelegate
 extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
-        visionEngine.processVideoSampleBuffer(sampleBuffer)
+        let orientation: CGImagePropertyOrientation
+        switch UIDevice.current.orientation {
+        case .landscapeLeft: orientation = .up
+        case .landscapeRight: orientation = .down
+        case .portraitUpsideDown: orientation = .left
+        default: orientation = .right
+        }
+        visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: orientation)
+    }
+    
+    public func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {
+        self.recordedVideoURL = url
+        self.isShowingVideoPreview = true
+        self.haptics.triggerSuccess()
     }
     
     public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, iso: Float, shutterSpeed: Double) {

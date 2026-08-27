@@ -25,6 +25,7 @@
 		B20000000000000000000010 /* SettingsSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000010 /* SettingsSheetView.swift */; };
 		B20000000000000000000011 /* GeminiService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000014 /* GeminiService.swift */; };
 		B20000000000000000000012 /* DeviceMotionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000015 /* DeviceMotionService.swift */; };
+		B20000000000000000000013 /* VideoPreviewSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000016 /* VideoPreviewSheetView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,6 +50,7 @@
 		B100000000000000000000013 /* AISmartFramingCamera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AISmartFramingCamera.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B100000000000000000000014 /* GeminiService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiService.swift; sourceTree = "<group>"; };
 		B100000000000000000000015 /* DeviceMotionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceMotionService.swift; sourceTree = "<group>"; };
+		B100000000000000000000016 /* VideoPreviewSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPreviewSheetView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -133,6 +135,7 @@
 				B1000000000000000000000E /* CameraControlsView.swift */,
 				B1000000000000000000000F /* CapturedPhotoPreviewView.swift */,
 				B100000000000000000000010 /* SettingsSheetView.swift */,
+				B100000000000000000000016 /* VideoPreviewSheetView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -231,6 +234,7 @@
 				B20000000000000000000010 /* SettingsSheetView.swift in Sources */,
 				B20000000000000000000011 /* GeminiService.swift in Sources */,
 				B20000000000000000000012 /* DeviceMotionService.swift in Sources */,
+				B20000000000000000000013 /* VideoPreviewSheetView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

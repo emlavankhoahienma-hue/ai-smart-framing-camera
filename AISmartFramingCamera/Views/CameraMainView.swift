@@ -30,7 +30,7 @@ public struct CameraMainView: View {
                     
                     Spacer()
                     
-                    // Bottom Control Deck (Zoom, Shutter, Presets)
+                    // Bottom Control Deck (Zoom, Mode, Shutter, Presets)
                     CameraControlsView(viewModel: viewModel)
                 }
             } else {
@@ -46,6 +46,11 @@ public struct CameraMainView: View {
                 CapturedPhotoPreviewView(item: latest)
             }
         }
+        .sheet(isPresented: $viewModel.isShowingVideoPreview) {
+            if let videoURL = viewModel.recordedVideoURL {
+                VideoPreviewSheetView(videoURL: videoURL, viewModel: viewModel)
+            }
+        }
         .onAppear {
             viewModel.requestPermissionsAndStart()
         }
@@ -58,19 +63,30 @@ struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             // Flash Mode Toggle
             Button(action: {
                 viewModel.toggleFlash()
             }) {
                 Image(systemName: flashIconName)
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundColor(viewModel.activeFlashMode == .off ? .white.opacity(0.8) : .yellow)
-                    .frame(width: 42, height: 42)
+                    .frame(width: 40, height: 40)
                     .background(Circle().fill(Color.black.opacity(0.45)))
             }
             
-            // AI Framing Session Button (top bar shortcut)
+            // Live Photo Toggle (Bật / Tắt Live Photo như Camera gốc của iOS)
+            Button(action: {
+                viewModel.toggleLivePhoto()
+            }) {
+                Image(systemName: viewModel.isLivePhotoEnabled ? "livephoto" : "livephoto.slash")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(viewModel.isLivePhotoEnabled ? .yellow : .white.opacity(0.8))
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Color.black.opacity(0.45)))
+            }
+            
+            // AI Framing Session Button (Top bar shortcut)
             Button(action: {
                 if viewModel.aiSessionState.isSessionActive {
                     viewModel.cancelAISession()
@@ -80,14 +96,14 @@ struct TopCameraBar: View {
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: viewModel.aiSessionState.isSessionActive ? "stop.circle" : "wand.and.stars")
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                     
                     Text("AI")
-                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
                 }
-                .foregroundColor(viewModel.aiSessionState.isSessionActive ? .red : .white.opacity(0.75))
-                .padding(.horizontal, 12)
-                .frame(height: 42)
+                .foregroundColor(viewModel.aiSessionState.isSessionActive ? .red : .white.opacity(0.85))
+                .padding(.horizontal, 10)
+                .frame(height: 40)
                 .background(Capsule().fill(Color.black.opacity(0.45)))
             }
             
@@ -108,9 +124,9 @@ struct TopCameraBar: View {
                 }
             } label: {
                 Image(systemName: viewModel.activeCompositionRule.iconName)
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundColor(.white)
-                    .frame(width: 42, height: 42)
+                    .frame(width: 40, height: 40)
                     .background(Circle().fill(Color.black.opacity(0.45)))
             }
             
@@ -121,9 +137,9 @@ struct TopCameraBar: View {
                 viewModel.toggleARMode()
             }) {
                 Image(systemName: viewModel.isARModeEnabled ? "arkit" : "viewfinder")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundColor(viewModel.isARModeEnabled ? .cyan : .white)
-                    .frame(width: 42, height: 42)
+                    .frame(width: 40, height: 40)
                     .background(Circle().fill(Color.black.opacity(0.45)))
             }
             
@@ -132,9 +148,9 @@ struct TopCameraBar: View {
                 viewModel.isShowingSettings = true
             }) {
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundColor(.white)
-                    .frame(width: 42, height: 42)
+                    .frame(width: 40, height: 40)
                     .background(Circle().fill(Color.black.opacity(0.45)))
             }
         }
@@ -158,18 +174,18 @@ struct CameraPermissionPlaceholderView: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: "camera.viewfinder")
-                .font(.system(size: 64, weight: .light))
+            Image(systemName: "camera.trianglebadge.exclamationmark")
+                .font(.system(size: 64))
                 .foregroundColor(.yellow)
             
-            Text("Yêu cầu quyền truy cập Camera")
+            Text("AlignAI Studio cần quyền Camera")
                 .font(.title2.bold())
                 .foregroundColor(.white)
             
-            Text("Ứng dụng cần quyền Camera để phân tích bối cảnh thời gian thực bằng Neural Engine và hiển thị vòng tròn chỉ dẫn bố cục.")
-                .font(.body)
-                .multilineTextAlignment(.center)
+            Text("Để phân tích bố cục thời gian thực, AI cần quyền truy cập cảm biến camera.")
+                .font(.subheadline)
                 .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             
             Button(action: {
@@ -177,15 +193,14 @@ struct CameraPermissionPlaceholderView: View {
                     UIApplication.shared.open(url)
                 }
             }) {
-                Text("Mở Cài đặt")
+                Text("Mở Cài đặt hệ thống")
                     .font(.headline)
                     .foregroundColor(.black)
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, 28)
                     .padding(.vertical, 14)
                     .background(Color.yellow)
-                    .cornerRadius(14)
+                    .cornerRadius(12)
             }
-            .padding(.top, 10)
         }
     }
 }
