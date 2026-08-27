@@ -1,0 +1,446 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* AISmartFramingCameraApp.swift */; };
+		B20000000000000000000002 /* FramingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* FramingModels.swift */; };
+		B20000000000000000000003 /* CameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* CameraService.swift */; };
+		B20000000000000000000004 /* VisionFramingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* VisionFramingEngine.swift */; };
+		B20000000000000000000005 /* CompositionCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* CompositionCalculator.swift */; };
+		B20000000000000000000006 /* FilmFilterEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* FilmFilterEngine.swift */; };
+		B20000000000000000000007 /* HapticFeedbackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* HapticFeedbackService.swift */; };
+		B20000000000000000000008 /* ARCompositionSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* ARCompositionSession.swift */; };
+		B20000000000000000000009 /* CameraViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* CameraViewModel.swift */; };
+		B2000000000000000000000A /* CameraMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* CameraMainView.swift */; };
+		B2000000000000000000000B /* CameraPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* CameraPreviewView.swift */; };
+		B2000000000000000000000C /* ARFramingOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* ARFramingOverlayView.swift */; };
+		B2000000000000000000000D /* AIStatusHUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* AIStatusHUDView.swift */; };
+		B2000000000000000000000E /* CameraControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* CameraControlsView.swift */; };
+		B2000000000000000000000F /* CapturedPhotoPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* CapturedPhotoPreviewView.swift */; };
+		B20000000000000000000010 /* SettingsSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000010 /* SettingsSheetView.swift */; };
+		B20000000000000000000011 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000011 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B10000000000000000000001 /* AISmartFramingCameraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISmartFramingCameraApp.swift; sourceTree = "<group>"; };
+		B10000000000000000000002 /* FramingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramingModels.swift; sourceTree = "<group>"; };
+		B10000000000000000000003 /* CameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraService.swift; sourceTree = "<group>"; };
+		B10000000000000000000004 /* VisionFramingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionFramingEngine.swift; sourceTree = "<group>"; };
+		B10000000000000000000005 /* CompositionCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionCalculator.swift; sourceTree = "<group>"; };
+		B10000000000000000000006 /* FilmFilterEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmFilterEngine.swift; sourceTree = "<group>"; };
+		B10000000000000000000007 /* HapticFeedbackService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticFeedbackService.swift; sourceTree = "<group>"; };
+		B10000000000000000000008 /* ARCompositionSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARCompositionSession.swift; sourceTree = "<group>"; };
+		B10000000000000000000009 /* CameraViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraViewModel.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A /* CameraMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraMainView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000B /* CameraPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000C /* ARFramingOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ARFramingOverlayView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000D /* AIStatusHUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIStatusHUDView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000E /* CameraControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraControlsView.swift; sourceTree = "<group>"; };
+		B1000000000000000000000F /* CapturedPhotoPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturedPhotoPreviewView.swift; sourceTree = "<group>"; };
+		B100000000000000000000010 /* SettingsSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSheetView.swift; sourceTree = "<group>"; };
+		B100000000000000000000011 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B100000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B100000000000000000000013 /* AISmartFramingCamera.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AISmartFramingCamera.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B40000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B30000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				B30000000000000000000002 /* AISmartFramingCamera */,
+				B30000000000000000000009 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B30000000000000000000002 /* AISmartFramingCamera */ = {
+			isa = PBXGroup;
+			children = (
+				B30000000000000000000003 /* App */,
+				B30000000000000000000004 /* Models */,
+				B30000000000000000000005 /* Services */,
+				B30000000000000000000006 /* ViewModels */,
+				B30000000000000000000007 /* Views */,
+				B100000000000000000000011 /* Assets.xcassets */,
+				B100000000000000000000012 /* Info.plist */,
+			);
+			path = AISmartFramingCamera;
+			sourceTree = "<group>";
+		};
+		B30000000000000000000003 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000001 /* AISmartFramingCameraApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		B30000000000000000000004 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000002 /* FramingModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		B30000000000000000000005 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000003 /* CameraService.swift */,
+				B10000000000000000000004 /* VisionFramingEngine.swift */,
+				B10000000000000000000005 /* CompositionCalculator.swift */,
+				B10000000000000000000006 /* FilmFilterEngine.swift */,
+				B10000000000000000000007 /* HapticFeedbackService.swift */,
+				B10000000000000000000008 /* ARCompositionSession.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		B30000000000000000000006 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000009 /* CameraViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		B30000000000000000000007 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000000000000000000A /* CameraMainView.swift */,
+				B1000000000000000000000B /* CameraPreviewView.swift */,
+				B1000000000000000000000C /* ARFramingOverlayView.swift */,
+				B1000000000000000000000D /* AIStatusHUDView.swift */,
+				B1000000000000000000000E /* CameraControlsView.swift */,
+				B1000000000000000000000F /* CapturedPhotoPreviewView.swift */,
+				B100000000000000000000010 /* SettingsSheetView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		B30000000000000000000009 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B100000000000000000000013 /* AISmartFramingCamera.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B50000000000000000000001 /* AISmartFramingCamera */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B70000000000000000000002 /* Build configuration list for PBXNativeTarget "AISmartFramingCamera" */;
+			buildPhases = (
+				B40000000000000000000001 /* Sources */,
+				B40000000000000000000002 /* Frameworks */,
+				B40000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AISmartFramingCamera;
+			productName = AISmartFramingCamera;
+			productReference = B100000000000000000000013 /* AISmartFramingCamera.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B80000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					B50000000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = B70000000000000000000001 /* Build configuration list for PBXProject "AISmartFramingCamera" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B30000000000000000000001;
+			productRefGroup = B30000000000000000000009 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B50000000000000000000001 /* AISmartFramingCamera */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B40000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000000000000000000011 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B40000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */,
+				B20000000000000000000002 /* FramingModels.swift in Sources */,
+				B20000000000000000000003 /* CameraService.swift in Sources */,
+				B20000000000000000000004 /* VisionFramingEngine.swift in Sources */,
+				B20000000000000000000005 /* CompositionCalculator.swift in Sources */,
+				B20000000000000000000006 /* FilmFilterEngine.swift in Sources */,
+				B20000000000000000000007 /* HapticFeedbackService.swift in Sources */,
+				B20000000000000000000008 /* ARCompositionSession.swift in Sources */,
+				B20000000000000000000009 /* CameraViewModel.swift in Sources */,
+				B2000000000000000000000A /* CameraMainView.swift in Sources */,
+				B2000000000000000000000B /* CameraPreviewView.swift in Sources */,
+				B2000000000000000000000C /* ARFramingOverlayView.swift in Sources */,
+				B2000000000000000000000D /* AIStatusHUDView.swift in Sources */,
+				B2000000000000000000000E /* CameraControlsView.swift in Sources */,
+				B2000000000000000000000F /* CapturedPhotoPreviewView.swift in Sources */,
+				B20000000000000000000010 /* SettingsSheetView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B60000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B60000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		B60000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AISmartFramingCamera/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "AI Framing Camera";
+				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aismartframing.camera;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B60000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = AISmartFramingCamera/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "AI Framing Camera";
+				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aismartframing.camera;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B70000000000000000000001 /* Build configuration list for PBXProject "AISmartFramingCamera" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B60000000000000000000001 /* Debug */,
+				B60000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B70000000000000000000002 /* Build configuration list for PBXNativeTarget "AISmartFramingCamera" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B60000000000000000000003 /* Debug */,
+				B60000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = B80000000000000000000001 /* Project object */;
+}

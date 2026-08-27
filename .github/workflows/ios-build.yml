@@ -1,0 +1,92 @@
+name: iOS Sideload Build & Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Unsigned IPA
+    runs-on: macos-15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          if [ -d "/Applications/Xcode_16.2.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          elif [ -d "/Applications/Xcode_16.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
+          elif [ -d "/Applications/Xcode_16.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.0.app/Contents/Developer
+          else
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build for iOS (unsigned)
+        run: |
+          xcodebuild build \
+            -project AISmartFramingCamera.xcodeproj \
+            -scheme AISmartFramingCamera \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=NO \
+            ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS=NO \
+            ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
+            BUILD_DIR=${{ github.workspace }}/build
+
+      - name: Create Payload directory
+        run: |
+          mkdir -p Payload
+          cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
+
+      - name: Package IPA
+        run: |
+          zip -r AISmartFramingCamera.ipa Payload/
+          echo "IPA size: $(du -h AISmartFramingCamera.ipa | cut -f1)"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AISmartFramingCamera-IPA
+          path: AISmartFramingCamera.ipa
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v1.0.0-build.${{ github.run_number }}"
+          gh release create "$TAG" \
+            AISmartFramingCamera.ipa \
+            --title "AI Smart Framing Camera $TAG" \
+            --notes "Unsigned IPA build for Sideloadly / AltStore / TrollStore installation.
+
+          ## Features
+          - 🎯 Real-time AI Subject & Face Tracking (Neural Engine accelerated)
+          - 📐 Rule of Thirds & Golden Ratio Framing Guides
+          - ⚡ Magnetic Snap Haptics & Auto-Alignment Crosshair
+          - 🎨 CoreImage Film Simulation Recipes (Fuji Pro 400H, Kodak Portra, Cine Teal/Orange)
+          - 🔍 Dynamic Auto-Zoom Adjustment
+
+          ## Installation via Sideloadly
+          1. Download \`AISmartFramingCamera.ipa\` from this release
+          2. Connect iPhone via USB and open Sideloadly
+          3. Drag the IPA into Sideloadly, enter Apple ID, and click Start
+          4. On iPhone: Settings > General > VPN & Device Management > Trust Developer Profile
+
+          ## System Requirements
+          - iPhone with A11 Bionic to A18 Pro (iPhone 8 / X or later)
+          - iOS 16.0 or later"
