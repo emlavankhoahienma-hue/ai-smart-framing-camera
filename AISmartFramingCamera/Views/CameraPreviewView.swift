@@ -25,6 +25,7 @@ public struct CameraPreviewView: UIViewRepresentable {
         Coordinator(self)
     }
     
+    @MainActor
     public class Coordinator: NSObject {
         let parent: CameraPreviewView
         private var initialZoom: CGFloat = 1.0
@@ -52,6 +53,7 @@ public struct CameraPreviewView: UIViewRepresentable {
     }
 }
 
+@MainActor
 public class PreviewContainerView: UIView {
     public let previewLayer = AVCaptureVideoPreviewLayer()
     private let focusRingView = UIView(frame: CGRect(x: 0, y: 0, width: 70, height: 70))

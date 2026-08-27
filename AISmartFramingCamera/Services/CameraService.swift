@@ -3,6 +3,7 @@ import AVFoundation
 import UIKit
 import CoreImage
 
+@MainActor
 public protocol CameraServiceDelegate: AnyObject {
     func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
     func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, iso: Float, shutterSpeed: Double)
@@ -192,7 +193,10 @@ public final class CameraService: NSObject, @unchecked Sendable {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        delegate?.cameraService(self, didOutputSampleBuffer: sampleBuffer)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.delegate?.cameraService(self, didOutputSampleBuffer: sampleBuffer)
+        }
     }
 }
 
