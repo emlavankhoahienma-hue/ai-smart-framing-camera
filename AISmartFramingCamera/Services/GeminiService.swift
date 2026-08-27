@@ -7,38 +7,47 @@ import QuartzCore
 
 public enum AIVisionModel: String, CaseIterable, Identifiable {
     case autoStrongest = "auto"
-    case gemini36Flash = "gemini-3.6-flash"
-    case gemini25Flash = "gemini-2.5-flash"
     case gemini15Flash = "gemini-1.5-flash"
-    case gemini15Pro = "gemini-1.5-pro"
+    case gemini15FlashLatest = "gemini-1.5-flash-latest"
+    case gemini20Flash = "gemini-2.0-flash"
     case gemini20FlashExp = "gemini-2.0-flash-exp"
-    case gemini20FlashThinking = "gemini-2.0-flash-thinking-exp-01-21"
+    case gemini20FlashLite = "gemini-2.0-flash-lite-preview-02-05"
+    case gemini15Pro = "gemini-1.5-pro"
+    case gemini15ProLatest = "gemini-1.5-pro-latest"
+    case gemini20ProExp = "gemini-2.0-pro-exp-02-05"
+    case gemini36Flash = "gemini-3.6-flash"
     
     public var id: String { rawValue }
     
     public var displayName: String {
         switch self {
         case .autoStrongest:
-            return "⚡ Tự động chọn Vision tốt nhất (Khuyên dùng)"
-        case .gemini36Flash:
-            return "🔥 Gemini 3.6 Flash (Khuyên dùng theo máy chủ)"
-        case .gemini25Flash:
-            return "⚡ Gemini 2.5 Flash"
+            return "⚡ Tự động luân chuyển model (Khuyên dùng - Không lo hết Quota)"
         case .gemini15Flash:
-            return "🚀 Gemini 1.5 Flash (Chuẩn chính thức)"
-        case .gemini15Pro:
-            return "💎 Gemini 1.5 Pro (Phân tích chiều sâu)"
+            return "🚀 Gemini 1.5 Flash (Quota cao nhất, ổn định)"
+        case .gemini15FlashLatest:
+            return "⚡ Gemini 1.5 Flash Latest"
+        case .gemini20Flash:
+            return "🔥 Gemini 2.0 Flash (Thị giác thế hệ mới)"
         case .gemini20FlashExp:
-            return "🧪 Gemini 2.0 Flash Exp"
-        case .gemini20FlashThinking:
-            return "🧠 Gemini 2.0 Flash Thinking"
+            return "🧪 Gemini 2.0 Flash Experimental"
+        case .gemini20FlashLite:
+            return "💨 Gemini 2.0 Flash Lite (Siêu nhanh < 200ms)"
+        case .gemini15Pro:
+            return "💎 Gemini 1.5 Pro (Độ sâu quang học studio)"
+        case .gemini15ProLatest:
+            return "💎 Gemini 1.5 Pro Latest"
+        case .gemini20ProExp:
+            return "🎯 Gemini 2.0 Pro Experimental"
+        case .gemini36Flash:
+            return "🧠 Gemini 3.6 Flash"
         }
     }
     
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "gemini-3.6-flash"
+            return "gemini-1.5-flash"
         default:
             return rawValue
         }
@@ -47,12 +56,15 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Sequence of standard verified models to try in auto mode
     public static var autoFallbackChain: [String] {
         [
-            "gemini-3.6-flash",
-            "gemini-2.5-flash",
             "gemini-1.5-flash",
-            "gemini-1.5-pro",
+            "gemini-1.5-flash-latest",
+            "gemini-2.0-flash",
             "gemini-2.0-flash-exp",
-            "gemini-1.5-flash-8b"
+            "gemini-2.0-flash-lite-preview-02-05",
+            "gemini-1.5-pro",
+            "gemini-1.5-pro-latest",
+            "gemini-2.0-pro-exp-02-05",
+            "gemini-3.6-flash"
         ]
     }
 }
@@ -113,6 +125,7 @@ public struct GeminiFramingResponse {
 public enum GeminiError: LocalizedError {
     case noAPIKey
     case invalidAPIKey(String)
+    case rateLimited(String)
     case imageConversionFailed
     case invalidURL
     case networkError(Error)
@@ -123,21 +136,23 @@ public enum GeminiError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .noAPIKey:
-            return "Chưa cấu hình Gemini API Key. Mở Cài đặt để dán key."
+            return "Chưa cài API Key. Mở Cài đặt để dán key."
         case .invalidAPIKey(let msg):
-            return "API Key không hợp lệ: \(msg). Hãy lấy key mới tại aistudio.google.com"
+            return "API Key không hợp lệ: \(msg)."
+        case .rateLimited(let msg):
+            return "Hết hạn mức Quota model này: \(msg)."
         case .imageConversionFailed:
-            return "Không thể chuyển đổi ảnh để gửi AI."
+            return "Không thể chuyển đổi ảnh gửi AI."
         case .invalidURL:
             return "URL API không hợp lệ."
         case .networkError(let e):
             return "Lỗi mạng: \(e.localizedDescription)"
         case .invalidResponse:
-            return "AI trả về dữ liệu không đúng định dạng."
+            return "Dữ liệu AI trả về không đúng định dạng."
         case .parseError(let msg):
-            return "Lỗi AI: \(msg)"
+            return "Lỗi AI (\(msg))"
         case .allModelsFailed(let msg):
-            return "Lỗi kết nối Gemini: \(msg)"
+            return "Tất cả model Gemini đều bận hoặc hết hạn mức. Đang dùng AI Neural Engine cục bộ."
         }
     }
 }
@@ -179,23 +194,31 @@ public final class GeminiService {
     
     private let urlSession: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 25
-        config.timeoutIntervalForResource = 50
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 40
         return URLSession(configuration: config)
     }()
     
     public init() {}
     
-    // MARK: - Test API Key Connection (Fast Ping across standard models)
+    // MARK: - Test API Key Connection (Fast Multi-Model Ping & Auto-Discovery)
     
     public func testAPIKey(completion: @escaping (Bool, String) -> Void) {
         let key = apiKey
         guard !key.isEmpty else {
-            completion(false, "API Key đang trống.")
+            completion(false, "API Key đang trống. Hãy dán key từ Google AI Studio.")
             return
         }
         
-        var testCandidates = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+        var testCandidates = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-latest",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-exp",
+            "gemini-2.0-flash-lite-preview-02-05",
+            "gemini-1.5-pro",
+            "gemini-3.6-flash"
+        ]
         if !customModelName.isEmpty {
             testCandidates.insert(customModelName, at: 0)
         }
@@ -210,7 +233,7 @@ public final class GeminiService {
         completion: @escaping (Bool, String) -> Void
     ) {
         guard index < candidates.count else {
-            completion(false, "❌ Không thể kết nối với các model Gemini tiêu chuẩn.")
+            completion(false, "❌ Đã thử tất cả model Gemini nhưng key bị giới hạn quota hoặc chưa bật. Thử tạo key mới tại aistudio.google.com")
             return
         }
         
@@ -252,8 +275,12 @@ public final class GeminiService {
             }
             
             if http.statusCode == 200 {
-                DispatchQueue.main.async { completion(true, "✅ Đang hoạt động thật với Gemini (\(testModel))! Độ trễ: \(latency)ms") }
-            } else if http.statusCode == 404 {
+                self.lastModelUsed = testModel
+                DispatchQueue.main.async {
+                    completion(true, "✅ Kết nối thành công! Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
+                }
+            } else if http.statusCode == 404 || http.statusCode == 429 || http.statusCode == 503 {
+                // Rate limited or model not found -> Automatically try next model in candidate list
                 self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
             } else {
                 let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
@@ -262,7 +289,7 @@ public final class GeminiService {
         }.resume()
     }
     
-    // MARK: - Main Analysis Call with Intelligent Chain
+    // MARK: - Main Analysis Call with Intelligent Multi-Model Auto-Rotation
     
     public func analyzeForComposition(
         image: CGImage,
@@ -275,7 +302,7 @@ public final class GeminiService {
         }
         
         let uiImage = UIImage(cgImage: image)
-        guard let jpegData = uiImage.jpegData(compressionQuality: 0.70) else {
+        guard let jpegData = uiImage.jpegData(compressionQuality: 0.65) else {
             completion(.failure(.imageConversionFailed))
             return
         }
@@ -285,32 +312,23 @@ public final class GeminiService {
         var chain = AIVisionModel.autoFallbackChain
         if !customModelName.isEmpty {
             chain.insert(customModelName, at: 0)
+        } else if selectedModel != .autoStrongest {
+            chain.removeAll(where: { $0 == selectedModel.technicalModelID })
+            chain.insert(selectedModel.technicalModelID, at: 0)
         }
         
         let startTime = CACurrentMediaTime()
         
-        if selectedModel == .autoStrongest {
-            tryModelChain(
-                chain: chain,
-                index: 0,
-                base64Image: base64Image,
-                prompt: prompt,
-                key: key,
-                lastErrorMsg: "",
-                startTime: startTime,
-                completion: completion
-            )
-        } else {
-            let modelID = !customModelName.isEmpty ? customModelName : selectedModel.technicalModelID
-            executeModelCall(
-                modelID: modelID,
-                base64Image: base64Image,
-                prompt: prompt,
-                key: key,
-                startTime: startTime,
-                completion: completion
-            )
-        }
+        tryModelChain(
+            chain: chain,
+            index: 0,
+            base64Image: base64Image,
+            prompt: prompt,
+            key: key,
+            lastErrorMsg: "",
+            startTime: startTime,
+            completion: completion
+        )
     }
     
     private func tryModelChain(
@@ -324,7 +342,7 @@ public final class GeminiService {
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
         guard index < chain.count else {
-            let finalMsg = lastErrorMsg.isEmpty ? "Không thể kết nối đến Gemini." : lastErrorMsg
+            let finalMsg = lastErrorMsg.isEmpty ? "Tất cả model Gemini đều bận." : lastErrorMsg
             completion(.failure(.allModelsFailed(finalMsg)))
             return
         }
@@ -342,10 +360,13 @@ public final class GeminiService {
             case .success(let response):
                 completion(.success(response))
             case .failure(let error):
+                // If invalid API key completely, stop
                 if case .invalidAPIKey = error {
                     completion(.failure(error))
                     return
                 }
+                
+                // On 429 quota or 404 or server error, immediately rotate to next model
                 self.tryModelChain(
                     chain: chain,
                     index: index + 1,
@@ -403,7 +424,7 @@ public final class GeminiService {
         request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            completion(.failure(.parseError("Không thể tạo request JSON")))
+            completion(.failure(.parseError("Không thể tạo JSON")))
             return
         }
         request.httpBody = bodyData
@@ -411,8 +432,6 @@ public final class GeminiService {
         urlSession.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
             let latency = Int((CACurrentMediaTime() - startTime) * 1000)
-            self.lastLatencyMs = latency
-            self.lastModelUsed = modelID
             
             if let error = error {
                 DispatchQueue.main.async { completion(.failure(.networkError(error))) }
@@ -426,6 +445,7 @@ public final class GeminiService {
             
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 let errorDetails = Self.extractErrorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)"
+                
                 if httpResponse.statusCode == 400 && (errorDetails.contains("API_KEY_INVALID") || errorDetails.contains("API key not valid")) {
                     DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
                     return
@@ -434,6 +454,11 @@ public final class GeminiService {
                     DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
                     return
                 }
+                if httpResponse.statusCode == 429 {
+                    DispatchQueue.main.async { completion(.failure(.rateLimited("\(modelID) hết quota (429)"))) }
+                    return
+                }
+                
                 DispatchQueue.main.async {
                     completion(.failure(.parseError("\(modelID) [HTTP \(httpResponse.statusCode)]: \(errorDetails)")))
                 }
@@ -454,10 +479,12 @@ public final class GeminiService {
             let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let jsonData = cleanText.data(using: .utf8),
                   let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                DispatchQueue.main.async { completion(.failure(.parseError("JSON không hợp lệ: \(text.prefix(120))"))) }
+                DispatchQueue.main.async { completion(.failure(.parseError("JSON không hợp lệ: \(text.prefix(80))"))) }
                 return
             }
             
+            self.lastLatencyMs = latency
+            self.lastModelUsed = modelID
             let result = Self.parseGeminiResponse(parsed, modelUsed: modelID, latencyMs: latency)
             self.lastExplanation = result.explanation
             DispatchQueue.main.async { completion(.success(result)) }
@@ -483,7 +510,7 @@ public final class GeminiService {
     
     private func buildPrompt() -> String {
         """
-        You are a World-Class Hasselblad & Leica Master Cinematographer AI. Analyze this camera image to optimize composition, focal zoom, and TRUE-TO-LIFE natural studio color science.
+        You are a World-Class Master Cinematographer & Hasselblad / Leica Colorist AI. Analyze this camera image to optimize composition, focal zoom, and TRUE-TO-LIFE natural studio color science.
         
         CRITICAL COLOR SCIENCE RULES:
         1. Produce NATURAL, TRUE-TO-LIFE, ORGANIC colors (Leica Natural Color Science).
@@ -515,16 +542,16 @@ public final class GeminiService {
         Constraints:
         - target_x: 0.05 to 0.95
         - target_y: 0.05 to 0.95
-        - suggested_zoom: 1.0 to 3.0 (e.g. 1.0 for wide, 1.5 to 2.5 for portrait/macro)
-        - temperature_k: 5000 to 6500 (subtle natural range)
-        - saturation: 0.95 to 1.08 (gentle and natural)
-        - contrast: 0.98 to 1.06 (soft micro-contrast)
-        - shadow_lift: 0.00 to 0.03 (soft shadows)
-        - highlight_roll: 0.96 to 1.00 (protect highlight detail)
+        - suggested_zoom: 1.0 to 3.0
+        - temperature_k: 5000 to 6500
+        - saturation: 0.95 to 1.08
+        - contrast: 0.98 to 1.06
+        - shadow_lift: 0.00 to 0.03
+        - highlight_roll: 0.96 to 1.00
         - grain: 0.00 to 0.02
         - vignette: 0.00 to 0.04
         - warmth_shift: -0.10 to 0.10
-        - explanation: Short Vietnamese advice (1 sentence) on composition and why the zoom/framing was chosen
+        - explanation: Short Vietnamese advice (1 sentence)
         """
     }
     

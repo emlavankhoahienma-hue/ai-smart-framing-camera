@@ -7,73 +7,182 @@ public struct SettingsSheetView: View {
     
     @State private var geminiKeyInput: String = ""
     @State private var showKeyInput: Bool = false
-    @State private var isKeyVisible: Bool = true
+    @State private var isKeyVisible: Bool = false
     @State private var keySavedMessage: String? = nil
     @State private var selectedModel: AIVisionModel = .autoStrongest
     @State private var customModelInput: String = ""
     @State private var isTestingKey: Bool = false
     @State private var testResult: String? = nil
-    @State private var isCopiedDevInfo: Bool = false
+    @State private var showDevConsole: Bool = false
     
     public var body: some View {
         NavigationView {
             Form {
-                // MARK: - Developer Information (VanKhoa)
+                // MARK: - 1. Developer Profile (VanKhoa)
                 Section(header: Text("👨‍💻 THÔNG TIN DEVELOPER")) {
-                    HStack {
-                        Label("Tên Dev", systemImage: "person.crop.circle.fill")
-                        Spacer()
-                        Text("VanKhoa")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.cyan)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Image(systemName: "person.crop.circle.fill.badge.checkmark")
+                                .font(.system(size: 28))
+                                .foregroundColor(.cyan)
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("VanKhoa")
+                                    .font(.headline.bold())
+                                    .foregroundColor(.white)
+                                Text("iOS & AI Camera Engineer")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                        }
+                        
+                        Divider().background(Color.gray.opacity(0.3))
+                        
+                        HStack {
+                            Label("Email:", systemImage: "envelope.fill")
+                                .font(.caption.bold())
+                                .foregroundColor(.yellow)
+                            Spacer()
+                            Text("tranvantrinhhd@gmail.com")
+                                .font(.caption.monospaced())
+                                .foregroundColor(.white)
+                        }
+                        
+                        HStack {
+                            Label("Hotline:", systemImage: "phone.fill")
+                                .font(.caption.bold())
+                                .foregroundColor(.green)
+                            Spacer()
+                            Text("+84 344197212")
+                                .font(.caption.bold().monospaced())
+                                .foregroundColor(.green)
+                        }
                     }
-                    
-                    HStack {
-                        Label("Developer", systemImage: "chevron.left.forwardslash.chevron.right")
-                        Spacer()
-                        Text("VanKhoa")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
-                    }
-                    
-                    HStack {
-                        Label("Mail", systemImage: "envelope.fill")
-                        Spacer()
-                        Text("tranvantrinhhd@gmail.com")
-                            .font(.system(size: 13, design: .monospaced))
-                            .foregroundColor(.yellow)
-                    }
-                    
-                    HStack {
-                        Label("Contacs", systemImage: "phone.fill")
-                        Spacer()
-                        Text("+84 344197212")
-                            .font(.system(size: 13, weight: .bold, design: .monospaced))
-                            .foregroundColor(.green)
-                    }
+                    .padding(.vertical, 4)
                 }
                 
-                // MARK: - Gemini AI Vision Configuration
-                Section(header: Text("🤖 Cấu hình AI Vision đa mô hình")) {
-                    // Connection Status
+                // MARK: - 2. Gemini AI Key & Connection
+                Section(header: Text("🔑 CẤU HÌNH GOOGLE GEMINI API")) {
+                    // Status row
                     HStack {
-                        Label("Trạng thái API Key", systemImage: "key.fill")
+                        Label("Trạng thái", systemImage: "key.horizontal.fill")
                         Spacer()
                         if viewModel.geminiService.hasAPIKey {
-                            HStack(spacing: 4) {
+                            HStack(spacing: 5) {
                                 Circle().fill(Color.green).frame(width: 8, height: 8)
-                                Text("Đã kết nối").foregroundColor(.green).font(.subheadline)
+                                Text("Đã sẵn sàng").font(.subheadline.bold()).foregroundColor(.green)
                             }
                         } else {
-                            HStack(spacing: 4) {
+                            HStack(spacing: 5) {
                                 Circle().fill(Color.red).frame(width: 8, height: 8)
-                                Text("Chưa cài").foregroundColor(.red).font(.subheadline)
+                                Text("Chưa có Key").font(.subheadline.bold()).foregroundColor(.red)
                             }
                         }
                     }
                     
-                    // Model Selection
-                    Picker("Mô hình AI Vision", selection: $selectedModel) {
+                    // Quick Action: Paste & Test Buttons
+                    HStack(spacing: 10) {
+                        Button(action: {
+                            if let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines), !clip.isEmpty {
+                                geminiKeyInput = clip
+                                viewModel.geminiService.apiKey = clip
+                                keySavedMessage = "✅ Đã dán Key thành công!"
+                                testResult = nil
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { keySavedMessage = nil }
+                            } else {
+                                keySavedMessage = "⚠️ Clipboard không có văn bản"
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.on.clipboard.fill")
+                                Text("Dán Key")
+                            }
+                            .font(.caption.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                        
+                        Button(action: {
+                            isTestingKey = true
+                            testResult = nil
+                            viewModel.geminiService.testAPIKey { success, message in
+                                isTestingKey = false
+                                testResult = message
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                if isTestingKey {
+                                    ProgressView().scaleEffect(0.7).padding(.trailing, 2)
+                                } else {
+                                    Image(systemName: "antenna.radiowaves.left.and.right")
+                                }
+                                Text(isTestingKey ? "Đang thử..." : "Test Kết Nối")
+                            }
+                            .font(.caption.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(Color.purple.opacity(0.2))
+                            .foregroundColor(.purple)
+                            .cornerRadius(8)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    
+                    if let res = testResult {
+                        Text(res)
+                            .font(.caption2.bold())
+                            .foregroundColor(res.contains("✅") ? .green : .red)
+                            .lineLimit(3)
+                    }
+                    
+                    if let saved = keySavedMessage {
+                        Text(saved)
+                            .font(.caption2.bold())
+                            .foregroundColor(.green)
+                    }
+                    
+                    // Input Key Accordion
+                    DisclosureGroup("Xem / Nhập Key thủ công", isExpanded: $showKeyInput) {
+                        VStack(spacing: 8) {
+                            HStack {
+                                if isKeyVisible {
+                                    TextField("AIzaSy...", text: $geminiKeyInput)
+                                        .font(.caption.monospaced())
+                                        .autocapitalization(.none)
+                                        .disableAutocorrection(true)
+                                } else {
+                                    SecureField("AIzaSy...", text: $geminiKeyInput)
+                                        .font(.caption.monospaced())
+                                }
+                                
+                                Button(action: { isKeyVisible.toggle() }) {
+                                    Image(systemName: isKeyVisible ? "eye.slash" : "eye")
+                                        .foregroundColor(.gray)
+                                }
+                            }
+                            .padding(8)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(6)
+                            
+                            Button("Lưu Key") {
+                                viewModel.geminiService.apiKey = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                keySavedMessage = "✅ Đã lưu!"
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { keySavedMessage = nil }
+                            }
+                            .font(.caption.bold())
+                            .foregroundColor(.green)
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+                
+                // MARK: - 3. Model AI & Auto-Fallback Engine
+                Section(header: Text("🤖 CHỌN MÔ HÌNH & TỰ ĐỘNG LUÂN CHUYỂN")) {
+                    Picker("Mô hình AI", selection: $selectedModel) {
                         ForEach(AIVisionModel.allCases) { model in
                             Text(model.displayName).tag(model)
                         }
@@ -82,14 +191,13 @@ public struct SettingsSheetView: View {
                         viewModel.geminiService.selectedModel = newModel
                     }
                     
-                    // Custom Model Name Override
                     HStack {
-                        Label("Model ID chỉ định:", systemImage: "cpu")
+                        Label("Chỉ định Model ID:", systemImage: "cpu")
                             .font(.caption)
                             .foregroundColor(.gray)
                         Spacer()
-                        TextField("Mặc định (Auto)", text: $customModelInput)
-                            .font(.system(size: 12, design: .monospaced))
+                        TextField("Tự động", text: $customModelInput)
+                            .font(.caption.monospaced())
                             .multilineTextAlignment(.trailing)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
@@ -98,159 +206,13 @@ public struct SettingsSheetView: View {
                             }
                     }
                     
-                    // Toggle Open Key Box
-                    Button(action: {
-                        if !showKeyInput {
-                            geminiKeyInput = viewModel.geminiService.apiKey
-                        }
-                        showKeyInput.toggle()
-                    }) {
-                        HStack {
-                            Image(systemName: showKeyInput ? "chevron.up" : "pencil.and.outline")
-                            Text(viewModel.geminiService.hasAPIKey ? "Chỉnh sửa / Dán lại API Key" : "Nhập / Dán Gemini API Key")
-                        }
+                    Text("💡 Tính năng tự động: Khi 1 model bị hết Quota (429) hoặc lỗi, app sẽ tự động chuyển sang model tiếp theo ngay lập tức.")
+                        .font(.caption2)
                         .foregroundColor(.cyan)
-                    }
-                    
-                    if showKeyInput {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Text("Google AI Studio Key:")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Link("Lấy Key miễn phí ↗", destination: URL(string: "https://aistudio.google.com/app/apikey")!)
-                                    .font(.caption)
-                                    .foregroundColor(.yellow)
-                            }
-                            
-                            // Input Box with Show/Hide Toggle & Clear Button
-                            HStack(spacing: 8) {
-                                if isKeyVisible {
-                                    TextField("AIzaSy...", text: $geminiKeyInput)
-                                        .font(.system(size: 13, design: .monospaced))
-                                        .autocapitalization(.none)
-                                        .disableAutocorrection(true)
-                                } else {
-                                    SecureField("AIzaSy...", text: $geminiKeyInput)
-                                        .font(.system(size: 13, design: .monospaced))
-                                }
-                                
-                                if !geminiKeyInput.isEmpty {
-                                    Button(action: { geminiKeyInput = "" }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.gray)
-                                            .font(.system(size: 14))
-                                    }
-                                }
-                                
-                                Button(action: { isKeyVisible.toggle() }) {
-                                    Image(systemName: isKeyVisible ? "eye.slash" : "eye")
-                                        .foregroundColor(.gray)
-                                        .font(.system(size: 14))
-                                }
-                            }
-                            .padding(10)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(8)
-                            
-                            // Buttons Row: Direct Pasteboard Paste + Save
-                            HStack(spacing: 10) {
-                                Button(action: {
-                                    if let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines), !clip.isEmpty {
-                                        geminiKeyInput = clip
-                                        viewModel.geminiService.apiKey = clip
-                                        keySavedMessage = "✅ Đã dán và lưu Key từ Clipboard!"
-                                        testResult = nil
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { keySavedMessage = nil }
-                                    } else {
-                                        keySavedMessage = "⚠️ Clipboard đang trống"
-                                    }
-                                }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "doc.on.clipboard.fill")
-                                        Text("Dán từ Clipboard")
-                                    }
-                                    .font(.subheadline.bold())
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
-                                    .background(Color.blue.opacity(0.8))
-                                    .foregroundColor(.white)
-                                    .cornerRadius(8)
-                                }
-                                
-                                Button(action: {
-                                    let cleaned = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    viewModel.geminiService.apiKey = cleaned
-                                    keySavedMessage = cleaned.isEmpty ? "Đã xóa API Key" : "✅ Đã lưu API Key thành công!"
-                                    testResult = nil
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { keySavedMessage = nil }
-                                }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                        Text("Lưu Key")
-                                    }
-                                    .font(.subheadline.bold())
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
-                                    .background(Color.green)
-                                    .foregroundColor(.black)
-                                    .cornerRadius(8)
-                                }
-                            }
-                            
-                            // Test Connection Button
-                            Button(action: {
-                                isTestingKey = true
-                                testResult = nil
-                                viewModel.geminiService.testAPIKey { success, message in
-                                    isTestingKey = false
-                                    testResult = message
-                                }
-                            }) {
-                                HStack {
-                                    if isTestingKey {
-                                        ProgressView().scaleEffect(0.8).padding(.trailing, 4)
-                                    } else {
-                                        Image(systemName: "antenna.radiowaves.left.and.right")
-                                    }
-                                    Text(isTestingKey ? "Đang kiểm tra kết nối..." : "Kiểm tra kết nối API Key")
-                                }
-                                .font(.subheadline.bold())
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .background(Color.purple.opacity(0.15))
-                                .foregroundColor(.purple)
-                                .cornerRadius(8)
-                            }
-                            
-                            if let result = testResult {
-                                Text(result)
-                                    .font(.caption.bold())
-                                    .foregroundColor(result.contains("✅") ? .green : .red)
-                                    .padding(.top, 2)
-                            }
-                            
-                            if let msg = keySavedMessage {
-                                Text(msg)
-                                    .font(.caption.bold())
-                                    .foregroundColor(.green)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    
-                    Toggle("Bật AI Vision khi bấm nút AI", isOn: $viewModel.useGeminiForAnalysis)
-                    
-                    if !viewModel.geminiService.hasAPIKey && viewModel.useGeminiForAnalysis {
-                        Text("⚠️ Chưa có API Key — Camera sẽ dùng Vision cục bộ trên chip Neural Engine làm fallback")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
                 }
                 
-                // MARK: - AI Framing & Zoom
-                Section(header: Text("🎯 Quy tắc & Bố cục AI")) {
+                // MARK: - 4. Framing, Auto-Zoom & Color Science
+                Section(header: Text("🎯 TÙY CHỈNH CHỤP & MÀU SẮC")) {
                     Picker("Quy tắc bố cục", selection: $viewModel.activeCompositionRule) {
                         ForEach(CompositionRule.allCases) { rule in
                             HStack {
@@ -261,53 +223,51 @@ public struct SettingsSheetView: View {
                     }
                     
                     Toggle("Tự động Zoom theo AI (Auto-Zoom)", isOn: $viewModel.isAutoZoomEnabled)
-                    Toggle("AI Full Color — Màu Leica Natural 100%", isOn: $viewModel.isAIFullColorEnabled)
+                    Toggle("Màu Leica / Hasselblad Natural", isOn: $viewModel.isAIFullColorEnabled)
                     Toggle("Không gian 3D ARKit", isOn: $viewModel.isARModeEnabled)
                 }
                 
-                // MARK: - Developer Error & Performance Console
-                Section(header: Text("🛠 NHẬT KÝ LỖI & DEV CONSOLE")) {
-                    HStack {
-                        Label("Trạng thái lỗi", systemImage: "exclamationmark.bubble.fill")
-                        Spacer()
-                        Text(viewModel.geminiError ?? "Không có lỗi (Healthy)")
-                            .font(.caption.monospaced())
-                            .foregroundColor(viewModel.geminiError != nil ? .red : .green)
-                    }
-                    
-                    if viewModel.geminiLatencyMs > 0 {
-                        HStack {
-                            Label("Độ trễ AI phản hồi", systemImage: "timer")
-                            Spacer()
-                            Text("\(viewModel.geminiLatencyMs) ms")
-                                .font(.caption.monospaced())
-                                .foregroundColor(.cyan)
+                // MARK: - 5. Developer Debug Console (Collapsible)
+                Section(header: Text("🛠 NHẬT KÝ & DEV CONSOLE")) {
+                    DisclosureGroup("Xem nhật ký & lỗi", isExpanded: $showDevConsole) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Model đang active:")
+                                Spacer()
+                                Text(viewModel.activeModelUsedName.isEmpty ? "Chưa kích hoạt" : viewModel.activeModelUsedName)
+                                    .font(.caption.bold().monospaced())
+                                    .foregroundColor(.yellow)
+                            }
+                            
+                            HStack {
+                                Text("Độ trễ phản hồi:")
+                                Spacer()
+                                Text(viewModel.geminiLatencyMs > 0 ? "\(viewModel.geminiLatencyMs) ms" : "0 ms")
+                                    .font(.caption.monospaced())
+                                    .foregroundColor(.cyan)
+                            }
+                            
+                            if let err = viewModel.geminiError {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Lỗi gần nhất:").font(.caption.bold()).foregroundColor(.red)
+                                    Text(err)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(.red.opacity(0.85))
+                                }
+                                .padding(6)
+                                .background(Color.red.opacity(0.1))
+                                .cornerRadius(6)
+                            }
                         }
-                    }
-                    
-                    if !viewModel.activeModelUsedName.isEmpty {
-                        HStack {
-                            Label("Model đang active", systemImage: "cpu.fill")
-                            Spacer()
-                            Text(viewModel.activeModelUsedName)
-                                .font(.caption.monospaced())
-                                .foregroundColor(.yellow)
-                        }
+                        .padding(.vertical, 4)
                     }
                 }
                 
-                // MARK: - Hardware & Engine Specs
-                Section(header: Text("⚡ Phần cứng & Kiến trúc tích hợp")) {
-                    hardwareRow("Hybrid AI Engine", "Google Gemini + Apple Neural Engine", color: .yellow)
-                    hardwareRow("Xử lý màu đồ họa", "Metal GPU (32-bit Floating Point)", color: .cyan)
-                    hardwareRow("Tracking thị giác", "Vision Optical Flow (60 FPS)", color: .green)
-                    hardwareRow("Tối ưu Neural Engine", "A11 đến A18 Pro Bionic")
-                }
-                
-                // MARK: - App Info
-                Section(header: Text("ℹ️ Thông tin ứng dụng")) {
-                    HStack { Text("Ứng dụng"); Spacer(); Text("VanKhoa AI Camera").font(.subheadline.bold()).foregroundColor(.white) }
-                    HStack { Text("Phiên bản"); Spacer(); Text("2.5.0 Pro Studio").foregroundColor(.gray) }
+                // MARK: - 6. Hardware & App Info
+                Section(header: Text("ℹ️ THÔNG TIN PHẦN CỨNG")) {
+                    hardwareRow("Kiến trúc", "CPU + Neural Engine + Metal GPU + Gemini Cloud", color: .yellow)
+                    hardwareRow("Thiết bị hỗ trợ", "Apple A11 đến A18 Pro Bionic")
+                    HStack { Text("Ứng dụng"); Spacer(); Text("VanKhoa AI Cam v2.5").font(.caption.bold()).foregroundColor(.white) }
                 }
             }
             .navigationBarTitle("Cài đặt AI Camera", displayMode: .inline)
