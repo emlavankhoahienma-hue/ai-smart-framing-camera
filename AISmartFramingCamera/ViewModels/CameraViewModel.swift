@@ -123,6 +123,11 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self else { return }
             self.handleVisionDetection(detection)
         }
+        
+        visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence in
+            guard let self = self else { return }
+            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence)
+        }
     }
     
     private func setupMotionCallbacks() {
@@ -314,7 +319,7 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: result.targetPoint)
     }
     
-    // MARK: - Pin Target & Start 60Hz Motion Tracking (Chuẩn Doka nguyên bản)
+    // MARK: - Pin Target & Start Optical Visual Object Tracking (Build 15/16)
     
     private func pinTargetAndStartMotion(at target: CGPoint) {
         initialTargetPoint = target
@@ -324,7 +329,8 @@ public final class CameraViewModel: ObservableObject {
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // Bắt đầu đo con quay hồi chuyển 60Hz ổn định tuyệt đối
+        // Khởi động Vision Object Tracking bám dính chặt vào đúng vùng cảnh vật/vật thể/chữ tại target
+        visionEngine.startTrackingObject(at: target)
         motionService.startTracking()
         
         haptics.triggerSelectionChange()
@@ -337,17 +343,31 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 60Hz Gyro Motion Handler (Di chuyển mượt mà 60 FPS theo góc máy)
+    // MARK: - Visual Object Tracking Handler (Ghim dính vật thể/chữ theo camera thực tế)
+    
+    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
+        guard case .targetPlaced = aiSessionState else { return }
+        
+        if let tracked = point {
+            // Target vàng ghim dính chặt vào vùng cảnh vật/chữ thực tế
+            self.currentTargetPoint = tracked
+            evaluateAlignment(at: tracked)
+        }
+    }
+    
+    // MARK: - 60Hz Gyro Motion Handler (Fallback khi vật thể tạm thời khuất)
     
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
         guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
         
-        // Target vàng dịch chuyển mượt mà 1:1 theo góc lia máy về tâm trắng (0.5, 0.5)
-        let newX = initial.x - deltaX
-        let newY = initial.y - deltaY
-        let newPoint = CGPoint(x: newX, y: newY)
-        self.currentTargetPoint = newPoint
-        evaluateAlignment(at: newPoint)
+        // Dùng gyro bổ trợ khi visual tracking chưa có kết quả
+        if currentTargetPoint == nil {
+            let newX = initial.x - deltaX
+            let newY = initial.y - deltaY
+            let newPoint = CGPoint(x: newX, y: newY)
+            self.currentTargetPoint = newPoint
+            evaluateAlignment(at: newPoint)
+        }
     }
     
     private func evaluateAlignment(at point: CGPoint) {
