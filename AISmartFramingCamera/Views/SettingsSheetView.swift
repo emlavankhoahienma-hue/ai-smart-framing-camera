@@ -10,6 +10,8 @@ public struct SettingsSheetView: View {
     @State private var isKeyVisible: Bool = true
     @State private var keySavedMessage: String? = nil
     @State private var selectedModel: AIVisionModel = .autoStrongest
+    @State private var isTestingKey: Bool = false
+    @State private var testResult: String? = nil
     
     public var body: some View {
         NavigationView {
@@ -129,7 +131,6 @@ public struct SettingsSheetView: View {
                                         keySavedMessage = "✓ Đã lưu thành công!"
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                                             keySavedMessage = nil
-                                            showKeyInput = false
                                         }
                                     }
                                 }) {
@@ -144,6 +145,42 @@ public struct SettingsSheetView: View {
                                     .foregroundColor(.white)
                                     .cornerRadius(8)
                                 }
+                            }
+                            
+                            // Test Connection Button
+                            Button(action: {
+                                let key = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if !key.isEmpty {
+                                    viewModel.geminiService.apiKey = key
+                                }
+                                isTestingKey = true
+                                testResult = "Đang kiểm tra kết nối với Google AI Studio..."
+                                viewModel.geminiService.testAPIKey { success, message in
+                                    isTestingKey = false
+                                    testResult = message
+                                }
+                            }) {
+                                HStack(spacing: 6) {
+                                    if isTestingKey {
+                                        ProgressView().scaleEffect(0.8)
+                                    } else {
+                                        Image(systemName: "antenna.radiowaves.left.and.right")
+                                    }
+                                    Text("Kiểm tra kết nối API Key")
+                                }
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(Color.purple.opacity(0.15))
+                                .foregroundColor(.purple)
+                                .cornerRadius(8)
+                            }
+                            
+                            if let result = testResult {
+                                Text(result)
+                                    .font(.caption.bold())
+                                    .foregroundColor(result.contains("✅") ? .green : .red)
+                                    .padding(.top, 2)
                             }
                             
                             if let msg = keySavedMessage {

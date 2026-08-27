@@ -6,52 +6,48 @@ import CoreGraphics
 
 public enum AIVisionModel: String, CaseIterable, Identifiable {
     case autoStrongest = "auto"
-    case gemini25Pro = "gemini-2.5-pro"
-    case gemini20ProExp = "gemini-2.0-pro-exp-02-05"
-    case gemini20FlashThinking = "gemini-2.0-flash-thinking-exp-01-21"
-    case gemini20Flash = "gemini-2.0-flash-exp"
-    case gemini15Pro = "gemini-1.5-pro"
+    case gemini20Flash = "gemini-2.0-flash"
     case gemini15Flash = "gemini-1.5-flash"
+    case gemini15Pro = "gemini-1.5-pro"
+    case gemini20FlashThinking = "gemini-2.0-flash-thinking-exp-01-21"
+    case gemini20ProExp = "gemini-2.0-pro-exp-02-05"
     
     public var id: String { rawValue }
     
     public var displayName: String {
         switch self {
         case .autoStrongest:
-            return "⚡ Tự động chọn Vision mạnh nhất (Khuyên dùng)"
-        case .gemini25Pro:
-            return "💎 Gemini 2.5 Pro Vision (Mạnh nhất)"
-        case .gemini20ProExp:
-            return "🎯 Gemini 2.0 Pro Exp (Chuyên thị giác)"
+            return "⚡ Tự động chọn Vision tốt nhất (Khuyên dùng)"
+        case .gemini20Flash:
+            return "🚀 Gemini 2.0 Flash (Chuẩn thị giác mới)"
+        case .gemini15Flash:
+            return "⚡ Gemini 1.5 Flash (Tốc độ cao & ổn định)"
+        case .gemini15Pro:
+            return "💎 Gemini 1.5 Pro (Phân tích chiều sâu quang học)"
         case .gemini20FlashThinking:
             return "🧠 Gemini 2.0 Flash Thinking (Tư duy bố cục)"
-        case .gemini20Flash:
-            return "⚡ Gemini 2.0 Flash (Tốc độ cao)"
-        case .gemini15Pro:
-            return "🏆 Gemini 1.5 Pro Vision"
-        case .gemini15Flash:
-            return "🚀 Gemini 1.5 Flash (Tiết kiệm)"
+        case .gemini20ProExp:
+            return "🎯 Gemini 2.0 Pro Exp (Chuyên gia thị giác)"
         }
     }
     
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "gemini-2.0-pro-exp-02-05" // Starting candidate
+            return "gemini-2.0-flash"
         default:
             return rawValue
         }
     }
     
-    /// Sequence of models to try in autoStrongest mode
+    /// Sequence of standard verified models to try in auto mode
     public static var autoFallbackChain: [String] {
         [
-            "gemini-2.5-pro",
-            "gemini-2.0-pro-exp-02-05",
-            "gemini-2.0-flash-exp",
             "gemini-2.0-flash",
+            "gemini-1.5-flash",
             "gemini-1.5-pro",
-            "gemini-1.5-flash"
+            "gemini-2.0-flash-exp",
+            "gemini-2.0-pro-exp-02-05"
         ]
     }
 }
@@ -121,6 +117,7 @@ public struct GeminiFramingResponse {
 
 public enum GeminiError: LocalizedError {
     case noAPIKey
+    case invalidAPIKey(String)
     case imageConversionFailed
     case invalidURL
     case networkError(Error)
@@ -130,13 +127,22 @@ public enum GeminiError: LocalizedError {
     
     public var errorDescription: String? {
         switch self {
-        case .noAPIKey: return "Chưa cấu hình Gemini API Key. Mở Cài đặt để dán key."
-        case .imageConversionFailed: return "Không thể chuyển đổi ảnh để gửi AI."
-        case .invalidURL: return "URL API không hợp lệ."
-        case .networkError(let e): return "Lỗi mạng: \(e.localizedDescription)"
-        case .invalidResponse: return "AI trả về dữ liệu không đúng định dạng."
-        case .parseError(let msg): return "Lỗi parse JSON: \(msg)"
-        case .allModelsFailed(let msg): return "Tất cả model Vision đều không phản hồi: \(msg)"
+        case .noAPIKey:
+            return "Chưa cấu hình Gemini API Key. Mở Cài đặt để dán key."
+        case .invalidAPIKey(let msg):
+            return "API Key không hợp lệ: \(msg). Hãy lấy key mới tại aistudio.google.com"
+        case .imageConversionFailed:
+            return "Không thể chuyển đổi ảnh để gửi AI."
+        case .invalidURL:
+            return "URL API không hợp lệ."
+        case .networkError(let e):
+            return "Lỗi mạng: \(e.localizedDescription)"
+        case .invalidResponse:
+            return "AI trả về dữ liệu không đúng định dạng."
+        case .parseError(let msg):
+            return "Lỗi AI: \(msg)"
+        case .allModelsFailed(let msg):
+            return "Lỗi kết nối Gemini: \(msg)"
         }
     }
 }
@@ -148,11 +154,11 @@ public final class GeminiService {
     
     // Persistent API Key
     public var apiKey: String {
-        get { UserDefaults.standard.string(forKey: "gemini_api_key") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "gemini_api_key") }
+        get { (UserDefaults.standard.string(forKey: "gemini_api_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "gemini_api_key") }
     }
     
-    public var hasAPIKey: Bool { !apiKey.trimmingCharacters(in: .whitespaces).isEmpty }
+    public var hasAPIKey: Bool { !apiKey.isEmpty }
     
     // Selected Model Setting
     public var selectedModel: AIVisionModel {
@@ -174,19 +180,71 @@ public final class GeminiService {
     
     public init() {}
     
-    // MARK: - Main Analysis Call with Auto-Fallback Chain
+    // MARK: - Test API Key Connection (Fast Ping)
+    
+    public func testAPIKey(completion: @escaping (Bool, String) -> Void) {
+        let key = apiKey
+        guard !key.isEmpty else {
+            completion(false, "API Key đang trống.")
+            return
+        }
+        
+        let testModel = "gemini-2.0-flash"
+        guard let url = buildURL(for: testModel, key: key) else {
+            completion(false, "URL không hợp lệ.")
+            return
+        }
+        
+        let body: [String: Any] = [
+            "contents": [
+                [
+                    "parts": [
+                        ["text": "Ping"]
+                    ]
+                ]
+            ]
+        ]
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        urlSession.dataTask(with: request) { data, response, error in
+            if let error = error {
+                DispatchQueue.main.async { completion(false, "Lỗi mạng: \(error.localizedDescription)") }
+                return
+            }
+            
+            guard let data = data, let http = response as? HTTPURLResponse else {
+                DispatchQueue.main.async { completion(false, "Không nhận được phản hồi.") }
+                return
+            }
+            
+            if http.statusCode == 200 {
+                DispatchQueue.main.async { completion(true, "✅ Kết nối thành công với Gemini (\(testModel))!") }
+            } else {
+                let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
+                DispatchQueue.main.async { completion(false, "❌ Lỗi (\(http.statusCode)): \(msg)") }
+            }
+        }.resume()
+    }
+    
+    // MARK: - Main Analysis Call with Intelligent Chain
     
     public func analyzeForComposition(
         image: CGImage,
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
-        guard hasAPIKey else {
+        let key = apiKey
+        guard !key.isEmpty else {
             completion(.failure(.noAPIKey))
             return
         }
         
         let uiImage = UIImage(cgImage: image)
-        guard let jpegData = uiImage.jpegData(compressionQuality: 0.72) else {
+        guard let jpegData = uiImage.jpegData(compressionQuality: 0.70) else {
             completion(.failure(.imageConversionFailed))
             return
         }
@@ -194,20 +252,21 @@ public final class GeminiService {
         let prompt = buildPrompt()
         
         if selectedModel == .autoStrongest {
-            // Auto mode: try the strongest models in sequence until one succeeds
             tryModelChain(
                 chain: AIVisionModel.autoFallbackChain,
                 index: 0,
                 base64Image: base64Image,
                 prompt: prompt,
+                key: key,
+                lastErrorMsg: "",
                 completion: completion
             )
         } else {
-            // Specific model
             executeModelCall(
                 modelID: selectedModel.technicalModelID,
                 base64Image: base64Image,
                 prompt: prompt,
+                key: key,
                 completion: completion
             )
         }
@@ -218,10 +277,13 @@ public final class GeminiService {
         index: Int,
         base64Image: String,
         prompt: String,
+        key: String,
+        lastErrorMsg: String,
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
         guard index < chain.count else {
-            completion(.failure(.allModelsFailed("Đã thử toàn bộ danh sách model")))
+            let finalMsg = lastErrorMsg.isEmpty ? "Không thể kết nối đến Gemini." : lastErrorMsg
+            completion(.failure(.allModelsFailed(finalMsg)))
             return
         }
         
@@ -229,19 +291,28 @@ public final class GeminiService {
         executeModelCall(
             modelID: currentModelID,
             base64Image: base64Image,
-            prompt: prompt
+            prompt: prompt,
+            key: key
         ) { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let response):
                 completion(.success(response))
-            case .failure:
-                // Fallback to next model in chain
+            case .failure(let error):
+                // If the error is specifically an invalid API key, don't waste time retrying other models
+                if case .invalidAPIKey = error {
+                    completion(.failure(error))
+                    return
+                }
+                
+                // Otherwise, try next model in fallback chain
                 self.tryModelChain(
                     chain: chain,
                     index: index + 1,
                     base64Image: base64Image,
                     prompt: prompt,
+                    key: key,
+                    lastErrorMsg: error.localizedDescription,
                     completion: completion
                 )
             }
@@ -252,10 +323,10 @@ public final class GeminiService {
         modelID: String,
         base64Image: String,
         prompt: String,
+        key: String,
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
-        let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(modelID):generateContent?key=\(apiKey)"
-        guard let url = URL(string: endpoint) else {
+        guard let url = buildURL(for: modelID, key: key) else {
             completion(.failure(.invalidURL))
             return
         }
@@ -287,9 +358,10 @@ public final class GeminiService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "x-goog-api-key") // Official Google Header
         
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            completion(.failure(.parseError("Không thể tạo request body")))
+            completion(.failure(.parseError("Không thể tạo request JSON")))
             return
         }
         request.httpBody = bodyData
@@ -305,14 +377,22 @@ public final class GeminiService {
                 return
             }
             
-            // Check HTTP status code
+            // Check HTTP Status
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let errObj = errorJson["error"] as? [String: Any],
-                   let message = errObj["message"] as? String {
-                    DispatchQueue.main.async { completion(.failure(.parseError("\(modelID) [HTTP \(httpResponse.statusCode)]: \(message)"))) }
-                } else {
-                    DispatchQueue.main.async { completion(.failure(.parseError("\(modelID) failed with HTTP \(httpResponse.statusCode)"))) }
+                let errorDetails = Self.extractErrorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)"
+                
+                // Specific check for invalid API key (400 or 403)
+                if httpResponse.statusCode == 400 && (errorDetails.contains("API_KEY_INVALID") || errorDetails.contains("API key not valid")) {
+                    DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
+                    return
+                }
+                if httpResponse.statusCode == 403 {
+                    DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
+                    return
+                }
+                
+                DispatchQueue.main.async {
+                    completion(.failure(.parseError("\(modelID) [HTTP \(httpResponse.statusCode)]: \(errorDetails)")))
                 }
                 return
             }
@@ -340,6 +420,21 @@ public final class GeminiService {
             let result = Self.parseGeminiResponse(parsed, modelUsed: modelID)
             DispatchQueue.main.async { completion(.success(result)) }
         }.resume()
+    }
+    
+    // MARK: - Helpers
+    
+    private func buildURL(for modelID: String, key: String) -> URL? {
+        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+        return URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelID):generateContent?key=\(encodedKey)")
+    }
+    
+    private static func extractErrorMessage(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let errorObj = json["error"] as? [String: Any] else {
+            return nil
+        }
+        return errorObj["message"] as? String
     }
     
     // MARK: - Prompt
