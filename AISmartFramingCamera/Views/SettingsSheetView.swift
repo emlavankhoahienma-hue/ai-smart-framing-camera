@@ -10,6 +10,7 @@ public struct SettingsSheetView: View {
     @State private var isKeyVisible: Bool = true
     @State private var keySavedMessage: String? = nil
     @State private var selectedModel: AIVisionModel = .autoStrongest
+    @State private var customModelInput: String = ""
     @State private var isTestingKey: Bool = false
     @State private var testResult: String? = nil
     
@@ -43,6 +44,22 @@ public struct SettingsSheetView: View {
                     }
                     .onChange(of: selectedModel) { newModel in
                         viewModel.geminiService.selectedModel = newModel
+                    }
+                    
+                    // Custom Model Name Override
+                    HStack {
+                        Label("Model ID chỉ định:", systemImage: "cpu")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        Spacer()
+                        TextField("Mặc định (Auto)", text: $customModelInput)
+                            .font(.system(size: 12, design: .monospaced))
+                            .multilineTextAlignment(.trailing)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                            .onChange(of: customModelInput) { newVal in
+                                viewModel.geminiService.customModelName = newVal
+                            }
                     }
                     
                     // Toggle Open Key Box
@@ -253,6 +270,7 @@ public struct SettingsSheetView: View {
             )
             .onAppear {
                 selectedModel = viewModel.geminiService.selectedModel
+                customModelInput = viewModel.geminiService.customModelName
             }
         }
     }

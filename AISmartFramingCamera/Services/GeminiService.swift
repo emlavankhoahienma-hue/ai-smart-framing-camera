@@ -6,6 +6,8 @@ import CoreGraphics
 
 public enum AIVisionModel: String, CaseIterable, Identifiable {
     case autoStrongest = "auto"
+    case gemini36Flash = "gemini-3.6-flash"
+    case gemini25Flash = "gemini-2.5-flash"
     case gemini15Flash = "gemini-1.5-flash"
     case gemini15Pro = "gemini-1.5-pro"
     case gemini20FlashExp = "gemini-2.0-flash-exp"
@@ -17,21 +19,25 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         switch self {
         case .autoStrongest:
             return "⚡ Tự động chọn Vision tốt nhất (Khuyên dùng)"
+        case .gemini36Flash:
+            return "🔥 Gemini 3.6 Flash (Khuyên dùng theo máy chủ)"
+        case .gemini25Flash:
+            return "⚡ Gemini 2.5 Flash"
         case .gemini15Flash:
-            return "🚀 Gemini 1.5 Flash (Chuẩn chính thức Google)"
+            return "🚀 Gemini 1.5 Flash (Chuẩn chính thức)"
         case .gemini15Pro:
-            return "💎 Gemini 1.5 Pro (Phân tích chiều sâu quang học)"
+            return "💎 Gemini 1.5 Pro (Phân tích chiều sâu)"
         case .gemini20FlashExp:
-            return "🧪 Gemini 2.0 Flash Experimental"
+            return "🧪 Gemini 2.0 Flash Exp"
         case .gemini20FlashThinking:
-            return "🧠 Gemini 2.0 Flash Thinking (Tư duy bố cục)"
+            return "🧠 Gemini 2.0 Flash Thinking"
         }
     }
     
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "gemini-1.5-flash"
+            return "gemini-3.6-flash"
         default:
             return rawValue
         }
@@ -40,6 +46,8 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Sequence of standard verified models to try in auto mode
     public static var autoFallbackChain: [String] {
         [
+            "gemini-3.6-flash",
+            "gemini-2.5-flash",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
             "gemini-2.0-flash-exp",
@@ -167,6 +175,12 @@ public final class GeminiService {
         }
     }
     
+    // Custom Model Name (if specified)
+    public var customModelName: String {
+        get { (UserDefaults.standard.string(forKey: "gemini_custom_model_name") ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "gemini_custom_model_name") }
+    }
+    
     private let urlSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 25
@@ -185,7 +199,11 @@ public final class GeminiService {
             return
         }
         
-        let testCandidates = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+        var testCandidates = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+        if !customModelName.isEmpty {
+            testCandidates.insert(customModelName, at: 0)
+        }
+        
         testModelCandidate(candidates: testCandidates, index: 0, key: key, completion: completion)
     }
     
@@ -238,7 +256,7 @@ public final class GeminiService {
             if http.statusCode == 200 {
                 DispatchQueue.main.async { completion(true, "✅ Kết nối thành công với Gemini (\(testModel))!") }
             } else if http.statusCode == 404 {
-                // Try next model candidate
+                // Try next model candidate in chain
                 self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
             } else {
                 let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
@@ -267,9 +285,14 @@ public final class GeminiService {
         let base64Image = jpegData.base64EncodedString()
         let prompt = buildPrompt()
         
+        var chain = AIVisionModel.autoFallbackChain
+        if !customModelName.isEmpty {
+            chain.insert(customModelName, at: 0)
+        }
+        
         if selectedModel == .autoStrongest {
             tryModelChain(
-                chain: AIVisionModel.autoFallbackChain,
+                chain: chain,
                 index: 0,
                 base64Image: base64Image,
                 prompt: prompt,
@@ -278,8 +301,9 @@ public final class GeminiService {
                 completion: completion
             )
         } else {
+            let modelID = !customModelName.isEmpty ? customModelName : selectedModel.technicalModelID
             executeModelCall(
-                modelID: selectedModel.technicalModelID,
+                modelID: modelID,
                 base64Image: base64Image,
                 prompt: prompt,
                 key: key,
