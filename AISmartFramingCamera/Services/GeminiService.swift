@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import CoreGraphics
+import QuartzCore
 
 // MARK: - Supported AI Vision Models
 
@@ -59,29 +60,17 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 // MARK: - Gemini Response Models
 
 public struct GeminiColorRecipe {
-    public let temperatureK: Float     // 2700 (warm) — 9000 (cool)
-    public let saturation: Float       // 0.5 (muted) — 1.8 (vivid)
-    public let contrast: Float         // 0.8 (flat) — 1.5 (punchy)
-    public let shadowLift: Float       // 0.0 — 0.12 (lifted shadows)
-    public let highlightRoll: Float    // 0.85 — 1.0 (highlight rolloff)
-    public let grain: Float            // 0.0 — 0.5 (film grain)
-    public let vignette: Float         // 0.0 — 0.7 (vignette strength)
-    public let warmthShift: Float      // -1.0 cool, +1.0 warm
+    public let temperatureK: Float     // 5200 - 6800 (tự nhiên chân thực)
+    public let saturation: Float       // 0.95 - 1.08 (tươi tắn dịu nhẹ)
+    public let contrast: Float         // 0.98 - 1.06 (micro-contrast mượt mà)
+    public let shadowLift: Float       // 0.00 - 0.03 (vùng tối mềm mại)
+    public let highlightRoll: Float    // 0.96 - 1.00 (giữ chi tiết mây trời)
+    public let grain: Float            // 0.00 - 0.02 (sạch sẽ không nhiễu)
+    public let vignette: Float         // 0.00 - 0.04 (tự nhiên)
+    public let warmthShift: Float      // -0.10 đến +0.10 (vi mô)
     public let colorGrade: AIColorGrade
     
     public var asAIColorParameters: AIColorParameters {
-        let gradeStr = colorGrade.rawValue.lowercased()
-        let grade: AIColorGrade
-        switch gradeStr {
-        case "softwarm": grade = .softwarm
-        case "coolnatural", "cool_natural": grade = .coolnatural
-        case "golden": grade = .golden
-        case "tealorange", "teal_orange": grade = .tealOrange
-        case "moody": grade = .moody
-        case "vibrant": grade = .vibrant
-        case "classic": grade = .classic
-        default: grade = .softwarm
-        }
         return AIColorParameters(
             warmthShift: CGFloat(warmthShift),
             saturationBoost: CGFloat(saturation),
@@ -90,18 +79,18 @@ public struct GeminiColorRecipe {
             highlightRoll: CGFloat(highlightRoll),
             filmGrain: CGFloat(grain),
             vignetteAmount: CGFloat(vignette),
-            colorGrade: grade
+            colorGrade: colorGrade
         )
     }
     
     public static let defaultRecipe = GeminiColorRecipe(
         temperatureK: 5500,
-        saturation: 1.05,
-        contrast: 1.05,
-        shadowLift: 0.02,
-        highlightRoll: 0.97,
-        grain: 0.10,
-        vignette: 0.15,
+        saturation: 1.02,
+        contrast: 1.02,
+        shadowLift: 0.01,
+        highlightRoll: 0.98,
+        grain: 0.00,
+        vignette: 0.00,
         warmthShift: 0.0,
         colorGrade: .softwarm
     )
@@ -110,11 +99,13 @@ public struct GeminiColorRecipe {
 public struct GeminiFramingResponse {
     public let targetX: CGFloat
     public let targetY: CGFloat
+    public let suggestedZoom: CGFloat
     public let sceneType: DetectedSceneType
     public let colorRecipe: GeminiColorRecipe
     public let compositionRule: CompositionRule
     public let explanation: String
     public let modelUsed: String
+    public let latencyMs: Int
 }
 
 // MARK: - Errors
@@ -181,6 +172,11 @@ public final class GeminiService {
         set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "gemini_custom_model_name") }
     }
     
+    // Live Inspection Observables
+    public private(set) var lastLatencyMs: Int = 0
+    public private(set) var lastModelUsed: String = ""
+    public private(set) var lastExplanation: String = ""
+    
     private let urlSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 25
@@ -240,8 +236,10 @@ public final class GeminiService {
         request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         
+        let startTime = CACurrentMediaTime()
         urlSession.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
+            let latency = Int((CACurrentMediaTime() - startTime) * 1000)
             
             if let error = error {
                 DispatchQueue.main.async { completion(false, "Lỗi mạng: \(error.localizedDescription)") }
@@ -254,9 +252,8 @@ public final class GeminiService {
             }
             
             if http.statusCode == 200 {
-                DispatchQueue.main.async { completion(true, "✅ Kết nối thành công với Gemini (\(testModel))!") }
+                DispatchQueue.main.async { completion(true, "✅ Đang hoạt động thật với Gemini (\(testModel))! Độ trễ: \(latency)ms") }
             } else if http.statusCode == 404 {
-                // Try next model candidate in chain
                 self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
             } else {
                 let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
@@ -290,6 +287,8 @@ public final class GeminiService {
             chain.insert(customModelName, at: 0)
         }
         
+        let startTime = CACurrentMediaTime()
+        
         if selectedModel == .autoStrongest {
             tryModelChain(
                 chain: chain,
@@ -298,6 +297,7 @@ public final class GeminiService {
                 prompt: prompt,
                 key: key,
                 lastErrorMsg: "",
+                startTime: startTime,
                 completion: completion
             )
         } else {
@@ -307,6 +307,7 @@ public final class GeminiService {
                 base64Image: base64Image,
                 prompt: prompt,
                 key: key,
+                startTime: startTime,
                 completion: completion
             )
         }
@@ -319,6 +320,7 @@ public final class GeminiService {
         prompt: String,
         key: String,
         lastErrorMsg: String,
+        startTime: Double,
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
         guard index < chain.count else {
@@ -332,20 +334,18 @@ public final class GeminiService {
             modelID: currentModelID,
             base64Image: base64Image,
             prompt: prompt,
-            key: key
+            key: key,
+            startTime: startTime
         ) { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let response):
                 completion(.success(response))
             case .failure(let error):
-                // If invalid API key, fail immediately
                 if case .invalidAPIKey = error {
                     completion(.failure(error))
                     return
                 }
-                
-                // Fallback to next model in chain
                 self.tryModelChain(
                     chain: chain,
                     index: index + 1,
@@ -353,6 +353,7 @@ public final class GeminiService {
                     prompt: prompt,
                     key: key,
                     lastErrorMsg: error.localizedDescription,
+                    startTime: startTime,
                     completion: completion
                 )
             }
@@ -364,6 +365,7 @@ public final class GeminiService {
         base64Image: String,
         prompt: String,
         key: String,
+        startTime: Double,
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
         guard let url = buildURL(for: modelID, key: key) else {
@@ -387,7 +389,7 @@ public final class GeminiService {
                 ]
             ],
             "generationConfig": [
-                "temperature": 0.20,
+                "temperature": 0.15,
                 "topK": 32,
                 "topP": 0.95,
                 "maxOutputTokens": 768,
@@ -398,7 +400,7 @@ public final class GeminiService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(key, forHTTPHeaderField: "x-goog-api-key") // Official Google Header
+        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
             completion(.failure(.parseError("Không thể tạo request JSON")))
@@ -406,7 +408,12 @@ public final class GeminiService {
         }
         request.httpBody = bodyData
         
-        urlSession.dataTask(with: request) { data, response, error in
+        urlSession.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            let latency = Int((CACurrentMediaTime() - startTime) * 1000)
+            self.lastLatencyMs = latency
+            self.lastModelUsed = modelID
+            
             if let error = error {
                 DispatchQueue.main.async { completion(.failure(.networkError(error))) }
                 return
@@ -417,10 +424,8 @@ public final class GeminiService {
                 return
             }
             
-            // Check HTTP Status
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 let errorDetails = Self.extractErrorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)"
-                
                 if httpResponse.statusCode == 400 && (errorDetails.contains("API_KEY_INVALID") || errorDetails.contains("API key not valid")) {
                     DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
                     return
@@ -429,14 +434,12 @@ public final class GeminiService {
                     DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
                     return
                 }
-                
                 DispatchQueue.main.async {
                     completion(.failure(.parseError("\(modelID) [HTTP \(httpResponse.statusCode)]: \(errorDetails)")))
                 }
                 return
             }
             
-            // Parse response
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let candidates = json["candidates"] as? [[String: Any]],
                   let firstCandidate = candidates.first,
@@ -444,7 +447,6 @@ public final class GeminiService {
                   let parts = content["parts"] as? [[String: Any]],
                   let textPart = parts.first,
                   let text = textPart["text"] as? String else {
-                
                 DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
                 return
             }
@@ -456,7 +458,8 @@ public final class GeminiService {
                 return
             }
             
-            let result = Self.parseGeminiResponse(parsed, modelUsed: modelID)
+            let result = Self.parseGeminiResponse(parsed, modelUsed: modelID, latencyMs: latency)
+            self.lastExplanation = result.explanation
             DispatchQueue.main.async { completion(.success(result)) }
         }.resume()
     }
@@ -480,56 +483,57 @@ public final class GeminiService {
     
     private func buildPrompt() -> String {
         """
-        You are an elite master photographer & cinematography AI. Analyze this image with deep visual perception and return ONLY a valid JSON object.
+        You are a World-Class Hasselblad & Leica Master Cinematographer AI. Analyze this camera image to optimize composition, focal zoom, and TRUE-TO-LIFE natural studio color science.
         
-        Analyze:
-        1. Primary visual focal subject (human face, body, pet, architecture, or salient item)
-        2. Optimal framing anchor position based on classical and modern compositional harmony (Rule of Thirds, Golden Ratio, Golden Spiral)
-        3. Scene mood & cinematic color grading recipe
+        CRITICAL COLOR SCIENCE RULES:
+        1. Produce NATURAL, TRUE-TO-LIFE, ORGANIC colors (Leica Natural Color Science).
+        2. DO NOT apply tacky, cartoonish, oversaturated, or heavy color cast filters.
+        3. Protect authentic human skin tones (rosy, natural, healthy — never yellowish or orange).
+        4. Suggest optimal focal zoom: 1.0 (for wide landscapes), 1.5 - 2.5 (for portraits, food, macro, text details to eliminate wide-angle lens facial distortion).
         
-        Return this EXACT JSON format (no markdown fences, just pure JSON):
+        Return ONLY valid JSON (no markdown fences, just pure JSON):
         {
           "target_x": 0.618,
           "target_y": 0.382,
+          "suggested_zoom": 1.5,
           "scene_type": "portrait",
           "composition_rule": "golden_ratio",
-          "explanation": "Khóa chủ thể tại giao điểm tỷ lệ vàng phía bên phải",
+          "explanation": "Chân dung tự nhiên: Khóa mắt vào giao điểm tỷ lệ vàng, tự động zoom 1.5x giảm méo góc rộng.",
           "color_recipe": {
-            "temperature_k": 5600,
-            "saturation": 1.08,
-            "contrast": 1.06,
-            "shadow_lift": 0.03,
-            "highlight_roll": 0.95,
-            "grain": 0.12,
-            "vignette": 0.20,
-            "warmth_shift": 0.05,
+            "temperature_k": 5500,
+            "saturation": 1.02,
+            "contrast": 1.03,
+            "shadow_lift": 0.01,
+            "highlight_roll": 0.98,
+            "grain": 0.00,
+            "vignette": 0.00,
+            "warmth_shift": 0.00,
             "color_grade": "softwarm"
           }
         }
         
         Constraints:
-        - target_x: 0.05 to 0.95 (normalized X coordinate for sniper target pin)
-        - target_y: 0.05 to 0.95 (normalized Y coordinate for sniper target pin)
-        - scene_type: "portrait" | "landscape" | "sunset" | "architecture" | "night" | "food" | "street" | "general"
-        - composition_rule: "rule_of_thirds" | "golden_ratio" | "center_symmetry" | "golden_spiral"
-        - temperature_k: 2700 to 9000
-        - saturation: 0.50 to 1.80
-        - contrast: 0.80 to 1.50
-        - shadow_lift: 0.00 to 0.12
-        - highlight_roll: 0.85 to 1.00
-        - grain: 0.00 to 0.50
-        - vignette: 0.00 to 0.70
-        - warmth_shift: -1.0 to 1.0
-        - color_grade: "softwarm" | "coolnatural" | "golden" | "tealOrange" | "moody" | "vibrant" | "classic"
-        - explanation: Short Vietnamese advice (1-2 sentences) on how to angle the camera
+        - target_x: 0.05 to 0.95
+        - target_y: 0.05 to 0.95
+        - suggested_zoom: 1.0 to 3.0 (e.g. 1.0 for wide, 1.5 to 2.5 for portrait/macro)
+        - temperature_k: 5000 to 6500 (subtle natural range)
+        - saturation: 0.95 to 1.08 (gentle and natural)
+        - contrast: 0.98 to 1.06 (soft micro-contrast)
+        - shadow_lift: 0.00 to 0.03 (soft shadows)
+        - highlight_roll: 0.96 to 1.00 (protect highlight detail)
+        - grain: 0.00 to 0.02
+        - vignette: 0.00 to 0.04
+        - warmth_shift: -0.10 to 0.10
+        - explanation: Short Vietnamese advice (1 sentence) on composition and why the zoom/framing was chosen
         """
     }
     
     // MARK: - Response Parsing
     
-    private static func parseGeminiResponse(_ json: [String: Any], modelUsed: String) -> GeminiFramingResponse {
+    private static func parseGeminiResponse(_ json: [String: Any], modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
         let targetX = parseCGFloat(json["target_x"], defaultVal: 0.618)
         let targetY = parseCGFloat(json["target_y"], defaultVal: 0.382)
+        let suggestedZoom = parseCGFloat(json["suggested_zoom"], defaultVal: 1.0)
         let explanation = (json["explanation"] as? String) ?? "AI phân tích bố cục hoàn tất"
         
         let sceneType = parseSceneType((json["scene_type"] as? String) ?? "general")
@@ -541,13 +545,13 @@ public final class GeminiService {
             let grade = parseColorGrade(gradeStr)
             colorRecipe = GeminiColorRecipe(
                 temperatureK: parseFloat(colorJson["temperature_k"], defaultVal: 5500),
-                saturation: clampF(colorJson["saturation"], 0.50, 1.80, 1.05),
-                contrast: clampF(colorJson["contrast"], 0.80, 1.50, 1.05),
-                shadowLift: clampF(colorJson["shadow_lift"], 0.00, 0.12, 0.02),
-                highlightRoll: clampF(colorJson["highlight_roll"], 0.85, 1.00, 0.97),
-                grain: clampF(colorJson["grain"], 0.00, 0.50, 0.10),
-                vignette: clampF(colorJson["vignette"], 0.00, 0.70, 0.15),
-                warmthShift: clampF(colorJson["warmth_shift"], -1.0, 1.0, 0.0),
+                saturation: clampF(colorJson["saturation"], 0.90, 1.15, 1.02),
+                contrast: clampF(colorJson["contrast"], 0.95, 1.10, 1.02),
+                shadowLift: clampF(colorJson["shadow_lift"], 0.00, 0.05, 0.01),
+                highlightRoll: clampF(colorJson["highlight_roll"], 0.95, 1.00, 0.98),
+                grain: clampF(colorJson["grain"], 0.00, 0.03, 0.00),
+                vignette: clampF(colorJson["vignette"], 0.00, 0.05, 0.00),
+                warmthShift: clampF(colorJson["warmth_shift"], -0.15, 0.15, 0.0),
                 colorGrade: grade
             )
         }
@@ -555,11 +559,13 @@ public final class GeminiService {
         return GeminiFramingResponse(
             targetX: max(0.05, min(0.95, targetX)),
             targetY: max(0.05, min(0.95, targetY)),
+            suggestedZoom: max(1.0, min(5.0, suggestedZoom)),
             sceneType: sceneType,
             colorRecipe: colorRecipe,
             compositionRule: compositionRule,
             explanation: explanation,
-            modelUsed: modelUsed
+            modelUsed: modelUsed,
+            latencyMs: latencyMs
         )
     }
     

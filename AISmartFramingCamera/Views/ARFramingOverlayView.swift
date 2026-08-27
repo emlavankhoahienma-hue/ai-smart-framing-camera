@@ -316,28 +316,48 @@ struct CountdownOverlayView: View {
 
 struct GeminiAnalyzingBadge: View {
     @State private var rotation: Double = 0
+    @State private var pulse: CGFloat = 1.0
     
     var body: some View {
         VStack {
             HStack(spacing: 8) {
-                Image(systemName: "sparkle")
-                    .font(.system(size: 12, weight: .bold))
+                Image(systemName: "sparkles")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.cyan)
                     .rotationEffect(.degrees(rotation))
+                    .scaleEffect(pulse)
                     .onAppear {
                         withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
                             rotation = 360
                         }
+                        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                            pulse = 1.25
+                        }
                     }
-                Text("Gemini đang phân tích bố cục...")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Google Gemini AI Live")
+                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                        .foregroundColor(.cyan)
+                    Text("Đang phân tích quang học & màu tự nhiên...")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                }
+                
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
+                    .scaleEffect(0.8)
             }
-            .foregroundColor(.cyan)
-            .padding(.horizontal, 14).padding(.vertical, 7)
-            .background(Capsule().fill(Color.black.opacity(0.75)))
-            .overlay(Capsule().stroke(Color.cyan.opacity(0.5), lineWidth: 1))
+            .padding(.horizontal, 16).padding(.vertical, 9)
+            .background(
+                Capsule()
+                    .fill(Color.black.opacity(0.85))
+                    .overlay(Capsule().stroke(Color.cyan.opacity(0.6), lineWidth: 1.2))
+                    .shadow(color: Color.cyan.opacity(0.3), radius: 10)
+            )
             Spacer()
         }
-        .padding(.top, 80)
+        .padding(.top, 85)
     }
 }
 

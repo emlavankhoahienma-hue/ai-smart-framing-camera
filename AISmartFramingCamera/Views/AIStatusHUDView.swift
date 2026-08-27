@@ -29,66 +29,92 @@ public struct AIStatusHUDView: View {
                     .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 
-                // Badges
-                HStack(spacing: 4) {
-                    // Gemini badge
+                // Badges Deck
+                HStack(spacing: 5) {
+                    // Gemini Active Badge with Latency
                     if viewModel.useGeminiForAnalysis {
-                        Image(systemName: viewModel.geminiService.hasAPIKey ? "sparkle" : "sparkle.slash")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(viewModel.geminiService.hasAPIKey ? .cyan : .gray)
+                        HStack(spacing: 3) {
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 9, weight: .heavy))
+                            if viewModel.geminiLatencyMs > 0 {
+                                Text("\(viewModel.geminiLatencyMs)ms")
+                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            }
+                        }
+                        .foregroundColor(viewModel.geminiService.hasAPIKey ? .cyan : .gray)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Color.cyan.opacity(0.18))
+                        .cornerRadius(6)
                     }
                     
-                    // AI Color badge
+                    // AI Zoom Badge
+                    if let zoom = viewModel.aiSuggestedZoom, zoom > 1.05 {
+                        HStack(spacing: 2) {
+                            Image(systemName: "plus.magnifyingglass")
+                                .font(.system(size: 8, weight: .bold))
+                            Text(String(format: "%.1fx", zoom))
+                                .font(.system(size: 9, weight: .heavy, design: .monospaced))
+                        }
+                        .foregroundColor(.yellow)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Color.yellow.opacity(0.18))
+                        .cornerRadius(6)
+                    }
+                    
+                    // True Natural Color Badge
                     if viewModel.isAIFullColorEnabled {
-                        Image(systemName: "wand.and.stars.inverse")
-                            .font(.system(size: 9, weight: .heavy))
-                            .foregroundColor(.cyan)
+                        HStack(spacing: 2) {
+                            Image(systemName: "camera.aperture")
+                                .font(.system(size: 8, weight: .heavy))
+                            Text("LEICA")
+                                .font(.system(size: 8, weight: .black, design: .monospaced))
+                        }
+                        .foregroundColor(.green)
+                        .padding(.horizontal, 4).padding(.vertical, 2)
+                        .background(Color.green.opacity(0.18))
+                        .cornerRadius(6)
                     }
-                    
-                    Text(viewModel.selectedFilmPreset.shortTitle)
-                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                        .foregroundColor(viewModel.isAIFullColorEnabled ? .cyan : .yellow)
                     
                     Circle()
                         .fill(viewModel.aiSessionState.accentColor)
                         .frame(width: 5, height: 5)
                 }
-                .padding(.horizontal, 6).padding(.vertical, 3)
+                .padding(.horizontal, 4).padding(.vertical, 3)
                 .background(Color.black.opacity(0.4))
                 .cornerRadius(8)
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.65))
+                    .fill(Color.black.opacity(0.68))
                     .overlay(Capsule().stroke(viewModel.aiSessionState.accentColor.opacity(0.45), lineWidth: 1))
             )
             
-            // Gemini explanation sub-pill (shows briefly after analysis)
+            // Gemini Live Explanation sub-pill
             if !viewModel.geminiExplanation.isEmpty, case .targetPlaced = viewModel.aiSessionState {
                 HStack(spacing: 6) {
-                    Image(systemName: "sparkle")
+                    Image(systemName: "sparkles")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.cyan)
                     
                     if !viewModel.activeModelUsedName.isEmpty {
-                        Text(viewModel.activeModelUsedName.components(separatedBy: "-").prefix(2).joined(separator: " ").capitalized)
+                        Text(viewModel.activeModelUsedName)
                             .font(.system(size: 9, weight: .heavy, design: .monospaced))
                             .foregroundColor(.cyan)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
                             .background(Color.cyan.opacity(0.2))
                             .cornerRadius(4)
                     }
                     
                     Text(viewModel.geminiExplanation)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(.white.opacity(0.9))
                         .lineLimit(2)
                         .minimumScaleFactor(0.8)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 5)
-                .background(Capsule().fill(Color.black.opacity(0.6)))
+                .background(Capsule().fill(Color.black.opacity(0.65)))
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -109,7 +135,7 @@ public struct AIStatusHUDView: View {
     }
     
     private var statusText: String {
-        if viewModel.isGeminiAnalyzing { return "Gemini AI đang phân tích cảnh vật..." }
+        if viewModel.isGeminiAnalyzing { return "Gemini AI đang phân tích bối cảnh & màu..." }
         if let err = viewModel.geminiError { return "Lỗi Gemini: \(err.prefix(50))" }
         return viewModel.aiSessionState.displayMessage
     }

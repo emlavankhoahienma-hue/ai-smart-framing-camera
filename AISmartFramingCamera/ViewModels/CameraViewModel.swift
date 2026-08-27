@@ -58,6 +58,8 @@ public final class CameraViewModel: ObservableObject {
     @Published public var geminiColorRecipe: GeminiColorRecipe? = nil
     @Published public var useGeminiForAnalysis: Bool = true
     @Published public var activeModelUsedName: String = ""
+    @Published public var geminiLatencyMs: Int = 0
+    @Published public var aiSuggestedZoom: CGFloat? = nil
     
     // Capture & Review
     @Published public var latestCapturedPhoto: CapturedPhotoItem?
@@ -254,6 +256,13 @@ public final class CameraViewModel: ObservableObject {
         self.detectedScene = response.sceneType
         self.activeCompositionRule = response.compositionRule
         self.activeModelUsedName = response.modelUsed
+        self.geminiLatencyMs = response.latencyMs
+        self.aiSuggestedZoom = response.suggestedZoom
+        
+        // Tự động điều chỉnh Zoom quang học theo đề xuất của AI để tối ưu bố cục
+        if isAutoZoomEnabled && response.suggestedZoom > 1.0 {
+            setZoom(response.suggestedZoom)
+        }
         
         if isAIFullColorEnabled {
             currentAIColorParams = response.colorRecipe.asAIColorParameters
