@@ -319,7 +319,7 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: result.targetPoint)
     }
     
-    // MARK: - Pin Target & Start Visual Object Tracking
+    // MARK: - Pin Target & Start 60Hz Motion Tracking (Chuẩn Doka nguyên bản)
     
     private func pinTargetAndStartMotion(at target: CGPoint) {
         initialTargetPoint = target
@@ -329,8 +329,7 @@ public final class CameraViewModel: ObservableObject {
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // Khởi động Vision Object Tracking bám chặt vào vùng cảnh vật/vật thể/chữ tại điểm target
-        visionEngine.startTrackingObject(at: target)
+        // Bắt đầu đo con quay hồi chuyển 60Hz ổn định tuyệt đối
         motionService.startTracking()
         
         haptics.triggerSelectionChange()
@@ -343,31 +342,17 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - Visual Object Tracking Handler (Bám dính vật thể theo camera)
-    
-    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
-        guard case .targetPlaced = aiSessionState else { return }
-        
-        if let tracked = point {
-            // Target bám chặt theo vùng cảnh vật thực tế trong camera
-            self.currentTargetPoint = tracked
-            evaluateAlignment(at: tracked)
-        }
-    }
-    
-    // MARK: - 60Hz Gyro Motion Handler (Fallback khi vật thể bị khuất)
+    // MARK: - 60Hz Gyro Motion Handler (Di chuyển mượt mà 60 FPS theo góc máy)
     
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
         guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
         
-        // Chỉ dùng Gyro fallback nếu Vision tracking tạm thời không có điểm
-        if currentTargetPoint == nil {
-            let newX = initial.x - deltaX
-            let newY = initial.y - deltaY
-            let newPoint = CGPoint(x: newX, y: newY)
-            self.currentTargetPoint = newPoint
-            evaluateAlignment(at: newPoint)
-        }
+        // Target vàng dịch chuyển mượt mà 1:1 theo góc lia máy về tâm trắng (0.5, 0.5)
+        let newX = initial.x - deltaX
+        let newY = initial.y - deltaY
+        let newPoint = CGPoint(x: newX, y: newY)
+        self.currentTargetPoint = newPoint
+        evaluateAlignment(at: newPoint)
     }
     
     private func evaluateAlignment(at point: CGPoint) {
