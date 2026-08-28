@@ -7,15 +7,16 @@ import QuartzCore
 
 public enum AIVisionModel: String, CaseIterable, Identifiable {
     case autoStrongest = "auto"
-    case gemini15Flash = "gemini-1.5-flash"
-    case gemini15FlashLatest = "gemini-1.5-flash-latest"
-    case gemini20Flash = "gemini-2.0-flash"
-    case gemini20FlashExp = "gemini-2.0-flash-exp"
-    case gemini20FlashLite = "gemini-2.0-flash-lite-preview-02-05"
-    case gemini15Pro = "gemini-1.5-pro"
-    case gemini15ProLatest = "gemini-1.5-pro-latest"
-    case gemini20ProExp = "gemini-2.0-pro-exp-02-05"
+    case gemini37Flash = "gemini-3.7-flash"
     case gemini36Flash = "gemini-3.6-flash"
+    case gemini35Flash = "gemini-3.5-flash"
+    case gemini31Pro = "gemini-3.1-pro"
+    case gemini25Flash = "gemini-2.5-flash"
+    case gemini20Flash = "gemini-2.0-flash"
+    
+    // Legacy support
+    case gemini15Flash = "gemini-1.5-flash"
+    case gemini15Pro = "gemini-1.5-pro"
     
     public var id: String { rawValue }
     
@@ -23,31 +24,29 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         switch self {
         case .autoStrongest:
             return "⚡ Tự động luân chuyển model (Khuyên dùng - Không lo hết Quota)"
-        case .gemini15Flash:
-            return "🚀 Gemini 1.5 Flash (Quota cao nhất, ổn định)"
-        case .gemini15FlashLatest:
-            return "⚡ Gemini 1.5 Flash Latest"
+        case .gemini37Flash:
+            return "🚀 Gemini 3.7 Flash (Mới nhất)"
+        case .gemini36Flash:
+            return "⚡ Gemini 3.6 Flash"
+        case .gemini35Flash:
+            return "⚡ Gemini 3.5 Flash"
+        case .gemini31Pro:
+            return "💎 Gemini 3.1 Pro (Bố cục Studio)"
+        case .gemini25Flash:
+            return "⚡ Gemini 2.5 Flash"
         case .gemini20Flash:
             return "🔥 Gemini 2.0 Flash (Thị giác thế hệ mới)"
-        case .gemini20FlashExp:
-            return "🧪 Gemini 2.0 Flash Experimental"
-        case .gemini20FlashLite:
-            return "💨 Gemini 2.0 Flash Lite (Siêu nhanh < 200ms)"
+        case .gemini15Flash:
+            return "🚀 Gemini 1.5 Flash (Ổn định)"
         case .gemini15Pro:
-            return "💎 Gemini 1.5 Pro (Độ sâu quang học studio)"
-        case .gemini15ProLatest:
-            return "💎 Gemini 1.5 Pro Latest"
-        case .gemini20ProExp:
-            return "🎯 Gemini 2.0 Pro Experimental"
-        case .gemini36Flash:
-            return "🧠 Gemini 3.6 Flash"
+            return "💎 Gemini 1.5 Pro"
         }
     }
     
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "gemini-1.5-flash"
+            return "gemini-3.7-flash"
         default:
             return rawValue
         }
@@ -56,15 +55,14 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Sequence of standard verified models to try in auto mode
     public static var autoFallbackChain: [String] {
         [
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-latest",
+            "gemini-3.7-flash",
+            "gemini-3.1-pro",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-2.5-flash",
             "gemini-2.0-flash",
-            "gemini-2.0-flash-exp",
-            "gemini-2.0-flash-lite-preview-02-05",
             "gemini-1.5-pro",
-            "gemini-1.5-pro-latest",
-            "gemini-2.0-pro-exp-02-05",
-            "gemini-3.6-flash"
+            "gemini-1.5-flash"
         ]
     }
 }
@@ -210,15 +208,7 @@ public final class GeminiService {
             return
         }
         
-        var testCandidates = [
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-latest",
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-exp",
-            "gemini-2.0-flash-lite-preview-02-05",
-            "gemini-1.5-pro",
-            "gemini-3.6-flash"
-        ]
+        var testCandidates = AIVisionModel.autoFallbackChain
         if !customModelName.isEmpty {
             testCandidates.insert(customModelName, at: 0)
         }
@@ -233,31 +223,47 @@ public final class GeminiService {
         completion: @escaping (Bool, String) -> Void
     ) {
         guard index < candidates.count else {
-            completion(false, "❌ Đã thử tất cả model Gemini nhưng key bị giới hạn quota hoặc chưa bật. Thử tạo key mới tại aistudio.google.com")
+            completion(false, "❌ Đã thử tất cả model nhưng key bị giới hạn quota hoặc chưa bật. Thử tạo key mới.")
             return
         }
         
         let testModel = candidates[index]
+        let isOpenRouter = key.hasPrefix("sk-or-")
+        
         guard let url = buildURL(for: testModel, key: key) else {
             completion(false, "URL không hợp lệ.")
             return
         }
         
-        let body: [String: Any] = [
-            "contents": [
-                [
-                    "parts": [
-                        ["text": "Hi"]
-                    ]
-                ]
-            ]
-        ]
-        
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        
+        if isOpenRouter {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue("AlignAI Studio", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
+            
+            let body: [String: Any] = [
+                "model": testModel,
+                "messages": [
+                    ["role": "user", "content": "Hi"]
+                ]
+            ]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        } else {
+            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+            let body: [String: Any] = [
+                "contents": [
+                    [
+                        "parts": [
+                            ["text": "Hi"]
+                        ]
+                    ]
+                ]
+            ]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
         
         let startTime = CACurrentMediaTime()
         urlSession.dataTask(with: request) { [weak self] data, response, error in
@@ -277,13 +283,13 @@ public final class GeminiService {
             if http.statusCode == 200 {
                 self.lastModelUsed = testModel
                 DispatchQueue.main.async {
-                    completion(true, "✅ Kết nối thành công! Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
+                    let provider = isOpenRouter ? "OpenRouter" : "Gemini"
+                    completion(true, "✅ Kết nối thành công! [\(provider)] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
                 }
             } else if http.statusCode == 404 || http.statusCode == 429 || http.statusCode == 503 {
-                // Rate limited or model not found -> Automatically try next model in candidate list
                 self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
             } else {
-                let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
+                let msg = Self.extractErrorMessage(from: data, isOpenRouter: isOpenRouter) ?? "HTTP \(http.statusCode)"
                 DispatchQueue.main.async { completion(false, "❌ Lỗi (\(http.statusCode)): \(msg)") }
             }
         }.resume()
@@ -394,34 +400,67 @@ public final class GeminiService {
             return
         }
         
-        let requestBody: [String: Any] = [
-            "contents": [
-                [
-                    "role": "user",
-                    "parts": [
-                        [
-                            "inline_data": [
-                                "mime_type": "image/jpeg",
-                                "data": base64Image
-                            ]
-                        ],
-                        ["text": prompt]
-                    ]
-                ]
-            ],
-            "generationConfig": [
-                "temperature": 0.15,
-                "topK": 32,
-                "topP": 0.95,
-                "maxOutputTokens": 768,
-                "responseMimeType": "application/json"
-            ]
-        ]
-        
+        let isOpenRouter = key.hasPrefix("sk-or-")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        
+        var requestBody: [String: Any] = [:]
+        if isOpenRouter {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue("AlignAI Studio", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
+            
+            requestBody = [
+                "model": modelID,
+                "messages": [
+                    [
+                        "role": "user",
+                        "content": [
+                            [
+                                "type": "image_url",
+                                "image_url": [
+                                    "url": "data:image/jpeg;base64,\(base64Image)"
+                                ]
+                            ],
+                            [
+                                "type": "text",
+                                "text": prompt
+                            ]
+                        ]
+                    ]
+                ],
+                "temperature": 0.15,
+                "top_p": 0.95,
+                "max_tokens": 768,
+                "response_format": ["type": "json_object"]
+            ]
+        } else {
+            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+            requestBody = [
+                "contents": [
+                    [
+                        "role": "user",
+                        "parts": [
+                            [
+                                "inline_data": [
+                                    "mime_type": "image/jpeg",
+                                    "data": base64Image
+                                ]
+                            ],
+                            ["text": prompt]
+                        ]
+                    ]
+                ],
+                "generationConfig": [
+                    "temperature": 0.15,
+                    "topK": 32,
+                    "topP": 0.95,
+                    "maxOutputTokens": 768,
+                    "responseMimeType": "application/json"
+                ]
+            ]
+        }
         
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
             completion(.failure(.parseError("Không thể tạo JSON")))
@@ -444,13 +483,13 @@ public final class GeminiService {
             }
             
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                let errorDetails = Self.extractErrorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)"
+                let errorDetails = Self.extractErrorMessage(from: data, isOpenRouter: isOpenRouter) ?? "HTTP \(httpResponse.statusCode)"
                 
                 if httpResponse.statusCode == 400 && (errorDetails.contains("API_KEY_INVALID") || errorDetails.contains("API key not valid")) {
                     DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
                     return
                 }
-                if httpResponse.statusCode == 403 {
+                if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
                     DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
                     return
                 }
@@ -465,21 +504,51 @@ public final class GeminiService {
                 return
             }
             
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let candidates = json["candidates"] as? [[String: Any]],
-                  let firstCandidate = candidates.first,
-                  let content = firstCandidate["content"] as? [String: Any],
-                  let parts = content["parts"] as? [[String: Any]],
-                  let textPart = parts.first,
-                  let text = textPart["text"] as? String else {
+            var responseText: String?
+            
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if isOpenRouter {
+                    if let choices = json["choices"] as? [[String: Any]],
+                       let firstChoice = choices.first,
+                       let message = firstChoice["message"] as? [String: Any],
+                       let text = message["content"] as? String {
+                        responseText = text
+                    }
+                } else {
+                    if let candidates = json["candidates"] as? [[String: Any]],
+                       let firstCandidate = candidates.first,
+                       let content = firstCandidate["content"] as? [String: Any],
+                       let parts = content["parts"] as? [[String: Any]],
+                       let textPart = parts.first,
+                       let text = textPart["text"] as? String {
+                        responseText = text
+                    }
+                }
+            }
+            
+            guard let text = responseText else {
                 DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
                 return
             }
             
-            let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Clean markdown if present
+            var cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanText.hasPrefix("```json") {
+                cleanText = cleanText.replacingOccurrences(of: "```json", with: "")
+                if cleanText.hasSuffix("```") {
+                    cleanText = String(cleanText.dropLast(3))
+                }
+            } else if cleanText.hasPrefix("```") {
+                cleanText = cleanText.replacingOccurrences(of: "```", with: "")
+                if cleanText.hasSuffix("```") {
+                    cleanText = String(cleanText.dropLast(3))
+                }
+            }
+            cleanText = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+            
             guard let jsonData = cleanText.data(using: .utf8),
                   let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                DispatchQueue.main.async { completion(.failure(.parseError("JSON không hợp lệ: \(text.prefix(80))"))) }
+                DispatchQueue.main.async { completion(.failure(.parseError("JSON không hợp lệ: \(cleanText.prefix(80))"))) }
                 return
             }
             
@@ -494,15 +563,24 @@ public final class GeminiService {
     // MARK: - Helpers
     
     private func buildURL(for modelID: String, key: String) -> URL? {
+        let isOpenRouter = key.hasPrefix("sk-or-")
+        if isOpenRouter {
+            return URL(string: "https://openrouter.ai/api/v1/chat/completions")
+        }
         let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
         return URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelID):generateContent?key=\(encodedKey)")
     }
     
-    private static func extractErrorMessage(from data: Data) -> String? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let errorObj = json["error"] as? [String: Any] else {
-            return nil
+    private static func extractErrorMessage(from data: Data, isOpenRouter: Bool = false) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        
+        if isOpenRouter {
+            if let errorObj = json["error"] as? [String: Any], let msg = errorObj["message"] as? String {
+                return msg
+            }
         }
+        
+        guard let errorObj = json["error"] as? [String: Any] else { return nil }
         return errorObj["message"] as? String
     }
     
