@@ -20,17 +20,30 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - AI Session State Machine
     @Published public var aiSessionState: AISessionState = .idle
     
-    // MARK: - Published UI States
+    // MARK: - Published UI States (Persisted)
     @Published public var isCameraReady: Bool = false
     @Published public var hasCameraPermission: Bool = false
-    @Published public var activeCompositionRule: CompositionRule = .goldenRatio
-    @Published public var selectedFilmPreset: FilmPreset = .fujiPro400H
-    @Published public var isAIFullColorEnabled: Bool = true
-    @Published public var isAutoZoomEnabled: Bool = true
+    
+    @Published public var activeCompositionRule: CompositionRule = .goldenRatio {
+        didSet { UserDefaults.standard.set(activeCompositionRule.rawValue, forKey: "activeCompositionRule") }
+    }
+    @Published public var selectedFilmPreset: FilmPreset = .fujiPro400H {
+        didSet { UserDefaults.standard.set(selectedFilmPreset.rawValue, forKey: "selectedFilmPreset") }
+    }
+    @Published public var isAIFullColorEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(isAIFullColorEnabled, forKey: "isAIFullColorEnabled") }
+    }
+    @Published public var isAutoZoomEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(isAutoZoomEnabled, forKey: "isAutoZoomEnabled") }
+    }
     
     // Camera Mode & Live Photo
-    @Published public var captureMode: CameraCaptureMode = .photo
-    @Published public var isLivePhotoEnabled: Bool = false
+    @Published public var captureMode: CameraCaptureMode = .photo {
+        didSet { UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode") }
+    }
+    @Published public var isLivePhotoEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(isLivePhotoEnabled, forKey: "isLivePhotoEnabled") }
+    }
     @Published public var isRecordingVideo: Bool = false
     @Published public var recordedVideoURL: URL? = nil
     @Published public var isShowingVideoPreview: Bool = false
@@ -63,7 +76,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var geminiError: String? = nil
     @Published public var geminiExplanation: String = ""
     @Published public var geminiColorRecipe: GeminiColorRecipe? = nil
-    @Published public var useGeminiForAnalysis: Bool = true
+    @Published public var useGeminiForAnalysis: Bool = true {
+        didSet { UserDefaults.standard.set(useGeminiForAnalysis, forKey: "useGeminiForAnalysis") }
+    }
     @Published public var activeModelUsedName: String = ""
     @Published public var geminiLatencyMs: Int = 0
     @Published public var aiSuggestedZoom: CGFloat? = nil
@@ -87,6 +102,30 @@ public final class CameraViewModel: ObservableObject {
     private var isOneShotCaptured = false
     
     public init() {
+        // Load saved settings
+        let defaults = UserDefaults.standard
+        if let ruleRaw = defaults.string(forKey: "activeCompositionRule"), let rule = CompositionRule(rawValue: ruleRaw) {
+            self.activeCompositionRule = rule
+        }
+        if let presetRaw = defaults.string(forKey: "selectedFilmPreset"), let preset = FilmPreset(rawValue: presetRaw) {
+            self.selectedFilmPreset = preset
+        }
+        if let modeRaw = defaults.string(forKey: "captureMode"), let mode = CameraCaptureMode(rawValue: modeRaw) {
+            self.captureMode = mode
+        }
+        if defaults.object(forKey: "isAIFullColorEnabled") != nil {
+            self.isAIFullColorEnabled = defaults.bool(forKey: "isAIFullColorEnabled")
+        }
+        if defaults.object(forKey: "isAutoZoomEnabled") != nil {
+            self.isAutoZoomEnabled = defaults.bool(forKey: "isAutoZoomEnabled")
+        }
+        if defaults.object(forKey: "isLivePhotoEnabled") != nil {
+            self.isLivePhotoEnabled = defaults.bool(forKey: "isLivePhotoEnabled")
+        }
+        if defaults.object(forKey: "useGeminiForAnalysis") != nil {
+            self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
+        }
+        
         setupCallbacks()
         setupMotionCallbacks()
     }

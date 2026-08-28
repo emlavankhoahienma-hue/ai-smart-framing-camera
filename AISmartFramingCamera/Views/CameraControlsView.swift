@@ -103,7 +103,7 @@ struct MainCaptureButton: View {
             } else {
                 // Photo Mode
                 switch viewModel.aiSessionState {
-                case .idle:
+                case .idle, .done:
                     HStack(spacing: 16) {
                         // AI START button
                         Button(action: {
@@ -213,9 +213,6 @@ struct MainCaptureButton: View {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle(tint: .black))
                     }
-                    
-                case .done:
-                    EmptyView()
                 }
             }
         }
