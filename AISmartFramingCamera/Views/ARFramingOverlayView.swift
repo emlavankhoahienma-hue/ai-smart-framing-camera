@@ -99,7 +99,14 @@ public struct ARFramingOverlayView: View {
                     GeminiAnalyzingBadge()
                 }
                 
-                // 9. Capture Flash
+                // 9. Smart Autofocus Yellow Square Indicator (Apple Camera App style)
+                if let focusPoint = viewModel.activeFocusSquarePoint {
+                    FocusSquareView()
+                        .position(x: focusPoint.x * size.width, y: focusPoint.y * size.height)
+                        .transition(.scale.combined(with: .opacity))
+                }
+                
+                // 10. Capture Flash
                 if viewModel.activeFlashMode2 {
                     Color.white.opacity(0.55)
                         .ignoresSafeArea()
@@ -380,5 +387,46 @@ struct SubjectHighlightBox: View {
             .stroke(Color.yellow.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             .frame(width: max(20, rect.width), height: max(20, rect.height))
             .position(x: rect.midX, y: rect.midY)
+    }
+}
+
+// MARK: - Smart Focus Square Indicator (Apple Camera App Style)
+
+struct FocusSquareView: View {
+    @State private var scale: CGFloat = 1.3
+    @State private var opacity: Double = 1.0
+    
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .stroke(Color.yellow, lineWidth: 1.5)
+                .frame(width: 65, height: 65)
+            
+            // 4 Corner tick marks
+            VStack {
+                HStack {
+                    Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
+                    Spacer()
+                    Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
+                }
+                Spacer()
+                HStack {
+                    Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
+                    Spacer()
+                    Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
+                }
+            }
+            .frame(width: 65, height: 65)
+        }
+        .scaleEffect(scale)
+        .opacity(opacity)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.2)) {
+                scale = 1.0
+            }
+            withAnimation(.easeIn(duration: 0.3).delay(0.6)) {
+                opacity = 0.0
+            }
+        }
     }
 }

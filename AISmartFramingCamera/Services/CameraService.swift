@@ -130,6 +130,30 @@ public final class CameraService: NSObject {
                     }
                 }
                 
+                // Initial Continuous Auto Focus & Exposure setup
+                try camera.lockForConfiguration()
+                if camera.isFocusModeSupported(.continuousAutoFocus) {
+                    camera.focusMode = .continuousAutoFocus
+                }
+                if camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposureMode = .continuousAutoExposure
+                }
+                if camera.isSmoothAutoFocusSupported {
+                    camera.isSmoothAutoFocusEnabled = true
+                }
+                camera.isSubjectAreaChangeMonitoringEnabled = true
+                camera.unlockForConfiguration()
+                
+                // Subject Area Did Change Notification Observer (Apple Camera App style)
+                NotificationCenter.default.removeObserver(self, name: AVCaptureDevice.subjectAreaDidChangeNotification, object: nil)
+                NotificationCenter.default.addObserver(
+                    forName: AVCaptureDevice.subjectAreaDidChangeNotification,
+                    object: camera,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.onSubjectAreaDidChange?()
+                }
+                
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(true) }
             } catch {
@@ -187,18 +211,68 @@ public final class CameraService: NSObject {
         }
     }
     
-    // MARK: - Focus & Exposure Tap
-    public func focusAndExpose(at point: CGPoint) {
+    public var onSubjectAreaDidChange: (() -> Void)?
+    private var subjectAreaObserver: NSObjectProtocol?
+    
+    // MARK: - Smart Focus & Exposure (Apple Camera App Style)
+    
+    /// Chuyển đổi tọa độ chuẩn hóa UI (Top-Left 0,0) sang tọa độ AVCaptureDevice sensor (Portrait 0,0)
+    public static func convertUIPointToDevicePoint(_ uiPoint: CGPoint) -> CGPoint {
+        // Trên iOS Portrait: AVCaptureDevice point x = UI y, point y = 1.0 - UI x
+        let devX = max(0.01, min(0.99, uiPoint.y))
+        let devY = max(0.01, min(0.99, 1.0 - uiPoint.x))
+        return CGPoint(x: devX, y: devY)
+    }
+    
+    /// Thiết lập lấy nét & đo sáng thông minh tự động (Smart Continuous AF/AE)
+    public func setSmartFocusAndExposure(at devicePoint: CGPoint) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
             do {
                 try camera.lockForConfiguration()
+                let clampedPoint = CGPoint(
+                    x: max(0.01, min(0.99, devicePoint.x)),
+                    y: max(0.01, min(0.99, devicePoint.y))
+                )
+                if camera.isFocusPointOfInterestSupported {
+                    camera.focusPointOfInterest = clampedPoint
+                    if camera.isFocusModeSupported(.continuousAutoFocus) {
+                        camera.focusMode = .continuousAutoFocus
+                    } else if camera.isFocusModeSupported(.autoFocus) {
+                        camera.focusMode = .autoFocus
+                    }
+                }
+                if camera.isExposurePointOfInterestSupported {
+                    camera.exposurePointOfInterest = clampedPoint
+                    if camera.isExposureModeSupported(.continuousAutoExposure) {
+                        camera.exposureMode = .continuousAutoExposure
+                    } else if camera.isExposureModeSupported(.autoExpose) {
+                        camera.exposureMode = .autoExpose
+                    }
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("CameraService: Error configuring smart focus & exposure: \(error)")
+            }
+        }
+    }
+    
+    // MARK: - Focus & Exposure Tap (Người dùng chạm màn hình lấy nét thủ công)
+    public func focusAndExpose(at devicePoint: CGPoint) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let camera = self.activeCamera else { return }
+            do {
+                try camera.lockForConfiguration()
+                let clampedPoint = CGPoint(
+                    x: max(0.01, min(0.99, devicePoint.x)),
+                    y: max(0.01, min(0.99, devicePoint.y))
+                )
                 if camera.isFocusPointOfInterestSupported && camera.isFocusModeSupported(.autoFocus) {
-                    camera.focusPointOfInterest = point
+                    camera.focusPointOfInterest = clampedPoint
                     camera.focusMode = .autoFocus
                 }
                 if camera.isExposurePointOfInterestSupported && camera.isExposureModeSupported(.autoExpose) {
-                    camera.exposurePointOfInterest = point
+                    camera.exposurePointOfInterest = clampedPoint
                     camera.exposureMode = .autoExpose
                 }
                 camera.unlockForConfiguration()

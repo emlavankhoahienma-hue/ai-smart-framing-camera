@@ -99,12 +99,15 @@ public final class CameraViewModel: ObservableObject {
     public let arSessionService = ARCompositionSession.shared
     @Published public var activeEngineSource: AIEngineSource? = nil
     @Published public var arTrackingWarning: String? = nil
+    @Published public var activeFocusSquarePoint: CGPoint? = nil
     
     // Internal State
     private var autoCaptureTask: Task<Void, Never>? = nil
     private var analysisFrames: [SubjectDetectionResult] = []
     private let analysisFramesNeeded = 5 // Collect 5 quick frames (~0.25s) for rock-solid stabilization
     private var isOneShotCaptured = false
+    private var lastFocusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    private var focusSquareHideTask: Task<Void, Never>? = nil
     
     public init() {
         // Load saved settings
@@ -172,6 +175,18 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence in
             guard let self = self else { return }
             self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence)
+        }
+        
+        // Smart Autofocus (Face Priority > Saliency > Center)
+        visionEngine.onSmartFocusPointCalculated = { [weak self] point, focusType in
+            guard let self = self else { return }
+            self.handleSmartFocusCalculated(point: point, type: focusType)
+        }
+        
+        // Subject Area Did Change Observer (Apple Camera App style)
+        cameraService.onSubjectAreaDidChange = { [weak self] in
+            guard let self = self else { return }
+            self.handleSubjectAreaChanged()
         }
     }
     
@@ -636,17 +651,78 @@ public final class CameraViewModel: ObservableObject {
         if isARModeEnabled { arSession.startSession() } else { arSession.pauseSession() }
     }
     
+    // MARK: - Smart Autofocus & Exposure Control (Apple Camera App Style)
+    
+    private func handleSubjectAreaChanged() {
+        // Cảnh vật hoặc chủ thể di chuyển -> Kích hoạt lấy nét lại ngay lập tức
+        if showTargetCircle, let target = currentTargetPoint {
+            applyFocusAndExposure(to: target, source: .aiTarget, force: true)
+        } else {
+            applyFocusAndExposure(to: lastFocusPoint, source: .center, force: true)
+        }
+    }
+    
+    private func handleSmartFocusCalculated(point: CGPoint, type: SmartFocusType) {
+        // 1. Ưu tiên số 1: Nếu AI đã khóa mục tiêu target (vòng tròn vàng), luôn lấy nét vào target
+        if showTargetCircle, let target = currentTargetPoint {
+            applyFocusAndExposure(to: target, source: .aiTarget)
+            return
+        }
+        
+        // 2. Nếu đang ở chế độ thường: Mặt người > Vật thể nổi bật (Saliency) > Tâm màn hình
+        applyFocusAndExposure(to: point, source: type)
+    }
+    
+    public func applyFocusAndExposure(to point: CGPoint, source: SmartFocusType, force: Bool = false) {
+        let dx = point.x - lastFocusPoint.x
+        let dy = point.y - lastFocusPoint.y
+        let dist = sqrt(dx * dx + dy * dy)
+        
+        // Chỉ trigger refocus & animation khi điểm focus thay đổi đáng kể (> 0.08) hoặc khi cảnh thay đổi (force)
+        if dist > 0.08 || force {
+            lastFocusPoint = point
+            let devicePoint = CameraService.convertUIPointToDevicePoint(point)
+            cameraService.setSmartFocusAndExposure(at: devicePoint)
+            triggerFocusSquareAnimation(at: point)
+        }
+    }
+    
+    public func triggerFocusSquareAnimation(at point: CGPoint) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            self.activeFocusSquarePoint = point
+        }
+        focusSquareHideTask?.cancel()
+        focusSquareHideTask = Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            await MainActor.run {
+                withAnimation(.easeIn(duration: 0.3)) {
+                    if self.activeFocusSquarePoint == point {
+                        self.activeFocusSquarePoint = nil
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Manual Shutter Click (Nút chụp màu trắng)
     public func takePhotoManual() {
         if captureMode == .video {
             toggleVideoRecording()
             return
         }
         
-        guard aiSessionState == .idle else { return }
+        // Cho phép chụp thủ công bất kỳ lúc nào (ngay cả khi chưa bật AI hoặc AI đã hoàn tất)
         haptics.triggerShutterClick()
-        withAnimation(.easeInOut(duration: 0.1)) { isShutterPressing = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.isShutterPressing = false }
+        withAnimation(.easeInOut(duration: 0.05)) { activeFlashMode2 = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { self.activeFlashMode2 = false }
+        
+        withAnimation {
+            aiSessionState = .capturing
+            isShutterPressing = true
+        }
+        
         cameraService.capturePhoto()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
     
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {

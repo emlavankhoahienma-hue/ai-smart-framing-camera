@@ -125,6 +125,14 @@ public enum AIEngineSource: Equatable {
     }
 }
 
+// MARK: - Smart Autofocus Target Type
+public enum SmartFocusType: Equatable {
+    case face
+    case salientObject
+    case center
+    case aiTarget
+}
+
 // MARK: - Scene Classification Types
 public enum DetectedSceneType: String, CaseIterable {
     case portrait = "Portrait"

@@ -22,6 +22,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     // Callbacks
     public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)?
     public var onTargetTracked: ((CGPoint?, Double) -> Void)?
+    public var onSmartFocusPointCalculated: ((CGPoint, SmartFocusType) -> Void)?
     
     // Gemini Frame Capture
     public var captureNextFrameForGemini: Bool = false
@@ -262,17 +263,38 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 
                 result.confidence = 0.92
                 
+                // 3. Smart Autofocus Point Calculation (Face Priority > Saliency Object > Center)
+                var smartFocusPoint = CGPoint(x: 0.5, y: 0.5)
+                var smartFocusType: SmartFocusType = .center
+                
+                if let faces = self.faceDetectionRequest.results as? [VNFaceObservation], !faces.isEmpty {
+                    // Face Priority: chọn khuôn mặt có diện tích lớn nhất (chủ thể gần camera nhất)
+                    if let primaryFace = faces.max(by: { ($0.boundingBox.width * $0.boundingBox.height) < ($1.boundingBox.width * $1.boundingBox.height) }) {
+                        smartFocusPoint = CGPoint(x: primaryFace.boundingBox.midX, y: 1.0 - primaryFace.boundingBox.midY)
+                        smartFocusType = .face
+                    }
+                } else if let saliency = self.saliencyRequest.results?.first as? VNSaliencyImageObservation,
+                          let salientObjects = saliency.salientObjects, let dominant = salientObjects.first {
+                    // Saliency Object Priority
+                    smartFocusPoint = CGPoint(x: dominant.boundingBox.midX, y: 1.0 - dominant.boundingBox.midY)
+                    smartFocusType = .salientObject
+                }
+                
                 let luma = Self.estimateLuminance(from: pixelBuffer)
                 result.averageLuminance = luma.luminance
                 result.estimatedColorTemp = luma.colorTemp
                 
+                DispatchQueue.main.async {
+                    self.onDetectionCompleted?(result)
+                    self.onSmartFocusPointCalculated?(smartFocusPoint, smartFocusType)
+                }
             } catch {
                 result.detectedScene = .general
                 result.confidence = 0.5
-            }
-            
-            DispatchQueue.main.async {
-                self.onDetectionCompleted?(result)
+                DispatchQueue.main.async {
+                    self.onDetectionCompleted?(result)
+                    self.onSmartFocusPointCalculated?(CGPoint(x: 0.5, y: 0.5), .center)
+                }
             }
         }
     }

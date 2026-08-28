@@ -188,13 +188,30 @@ public struct CapturedPhotoPreviewView: View {
                             .foregroundColor(.gray)
                     }
                     
-                    // 5. Action Buttons
-                    HStack(spacing: 14) {
+                    // 5. Action Buttons (Lưu vào máy / Xem ảnh gốc / Chia sẻ)
+                    HStack(spacing: 10) {
+                        // Nút Lưu trực tiếp ảnh đã chỉnh vào Thư viện
+                        Button(action: {
+                            saveEnhancedImageToPhotos(currentProcessedImage)
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: hasSavedNewEnhancement ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                                    .font(.system(size: 14, weight: .bold))
+                                Text(hasSavedNewEnhancement ? "Đã lưu!" : "Lưu vào máy")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background(hasSavedNewEnhancement ? Color.green : Color.yellow)
+                            .cornerRadius(12)
+                        }
+                        
                         Button(action: {
                             isShowingOriginalOnly.toggle()
                         }) {
-                            Label(isShowingOriginalOnly ? "Xem màu AI" : "Xem ảnh gốc", systemImage: "eye.fill")
-                                .font(.system(size: 13, weight: .semibold))
+                            Label(isShowingOriginalOnly ? "Màu AI" : "Ảnh gốc", systemImage: "eye.fill")
+                                .font(.system(size: 12, weight: .semibold))
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 11)
@@ -204,14 +221,14 @@ public struct CapturedPhotoPreviewView: View {
                         
                         ShareLink(
                             item: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up),
-                            preview: SharePreview("VanKhoa AI Camera Photo", image: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up))
+                            preview: SharePreview("AlignAI Studio Photo", image: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up))
                         ) {
                             Label("Chia sẻ", systemImage: "square.and.arrow.up")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.black)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 11)
-                                .background(Color.yellow)
+                                .background(Color.white.opacity(0.25))
                                 .cornerRadius(12)
                         }
                     }
