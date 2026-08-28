@@ -290,8 +290,10 @@ public final class CameraViewModel: ObservableObject {
                 self.handleGeminiResponse(response)
             case .failure(let error):
                 self.geminiError = error.localizedDescription
-                // Fallback: dùng phân tích cục bộ
-                self.consolidateLocalAnalysisAndLockTarget()
+                // Lỗi API -> Hủy AI Session, không dùng fallback để tránh tạo target vàng sai lệch
+                self.cancelAISession()
+                // Vẫn giữ lại thông báo lỗi để hiển thị lên màn hình
+                self.geminiError = error.localizedDescription
             }
         }
     }
