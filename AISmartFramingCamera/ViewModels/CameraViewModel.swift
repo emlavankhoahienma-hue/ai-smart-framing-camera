@@ -131,9 +131,9 @@ public final class CameraViewModel: ObservableObject {
     }
     
     private func setupMotionCallbacks() {
-        motionService.onTargetProjected = { [weak self] projectedPoint in
+        motionService.onMotionUpdate = { [weak self] deltaX, deltaY in
             guard let self = self else { return }
-            self.handleWorldTargetProjected(point: projectedPoint)
+            self.handleGyroMotion(deltaX: deltaX, deltaY: deltaY)
         }
     }
     
@@ -319,7 +319,7 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: result.targetPoint)
     }
     
-    // MARK: - Pin Target & Start 3D World Anchor Spatial Tracking (Chuẩn App Đo iPhone)
+    // MARK: - Pin Target & Start Gyroscope Tracking (Chuẩn Build 15/16)
     
     private func pinTargetAndStartMotion(at target: CGPoint) {
         initialTargetPoint = target
@@ -329,9 +329,8 @@ public final class CameraViewModel: ObservableObject {
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // Khóa 3D World Anchor vector vào đúng vị trí vật thể/chữ trong không gian thực (như App Đo iPhone)
-        motionService.pinWorldTarget(at: target)
-        visionEngine.startTrackingObject(at: target)
+        // Khóa mục tiêu hoàn toàn bằng Gyro 60Hz - Không dùng Vision Engine để tránh bị nhảy (drift)
+        motionService.startTracking()
         
         haptics.triggerSelectionChange()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) {
@@ -343,18 +342,23 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 3D Spatial World Projection Handler (Bám dính tuyệt đối vào vị trí 3D thực tế)
+    // MARK: - 60Hz Gyro Motion Handler (Ghim dính tâm vàng hoàn hảo không sai số)
     
-    private func handleWorldTargetProjected(point: CGPoint) {
-        guard case .targetPlaced = aiSessionState else { return }
+    private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
+        guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
         
-        // Target vàng giữ nguyên vị trí vật lý trong không gian thực khi lia máy
-        self.currentTargetPoint = point
-        evaluateAlignment(at: point)
+        // Vị trí mục tiêu dịch chuyển trên màn hình theo góc xoay của thiết bị
+        let newX = initial.x - deltaX
+        let newY = initial.y - deltaY
+        
+        let newPoint = CGPoint(x: newX, y: newY)
+        self.currentTargetPoint = newPoint
+        
+        evaluateAlignment(at: newPoint)
     }
     
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
-        // Dự phòng cho vision engine nếu cần
+        // Tắt hoàn toàn visual tracking để tâm vàng không bị nhảy lung tung khi đưa máy lại gần
     }
     
     private func evaluateAlignment(at point: CGPoint) {
