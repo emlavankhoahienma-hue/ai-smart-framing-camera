@@ -642,14 +642,8 @@ public final class CameraViewModel: ObservableObject {
 // MARK: - CameraServiceDelegate
 extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
-        let orientation: CGImagePropertyOrientation
-        switch UIDevice.current.orientation {
-        case .landscapeLeft: orientation = .up
-        case .landscapeRight: orientation = .down
-        case .portraitUpsideDown: orientation = .left
-        default: orientation = .right
-        }
-        visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: orientation)
+        // Video connection is already set to .portrait in CameraService, so pixelBuffer is upright (.up)
+        visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: .up)
     }
     
     public func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {
