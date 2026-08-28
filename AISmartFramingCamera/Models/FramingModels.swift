@@ -86,6 +86,45 @@ public enum AISessionState: Equatable {
     }
 }
 
+// MARK: - AI Framing Engine Source Indicator
+public enum AIEngineSource: Equatable {
+    case geminiCloud(model: String)
+    case appleNeuralEngine(scene: String)
+    
+    public var title: String {
+        switch self {
+        case .geminiCloud(let model):
+            return "✨ Cloud AI: \(model)"
+        case .appleNeuralEngine(let scene):
+            return "⚡ Apple Neural Engine (\(scene))"
+        }
+    }
+    
+    public var badgeName: String {
+        switch self {
+        case .geminiCloud(let model):
+            let short = model.replacingOccurrences(of: "gemini-", with: "").uppercased()
+            return "CLOUD AI (\(short))"
+        case .appleNeuralEngine:
+            return "NPU CHIP A-SERIES"
+        }
+    }
+    
+    public var iconName: String {
+        switch self {
+        case .geminiCloud: return "sparkles"
+        case .appleNeuralEngine: return "cpu.fill"
+        }
+    }
+    
+    public var badgeColor: Color {
+        switch self {
+        case .geminiCloud: return .cyan
+        case .appleNeuralEngine: return .green
+        }
+    }
+}
+
 // MARK: - Scene Classification Types
 public enum DetectedSceneType: String, CaseIterable {
     case portrait = "Portrait"

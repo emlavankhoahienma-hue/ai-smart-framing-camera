@@ -95,6 +95,11 @@ public final class CameraViewModel: ObservableObject {
     @Published public var autoCaptureCountdown: Int = 0
     @Published public var currentAIColorParams: AIColorParameters? = nil
     
+    // ARKit 3D World Tracking & Engine Source Indicator
+    public let arSessionService = ARCompositionSession.shared
+    @Published public var activeEngineSource: AIEngineSource? = nil
+    @Published public var arTrackingWarning: String? = nil
+    
     // Internal State
     private var autoCaptureTask: Task<Void, Never>? = nil
     private var analysisFrames: [SubjectDetectionResult] = []
@@ -128,6 +133,7 @@ public final class CameraViewModel: ObservableObject {
         
         setupCallbacks()
         setupMotionCallbacks()
+        arSessionService.startSession()
     }
     
     // MARK: - Initialization & Permissions
@@ -170,6 +176,13 @@ public final class CameraViewModel: ObservableObject {
     }
     
     private func setupMotionCallbacks() {
+        // 1. ARKit 3D World Tracking Anchor Projection (Ưu tiên số 1 - Chuẩn App Đo trên iPhone)
+        arSessionService.onTargetProjected = { [weak self] projectedPoint, isValid, warning in
+            guard let self = self else { return }
+            self.handleARWorldTargetProjected(point: projectedPoint, isValid: isValid, warning: warning)
+        }
+        
+        // 2. 60Hz Gyroscope Quán tính
         motionService.onMotionUpdate = { [weak self] deltaX, deltaY in
             guard let self = self else { return }
             self.handleGyroMotion(deltaX: deltaX, deltaY: deltaY)
@@ -184,6 +197,7 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
         
         // Reset state
+        arSessionService.clearTarget()
         motionService.stopTracking()
         visionEngine.stopTrackingObject()
         analysisFrames = []
@@ -197,6 +211,8 @@ public final class CameraViewModel: ObservableObject {
         geminiError = nil
         geminiExplanation = ""
         activeModelUsedName = ""
+        activeEngineSource = nil
+        arTrackingWarning = nil
         
         withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
             aiSessionState = .analyzing
@@ -209,6 +225,7 @@ public final class CameraViewModel: ObservableObject {
     public func cancelAISession() {
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
+        arSessionService.clearTarget()
         motionService.stopTracking()
         visionEngine.stopTrackingObject()
         haptics.triggerSelectionChange()
@@ -223,6 +240,8 @@ public final class CameraViewModel: ObservableObject {
             alignmentDistance = 1.0
             detectedSubjectRects = []
             detectedFaceRects = []
+            activeEngineSource = nil
+            arTrackingWarning = nil
         }
     }
     
@@ -305,6 +324,7 @@ public final class CameraViewModel: ObservableObject {
         self.detectedScene = response.sceneType
         self.activeCompositionRule = response.compositionRule
         self.activeModelUsedName = response.modelUsed
+        self.activeEngineSource = .geminiCloud(model: response.modelUsed)
         self.geminiLatencyMs = response.latencyMs
         self.aiSuggestedZoom = response.suggestedZoom
         
@@ -351,6 +371,7 @@ public final class CameraViewModel: ObservableObject {
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
         self.framingResult = result
         self.detectedScene = dominantScene
+        self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
         
         if isAIFullColorEnabled {
             currentAIColorParams = dominantScene.aiFullColorParameters
@@ -365,7 +386,7 @@ public final class CameraViewModel: ObservableObject {
     private var lastVisualConfidence: Double = 0
     private var lastTrackedVisualPoint: CGPoint? = nil
     
-    // MARK: - Pin Target & Start Tracking (Chuẩn Apple Measure App: Optical Visual Lock + Gyro Odometry)
+    // MARK: - Pin Target & Start Tracking (Chuẩn Apple Measure App: ARKit 3D World Anchor + Visual/Gyro Fallback)
     
     private func pinTargetAndStartMotion(at target: CGPoint) {
         initialTargetPoint = target
@@ -377,10 +398,13 @@ public final class CameraViewModel: ObservableObject {
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // 1. Khởi động Vision Optical Tracking (VNTrackObjectRequest) bám chặt vào texture/chữ/vật thể tại target
+        // 1. Khóa 3D World Anchor bằng ARKit (Raycast & Feature Points bám không gian 3D như App Đo)
+        arSessionService.pinTarget(at: target, viewportSize: UIScreen.main.bounds.size)
+        
+        // 2. Khởi động Vision Optical Tracking (VNTrackObjectRequest) làm bộ lọc quang học bổ trợ
         visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.18, height: 0.18))
         
-        // 2. Khởi động 60Hz Gyroscope làm mỏ neo không gian quán tính (Inertial Fallback)
+        // 3. Khởi động 60Hz Gyroscope làm mỏ neo quán tính dự phòng
         motionService.startTracking()
         
         haptics.triggerSelectionChange()
@@ -393,35 +417,48 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - Optical Visual Object Tracking Handler (Bám chặt vào vật thể/chữ thực tế trên màn hình)
+    // MARK: - 1. ARKit 3D World Target Handler (Ưu tiên hàng đầu — 60 FPS Camera Pose Projection)
+    
+    private func handleARWorldTargetProjected(point: CGPoint, isValid: Bool, warning: String?) {
+        guard case .targetPlaced = aiSessionState else { return }
+        self.arTrackingWarning = warning
+        
+        if isValid {
+            self.currentTargetPoint = point
+            evaluateAlignment(at: point)
+        }
+    }
+    
+    // MARK: - 2. Optical Visual Object Tracking Handler (Bổ trợ quang học khi ARKit chưa khóa được mặt phẳng)
     
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
         guard case .targetPlaced = aiSessionState else { return }
         self.lastVisualConfidence = confidence
         
-        if let visualPoint = point, confidence > 0.25 {
-            self.lastTrackedVisualPoint = visualPoint
-            
-            // Lọc EMA để khử nhiễu micro-jitter quang học
-            let current = self.currentTargetPoint ?? visualPoint
-            let alpha: CGFloat = 0.70 // 70% vị trí quang học mới, 30% vị trí trước
-            let smoothedX = current.x * (1.0 - alpha) + visualPoint.x * alpha
-            let smoothedY = current.y * (1.0 - alpha) + visualPoint.y * alpha
-            let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
-            
-            self.currentTargetPoint = smoothedPoint
-            evaluateAlignment(at: smoothedPoint)
+        // Nếu ARKit không khả dụng hoặc đang bị giới hạn, dùng Visual Tracking tiếp quản
+        if !arSessionService.isARSupported || !arSessionService.isTrackingNormal {
+            if let visualPoint = point, confidence > 0.25 {
+                self.lastTrackedVisualPoint = visualPoint
+                
+                let current = self.currentTargetPoint ?? visualPoint
+                let alpha: CGFloat = 0.70
+                let smoothedX = current.x * (1.0 - alpha) + visualPoint.x * alpha
+                let smoothedY = current.y * (1.0 - alpha) + visualPoint.y * alpha
+                let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
+                
+                self.currentTargetPoint = smoothedPoint
+                evaluateAlignment(at: smoothedPoint)
+            }
         }
     }
     
-    // MARK: - 60Hz Gyro Motion Handler (Inertial Odometry khi mất dấu hoặc chuyển động nhanh)
+    // MARK: - 3. 60Hz Gyro Motion Handler (Inertial Odometry quán tính khi lia máy quá nhanh)
     
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
         guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
         
-        // Nếu Vision Tracking đang mất dấu (ví dụ lia máy quá nhanh bị mờ hình)
-        // Dùng Gyroscope tiếp quản làm mỏ neo không gian để tâm vàng không bị văng
-        if lastVisualConfidence <= 0.25 {
+        // Nếu cả ARKit và Vision đều mất dấu, dùng Gyroscope quán tính
+        if (!arSessionService.isARSupported || !arSessionService.isTrackingNormal) && lastVisualConfidence <= 0.25 {
             let newX = initial.x - deltaX
             let newY = initial.y - deltaY
             let gyroPoint = CGPoint(x: newX, y: newY)
@@ -502,6 +539,7 @@ public final class CameraViewModel: ObservableObject {
     }
     
     private func executeCapture() {
+        arSessionService.clearTarget()
         motionService.stopTracking()
         visionEngine.stopTrackingObject()
         haptics.triggerShutterClick()

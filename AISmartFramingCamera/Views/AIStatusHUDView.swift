@@ -31,8 +31,22 @@ public struct AIStatusHUDView: View {
                 
                 // Badges Deck
                 HStack(spacing: 5) {
+                    // Engine Source Badge (Cloud AI vs Apple Neural Engine Chip)
+                    if let engine = viewModel.activeEngineSource, case .targetPlaced = viewModel.aiSessionState {
+                        HStack(spacing: 3) {
+                            Image(systemName: engine.iconName)
+                                .font(.system(size: 8, weight: .black))
+                            Text(engine.badgeName)
+                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        }
+                        .foregroundColor(engine.badgeColor)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(engine.badgeColor.opacity(0.2))
+                        .cornerRadius(6)
+                    }
+                    
                     // Gemini Active Badge with Latency
-                    if viewModel.useGeminiForAnalysis {
+                    if viewModel.useGeminiForAnalysis && viewModel.activeEngineSource == nil {
                         HStack(spacing: 3) {
                             Image(systemName: "sparkle")
                                 .font(.system(size: 9, weight: .heavy))
@@ -90,6 +104,22 @@ public struct AIStatusHUDView: View {
                     .overlay(Capsule().stroke(viewModel.aiSessionState.accentColor.opacity(0.45), lineWidth: 1))
             )
             
+            // ARKit Tracking Warning Banner
+            if let warning = viewModel.arTrackingWarning, case .targetPlaced = viewModel.aiSessionState {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.yellow)
+                    Text(warning)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundColor(.yellow)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 4)
+                .background(Capsule().fill(Color.black.opacity(0.75)))
+                .overlay(Capsule().stroke(Color.yellow.opacity(0.6), lineWidth: 1))
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            
             // Gemini Live Explanation sub-pill
             if !viewModel.geminiExplanation.isEmpty, case .targetPlaced = viewModel.aiSessionState {
                 HStack(spacing: 6) {
@@ -121,6 +151,7 @@ public struct AIStatusHUDView: View {
         .padding(.horizontal, 16)
         .animation(.easeInOut(duration: 0.25), value: viewModel.aiSessionState)
         .animation(.easeInOut(duration: 0.3), value: viewModel.geminiExplanation)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.arTrackingWarning)
     }
     
     private var sessionIconName: String {
