@@ -185,9 +185,12 @@ public final class CameraViewModel: ObservableObject {
         
         // Reset state
         motionService.stopTracking()
+        visionEngine.stopTrackingObject()
         analysisFrames = []
         initialTargetPoint = nil
         currentTargetPoint = nil
+        lastTrackedVisualPoint = nil
+        lastVisualConfidence = 0
         isOneShotCaptured = false
         isPerfectAlignment = false
         alignmentDistance = 1.0
@@ -358,17 +361,26 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: result.targetPoint)
     }
     
-    // MARK: - Pin Target & Start Gyroscope Tracking (Chuẩn Build 15/16)
+    // MARK: - State for Hybrid Optical Visual + Gyro Tracking
+    private var lastVisualConfidence: Double = 0
+    private var lastTrackedVisualPoint: CGPoint? = nil
+    
+    // MARK: - Pin Target & Start Tracking (Chuẩn Apple Measure App: Optical Visual Lock + Gyro Odometry)
     
     private func pinTargetAndStartMotion(at target: CGPoint) {
         initialTargetPoint = target
         currentTargetPoint = target
+        lastTrackedVisualPoint = target
+        lastVisualConfidence = 1.0
         
         let dx = target.x - 0.5
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // Khóa mục tiêu hoàn toàn bằng Gyro 60Hz - Không dùng Vision Engine để tránh bị nhảy (drift)
+        // 1. Khởi động Vision Optical Tracking (VNTrackObjectRequest) bám chặt vào texture/chữ/vật thể tại target
+        visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.18, height: 0.18))
+        
+        // 2. Khởi động 60Hz Gyroscope làm mỏ neo không gian quán tính (Inertial Fallback)
         motionService.startTracking()
         
         haptics.triggerSelectionChange()
@@ -381,23 +393,48 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 60Hz Gyro Motion Handler (Ghim dính tâm vàng hoàn hảo không sai số)
+    // MARK: - Optical Visual Object Tracking Handler (Bám chặt vào vật thể/chữ thực tế trên màn hình)
+    
+    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
+        guard case .targetPlaced = aiSessionState else { return }
+        self.lastVisualConfidence = confidence
+        
+        if let visualPoint = point, confidence > 0.25 {
+            self.lastTrackedVisualPoint = visualPoint
+            
+            // Lọc EMA để khử nhiễu micro-jitter quang học
+            let current = self.currentTargetPoint ?? visualPoint
+            let alpha: CGFloat = 0.70 // 70% vị trí quang học mới, 30% vị trí trước
+            let smoothedX = current.x * (1.0 - alpha) + visualPoint.x * alpha
+            let smoothedY = current.y * (1.0 - alpha) + visualPoint.y * alpha
+            let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
+            
+            self.currentTargetPoint = smoothedPoint
+            evaluateAlignment(at: smoothedPoint)
+        }
+    }
+    
+    // MARK: - 60Hz Gyro Motion Handler (Inertial Odometry khi mất dấu hoặc chuyển động nhanh)
     
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
         guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
         
-        // Vị trí mục tiêu dịch chuyển trên màn hình theo góc xoay của thiết bị
-        let newX = initial.x - deltaX
-        let newY = initial.y - deltaY
-        
-        let newPoint = CGPoint(x: newX, y: newY)
-        self.currentTargetPoint = newPoint
-        
-        evaluateAlignment(at: newPoint)
-    }
-    
-    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
-        // Tắt hoàn toàn visual tracking để tâm vàng không bị nhảy lung tung khi đưa máy lại gần
+        // Nếu Vision Tracking đang mất dấu (ví dụ lia máy quá nhanh bị mờ hình)
+        // Dùng Gyroscope tiếp quản làm mỏ neo không gian để tâm vàng không bị văng
+        if lastVisualConfidence <= 0.25 {
+            let newX = initial.x - deltaX
+            let newY = initial.y - deltaY
+            let gyroPoint = CGPoint(x: newX, y: newY)
+            
+            let current = self.currentTargetPoint ?? gyroPoint
+            let alpha: CGFloat = 0.50
+            let smoothedX = current.x * (1.0 - alpha) + newX * alpha
+            let smoothedY = current.y * (1.0 - alpha) + newY * alpha
+            let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
+            
+            self.currentTargetPoint = smoothedPoint
+            evaluateAlignment(at: smoothedPoint)
+        }
     }
     
     private func evaluateAlignment(at point: CGPoint) {
