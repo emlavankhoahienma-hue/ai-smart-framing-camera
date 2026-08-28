@@ -290,10 +290,8 @@ public final class CameraViewModel: ObservableObject {
                 self.handleGeminiResponse(response)
             case .failure(let error):
                 self.geminiError = error.localizedDescription
-                // Lỗi API -> Hủy AI Session, không dùng fallback để tránh tạo target vàng sai lệch
-                self.cancelAISession()
-                // Vẫn giữ lại thông báo lỗi để hiển thị lên màn hình
-                self.geminiError = error.localizedDescription
+                // Lỗi API -> Tự động Fallback qua Neural Engine cục bộ (CoreML / Vision) để vẫn dùng được app
+                self.consolidateLocalAnalysisAndLockTarget()
             }
         }
     }
@@ -323,28 +321,28 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Local Neural Engine Analysis (One-shot)
     
     private func consolidateLocalAnalysisAndLockTarget() {
-        guard !analysisFrames.isEmpty else { return }
-        
-        var sceneCounts: [DetectedSceneType: Int] = [:]
-        for f in analysisFrames { sceneCounts[f.detectedScene, default: 0] += 1 }
-        let dominantScene = sceneCounts.max(by: { $0.value < $1.value })?.key ?? .general
-        
-        let validFrames = analysisFrames.filter { $0.dominantSubjectRect != nil }
+        var dominantScene: DetectedSceneType = .general
         var avgDetection = SubjectDetectionResult()
         
-        if !validFrames.isEmpty {
-            let avgX = validFrames.compactMap { $0.dominantSubjectRect?.midX }.reduce(0, +) / CGFloat(validFrames.count)
-            let avgY = validFrames.compactMap { $0.dominantSubjectRect?.midY }.reduce(0, +) / CGFloat(validFrames.count)
-            let avgW = validFrames.compactMap { $0.dominantSubjectRect?.width }.reduce(0, +) / CGFloat(validFrames.count)
-            let avgH = validFrames.compactMap { $0.dominantSubjectRect?.height }.reduce(0, +) / CGFloat(validFrames.count)
-            avgDetection.dominantSubjectRect = CGRect(x: avgX - avgW/2, y: avgY - avgH/2, width: avgW, height: avgH)
-            avgDetection.detectedScene = dominantScene
-            avgDetection.averageLuminance = analysisFrames.map { $0.averageLuminance }.reduce(0, +) / Float(analysisFrames.count)
-            avgDetection.estimatedColorTemp = analysisFrames.map { $0.estimatedColorTemp }.reduce(0, +) / Float(analysisFrames.count)
-        }
-        
-        if let faceFrame = analysisFrames.first(where: { !$0.faceRectangles.isEmpty }) {
-            avgDetection.faceRectangles = faceFrame.faceRectangles
+        if !analysisFrames.isEmpty {
+            var sceneCounts: [DetectedSceneType: Int] = [:]
+            for f in analysisFrames { sceneCounts[f.detectedScene, default: 0] += 1 }
+            dominantScene = sceneCounts.max(by: { $0.value < $1.value })?.key ?? .general
+            
+            let validFrames = analysisFrames.filter { $0.dominantSubjectRect != nil }
+            if !validFrames.isEmpty {
+                let avgX = validFrames.compactMap { $0.dominantSubjectRect?.midX }.reduce(0, +) / CGFloat(validFrames.count)
+                let avgY = validFrames.compactMap { $0.dominantSubjectRect?.midY }.reduce(0, +) / CGFloat(validFrames.count)
+                let avgW = validFrames.compactMap { $0.dominantSubjectRect?.width }.reduce(0, +) / CGFloat(validFrames.count)
+                let avgH = validFrames.compactMap { $0.dominantSubjectRect?.height }.reduce(0, +) / CGFloat(validFrames.count)
+                avgDetection.dominantSubjectRect = CGRect(x: avgX - avgW/2, y: avgY - avgH/2, width: avgW, height: avgH)
+                avgDetection.detectedScene = dominantScene
+                avgDetection.averageLuminance = analysisFrames.map { $0.averageLuminance }.reduce(0, +) / Float(analysisFrames.count)
+                avgDetection.estimatedColorTemp = analysisFrames.map { $0.estimatedColorTemp }.reduce(0, +) / Float(analysisFrames.count)
+            }
+            if let faceFrame = analysisFrames.first(where: { !$0.faceRectangles.isEmpty }) {
+                avgDetection.faceRectangles = faceFrame.faceRectangles
+            }
         }
         
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)

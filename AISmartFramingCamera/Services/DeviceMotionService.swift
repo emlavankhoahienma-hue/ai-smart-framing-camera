@@ -60,10 +60,10 @@ public final class DeviceMotionService: @unchecked Sendable {
             switch orientation {
             case .landscapeLeft:
                 deltaX = -pitchDelta * self.sensitivityFactor
-                deltaY = -rollDelta * self.sensitivityFactor
+                deltaY = -yawDelta * self.sensitivityFactor
             case .landscapeRight:
                 deltaX = pitchDelta * self.sensitivityFactor
-                deltaY = rollDelta * self.sensitivityFactor
+                deltaY = yawDelta * self.sensitivityFactor
             case .portraitUpsideDown:
                 deltaX = -yawDelta * self.sensitivityFactor
                 deltaY = pitchDelta * self.sensitivityFactor
