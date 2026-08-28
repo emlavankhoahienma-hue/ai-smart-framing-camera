@@ -59,13 +59,17 @@ public final class DeviceMotionService: @unchecked Sendable {
             let orientation = UIDevice.current.orientation
             switch orientation {
             case .landscapeLeft:
-                // Máy quay ngang trái: Trục Y điện thoại thành X màn hình, Trục X điện thoại thành Y màn hình
-                deltaX = -pitchDelta * self.sensitivityFactor
-                deltaY = -yawDelta * self.sensitivityFactor
-            case .landscapeRight:
-                // Máy quay ngang phải
+                // Máy quay ngang trái: 
+                // Pan Right (yaw > 0) -> target moves to Earpiece (-Y) -> deltaY > 0
+                // Tilt Up (pitch > 0) -> target moves to Vol Buttons (-X) -> deltaX > 0
                 deltaX = pitchDelta * self.sensitivityFactor
                 deltaY = yawDelta * self.sensitivityFactor
+            case .landscapeRight:
+                // Máy quay ngang phải
+                // Pan Right (yaw > 0) -> target moves to Charging Port (+Y) -> deltaY < 0
+                // Tilt Up (pitch > 0) -> target moves to Power Button (+X) -> deltaX < 0
+                deltaX = -pitchDelta * self.sensitivityFactor
+                deltaY = -yawDelta * self.sensitivityFactor
             case .portraitUpsideDown:
                 deltaX = -yawDelta * self.sensitivityFactor
                 deltaY = pitchDelta * self.sensitivityFactor

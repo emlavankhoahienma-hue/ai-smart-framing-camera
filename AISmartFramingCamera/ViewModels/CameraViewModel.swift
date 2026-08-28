@@ -384,12 +384,7 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - 60Hz Gyro Motion Handler (Ghim dính tâm vàng hoàn hảo không sai số)
     
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
-        let isValidState: Bool
-        switch aiSessionState {
-        case .targetPlaced, .alignmentPerfect: isValidState = true
-        default: isValidState = false
-        }
-        guard isValidState, let initial = initialTargetPoint else { return }
+        guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
         
         // Vị trí mục tiêu dịch chuyển trên màn hình theo góc xoay của thiết bị
         let newX = initial.x - deltaX
