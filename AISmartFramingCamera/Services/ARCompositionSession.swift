@@ -72,7 +72,7 @@ public final class ARCompositionSession: NSObject, ARSessionDelegate, Observable
         var targetTransform: simd_float4x4? = nil
         
         // 1. Raycast ra mặt phẳng ước lượng (Estimated Plane)
-        if let query = arSession.raycastQuery(from: screenPoint, allowing: .estimatedPlane, alignment: .any) {
+        if let query = currentFrame.raycastQuery(from: screenPoint, allowing: .estimatedPlane, alignment: .any) {
             let results = arSession.raycast(query)
             if let first = results.first {
                 targetTransform = first.worldTransform
@@ -81,7 +81,7 @@ public final class ARCompositionSession: NSObject, ARSessionDelegate, Observable
         
         // 2. Fallback: Raycast vào existing plane
         if targetTransform == nil {
-            if let query = arSession.raycastQuery(from: screenPoint, allowing: .existingPlaneGeometry, alignment: .any) {
+            if let query = currentFrame.raycastQuery(from: screenPoint, allowing: .existingPlaneGeometry, alignment: .any) {
                 let results = arSession.raycast(query)
                 if let first = results.first {
                     targetTransform = first.worldTransform
