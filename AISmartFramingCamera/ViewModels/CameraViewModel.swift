@@ -18,7 +18,20 @@ public final class CameraViewModel: ObservableObject {
     public let motionService = DeviceMotionService.shared
     
     // MARK: - AI Session State Machine
-    @Published public var aiSessionState: AISessionState = .idle
+    @Published public var aiSessionState: AISessionState = .idle {
+        didSet {
+            switch aiSessionState {
+            case .idle, .done:
+                visionEngine.isIdlePreviewMode = true
+                arSessionService.pauseSession()
+            case .analyzing:
+                visionEngine.isIdlePreviewMode = false
+                arSessionService.startSession()
+            default:
+                visionEngine.isIdlePreviewMode = false
+            }
+        }
+    }
     
     // MARK: - Published UI States (Persisted)
     @Published public var isCameraReady: Bool = false
@@ -136,7 +149,6 @@ public final class CameraViewModel: ObservableObject {
         
         setupCallbacks()
         setupMotionCallbacks()
-        arSessionService.startSession()
     }
     
     // MARK: - Initialization & Permissions

@@ -42,7 +42,7 @@ public final class ARCompositionSession: NSObject, ARSessionDelegate, Observable
         
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal, .vertical]
-        config.environmentTexturing = .automatic
+        config.environmentTexturing = .none
         
         arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
     }

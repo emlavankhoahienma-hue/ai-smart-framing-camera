@@ -29,6 +29,7 @@ public final class CameraService: NSObject {
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
     private let movieFileOutput = AVCaptureMovieFileOutput()
+    private let sharedPhotoContext = CIContext(options: [.useSoftwareRenderer: false])
     
     // State
     public private(set) var isSessionRunning = false
@@ -379,8 +380,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             ciImage = ciImage.cropped(to: cropRect)
         }
         
-        let ciContext = CIContext(options: [.useSoftwareRenderer: false])
-        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
+        guard let cgImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent) else { return }
         
         let metadata = photo.metadata
         let (iso, shutter) = Self.parseExif(metadata)

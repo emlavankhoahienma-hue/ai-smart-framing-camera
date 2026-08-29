@@ -15,9 +15,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
         autoreleaseFrequency: .workItem
     )
     
+    private let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
+    
     private var isProcessingFrame = false
     private var lastProcessTime: TimeInterval = 0
     private let frameThrottleInterval: TimeInterval = 0.033 // ~30 FPS for ultra-smooth optical tracking
+    public var isIdlePreviewMode: Bool = false
+    private let idleThrottleInterval: TimeInterval = 0.2 // ~5 FPS lúc rảnh, vẫn đủ mượt cho preview mặt/scene
     
     // Callbacks
     public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)?
@@ -96,7 +100,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
     // MARK: - Process Incoming Video PixelBuffer
     public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer, orientation: CGImagePropertyOrientation = .up) {
         let currentTime = CACurrentMediaTime()
-        guard currentTime - lastProcessTime >= frameThrottleInterval else { return }
+        let effectiveThrottle = isIdlePreviewMode ? idleThrottleInterval : frameThrottleInterval
+        guard currentTime - lastProcessTime >= effectiveThrottle else { return }
         guard !isProcessingFrame else { return }
         
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -109,8 +114,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         if shouldCaptureForGemini {
             captureNextFrameForGemini = false
             let ciImg = CIImage(cvPixelBuffer: pixelBuffer)
-            let ciCtx = CIContext(options: [.useSoftwareRenderer: false])
-            if let cgImg = ciCtx.createCGImage(ciImg, from: ciImg.extent) {
+            if let cgImg = self.sharedCIContext.createCGImage(ciImg, from: ciImg.extent) {
                 DispatchQueue.main.async { [weak self] in
                     self?.capturedGeminiFrame = cgImg
                 }
