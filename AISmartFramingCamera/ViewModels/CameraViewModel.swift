@@ -875,11 +875,11 @@ public final class CameraViewModel: ObservableObject {
             
             PHPhotoLibrary.shared().performChanges({
                 let creationRequest = PHAssetCreationRequest.forAsset()
-                creationRequest.addResource(.photo, data: image.jpegData(compressionQuality: 0.95) ?? Data(), options: nil)
+                creationRequest.addResource(with: .photo, data: image.jpegData(compressionQuality: 0.95) ?? Data(), options: nil)
                 if let liveURL = livePhotoURL {
                     let options = PHAssetResourceCreationOptions()
                     options.shouldMoveFile = true
-                    creationRequest.addResource(.pairedVideo, fileURL: liveURL, options: options)
+                    creationRequest.addResource(with: .pairedVideo, fileURL: liveURL, options: options)
                 }
                 
                 if isAIColorEdited {
