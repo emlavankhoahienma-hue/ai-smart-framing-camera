@@ -73,14 +73,17 @@ public struct ARFramingOverlayView: View {
                     .position(targetScreen)
                 }
                 
-                // 5. TÂM TRẮNG GIỮA MÀN HÌNH — LUÔN LUÔN CỐ ĐỊNH Ở CHÍNH GIỮA (0.5, 0.5)
-                // Đây là tâm ngắm của camera. Bạn chỉ việc di chuyển máy để tâm trắng này đè lên Target Vàng.
-                CurrentCenterCrosshair(
-                    isAligned: viewModel.isPerfectAlignment,
-                    sessionState: viewModel.aiSessionState,
-                    distance: viewModel.alignmentDistance
-                )
-                .position(screenCenter)
+                // 5. TÂM TRẮNG GIỮA MÀN HÌNH — CHỈ HIỆN KHI AI ĐÃ XÁC ĐỊNH ĐƯỢC TARGET
+                // Trước đó (idle/đang phân tích) tâm này ẨN, không hiện gì cả.
+                if viewModel.showTargetCircle {
+                    CurrentCenterCrosshair(
+                        isAligned: viewModel.isPerfectAlignment,
+                        sessionState: viewModel.aiSessionState,
+                        distance: viewModel.alignmentDistance
+                    )
+                    .position(screenCenter)
+                    .transition(.opacity.combined(with: .scale(scale: 0.7)))
+                }
                 
                 // 6. Countdown Overlay khi 2 tâm đã trùng khớp
                 if case .alignmentPerfect = viewModel.aiSessionState {
@@ -125,6 +128,7 @@ public struct ARFramingOverlayView: View {
                 }
             }
             .clipped()
+            .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
             .onAppear { startAnimations() }
         }
     }
@@ -266,7 +270,14 @@ struct TargetCircleView: View {
             ZStack {
                 if !isAligned && trackingQuality == .locked {
                     Circle()
-                        .stroke(baseColor.opacity(radarOpacity), lineWidth: 1.2)
+                        .stroke(
+                            AngularGradient(
+                                colors: [.cyan, .purple, .pink, .orange, .cyan],
+                                center: .center
+                            ),
+                            style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
+                        )
+                        .opacity(radarOpacity)
                         .frame(width: 64 * radarPulse, height: 64 * radarPulse)
                 }
                 
