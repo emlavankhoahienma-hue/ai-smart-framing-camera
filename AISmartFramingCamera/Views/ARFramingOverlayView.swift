@@ -67,7 +67,8 @@ public struct ARFramingOverlayView: View {
                         alignmentDistance: viewModel.alignmentDistance,
                         radarPulse: radarPulse,
                         radarOpacity: radarOpacity,
-                        countdown: viewModel.autoCaptureCountdown
+                        countdown: viewModel.autoCaptureCountdown,
+                        trackingQuality: viewModel.trackingQuality
                     )
                     .position(targetScreen)
                 }
@@ -111,6 +112,16 @@ public struct ARFramingOverlayView: View {
                     Color.white.opacity(0.55)
                         .ignoresSafeArea()
                         .transition(.opacity)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { location in
+                if case .targetPlaced = viewModel.aiSessionState {
+                    let normalizedPoint = CGPoint(
+                        x: max(0.05, min(0.95, location.x / size.width)),
+                        y: max(0.05, min(0.95, location.y / size.height))
+                    )
+                    viewModel.pinTargetAndStartMotion(at: normalizedPoint)
                 }
             }
             .clipped()
@@ -219,7 +230,7 @@ struct CurrentCenterCrosshair: View {
     }
 }
 
-// MARK: - Target Vàng (Di chuyển theo Gyro để về tâm giữa)
+// MARK: - Target Vàng (Di chuyển theo Gyro + Optical Tracking để về tâm giữa)
 
 struct TargetCircleView: View {
     let isAligned: Bool
@@ -227,54 +238,119 @@ struct TargetCircleView: View {
     let radarPulse: CGFloat
     let radarOpacity: Double
     let countdown: Int
+    let trackingQuality: TrackingQuality
+    
+    private var baseColor: Color {
+        if isAligned { return .green }
+        switch trackingQuality {
+        case .locked: return .yellow
+        case .predicting, .reacquiring: return Color.orange
+        case .lost: return Color.red
+        }
+    }
+    
+    private var strokeStyle: StrokeStyle {
+        let width: CGFloat = isAligned ? 3.5 : 2.2
+        switch trackingQuality {
+        case .locked:
+            return StrokeStyle(lineWidth: width)
+        case .predicting, .reacquiring:
+            return StrokeStyle(lineWidth: width, dash: [6, 4])
+        case .lost:
+            return StrokeStyle(lineWidth: width, dash: [3, 3])
+        }
+    }
     
     var body: some View {
-        ZStack {
-            if !isAligned {
-                Circle()
-                    .stroke(Color.yellow.opacity(radarOpacity), lineWidth: 1.2)
-                    .frame(width: 64 * radarPulse, height: 64 * radarPulse)
-            }
-            
-            let progress = max(0, 1.0 - (alignmentDistance / 0.30))
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(
-                    isAligned ? Color.green : Color.yellow.opacity(0.5),
-                    style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
-                )
-                .frame(width: 60, height: 60)
-                .rotationEffect(.degrees(-90))
-                .animation(.easeInOut(duration: 0.12), value: alignmentDistance)
-            
-            Circle()
-                .stroke(
-                    isAligned ? Color.green : Color.yellow,
-                    style: StrokeStyle(lineWidth: isAligned ? 3.5 : 2.2)
-                )
-                .frame(width: 52, height: 52)
-                .shadow(color: isAligned ? Color.green.opacity(0.9) : Color.yellow.opacity(0.65), radius: isAligned ? 10 : 5)
-            
-            if isAligned {
-                if countdown > 0 {
-                    Text("\(countdown)")
-                        .font(.system(size: 20, weight: .black, design: .rounded))
-                        .foregroundColor(.green)
-                } else {
-                    Image(systemName: "camera.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.green)
+        VStack(spacing: 6) {
+            ZStack {
+                if !isAligned && trackingQuality == .locked {
+                    Circle()
+                        .stroke(baseColor.opacity(radarOpacity), lineWidth: 1.2)
+                        .frame(width: 64 * radarPulse, height: 64 * radarPulse)
                 }
-            } else {
-                ZStack {
-                    Circle().fill(Color.yellow.opacity(0.75)).frame(width: 8, height: 8)
-                    Rectangle().fill(Color.yellow.opacity(0.6)).frame(width: 14, height: 1)
-                    Rectangle().fill(Color.yellow.opacity(0.6)).frame(width: 1, height: 14)
+                
+                let progress = max(0, 1.0 - (alignmentDistance / 0.30))
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(
+                        isAligned ? Color.green : baseColor.opacity(0.5),
+                        style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
+                    )
+                    .frame(width: 60, height: 60)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeInOut(duration: 0.12), value: alignmentDistance)
+                
+                Circle()
+                    .stroke(baseColor, style: strokeStyle)
+                    .frame(width: 52, height: 52)
+                    .shadow(color: baseColor.opacity(isAligned ? 0.9 : 0.65), radius: isAligned ? 10 : 5)
+                
+                if isAligned {
+                    if countdown > 0 {
+                        Text("\(countdown)")
+                            .font(.system(size: 20, weight: .black, design: .rounded))
+                            .foregroundColor(.green)
+                    } else {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.green)
+                    }
+                } else {
+                    switch trackingQuality {
+                    case .locked:
+                        ZStack {
+                            Circle().fill(Color.yellow.opacity(0.75)).frame(width: 8, height: 8)
+                            Rectangle().fill(Color.yellow.opacity(0.6)).frame(width: 14, height: 1)
+                            Rectangle().fill(Color.yellow.opacity(0.6)).frame(width: 1, height: 14)
+                        }
+                    case .predicting:
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.orange)
+                    case .reacquiring:
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.orange)
+                    case .lost:
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+            .scaleEffect(isAligned ? 1.18 : 1.0)
+            .animation(.spring(response: 0.28, dampingFraction: 0.55), value: isAligned)
+            
+            // Sub-labels when tracking is degraded
+            if !isAligned {
+                switch trackingQuality {
+                case .locked, .predicting:
+                    EmptyView()
+                case .reacquiring:
+                    Text("Đang tìm lại mục tiêu…")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.black.opacity(0.75)))
+                        .transition(.opacity)
+                case .lost:
+                    HStack(spacing: 4) {
+                        Image(systemName: "hand.tap.fill")
+                            .font(.system(size: 9))
+                        Text("Chạm để đặt lại mục tiêu")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.red.opacity(0.85)))
+                    .shadow(color: Color.red.opacity(0.4), radius: 6)
+                    .transition(.opacity)
                 }
             }
         }
-        .scaleEffect(isAligned ? 1.18 : 1.0)
-        .animation(.spring(response: 0.28, dampingFraction: 0.55), value: isAligned)
     }
 }
 

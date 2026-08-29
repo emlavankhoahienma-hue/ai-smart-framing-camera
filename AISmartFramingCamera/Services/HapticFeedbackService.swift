@@ -53,4 +53,9 @@ public final class HapticFeedbackService {
     public func triggerProximityPulse(intensity: CGFloat) {
         impactSoft.impactOccurred(intensity: max(0.2, min(1.0, intensity)))
     }
+    
+    // MARK: - Tracking Lost Warning
+    public func triggerTrackingLostWarning() {
+        notificationFeedback.notificationOccurred(.warning)
+    }
 }

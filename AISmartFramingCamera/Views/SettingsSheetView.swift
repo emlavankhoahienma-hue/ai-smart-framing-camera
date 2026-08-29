@@ -212,13 +212,19 @@ public struct SettingsSheetView: View {
                 }
                 
                 // MARK: - 4. Framing, Auto-Zoom & Color Science
-                Section(header: Text("🎯 TÙY CHỈNH CHỤP & MÀU SẮC")) {
+                Section(header: Text("🎯 TÙY CHỈNH CHỤP & BÁM MỤC TIÊU")) {
                     Picker("Quy tắc bố cục", selection: $viewModel.activeCompositionRule) {
                         ForEach(CompositionRule.allCases) { rule in
                             HStack {
                                 Image(systemName: rule.iconName)
                                 Text(rule.displayNameVietnamese)
                             }.tag(rule)
+                        }
+                    }
+                    
+                    Picker("Độ nhạy bám mục tiêu (Tracking)", selection: $viewModel.trackingSensitivity) {
+                        ForEach(TrackingSensitivityPreset.allCases) { preset in
+                            Text(preset.rawValue).tag(preset)
                         }
                     }
                     

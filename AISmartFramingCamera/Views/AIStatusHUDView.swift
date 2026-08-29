@@ -31,6 +31,58 @@ public struct AIStatusHUDView: View {
                 
                 // Badges Deck
                 HStack(spacing: 5) {
+                    // Tracking Quality & Confidence Badge
+                    if case .targetPlaced = viewModel.aiSessionState {
+                        switch viewModel.trackingQuality {
+                        case .locked:
+                            if viewModel.lastVisualConfidence > 0 {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "scope")
+                                        .font(.system(size: 8, weight: .bold))
+                                    Text("\(Int(viewModel.lastVisualConfidence * 100))%")
+                                        .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                                }
+                                .foregroundColor(.green)
+                                .padding(.horizontal, 4).padding(.vertical, 2)
+                                .background(Color.green.opacity(0.18))
+                                .cornerRadius(6)
+                            }
+                        case .predicting:
+                            HStack(spacing: 2) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("DỰ ĐOÁN")
+                                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                            }
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.25))
+                            .cornerRadius(6)
+                        case .reacquiring:
+                            HStack(spacing: 2) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("TÌM LẠI")
+                                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                            }
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.25))
+                            .cornerRadius(6)
+                        case .lost:
+                            HStack(spacing: 2) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 8, weight: .bold))
+                                Text("MẤT DẤU")
+                                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                            }
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Color.red.opacity(0.25))
+                            .cornerRadius(6)
+                        }
+                    }
+                    
                     // Engine Source Badge (Cloud AI vs Apple Neural Engine Chip)
                     if let engine = viewModel.activeEngineSource, case .targetPlaced = viewModel.aiSessionState {
                         HStack(spacing: 3) {

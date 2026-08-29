@@ -110,6 +110,42 @@ public final class CameraViewModel: ObservableObject {
     @Published public var arTrackingWarning: String? = nil
     @Published public var activeFocusSquarePoint: CGPoint? = nil
     
+    // MARK: - Advanced Predictive Tracking State Machine
+    @Published public var trackingQuality: TrackingQuality = .locked
+    @Published public var trackingSensitivity: TrackingSensitivityPreset = .medium {
+        didSet { UserDefaults.standard.set(trackingSensitivity.rawValue, forKey: "trackingSensitivity") }
+    }
+    
+    public var confidenceAcceptThreshold: Double {
+        switch trackingSensitivity {
+        case .low: return 0.20
+        case .medium: return 0.30
+        case .high: return 0.40
+        }
+    }
+    
+    public var trackingEMAAlpha: CGFloat {
+        switch trackingSensitivity {
+        case .low: return 0.45
+        case .medium: return 0.60
+        case .high: return 0.75
+        }
+    }
+    
+    public var maxJumpPerFrame: CGFloat {
+        switch trackingSensitivity {
+        case .low: return 0.15
+        case .medium: return 0.12
+        case .high: return 0.09
+        }
+    }
+    
+    private var consecutiveLowConfidenceFrames: Int = 0
+    private var smoothedVelocity: CGVector = .zero
+    private var lastVisualUpdateTime: CFTimeInterval = 0
+    private let predictionGraceFrames: Int = 24   // ~0.8s ở 30fps: còn được phép ngoại suy vận tốc
+    private let reacquireGraceFrames: Int = 90    // ~3.0s: sau mốc này coi như mất hẳn
+    
     // Internal State
     private var autoCaptureTask: Task<Void, Never>? = nil
     private var analysisFrames: [SubjectDetectionResult] = []
@@ -141,6 +177,9 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "useGeminiForAnalysis") != nil {
             self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
+        }
+        if let sensitivityRaw = defaults.string(forKey: "trackingSensitivity"), let sensitivity = TrackingSensitivityPreset(rawValue: sensitivityRaw) {
+            self.trackingSensitivity = sensitivity
         }
         
         setupCallbacks()
@@ -222,6 +261,10 @@ public final class CameraViewModel: ObservableObject {
         currentTargetPoint = nil
         lastTrackedVisualPoint = nil
         lastVisualConfidence = 0
+        consecutiveLowConfidenceFrames = 0
+        smoothedVelocity = .zero
+        lastVisualUpdateTime = 0
+        trackingQuality = .locked
         isOneShotCaptured = false
         isPerfectAlignment = false
         alignmentDistance = 1.0
@@ -247,6 +290,10 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.stopTrackingObject()
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
+        consecutiveLowConfidenceFrames = 0
+        smoothedVelocity = .zero
+        lastVisualUpdateTime = 0
+        trackingQuality = .locked
         
         withAnimation(.easeInOut(duration: 0.3)) {
             aiSessionState = .idle
@@ -396,27 +443,33 @@ public final class CameraViewModel: ObservableObject {
             setExposure(max(-2.0, min(2.0, lumaError * 3.0)))
         }
         
-        pinTargetAndStartMotion(at: result.targetPoint)
+        pinTargetAndStartMotion(at: result.targetPoint, subjectSize: avgDetection.dominantSubjectRect?.size)
     }
     
     // MARK: - State for Hybrid Optical Visual + Gyro Tracking
-    private var lastVisualConfidence: Double = 0
+    @Published public var lastVisualConfidence: Double = 0
     private var lastTrackedVisualPoint: CGPoint? = nil
     
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
     
-    private func pinTargetAndStartMotion(at target: CGPoint) {
+    public func pinTargetAndStartMotion(at target: CGPoint, subjectSize: CGSize? = nil) {
         initialTargetPoint = target
         currentTargetPoint = target
         lastTrackedVisualPoint = target
         lastVisualConfidence = 1.0
+        lastVisualUpdateTime = CACurrentMediaTime()
+        consecutiveLowConfidenceFrames = 0
+        smoothedVelocity = .zero
+        trackingQuality = .locked
         
         let dx = target.x - 0.5
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // 1. Khởi động Vision Optical Tracking (VNTrackObjectRequest) bám chặt vật thể
-        visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.18, height: 0.18))
+        // 1. Khởi động Vision Optical Tracking (VNTrackObjectRequest) theo kích thước chủ thể thật
+        let clampedW = min(0.42, max(0.10, (subjectSize?.width ?? 0.18) * 1.15))
+        let clampedH = min(0.42, max(0.10, (subjectSize?.height ?? 0.18) * 1.15))
+        visionEngine.startTrackingObject(at: target, size: CGSize(width: clampedW, height: clampedH))
         
         // 2. Khởi động 60Hz Gyroscope làm mỏ neo quán tính dự phòng
         motionService.startTracking()
@@ -436,19 +489,78 @@ public final class CameraViewModel: ObservableObject {
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
         guard case .targetPlaced = aiSessionState else { return }
         self.lastVisualConfidence = confidence
-        
-        if let visualPoint = point, confidence > 0.20 {
-            self.lastTrackedVisualPoint = visualPoint
-            
-            // Lọc EMA để khử nhiễu micro-jitter quang học
+
+        let now = CACurrentMediaTime()
+        let dt = lastVisualUpdateTime > 0 ? min(0.2, now - lastVisualUpdateTime) : (1.0 / 30.0)
+        lastVisualUpdateTime = now
+
+        if let visualPoint = point, confidence > confidenceAcceptThreshold {
+            // Kiểm tra outlier: nếu điểm mới nhảy quá xa so với vị trí + vận tốc dự đoán,
+            // rất có thể tracker vừa "dính" nhầm sang vật thể đang che ngang qua -> không nhận frame này.
+            let predicted = CGPoint(
+                x: (currentTargetPoint?.x ?? visualPoint.x) + smoothedVelocity.dx * CGFloat(dt),
+                y: (currentTargetPoint?.y ?? visualPoint.y) + smoothedVelocity.dy * CGFloat(dt)
+            )
+            let jump = hypot(visualPoint.x - predicted.x, visualPoint.y - predicted.y)
+
+            if jump > maxJumpPerFrame && consecutiveLowConfidenceFrames == 0 && trackingQuality == .locked {
+                // Nghi là false-positive do vật che -> bỏ qua frame này, coi như 1 frame confidence thấp
+                handleTrackingDegraded()
+                return
+            }
+
+            // Chấp nhận điểm mới
             let current = self.currentTargetPoint ?? visualPoint
-            let alpha: CGFloat = 0.75 // 75% vị trí quang học mới, 25% vị trí trước
+            let alpha = trackingEMAAlpha
             let smoothedX = current.x * (1.0 - alpha) + visualPoint.x * alpha
             let smoothedY = current.y * (1.0 - alpha) + visualPoint.y * alpha
             let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
-            
+
+            if dt > 0 {
+                let rawVX = (smoothedPoint.x - current.x) / CGFloat(dt)
+                let rawVY = (smoothedPoint.y - current.y) / CGFloat(dt)
+                smoothedVelocity = CGVector(dx: smoothedVelocity.dx * 0.7 + rawVX * 0.3,
+                                              dy: smoothedVelocity.dy * 0.7 + rawVY * 0.3)
+            }
+
+            self.lastTrackedVisualPoint = smoothedPoint
             self.currentTargetPoint = smoothedPoint
+            consecutiveLowConfidenceFrames = 0
+            trackingQuality = .locked
             evaluateAlignment(at: smoothedPoint)
+        } else {
+            handleTrackingDegraded()
+        }
+    }
+
+    // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che / bị outlier reject)
+    private func handleTrackingDegraded() {
+        consecutiveLowConfidenceFrames += 1
+
+        guard let lastPoint = self.currentTargetPoint ?? lastTrackedVisualPoint else { return }
+
+        let previousQuality = trackingQuality
+
+        if consecutiveLowConfidenceFrames <= predictionGraceFrames {
+            // Còn trong khoảng cho phép ngoại suy: dùng vận tốc gần nhất để "cầm cự" qua lúc bị che
+            let dt: CGFloat = 1.0 / 30.0
+            let predictedX = lastPoint.x + smoothedVelocity.dx * dt
+            let predictedY = lastPoint.y + smoothedVelocity.dy * dt
+            let clamped = CGPoint(x: min(1.0, max(0.0, predictedX)), y: min(1.0, max(0.0, predictedY)))
+            self.currentTargetPoint = clamped
+            trackingQuality = .predicting
+            evaluateAlignment(at: clamped)
+        } else if consecutiveLowConfidenceFrames <= reacquireGraceFrames {
+            // Hết thời gian ngoại suy hợp lý -> đứng yên tại vị trí cuối, không đoán mò thêm nữa
+            trackingQuality = .reacquiring
+        } else {
+            trackingQuality = .lost
+            autoCaptureTask?.cancel()
+            autoCaptureTask = nil
+            autoCaptureCountdown = 0
+            if previousQuality != .lost {
+                haptics.triggerTrackingLostWarning()
+            }
         }
     }
     
@@ -459,8 +571,10 @@ public final class CameraViewModel: ObservableObject {
         
         // Khi lia máy nhanh hoặc quang học tạm thời mờ/khuất (confidence thấp), Gyroscope giữ vị trí không gian
         if lastVisualConfidence <= 0.35 {
-            let newX = initial.x - deltaX
-            let newY = initial.y - deltaY
+            // Xấp xỉ tuyến tính theo zoom: zoom càng cao thì cùng góc xoay tay dịch chuyển điểm ảnh nhiều hơn trên khung hình
+            let zoomCompensation = max(1.0, currentZoom)
+            let newX = initial.x - deltaX * zoomCompensation
+            let newY = initial.y - deltaY * zoomCompensation
             let gyroPoint = CGPoint(x: newX, y: newY)
             
             let current = self.currentTargetPoint ?? gyroPoint
@@ -488,7 +602,8 @@ public final class CameraViewModel: ObservableObject {
         
         let isPerfect = dist <= calculator.alignmentTolerance
         
-        if isPerfect && !isPerfectAlignment {
+        // Chỉ kích hoạt tự động chụp khi thực sự khóa tốt (trackingQuality == .locked), không chụp khi đang đoán mò
+        if isPerfect && !isPerfectAlignment && trackingQuality == .locked {
             // Tâm trắng đã đè khớp lên vùng target!
             isPerfectAlignment = true
             haptics.triggerMagneticSnap()

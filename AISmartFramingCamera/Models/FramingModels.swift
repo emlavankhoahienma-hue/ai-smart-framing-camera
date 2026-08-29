@@ -86,6 +86,31 @@ public enum AISessionState: Equatable {
     }
 }
 
+// MARK: - Tracking Quality State Machine (Hybrid Optical + Gyro State)
+public enum TrackingQuality: Equatable {
+    case locked        // đang bám tốt bằng optical tracking
+    case predicting     // vừa mất optical, đang ngoại suy bằng vận tốc + gyro
+    case reacquiring     // mất lâu hơn, đang cố tìm lại / giữ vị trí cuối
+    case lost            // mất hẳn, cần người dùng chạm lại để đặt target
+}
+
+// MARK: - Tracking Sensitivity Preset
+public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
+    case low = "Thấp (Ổn định, chống giật)"
+    case medium = "Vừa (Cân bằng tiêu chuẩn)"
+    case high = "Cao (Phản hồi tức thì)"
+    
+    public var id: String { rawValue }
+    
+    public var shortName: String {
+        switch self {
+        case .low: return "Thấp"
+        case .medium: return "Vừa"
+        case .high: return "Cao"
+        }
+    }
+}
+
 // MARK: - AI Framing Engine Source Indicator
 public enum AIEngineSource: Equatable {
     case geminiCloud(model: String)
