@@ -80,7 +80,7 @@ public final class CameraService: NSObject {
                     camera.isVideoHDREnabled = true
                 }
                 if camera.isLowLightBoostSupported {
-                    camera.automaticallyEnablesLowLightBoost = true
+                    camera.automaticallyEnablesLowLightBoostWhenAvailable = true
                 }
                 camera.unlockForConfiguration()
             } catch {
