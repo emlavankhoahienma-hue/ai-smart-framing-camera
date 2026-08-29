@@ -320,6 +320,52 @@ public final class CameraService: NSObject {
         }
     }
     
+    public func lockFocusAndExposure(at devicePoint: CGPoint) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let camera = self.activeCamera else { return }
+            do {
+                try camera.lockForConfiguration()
+                let clampedPoint = CGPoint(
+                    x: max(0.01, min(0.99, devicePoint.x)),
+                    y: max(0.01, min(0.99, devicePoint.y))
+                )
+                if camera.isFocusPointOfInterestSupported {
+                    camera.focusPointOfInterest = clampedPoint
+                }
+                if camera.isFocusModeSupported(.locked) {
+                    camera.focusMode = .locked
+                }
+                if camera.isExposurePointOfInterestSupported {
+                    camera.exposurePointOfInterest = clampedPoint
+                }
+                if camera.isExposureModeSupported(.locked) {
+                    camera.exposureMode = .locked
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("CameraService: Error locking AE/AF \(error)")
+            }
+        }
+    }
+    
+    public func unlockFocusAndExposure() {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let camera = self.activeCamera else { return }
+            do {
+                try camera.lockForConfiguration()
+                if camera.isFocusModeSupported(.continuousAutoFocus) {
+                    camera.focusMode = .continuousAutoFocus
+                }
+                if camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposureMode = .continuousAutoExposure
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("CameraService: Error unlocking AE/AF \(error)")
+            }
+        }
+    }
+    
     // MARK: - Video Recording
     public func startRecordingVideo() {
         sessionQueue.async { [weak self] in

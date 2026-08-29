@@ -229,7 +229,7 @@ struct ZoomSelectorPills: View {
             ForEach(options, id: \.self) { zoom in
                 let isSelected = abs(viewModel.currentZoom - zoom) < 0.15
                 Button(action: {
-                    viewModel.setZoom(zoom)
+                    viewModel.setZoomFromButton(zoom)
                 }) {
                     Text(String(format: "%.0f×", zoom))
                         .font(.system(size: 12, weight: isSelected ? .heavy : .medium, design: .rounded))

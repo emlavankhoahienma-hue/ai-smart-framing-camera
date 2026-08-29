@@ -111,6 +111,8 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeEngineSource: AIEngineSource? = nil
     @Published public var arTrackingWarning: String? = nil
     @Published public var activeFocusSquarePoint: CGPoint? = nil
+    @Published public var isAEAFLocked: Bool = false
+    @Published public var aeafLockPoint: CGPoint? = nil
     
     // MARK: - Advanced Predictive Tracking State Machine
     @Published public var trackingQuality: TrackingQuality = .locked
@@ -147,6 +149,7 @@ public final class CameraViewModel: ObservableObject {
     private var lastVisualUpdateTime: CFTimeInterval = 0
     private let predictionGraceFrames: Int = 24   // ~0.8s ở 30fps: còn được phép ngoại suy vận tốc
     private let reacquireGraceFrames: Int = 90    // ~3.0s: sau mốc này coi như mất hẳn
+    private var lastProximityHapticTime: TimeInterval = 0
     
     // Internal State
     private var autoCaptureTask: Task<Void, Never>? = nil
@@ -600,10 +603,14 @@ public final class CameraViewModel: ObservableObject {
         let dist = sqrt(dx * dx + dy * dy)
         self.alignmentDistance = dist
         
-        // Haptic rung khi tiến gần tâm
+        // Haptic rung khi tiến gần tâm — giới hạn tần suất, tránh dồn lệnh gây lag
         if dist < 0.15 && dist > calculator.alignmentTolerance {
-            let intensity = 1.0 - (dist / 0.15)
-            haptics.triggerProximityPulse(intensity: intensity)
+            let now = CACurrentMediaTime()
+            if now - lastProximityHapticTime >= 0.1 {
+                lastProximityHapticTime = now
+                let intensity = 1.0 - (dist / 0.15)
+                haptics.triggerProximityPulse(intensity: intensity)
+            }
         }
         
         let isPerfect = dist <= calculator.alignmentTolerance
@@ -679,14 +686,34 @@ public final class CameraViewModel: ObservableObject {
     
     // MARK: - Actions
     public func setZoom(_ zoom: CGFloat) {
-        haptics.triggerSelectionChange()
         currentZoom = zoom
         cameraService.setZoomFactor(zoom)
+    }
+    
+    public func setZoomFromButton(_ zoom: CGFloat) {
+        haptics.triggerSelectionChange()
+        setZoom(zoom)
     }
     
     public func setExposure(_ bias: Float) {
         exposureBias = bias
         cameraService.setExposureBias(bias)
+    }
+    
+    public func lockAEAF(at normalizedPoint: CGPoint) {
+        haptics.triggerSelectionChange()
+        aeafLockPoint = normalizedPoint
+        isAEAFLocked = true
+        let devicePoint = CGPoint(x: normalizedPoint.y, y: 1.0 - normalizedPoint.x)
+        cameraService.lockFocusAndExposure(at: devicePoint)
+    }
+    
+    public func unlockAEAF() {
+        guard isAEAFLocked else { return }
+        haptics.triggerSelectionChange()
+        isAEAFLocked = false
+        aeafLockPoint = nil
+        cameraService.unlockFocusAndExposure()
     }
     
     public func toggleFlash() {

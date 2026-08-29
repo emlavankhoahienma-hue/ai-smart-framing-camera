@@ -103,6 +103,26 @@ public struct ARFramingOverlayView: View {
                     GeminiAnalyzingBadge()
                 }
                 
+                // 8b. AE/AF LOCK badge — hiện liên tục, không tự ẩn, cho tới khi chạm ra ngoài
+                if viewModel.isAEAFLocked, let lockPoint = viewModel.aeafLockPoint {
+                    ZStack {
+                        Rectangle()
+                            .stroke(Color.yellow, lineWidth: 1.5)
+                            .frame(width: 70, height: 70)
+                    }
+                    .position(x: lockPoint.x * size.width, y: lockPoint.y * size.height)
+                    
+                    VStack {
+                        Text("AE/AF LOCK")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundColor(.yellow)
+                            .padding(.horizontal, 12).padding(.vertical, 5)
+                            .background(Capsule().fill(Color.black.opacity(0.6)))
+                            .padding(.top, 50)
+                        Spacer()
+                    }
+                }
+                
                 // 9. Smart Autofocus Yellow Square Indicator (Apple Camera App style)
                 if let focusPoint = viewModel.activeFocusSquarePoint {
                     FocusSquareView()

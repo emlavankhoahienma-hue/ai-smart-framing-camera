@@ -14,6 +14,10 @@ public struct CameraPreviewView: UIViewRepresentable {
         let pinchGesture = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
         view.addGestureRecognizer(pinchGesture)
         
+        let longPressGesture = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
+        longPressGesture.minimumPressDuration = 0.5
+        view.addGestureRecognizer(longPressGesture)
+        
         return view
     }
     
@@ -37,8 +41,13 @@ public struct CameraPreviewView: UIViewRepresentable {
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard let view = gesture.view as? PreviewContainerView else { return }
             let location = gesture.location(in: view)
-            let devicePoint = view.previewLayer.captureDevicePointConverted(fromLayerPoint: location)
             
+            if parent.viewModel.isAEAFLocked {
+                parent.viewModel.unlockAEAF()
+                return
+            }
+            
+            let devicePoint = view.previewLayer.captureDevicePointConverted(fromLayerPoint: location)
             parent.viewModel.cameraService.focusAndExpose(at: devicePoint)
             view.showFocusRing(at: location)
         }
@@ -49,6 +58,14 @@ public struct CameraPreviewView: UIViewRepresentable {
             }
             let newZoom = max(1.0, min(initialZoom * gesture.scale, 10.0))
             parent.viewModel.setZoom(newZoom)
+        }
+        
+        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began, let view = gesture.view as? PreviewContainerView else { return }
+            let location = gesture.location(in: view)
+            let normalizedPoint = CGPoint(x: location.x / view.bounds.width, y: location.y / view.bounds.height)
+            parent.viewModel.lockAEAF(at: normalizedPoint)
+            view.showFocusRing(at: location)
         }
     }
 }
