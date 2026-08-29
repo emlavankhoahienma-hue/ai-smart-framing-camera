@@ -74,6 +74,20 @@ public final class CameraService: NSObject {
             self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
             
             do {
+                try camera.lockForConfiguration()
+                if camera.activeFormat.isVideoHDRSupported {
+                    camera.automaticallyAdjustsVideoHDREnabled = false
+                    camera.isVideoHDREnabled = true
+                }
+                if camera.isLowLightBoostSupported {
+                    camera.automaticallyEnablesLowLightBoost = true
+                }
+                camera.unlockForConfiguration()
+            } catch {
+                print("Không thể bật HDR/LowLightBoost: \(error)")
+            }
+            
+            do {
                 let videoInput = try AVCaptureDeviceInput(device: camera)
                 if self.captureSession.canAddInput(videoInput) {
                     self.captureSession.addInput(videoInput)

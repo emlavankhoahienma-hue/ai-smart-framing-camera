@@ -3,7 +3,7 @@ import SwiftUI
 public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
     
-    let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0]
+    let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0, 10.0]
     
     public var body: some View {
         VStack(spacing: 6) {

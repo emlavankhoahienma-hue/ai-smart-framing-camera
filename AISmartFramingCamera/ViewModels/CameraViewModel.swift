@@ -60,7 +60,9 @@ public final class CameraViewModel: ObservableObject {
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var exposureBias: Float = 0.0
-    @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto
+    @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto {
+        didSet { UserDefaults.standard.set(activeFlashMode.rawValue, forKey: "activeFlashMode") }
+    }
     
     // AI Framing & Composition
     @Published public var framingResult: FramingTargetResult?
@@ -180,6 +182,10 @@ public final class CameraViewModel: ObservableObject {
         }
         if let sensitivityRaw = defaults.string(forKey: "trackingSensitivity"), let sensitivity = TrackingSensitivityPreset(rawValue: sensitivityRaw) {
             self.trackingSensitivity = sensitivity
+        }
+        if let flashRaw = defaults.object(forKey: "activeFlashMode") as? Int,
+           let flash = AVCaptureDevice.FlashMode(rawValue: flashRaw) {
+            self.activeFlashMode = flash
         }
         
         setupCallbacks()
