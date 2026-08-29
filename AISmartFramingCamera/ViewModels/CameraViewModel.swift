@@ -432,7 +432,7 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 1. ARKit 3D World Target Handler (Ưu tiên hàng đầu — 60 FPS Camera Pose Projection)
+    // MARK: - 1. ARKit 3D World Target Handler (Nếu có dữ liệu chiếu 3D)
     
     private func handleARWorldTargetProjected(point: CGPoint, isValid: Bool, warning: String?) {
         guard case .targetPlaced = aiSessionState else { return }
@@ -444,36 +444,34 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 2. Optical Visual Object Tracking Handler (Bổ trợ quang học khi ARKit chưa khóa được mặt phẳng)
+    // MARK: - 2. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
     
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
         guard case .targetPlaced = aiSessionState else { return }
         self.lastVisualConfidence = confidence
         
-        // Nếu ARKit không khả dụng hoặc đang bị giới hạn, dùng Visual Tracking tiếp quản
-        if !arSessionService.isARSupported || !arSessionService.isTrackingNormal {
-            if let visualPoint = point, confidence > 0.25 {
-                self.lastTrackedVisualPoint = visualPoint
-                
-                let current = self.currentTargetPoint ?? visualPoint
-                let alpha: CGFloat = 0.70
-                let smoothedX = current.x * (1.0 - alpha) + visualPoint.x * alpha
-                let smoothedY = current.y * (1.0 - alpha) + visualPoint.y * alpha
-                let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
-                
-                self.currentTargetPoint = smoothedPoint
-                evaluateAlignment(at: smoothedPoint)
-            }
+        if let visualPoint = point, confidence > 0.20 {
+            self.lastTrackedVisualPoint = visualPoint
+            
+            // Lọc EMA để khử nhiễu micro-jitter quang học
+            let current = self.currentTargetPoint ?? visualPoint
+            let alpha: CGFloat = 0.75 // 75% vị trí quang học mới, 25% vị trí trước
+            let smoothedX = current.x * (1.0 - alpha) + visualPoint.x * alpha
+            let smoothedY = current.y * (1.0 - alpha) + visualPoint.y * alpha
+            let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
+            
+            self.currentTargetPoint = smoothedPoint
+            evaluateAlignment(at: smoothedPoint)
         }
     }
     
-    // MARK: - 3. 60Hz Gyro Motion Handler (Inertial Odometry quán tính khi lia máy quá nhanh)
+    // MARK: - 3. 60Hz Gyro Motion Handler (Inertial Odometry khi lia máy nhanh hoặc mất dấu quang học)
     
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
         guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
         
-        // Nếu cả ARKit và Vision đều mất dấu, dùng Gyroscope quán tính
-        if (!arSessionService.isARSupported || !arSessionService.isTrackingNormal) && lastVisualConfidence <= 0.25 {
+        // Khi lia máy nhanh hoặc quang học tạm thời mờ/khuất (confidence thấp), Gyroscope giữ vị trí không gian
+        if lastVisualConfidence <= 0.35 {
             let newX = initial.x - deltaX
             let newY = initial.y - deltaY
             let gyroPoint = CGPoint(x: newX, y: newY)

@@ -44,8 +44,8 @@ public struct ARFramingOverlayView: View {
                     }
                 }
                 
-                // 4. VÒNG TRÒN TARGET VÀNG (Dịch chuyển theo ARKit 3D World Anchor / Optical Flow)
-                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint, !viewModel.arSessionService.isTargetBehindCamera {
+                // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
+                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
                     let targetScreen = CGPoint(
                         x: targetPoint.x * size.width,
                         y: targetPoint.y * size.height
