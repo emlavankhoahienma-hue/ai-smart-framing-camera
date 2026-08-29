@@ -113,6 +113,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeFocusSquarePoint: CGPoint? = nil
     @Published public var isAEAFLocked: Bool = false
     @Published public var aeafLockPoint: CGPoint? = nil
+    @Published public var saveErrorMessage: String? = nil
     
     // MARK: - Advanced Predictive Tracking State Machine
     @Published public var trackingQuality: TrackingQuality = .locked
@@ -700,11 +701,10 @@ public final class CameraViewModel: ObservableObject {
         cameraService.setExposureBias(bias)
     }
     
-    public func lockAEAF(at normalizedPoint: CGPoint) {
+    public func lockAEAF(at normalizedPoint: CGPoint, devicePoint: CGPoint) {
         haptics.triggerSelectionChange()
         aeafLockPoint = normalizedPoint
         isAEAFLocked = true
-        let devicePoint = CGPoint(x: normalizedPoint.y, y: 1.0 - normalizedPoint.x)
         cameraService.lockFocusAndExposure(at: devicePoint)
     }
     
@@ -860,12 +860,65 @@ public final class CameraViewModel: ObservableObject {
     
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {
         let image = UIImage(cgImage: item.processedImage)
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-            if status == .authorized || status == .limited {
-                UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-                DispatchQueue.main.async { self.haptics.triggerSuccess() }
+        let isAIColorEdited = item.aiColorParameters != nil
+        let albumName = "AI Smart Framing - AI Color"
+        let livePhotoURL = cameraService.pendingLivePhotoMovieURL
+        
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+            guard let self = self else { return }
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async {
+                    self.saveErrorMessage = "Chưa cấp quyền Photos. Vào Cài đặt > AI Smart Framing Camera > Ảnh để bật quyền lưu ảnh."
+                }
+                return
+            }
+            
+            PHPhotoLibrary.shared().performChanges({
+                let creationRequest = PHAssetCreationRequest.forAsset()
+                creationRequest.addResource(.photo, data: image.jpegData(compressionQuality: 0.95) ?? Data(), options: nil)
+                if let liveURL = livePhotoURL {
+                    let options = PHAssetResourceCreationOptions()
+                    options.shouldMoveFile = true
+                    creationRequest.addResource(.pairedVideo, fileURL: liveURL, options: options)
+                }
+                
+                if isAIColorEdited {
+                    if let album = self.findOrCreateAlbum(named: albumName) {
+                        let albumChangeRequest = PHAssetCollectionChangeRequest(for: album)
+                        if let placeholder = creationRequest.placeholderForCreatedAsset {
+                            albumChangeRequest?.addAssets([placeholder] as NSArray)
+                        }
+                    }
+                }
+            }) { success, error in
+                DispatchQueue.main.async {
+                    if success {
+                        self.haptics.triggerSuccess()
+                        self.saveErrorMessage = nil
+                    } else {
+                        self.saveErrorMessage = "Lưu ảnh thất bại: \(error?.localizedDescription ?? "không rõ lỗi")"
+                    }
+                }
             }
         }
+    }
+    
+    private func findOrCreateAlbum(named title: String) -> PHAssetCollection? {
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.predicate = NSPredicate(format: "title = %@", title)
+        let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+        if let existing = collections.firstObject {
+            return existing
+        }
+        
+        var albumPlaceholder: PHObjectPlaceholder?
+        try? PHPhotoLibrary.shared().performChangesAndWait {
+            let createRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: title)
+            albumPlaceholder = createRequest.placeholderForCreatedAssetCollection
+        }
+        guard let placeholder = albumPlaceholder else { return nil }
+        let fetchResult = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [placeholder.localIdentifier], options: nil)
+        return fetchResult.firstObject
     }
     
     // MARK: - Computed helpers

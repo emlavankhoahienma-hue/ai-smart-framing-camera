@@ -9,13 +9,16 @@ public struct CameraPreviewView: UIViewRepresentable {
         view.setupLayer(session: viewModel.cameraService.captureSession)
         
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        tapGesture.delegate = context.coordinator
         view.addGestureRecognizer(tapGesture)
         
         let pinchGesture = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
+        pinchGesture.delegate = context.coordinator
         view.addGestureRecognizer(pinchGesture)
         
         let longPressGesture = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
         longPressGesture.minimumPressDuration = 0.5
+        longPressGesture.delegate = context.coordinator
         view.addGestureRecognizer(longPressGesture)
         
         return view
@@ -30,7 +33,7 @@ public struct CameraPreviewView: UIViewRepresentable {
     }
     
     @MainActor
-    public class Coordinator: NSObject {
+    public class Coordinator: NSObject, UIGestureRecognizerDelegate {
         let parent: CameraPreviewView
         private var initialZoom: CGFloat = 1.0
         
@@ -64,8 +67,13 @@ public struct CameraPreviewView: UIViewRepresentable {
             guard gesture.state == .began, let view = gesture.view as? PreviewContainerView else { return }
             let location = gesture.location(in: view)
             let normalizedPoint = CGPoint(x: location.x / view.bounds.width, y: location.y / view.bounds.height)
-            parent.viewModel.lockAEAF(at: normalizedPoint)
-            view.showFocusRing(at: location)
+            let devicePoint = view.previewLayer.captureDevicePointConverted(fromLayerPoint: location)
+            parent.viewModel.lockAEAF(at: normalizedPoint, devicePoint: devicePoint)
+            view.showFocusRing(at: location, persist: true)
+        }
+        
+        public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            return true
         }
     }
 }
@@ -109,7 +117,7 @@ public class PreviewContainerView: UIView {
         }
     }
     
-    public func showFocusRing(at point: CGPoint) {
+    public func showFocusRing(at point: CGPoint, persist: Bool = false) {
         focusRingView.center = point
         focusRingView.transform = CGAffineTransform(scaleX: 1.4, y: 1.4)
         focusRingView.alpha = 1.0
@@ -117,6 +125,7 @@ public class PreviewContainerView: UIView {
         UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
             self.focusRingView.transform = .identity
         }) { _ in
+            guard !persist else { return }
             UIView.animate(withDuration: 0.2, delay: 0.6, options: .curveEaseIn, animations: {
                 self.focusRingView.alpha = 0
             })

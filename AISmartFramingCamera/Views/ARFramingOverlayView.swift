@@ -103,6 +103,27 @@ public struct ARFramingOverlayView: View {
                     GeminiAnalyzingBadge()
                 }
                 
+                // 8c. Save error toast — hiện khi lưu ảnh thất bại hoặc thiếu quyền Photos
+                if let errorMsg = viewModel.saveErrorMessage {
+                    VStack {
+                        Spacer()
+                        Text(errorMsg)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.85)))
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 140)
+                    }
+                    .transition(.opacity)
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            withAnimation { viewModel.saveErrorMessage = nil }
+                        }
+                    }
+                }
+                
                 // 8b. AE/AF LOCK badge — hiện liên tục, không tự ẩn, cho tới khi chạm ra ngoài
                 if viewModel.isAEAFLocked, let lockPoint = viewModel.aeafLockPoint {
                     ZStack {

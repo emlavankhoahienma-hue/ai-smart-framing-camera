@@ -40,6 +40,7 @@ public final class CameraService: NSObject {
     
     public var flashMode: AVCaptureDevice.FlashMode = .auto
     public var isLivePhotoMode = false
+    public private(set) var pendingLivePhotoMovieURL: URL?
     
     private override init() {
         super.init()
@@ -401,6 +402,13 @@ public final class CameraService: NSObject {
             }
             photoSettings.photoQualityPrioritization = .quality
             
+            if self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {
+                let tempDir = FileManager.default.temporaryDirectory
+                let fileName = ProcessInfo.processInfo.globallyUniqueString + ".mov"
+                let movieURL = tempDir.appendingPathComponent(fileName)
+                photoSettings.livePhotoMovieFileURL = movieURL
+            }
+            
             self.photoOutput.capturePhoto(with: photoSettings, delegate: self)
         }
     }
@@ -471,6 +479,15 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
+        }
+    }
+    
+    public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingLivePhotoToMovieFileAt outputFileURL: URL, duration: CMTime, photoDisplayTime: CMTime, resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        if error == nil {
+            self.pendingLivePhotoMovieURL = outputFileURL
+        } else {
+            print("CameraService: Lỗi ghi video Live Photo: \(error!)")
+            self.pendingLivePhotoMovieURL = nil
         }
     }
     
