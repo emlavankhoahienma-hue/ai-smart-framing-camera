@@ -23,10 +23,6 @@ public final class CameraViewModel: ObservableObject {
             switch aiSessionState {
             case .idle, .done:
                 visionEngine.isIdlePreviewMode = true
-                arSessionService.pauseSession()
-            case .analyzing:
-                visionEngine.isIdlePreviewMode = false
-                arSessionService.startSession()
             default:
                 visionEngine.isIdlePreviewMode = false
             }
@@ -203,13 +199,7 @@ public final class CameraViewModel: ObservableObject {
     }
     
     private func setupMotionCallbacks() {
-        // 1. ARKit 3D World Tracking Anchor Projection (Ưu tiên số 1 - Chuẩn App Đo trên iPhone)
-        arSessionService.onTargetProjected = { [weak self] projectedPoint, isValid, warning in
-            guard let self = self else { return }
-            self.handleARWorldTargetProjected(point: projectedPoint, isValid: isValid, warning: warning)
-        }
-        
-        // 2. 60Hz Gyroscope Quán tính
+        // 60Hz Gyroscope Quán tính
         motionService.onMotionUpdate = { [weak self] deltaX, deltaY in
             guard let self = self else { return }
             self.handleGyroMotion(deltaX: deltaX, deltaY: deltaY)
@@ -413,7 +403,7 @@ public final class CameraViewModel: ObservableObject {
     private var lastVisualConfidence: Double = 0
     private var lastTrackedVisualPoint: CGPoint? = nil
     
-    // MARK: - Pin Target & Start Tracking (Chuẩn Apple Measure App: ARKit 3D World Anchor + Visual/Gyro Fallback)
+    // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
     
     private func pinTargetAndStartMotion(at target: CGPoint) {
         initialTargetPoint = target
@@ -425,13 +415,10 @@ public final class CameraViewModel: ObservableObject {
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // 1. Khóa 3D World Anchor bằng ARKit (Raycast & Feature Points bám không gian 3D như App Đo)
-        arSessionService.pinTarget(at: target, viewportSize: UIScreen.main.bounds.size)
-        
-        // 2. Khởi động Vision Optical Tracking (VNTrackObjectRequest) làm bộ lọc quang học bổ trợ
+        // 1. Khởi động Vision Optical Tracking (VNTrackObjectRequest) bám chặt vật thể
         visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.18, height: 0.18))
         
-        // 3. Khởi động 60Hz Gyroscope làm mỏ neo quán tính dự phòng
+        // 2. Khởi động 60Hz Gyroscope làm mỏ neo quán tính dự phòng
         motionService.startTracking()
         
         haptics.triggerSelectionChange()
@@ -444,19 +431,7 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 1. ARKit 3D World Target Handler (Nếu có dữ liệu chiếu 3D)
-    
-    private func handleARWorldTargetProjected(point: CGPoint, isValid: Bool, warning: String?) {
-        guard case .targetPlaced = aiSessionState else { return }
-        self.arTrackingWarning = warning
-        
-        if isValid {
-            self.currentTargetPoint = point
-            evaluateAlignment(at: point)
-        }
-    }
-    
-    // MARK: - 2. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
+    // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
     
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
         guard case .targetPlaced = aiSessionState else { return }

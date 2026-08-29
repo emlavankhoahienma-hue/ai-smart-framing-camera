@@ -155,6 +155,29 @@ public final class CameraService: NSObject {
                     self?.onSubjectAreaDidChange?()
                 }
                 
+                // Session Interruption Observers (Tự động phục hồi camera preview khi hết gián đoạn)
+                NotificationCenter.default.removeObserver(self, name: AVCaptureSession.wasInterruptedNotification, object: self.captureSession)
+                NotificationCenter.default.addObserver(
+                    forName: AVCaptureSession.wasInterruptedNotification,
+                    object: self.captureSession,
+                    queue: .main
+                ) { [weak self] _ in
+                    guard let self = self else { return }
+                    self.isSessionRunning = false
+                    print("CameraService: AVCaptureSession was interrupted")
+                }
+                
+                NotificationCenter.default.removeObserver(self, name: AVCaptureSession.interruptionEndedNotification, object: self.captureSession)
+                NotificationCenter.default.addObserver(
+                    forName: AVCaptureSession.interruptionEndedNotification,
+                    object: self.captureSession,
+                    queue: .main
+                ) { [weak self] _ in
+                    guard let self = self else { return }
+                    print("CameraService: AVCaptureSession interruption ended, resuming...")
+                    self.start()
+                }
+                
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(true) }
             } catch {
