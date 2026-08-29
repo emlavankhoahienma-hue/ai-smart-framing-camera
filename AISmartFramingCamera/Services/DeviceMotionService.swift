@@ -84,6 +84,11 @@ public final class DeviceMotionService: @unchecked Sendable {
         }
     }
     
+    // MARK: - Reset Baseline Anchor
+    public func resetReferenceAttitude() {
+        referenceAttitude = nil
+    }
+    
     // MARK: - Stop Tracking
     public func stopTracking() {
         isTracking = false

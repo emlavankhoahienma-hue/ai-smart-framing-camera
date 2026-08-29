@@ -459,6 +459,7 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - State for Hybrid Optical Visual + Gyro Tracking
     @Published public var lastVisualConfidence: Double = 0
     private var lastTrackedVisualPoint: CGPoint? = nil
+    private var gyroAnchorPoint: CGPoint? = nil
     
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
     
@@ -466,6 +467,7 @@ public final class CameraViewModel: ObservableObject {
         initialTargetPoint = target
         currentTargetPoint = target
         lastTrackedVisualPoint = target
+        gyroAnchorPoint = target
         lastVisualConfidence = 1.0
         lastVisualUpdateTime = CACurrentMediaTime()
         consecutiveLowConfidenceFrames = 0
@@ -482,6 +484,7 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.startTrackingObject(at: target, size: CGSize(width: clampedW, height: clampedH))
         
         // 2. Khởi động 60Hz Gyroscope làm mỏ neo quán tính dự phòng
+        motionService.resetReferenceAttitude()
         motionService.startTracking()
         
         haptics.triggerSelectionChange()
@@ -505,36 +508,44 @@ public final class CameraViewModel: ObservableObject {
         lastVisualUpdateTime = now
 
         if let visualPoint = point, confidence > confidenceAcceptThreshold {
-            // Kiểm tra outlier: nếu điểm mới nhảy quá xa so với vị trí + vận tốc dự đoán,
-            // rất có thể tracker vừa "dính" nhầm sang vật thể đang che ngang qua -> không nhận frame này.
-            let predicted = CGPoint(
-                x: (currentTargetPoint?.x ?? visualPoint.x) + smoothedVelocity.dx * CGFloat(dt),
-                y: (currentTargetPoint?.y ?? visualPoint.y) + smoothedVelocity.dy * CGFloat(dt)
+            // Giới hạn tọa độ hợp lệ trong khung hình preview
+            let clampedVisual = CGPoint(
+                x: max(0.02, min(0.98, visualPoint.x)),
+                y: max(0.02, min(0.98, visualPoint.y))
             )
-            let jump = hypot(visualPoint.x - predicted.x, visualPoint.y - predicted.y)
-
-            if jump > maxJumpPerFrame && consecutiveLowConfidenceFrames == 0 && trackingQuality == .locked {
-                // Nghi là false-positive do vật che -> bỏ qua frame này, coi như 1 frame confidence thấp
-                handleTrackingDegraded()
-                return
+            
+            // Lọc outlier cực đoan nếu nhảy đột ngột quá xa (> 0.35 khung hình trong 1 frame)
+            if let current = self.currentTargetPoint {
+                let rawJump = hypot(clampedVisual.x - current.x, clampedVisual.y - current.y)
+                if rawJump > 0.35 && consecutiveLowConfidenceFrames == 0 && trackingQuality == .locked {
+                    handleTrackingDegraded()
+                    return
+                }
             }
 
-            // Chấp nhận điểm mới
-            let current = self.currentTargetPoint ?? visualPoint
+            // Smooth EMA filter - Bám dính chắc chắn, triệt tiêu hoàn toàn rung giật
+            let current = self.currentTargetPoint ?? clampedVisual
             let alpha = trackingEMAAlpha
-            let smoothedX = current.x * (1.0 - alpha) + visualPoint.x * alpha
-            let smoothedY = current.y * (1.0 - alpha) + visualPoint.y * alpha
+            let smoothedX = current.x * (1.0 - alpha) + clampedVisual.x * alpha
+            let smoothedY = current.y * (1.0 - alpha) + clampedVisual.y * alpha
             let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
 
-            if dt > 0 {
+            // Vận tốc thực tế có giới hạn vật lý để tránh phóng vọt
+            if dt > 0.005 {
                 let rawVX = (smoothedPoint.x - current.x) / CGFloat(dt)
                 let rawVY = (smoothedPoint.y - current.y) / CGFloat(dt)
-                smoothedVelocity = CGVector(dx: smoothedVelocity.dx * 0.7 + rawVX * 0.3,
-                                              dy: smoothedVelocity.dy * 0.7 + rawVY * 0.3)
+                let clampedVX = max(-1.5, min(1.5, rawVX))
+                let clampedVY = max(-1.5, min(1.5, rawVY))
+                smoothedVelocity = CGVector(
+                    dx: smoothedVelocity.dx * 0.6 + clampedVX * 0.4,
+                    dy: smoothedVelocity.dy * 0.6 + clampedVY * 0.4
+                )
             }
 
             self.lastTrackedVisualPoint = smoothedPoint
             self.currentTargetPoint = smoothedPoint
+            self.gyroAnchorPoint = smoothedPoint
+            self.motionService.resetReferenceAttitude()
             consecutiveLowConfidenceFrames = 0
             trackingQuality = .locked
             evaluateAlignment(at: smoothedPoint)
@@ -543,7 +554,7 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che / bị outlier reject)
+    // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che)
     private func handleTrackingDegraded() {
         consecutiveLowConfidenceFrames += 1
 
@@ -552,18 +563,21 @@ public final class CameraViewModel: ObservableObject {
         let previousQuality = trackingQuality
 
         if consecutiveLowConfidenceFrames <= predictionGraceFrames {
-            // Còn trong khoảng cho phép ngoại suy: dùng vận tốc gần nhất để "cầm cự" qua lúc bị che
+            // Còn trong khoảng cho phép ngoại suy: dùng vận tốc giảm dần (damped) để không trôi dạt
             let dt: CGFloat = 1.0 / 30.0
+            smoothedVelocity = CGVector(dx: smoothedVelocity.dx * 0.85, dy: smoothedVelocity.dy * 0.85)
             let predictedX = lastPoint.x + smoothedVelocity.dx * dt
             let predictedY = lastPoint.y + smoothedVelocity.dy * dt
-            let clamped = CGPoint(x: min(1.0, max(0.0, predictedX)), y: min(1.0, max(0.0, predictedY)))
+            let clamped = CGPoint(x: min(0.98, max(0.02, predictedX)), y: min(0.98, max(0.02, predictedY)))
             self.currentTargetPoint = clamped
             trackingQuality = .predicting
             evaluateAlignment(at: clamped)
         } else if consecutiveLowConfidenceFrames <= reacquireGraceFrames {
-            // Hết thời gian ngoại suy hợp lý -> đứng yên tại vị trí cuối, không đoán mò thêm nữa
+            // Hết thời gian ngoại suy -> giữ nguyên vị trí cuối cùng, triệt tiêu vận tốc
+            smoothedVelocity = .zero
             trackingQuality = .reacquiring
         } else {
+            smoothedVelocity = .zero
             trackingQuality = .lost
             autoCaptureTask?.cancel()
             autoCaptureTask = nil
@@ -577,20 +591,19 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - 3. 60Hz Gyro Motion Handler (Inertial Odometry khi lia máy nhanh hoặc mất dấu quang học)
     
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
-        guard case .targetPlaced = aiSessionState, let initial = initialTargetPoint else { return }
+        guard case .targetPlaced = aiSessionState, let anchor = gyroAnchorPoint ?? initialTargetPoint else { return }
         
-        // Khi lia máy nhanh hoặc quang học tạm thời mờ/khuất (confidence thấp), Gyroscope giữ vị trí không gian
+        // Khi lia máy nhanh hoặc quang học tạm thời mờ/khuất (confidence thấp), Gyroscope giữ vị trí không gian từ mỏ neo gần nhất
         if lastVisualConfidence <= 0.35 {
-            // Xấp xỉ tuyến tính theo zoom: zoom càng cao thì cùng góc xoay tay dịch chuyển điểm ảnh nhiều hơn trên khung hình
             let zoomCompensation = max(1.0, currentZoom)
-            let newX = initial.x - deltaX * zoomCompensation
-            let newY = initial.y - deltaY * zoomCompensation
-            let gyroPoint = CGPoint(x: newX, y: newY)
+            let newX = anchor.x - deltaX * zoomCompensation
+            let newY = anchor.y - deltaY * zoomCompensation
+            let gyroPoint = CGPoint(x: min(0.98, max(0.02, newX)), y: min(0.98, max(0.02, newY)))
             
             let current = self.currentTargetPoint ?? gyroPoint
-            let alpha: CGFloat = 0.50
-            let smoothedX = current.x * (1.0 - alpha) + newX * alpha
-            let smoothedY = current.y * (1.0 - alpha) + newY * alpha
+            let alpha: CGFloat = 0.45
+            let smoothedX = current.x * (1.0 - alpha) + gyroPoint.x * alpha
+            let smoothedY = current.y * (1.0 - alpha) + gyroPoint.y * alpha
             let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
             
             self.currentTargetPoint = smoothedPoint
@@ -873,52 +886,67 @@ public final class CameraViewModel: ObservableObject {
                 return
             }
             
+            // 1. Kiểm tra Album trước khi vào performChanges (tránh crash performChangesAndWait)
+            var existingAlbum: PHAssetCollection? = nil
+            if isAIColorEdited {
+                let fetchOptions = PHFetchOptions()
+                fetchOptions.predicate = NSPredicate(format: "title = %@", albumName)
+                let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+                existingAlbum = collections.firstObject
+            }
+            
+            // 2. Kiểm tra file Live Photo video có tồn tại trên đĩa không
+            let validLiveURL: URL?
+            if self.isLivePhotoEnabled, let url = livePhotoURL, FileManager.default.fileExists(atPath: url.path) {
+                validLiveURL = url
+            } else {
+                validLiveURL = nil
+            }
+            
+            guard let imageData = image.jpegData(compressionQuality: 0.95) else {
+                DispatchQueue.main.async {
+                    self.saveErrorMessage = "Lỗi nén ảnh JPEG"
+                }
+                return
+            }
+            
+            // 3. Thực hiện lưu ảnh an toàn trong 1 transaction duy nhất
             PHPhotoLibrary.shared().performChanges({
                 let creationRequest = PHAssetCreationRequest.forAsset()
-                creationRequest.addResource(with: .photo, data: image.jpegData(compressionQuality: 0.95) ?? Data(), options: nil)
-                if let liveURL = livePhotoURL {
+                creationRequest.addResource(with: .photo, data: imageData, options: nil)
+                
+                if let liveURL = validLiveURL {
                     let options = PHAssetResourceCreationOptions()
-                    options.shouldMoveFile = true
+                    options.shouldMoveFile = false
                     creationRequest.addResource(with: .pairedVideo, fileURL: liveURL, options: options)
                 }
                 
-                if isAIColorEdited {
-                    if let album = self.findOrCreateAlbum(named: albumName) {
+                if isAIColorEdited, let placeholder = creationRequest.placeholderForCreatedAsset {
+                    if let album = existingAlbum {
                         let albumChangeRequest = PHAssetCollectionChangeRequest(for: album)
-                        if let placeholder = creationRequest.placeholderForCreatedAsset {
-                            albumChangeRequest?.addAssets([placeholder] as NSArray)
-                        }
+                        albumChangeRequest?.addAssets([placeholder] as NSArray)
+                    } else {
+                        let albumCreateRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumName)
+                        albumCreateRequest.addAssets([placeholder] as NSArray)
                     }
                 }
             }) { success, error in
+                // Dọn dẹp file tạm Live Photo sau khi xử lý xong
+                if let liveURL = validLiveURL {
+                    try? FileManager.default.removeItem(at: liveURL)
+                }
+                
                 DispatchQueue.main.async {
                     if success {
                         self.haptics.triggerSuccess()
                         self.saveErrorMessage = nil
                     } else {
+                        print("Lưu ảnh lỗi: \(String(describing: error))")
                         self.saveErrorMessage = "Lưu ảnh thất bại: \(error?.localizedDescription ?? "không rõ lỗi")"
                     }
                 }
             }
         }
-    }
-    
-    private func findOrCreateAlbum(named title: String) -> PHAssetCollection? {
-        let fetchOptions = PHFetchOptions()
-        fetchOptions.predicate = NSPredicate(format: "title = %@", title)
-        let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
-        if let existing = collections.firstObject {
-            return existing
-        }
-        
-        var albumPlaceholder: PHObjectPlaceholder?
-        try? PHPhotoLibrary.shared().performChangesAndWait {
-            let createRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: title)
-            albumPlaceholder = createRequest.placeholderForCreatedAssetCollection
-        }
-        guard let placeholder = albumPlaceholder else { return nil }
-        let fetchResult = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [placeholder.localIdentifier], options: nil)
-        return fetchResult.firstObject
     }
     
     // MARK: - Computed helpers
