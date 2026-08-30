@@ -125,7 +125,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     }
     
     // MARK: - Dung hợp Dữ liệu Quang Học (Vision Optical Observation Update)
-    public func updateWithOpticalDetection(point: CGPoint?, confidence: Double) {
+    public func updateWithOpticalDetection(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer? = nil) {
         guard isTrackingActive else { return }
         self.lastOpticalConfidence = confidence
         
@@ -172,18 +172,39 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 self.anchorWorldVector = currentQuat.act(localRay)
             }
             
+            if confidence > 0.60, let buffer = pixelBuffer {
+                VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: CGPoint(x: self.stateX, y: self.stateY))
+            }
+            
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
             self.onSpatialTargetUpdated?(targetPoint, confidence, .locked)
         } else {
-            // Khi quang học tạm thời mờ/khuất: Ngoại suy vận tốc kết hợp con quay hồi chuyển
-            self.velocityX *= 0.85
-            self.velocityY *= 0.85
-            self.stateX = min(0.98, max(0.02, self.stateX + self.velocityX * dt))
-            self.stateY = min(0.98, max(0.02, self.stateY + self.velocityY * dt))
-            
-            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-            let quality: TrackingQuality = (confidence > 0.15) ? .predicting : .reacquiring
-            self.onSpatialTargetUpdated?(targetPoint, confidence, quality)
+            if let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
+                // Visual Odometry thành công: tin theo kết quả này, đồng bộ lại 
+                // luôn vận tốc để nếu VO cũng rớt ở frame sau, ngoại suy Gyro tiếp 
+                // theo vẫn mượt, không giật.
+                if dt > 0.005 {
+                    let rawVx = (Double(voPoint.x) - self.stateX) / dt
+                    let rawVy = (Double(voPoint.y) - self.stateY) / dt
+                    self.velocityX = self.velocityX * 0.7 + max(-2.0, min(2.0, rawVx)) * 0.3
+                    self.velocityY = self.velocityY * 0.7 + max(-2.0, min(2.0, rawVy)) * 0.3
+                }
+                self.stateX = min(0.98, max(0.02, Double(voPoint.x)))
+                self.stateY = min(0.98, max(0.02, Double(voPoint.y)))
+                
+                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                self.onSpatialTargetUpdated?(targetPoint, confidence, .predicting)
+            } else {
+                // Visual Odometry cũng không tính được: rơi về Gyro thuần như cũ
+                self.velocityX *= 0.85
+                self.velocityY *= 0.85
+                self.stateX = min(0.98, max(0.02, self.stateX + self.velocityX * dt))
+                self.stateY = min(0.98, max(0.02, self.stateY + self.velocityY * dt))
+                
+                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                let quality: TrackingQuality = (confidence > 0.15) ? .predicting : .reacquiring
+                self.onSpatialTargetUpdated?(targetPoint, confidence, quality)
+            }
         }
     }
     
@@ -193,6 +214,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         anchorWorldVector = nil
         initialAttitudeQuaternion = nil
         motionManager.stopDeviceMotionUpdates()
+        VisualOdometryEngine.shared.clearReference()
         CameraLogger.info("Đã dừng động cơ tracking không gian 6DOF", category: .tracking)
     }
 }

@@ -25,7 +25,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     
     // Callbacks
     public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)?
-    public var onTargetTracked: ((CGPoint?, Double) -> Void)?
+    public var onTargetTracked: ((CGPoint?, Double, CVPixelBuffer) -> Void)?
     public var onSmartFocusPointCalculated: ((CGPoint, SmartFocusType) -> Void)?
     
     // Gemini Frame Capture
@@ -141,11 +141,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             let trackedPoint = CGPoint(x: uiX, y: uiY)
                             
                             DispatchQueue.main.async {
-                                self.onTargetTracked?(trackedPoint, Double(newObs.confidence))
+                                self.onTargetTracked?(trackedPoint, Double(newObs.confidence), pixelBuffer)
                             }
                         } else {
                             DispatchQueue.main.async {
-                                self.onTargetTracked?(nil, Double(newObs.confidence))
+                                self.onTargetTracked?(nil, Double(newObs.confidence), pixelBuffer)
                             }
                         }
                     }

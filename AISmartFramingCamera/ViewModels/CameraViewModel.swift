@@ -229,9 +229,9 @@ public final class CameraViewModel: ObservableObject {
             self.handleVisionDetection(detection)
         }
         
-        visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence in
+        visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence, pixelBuffer in
             guard let self = self else { return }
-            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence)
+            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence, pixelBuffer: pixelBuffer)
         }
         
         // Smart Autofocus (Face Priority > Saliency > Center)
@@ -519,7 +519,7 @@ public final class CameraViewModel: ObservableObject {
     
     // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
     
-    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
+    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer) {
         guard case .targetPlaced = aiSessionState else { return }
         self.lastVisualConfidence = confidence
         
@@ -533,9 +533,9 @@ public final class CameraViewModel: ObservableObject {
             let mappedTargetY = min(0.98, max(0.02, initialTarget.y + deltaY))
             let mappedTarget = CGPoint(x: mappedTargetX, y: mappedTargetY)
             
-            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: mappedTarget, confidence: confidence)
+            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: mappedTarget, confidence: confidence, pixelBuffer: pixelBuffer)
         } else {
-            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: nil, confidence: confidence)
+            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: nil, confidence: confidence, pixelBuffer: pixelBuffer)
         }
     }
 
