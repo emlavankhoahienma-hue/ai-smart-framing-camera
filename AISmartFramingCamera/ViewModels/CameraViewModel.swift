@@ -461,7 +461,7 @@ public final class CameraViewModel: ObservableObject {
         if isAIFullColorEnabled {
             currentAIColorParams = dominantScene.aiFullColorParameters
             let lumaError: Float = 0.50 - avgDetection.averageLuminance
-            setExposure(max(-2.0, min(2.0, lumaError * 3.0)))
+            setExposure(max(-1.0, min(1.0, lumaError * 1.2)))
         }
         
         pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
