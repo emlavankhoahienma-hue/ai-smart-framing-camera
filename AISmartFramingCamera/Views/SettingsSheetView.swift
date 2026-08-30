@@ -269,7 +269,12 @@ public struct SettingsSheetView: View {
                     }
                 }
                 
-                // MARK: - 6. Hardware & App Info
+                // MARK: - 6. Feedback & Support
+                Section(header: Text("💬 GÓP Ý & HỖ TRỢ")) {
+                    NavigationLink("Gửi góp ý cho AlignAI", destination: FeedbackView())
+                }
+                
+                // MARK: - 7. Hardware & App Info
                 Section(header: Text("ℹ️ THÔNG TIN PHẦN CỨNG")) {
                     hardwareRow("Kiến trúc", "CPU + Neural Engine + Metal GPU + Gemini Cloud", color: .yellow)
                     hardwareRow("Thiết bị hỗ trợ", "Apple A11 đến A18 Pro Bionic")

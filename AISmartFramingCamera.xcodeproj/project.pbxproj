@@ -31,6 +31,7 @@
 		B20000000000000000000016 /* NeuralSubjectIntelligenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */; };
 		B20000000000000000000017 /* YOLODetectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000020 /* YOLODetectionEngine.swift */; };
 		B20000000000000000000018 /* VisualOdometryEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000021 /* VisualOdometryEngine.swift */; };
+		B20000000000000000000019 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000022 /* FeedbackView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +62,7 @@
 		B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralSubjectIntelligenceEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000020 /* YOLODetectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YOLODetectionEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000021 /* VisualOdometryEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualOdometryEngine.swift; sourceTree = "<group>"; };
+		B100000000000000000000022 /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -151,6 +153,7 @@
 				B1000000000000000000000F /* CapturedPhotoPreviewView.swift */,
 				B100000000000000000000010 /* SettingsSheetView.swift */,
 				B100000000000000000000016 /* VideoPreviewSheetView.swift */,
+				B100000000000000000000022 /* FeedbackView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -255,6 +258,7 @@
 				B20000000000000000000016 /* NeuralSubjectIntelligenceEngine.swift in Sources */,
 				B20000000000000000000017 /* YOLODetectionEngine.swift in Sources */,
 				B20000000000000000000018 /* VisualOdometryEngine.swift in Sources */,
+				B20000000000000000000019 /* FeedbackView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
