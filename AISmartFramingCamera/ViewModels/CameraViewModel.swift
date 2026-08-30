@@ -878,7 +878,6 @@ public final class CameraViewModel: ObservableObject {
         let image = UIImage(cgImage: item.processedImage)
         let isAIColorEdited = item.aiColorParameters != nil
         let albumName = "AI Smart Framing - AI Color"
-        let livePhotoURL = cameraService.pendingLivePhotoMovieURL
         
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let self = self else { return }
@@ -898,34 +897,11 @@ public final class CameraViewModel: ObservableObject {
                 existingAlbum = collections.firstObject
             }
             
-            // 2. Kiểm tra file Live Photo video có tồn tại trên đĩa và dung lượng > 0 không
-            let validLiveURL: URL?
-            if self.isLivePhotoEnabled, let url = livePhotoURL, FileManager.default.fileExists(atPath: url.path) {
-                let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
-                validLiveURL = fileSize > 0 ? url : nil
-            } else {
-                validLiveURL = nil
-            }
-            
-            guard let imageData = image.jpegData(compressionQuality: 0.95) else {
-                DispatchQueue.main.async {
-                    self.saveErrorMessage = "Lỗi nén ảnh JPEG"
-                }
-                return
-            }
-            
-            // 3. Thực hiện lưu ảnh an toàn trong 1 transaction duy nhất
+            // 2. Thực hiện lưu ảnh an toàn tuyệt đối bằng PHAssetChangeRequest (tránh hoàn toàn NSInternalInconsistencyException)
             PHPhotoLibrary.shared().performChanges({
-                let creationRequest = PHAssetCreationRequest.forAsset()
-                creationRequest.addResource(with: .photo, data: imageData, options: nil)
+                let assetRequest = PHAssetChangeRequest.creationRequestForAsset(from: image)
                 
-                if let liveURL = validLiveURL, liveURL.pathExtension.lowercased() == "mov" {
-                    let options = PHAssetResourceCreationOptions()
-                    options.shouldMoveFile = false
-                    creationRequest.addResource(with: .pairedVideo, fileURL: liveURL, options: options)
-                }
-                
-                if isAIColorEdited, let placeholder = creationRequest.placeholderForCreatedAsset {
+                if isAIColorEdited, let placeholder = assetRequest.placeholderForCreatedAsset {
                     if let album = existingAlbum {
                         let albumChangeRequest = PHAssetCollectionChangeRequest(for: album)
                         albumChangeRequest?.addAssets([placeholder] as NSArray)
@@ -935,11 +911,6 @@ public final class CameraViewModel: ObservableObject {
                     }
                 }
             }) { success, error in
-                // Dọn dẹp file tạm Live Photo sau khi xử lý xong
-                if let liveURL = validLiveURL {
-                    try? FileManager.default.removeItem(at: liveURL)
-                }
-                
                 DispatchQueue.main.async {
                     if success {
                         self.haptics.triggerSuccess()
