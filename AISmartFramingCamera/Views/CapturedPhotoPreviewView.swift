@@ -152,6 +152,17 @@ public struct CapturedPhotoPreviewView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack {
+                                    if item.isLivePhoto {
+                                        HStack(spacing: 3) {
+                                            Image(systemName: "livephoto")
+                                            Text("LIVE")
+                                        }
+                                        .font(.caption2.bold())
+                                        .foregroundColor(.yellow)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.yellow.opacity(0.2)))
+                                    }
                                     Text(item.appliedPreset.rawValue)
                                         .font(.headline)
                                         .foregroundColor(.white)

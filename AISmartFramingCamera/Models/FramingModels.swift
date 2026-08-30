@@ -348,6 +348,8 @@ public struct CapturedPhotoItem: Identifiable {
     public let id: UUID = UUID()
     public let originalImage: CGImage
     public let processedImage: CGImage
+    public let rawPhotoData: Data?
+    public let livePhotoMovieURL: URL?
     public let sceneType: DetectedSceneType
     public let appliedPreset: FilmPreset
     public let compositionRule: CompositionRule
@@ -357,9 +359,15 @@ public struct CapturedPhotoItem: Identifiable {
     public let shutterSpeed: Double
     public let aiColorParameters: AIColorParameters?
     
+    public var isLivePhoto: Bool {
+        return livePhotoMovieURL != nil
+    }
+    
     public init(
         originalImage: CGImage,
         processedImage: CGImage,
+        rawPhotoData: Data? = nil,
+        livePhotoMovieURL: URL? = nil,
         sceneType: DetectedSceneType,
         appliedPreset: FilmPreset,
         compositionRule: CompositionRule,
@@ -371,6 +379,8 @@ public struct CapturedPhotoItem: Identifiable {
     ) {
         self.originalImage = originalImage
         self.processedImage = processedImage
+        self.rawPhotoData = rawPhotoData
+        self.livePhotoMovieURL = livePhotoMovieURL
         self.sceneType = sceneType
         self.appliedPreset = appliedPreset
         self.compositionRule = compositionRule

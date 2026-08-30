@@ -7,12 +7,14 @@ import ImageIO
 
 public protocol CameraServiceDelegate: AnyObject {
     func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
-    func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, iso: Float, shutterSpeed: Double)
+    func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double)
     func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL)
+    func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat)
 }
 
 public extension CameraServiceDelegate {
     func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {}
+    func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {}
 }
 
 public final class CameraService: NSObject {
@@ -40,7 +42,11 @@ public final class CameraService: NSObject {
     
     public var flashMode: AVCaptureDevice.FlashMode = .auto
     public var isLivePhotoMode = false
-    public private(set) var pendingLivePhotoMovieURL: URL?
+    
+    // Live Photo capture coordination state
+    private var isCapturingLivePhotoRequest = false
+    private var currentPhotoCaptured: (cgImage: CGImage, rawData: Data?, iso: Float, shutter: Double)?
+    private var currentLivePhotoURL: URL?
     
     private override init() {
         super.init()
@@ -125,6 +131,9 @@ public final class CameraService: NSObject {
                     self.photoOutput.maxPhotoQualityPrioritization = .quality
                     if self.photoOutput.isLivePhotoCaptureSupported {
                         self.photoOutput.isLivePhotoCaptureEnabled = true
+                        CameraLogger.info("CameraService: Thiết bị hỗ trợ Live Photo -> isLivePhotoCaptureEnabled = true", category: .capture)
+                    } else {
+                        CameraLogger.warning("CameraService: isLivePhotoCaptureSupported = false", category: .capture)
                     }
                     if let connection = self.photoOutput.connection(with: .video) {
                         if connection.isVideoOrientationSupported {
@@ -133,18 +142,8 @@ public final class CameraService: NSObject {
                     }
                 }
                 
-                // Movie Output for Video Recording
-                if self.captureSession.canAddOutput(self.movieFileOutput) {
-                    self.captureSession.addOutput(self.movieFileOutput)
-                    if let connection = self.movieFileOutput.connection(with: .video) {
-                        if connection.isVideoOrientationSupported {
-                            connection.videoOrientation = .portrait
-                        }
-                        if connection.isVideoStabilizationSupported {
-                            connection.preferredVideoStabilizationMode = .cinematicExtended
-                        }
-                    }
-                }
+                // Movie Output: Không add sẵn vào session để tránh vô hiệu hoá Live Photo ở chế độ Ảnh
+                // (Chỉ add khi người dùng chuyển sang chế độ VIDEO)
                 
                 // Initial Continuous Auto Focus & Exposure setup
                 try camera.lockForConfiguration()
@@ -392,11 +391,60 @@ public final class CameraService: NSObject {
         }
     }
     
+    // MARK: - Capture Mode & Live Photo Dynamic Control
+    public func updateCaptureMode(_ mode: CameraCaptureMode) {
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.captureSession.beginConfiguration()
+            if mode == .video {
+                if self.photoOutput.isLivePhotoCaptureEnabled {
+                    self.photoOutput.isLivePhotoCaptureEnabled = false
+                }
+                if !self.captureSession.outputs.contains(self.movieFileOutput) && self.captureSession.canAddOutput(self.movieFileOutput) {
+                    self.captureSession.addOutput(self.movieFileOutput)
+                    if let connection = self.movieFileOutput.connection(with: .video) {
+                        if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
+                        if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .cinematicExtended }
+                    }
+                }
+            } else {
+                if self.captureSession.outputs.contains(self.movieFileOutput) {
+                    self.captureSession.removeOutput(self.movieFileOutput)
+                }
+                if self.photoOutput.isLivePhotoCaptureSupported {
+                    self.photoOutput.isLivePhotoCaptureEnabled = true
+                }
+            }
+            self.captureSession.commitConfiguration()
+            CameraLogger.info("Đã chuyển chế độ: \(mode == .video ? "VIDEO" : "ẢNH") | LivePhotoSupported: \(self.photoOutput.isLivePhotoCaptureSupported)", category: .capture)
+        }
+    }
+    
+    public func setLivePhotoCaptureEnabled(_ enabled: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.isLivePhotoMode = enabled
+            if self.photoOutput.isLivePhotoCaptureSupported {
+                if self.photoOutput.isLivePhotoCaptureEnabled != enabled {
+                    self.captureSession.beginConfiguration()
+                    self.photoOutput.isLivePhotoCaptureEnabled = enabled
+                    self.captureSession.commitConfiguration()
+                }
+                CameraLogger.info("Chế độ Live Photo: \(enabled ? "BẬT" : "TẮT") (isLivePhotoCaptureEnabled = \(self.photoOutput.isLivePhotoCaptureEnabled))", category: .capture)
+            } else {
+                CameraLogger.warning("Thiết bị không hỗ trợ Live Photo ở cấu hình này", category: .capture)
+            }
+        }
+    }
+    
     // MARK: - Capture Photo
     public func capturePhoto() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            self.pendingLivePhotoMovieURL = nil
+            self.currentPhotoCaptured = nil
+            self.currentLivePhotoURL = nil
+            self.isCapturingLivePhotoRequest = false
+            
             let photoSettings = AVCapturePhotoSettings()
             if self.activeCamera?.isFlashAvailable == true {
                 photoSettings.flashMode = self.flashMode
@@ -404,10 +452,19 @@ public final class CameraService: NSObject {
             photoSettings.photoQualityPrioritization = .quality
             
             if self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {
+                if !self.photoOutput.isLivePhotoCaptureEnabled {
+                    self.captureSession.beginConfiguration()
+                    self.photoOutput.isLivePhotoCaptureEnabled = true
+                    self.captureSession.commitConfiguration()
+                }
                 let tempDir = FileManager.default.temporaryDirectory
-                let fileName = ProcessInfo.processInfo.globallyUniqueString + ".mov"
-                let movieURL = tempDir.appendingPathComponent(fileName)
+                let movieURL = tempDir.appendingPathComponent("livephoto_\(UUID().uuidString).mov")
+                try? FileManager.default.removeItem(at: movieURL)
                 photoSettings.livePhotoMovieFileURL = movieURL
+                self.isCapturingLivePhotoRequest = true
+                CameraLogger.info("📸 Kích hoạt chụp LIVE PHOTO (Movie URL: \(movieURL.lastPathComponent))", category: .capture)
+            } else {
+                CameraLogger.info("📸 Chụp ẢNH TĨNH tiêu chuẩn", category: .capture)
             }
             
             self.photoOutput.capturePhoto(with: photoSettings, delegate: self)
@@ -437,8 +494,11 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         let zoomAtCapture = self.currentZoom
         let metadata = photo.metadata
         let (iso, shutter) = Self.parseExif(metadata)
+        let rawData = photo.fileDataRepresentation()
         
         autoreleasepool {
+            var finalCGImage: CGImage? = nil
+            
             if let pixelBuffer = photo.pixelBuffer {
                 var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
                 if let orientationNum = metadata[kCGImagePropertyOrientation as String] as? UInt32,
@@ -458,42 +518,63 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                     ciImage = ciImage.cropped(to: cropRect)
                 }
                 
-                if let cgImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent) {
-                    CameraLogger.info("Đã render CGImage thành công từ pixelBuffer (\(cgImage.width)x\(cgImage.height))", category: .capture)
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
-                    }
-                    return
-                }
+                finalCGImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent)
             }
             
-            // Fallback qua fileDataRepresentation
-            if let data = photo.fileDataRepresentation(), let uiImage = UIImage(data: data) {
+            if finalCGImage == nil, let data = rawData, let uiImage = UIImage(data: data) {
                 var uprightImage = Self.fixOrientation(uiImage)
                 if zoomAtCapture > 1.02, let cropped = Self.cropImageForZoom(uprightImage, zoom: zoomAtCapture) {
                     uprightImage = cropped
                 }
-                if let cgImage = uprightImage.cgImage {
-                    CameraLogger.info("Đã xử lý CGImage thành công từ fileData (\(cgImage.width)x\(cgImage.height))", category: .capture)
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
-                    }
-                    return
+                finalCGImage = uprightImage.cgImage
+            }
+            
+            guard let cgImage = finalCGImage else {
+                CameraLogger.error("Không thể tạo CGImage từ AVCapturePhoto", category: .capture)
+                return
+            }
+            
+            CameraLogger.info("Đã render CGImage thành công (\(cgImage.width)x\(cgImage.height))", category: .capture)
+            
+            if self.isCapturingLivePhotoRequest {
+                // Tạm lưu lại và chờ file video Live Photo hoàn tất
+                self.currentPhotoCaptured = (cgImage, rawData, iso, shutter)
+            } else {
+                // Ảnh tĩnh thường: Dispatch ngay
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.delegate?.cameraService(self, didCapturePhoto: cgImage, rawData: rawData, livePhotoMovieURL: nil, iso: iso, shutterSpeed: shutter)
                 }
             }
         }
     }
     
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingLivePhotoToMovieFileAt outputFileURL: URL, duration: CMTime, photoDisplayTime: CMTime, resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
-        if error == nil {
-            self.pendingLivePhotoMovieURL = outputFileURL
+        if let error = error {
+            CameraLogger.error("Lỗi ghi file video Live Photo: \(error.localizedDescription)", error: error, category: .capture)
+            self.currentLivePhotoURL = nil
         } else {
-            print("CameraService: Lỗi ghi video Live Photo: \(error!)")
-            self.pendingLivePhotoMovieURL = nil
+            CameraLogger.success("✅ Đã ghi xong file video Live Photo (\(outputFileURL.lastPathComponent))", category: .capture)
+            self.currentLivePhotoURL = outputFileURL
         }
     }
+    
+    public func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        if self.isCapturingLivePhotoRequest {
+            guard let captured = self.currentPhotoCaptured else { return }
+            let movieURL = self.currentLivePhotoURL
+            self.currentPhotoCaptured = nil
+            self.currentLivePhotoURL = nil
+            self.isCapturingLivePhotoRequest = false
+            
+            CameraLogger.info("Hoàn tất phiên Live Photo -> Gửi ảnh + movie (\(movieURL?.lastPathComponent ?? "không có"))", category: .capture)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.delegate?.cameraService(self, didCapturePhoto: captured.cgImage, rawData: captured.rawData, livePhotoMovieURL: movieURL, iso: captured.iso, shutterSpeed: captured.shutter)
+            }
+        }
+    }
+}
     
     // MARK: - Helpers
     

@@ -48,10 +48,16 @@ public final class CameraViewModel: ObservableObject {
     
     // Camera Mode & Live Photo
     @Published public var captureMode: CameraCaptureMode = .photo {
-        didSet { UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode") }
+        didSet {
+            UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode")
+            cameraService.updateCaptureMode(captureMode)
+        }
     }
     @Published public var isLivePhotoEnabled: Bool = false {
-        didSet { UserDefaults.standard.set(isLivePhotoEnabled, forKey: "isLivePhotoEnabled") }
+        didSet {
+            UserDefaults.standard.set(isLivePhotoEnabled, forKey: "isLivePhotoEnabled")
+            cameraService.setLivePhotoCaptureEnabled(isLivePhotoEnabled)
+        }
     }
     @Published public var isRecordingVideo: Bool = false
     @Published public var recordedVideoURL: URL? = nil
@@ -218,6 +224,8 @@ public final class CameraViewModel: ObservableObject {
         cameraService.delegate = self
         cameraService.setupSession { [weak self] success in
             guard let self = self, success else { return }
+            self.cameraService.updateCaptureMode(self.captureMode)
+            self.cameraService.setLivePhotoCaptureEnabled(self.isLivePhotoEnabled)
             self.cameraService.start()
             self.isCameraReady = true
         }
@@ -762,7 +770,8 @@ public final class CameraViewModel: ObservableObject {
     public func toggleLivePhoto() {
         haptics.triggerSelectionChange()
         isLivePhotoEnabled.toggle()
-        cameraService.isLivePhotoMode = isLivePhotoEnabled
+        cameraService.setLivePhotoCaptureEnabled(isLivePhotoEnabled)
+        CameraLogger.info("Người dùng chuyển chế độ Live Photo: \(isLivePhotoEnabled ? "BẬT" : "TẮT")", category: .capture)
     }
     
     public func toggleVideoRecording() {
@@ -858,8 +867,7 @@ public final class CameraViewModel: ObservableObject {
     }
     
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {
-        CameraLogger.info("Bắt đầu lưu ảnh trực tiếp vào Cuộn Camera (Photo Library)...", category: .photoKit)
-        let image = UIImage(cgImage: item.processedImage)
+        CameraLogger.info("Bắt đầu lưu ảnh vào Cuộn Camera (Photo Library)... (Live Photo: \(item.isLivePhoto ? "CÓ" : "KHÔNG"))", category: .photoKit)
         
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let self = self else { return }
@@ -871,19 +879,73 @@ public final class CameraViewModel: ObservableObject {
                 return
             }
             
-            // Lưu trực tiếp vào Thư viện ảnh (Cuộn Camera mặc định) - Không lưu vào thư mục riêng, an toàn 100%
-            PHPhotoLibrary.shared().performChanges({
-                PHAssetChangeRequest.creationRequestForAsset(from: image)
-            }) { success, error in
-                DispatchQueue.main.async {
-                    if success {
-                        CameraLogger.success("Đã lưu ảnh vào Cuộn Camera thành công!", category: .photoKit)
-                        self.haptics.triggerSuccess()
-                        self.saveErrorMessage = nil
+            if let liveMovieURL = item.livePhotoMovieURL, FileManager.default.fileExists(atPath: liveMovieURL.path) {
+                // LƯU LIVE PHOTO CHUẨN APPLE
+                CameraLogger.info("Đang tạo PHAssetCreationRequest cho Live Photo (Kèm video: \(liveMovieURL.lastPathComponent))", category: .photoKit)
+                
+                PHPhotoLibrary.shared().performChanges({
+                    let creationRequest = PHAssetCreationRequest.forAsset()
+                    
+                    // Thêm tài nguyên ảnh (raw data từ AVCapturePhoto có chứa Live Photo Content Identifier)
+                    if let rawData = item.rawPhotoData {
+                        let photoOptions = PHAssetResourceCreationOptions()
+                        creationRequest.addResource(with: .photo, data: rawData, options: photoOptions)
                     } else {
-                        CameraLogger.error("Lưu ảnh thất bại", error: error, category: .photoKit)
-                        self.saveErrorMessage = "Lưu ảnh thất bại: \(error?.localizedDescription ?? "không rõ lỗi")"
+                        let image = UIImage(cgImage: item.processedImage)
+                        if let jpegData = image.jpegData(compressionQuality: 0.95) {
+                            creationRequest.addResource(with: .photo, data: jpegData, options: nil)
+                        }
                     }
+                    
+                    // Thêm tài nguyên video ghép đôi (Paired Video)
+                    let videoOptions = PHAssetResourceCreationOptions()
+                    videoOptions.shouldMoveFile = false
+                    creationRequest.addResource(with: .pairedVideo, fileURL: liveMovieURL, options: videoOptions)
+                }) { success, error in
+                    DispatchQueue.main.async {
+                        if success {
+                            CameraLogger.success("✅ Đã lưu LIVE PHOTO vào Cuộn Camera thành công!", category: .photoKit)
+                            self.haptics.triggerSuccess()
+                            self.saveErrorMessage = nil
+                        } else {
+                            CameraLogger.error("Lưu Live Photo thất bại, chuyển sang lưu ảnh tĩnh dự phòng", error: error, category: .photoKit)
+                            self.saveFallbackStaticPhoto(item)
+                        }
+                    }
+                }
+            } else {
+                // LƯU ẢNH TĨNH THƯỜNG
+                let image = UIImage(cgImage: item.processedImage)
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAsset(from: image)
+                }) { success, error in
+                    DispatchQueue.main.async {
+                        if success {
+                            CameraLogger.success("✅ Đã lưu ảnh tĩnh vào Cuộn Camera thành công!", category: .photoKit)
+                            self.haptics.triggerSuccess()
+                            self.saveErrorMessage = nil
+                        } else {
+                            CameraLogger.error("Lưu ảnh thất bại", error: error, category: .photoKit)
+                            self.saveErrorMessage = "Lưu ảnh thất bại: \(error?.localizedDescription ?? "không rõ lỗi")"
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func saveFallbackStaticPhoto(_ item: CapturedPhotoItem) {
+        let image = UIImage(cgImage: item.processedImage)
+        PHPhotoLibrary.shared().performChanges({
+            PHAssetChangeRequest.creationRequestForAsset(from: image)
+        }) { success, error in
+            DispatchQueue.main.async {
+                if success {
+                    CameraLogger.success("Đã lưu ảnh tĩnh dự phòng thành công!", category: .photoKit)
+                    self.haptics.triggerSuccess()
+                    self.saveErrorMessage = nil
+                } else {
+                    self.saveErrorMessage = "Lưu ảnh thất bại: \(error?.localizedDescription ?? "không rõ lỗi")"
                 }
             }
         }
@@ -920,8 +982,8 @@ extension CameraViewModel: CameraServiceDelegate {
         self.haptics.triggerSuccess()
     }
     
-    public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, iso: Float, shutterSpeed: Double) {
-        CameraLogger.info("Bắt đầu xử lý bộ lọc ảnh màu AI (Kích thước: \(photo.width)x\(photo.height), ISO: \(Int(iso)))", category: .capture)
+    public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double) {
+        CameraLogger.info("Bắt đầu xử lý bộ lọc ảnh màu AI (Kích thước: \(photo.width)x\(photo.height), LivePhoto: \(livePhotoMovieURL != nil ? "CÓ" : "KHÔNG"))", category: .capture)
         
         let finalColorParams: AIColorParameters?
         if isAIFullColorEnabled {
@@ -952,6 +1014,8 @@ extension CameraViewModel: CameraServiceDelegate {
             let item = CapturedPhotoItem(
                 originalImage: photo,
                 processedImage: processedImageResult,
+                rawPhotoData: rawData,
+                livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
                 appliedPreset: activePreset,
                 compositionRule: activeRule,
@@ -962,7 +1026,7 @@ extension CameraViewModel: CameraServiceDelegate {
             )
             
             DispatchQueue.main.async {
-                CameraLogger.success("Render bộ lọc hoàn tất, hiển thị xem trước & lưu ảnh", category: .capture)
+                CameraLogger.success("Render bộ lọc hoàn tất, hiển thị xem trước & lưu ảnh (LivePhoto: \(item.isLivePhoto))", category: .capture)
                 withAnimation {
                     self.latestCapturedPhoto = item
                     self.isShowingPhotoDetail = true
