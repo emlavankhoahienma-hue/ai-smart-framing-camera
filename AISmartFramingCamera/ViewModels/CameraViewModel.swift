@@ -248,6 +248,15 @@ public final class CameraViewModel: ObservableObject {
     }
     
     private func setupMotionCallbacks() {
+        // Động cơ Tracking Không Gian 6DOF Chuẩn AR
+        SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
+            guard let self = self else { return }
+            self.lastVisualConfidence = confidence
+            self.currentTargetPoint = point
+            self.trackingQuality = quality
+            self.evaluateAlignment(at: point)
+        }
+        
         // 60Hz Gyroscope Quán tính
         motionService.onMotionUpdate = { [weak self] deltaX, deltaY in
             guard let self = self else { return }
@@ -298,6 +307,7 @@ public final class CameraViewModel: ObservableObject {
         arSessionService.clearTarget()
         motionService.stopTracking()
         visionEngine.stopTrackingObject()
+        SpatialTrackingEngine.shared.stopTracking()
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
         consecutiveLowConfidenceFrames = 0
@@ -483,7 +493,8 @@ public final class CameraViewModel: ObservableObject {
         let clampedH = min(0.42, max(0.10, (subjectSize?.height ?? 0.18) * 1.15))
         visionEngine.startTrackingObject(at: target, size: CGSize(width: clampedW, height: clampedH))
         
-        // 2. Khởi động 60Hz Gyroscope làm mỏ neo quán tính dự phòng
+        // 2. Khởi động Động cơ Tracking Không Gian 6DOF Chuẩn AR (Visual-Inertial Fusion)
+        SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
         motionService.resetReferenceAttitude()
         motionService.startTracking()
         
@@ -502,59 +513,7 @@ public final class CameraViewModel: ObservableObject {
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
         guard case .targetPlaced = aiSessionState else { return }
         self.lastVisualConfidence = confidence
-
-        let now = CACurrentMediaTime()
-        let dt = lastVisualUpdateTime > 0 ? min(0.2, now - lastVisualUpdateTime) : (1.0 / 30.0)
-        lastVisualUpdateTime = now
-
-        if let visualPoint = point, confidence > confidenceAcceptThreshold {
-            // Giới hạn tọa độ hợp lệ trong khung hình preview
-            let clampedVisual = CGPoint(
-                x: max(0.02, min(0.98, visualPoint.x)),
-                y: max(0.02, min(0.98, visualPoint.y))
-            )
-            
-            // Lọc outlier cực đoan nếu nhảy đột ngột quá xa theo mức nhạy người dùng chọn
-            if let current = self.currentTargetPoint {
-                let rawJump = hypot(clampedVisual.x - current.x, clampedVisual.y - current.y)
-                if rawJump > maxJumpPerFrame && consecutiveLowConfidenceFrames == 0 && trackingQuality == .locked {
-                    handleTrackingDegraded()
-                    return
-                }
-            }
-
-            // Smooth EMA filter - Bám dính chắc chắn, làm mượt thích ứng theo confidence
-            let current = self.currentTargetPoint ?? clampedVisual
-            let confidenceMargin = max(0.0, min(1.0, (confidence - confidenceAcceptThreshold) / confidenceAcceptThreshold))
-            let alpha = trackingEMAAlpha * max(0.3, confidenceMargin)
-            let smoothedX = current.x * (1.0 - alpha) + clampedVisual.x * alpha
-            let smoothedY = current.y * (1.0 - alpha) + clampedVisual.y * alpha
-            let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
-
-            // Vận tốc thực tế có giới hạn vật lý để tránh phóng vọt
-            if dt > 0.005 {
-                let rawVX = (smoothedPoint.x - current.x) / CGFloat(dt)
-                let rawVY = (smoothedPoint.y - current.y) / CGFloat(dt)
-                let clampedVX = max(-1.5, min(1.5, rawVX))
-                let clampedVY = max(-1.5, min(1.5, rawVY))
-                smoothedVelocity = CGVector(
-                    dx: smoothedVelocity.dx * 0.6 + clampedVX * 0.4,
-                    dy: smoothedVelocity.dy * 0.6 + clampedVY * 0.4
-                )
-            }
-
-            self.lastTrackedVisualPoint = smoothedPoint
-            self.currentTargetPoint = smoothedPoint
-            if confidence > confidenceAcceptThreshold * 1.5 {
-                self.gyroAnchorPoint = smoothedPoint
-                self.motionService.resetReferenceAttitude()
-            }
-            consecutiveLowConfidenceFrames = 0
-            trackingQuality = .locked
-            evaluateAlignment(at: smoothedPoint)
-        } else {
-            handleTrackingDegraded()
-        }
+        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence)
     }
 
     // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che)
@@ -705,6 +664,7 @@ public final class CameraViewModel: ObservableObject {
     public func setZoom(_ zoom: CGFloat) {
         currentZoom = zoom
         cameraService.setZoomFactor(zoom)
+        SpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
     
     public func setZoomFromButton(_ zoom: CGFloat) {
@@ -875,6 +835,7 @@ public final class CameraViewModel: ObservableObject {
     }
     
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {
+        CameraLogger.info("Bắt đầu chuẩn bị lưu ảnh vào PhotoKit...", category: .photoKit)
         let image = UIImage(cgImage: item.processedImage)
         let isAIColorEdited = item.aiColorParameters != nil
         let albumName = "AI Smart Framing - AI Color"
@@ -882,13 +843,14 @@ public final class CameraViewModel: ObservableObject {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let self = self else { return }
             guard status == .authorized || status == .limited else {
+                CameraLogger.warning("Chưa được cấp quyền truy cập Photo Library", category: .photoKit)
                 DispatchQueue.main.async {
                     self.saveErrorMessage = "Chưa cấp quyền Photos. Vào Cài đặt > AI Smart Framing Camera > Ảnh để bật quyền lưu ảnh."
                 }
                 return
             }
             
-            // 1. Kiểm tra Album trước khi vào performChanges (tránh crash performChangesAndWait)
+            // 1. Kiểm tra Album trước khi vào performChanges (tránh deadlock)
             var existingAlbum: PHAssetCollection? = nil
             if isAIColorEdited {
                 let fetchOptions = PHFetchOptions()
@@ -897,7 +859,7 @@ public final class CameraViewModel: ObservableObject {
                 existingAlbum = collections.firstObject
             }
             
-            // 2. Thực hiện lưu ảnh an toàn tuyệt đối bằng PHAssetChangeRequest (tránh hoàn toàn NSInternalInconsistencyException)
+            // 2. Thực hiện lưu ảnh an toàn tuyệt đối bằng PHAssetChangeRequest trong 1 Transaction duy nhất
             PHPhotoLibrary.shared().performChanges({
                 let assetRequest = PHAssetChangeRequest.creationRequestForAsset(from: image)
                 
@@ -913,10 +875,11 @@ public final class CameraViewModel: ObservableObject {
             }) { success, error in
                 DispatchQueue.main.async {
                     if success {
+                        CameraLogger.success("Lưu ảnh vào Thư viện thành công!", category: .photoKit)
                         self.haptics.triggerSuccess()
                         self.saveErrorMessage = nil
                     } else {
-                        print("Lưu ảnh lỗi: \(String(describing: error))")
+                        CameraLogger.error("Lưu ảnh thất bại", error: error, category: .photoKit)
                         self.saveErrorMessage = "Lưu ảnh thất bại: \(error?.localizedDescription ?? "không rõ lỗi")"
                     }
                 }
@@ -956,6 +919,8 @@ extension CameraViewModel: CameraServiceDelegate {
     }
     
     public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, iso: Float, shutterSpeed: Double) {
+        CameraLogger.info("Bắt đầu xử lý bộ lọc ảnh màu AI (Kích thước: \(photo.width)x\(photo.height), ISO: \(Int(iso)))", category: .capture)
+        
         let finalColorParams: AIColorParameters?
         if isAIFullColorEnabled {
             finalColorParams = geminiColorRecipe?.asAIColorParameters ?? currentAIColorParams ?? detectedScene.aiFullColorParameters
@@ -963,37 +928,47 @@ extension CameraViewModel: CameraServiceDelegate {
             finalColorParams = nil
         }
         
-        let processed: CGImage
-        if let params = finalColorParams {
-            processed = filterEngine.applyAIColorParameters(to: photo, params: params) ?? photo
-        } else {
-            processed = filterEngine.applyPreset(to: photo, preset: selectedFilmPreset) ?? photo
-        }
+        let activePreset = self.selectedFilmPreset
+        let activeScene = self.detectedScene
+        let activeRule = self.activeCompositionRule
+        let sessionState = self.aiSessionState
+        let score: Double = (sessionState == .alignmentPerfect || sessionState == .capturing) ? 1.0 : (framingResult?.alignmentScore ?? 0.8)
         
-        let alignmentScore: Double
-        switch aiSessionState {
-        case .alignmentPerfect, .capturing: alignmentScore = 1.0
-        default: alignmentScore = framingResult?.alignmentScore ?? 0.8
+        // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            var processedImageResult: CGImage = photo
+            autoreleasepool {
+                if let params = finalColorParams {
+                    processedImageResult = self.filterEngine.applyAIColorParameters(to: photo, params: params) ?? photo
+                } else {
+                    processedImageResult = self.filterEngine.applyPreset(to: photo, preset: activePreset) ?? photo
+                }
+            }
+            
+            let item = CapturedPhotoItem(
+                originalImage: photo,
+                processedImage: processedImageResult,
+                sceneType: activeScene,
+                appliedPreset: activePreset,
+                compositionRule: activeRule,
+                alignmentScore: score,
+                iso: iso,
+                shutterSpeed: shutterSpeed,
+                aiColorParameters: finalColorParams
+            )
+            
+            DispatchQueue.main.async {
+                CameraLogger.success("Render bộ lọc hoàn tất, hiển thị xem trước & lưu ảnh", category: .capture)
+                withAnimation {
+                    self.latestCapturedPhoto = item
+                    self.isShowingPhotoDetail = true
+                    self.aiSessionState = .done
+                }
+                self.savePhotoToLibrary(item)
+            }
         }
-        
-        let item = CapturedPhotoItem(
-            originalImage: photo,
-            processedImage: processed,
-            sceneType: detectedScene,
-            appliedPreset: selectedFilmPreset,
-            compositionRule: activeCompositionRule,
-            alignmentScore: alignmentScore,
-            iso: iso,
-            shutterSpeed: shutterSpeed,
-            aiColorParameters: finalColorParams
-        )
-        
-        withAnimation {
-            self.latestCapturedPhoto = item
-            self.isShowingPhotoDetail = true
-            self.aiSessionState = .done
-        }
-        self.savePhotoToLibrary(item)
     }
     
     public func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {

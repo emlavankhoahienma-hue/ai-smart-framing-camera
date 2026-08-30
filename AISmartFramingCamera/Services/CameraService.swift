@@ -428,58 +428,61 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
 // MARK: - AVCapturePhotoCaptureDelegate
 extension CameraService: AVCapturePhotoCaptureDelegate {
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        guard error == nil else { return }
-        
-        let zoomAtCapture = self.currentZoom
-        
-        guard let pixelBuffer = photo.pixelBuffer else {
-            guard let data = photo.fileDataRepresentation(),
-                  let uiImage = UIImage(data: data) else { return }
-            
-            var uprightImage = Self.fixOrientation(uiImage)
-            if zoomAtCapture > 1.02, let cropped = Self.cropImageForZoom(uprightImage, zoom: zoomAtCapture) {
-                uprightImage = cropped
-            }
-            guard let cgImage = uprightImage.cgImage else { return }
-            
-            let metadata = photo.metadata
-            let (iso, shutter) = Self.parseExif(metadata)
-            
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
-            }
+        if let error = error {
+            CameraLogger.error("Lỗi chụp ảnh từ phần cứng AVFoundation", error: error, category: .capture)
             return
         }
         
-        var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        
-        if let orientationNum = photo.metadata[kCGImagePropertyOrientation as String] as? UInt32,
-           let cgOrientation = CGImagePropertyOrientation(rawValue: orientationNum) {
-            ciImage = ciImage.oriented(cgOrientation)
-        } else {
-            ciImage = ciImage.oriented(.right)
-        }
-        
-        // ✅ CẮT CHUẨN XÁC THEO TỶ LỆ ZOOM CỦA AI VÀ CAMERA (Fix ảnh lưu không zoom)
-        if zoomAtCapture > 1.02 {
-            let fullExtent = ciImage.extent
-            let cropWidth = fullExtent.width / zoomAtCapture
-            let cropHeight = fullExtent.height / zoomAtCapture
-            let cropX = fullExtent.midX - (cropWidth / 2.0)
-            let cropY = fullExtent.midY - (cropHeight / 2.0)
-            let cropRect = CGRect(x: cropX, y: cropY, width: cropWidth, height: cropHeight)
-            ciImage = ciImage.cropped(to: cropRect)
-        }
-        
-        guard let cgImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent) else { return }
-        
+        CameraLogger.info("Đã nhận buffer ảnh từ cảm biến camera", category: .capture)
+        let zoomAtCapture = self.currentZoom
         let metadata = photo.metadata
         let (iso, shutter) = Self.parseExif(metadata)
         
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
+        autoreleasepool {
+            if let pixelBuffer = photo.pixelBuffer {
+                var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+                if let orientationNum = metadata[kCGImagePropertyOrientation as String] as? UInt32,
+                   let cgOrientation = CGImagePropertyOrientation(rawValue: orientationNum) {
+                    ciImage = ciImage.oriented(cgOrientation)
+                } else {
+                    ciImage = ciImage.oriented(.right)
+                }
+                
+                if zoomAtCapture > 1.02 {
+                    let fullExtent = ciImage.extent
+                    let cropWidth = fullExtent.width / zoomAtCapture
+                    let cropHeight = fullExtent.height / zoomAtCapture
+                    let cropX = fullExtent.midX - (cropWidth / 2.0)
+                    let cropY = fullExtent.midY - (cropHeight / 2.0)
+                    let cropRect = CGRect(x: cropX, y: cropY, width: cropWidth, height: cropHeight)
+                    ciImage = ciImage.cropped(to: cropRect)
+                }
+                
+                if let cgImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent) {
+                    CameraLogger.info("Đã render CGImage thành công từ pixelBuffer (\(cgImage.width)x\(cgImage.height))", category: .capture)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
+                    }
+                    return
+                }
+            }
+            
+            // Fallback qua fileDataRepresentation
+            if let data = photo.fileDataRepresentation(), let uiImage = UIImage(data: data) {
+                var uprightImage = Self.fixOrientation(uiImage)
+                if zoomAtCapture > 1.02, let cropped = Self.cropImageForZoom(uprightImage, zoom: zoomAtCapture) {
+                    uprightImage = cropped
+                }
+                if let cgImage = uprightImage.cgImage {
+                    CameraLogger.info("Đã xử lý CGImage thành công từ fileData (\(cgImage.width)x\(cgImage.height))", category: .capture)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.delegate?.cameraService(self, didCapturePhoto: cgImage, iso: iso, shutterSpeed: shutter)
+                    }
+                    return
+                }
+            }
         }
     }
     
