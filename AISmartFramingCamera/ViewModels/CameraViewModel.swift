@@ -422,7 +422,8 @@ public final class CameraViewModel: ObservableObject {
         }
         
         let targetPoint = CGPoint(x: response.targetX, y: response.targetY)
-        pinTargetAndStartMotion(at: targetPoint)
+        let subjectSize = detectedSubjectRects.first?.size ?? detectedFaceRects.first?.size
+        pinTargetAndStartMotion(at: targetPoint, subjectSize: subjectSize)
     }
     
     // MARK: - Local Neural Engine Analysis (One-shot)
@@ -835,10 +836,8 @@ public final class CameraViewModel: ObservableObject {
     }
     
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {
-        CameraLogger.info("Bắt đầu chuẩn bị lưu ảnh vào PhotoKit...", category: .photoKit)
+        CameraLogger.info("Bắt đầu lưu ảnh trực tiếp vào Cuộn Camera (Photo Library)...", category: .photoKit)
         let image = UIImage(cgImage: item.processedImage)
-        let isAIColorEdited = item.aiColorParameters != nil
-        let albumName = "AI Smart Framing - AI Color"
         
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let self = self else { return }
@@ -850,32 +849,13 @@ public final class CameraViewModel: ObservableObject {
                 return
             }
             
-            // 1. Kiểm tra Album trước khi vào performChanges (tránh deadlock)
-            var existingAlbum: PHAssetCollection? = nil
-            if isAIColorEdited {
-                let fetchOptions = PHFetchOptions()
-                fetchOptions.predicate = NSPredicate(format: "title = %@", albumName)
-                let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
-                existingAlbum = collections.firstObject
-            }
-            
-            // 2. Thực hiện lưu ảnh an toàn tuyệt đối bằng PHAssetChangeRequest trong 1 Transaction duy nhất
+            // Lưu trực tiếp vào Thư viện ảnh (Cuộn Camera mặc định) - Không lưu vào thư mục riêng, an toàn 100%
             PHPhotoLibrary.shared().performChanges({
-                let assetRequest = PHAssetChangeRequest.creationRequestForAsset(from: image)
-                
-                if isAIColorEdited, let placeholder = assetRequest.placeholderForCreatedAsset {
-                    if let album = existingAlbum {
-                        let albumChangeRequest = PHAssetCollectionChangeRequest(for: album)
-                        albumChangeRequest?.addAssets([placeholder] as NSArray)
-                    } else {
-                        let albumCreateRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumName)
-                        albumCreateRequest.addAssets([placeholder] as NSArray)
-                    }
-                }
+                PHAssetChangeRequest.creationRequestForAsset(from: image)
             }) { success, error in
                 DispatchQueue.main.async {
                     if success {
-                        CameraLogger.success("Lưu ảnh vào Thư viện thành công!", category: .photoKit)
+                        CameraLogger.success("Đã lưu ảnh vào Cuộn Camera thành công!", category: .photoKit)
                         self.haptics.triggerSuccess()
                         self.saveErrorMessage = nil
                     } else {
