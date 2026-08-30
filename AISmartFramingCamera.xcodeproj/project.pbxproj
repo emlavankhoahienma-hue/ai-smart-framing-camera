@@ -28,6 +28,7 @@
 		B20000000000000000000013 /* VideoPreviewSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000016 /* VideoPreviewSheetView.swift */; };
 		B20000000000000000000014 /* CameraLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000017 /* CameraLogger.swift */; };
 		B20000000000000000000015 /* SpatialTrackingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000018 /* SpatialTrackingEngine.swift */; };
+		B20000000000000000000016 /* NeuralSubjectIntelligenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,6 +56,7 @@
 		B100000000000000000000016 /* VideoPreviewSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPreviewSheetView.swift; sourceTree = "<group>"; };
 		B100000000000000000000017 /* CameraLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraLogger.swift; sourceTree = "<group>"; };
 		B100000000000000000000018 /* SpatialTrackingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialTrackingEngine.swift; sourceTree = "<group>"; };
+		B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralSubjectIntelligenceEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -119,6 +121,7 @@
 				B100000000000000000000015 /* DeviceMotionService.swift */,
 				B100000000000000000000017 /* CameraLogger.swift */,
 				B100000000000000000000018 /* SpatialTrackingEngine.swift */,
+				B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -243,6 +246,7 @@
 				B20000000000000000000013 /* VideoPreviewSheetView.swift in Sources */,
 				B20000000000000000000014 /* CameraLogger.swift in Sources */,
 				B20000000000000000000015 /* SpatialTrackingEngine.swift in Sources */,
+				B20000000000000000000016 /* NeuralSubjectIntelligenceEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
