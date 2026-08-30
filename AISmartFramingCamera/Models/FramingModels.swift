@@ -161,22 +161,26 @@ public enum SmartFocusType: Equatable {
 // MARK: - Scene Classification Types
 public enum DetectedSceneType: String, CaseIterable {
     case portrait = "Portrait"
+    case pet = "Pet / Animal"
     case landscape = "Landscape"
     case sunset = "Sunset / Golden Hour"
     case architecture = "Architecture"
     case night = "Night Scene"
-    case food = "Food / Macro"
+    case food = "Food"
+    case macro = "Macro / Close-up"
     case street = "Street Life"
     case general = "Auto General"
     
     public var iconName: String {
         switch self {
         case .portrait: return "person.crop.rectangle.fill"
+        case .pet: return "pawprint.fill"
         case .landscape: return "mountain.2.fill"
         case .sunset: return "sun.horizon.fill"
         case .architecture: return "building.columns.fill"
         case .night: return "moon.stars.fill"
         case .food: return "fork.knife"
+        case .macro: return "camera.macro"
         case .street: return "figure.walk"
         case .general: return "sparkles"
         }
@@ -185,11 +189,13 @@ public enum DetectedSceneType: String, CaseIterable {
     public var recommendedFilter: FilmPreset {
         switch self {
         case .portrait: return .fujiPro400H
+        case .pet: return .vintageWarm
         case .landscape: return .kodakPortra400
         case .sunset: return .sunsetGlow
         case .architecture: return .cinemaTealOrange
         case .night: return .monochromeNoir
         case .food: return .vintageWarm
+        case .macro: return .fujiPro400H
         case .street: return .streetClassic
         case .general: return .fujiPro400H
         }
@@ -200,6 +206,8 @@ public enum DetectedSceneType: String, CaseIterable {
         switch self {
         case .portrait:
             return AIColorParameters(warmthShift: -0.08, saturationBoost: 1.05, contrastCurve: 1.04, shadowLift: 0.04, highlightRoll: 0.92, filmGrain: 0.15, vignetteAmount: 0.2, colorGrade: .softwarm)
+        case .pet:
+            return AIColorParameters(warmthShift: 0.08, saturationBoost: 1.15, contrastCurve: 1.06, shadowLift: 0.05, highlightRoll: 0.93, filmGrain: 0.10, vignetteAmount: 0.15, colorGrade: .vibrant)
         case .landscape:
             return AIColorParameters(warmthShift: 0.05, saturationBoost: 1.18, contrastCurve: 1.12, shadowLift: 0.02, highlightRoll: 0.96, filmGrain: 0.10, vignetteAmount: 0.25, colorGrade: .coolnatural)
         case .sunset:
@@ -210,6 +218,8 @@ public enum DetectedSceneType: String, CaseIterable {
             return AIColorParameters(warmthShift: -0.15, saturationBoost: 0.80, contrastCurve: 1.35, shadowLift: 0.08, highlightRoll: 0.85, filmGrain: 0.35, vignetteAmount: 0.55, colorGrade: .moody)
         case .food:
             return AIColorParameters(warmthShift: 0.12, saturationBoost: 1.22, contrastCurve: 1.08, shadowLift: 0.05, highlightRoll: 0.94, filmGrain: 0.08, vignetteAmount: 0.18, colorGrade: .vibrant)
+        case .macro:
+            return AIColorParameters(warmthShift: 0.04, saturationBoost: 1.20, contrastCurve: 1.10, shadowLift: 0.03, highlightRoll: 0.95, filmGrain: 0.08, vignetteAmount: 0.22, colorGrade: .vibrant)
         case .street:
             return AIColorParameters(warmthShift: -0.03, saturationBoost: 0.95, contrastCurve: 1.18, shadowLift: 0.01, highlightRoll: 0.97, filmGrain: 0.22, vignetteAmount: 0.30, colorGrade: .classic)
         case .general:
@@ -220,11 +230,13 @@ public enum DetectedSceneType: String, CaseIterable {
     public var localizedName: String {
         switch self {
         case .portrait: return "Chân dung (Portrait)"
+        case .pet: return "Thú cưng (Pet)"
         case .landscape: return "Phong cảnh (Landscape)"
         case .sunset: return "Hoàng hôn (Golden Hour)"
         case .architecture: return "Kiến trúc (Architecture)"
         case .night: return "Ban đêm (Night Scene)"
-        case .food: return "Ẩm thực / Macro"
+        case .food: return "Ẩm thực (Food)"
+        case .macro: return "Cận cảnh (Macro)"
         case .street: return "Đường phố (Street)"
         case .general: return "Tự nhiên (Natural)"
         }

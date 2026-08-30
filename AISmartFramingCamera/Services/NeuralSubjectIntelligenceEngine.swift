@@ -104,7 +104,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         var candidates: [NeuralSubjectCandidate] = []
         
         // 1. Trích xuất Con người (Human Body)
-        if let humans = humanBodyRequest.results as? [VNHumanObservation] {
+        if let humans = humanBodyRequest.results {
             for human in humans where human.confidence > 0.40 {
                 let rect = convertVisionRectToUIRect(human.boundingBox)
                 if isValidSubjectRect(rect) {
@@ -121,7 +121,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         
         // 2. Trích xuất Khuôn mặt (Face)
-        if let faces = faceRequest.results as? [VNFaceObservation] {
+        if let faces = faceRequest.results {
             for face in faces where face.confidence > 0.45 {
                 let rect = convertVisionRectToUIRect(face.boundingBox)
                 if isValidSubjectRect(rect) {
@@ -138,7 +138,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         
         // 3. Trích xuất Thú cưng / Động vật (Animal Recognition)
-        if let animals = animalRequest.results as? [VNRecognizedObjectObservation] {
+        if let animals = animalRequest.results {
             for animal in animals where animal.confidence > 0.40 {
                 let rect = convertVisionRectToUIRect(animal.boundingBox)
                 let topLabel = animal.labels.first?.identifier ?? "Thú cưng"
@@ -157,7 +157,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         
         // 4. Trích xuất Vật thể tiền cảnh thực tế (Objectness Saliency)
-        if let saliency = saliencyObjectRequest.results?.first as? VNSaliencyImageObservation,
+        if let saliency = saliencyObjectRequest.results?.first,
            let salientObjects = saliency.salientObjects {
             for obj in salientObjects where obj.confidence > 0.35 {
                 let rect = convertVisionRectToUIRect(obj.boundingBox)
@@ -182,7 +182,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         
         // 5. Phân loại Cảnh quan
         var scene: DetectedSceneType = .general
-        if let classifications = sceneClassifierRequest.results as? [VNClassificationObservation],
+        if let classifications = sceneClassifierRequest.results,
            let topClass = classifications.first(where: { $0.confidence > 0.20 }) {
             let id = topClass.identifier.lowercased()
             if id.contains("portrait") || id.contains("face") || id.contains("person") {
