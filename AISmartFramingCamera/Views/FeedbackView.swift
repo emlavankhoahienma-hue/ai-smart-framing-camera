@@ -44,7 +44,7 @@ public struct FeedbackView: View {
                         Label("Chọn ảnh", systemImage: "photo.on.rectangle")
                     }
                 }
-                .onChange(of: selectedPhotoItem) { _, newItem in
+                .onChange(of: selectedPhotoItem) { newItem in
                     Task {
                         if let data = try? await newItem?.loadTransferable(type: Data.self) {
                             selectedImageData = data
