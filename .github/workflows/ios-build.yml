@@ -31,16 +31,20 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Export & Compile YOLOv11 CoreML Model
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Export & Compile YOLO CoreML Model
         run: |
-          python3 -m venv /tmp/yolo_env
-          /tmp/yolo_env/bin/pip install --upgrade pip ultralytics coremltools
-          /tmp/yolo_env/bin/python -c "
+          pip install --upgrade pip "ultralytics>=8.3.0" "coremltools>=8.0"
+          python -c "
           from ultralytics import YOLO
-          model = YOLO('yolo11n.pt')
+          model = YOLO('yolov8n.pt')
           model.export(format='coreml', nms=True)
           "
-          xcrun coremlc compile yolo11n.mlpackage .
+          xcrun coremlc compile yolov8n.mlpackage .
           ls -la
 
       - name: Build for iOS (unsigned)
@@ -63,7 +67,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
-          if [ -d "yolo11n.mlmodelc" ]; then
+          if [ -d "yolov8n.mlmodelc" ]; then
+            cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
+            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
+          elif [ -d "yolo11n.mlmodelc" ]; then
             cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
             echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
           fi
