@@ -514,18 +514,19 @@ public final class CameraViewModel: ObservableObject {
                 y: max(0.02, min(0.98, visualPoint.y))
             )
             
-            // Lọc outlier cực đoan nếu nhảy đột ngột quá xa (> 0.35 khung hình trong 1 frame)
+            // Lọc outlier cực đoan nếu nhảy đột ngột quá xa theo mức nhạy người dùng chọn
             if let current = self.currentTargetPoint {
                 let rawJump = hypot(clampedVisual.x - current.x, clampedVisual.y - current.y)
-                if rawJump > 0.35 && consecutiveLowConfidenceFrames == 0 && trackingQuality == .locked {
+                if rawJump > maxJumpPerFrame && consecutiveLowConfidenceFrames == 0 && trackingQuality == .locked {
                     handleTrackingDegraded()
                     return
                 }
             }
 
-            // Smooth EMA filter - Bám dính chắc chắn, triệt tiêu hoàn toàn rung giật
+            // Smooth EMA filter - Bám dính chắc chắn, làm mượt thích ứng theo confidence
             let current = self.currentTargetPoint ?? clampedVisual
-            let alpha = trackingEMAAlpha
+            let confidenceMargin = max(0.0, min(1.0, (confidence - confidenceAcceptThreshold) / confidenceAcceptThreshold))
+            let alpha = trackingEMAAlpha * max(0.3, confidenceMargin)
             let smoothedX = current.x * (1.0 - alpha) + clampedVisual.x * alpha
             let smoothedY = current.y * (1.0 - alpha) + clampedVisual.y * alpha
             let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
@@ -544,8 +545,10 @@ public final class CameraViewModel: ObservableObject {
 
             self.lastTrackedVisualPoint = smoothedPoint
             self.currentTargetPoint = smoothedPoint
-            self.gyroAnchorPoint = smoothedPoint
-            self.motionService.resetReferenceAttitude()
+            if confidence > confidenceAcceptThreshold * 1.5 {
+                self.gyroAnchorPoint = smoothedPoint
+                self.motionService.resetReferenceAttitude()
+            }
             consecutiveLowConfidenceFrames = 0
             trackingQuality = .locked
             evaluateAlignment(at: smoothedPoint)
@@ -895,10 +898,11 @@ public final class CameraViewModel: ObservableObject {
                 existingAlbum = collections.firstObject
             }
             
-            // 2. Kiểm tra file Live Photo video có tồn tại trên đĩa không
+            // 2. Kiểm tra file Live Photo video có tồn tại trên đĩa và dung lượng > 0 không
             let validLiveURL: URL?
             if self.isLivePhotoEnabled, let url = livePhotoURL, FileManager.default.fileExists(atPath: url.path) {
-                validLiveURL = url
+                let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                validLiveURL = fileSize > 0 ? url : nil
             } else {
                 validLiveURL = nil
             }
@@ -915,7 +919,7 @@ public final class CameraViewModel: ObservableObject {
                 let creationRequest = PHAssetCreationRequest.forAsset()
                 creationRequest.addResource(with: .photo, data: imageData, options: nil)
                 
-                if let liveURL = validLiveURL {
+                if let liveURL = validLiveURL, liveURL.pathExtension.lowercased() == "mov" {
                     let options = PHAssetResourceCreationOptions()
                     options.shouldMoveFile = false
                     creationRequest.addResource(with: .pairedVideo, fileURL: liveURL, options: options)

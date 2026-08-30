@@ -396,6 +396,7 @@ public final class CameraService: NSObject {
     public func capturePhoto() {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
+            self.pendingLivePhotoMovieURL = nil
             let photoSettings = AVCapturePhotoSettings()
             if self.activeCamera?.isFlashAvailable == true {
                 photoSettings.flashMode = self.flashMode

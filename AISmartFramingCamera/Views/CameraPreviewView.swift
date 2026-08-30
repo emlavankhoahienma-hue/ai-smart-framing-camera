@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import QuartzCore
 
 public struct CameraPreviewView: UIViewRepresentable {
     @ObservedObject var viewModel: CameraViewModel
@@ -36,6 +37,7 @@ public struct CameraPreviewView: UIViewRepresentable {
     public class Coordinator: NSObject, UIGestureRecognizerDelegate {
         let parent: CameraPreviewView
         private var initialZoom: CGFloat = 1.0
+        private var lastZoomPublishTime: CFTimeInterval = 0
         
         init(_ parent: CameraPreviewView) {
             self.parent = parent
@@ -58,9 +60,17 @@ public struct CameraPreviewView: UIViewRepresentable {
         @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
             if gesture.state == .began {
                 initialZoom = parent.viewModel.currentZoom
+                lastZoomPublishTime = 0
             }
             let newZoom = max(1.0, min(initialZoom * gesture.scale, 10.0))
-            parent.viewModel.setZoom(newZoom)
+            parent.viewModel.cameraService.setZoomFactor(newZoom)
+            
+            let now = CACurrentMediaTime()
+            let isFinished = gesture.state == .ended || gesture.state == .cancelled
+            if now - lastZoomPublishTime >= 0.05 || isFinished {
+                lastZoomPublishTime = now
+                parent.viewModel.currentZoom = newZoom
+            }
         }
         
         @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
