@@ -29,6 +29,7 @@
 		B20000000000000000000014 /* CameraLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000017 /* CameraLogger.swift */; };
 		B20000000000000000000015 /* SpatialTrackingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000018 /* SpatialTrackingEngine.swift */; };
 		B20000000000000000000016 /* NeuralSubjectIntelligenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */; };
+		B20000000000000000000017 /* YOLODetectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000020 /* YOLODetectionEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -57,6 +58,7 @@
 		B100000000000000000000017 /* CameraLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraLogger.swift; sourceTree = "<group>"; };
 		B100000000000000000000018 /* SpatialTrackingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialTrackingEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralSubjectIntelligenceEngine.swift; sourceTree = "<group>"; };
+		B100000000000000000000020 /* YOLODetectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YOLODetectionEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +124,7 @@
 				B100000000000000000000017 /* CameraLogger.swift */,
 				B100000000000000000000018 /* SpatialTrackingEngine.swift */,
 				B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */,
+				B100000000000000000000020 /* YOLODetectionEngine.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -247,6 +250,7 @@
 				B20000000000000000000014 /* CameraLogger.swift in Sources */,
 				B20000000000000000000015 /* SpatialTrackingEngine.swift in Sources */,
 				B20000000000000000000016 /* NeuralSubjectIntelligenceEngine.swift in Sources */,
+				B20000000000000000000017 /* YOLODetectionEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

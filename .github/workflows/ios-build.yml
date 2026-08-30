@@ -31,6 +31,17 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Export & Compile YOLOv11 CoreML Model
+        run: |
+          python3 -m pip install ultralytics coremltools
+          python3 -c "
+          from ultralytics import YOLO
+          model = YOLO('yolo11n.pt')
+          model.export(format='coreml', nms=True)
+          "
+          xcrun coremlc compile yolo11n.mlpackage .
+          ls -la
+
       - name: Build for iOS (unsigned)
         run: |
           xcodebuild build \
@@ -51,6 +62,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
+          if [ -d "yolo11n.mlmodelc" ]; then
+            cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
+            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
+          fi
 
       - name: Package IPA
         run: |

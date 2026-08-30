@@ -103,6 +103,12 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         
         var candidates: [NeuralSubjectCandidate] = []
         
+        // 0. Nhận diện vật thể bằng YOLOv11 CoreML (nếu có model)
+        if YOLODetectionEngine.shared.hasYOLOModel {
+            let yoloCandidates = YOLODetectionEngine.shared.detectObjects(pixelBuffer: pixelBuffer, orientation: orientation)
+            candidates.append(contentsOf: yoloCandidates)
+        }
+        
         // 1. Trích xuất Con người (Human Body)
         if let humans = humanBodyRequest.results {
             for human in humans where human.confidence > 0.40 {
