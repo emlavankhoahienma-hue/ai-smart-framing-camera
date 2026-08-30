@@ -41,7 +41,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var faceDetectionRequest: VNDetectFaceRectanglesRequest!
     private var faceLandmarksRequest: VNDetectFaceLandmarksRequest!
     private var humanPoseRequest: VNDetectHumanBodyPoseRequest!
-    private var saliencyRequest: VNGenerateAttentionBasedSaliencyImageRequest!
+    private var saliencyRequest: VNGenerateObjectnessBasedSaliencyImageRequest!
     private var sceneClassificationRequest: VNClassifyImageRequest!
     
     public init() {
@@ -61,9 +61,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
         humanPoseRequest = VNDetectHumanBodyPoseRequest()
         humanPoseRequest.revision = VNDetectHumanBodyPoseRequestRevision1
         
-        // 4. Attention Saliency
-        saliencyRequest = VNGenerateAttentionBasedSaliencyImageRequest()
-        saliencyRequest.revision = VNGenerateAttentionBasedSaliencyImageRequestRevision1
+        // 4. Objectness Saliency
+        saliencyRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
+        saliencyRequest.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
         
         // 5. Scene Classification
         sceneClassificationRequest = VNClassifyImageRequest()

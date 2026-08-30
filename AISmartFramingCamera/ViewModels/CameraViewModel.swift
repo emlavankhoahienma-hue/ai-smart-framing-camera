@@ -632,8 +632,8 @@ public final class CameraViewModel: ObservableObject {
         
         let isPerfect = dist <= calculator.alignmentTolerance
         
-        // Chỉ kích hoạt tự động chụp khi thực sự khóa tốt (trackingQuality == .locked), không chụp khi đang đoán mò
-        if isPerfect && !isPerfectAlignment && trackingQuality == .locked {
+        // Kích hoạt tự động chụp khi khóa tốt hoặc đang dự đoán chuyển động ngắn hạn
+        if isPerfect && !isPerfectAlignment && (trackingQuality == .locked || trackingQuality == .predicting) {
             // Tâm trắng đã đè khớp lên vùng target!
             isPerfectAlignment = true
             haptics.triggerMagneticSnap()
