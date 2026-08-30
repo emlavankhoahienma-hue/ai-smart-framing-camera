@@ -191,14 +191,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 self.onDetectionCompleted?(result)
                 self.onSmartFocusPointCalculated?(smartFocusPoint, smartFocusType)
             }
-            } catch {
-                result.detectedScene = .general
-                result.confidence = 0.5
-                DispatchQueue.main.async {
-                    self.onDetectionCompleted?(result)
-                    self.onSmartFocusPointCalculated?(CGPoint(x: 0.5, y: 0.5), .center)
-                }
-            }
         }
     }
     

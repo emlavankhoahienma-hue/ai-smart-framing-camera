@@ -108,9 +108,9 @@ public final class CompositionCalculator {
         guard requestedRule == .dynamicAI else { return requestedRule }
         
         switch detection.detectedScene {
-        case .portrait:
+        case .portrait, .pet:
             return .goldenRatio
-        case .landscape, .sunset:
+        case .landscape, .sunset, .macro:
             return .ruleOfThirds
         case .architecture, .food:
             return .centerSymmetry
