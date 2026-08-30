@@ -574,7 +574,6 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             }
         }
     }
-}
     
     // MARK: - Helpers
     
