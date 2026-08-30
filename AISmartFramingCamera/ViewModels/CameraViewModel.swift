@@ -422,8 +422,8 @@ public final class CameraViewModel: ObservableObject {
         }
         
         let targetPoint = CGPoint(x: response.targetX, y: response.targetY)
-        let subjectSize = detectedSubjectRects.first?.size ?? detectedFaceRects.first?.size
-        pinTargetAndStartMotion(at: targetPoint, subjectSize: subjectSize)
+        let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
+        pinTargetAndStartMotion(at: targetPoint, subjectRect: subjectRect)
     }
     
     // MARK: - Local Neural Engine Analysis (One-shot)
@@ -464,17 +464,18 @@ public final class CameraViewModel: ObservableObject {
             setExposure(max(-2.0, min(2.0, lumaError * 3.0)))
         }
         
-        pinTargetAndStartMotion(at: result.targetPoint, subjectSize: avgDetection.dominantSubjectRect?.size)
+        pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
     }
     
     // MARK: - State for Hybrid Optical Visual + Gyro Tracking
     @Published public var lastVisualConfidence: Double = 0
     private var lastTrackedVisualPoint: CGPoint? = nil
     private var gyroAnchorPoint: CGPoint? = nil
+    private var initialPhysicalSubjectCenter: CGPoint? = nil
     
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
     
-    public func pinTargetAndStartMotion(at target: CGPoint, subjectSize: CGSize? = nil) {
+    public func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect? = nil) {
         initialTargetPoint = target
         currentTargetPoint = target
         lastTrackedVisualPoint = target
@@ -489,10 +490,17 @@ public final class CameraViewModel: ObservableObject {
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
-        // 1. Khởi động Vision Optical Tracking (VNTrackObjectRequest) theo kích thước chủ thể thật
-        let clampedW = min(0.42, max(0.10, (subjectSize?.width ?? 0.18) * 1.15))
-        let clampedH = min(0.42, max(0.10, (subjectSize?.height ?? 0.18) * 1.15))
-        visionEngine.startTrackingObject(at: target, size: CGSize(width: clampedW, height: clampedH))
+        // 1. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (YOLO / Neural Engine Subject)
+        if let sRect = subjectRect {
+            let sCenter = CGPoint(x: sRect.midX, y: sRect.midY)
+            self.initialPhysicalSubjectCenter = sCenter
+            let clampedW = min(0.50, max(0.08, sRect.width * 1.10))
+            let clampedH = min(0.50, max(0.08, sRect.height * 1.10))
+            visionEngine.startTrackingObject(at: sCenter, size: CGSize(width: clampedW, height: clampedH))
+        } else {
+            self.initialPhysicalSubjectCenter = target
+            visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.20, height: 0.20))
+        }
         
         // 2. Khởi động Động cơ Tracking Không Gian 6DOF Chuẩn AR (Visual-Inertial Fusion)
         SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
@@ -514,7 +522,21 @@ public final class CameraViewModel: ObservableObject {
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double) {
         guard case .targetPlaced = aiSessionState else { return }
         self.lastVisualConfidence = confidence
-        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence)
+        
+        if let currentSubjectPos = point, let initialSubPos = initialPhysicalSubjectCenter, let initialTarget = initialTargetPoint {
+            // Khi vật thể thực di chuyển từ initialSubPos -> currentSubjectPos:
+            let deltaX = currentSubjectPos.x - initialSubPos.x
+            let deltaY = currentSubjectPos.y - initialSubPos.y
+            
+            // Toạ độ target tương ứng trên màn hình:
+            let mappedTargetX = min(0.98, max(0.02, initialTarget.x + deltaX))
+            let mappedTargetY = min(0.98, max(0.02, initialTarget.y + deltaY))
+            let mappedTarget = CGPoint(x: mappedTargetX, y: mappedTargetY)
+            
+            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: mappedTarget, confidence: confidence)
+        } else {
+            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: nil, confidence: confidence)
+        }
     }
 
     // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che)
