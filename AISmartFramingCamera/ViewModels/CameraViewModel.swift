@@ -652,8 +652,8 @@ public final class CameraViewModel: ObservableObject {
             visionEngine.startTrackingObject(at: sCenter, size: CGSize(width: clampedW, height: clampedH))
         } else {
             self.initialPhysicalSubjectCenter = target
-            // Tối ưu kích thước khung ôm khít vật thể nhỏ (hộp tăm, đồ vật để bàn) thay vì ôm trọn mặt bàn
-            visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.10, height: 0.10))
+            // Kích thước khung tracking tối ưu 0.14x0.14 ôm trọn vật thể
+            visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.14, height: 0.14))
         }
         
         // 2. Khởi động Động cơ Tracking Không Gian Duy Nhất

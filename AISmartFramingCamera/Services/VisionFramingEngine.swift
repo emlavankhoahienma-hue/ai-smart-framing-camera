@@ -559,36 +559,22 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 do {
                     try self.sequenceHandler.perform([trackRequest], on: pixelBuffer, orientation: orientation)
                     if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first {
-                        // Nâng ngưỡng confidence lên tối thiểu 0.45 và kiểm tra tương đồng màu sắc histogram
-                        if newObs.confidence >= 0.45 {
-                            var isVisualMatch = true
-                            if let refHist = self.referenceColorHistogram {
-                                let currentHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
-                                let colorSim = Double(self.compareColorHistograms(refHist, currentHist))
-                                if colorSim < 0.40 {
-                                    isVisualMatch = false
+                        if newObs.confidence > 0.20 {
+                            self.lastTargetObservation = newObs
+                            self.consecutiveLostFrames = 0
+                            var uiX = newObs.boundingBox.midX
+                            var uiY = 1.0 - newObs.boundingBox.midY
+                            
+                            // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
+                            if self.currentSceneType.isDeformableNature {
+                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                    uiX = uiX * 0.4 + salientCentroid.x * 0.6
+                                    uiY = uiY * 0.4 + (1.0 - salientCentroid.y) * 0.6
                                 }
                             }
                             
-                            if isVisualMatch {
-                                self.lastTargetObservation = newObs
-                                self.consecutiveLostFrames = 0
-                                var uiX = newObs.boundingBox.midX
-                                var uiY = 1.0 - newObs.boundingBox.midY
-                                
-                                // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
-                                if self.currentSceneType.isDeformableNature {
-                                    if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
-                                        uiX = uiX * 0.4 + salientCentroid.x * 0.6
-                                        uiY = uiY * 0.4 + (1.0 - salientCentroid.y) * 0.6
-                                    }
-                                }
-                                
-                                trackedPoint = CGPoint(x: uiX, y: uiY)
-                                trackedConfidence = Double(newObs.confidence)
-                            } else {
-                                self.consecutiveLostFrames += 1
-                            }
+                            trackedPoint = CGPoint(x: uiX, y: uiY)
+                            trackedConfidence = Double(newObs.confidence)
                         } else {
                             self.consecutiveLostFrames += 1
                         }

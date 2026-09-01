@@ -160,23 +160,20 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             }
         }
         
-        let effectiveThreshold = isLowTextureAnchor ? 0.75 : 0.25
+        let effectiveThreshold = isLowTextureAnchor ? 0.70 : 0.20
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
             self.deadReckoningFrameCount = 0
             let obsX = Double(visualPoint.x)
             let obsY = Double(visualPoint.y)
             
-            // Lọc outlier jump dựa trên vận tốc chuyển động và dt
+            // Lọc outlier cực đoan (> 0.45 màn hình trong 1 frame)
             let jump = hypot(obsX - self.stateX, obsY - self.stateY)
-            let expectedVelocityJump = hypot(velocityX, velocityY) * dt * 2.5 + 0.15
-            let maxAllowedJump = max(0.12, min(0.35, expectedVelocityJump))
-            if jump > maxAllowedJump && confidence < 0.85 {
+            if jump > 0.45 && effectiveConfidence < 0.75 {
                 return
             }
             
-            // Kalman gain tỉ lệ thuận thực sự với confidence trong toàn dải hợp lệ (không có sàn cứng 0.80)
-            let normalizedConf = max(0.0, min(1.0, (effectiveConfidence - effectiveThreshold) / (1.0 - effectiveThreshold)))
-            let kGain = max(0.15, min(0.95, 0.15 + 0.80 * normalizedConf))
+            // Quang học là Ground Truth: Bám trực tiếp, nhanh và mượt vào vật thể thực tế (như Build 79)
+            let kGain = max(0.70, min(0.92, effectiveConfidence))
             let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
             let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
             
