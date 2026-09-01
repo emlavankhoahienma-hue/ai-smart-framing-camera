@@ -73,6 +73,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         self.currentZoom = Double(max(1.0, zoom))
     }
     
+    private var lastMotionTime: TimeInterval = 0
+    
     // MARK: - Khởi động cảm biến 60Hz Gyroscope & Accelerometer
     private func startMotionSensors() {
         guard motionManager.isDeviceMotionAvailable else {
@@ -80,46 +82,39 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             return
         }
         
-        referenceAttitude = nil
+        lastMotionTime = CACurrentMediaTime()
         motionManager.deviceMotionUpdateInterval = 1.0 / 60.0 // 60 FPS
         
         motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
             guard let self = self, let motion = motion, self.isTrackingActive else { return }
             
-            // Frame đầu tiên: Khóa mốc attitude cơ sở
-            if self.referenceAttitude == nil {
-                self.referenceAttitude = motion.attitude.copy() as? CMAttitude
-                return
-            }
+            let now = CACurrentMediaTime()
+            let dt = self.lastMotionTime > 0 ? min(0.05, max(0.001, now - self.lastMotionTime)) : (1.0 / 60.0)
+            self.lastMotionTime = now
             
-            guard let ref = self.referenceAttitude else { return }
-            
-            // Tính góc quay tương đối chính xác tuyệt đối từ mốc ban đầu (Absolute Attitude Delta)
-            let currentAttitude = motion.attitude
-            currentAttitude.multiply(byInverseOf: ref)
-            
-            let yawDelta = Double(currentAttitude.yaw)
-            let pitchDelta = Double(currentAttitude.pitch)
-            
-            // Cực tính chuyển động (Motion Polarity):
-            // - Khi lia máy sang PHẢI (yaw > 0) -> Vật thể trên màn hình di chuyển sang TRÁI (projX giảm về tâm 0.5)
-            // - Khi ngửa máy lên TRÊN (pitch > 0) -> Vật thể trên màn hình di chuyển xuống DƯỚI (projY tăng về tâm 0.5)
+            // Cực tính chuẩn xác 100% theo hệ tọa độ quang học camera:
+            // - Panning sang PHẢI (hướng về mục tiêu bên phải) -> rotationRate.y > 0 -> Khung cảnh dịch sang TRÁI -> dx < 0 (hội tụ về tâm 0.5)
+            // - Panning sang TRÁI -> rotationRate.y < 0 -> Khung cảnh dịch sang PHẢI -> dx > 0
+            // - Tilting ngửa LÊN (hướng về mục tiêu phía trên) -> rotationRate.x < 0 -> Khung cảnh dịch xuống DƯỚI -> dy > 0 (hội tụ về tâm 0.5)
+            // - Tilting cúi XUỐNG -> rotationRate.x > 0 -> Khung cảnh dịch lên TRÊN -> dy < 0
             let zoomScale = self.currentZoom
-            let projX = Double(self.anchorInitialPoint.x) - yawDelta * self.sensitivityFactor * zoomScale
-            let projY = Double(self.anchorInitialPoint.y) + pitchDelta * self.sensitivityFactor * zoomScale
+            let scaleX = 0.80 * zoomScale
+            let scaleY = 0.99 * zoomScale
             
-            let clampedX = min(0.98, max(0.02, projX))
-            let clampedY = min(0.98, max(0.02, projY))
+            let rateY = motion.rotationRate.y
+            let rateX = motion.rotationRate.x
             
-            // Khi quang học tạm thời mờ/khuất (confidence <= 0.45), Gyroscope giữ mỏ neo vững vàng
-            if self.lastOpticalConfidence <= 0.45 {
-                let alpha = 0.75
-                self.stateX = self.stateX * (1.0 - alpha) + clampedX * alpha
-                self.stateY = self.stateY * (1.0 - alpha) + clampedY * alpha
-                
+            let dx = -rateY * dt * scaleX
+            let dy = -rateX * dt * scaleY
+            
+            // Khi quang học tạm thời mất nét / lia máy nhanh (optical confidence <= 0.40):
+            // Cập nhật vị trí mỏ neo không gian theo chuyển động quán tính thực tế
+            if self.lastOpticalConfidence <= 0.40 {
+                self.stateX = min(0.98, max(0.02, self.stateX + dx))
+                self.stateY = min(0.98, max(0.02, self.stateY + dy))
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
                 DispatchQueue.main.async {
-                    self.onSpatialTargetUpdated?(targetPoint, max(0.45, self.lastOpticalConfidence), .predicting)
+                    self.onSpatialTargetUpdated?(targetPoint, max(0.40, self.lastOpticalConfidence), .predicting)
                 }
             }
         }
@@ -138,7 +133,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         var activePoint = point
         
         if let visualPoint = point, let buffer = pixelBuffer {
-            let (bestPt, neuralSim) = NeuralTargetTracker.shared.findBestMatchingPoint(in: buffer, around: visualPoint, searchRadius: 0.04)
+            let (bestPt, neuralSim) = NeuralTargetTracker.shared.findBestMatchingPoint(in: buffer, around: visualPoint, searchRadius: 0.03)
             if neuralSim >= 0.50 {
                 activePoint = bestPt
                 effectiveConfidence = max(confidence, neuralSim * 0.95)
@@ -157,7 +152,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             }
             
             // Quang học + Neural Peak là Ground Truth: Bám trực tiếp vào tâm vật thể thực tế
-            let kGain = max(0.75, min(0.95, effectiveConfidence))
+            let kGain = max(0.80, min(0.98, effectiveConfidence))
             let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
             let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
             
@@ -171,12 +166,6 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             self.stateX = smoothX
             self.stateY = smoothY
             
-            // Tự động tái hiệu chuẩn lại mốc Gyro khi quang học bám rất tốt
-            if effectiveConfidence > 0.65, let motion = motionManager.deviceMotion {
-                self.referenceAttitude = motion.attitude.copy() as? CMAttitude
-                self.anchorInitialPoint = CGPoint(x: self.stateX, y: self.stateY)
-            }
-            
             if effectiveConfidence > 0.60, let buffer = pixelBuffer {
                 VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: CGPoint(x: self.stateX, y: self.stateY))
             }
@@ -184,25 +173,12 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
             self.onSpatialTargetUpdated?(targetPoint, effectiveConfidence, .locked)
         } else {
-            // Khi quang học tạm thời mất nét hoặc là vùng ít chi tiết (Low Texture):
+            // Khi quang học tạm thời mất nét:
             if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
                 self.stateX = min(0.98, max(0.02, Double(voPoint.x)))
                 self.stateY = min(0.98, max(0.02, Double(voPoint.y)))
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
                 self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
-            } else if let ref = self.referenceAttitude, let motion = motionManager.deviceMotion {
-                // Dùng Gyroscope chiếu chính xác mỏ neo không gian (Ưu tiên tuyệt đối cho vùng ít chi tiết)
-                let currentAttitude = motion.attitude
-                currentAttitude.multiply(byInverseOf: ref)
-                let yawDelta = Double(currentAttitude.yaw)
-                let pitchDelta = Double(currentAttitude.pitch)
-                let zoomScale = self.currentZoom
-                let projX = Double(self.anchorInitialPoint.x) - yawDelta * self.sensitivityFactor * zoomScale
-                let projY = Double(self.anchorInitialPoint.y) + pitchDelta * self.sensitivityFactor * zoomScale
-                self.stateX = min(0.98, max(0.02, projX))
-                self.stateY = min(0.98, max(0.02, projY))
-                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                self.onSpatialTargetUpdated?(targetPoint, 0.50, .predicting)
             }
         }
     }

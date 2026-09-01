@@ -688,20 +688,8 @@ public final class CameraViewModel: ObservableObject {
             CameraLogger.info("Texture Variance (Frame 1): \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isLow ? "CÓ" : "KHÔNG")", category: .tracking)
         }
         
-        if let currentSubjectPos = point, let initialSubPos = initialPhysicalSubjectCenter, let initialTarget = initialTargetPoint {
-            // Khi vật thể thực di chuyển từ initialSubPos -> currentSubjectPos:
-            let deltaX = currentSubjectPos.x - initialSubPos.x
-            let deltaY = currentSubjectPos.y - initialSubPos.y
-            
-            // Toạ độ target tương ứng trên màn hình:
-            let mappedTargetX = min(0.98, max(0.02, initialTarget.x + deltaX))
-            let mappedTargetY = min(0.98, max(0.02, initialTarget.y + deltaY))
-            let mappedTarget = CGPoint(x: mappedTargetX, y: mappedTargetY)
-            
-            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: mappedTarget, confidence: confidence, pixelBuffer: pixelBuffer)
-        } else {
-            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: nil, confidence: confidence, pixelBuffer: pixelBuffer)
-        }
+        // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào SpatialTrackingEngine
+        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
     }
 
     // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che / lia máy nhanh)
