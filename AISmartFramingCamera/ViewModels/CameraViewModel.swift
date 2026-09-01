@@ -95,6 +95,39 @@ public final class CameraViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(activeFlashMode.rawValue, forKey: "activeFlashMode") }
     }
     
+    private var pendingSuggestedZoom: CGFloat = 1.0
+    private var hasExecutedAutoZoomForSession: Bool = false
+    
+    public func triggerZoomRevealAnimation(targetZoom: CGFloat) {
+        guard targetZoom > 1.0 else { return }
+        pendingTargetZoomForReveal = targetZoom
+        liveZoomFactorForReveal = currentZoom
+        isZoomRampPhase = false
+        lockOnProgress = 0
+        isRevealingZoomTarget = true
+        
+        withAnimation(.easeOut(duration: 0.45)) {
+            lockOnProgress = 1.0
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48) { [weak self] in
+            guard let self = self else { return }
+            self.isZoomRampPhase = true
+            self.cameraService.smoothZoomFactor(to: targetZoom, rate: 1.8)
+            self.currentZoom = targetZoom
+            SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
+            
+            let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.8 + 0.25
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
+                guard let self = self else { return }
+                withAnimation(.easeOut(duration: 0.3)) {
+                    self.isRevealingZoomTarget = false
+                }
+                self.isZoomRampPhase = false
+            }
+        }
+    }
+    
     // AI Framing & Composition
     @Published public var framingResult: FramingTargetResult?
     @Published public var alignmentState: FramingAlignmentState = .analyzing
@@ -448,36 +481,8 @@ public final class CameraViewModel: ObservableObject {
         self.activeEngineSource = .geminiCloud(model: response.modelUsed)
         self.geminiLatencyMs = response.latencyMs
         self.aiSuggestedZoom = response.suggestedZoom
-        
-        if isAutoZoomEnabled && response.suggestedZoom > 1.0 {
-            let targetZoom = response.suggestedZoom
-            pendingTargetZoomForReveal = targetZoom
-            liveZoomFactorForReveal = currentZoom
-            isZoomRampPhase = false
-            lockOnProgress = 0
-            isRevealingZoomTarget = true
-            
-            withAnimation(.easeOut(duration: 0.5)) {
-                lockOnProgress = 1.0
-            }
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
-                guard let self = self else { return }
-                self.isZoomRampPhase = true
-                self.cameraService.smoothZoomFactor(to: targetZoom, rate: 1.8)
-                self.currentZoom = targetZoom
-                SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
-                
-                let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.8 + 0.25
-                DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
-                    guard let self = self else { return }
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        self.isRevealingZoomTarget = false
-                    }
-                    self.isZoomRampPhase = false
-                }
-            }
-        }
+        self.pendingSuggestedZoom = response.suggestedZoom
+        self.hasExecutedAutoZoomForSession = false
         
         if isAIFullColorEnabled {
             currentAIColorParams = response.colorRecipe.asAIColorParameters
@@ -547,6 +552,7 @@ public final class CameraViewModel: ObservableObject {
         consecutiveLowConfidenceFrames = 0
         smoothedVelocity = .zero
         trackingQuality = .locked
+        hasExecutedAutoZoomForSession = false
         
         let dx = target.x - 0.5
         let dy = target.y - 0.5
@@ -601,38 +607,17 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che)
+    // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che / lia máy nhanh)
     private func handleTrackingDegraded() {
         consecutiveLowConfidenceFrames += 1
-
-        guard let lastPoint = self.currentTargetPoint ?? lastTrackedVisualPoint else { return }
-
-        let previousQuality = trackingQuality
-
-        if consecutiveLowConfidenceFrames <= predictionGraceFrames {
-            // Còn trong khoảng cho phép ngoại suy: dùng vận tốc giảm dần (damped) để không trôi dạt
-            let dt: CGFloat = 1.0 / 30.0
-            smoothedVelocity = CGVector(dx: smoothedVelocity.dx * 0.85, dy: smoothedVelocity.dy * 0.85)
-            let predictedX = lastPoint.x + smoothedVelocity.dx * dt
-            let predictedY = lastPoint.y + smoothedVelocity.dy * dt
-            let clamped = CGPoint(x: min(0.98, max(0.02, predictedX)), y: min(0.98, max(0.02, predictedY)))
-            self.currentTargetPoint = clamped
-            trackingQuality = .predicting
-            evaluateAlignment(at: clamped)
-        } else if consecutiveLowConfidenceFrames <= reacquireGraceFrames {
-            // Hết thời gian ngoại suy -> giữ nguyên vị trí cuối cùng, triệt tiêu vận tốc
-            smoothedVelocity = .zero
-            trackingQuality = .reacquiring
-        } else {
-            smoothedVelocity = .zero
-            trackingQuality = .lost
-            autoCaptureTask?.cancel()
-            autoCaptureTask = nil
-            autoCaptureCountdown = 0
-            if previousQuality != .lost {
-                haptics.triggerTrackingLostWarning()
-            }
-        }
+        
+        let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+        let fallback = self.currentTargetPoint ?? lastTrackedVisualPoint ?? spatialPoint
+        let target = (spatialPoint.x >= 0.02 && spatialPoint.x <= 0.98) ? spatialPoint : fallback
+        
+        self.currentTargetPoint = target
+        self.trackingQuality = .predicting
+        evaluateAlignment(at: target)
     }
     
     // MARK: - 3. 60Hz Gyro Motion Handler (Inertial Odometry khi lia máy nhanh hoặc mất dấu quang học)
@@ -676,15 +661,21 @@ public final class CameraViewModel: ObservableObject {
         
         let isPerfect = dist <= calculator.alignmentTolerance
         
-        // Kích hoạt tự động chụp khi khóa tốt hoặc đang dự đoán chuyển động ngắn hạn
+        // Kích hoạt tự động chụp khi tâm trắng đè khớp lên vùng target vàng!
         if isPerfect && !isPerfectAlignment && (trackingQuality == .locked || trackingQuality == .predicting) {
-            // Tâm trắng đã đè khớp lên vùng target!
             isPerfectAlignment = true
             haptics.triggerMagneticSnap()
             withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
                 aiSessionState = .alignmentPerfect
                 showAlignmentSuccessFlash = true
             }
+            
+            // KÍCH HOẠT ZOOM REVEAL ĐÚNG KHI TÂM TRẮNG VÀO TÂM VÀNG!
+            if isAutoZoomEnabled && pendingSuggestedZoom > 1.0 && !hasExecutedAutoZoomForSession {
+                hasExecutedAutoZoomForSession = true
+                triggerZoomRevealAnimation(targetZoom: pendingSuggestedZoom)
+            }
+            
             startAutoCaptureCountdown()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 self.showAlignmentSuccessFlash = false
@@ -710,10 +701,14 @@ public final class CameraViewModel: ObservableObject {
     
     private func startAutoCaptureCountdown() {
         autoCaptureTask?.cancel()
+        
+        let hasPendingZoom = isAutoZoomEnabled && pendingSuggestedZoom > 1.0 && !hasExecutedAutoZoomForSession
+        let initialWait: UInt64 = hasPendingZoom ? 1_200_000_000 : 800_000_000
+        
         autoCaptureCountdown = 1 // 1 giây phản hồi nhanh chụp ngay
         
         autoCaptureTask = Task {
-            try? await Task.sleep(nanoseconds: 800_000_000)
+            try? await Task.sleep(nanoseconds: initialWait)
             await MainActor.run { self.autoCaptureCountdown = 0 }
             try? await Task.sleep(nanoseconds: 200_000_000)
             await MainActor.run {

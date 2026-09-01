@@ -32,10 +32,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
     public var captureNextFrameForGemini: Bool = false
     public var capturedGeminiFrame: CGImage? = nil
     
-    // Visual Feature Object Tracking (VNTrackObjectRequest)
+    // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID)
     public private(set) var isTrackingTarget: Bool = false
     private var sequenceHandler = VNSequenceRequestHandler()
     private var lastTargetObservation: VNDetectedObjectObservation? = nil
+    private var referenceFeaturePrint: VNFeaturePrintObservation? = nil
+    private var consecutiveLostFrames: Int = 0
     
     // Vision Detection Requests
     private var faceDetectionRequest: VNDetectFaceRectanglesRequest!
@@ -87,6 +89,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         let initialObservation = VNDetectedObjectObservation(boundingBox: clampedRect)
         self.lastTargetObservation = initialObservation
+        self.referenceFeaturePrint = nil
+        self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
         self.isTrackingTarget = true
     }
@@ -94,7 +98,87 @@ public final class VisionFramingEngine: @unchecked Sendable {
     public func stopTrackingObject() {
         self.isTrackingTarget = false
         self.lastTargetObservation = nil
+        self.referenceFeaturePrint = nil
+        self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
+    }
+    
+    private func extractFeaturePrint(from buffer: CVPixelBuffer, regionOfInterest: CGRect) -> VNFeaturePrintObservation? {
+        let req = VNGenerateImageFeaturePrintRequest()
+        req.imageCropAndScaleOption = .scaleFit
+        req.regionOfInterest = CGRect(
+            x: max(0, min(0.9, regionOfInterest.origin.x)),
+            y: max(0, min(0.9, regionOfInterest.origin.y)),
+            width: max(0.05, min(1.0, regionOfInterest.size.width)),
+            height: max(0.05, min(1.0, regionOfInterest.size.height))
+        )
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, options: [:])
+        do {
+            try handler.perform([req])
+            return req.results?.first as? VNFeaturePrintObservation
+        } catch {
+            return nil
+        }
+    }
+    
+    private func attemptNeuralReIdentification(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, fallbackPoint: CGPoint?) -> (CGPoint, Double)? {
+        guard let refPrint = self.referenceFeaturePrint else { return nil }
+        
+        var candidateBoxes: [CGRect] = []
+        if let fb = fallbackPoint {
+            let fbVisionY = 1.0 - fb.y - 0.10
+            let fbVisionX = fb.x - 0.10
+            candidateBoxes.append(CGRect(x: max(0, min(0.8, fbVisionX)), y: max(0, min(0.8, fbVisionY)), width: 0.20, height: 0.20))
+        }
+        
+        let searchPoints: [CGPoint] = [
+            CGPoint(x: 0.5, y: 0.5),
+            CGPoint(x: 0.35, y: 0.35),
+            CGPoint(x: 0.65, y: 0.35),
+            CGPoint(x: 0.35, y: 0.65),
+            CGPoint(x: 0.65, y: 0.65)
+        ]
+        for p in searchPoints {
+            let vy = 1.0 - p.y - 0.10
+            let vx = p.x - 0.10
+            candidateBoxes.append(CGRect(x: max(0, min(0.8, vx)), y: max(0, min(0.8, vy)), width: 0.20, height: 0.20))
+        }
+        
+        var bestBox: CGRect? = nil
+        var minDistance: Float = Float.greatestFiniteMagnitude
+        
+        for box in candidateBoxes {
+            let req = VNGenerateImageFeaturePrintRequest()
+            req.imageCropAndScaleOption = .scaleFit
+            req.regionOfInterest = box
+            let h = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+            do {
+                try h.perform([req])
+                if let candidatePrint = req.results?.first as? VNFeaturePrintObservation {
+                    var dist: Float = 0
+                    try refPrint.computeDistance(&dist, to: candidatePrint)
+                    if dist < minDistance {
+                        minDistance = dist
+                        bestBox = box
+                    }
+                }
+            } catch {
+                continue
+            }
+        }
+        
+        if let matchedBox = bestBox, minDistance < 0.48 {
+            CameraLogger.info("🎯 Deep Neural Re-ID thành công! Tìm lại được mục tiêu (Distance: \(String(format: "%.3f", minDistance)))", category: .tracking)
+            let newObs = VNDetectedObjectObservation(boundingBox: matchedBox)
+            self.lastTargetObservation = newObs
+            self.sequenceHandler = VNSequenceRequestHandler()
+            let uiX = matchedBox.midX
+            let uiY = 1.0 - matchedBox.midY
+            let confidence = max(0.65, Double(1.0 - (minDistance / 0.50)))
+            return (CGPoint(x: uiX, y: uiY), confidence)
+        }
+        
+        return nil
     }
     
     // MARK: - Process Incoming Video PixelBuffer
@@ -125,32 +209,48 @@ public final class VisionFramingEngine: @unchecked Sendable {
             guard let self = self else { return }
             defer { self.isProcessingFrame = false }
             
-            // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed) -> Chạy VNTrackObjectRequest bám vật thể
+            // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed) -> Chạy VNTrackObjectRequest + Neural Re-ID
             if self.isTrackingTarget, let prevObs = self.lastTargetObservation {
+                if self.referenceFeaturePrint == nil {
+                    self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: prevObs.boundingBox)
+                }
+                
                 let trackRequest = VNTrackObjectRequest(detectedObjectObservation: prevObs)
-                trackRequest.trackingLevel = .accurate // Optical flow + deep visual template matching
+                trackRequest.trackingLevel = .accurate
+                
+                var trackedPoint: CGPoint? = nil
+                var trackedConfidence: Double = 0.0
                 
                 do {
                     try self.sequenceHandler.perform([trackRequest], on: pixelBuffer, orientation: orientation)
                     if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first {
                         if newObs.confidence > 0.25 {
                             self.lastTargetObservation = newObs
-                            // Convert from Vision (bottom-left) to UI (top-left)
+                            self.consecutiveLostFrames = 0
                             let uiX = newObs.boundingBox.midX
                             let uiY = 1.0 - newObs.boundingBox.midY
-                            let trackedPoint = CGPoint(x: uiX, y: uiY)
-                            
-                            DispatchQueue.main.async {
-                                self.onTargetTracked?(trackedPoint, Double(newObs.confidence), pixelBuffer)
-                            }
+                            trackedPoint = CGPoint(x: uiX, y: uiY)
+                            trackedConfidence = Double(newObs.confidence)
                         } else {
-                            DispatchQueue.main.async {
-                                self.onTargetTracked?(nil, Double(newObs.confidence), pixelBuffer)
-                            }
+                            self.consecutiveLostFrames += 1
                         }
                     }
                 } catch {
-                    print("Visual tracking frame error: \(error)")
+                    self.consecutiveLostFrames += 1
+                }
+                
+                // Khi mất dấu quang học do lia máy nhanh: Kích hoạt Deep Neural Re-ID
+                if trackedPoint == nil && (self.consecutiveLostFrames >= 2) {
+                    let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+                    if let (reIdPoint, reIdConfidence) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, fallbackPoint: spatialPoint) {
+                        trackedPoint = reIdPoint
+                        trackedConfidence = reIdConfidence
+                        self.consecutiveLostFrames = 0
+                    }
+                }
+                
+                DispatchQueue.main.async {
+                    self.onTargetTracked?(trackedPoint, trackedConfidence, pixelBuffer)
                 }
                 return
             }

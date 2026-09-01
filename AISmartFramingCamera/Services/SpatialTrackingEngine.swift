@@ -32,6 +32,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var lastOpticalConfidence: Double = 1.0
     private var lastUpdateTime: CFTimeInterval = 0
     
+    public var currentEstimatedScreenPoint: CGPoint {
+        return CGPoint(x: stateX, y: stateY)
+    }
+    
     // Callbacks
     public var onSpatialTargetUpdated: ((CGPoint, Double, TrackingQuality) -> Void)?
     
@@ -100,7 +104,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // Vector mục tiêu trong hệ toạ độ Camera hiện tại: V_cam = Q_current^-1 * V_world
             let camRay = currentQuat.inverse.act(worldVec)
             
-            // Nếu vật thể vẫn nằm phía trước camera (z > 0.1)
+            // Nếu vật thể vẫn nằm phía trước camera (z > 0.05)
             if camRay.z > 0.05 {
                 let f = self.baseFocalLength * self.currentZoom
                 let projX = 0.5 + (camRay.x / camRay.z) * f
@@ -110,14 +114,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 let clampedY = min(0.98, max(0.02, projY))
                 
                 // Khi độ tin cậy quang học giảm (lia máy nhanh / thiếu sáng), dùng 3D Gyro làm động lực chính
-                if self.lastOpticalConfidence <= 0.40 {
-                    let alpha = 0.60
+                if self.lastOpticalConfidence <= 0.50 {
+                    let alpha = 0.70
                     self.stateX = self.stateX * (1.0 - alpha) + clampedX * alpha
                     self.stateY = self.stateY * (1.0 - alpha) + clampedY * alpha
                     
                     let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
                     DispatchQueue.main.async {
-                        self.onSpatialTargetUpdated?(targetPoint, self.lastOpticalConfidence, .predicting)
+                        self.onSpatialTargetUpdated?(targetPoint, max(0.40, self.lastOpticalConfidence), .predicting)
                     }
                 }
             }
@@ -137,17 +141,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let obsX = Double(visualPoint.x)
             let obsY = Double(visualPoint.y)
             
-            // Lọc Outlier cực đoan (> 0.30 màn hình trong 1 frame)
+            // Lọc Outlier cực đoan (> 0.35 màn hình trong 1 frame)
             let jump = hypot(obsX - self.stateX, obsY - self.stateY)
-            if jump > 0.30 && confidence < 0.70 {
-                // Bỏ qua frame nhiễu
+            if jump > 0.35 && confidence < 0.70 {
                 return
             }
             
             // Kalman-like Adaptive Smoothing Filter
-            // Confidence càng cao thì độ tin cậy quang học càng lớn, giảm nhiễu micro-jitter
             let kGain = max(0.40, min(0.85, confidence))
-            
             let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
             let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
             
@@ -180,9 +181,6 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             self.onSpatialTargetUpdated?(targetPoint, confidence, .locked)
         } else {
             if let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
-                // Visual Odometry thành công: tin theo kết quả này, đồng bộ lại 
-                // luôn vận tốc để nếu VO cũng rớt ở frame sau, ngoại suy Gyro tiếp 
-                // theo vẫn mượt, không giật.
                 if dt > 0.005 {
                     let rawVx = (Double(voPoint.x) - self.stateX) / dt
                     let rawVy = (Double(voPoint.y) - self.stateY) / dt
@@ -193,17 +191,16 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 self.stateY = min(0.98, max(0.02, Double(voPoint.y)))
                 
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                self.onSpatialTargetUpdated?(targetPoint, confidence, .predicting)
+                self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
             } else {
-                // Visual Odometry cũng không tính được: rơi về Gyro thuần như cũ
-                self.velocityX *= 0.85
-                self.velocityY *= 0.85
+                // Rơi về Gyroscope 3D Anchor bù trừ chuyển động lia máy
+                self.velocityX *= 0.90
+                self.velocityY *= 0.90
                 self.stateX = min(0.98, max(0.02, self.stateX + self.velocityX * dt))
                 self.stateY = min(0.98, max(0.02, self.stateY + self.velocityY * dt))
                 
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                let quality: TrackingQuality = (confidence > 0.15) ? .predicting : .reacquiring
-                self.onSpatialTargetUpdated?(targetPoint, confidence, quality)
+                self.onSpatialTargetUpdated?(targetPoint, 0.50, .predicting)
             }
         }
     }
