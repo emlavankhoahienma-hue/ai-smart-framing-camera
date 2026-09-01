@@ -550,8 +550,14 @@ public final class CameraViewModel: ObservableObject {
         
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
         self.framingResult = result
-        self.detectedScene = dominantScene
-        self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
+        // Xác định chính xác nguồn Engine AI đang hoạt động để hiển thị rõ ràng trên HUD
+        if NeuralTargetTracker.shared.hasActiveTrainedModel {
+            self.activeEngineSource = .localTrained114MB(category: dominantScene.localizedName)
+        } else if YOLODetectionEngine.shared.hasYOLOModel {
+            self.activeEngineSource = .yoloNeural(label: dominantScene.localizedName)
+        } else {
+            self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
+        }
         
         if isAIFullColorEnabled {
             currentAIColorParams = dominantScene.aiFullColorParameters

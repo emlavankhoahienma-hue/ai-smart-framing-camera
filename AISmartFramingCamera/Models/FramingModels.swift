@@ -114,12 +114,18 @@ public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
 // MARK: - AI Framing Engine Source Indicator
 public enum AIEngineSource: Equatable {
     case geminiCloud(model: String)
+    case localTrained114MB(category: String)
+    case yoloNeural(label: String)
     case appleNeuralEngine(scene: String)
     
     public var title: String {
         switch self {
         case .geminiCloud(let model):
             return "✨ Cloud AI: \(model)"
+        case .localTrained114MB(let cat):
+            return "🧠 AI Local 114MB (\(cat))"
+        case .yoloNeural(let label):
+            return "⚡ YOLOv11 Neural (\(label))"
         case .appleNeuralEngine(let scene):
             return "⚡ Apple Neural Engine (\(scene))"
         }
@@ -130,6 +136,10 @@ public enum AIEngineSource: Equatable {
         case .geminiCloud(let model):
             let short = model.replacingOccurrences(of: "gemini-", with: "").uppercased()
             return "CLOUD AI (\(short))"
+        case .localTrained114MB:
+            return "AI LOCAL 114MB"
+        case .yoloNeural(let label):
+            return "YOLOv11 (\(label.uppercased()))"
         case .appleNeuralEngine:
             return "NPU CHIP A-SERIES"
         }
@@ -138,6 +148,8 @@ public enum AIEngineSource: Equatable {
     public var iconName: String {
         switch self {
         case .geminiCloud: return "sparkles"
+        case .localTrained114MB: return "brain.head.profile"
+        case .yoloNeural: return "bolt.shield.fill"
         case .appleNeuralEngine: return "cpu.fill"
         }
     }
@@ -145,6 +157,8 @@ public enum AIEngineSource: Equatable {
     public var badgeColor: Color {
         switch self {
         case .geminiCloud: return .cyan
+        case .localTrained114MB: return .yellow
+        case .yoloNeural: return .orange
         case .appleNeuralEngine: return .green
         }
     }

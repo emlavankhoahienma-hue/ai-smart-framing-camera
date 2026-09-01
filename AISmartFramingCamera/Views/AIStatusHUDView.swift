@@ -83,8 +83,8 @@ public struct AIStatusHUDView: View {
                         }
                     }
                     
-                    // Engine Source Badge (Cloud AI vs Apple Neural Engine Chip)
-                    if let engine = viewModel.activeEngineSource, case .targetPlaced = viewModel.aiSessionState {
+                    // Engine Source Badge (Cloud AI vs Local 114MB AI vs YOLOv11 NPU vs Apple ANE)
+                    if let engine = viewModel.activeEngineSource, viewModel.aiSessionState != .idle {
                         HStack(spacing: 3) {
                             Image(systemName: engine.iconName)
                                 .font(.system(size: 8, weight: .black))

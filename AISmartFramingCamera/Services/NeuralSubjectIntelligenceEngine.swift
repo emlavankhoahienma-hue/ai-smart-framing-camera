@@ -173,7 +173,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                         existing.boundingBox.intersection(rect).width * existing.boundingBox.intersection(rect).height > (rect.width * rect.height * 0.45)
                     }
                     if !overlapsWithExisting {
-                        let score = calculateProminenceScore(rect: rect, confidence: obj.confidence, category: .foregroundObject)
+                        let score = calculateProminenceScore(rect: rect, confidence: obj.confidence, category: .foregroundObject, buffer: pixelBuffer)
                         candidates.append(NeuralSubjectCandidate(
                             boundingBox: rect,
                             category: .foregroundObject,
@@ -222,7 +222,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     }
     
     // MARK: - Thuật toán Tính Điểm Nổi Bật (Prominence Scoring Formula)
-    private func calculateProminenceScore(rect: CGRect, confidence: Float, category: NeuralSubjectCategory) -> Double {
+    private func calculateProminenceScore(rect: CGRect, confidence: Float, category: NeuralSubjectCategory, buffer: CVPixelBuffer? = nil) -> Double {
         let area = Double(rect.width * rect.height)
         
         // 1. Điểm tỷ lệ diện tích (Lý tưởng nhất là từ 5% đến 55% màn hình)
@@ -249,9 +249,60 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // 3. Hệ số ưu tiên danh mục AI
         let categoryWeight = category.priorityWeight
         
+        // 4. Lọc bỏ gạch lát sàn / nền đất (Floor Tile & Ground Suppression)
+        var floorPenalty: Double = 1.0
+        if category == .foregroundObject, let buf = buffer, isFloorTileOrGround(rect: rect, buffer: buf) {
+            floorPenalty = 0.05 // Giảm 95% điểm nếu chỉ là mảng gạch lát sàn / nền đất phẳng
+        } else if category == .foregroundObject && rect.midY > 0.70 && rect.width > 0.40 {
+            floorPenalty = 0.10
+        }
+        
         // Điểm tổng hợp
-        let totalScore = Double(confidence) * 1.5 * areaScore * centerScore * categoryWeight
-        return max(0.05, totalScore)
+        let totalScore = Double(confidence) * 1.5 * areaScore * centerScore * categoryWeight * floorPenalty
+        return max(0.01, totalScore)
+    }
+    
+    // MARK: - Phát hiện & Loại Bỏ Gạch Lát Sàn / Mặt Đất (Floor Tile & Ground Rejection)
+    private func isFloorTileOrGround(rect: CGRect, buffer: CVPixelBuffer) -> Bool {
+        if rect.midY > 0.65 && rect.width > 0.45 && rect.height < 0.40 {
+            return true
+        }
+        
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return false }
+        
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let data = base.assumingMemoryBound(to: UInt8.self)
+        
+        let minX = max(0, min(width - 1, Int(rect.origin.x * CGFloat(width))))
+        let minY = max(0, min(height - 1, Int(rect.origin.y * CGFloat(height))))
+        let maxX = max(minX + 1, min(width, Int((rect.origin.x + rect.size.width) * CGFloat(width))))
+        let maxY = max(minY + 1, min(height, Int((rect.origin.y + rect.size.height) * CGFloat(height))))
+        
+        var lums: [Float] = []
+        let step = max(2, (maxX - minX) / 16)
+        for y in stride(from: minY, to: maxY, by: max(2, step)) {
+            for x in stride(from: minX, to: maxX, by: max(2, step)) {
+                let off = y * bytesPerRow + x * 4
+                let b = Float(data[off])
+                let g = Float(data[off+1])
+                let r = Float(data[off+2])
+                lums.append(r * 0.299 + g * 0.587 + b * 0.114)
+            }
+        }
+        
+        guard lums.count > 12 else { return false }
+        let mean = lums.reduce(0, +) / Float(lums.count)
+        let variance = lums.reduce(0) { $0 + pow($1 - mean, 2) } / Float(lums.count)
+        
+        // Gạch men / nền sàn phẳng có variance thấp (< 40) và nằm ở phần dưới màn hình (y > 0.55)
+        if variance < 40.0 && rect.midY > 0.55 {
+            return true
+        }
+        return false
     }
     
     // MARK: - Helpers
