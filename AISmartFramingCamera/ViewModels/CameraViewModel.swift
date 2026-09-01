@@ -234,6 +234,7 @@ public final class CameraViewModel: ObservableObject {
     private let analysisFramesNeeded = 5 // Collect 5 quick frames (~0.25s) for rock-solid stabilization
     private var isOneShotCaptured = false
     private var lastFocusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    private var lastForcedResetTime: TimeInterval = 0
     private var focusSquareHideTask: Task<Void, Never>? = nil
     
     public init() {
@@ -563,6 +564,45 @@ public final class CameraViewModel: ObservableObject {
     private var lastTrackedVisualPoint: CGPoint? = nil
     private var gyroAnchorPoint: CGPoint? = nil
     private var initialPhysicalSubjectCenter: CGPoint? = nil
+    private var latestPixelBuffer: CVPixelBuffer? = nil
+    private var shouldCheckTextureOnNextFrame: Bool = false
+    
+    // MARK: - Low Texture Analysis (Bầu trời, Tường phẳng)
+    private func computeTextureVariance(pixelBuffer: CVPixelBuffer, normalizedRect: CGRect) -> Double {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 1000 }
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let buffer = baseAddress.assumingMemoryBound(to: UInt8.self)
+        
+        let regionX = max(0, Int(normalizedRect.origin.x * CGFloat(width)))
+        let regionY = max(0, Int(normalizedRect.origin.y * CGFloat(height)))
+        let regionW = max(20, Int(normalizedRect.width * CGFloat(width)))
+        let regionH = max(20, Int(normalizedRect.height * CGFloat(height)))
+        
+        var values: [Double] = []
+        var y = regionY
+        while y < min(regionY + regionH, height) {
+            var x = regionX
+            while x < min(regionX + regionW, width) {
+                let offset = y * bytesPerRow + x * 4
+                if offset + 2 < bytesPerRow * height {
+                    let b = Double(buffer[offset])
+                    let g = Double(buffer[offset + 1])
+                    let r = Double(buffer[offset + 2])
+                    values.append(0.299 * r + 0.587 * g + 0.114 * b)
+                }
+                x += 4
+            }
+            y += 4
+        }
+        
+        guard values.count > 8 else { return 1000 }
+        let mean = values.reduce(0, +) / Double(values.count)
+        return values.reduce(0) { $0 + pow($1 - mean, 2) } / Double(values.count)
+    }
     
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
     
@@ -601,6 +641,18 @@ public final class CameraViewModel: ObservableObject {
         // 2. Khởi động Động cơ Tracking Không Gian Duy Nhất
         SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
         
+        // 2b. Đánh giá độ phẳng Texture của vùng mục tiêu (Bầu trời, Tường trơn)
+        let anchorTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
+        if let buffer = latestPixelBuffer {
+            let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
+            let variance = computeTextureVariance(pixelBuffer: buffer, normalizedRect: region)
+            let isLow = variance < 25.0
+            SpatialTrackingEngine.shared.setLowTextureFlag(isLow)
+            CameraLogger.info("Texture Variance của mục tiêu: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isLow ? "CÓ" : "KHÔNG")", category: .tracking)
+        } else {
+            shouldCheckTextureOnNextFrame = true
+        }
+        
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
         let focusTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
         let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
@@ -621,6 +673,15 @@ public final class CameraViewModel: ObservableObject {
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer) {
         guard case .targetPlaced = aiSessionState else { return }
         self.lastVisualConfidence = confidence
+        
+        if shouldCheckTextureOnNextFrame, let target = currentTargetPoint ?? initialTargetPoint {
+            shouldCheckTextureOnNextFrame = false
+            let region = CGRect(x: max(0, target.x - 0.08), y: max(0, target.y - 0.08), width: 0.16, height: 0.16)
+            let variance = computeTextureVariance(pixelBuffer: pixelBuffer, normalizedRect: region)
+            let isLow = variance < 25.0
+            SpatialTrackingEngine.shared.setLowTextureFlag(isLow)
+            CameraLogger.info("Texture Variance (Frame 1): \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isLow ? "CÓ" : "KHÔNG")", category: .tracking)
+        }
         
         if let currentSubjectPos = point, let initialSubPos = initialPhysicalSubjectCenter, let initialTarget = initialTargetPoint {
             // Khi vật thể thực di chuyển từ initialSubPos -> currentSubjectPos:
@@ -877,6 +938,13 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Smart Autofocus & Exposure Control (Apple Camera App Style)
     
     private func handleSubjectAreaChanged() {
+        let now = CACurrentMediaTime()
+        guard now - lastForcedResetTime >= 1.5 else {
+            CameraLogger.info("Bỏ qua subject area change - vừa reset gần đây, tránh vòng lặp phơi sáng", category: .general)
+            return
+        }
+        lastForcedResetTime = now
+        
         // Cảnh vật hoặc chủ thể di chuyển -> Kích hoạt lấy nét lại ngay lập tức
         if showTargetCircle, let target = currentTargetPoint {
             applyFocusAndExposure(to: target, source: .aiTarget, force: true)
@@ -1057,12 +1125,16 @@ extension CameraViewModel: CameraServiceDelegate {
         // Video connection is already set to .portrait in CameraService, so pixelBuffer is upright (.up)
         visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: .up)
         
-        let now = CACurrentMediaTime()
-        if now - lastHistogramComputeTime >= 0.04, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-            lastHistogramComputeTime = now
-            let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
-            DispatchQueue.main.async {
-                self.histogramBars = bars
+        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            self.latestPixelBuffer = pixelBuffer
+            
+            let now = CACurrentMediaTime()
+            if now - lastHistogramComputeTime >= 0.04 {
+                lastHistogramComputeTime = now
+                let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
+                DispatchQueue.main.async {
+                    self.histogramBars = bars
+                }
             }
         }
     }

@@ -15,6 +15,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     // Mốc tọa độ quán tính khi khóa target
     private var referenceAttitude: CMAttitude? = nil
     private var anchorInitialPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    private var isLowTextureAnchor: Bool = false
+    
+    public func setLowTextureFlag(_ isLowTexture: Bool) {
+        self.isLowTextureAnchor = isLowTexture
+    }
     
     // Tọa độ mục tiêu hiện tại trên màn hình UI (0.0 đến 1.0)
     private var stateX: Double = 0.5
@@ -128,7 +133,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
         lastUpdateTime = now
         
-        if let visualPoint = point, confidence >= 0.25 {
+        let effectiveThreshold = isLowTextureAnchor ? 0.75 : 0.25
+        if let visualPoint = point, confidence >= effectiveThreshold {
             let obsX = Double(visualPoint.x)
             let obsY = Double(visualPoint.y)
             
@@ -166,14 +172,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
             self.onSpatialTargetUpdated?(targetPoint, confidence, .locked)
         } else {
-            // Khi quang học tạm thời mất nét: Thử Visual Odometry trước
-            if let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
+            // Khi quang học tạm thời mất nét hoặc là vùng ít chi tiết (Low Texture):
+            if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
                 self.stateX = min(0.98, max(0.02, Double(voPoint.x)))
                 self.stateY = min(0.98, max(0.02, Double(voPoint.y)))
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
                 self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
             } else if let ref = self.referenceAttitude, let motion = motionManager.deviceMotion {
-                // Dùng Gyroscope chiếu chính xác mỏ neo không gian
+                // Dùng Gyroscope chiếu chính xác mỏ neo không gian (Ưu tiên tuyệt đối cho vùng ít chi tiết)
                 let currentAttitude = motion.attitude
                 currentAttitude.multiply(byInverseOf: ref)
                 let yawDelta = Double(currentAttitude.yaw)
