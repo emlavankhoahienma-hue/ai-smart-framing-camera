@@ -235,6 +235,9 @@ public final class CameraViewModel: ObservableObject {
     private var isOneShotCaptured = false
     private var lastFocusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     private var lastForcedResetTime: TimeInterval = 0
+    private var lastSmartFocusExposureTime: TimeInterval = 0
+    private var pendingSmartFocusPoint: CGPoint?
+    private var pendingSmartFocusStableCount: Int = 0
     private var focusSquareHideTask: Task<Void, Never>? = nil
     
     public init() {
@@ -960,7 +963,29 @@ public final class CameraViewModel: ObservableObject {
             return
         }
         
-        // 2. Nếu đang ở chế độ thường: Mặt người > Vật thể nổi bật (Saliency) > Tâm màn hình
+        // 2. Chế độ rảnh (chưa khóa target, kể cả chưa bấm AI lần nào): lọc 
+        // nhiễu — chỉ đổi điểm đo sáng khi vật được phát hiện ổn định qua 
+        // nhiều lần liên tiếp, tránh nhảy loạn ISO do thuật toán saliency 
+        // chọn nhầm qua lại giữa 2 vật có điểm số gần bằng nhau.
+        if let pending = pendingSmartFocusPoint {
+            let dist = hypot(point.x - pending.x, point.y - pending.y)
+            if dist < 0.06 {
+                pendingSmartFocusStableCount += 1
+            } else {
+                pendingSmartFocusPoint = point
+                pendingSmartFocusStableCount = 0
+                return
+            }
+        } else {
+            pendingSmartFocusPoint = point
+            pendingSmartFocusStableCount = 0
+            return
+        }
+        
+        let now = CACurrentMediaTime()
+        guard pendingSmartFocusStableCount >= 2, now - lastSmartFocusExposureTime >= 1.0 else { return }
+        
+        lastSmartFocusExposureTime = now
         applyFocusAndExposure(to: point, source: type)
     }
     
