@@ -30,6 +30,10 @@ public struct CameraMainView: View {
                     
                     Spacer()
                     
+                    // Realtime Pro Color Histogram HUD (Biểu đồ Histogram màu, JPEG/DNG, Shutter, ISO)
+                    LiveColorHistogramHUDView(viewModel: viewModel)
+                        .padding(.bottom, 6)
+                    
                     // Bottom Control Deck (Zoom, Mode, Shutter, Presets)
                     CameraControlsView(viewModel: viewModel)
                 }

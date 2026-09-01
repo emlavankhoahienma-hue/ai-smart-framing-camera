@@ -436,3 +436,25 @@ public struct SubjectDetectionResult {
     
     public init() {}
 }
+
+// MARK: - Photo Save Format
+public enum PhotoSaveFormat: String, CaseIterable, Identifiable {
+    case jpeg = "JPEG"
+    case dng = "DNG"
+    case heif = "HEIF"
+    
+    public var id: String { rawValue }
+}
+
+// MARK: - Realtime Histogram Data
+public struct HistogramBarData: Identifiable {
+    public let id: Int
+    public var height: CGFloat // 0.05 to 1.0
+    public var color: Color
+    
+    public init(id: Int, height: CGFloat, color: Color) {
+        self.id = id
+        self.height = height
+        self.color = color
+    }
+}

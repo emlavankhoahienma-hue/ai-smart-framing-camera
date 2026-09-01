@@ -17,10 +17,23 @@ public extension CameraServiceDelegate {
     func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {}
 }
 
+public struct LiveCameraStats {
+    public var iso: Float
+    public var shutterSpeedString: String
+    public var exposureDurationSeconds: Double
+    
+    public init(iso: Float, shutterSpeedString: String, exposureDurationSeconds: Double) {
+        self.iso = iso
+        self.shutterSpeedString = shutterSpeedString
+        self.exposureDurationSeconds = exposureDurationSeconds
+    }
+}
+
 public final class CameraService: NSObject {
     public static let shared = CameraService()
     
     public weak var delegate: CameraServiceDelegate?
+    public var onLiveCameraStatsUpdated: ((LiveCameraStats) -> Void)?
     
     // Core AVFoundation objects
     public let captureSession = AVCaptureSession()
@@ -499,8 +512,30 @@ public final class CameraService: NSObject {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        var currentStats: LiveCameraStats? = nil
+        if let camera = self.activeCamera {
+            let iso = camera.iso
+            let duration = camera.exposureDuration
+            let seconds = CMTimeGetSeconds(duration)
+            let shutterString: String
+            if seconds > 0 {
+                if seconds >= 1.0 {
+                    shutterString = String(format: "%.1f s", seconds)
+                } else {
+                    let denom = Int(round(1.0 / seconds))
+                    shutterString = "1/\(denom) s"
+                }
+            } else {
+                shutterString = "1/125 s"
+            }
+            currentStats = LiveCameraStats(iso: iso, shutterSpeedString: shutterString, exposureDurationSeconds: seconds)
+        }
+        
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            if let stats = currentStats {
+                self.onLiveCameraStatsUpdated?(stats)
+            }
             self.delegate?.cameraService(self, didOutputSampleBuffer: sampleBuffer)
         }
     }

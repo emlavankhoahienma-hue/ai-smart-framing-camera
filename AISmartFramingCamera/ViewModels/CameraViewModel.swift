@@ -59,6 +59,18 @@ public final class CameraViewModel: ObservableObject {
             cameraService.setLivePhotoCaptureEnabled(isLivePhotoEnabled)
         }
     }
+    @Published public var selectedPhotoFormat: PhotoSaveFormat = .jpeg {
+        didSet { UserDefaults.standard.set(selectedPhotoFormat.rawValue, forKey: "selectedPhotoFormat") }
+    }
+    @Published public var liveISO: String = "ISO 32"
+    @Published public var liveShutterSpeed: String = "1/400 s"
+    @Published public var histogramBars: [HistogramBarData] = (0..<32).map {
+        let t = Double($0) / 31.0
+        let col = t < 0.28 ? Color(red: 0.15, green: 0.45, blue: 0.95) : (t < 0.72 ? Color(red: 0.40, green: 0.90, blue: 0.60) : Color(red: 0.95, green: 0.45, blue: 0.20))
+        return HistogramBarData(id: $0, height: 0.10, color: col)
+    }
+    private var lastHistogramComputeTime: CFTimeInterval = 0
+    
     @Published public var isRecordingVideo: Bool = false
     @Published public var recordedVideoURL: URL? = nil
     @Published public var isShowingVideoPreview: Bool = false
@@ -314,6 +326,25 @@ public final class CameraViewModel: ObservableObject {
         
         cameraService.onLiveZoomFactorChanged = { [weak self] zoom in
             self?.liveZoomFactorForReveal = zoom
+        }
+        
+        // Realtime Exposure Stats Listener (ISO & Shutter Speed)
+        cameraService.onLiveCameraStatsUpdated = { [weak self] stats in
+            guard let self = self else { return }
+            let isoInt = Int(round(stats.iso))
+            self.liveISO = "ISO \(isoInt)"
+            self.liveShutterSpeed = stats.shutterSpeedString
+        }
+    }
+    
+    public func togglePhotoFormat() {
+        haptics.triggerSelectionChange()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            switch selectedPhotoFormat {
+            case .jpeg: selectedPhotoFormat = .dng
+            case .dng: selectedPhotoFormat = .jpeg
+            case .heif: selectedPhotoFormat = .jpeg
+            }
         }
     }
     
@@ -1025,6 +1056,15 @@ extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
         // Video connection is already set to .portrait in CameraService, so pixelBuffer is upright (.up)
         visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: .up)
+        
+        let now = CACurrentMediaTime()
+        if now - lastHistogramComputeTime >= 0.04, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            lastHistogramComputeTime = now
+            let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
+            DispatchQueue.main.async {
+                self.histogramBars = bars
+            }
+        }
     }
     
     public func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {
