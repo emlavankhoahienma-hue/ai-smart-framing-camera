@@ -82,7 +82,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     // MARK: - Visual Object Tracking Control
     
     /// Khởi động tracking bám dính vào vùng cảnh vật/vật thể/chữ tại toạ độ mục tiêu
-    public func startTrackingObject(at normalizedPoint: CGPoint, size: CGSize = CGSize(width: 0.18, height: 0.18)) {
+    public func startTrackingObject(at normalizedPoint: CGPoint, size: CGSize = CGSize(width: 0.12, height: 0.12)) {
         // Convert UI coordinate (top-left origin) to Vision coordinate (bottom-left origin)
         let visionY = 1.0 - normalizedPoint.y - (size.height / 2.0)
         let visionX = normalizedPoint.x - (size.width / 2.0)

@@ -135,15 +135,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         lastUpdateTime = now
         
         var effectiveConfidence = confidence
+        var activePoint = point
+        
         if let visualPoint = point, let buffer = pixelBuffer {
-            let neuralSim = NeuralTargetTracker.shared.verifyTarget(in: buffer, at: visualPoint)
-            if neuralSim >= 0.70 {
+            let (bestPt, neuralSim) = NeuralTargetTracker.shared.findBestMatchingPoint(in: buffer, around: visualPoint, searchRadius: 0.04)
+            if neuralSim >= 0.50 {
+                activePoint = bestPt
                 effectiveConfidence = max(confidence, neuralSim * 0.95)
             }
         }
         
         let effectiveThreshold = isLowTextureAnchor ? 0.75 : 0.25
-        if let visualPoint = point, effectiveConfidence >= effectiveThreshold {
+        if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
             let obsX = Double(visualPoint.x)
             let obsY = Double(visualPoint.y)
             
@@ -153,8 +156,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 return
             }
             
-            // Quang học là Ground Truth: Bám trực tiếp vào vật thể thực tế
-            let kGain = max(0.70, min(0.90, effectiveConfidence))
+            // Quang học + Neural Peak là Ground Truth: Bám trực tiếp vào tâm vật thể thực tế
+            let kGain = max(0.75, min(0.95, effectiveConfidence))
             let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
             let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
             
@@ -299,6 +302,44 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         var dotProduct: Float = 0
         vDSP_dotpr(anchor, 1, currentEmbedding, 1, &dotProduct, vDSP_Length(embeddingDim))
         return Double(max(0.0, min(1.0, dotProduct)))
+    }
+    
+    // MARK: - 3. Quét Lưới 9 Điểm Cục Bộ Tìm Đỉnh Tương Đồng (Neural Peak Grid Search 3x3)
+    public func findBestMatchingPoint(in pixelBuffer: CVPixelBuffer, around centerPoint: CGPoint, searchRadius: CGFloat = 0.04) -> (CGPoint, Double) {
+        guard let anchor = anchorEmbedding else { return (centerPoint, 1.0) }
+        
+        let centerSim = verifyTarget(in: pixelBuffer, at: centerPoint)
+        if centerSim >= 0.88 {
+            return (centerPoint, centerSim)
+        }
+        
+        let offsets: [(CGFloat, CGFloat)] = [
+            (0, 0),
+            (-searchRadius, 0), (searchRadius, 0),
+            (0, -searchRadius), (0, searchRadius),
+            (-searchRadius, -searchRadius), (searchRadius, -searchRadius),
+            (-searchRadius, searchRadius), (searchRadius, searchRadius)
+        ]
+        
+        var bestPt = centerPoint
+        var maxSim: Double = centerSim
+        
+        for (dx, dy) in offsets {
+            let testX = min(0.96, max(0.04, centerPoint.x + dx))
+            let testY = min(0.96, max(0.04, centerPoint.y + dy))
+            let testPt = CGPoint(x: testX, y: testY)
+            let currentFeatures = extractFeatures(from: pixelBuffer, at: testPt)
+            let currentEmbedding = forwardPass(currentFeatures)
+            var dotProduct: Float = 0
+            vDSP_dotpr(anchor, 1, currentEmbedding, 1, &dotProduct, vDSP_Length(embeddingDim))
+            let sim = Double(max(0.0, min(1.0, dotProduct)))
+            if sim > maxSim {
+                maxSim = sim
+                bestPt = testPt
+            }
+        }
+        
+        return (bestPt, maxSim)
     }
     
     public func clearAnchor() {
