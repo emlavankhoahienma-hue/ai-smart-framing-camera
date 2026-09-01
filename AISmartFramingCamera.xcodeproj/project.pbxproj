@@ -34,6 +34,7 @@
 		B20000000000000000000019 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000022 /* FeedbackView.swift */; };
 		B20000000000000000000020 /* RealtimeHistogramEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000023 /* RealtimeHistogramEngine.swift */; };
 		B20000000000000000000021 /* LiveColorHistogramHUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000024 /* LiveColorHistogramHUDView.swift */; };
+		B20000000000000000000022 /* PresetThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000025 /* PresetThumbnailProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -67,6 +68,7 @@
 		B100000000000000000000022 /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
 		B100000000000000000000023 /* RealtimeHistogramEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeHistogramEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000024 /* LiveColorHistogramHUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveColorHistogramHUDView.swift; sourceTree = "<group>"; };
+		B100000000000000000000025 /* PresetThumbnailProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresetThumbnailProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -135,6 +137,7 @@
 				B100000000000000000000020 /* YOLODetectionEngine.swift */,
 				B100000000000000000000021 /* VisualOdometryEngine.swift */,
 				B100000000000000000000023 /* RealtimeHistogramEngine.swift */,
+				B100000000000000000000025 /* PresetThumbnailProvider.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -267,6 +270,7 @@
 				B20000000000000000000019 /* FeedbackView.swift in Sources */,
 				B20000000000000000000020 /* RealtimeHistogramEngine.swift in Sources */,
 				B20000000000000000000021 /* LiveColorHistogramHUDView.swift in Sources */,
+				B20000000000000000000022 /* PresetThumbnailProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

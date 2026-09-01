@@ -233,6 +233,58 @@ public struct SettingsSheetView: View {
                     Toggle("Không gian 3D ARKit", isOn: $viewModel.isARModeEnabled)
                 }
                 
+                // MARK: - 4B. Film Presets Visual Showcase (Ảnh mẫu từng màu Film)
+                Section(header: Text("🎞️ BỘ SƯU TẬP MÀU FILM & ẢNH MẪU")) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(FilmPreset.allCases) { preset in
+                                let isSelected = viewModel.selectedFilmPreset == preset
+                                let thumb = PresetThumbnailProvider.shared.thumbnail(for: preset)
+                                
+                                Button(action: {
+                                    viewModel.selectPreset(preset)
+                                }) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ZStack(alignment: .topTrailing) {
+                                            Image(uiImage: thumb)
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fill)
+                                                .frame(width: 110, height: 110)
+                                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 12)
+                                                        .stroke(isSelected ? (preset == .aiFullAuto ? Color.cyan : Color.yellow) : Color.white.opacity(0.12), lineWidth: isSelected ? 3 : 1)
+                                                )
+                                            
+                                            if isSelected {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .font(.system(size: 18, weight: .bold))
+                                                    .foregroundColor(preset == .aiFullAuto ? .cyan : .yellow)
+                                                    .background(Circle().fill(Color.black).padding(2))
+                                                    .padding(6)
+                                            }
+                                        }
+                                        
+                                        Text(preset.rawValue)
+                                            .font(.caption.bold())
+                                            .foregroundColor(isSelected ? (preset == .aiFullAuto ? .cyan : .yellow) : .white)
+                                            .lineLimit(1)
+                                        
+                                        Text(preset.description)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.gray)
+                                            .lineLimit(2)
+                                            .frame(width: 110, alignment: .leading)
+                                    }
+                                    .frame(width: 110)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .padding(.vertical, 6)
+                    }
+                }
+                
                 // MARK: - 5. Developer Debug Console (Collapsible)
                 Section(header: Text("🛠 NHẬT KÝ & DEV CONSOLE")) {
                     DisclosureGroup("Xem nhật ký & lỗi", isExpanded: $showDevConsole) {

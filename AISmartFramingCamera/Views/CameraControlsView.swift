@@ -303,47 +303,120 @@ struct FilterToggleButton: View {
     }
 }
 
-// MARK: - Film Preset Drawer
+// MARK: - Film Preset Drawer (Thư Viện Màu Film Trực Quan Có Hình Ảnh Mẫu)
 struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
     
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(FilmPreset.allCases) { preset in
-                    let isSelected = viewModel.selectedFilmPreset == preset
-                    Button(action: {
-                        viewModel.selectPreset(preset)
-                    }) {
-                        VStack(spacing: 4) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(isSelected ? Color.yellow.opacity(0.2) : Color.white.opacity(0.08))
-                                    .frame(width: 54, height: 54)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(isSelected ? Color.yellow : Color.clear, lineWidth: 2)
-                                    )
+        VStack(spacing: 8) {
+            // Header: Tiêu đề & Tắt
+            HStack {
+                HStack(spacing: 5) {
+                    Image(systemName: "camera.filters")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.yellow)
+                    Text("BỘ MÀU FILM NGHỆ THUẬT")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        viewModel.isShowingFilmDrawer = false
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            
+            // Danh sách ảnh mẫu ngang
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(FilmPreset.allCases) { preset in
+                        let isSelected = viewModel.selectedFilmPreset == preset
+                        let thumbImage = PresetThumbnailProvider.shared.thumbnail(for: preset)
+                        
+                        Button(action: {
+                            viewModel.selectPreset(preset)
+                        }) {
+                            VStack(spacing: 5) {
+                                ZStack(alignment: .bottom) {
+                                    // 1. Ảnh mẫu trực quan thể hiện chuẩn màu của từng preset
+                                    Image(uiImage: thumbImage)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 66, height: 66)
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                        .overlay(
+                                            // Gradient mờ ở đáy ảnh để chữ nổi bật
+                                            LinearGradient(
+                                                gradient: Gradient(colors: [Color.clear, Color.black.opacity(0.75)]),
+                                                startPoint: .center,
+                                                endPoint: .bottom
+                                            )
+                                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                                        )
+                                        .overlay(
+                                            // Viền nổi bật khi được chọn
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(isSelected ? (preset == .aiFullAuto ? Color.cyan : Color.yellow) : Color.white.opacity(0.15), lineWidth: isSelected ? 2.5 : 1)
+                                        )
+                                        .shadow(color: isSelected ? (preset == .aiFullAuto ? Color.cyan.opacity(0.4) : Color.yellow.opacity(0.4)) : Color.clear, radius: 6)
+                                    
+                                    // 2. Tên viết tắt trên ảnh
+                                    Text(preset.shortTitle)
+                                        .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                                        .foregroundColor(.white)
+                                        .padding(.bottom, 3)
+                                    
+                                    // 3. Dấu tích chọn góc trên
+                                    if isSelected {
+                                        VStack {
+                                            HStack {
+                                                Spacer()
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .font(.system(size: 13, weight: .bold))
+                                                    .foregroundColor(preset == .aiFullAuto ? .cyan : .yellow)
+                                                    .background(Circle().fill(Color.black).padding(1))
+                                                    .padding(3)
+                                            }
+                                            Spacer()
+                                        }
+                                    }
+                                }
+                                .frame(width: 66, height: 66)
                                 
-                                Text(preset.shortTitle)
-                                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                                    .foregroundColor(isSelected ? .yellow : .white)
+                                // Tên đầy đủ bên dưới
+                                Text(preset.rawValue.components(separatedBy: " ").first ?? "")
+                                    .font(.system(size: 10, weight: isSelected ? .bold : .medium))
+                                    .foregroundColor(isSelected ? (preset == .aiFullAuto ? .cyan : .yellow) : .white.opacity(0.85))
+                                    .lineLimit(1)
                             }
-                            
-                            Text(preset.rawValue.components(separatedBy: " ").first ?? "")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(isSelected ? .yellow : .gray)
-                                .lineLimit(1)
+                            .scaleEffect(isSelected ? 1.04 : 1.0)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isSelected)
                         }
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
         }
-        .background(Color.black.opacity(0.6))
-        .cornerRadius(16)
-        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.black.opacity(0.75))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 12)
         .padding(.bottom, 6)
     }
 }
