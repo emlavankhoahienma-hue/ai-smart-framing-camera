@@ -526,15 +526,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: prevObs.boundingBox)
                 }
                 
-                if self.kltTrackedPoints.isEmpty {
-                    self.kltTrackedPoints = self.extractKLTFeaturePoints(in: prevObs.boundingBox, buffer: pixelBuffer)
-                    self.kltPreviousBuffer = pixelBuffer
-                }
-                
-                // 1A. Tracking chùm điểm hình học KLT (Lucas-Kanade + RANSAC Consensus)
-                let kltResult = self.trackKLTCluster(in: pixelBuffer)
-                
-                // 1B. Tracking quang học tương quan (VNTrackObjectRequest)
+                // 1A. Tracking quang học phần cứng trực tiếp (Apple VNTrackObjectRequest)
                 let trackRequest = VNTrackObjectRequest(detectedObjectObservation: prevObs)
                 trackRequest.trackingLevel = .accurate
                 
@@ -544,17 +536,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 do {
                     try self.sequenceHandler.perform([trackRequest], on: pixelBuffer, orientation: orientation)
                     if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first {
-                        if newObs.confidence > 0.25 {
+                        if newObs.confidence > 0.20 {
                             self.lastTargetObservation = newObs
                             self.consecutiveLostFrames = 0
                             var uiX = newObs.boundingBox.midX
                             var uiY = 1.0 - newObs.boundingBox.midY
-                            
-                            // Dung hợp với chùm điểm hình học KLT để tăng độ chính xác sub-pixel
-                            if let klt = kltResult {
-                                uiX = uiX * 0.45 + klt.uiPoint.x * 0.55
-                                uiY = uiY * 0.45 + klt.uiPoint.y * 0.55
-                            }
                             
                             // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
                             if self.currentSceneType.isDeformableNature {
@@ -565,7 +551,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             }
                             
                             trackedPoint = CGPoint(x: uiX, y: uiY)
-                            trackedConfidence = max(Double(newObs.confidence), kltResult?.confidence ?? Double(newObs.confidence))
+                            trackedConfidence = Double(newObs.confidence)
                         } else {
                             self.consecutiveLostFrames += 1
                         }
@@ -574,14 +560,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     self.consecutiveLostFrames += 1
                 }
                 
-                // 1C. Nếu VNTrackObject tạm thời mất dấu nhưng KLT chùm điểm vẫn bám tốt
-                if trackedPoint == nil, let klt = kltResult {
-                    trackedPoint = klt.uiPoint
-                    trackedConfidence = klt.confidence
-                    self.consecutiveLostFrames = 0
-                }
-                
-                // 1D. Khi mất dấu quang học hoàn toàn: Thử Color Histogram Match + Deep Neural Re-ID
+                // 1B. Khi mất dấu quang học (lia máy nhanh): Thử Deep Neural Re-ID + Color Histogram
                 if trackedPoint == nil && (self.consecutiveLostFrames >= 2) {
                     let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
@@ -600,7 +579,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         trackedPoint = reIdPoint
                         trackedConfidence = reIdConfidence
                         self.consecutiveLostFrames = 0
-                        self.kltTrackedPoints = [] // Reset để re-seed chùm điểm mới
                     }
                 }
                 

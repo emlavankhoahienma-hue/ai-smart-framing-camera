@@ -172,12 +172,17 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 self.stateY = min(0.98, max(0.02, Double(voPoint.y)))
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
                 self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
-            } else {
-                // Gyroscope quán tính duy trì vị trí
-                self.velocityX *= 0.85
-                self.velocityY *= 0.85
-                self.stateX = min(0.98, max(0.02, self.stateX + self.velocityX * dt))
-                self.stateY = min(0.98, max(0.02, self.stateY + self.velocityY * dt))
+            } else if let ref = self.referenceAttitude, let motion = motionManager.deviceMotion {
+                // Dùng Gyroscope chiếu chính xác mỏ neo không gian
+                let currentAttitude = motion.attitude
+                currentAttitude.multiply(byInverseOf: ref)
+                let yawDelta = Double(currentAttitude.yaw)
+                let pitchDelta = Double(currentAttitude.pitch)
+                let zoomScale = self.currentZoom
+                let projX = Double(self.anchorInitialPoint.x) - yawDelta * self.sensitivityFactor * zoomScale
+                let projY = Double(self.anchorInitialPoint.y) + pitchDelta * self.sensitivityFactor * zoomScale
+                self.stateX = min(0.98, max(0.02, projX))
+                self.stateY = min(0.98, max(0.02, projY))
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
                 self.onSpatialTargetUpdated?(targetPoint, 0.50, .predicting)
             }
