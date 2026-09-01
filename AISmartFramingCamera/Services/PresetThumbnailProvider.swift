@@ -1,4 +1,4 @@
-﻿import UIKit
+import UIKit
 import CoreImage
 import SwiftUI
 
@@ -93,14 +93,13 @@ public final class PresetThumbnailProvider {
         if preset == .aiFullAuto {
             let aiParams = AIColorParameters(
                 warmthShift: 0.05,
-                tintShift: 0.01,
                 saturationBoost: 1.10,
                 contrastCurve: 1.05,
                 shadowLift: 0.03,
                 highlightRoll: 0.97,
-                filmGrainIntensity: 0.06,
-                vignetteIntensity: 0.12,
-                colorBoost: 0.06
+                filmGrain: 0.06,
+                vignetteAmount: 0.12,
+                colorGrade: .vibrant
             )
             if let processed = FilmFilterEngine.shared.applyAIColorParameters(to: cg, params: aiParams) {
                 return UIImage(cgImage: processed)
