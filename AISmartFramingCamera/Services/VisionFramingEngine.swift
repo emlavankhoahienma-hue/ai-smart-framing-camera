@@ -119,8 +119,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
     
     // MARK: - Cân Bằng Sáng Cục Bộ Thích Nghi (Adaptive ROI Dynamic Range & Local CLAHE)
     private func enhanceROIContrast(in buffer: CVPixelBuffer, roi: CGRect) {
-        CVPixelBufferLockBaseAddress(buffer, 0)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, 0) }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
         
         let width = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
