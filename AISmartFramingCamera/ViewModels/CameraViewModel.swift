@@ -644,7 +644,7 @@ public final class CameraViewModel: ObservableObject {
         // 2. Khởi động Động cơ Tracking Không Gian Duy Nhất
         SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
         
-        // 2b. Đánh giá độ phẳng Texture của vùng mục tiêu (Bầu trời, Tường trơn)
+        // 2b. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI (Neural Embedder)
         let anchorTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
         if let buffer = latestPixelBuffer {
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
@@ -652,6 +652,7 @@ public final class CameraViewModel: ObservableObject {
             let isLow = variance < 25.0
             SpatialTrackingEngine.shared.setLowTextureFlag(isLow)
             CameraLogger.info("Texture Variance của mục tiêu: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isLow ? "CÓ" : "KHÔNG")", category: .tracking)
+            NeuralTargetTracker.shared.setAnchorTemplate(from: buffer, at: anchorTarget)
         } else {
             shouldCheckTextureOnNextFrame = true
         }

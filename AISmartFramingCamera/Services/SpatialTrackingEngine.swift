@@ -133,19 +133,27 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
         lastUpdateTime = now
         
+        var effectiveConfidence = confidence
+        if let visualPoint = point, let buffer = pixelBuffer {
+            let neuralSim = NeuralTargetTracker.shared.verifyTarget(in: buffer, at: visualPoint)
+            if neuralSim >= 0.70 {
+                effectiveConfidence = max(confidence, neuralSim * 0.95)
+            }
+        }
+        
         let effectiveThreshold = isLowTextureAnchor ? 0.75 : 0.25
-        if let visualPoint = point, confidence >= effectiveThreshold {
+        if let visualPoint = point, effectiveConfidence >= effectiveThreshold {
             let obsX = Double(visualPoint.x)
             let obsY = Double(visualPoint.y)
             
             // Lọc outlier cực đoan (> 0.40 màn hình trong 1 frame)
             let jump = hypot(obsX - self.stateX, obsY - self.stateY)
-            if jump > 0.40 && confidence < 0.70 {
+            if jump > 0.40 && effectiveConfidence < 0.70 {
                 return
             }
             
             // Quang học là Ground Truth: Bám trực tiếp vào vật thể thực tế
-            let kGain = max(0.70, min(0.90, confidence))
+            let kGain = max(0.70, min(0.90, effectiveConfidence))
             let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
             let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
             
@@ -160,17 +168,17 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             self.stateY = smoothY
             
             // Tự động tái hiệu chuẩn lại mốc Gyro khi quang học bám rất tốt
-            if confidence > 0.65, let motion = motionManager.deviceMotion {
+            if effectiveConfidence > 0.65, let motion = motionManager.deviceMotion {
                 self.referenceAttitude = motion.attitude.copy() as? CMAttitude
                 self.anchorInitialPoint = CGPoint(x: self.stateX, y: self.stateY)
             }
             
-            if confidence > 0.60, let buffer = pixelBuffer {
+            if effectiveConfidence > 0.60, let buffer = pixelBuffer {
                 VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: CGPoint(x: self.stateX, y: self.stateY))
             }
             
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-            self.onSpatialTargetUpdated?(targetPoint, confidence, .locked)
+            self.onSpatialTargetUpdated?(targetPoint, effectiveConfidence, .locked)
         } else {
             // Khi quang học tạm thời mất nét hoặc là vùng ít chi tiết (Low Texture):
             if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
@@ -201,6 +209,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         referenceAttitude = nil
         motionManager.stopDeviceMotionUpdates()
         VisualOdometryEngine.shared.clearReference()
+        NeuralTargetTracker.shared.clearAnchor()
         CameraLogger.info("Đã dừng động cơ tracking không gian", category: .tracking)
     }
 }
