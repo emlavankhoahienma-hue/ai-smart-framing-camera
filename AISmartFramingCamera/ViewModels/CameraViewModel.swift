@@ -318,19 +318,13 @@ public final class CameraViewModel: ObservableObject {
     }
     
     private func setupMotionCallbacks() {
-        // Động cơ Tracking Không Gian 6DOF Chuẩn AR
+        // Động cơ Tracking Không Gian Duy Nhất (Single Source of Truth)
         SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
             guard let self = self else { return }
             self.lastVisualConfidence = confidence
             self.currentTargetPoint = point
             self.trackingQuality = quality
             self.evaluateAlignment(at: point)
-        }
-        
-        // 60Hz Gyroscope Quán tính
-        motionService.onMotionUpdate = { [weak self] deltaX, deltaY in
-            guard let self = self else { return }
-            self.handleGyroMotion(deltaX: deltaX, deltaY: deltaY)
         }
     }
     
@@ -343,7 +337,7 @@ public final class CameraViewModel: ObservableObject {
         
         // Reset state
         arSessionService.clearTarget()
-        motionService.stopTracking()
+        SpatialTrackingEngine.shared.stopTracking()
         visionEngine.stopTrackingObject()
         analysisFrames = []
         initialTargetPoint = nil
@@ -375,7 +369,6 @@ public final class CameraViewModel: ObservableObject {
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         arSessionService.clearTarget()
-        motionService.stopTracking()
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
         haptics.triggerSelectionChange()
@@ -574,10 +567,8 @@ public final class CameraViewModel: ObservableObject {
             visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.20, height: 0.20))
         }
         
-        // 2. Khởi động Động cơ Tracking Không Gian 6DOF Chuẩn AR (Visual-Inertial Fusion)
+        // 2. Khởi động Động cơ Tracking Không Gian Duy Nhất
         SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
-        motionService.resetReferenceAttitude()
-        motionService.startTracking()
         
         haptics.triggerSelectionChange()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) {

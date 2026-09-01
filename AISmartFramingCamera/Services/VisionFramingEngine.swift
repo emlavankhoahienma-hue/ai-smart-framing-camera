@@ -297,14 +297,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
             
             // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
             if self.isTrackingTarget, let prevObs = self.lastTargetObservation {
-                // Dynamic EKF: Bầu trời / Đám mây -> bỏ qua optical jitter, nhường 100% cho 3D Gyro
-                if self.currentSceneType.isSkyOrInfiniteHorizon {
-                    DispatchQueue.main.async {
-                        self.onTargetTracked?(nil, 0.95, pixelBuffer)
-                    }
-                    return
-                }
-                
                 if self.referenceFeaturePrint == nil {
                     self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: prevObs.boundingBox)
                     self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: prevObs.boundingBox)

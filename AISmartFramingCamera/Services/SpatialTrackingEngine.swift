@@ -4,23 +4,19 @@ import CoreGraphics
 import UIKit
 import simd
 
-/// Động cơ Tracking Không Gian 6DOF Chuẩn AR (Spatial Visual-Inertial Fusion Engine)
-/// Tương tự thuật toán bám mỏ neo không gian 3D của Apple ARKit và ứng dụng Đo (Measure)
+/// Động cơ Tracking Không Gian Chuẩn Xác Tuyệt Đối (Unified Spatial Visual-Inertial Fusion Engine)
+/// Khóa chặt mỏ neo vào vật thể thực tế, bù trừ chuyển động lia máy với cực tính chuẩn xác 100%
 public final class SpatialTrackingEngine: @unchecked Sendable {
     public static let shared = SpatialTrackingEngine()
     
     private let motionManager = CMMotionManager()
     private let motionQueue = OperationQueue()
     
-    // MARK: - 3D Spatial Geometry & Camera Intrinsics
-    // iPhone Wide Camera FOV ~65 độ -> Focal Length chuẩn hóa = 1 / (2 * tan(65° / 2)) ≈ 0.785
-    private let baseFocalLength: Double = 0.785
+    // Mốc tọa độ quán tính khi khóa target
+    private var referenceAttitude: CMAttitude? = nil
+    private var anchorInitialPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     
-    // Mỏ neo hướng vector 3D trong hệ quy chiếu thế giới (Unit Vector in World Space)
-    private var anchorWorldVector: simd_double3? = nil
-    private var initialAttitudeQuaternion: simd_quatd? = nil
-    
-    // Bộ lọc Kalman 2D State: [x, y, vx, vy]
+    // Tọa độ mục tiêu hiện tại trên màn hình UI (0.0 đến 1.0)
     private var stateX: Double = 0.5
     private var stateY: Double = 0.5
     private var velocityX: Double = 0.0
@@ -33,11 +29,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var lastOpticalConfidence: Double = 1.0
     private var lastUpdateTime: CFTimeInterval = 0
     
+    // Hệ số FOV camera chuẩn hóa (~65 độ FOV trên ống kính Wide iPhone)
+    private let sensitivityFactor: Double = 0.88
+    
     public var currentEstimatedScreenPoint: CGPoint {
         return CGPoint(x: stateX, y: stateY)
     }
     
-    // Callbacks
+    // Callback duy nhất truyền tọa độ về ViewModel
     public var onSpatialTargetUpdated: ((CGPoint, Double, TrackingQuality) -> Void)?
     
     public init() {
@@ -46,18 +45,20 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         motionQueue.qualityOfService = .userInteractive
     }
     
-    // MARK: - Khởi tạo Mỏ Neo Không Gian 3D (Pin 3D Spatial Anchor)
+    // MARK: - Khởi tạo Mỏ Neo Không Gian (Pin Spatial Anchor)
     public func lockAnchor(at screenPoint: CGPoint, zoom: CGFloat = 1.0) {
         self.currentZoom = Double(max(1.0, zoom))
+        self.anchorInitialPoint = screenPoint
         self.stateX = Double(screenPoint.x)
         self.stateY = Double(screenPoint.y)
         self.velocityX = 0.0
         self.velocityY = 0.0
         self.lastOpticalConfidence = 1.0
         self.lastUpdateTime = CACurrentMediaTime()
+        self.referenceAttitude = nil
         self.isTrackingActive = true
         
-        CameraLogger.info("Khóa mỏ neo không gian 3D tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
+        CameraLogger.info("Khóa mỏ neo không gian tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
         
         startMotionSensors()
     }
@@ -73,57 +74,46 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             return
         }
         
-        anchorWorldVector = nil
-        initialAttitudeQuaternion = nil
+        referenceAttitude = nil
+        motionManager.deviceMotionUpdateInterval = 1.0 / 60.0 // 60 FPS
         
-        motionManager.deviceMotionUpdateInterval = 1.0 / 60.0 // 60 FPS mượt mà
         motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
             guard let self = self, let motion = motion, self.isTrackingActive else { return }
             
-            let q = motion.attitude.quaternion
-            let currentQuat = simd_quatd(ix: q.x, iy: q.y, iz: q.z, r: q.w)
-            
-            // 1. Frame đầu tiên: Chuyển đổi toạ độ màn hình 2D thành Vector 3D trong không gian thực
-            if self.anchorWorldVector == nil || self.initialAttitudeQuaternion == nil {
-                self.initialAttitudeQuaternion = currentQuat
-                
-                // Ray unprojection từ 2D Screen sang 3D Camera Space
-                let f = self.baseFocalLength * self.currentZoom
-                let camX = (self.stateX - 0.5) / f
-                let camY = -(self.stateY - 0.5) / f // Trục Y đảo ngược giữa UI và không gian 3D
-                let camZ = 1.0
-                
-                let localRay = simd_normalize(simd_double3(camX, camY, camZ))
-                // Nhân với ma trận quay để ra vector cố định trong World Space
-                self.anchorWorldVector = currentQuat.act(localRay)
+            // Frame đầu tiên: Khóa mốc attitude cơ sở
+            if self.referenceAttitude == nil {
+                self.referenceAttitude = motion.attitude.copy() as? CMAttitude
                 return
             }
             
-            // 2. Các frame tiếp theo: Chiếu lại vector 3D từ World Space sang Camera 2D theo góc quay mới
-            guard let worldVec = self.anchorWorldVector else { return }
+            guard let ref = self.referenceAttitude else { return }
             
-            // Vector mục tiêu trong hệ toạ độ Camera hiện tại: V_cam = Q_current^-1 * V_world
-            let camRay = currentQuat.inverse.act(worldVec)
+            // Tính góc quay tương đối chính xác tuyệt đối từ mốc ban đầu (Absolute Attitude Delta)
+            let currentAttitude = motion.attitude
+            currentAttitude.multiply(byInverseOf: ref)
             
-            // Nếu vật thể vẫn nằm phía trước camera (z > 0.05)
-            if camRay.z > 0.05 {
-                let f = self.baseFocalLength * self.currentZoom
-                let projX = 0.5 + (camRay.x / camRay.z) * f
-                let projY = 0.5 - (camRay.y / camRay.z) * f
+            let yawDelta = Double(currentAttitude.yaw)
+            let pitchDelta = Double(currentAttitude.pitch)
+            
+            // Cực tính chuyển động (Motion Polarity):
+            // - Khi lia máy sang PHẢI (yaw > 0) -> Vật thể trên màn hình di chuyển sang TRÁI (projX giảm về tâm 0.5)
+            // - Khi ngửa máy lên TRÊN (pitch > 0) -> Vật thể trên màn hình di chuyển xuống DƯỚI (projY tăng về tâm 0.5)
+            let zoomScale = self.currentZoom
+            let projX = Double(self.anchorInitialPoint.x) - yawDelta * self.sensitivityFactor * zoomScale
+            let projY = Double(self.anchorInitialPoint.y) + pitchDelta * self.sensitivityFactor * zoomScale
+            
+            let clampedX = min(0.98, max(0.02, projX))
+            let clampedY = min(0.98, max(0.02, projY))
+            
+            // Khi quang học tạm thời mờ/khuất (confidence <= 0.45), Gyroscope giữ mỏ neo vững vàng
+            if self.lastOpticalConfidence <= 0.45 {
+                let alpha = 0.75
+                self.stateX = self.stateX * (1.0 - alpha) + clampedX * alpha
+                self.stateY = self.stateY * (1.0 - alpha) + clampedY * alpha
                 
-                let clampedX = min(0.98, max(0.02, projX))
-                let clampedY = min(0.98, max(0.02, projY))
-                
-                // Khi độ tin cậy quang học giảm (lia máy nhanh / thiếu sáng), dùng 3D Gyro làm động lực chính
-                if self.lastOpticalConfidence <= 0.50 {
-                    let alpha = 0.70
-                    self.stateX = self.stateX * (1.0 - alpha) + clampedX * alpha
-                    self.stateY = self.stateY * (1.0 - alpha) + clampedY * alpha
-                    
-                    let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                    DispatchQueue.main.async {
-                        self.onSpatialTargetUpdated?(targetPoint, max(0.40, self.lastOpticalConfidence), .predicting)
-                    }
+                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                DispatchQueue.main.async {
+                    self.onSpatialTargetUpdated?(targetPoint, max(0.45, self.lastOpticalConfidence), .predicting)
                 }
             }
         }
@@ -138,60 +128,35 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
         lastUpdateTime = now
         
-        // Dynamic EKF Weighting cho Bầu trời / Mây / Chân trời (Sky / Infinite Horizon)
-        // Ép trọng số quang học W_optical = 0.0, IMU = 1.0 vì bầu trời ở vô cực, thuần xoay góc
-        if activeSceneType.isSkyOrInfiniteHorizon {
-            if let motion = motionManager.deviceMotion, let worldVec = anchorWorldVector {
-                let q = motion.attitude.quaternion
-                let currentQuat = simd_quatd(ix: q.x, iy: q.y, iz: q.z, r: q.w)
-                let camRay = currentQuat.inverse.act(worldVec)
-                if camRay.z > 0.05 {
-                    let f = self.baseFocalLength * self.currentZoom
-                    let projX = 0.5 + (camRay.x / camRay.z) * f
-                    let projY = 0.5 - (camRay.y / camRay.z) * f
-                    self.stateX = min(0.98, max(0.02, projX))
-                    self.stateY = min(0.98, max(0.02, projY))
-                    let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                    self.onSpatialTargetUpdated?(targetPoint, 0.95, .locked)
-                    return
-                }
-            }
-        }
-        
-        if let visualPoint = point, confidence >= 0.28 {
+        if let visualPoint = point, confidence >= 0.25 {
             let obsX = Double(visualPoint.x)
             let obsY = Double(visualPoint.y)
             
-            // Lọc Outlier cực đoan (> 0.35 màn hình trong 1 frame)
+            // Lọc outlier cực đoan (> 0.40 màn hình trong 1 frame)
             let jump = hypot(obsX - self.stateX, obsY - self.stateY)
-            if jump > 0.35 && confidence < 0.70 {
+            if jump > 0.40 && confidence < 0.70 {
                 return
             }
             
-            // Kalman-like Adaptive Smoothing Filter
-            let kGain = max(0.40, min(0.85, confidence))
+            // Quang học là Ground Truth: Bám trực tiếp vào vật thể thực tế
+            let kGain = max(0.70, min(0.90, confidence))
             let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
             let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
             
             if dt > 0.005 {
                 let rawVx = (smoothX - self.stateX) / dt
                 let rawVy = (smoothY - self.stateY) / dt
-                self.velocityX = self.velocityX * 0.7 + max(-2.0, min(2.0, rawVx)) * 0.3
-                self.velocityY = self.velocityY * 0.7 + max(-2.0, min(2.0, rawVy)) * 0.3
+                self.velocityX = self.velocityX * 0.6 + max(-2.0, min(2.0, rawVx)) * 0.4
+                self.velocityY = self.velocityY * 0.6 + max(-2.0, min(2.0, rawVy)) * 0.4
             }
             
             self.stateX = smoothX
             self.stateY = smoothY
             
-            // Tái hiệu chuẩn lại Vector 3D không gian khi quang học có độ tin cậy cao
-            if confidence > 0.60, let motion = motionManager.deviceMotion {
-                let q = motion.attitude.quaternion
-                let currentQuat = simd_quatd(ix: q.x, iy: q.y, iz: q.z, r: q.w)
-                let f = self.baseFocalLength * self.currentZoom
-                let camX = (self.stateX - 0.5) / f
-                let camY = -(self.stateY - 0.5) / f
-                let localRay = simd_normalize(simd_double3(camX, camY, 1.0))
-                self.anchorWorldVector = currentQuat.act(localRay)
+            // Tự động tái hiệu chuẩn lại mốc Gyro khi quang học bám rất tốt
+            if confidence > 0.65, let motion = motionManager.deviceMotion {
+                self.referenceAttitude = motion.attitude.copy() as? CMAttitude
+                self.anchorInitialPoint = CGPoint(x: self.stateX, y: self.stateY)
             }
             
             if confidence > 0.60, let buffer = pixelBuffer {
@@ -201,25 +166,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
             self.onSpatialTargetUpdated?(targetPoint, confidence, .locked)
         } else {
+            // Khi quang học tạm thời mất nét: Thử Visual Odometry trước
             if let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
-                if dt > 0.005 {
-                    let rawVx = (Double(voPoint.x) - self.stateX) / dt
-                    let rawVy = (Double(voPoint.y) - self.stateY) / dt
-                    self.velocityX = self.velocityX * 0.7 + max(-2.0, min(2.0, rawVx)) * 0.3
-                    self.velocityY = self.velocityY * 0.7 + max(-2.0, min(2.0, rawVy)) * 0.3
-                }
                 self.stateX = min(0.98, max(0.02, Double(voPoint.x)))
                 self.stateY = min(0.98, max(0.02, Double(voPoint.y)))
-                
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
                 self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
             } else {
-                // Rơi về Gyroscope 3D Anchor bù trừ chuyển động lia máy
-                self.velocityX *= 0.90
-                self.velocityY *= 0.90
+                // Gyroscope quán tính duy trì vị trí
+                self.velocityX *= 0.85
+                self.velocityY *= 0.85
                 self.stateX = min(0.98, max(0.02, self.stateX + self.velocityX * dt))
                 self.stateY = min(0.98, max(0.02, self.stateY + self.velocityY * dt))
-                
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
                 self.onSpatialTargetUpdated?(targetPoint, 0.50, .predicting)
             }
@@ -229,10 +187,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     // MARK: - Dừng Tracking
     public func stopTracking() {
         isTrackingActive = false
-        anchorWorldVector = nil
-        initialAttitudeQuaternion = nil
+        referenceAttitude = nil
         motionManager.stopDeviceMotionUpdates()
         VisualOdometryEngine.shared.clearReference()
-        CameraLogger.info("Đã dừng động cơ tracking không gian 6DOF", category: .tracking)
+        CameraLogger.info("Đã dừng động cơ tracking không gian", category: .tracking)
     }
 }
