@@ -700,11 +700,16 @@ public final class GeminiService {
     private static func parseSceneType(_ s: String) -> DetectedSceneType {
         switch s.lowercased() {
         case "portrait": return .portrait
+        case "pet", "animal": return .pet
         case "landscape": return .landscape
         case "sunset", "sunrise", "golden_hour": return .sunset
         case "architecture", "building": return .architecture
+        case "sky", "cloud", "clouds": return .sky
+        case "water", "sea", "ocean", "river": return .water
+        case "foliage", "tree", "plant", "nature": return .foliage
         case "night", "dark": return .night
-        case "food", "macro": return .food
+        case "food": return .food
+        case "macro": return .macro
         case "street", "urban": return .street
         default: return .general
         }

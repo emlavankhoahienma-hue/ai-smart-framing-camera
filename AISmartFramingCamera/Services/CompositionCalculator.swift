@@ -110,7 +110,7 @@ public final class CompositionCalculator {
         switch detection.detectedScene {
         case .portrait, .pet:
             return .goldenRatio
-        case .landscape, .sunset, .macro:
+        case .landscape, .sunset, .macro, .sky, .water, .foliage:
             return .ruleOfThirds
         case .architecture, .food:
             return .centerSymmetry
