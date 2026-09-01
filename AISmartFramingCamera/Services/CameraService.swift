@@ -234,6 +234,21 @@ public final class CameraService: NSObject {
         }
     }
     
+    public func smoothZoomFactor(to factor: CGFloat, rate: Float = 2.2) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let camera = self.activeCamera else { return }
+            let clampedZoom = max(self.minZoom, min(factor, self.maxZoom))
+            do {
+                try camera.lockForConfiguration()
+                camera.ramp(toVideoZoomFactor: clampedZoom, withRate: rate)
+                camera.unlockForConfiguration()
+                self.currentZoom = clampedZoom
+            } catch {
+                print("CameraService: Error smooth zoom \(error)")
+            }
+        }
+    }
+    
     // MARK: - Exposure Bias
     public func setExposureBias(_ bias: Float) {
         sessionQueue.async { [weak self] in

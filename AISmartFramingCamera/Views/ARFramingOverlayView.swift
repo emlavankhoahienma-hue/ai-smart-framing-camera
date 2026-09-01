@@ -157,6 +157,9 @@ public struct ARFramingOverlayView: View {
                         .ignoresSafeArea()
                         .transition(.opacity)
                 }
+                
+                // 11. AI Zoom Reveal Overlay (Khung vuông vùng AI sắp zoom + làm tối xung quanh)
+                ZoomRevealOverlay(rect: viewModel.zoomRevealRect, isVisible: viewModel.isRevealingZoomTarget)
             }
             .contentShape(Rectangle())
             .onTapGesture { location in
@@ -481,5 +484,39 @@ struct FocusSquareView: View {
                 opacity = 0.0
             }
         }
+    }
+}
+
+// MARK: - AI Zoom Reveal Overlay
+struct ZoomRevealOverlay: View {
+    let rect: CGRect
+    let isVisible: Bool
+    
+    var body: some View {
+        GeometryReader { geo in
+            let pixelRect = CGRect(
+                x: rect.origin.x * geo.size.width,
+                y: rect.origin.y * geo.size.height,
+                width: rect.width * geo.size.width,
+                height: rect.height * geo.size.height
+            )
+            
+            ZStack {
+                Path { path in
+                    path.addRect(CGRect(origin: .zero, size: geo.size))
+                    path.addRoundedRect(in: pixelRect, cornerSize: CGSize(width: 14, height: 14))
+                }
+                .fill(Color.black.opacity(isVisible ? 0.55 : 0), style: FillStyle(eoFill: true))
+                
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.yellow, lineWidth: 2.5)
+                    .frame(width: pixelRect.width, height: pixelRect.height)
+                    .position(x: pixelRect.midX, y: pixelRect.midY)
+                    .opacity(isVisible ? 1 : 0)
+                    .scaleEffect(isVisible ? 1.0 : 1.2)
+            }
+            .animation(.easeInOut(duration: 0.4), value: isVisible)
+        }
+        .allowsHitTesting(false)
     }
 }

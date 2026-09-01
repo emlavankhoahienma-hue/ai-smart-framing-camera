@@ -65,6 +65,8 @@ public final class CameraViewModel: ObservableObject {
     
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
+    @Published public var isRevealingZoomTarget: Bool = false
+    @Published public var zoomRevealRect: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
     @Published public var exposureBias: Float = 0.0
     @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto {
         didSet { UserDefaults.standard.set(activeFlashMode.rawValue, forKey: "activeFlashMode") }
@@ -410,6 +412,13 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
+    private func computeZoomRevealRect(forZoom zoom: CGFloat) -> CGRect {
+        guard zoom > 1.0 else { return CGRect(x: 0, y: 0, width: 1, height: 1) }
+        let size = 1.0 / zoom
+        let origin = (1.0 - size) / 2.0
+        return CGRect(x: origin, y: origin, width: size, height: size)
+    }
+    
     private func handleGeminiResponse(_ response: GeminiFramingResponse) {
         self.geminiColorRecipe = response.colorRecipe
         self.geminiExplanation = response.explanation
@@ -422,7 +431,22 @@ public final class CameraViewModel: ObservableObject {
         
         // Tự động điều chỉnh Zoom quang học theo đề xuất của AI để tối ưu bố cục
         if isAutoZoomEnabled && response.suggestedZoom > 1.0 {
-            setZoom(response.suggestedZoom)
+            let targetZoom = response.suggestedZoom
+            zoomRevealRect = computeZoomRevealRect(forZoom: targetZoom)
+            withAnimation(.easeOut(duration: 0.25)) {
+                isRevealingZoomTarget = true
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                guard let self = self else { return }
+                self.cameraService.smoothZoomFactor(to: targetZoom, rate: 2.0)
+                self.currentZoom = targetZoom
+                SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
+                
+                withAnimation(.easeInOut(duration: 0.5)) {
+                    self.isRevealingZoomTarget = false
+                }
+            }
         }
         
         if isAIFullColorEnabled {
@@ -700,7 +724,9 @@ public final class CameraViewModel: ObservableObject {
     
     public func setZoomFromButton(_ zoom: CGFloat) {
         haptics.triggerSelectionChange()
-        setZoom(zoom)
+        currentZoom = zoom
+        cameraService.smoothZoomFactor(to: zoom, rate: 2.5)
+        SpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
     
     public func setExposure(_ bias: Float) {
