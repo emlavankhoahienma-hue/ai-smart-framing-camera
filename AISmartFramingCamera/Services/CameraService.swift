@@ -27,6 +27,8 @@ public final class CameraService: NSObject {
     private let sessionQueue = DispatchQueue(label: "com.alignai.camera.sessionQueue", qos: .userInteractive)
     
     private var activeCamera: AVCaptureDevice?
+    private var zoomObservation: NSKeyValueObservation?
+    public var onLiveZoomFactorChanged: ((CGFloat) -> Void)?
     private var videoDeviceInput: AVCaptureDeviceInput?
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
@@ -77,6 +79,13 @@ public final class CameraService: NSObject {
             }
             
             self.activeCamera = camera
+            self.zoomObservation?.invalidate()
+            self.zoomObservation = camera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
+                guard let newValue = change.newValue else { return }
+                DispatchQueue.main.async {
+                    self?.onLiveZoomFactorChanged?(newValue)
+                }
+            }
             self.minZoom = camera.minAvailableVideoZoomFactor
             self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
             

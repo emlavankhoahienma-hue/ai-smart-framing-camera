@@ -66,7 +66,30 @@ public final class CameraViewModel: ObservableObject {
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var isRevealingZoomTarget: Bool = false
-    @Published public var zoomRevealRect: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+    @Published public var lockOnProgress: CGFloat = 0
+    @Published public var liveZoomFactorForReveal: CGFloat = 1.0
+    private var pendingTargetZoomForReveal: CGFloat = 1.0
+    private var isZoomRampPhase: Bool = false
+    
+    public var zoomRevealRect: CGRect {
+        guard isRevealingZoomTarget, pendingTargetZoomForReveal > 1.0 else {
+            return CGRect(x: 0.5, y: 0.5, width: 0, height: 0)
+        }
+        let initialSize = 1.0 / pendingTargetZoomForReveal
+        
+        if !isZoomRampPhase {
+            // Giai đoạn 1: khung lớn dần từ 1 điểm tới kích thước ban đầu, zoom CHƯA chạy
+            let size = initialSize * lockOnProgress
+            let origin = (1.0 - size) / 2.0
+            return CGRect(x: origin, y: origin, width: size, height: size)
+        } else {
+            // Giai đoạn 2: khung lớn dần ĐÚNG THEO tỉ lệ zoom thật đang chạy
+            let ratio = min(1.0, liveZoomFactorForReveal / pendingTargetZoomForReveal)
+            let origin = (1.0 - ratio) / 2.0
+            return CGRect(x: origin, y: origin, width: ratio, height: ratio)
+        }
+    }
+    
     @Published public var exposureBias: Float = 0.0
     @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto {
         didSet { UserDefaults.standard.set(activeFlashMode.rawValue, forKey: "activeFlashMode") }
@@ -255,6 +278,10 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self else { return }
             self.handleSubjectAreaChanged()
         }
+        
+        cameraService.onLiveZoomFactorChanged = { [weak self] zoom in
+            self?.liveZoomFactorForReveal = zoom
+        }
     }
     
     private func setupMotionCallbacks() {
@@ -412,13 +439,6 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    private func computeZoomRevealRect(forZoom zoom: CGFloat) -> CGRect {
-        guard zoom > 1.0 else { return CGRect(x: 0, y: 0, width: 1, height: 1) }
-        let size = 1.0 / zoom
-        let origin = (1.0 - size) / 2.0
-        return CGRect(x: origin, y: origin, width: size, height: size)
-    }
-    
     private func handleGeminiResponse(_ response: GeminiFramingResponse) {
         self.geminiColorRecipe = response.colorRecipe
         self.geminiExplanation = response.explanation
@@ -429,22 +449,32 @@ public final class CameraViewModel: ObservableObject {
         self.geminiLatencyMs = response.latencyMs
         self.aiSuggestedZoom = response.suggestedZoom
         
-        // Tự động điều chỉnh Zoom quang học theo đề xuất của AI để tối ưu bố cục
         if isAutoZoomEnabled && response.suggestedZoom > 1.0 {
             let targetZoom = response.suggestedZoom
-            zoomRevealRect = computeZoomRevealRect(forZoom: targetZoom)
-            withAnimation(.easeOut(duration: 0.25)) {
-                isRevealingZoomTarget = true
+            pendingTargetZoomForReveal = targetZoom
+            liveZoomFactorForReveal = currentZoom
+            isZoomRampPhase = false
+            lockOnProgress = 0
+            isRevealingZoomTarget = true
+            
+            withAnimation(.easeOut(duration: 0.5)) {
+                lockOnProgress = 1.0
             }
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
                 guard let self = self else { return }
-                self.cameraService.smoothZoomFactor(to: targetZoom, rate: 2.0)
+                self.isZoomRampPhase = true
+                self.cameraService.smoothZoomFactor(to: targetZoom, rate: 1.8)
                 self.currentZoom = targetZoom
                 SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
                 
-                withAnimation(.easeInOut(duration: 0.5)) {
-                    self.isRevealingZoomTarget = false
+                let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.8 + 0.25
+                DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
+                    guard let self = self else { return }
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        self.isRevealingZoomTarget = false
+                    }
+                    self.isZoomRampPhase = false
                 }
             }
         }
