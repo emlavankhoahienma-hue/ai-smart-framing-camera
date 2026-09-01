@@ -32,7 +32,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     public var captureNextFrameForGemini: Bool = false
     public var capturedGeminiFrame: CGImage? = nil
     
-    // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID + Color Histogram)
+    // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID + Color Histogram + KLT Point Cluster)
     public private(set) var isTrackingTarget: Bool = false
     public var currentSceneType: DetectedSceneType = .general
     private var sequenceHandler = VNSequenceRequestHandler()
@@ -40,6 +40,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var referenceFeaturePrint: VNFeaturePrintObservation? = nil
     private var referenceColorHistogram: [Float]? = nil
     private var consecutiveLostFrames: Int = 0
+    
+    // KLT (Lucas-Kanade) Feature Point Cluster Tracker + RANSAC
+    private var kltTrackedPoints: [CGPoint] = []
+    private var kltPreviousBuffer: CVPixelBuffer? = nil
+    private var kltTargetBox: CGRect = .zero
     
     // Vision Detection Requests
     private var faceDetectionRequest: VNDetectFaceRectanglesRequest!
@@ -93,6 +98,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.lastTargetObservation = initialObservation
         self.referenceFeaturePrint = nil
         self.referenceColorHistogram = nil
+        self.kltTrackedPoints = []
+        self.kltPreviousBuffer = nil
+        self.kltTargetBox = clampedRect
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
         self.isTrackingTarget = true
@@ -103,8 +111,221 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.lastTargetObservation = nil
         self.referenceFeaturePrint = nil
         self.referenceColorHistogram = nil
+        self.kltTrackedPoints = []
+        self.kltPreviousBuffer = nil
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
+    }
+    
+    // MARK: - Cân Bằng Sáng Cục Bộ Thích Nghi (Adaptive ROI Dynamic Range & Local CLAHE)
+    private func enhanceROIContrast(in buffer: CVPixelBuffer, roi: CGRect) {
+        CVPixelBufferLockBaseAddress(buffer, 0)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, 0) }
+        
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return }
+        
+        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
+        
+        let minX = max(0, min(width - 1, Int(roi.origin.x * CGFloat(width))))
+        let minY = max(0, min(height - 1, Int((1.0 - roi.origin.y - roi.size.height) * CGFloat(height))))
+        let maxX = max(minX + 1, min(width, Int((roi.origin.x + roi.size.width) * CGFloat(width))))
+        let maxY = max(minY + 1, min(height, Int((1.0 - roi.origin.y) * CGFloat(height))))
+        
+        var minLum: Float = 255.0
+        var maxLum: Float = 0.0
+        let step = max(1, (maxX - minX) / 24)
+        
+        for y in stride(from: minY, to: maxY, by: max(1, step)) {
+            for x in stride(from: minX, to: maxX, by: max(1, step)) {
+                let offset = y * bytesPerRow + x * 4
+                let b = Float(data[offset])
+                let g = Float(data[offset + 1])
+                let r = Float(data[offset + 2])
+                let lum = r * 0.299 + g * 0.587 + b * 0.114
+                if lum < minLum { minLum = lum }
+                if lum > maxLum { maxLum = lum }
+            }
+        }
+        
+        let range = maxLum - minLum
+        guard range > 12.0 && range < 185.0 else { return }
+        
+        let scale = 220.0 / range
+        let stretchStep = max(1, (maxX - minX) / 80)
+        
+        for y in stride(from: minY, to: maxY, by: max(1, stretchStep)) {
+            for x in stride(from: minX, to: maxX, by: max(1, stretchStep)) {
+                let offset = y * bytesPerRow + x * 4
+                let b = Float(data[offset])
+                let g = Float(data[offset + 1])
+                let r = Float(data[offset + 2])
+                
+                let newB = max(0, min(255, (b - minLum) * scale + 15))
+                let newG = max(0, min(255, (g - minLum) * scale + 15))
+                let newR = max(0, min(255, (r - minLum) * scale + 15))
+                
+                data[offset] = UInt8(b * 0.40 + newB * 0.60)
+                data[offset + 1] = UInt8(g * 0.40 + newG * 0.60)
+                data[offset + 2] = UInt8(r * 0.40 + newR * 0.60)
+            }
+        }
+    }
+    
+    // MARK: - Bám Chùm Điểm Hình Học KLT (Lucas-Kanade Feature Point Cluster + RANSAC)
+    private func extractKLTFeaturePoints(in roi: CGRect, buffer: CVPixelBuffer) -> [CGPoint] {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return [] }
+        
+        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
+        
+        let minX = max(4, min(width - 5, Int(roi.origin.x * CGFloat(width))))
+        let minY = max(4, min(height - 5, Int((1.0 - roi.origin.y - roi.size.height) * CGFloat(height))))
+        let maxX = max(minX + 8, min(width - 5, Int((roi.origin.x + roi.size.width) * CGFloat(width))))
+        let maxY = max(minY + 8, min(height - 5, Int((1.0 - roi.origin.y) * CGFloat(height))))
+        
+        var corners: [(point: CGPoint, score: Float)] = []
+        let step = max(3, (maxX - minX) / 20)
+        
+        for y in stride(from: minY + 2, to: maxY - 2, by: step) {
+            for x in stride(from: minX + 2, to: maxX - 2, by: step) {
+                let offR = y * bytesPerRow + (x + 1) * 4
+                let offL = y * bytesPerRow + (x - 1) * 4
+                let offD = (y + 1) * bytesPerRow + x * 4
+                let offU = (y - 1) * bytesPerRow + x * 4
+                
+                let lumR = Float(data[offR]) * 0.114 + Float(data[offR+1]) * 0.587 + Float(data[offR+2]) * 0.299
+                let lumL = Float(data[offL]) * 0.114 + Float(data[offL+1]) * 0.587 + Float(data[offL+2]) * 0.299
+                let lumD = Float(data[offD]) * 0.114 + Float(data[offD+1]) * 0.587 + Float(data[offD+2]) * 0.299
+                let lumU = Float(data[offU]) * 0.114 + Float(data[offU+1]) * 0.587 + Float(data[offU+2]) * 0.299
+                
+                let ix = (lumR - lumL) * 0.5
+                let iy = (lumD - lumU) * 0.5
+                let score = ix * ix + iy * iy
+                
+                if score > 80.0 {
+                    let normX = CGFloat(x) / CGFloat(width)
+                    let normY = 1.0 - (CGFloat(y) / CGFloat(height))
+                    corners.append((point: CGPoint(x: normX, y: normY), score: score))
+                }
+            }
+        }
+        
+        corners.sort { $0.score > $1.score }
+        let top = corners.prefix(30).map { $0.point }
+        if top.count < 8 {
+            var grid: [CGPoint] = top
+            for r in 0..<3 {
+                for c in 0..<3 {
+                    let gx = roi.origin.x + roi.size.width * (CGFloat(c) + 0.5) / 3.0
+                    let gy = roi.origin.y + roi.size.height * (CGFloat(r) + 0.5) / 3.0
+                    grid.append(CGPoint(x: gx, y: gy))
+                }
+            }
+            return grid
+        }
+        return top
+    }
+    
+    private func trackKLTCluster(in currentBuffer: CVPixelBuffer) -> (uiPoint: CGPoint, confidence: Double)? {
+        guard !kltTrackedPoints.isEmpty, let prevBuffer = kltPreviousBuffer else {
+            self.kltPreviousBuffer = currentBuffer
+            return nil
+        }
+        defer { self.kltPreviousBuffer = currentBuffer }
+        
+        let width = CGFloat(CVPixelBufferGetWidth(currentBuffer))
+        let height = CGFloat(CVPixelBufferGetHeight(currentBuffer))
+        
+        CVPixelBufferLockBaseAddress(prevBuffer, .readOnly)
+        CVPixelBufferLockBaseAddress(currentBuffer, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(prevBuffer, .readOnly)
+            CVPixelBufferUnlockBaseAddress(currentBuffer, .readOnly)
+        }
+        
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(currentBuffer)
+        guard let prevData = CVPixelBufferGetBaseAddress(prevBuffer)?.assumingMemoryBound(to: UInt8.self),
+              let currData = CVPixelBufferGetBaseAddress(currentBuffer)?.assumingMemoryBound(to: UInt8.self) else {
+            return nil
+        }
+        
+        var displacedPoints: [CGPoint] = []
+        var displacementVectors: [CGVector] = []
+        let winR = 3
+        let searchR = 6
+        
+        for pt in kltTrackedPoints {
+            let px = Int(pt.x * width)
+            let py = Int((1.0 - pt.y) * height)
+            
+            guard px >= winR + searchR, px < Int(width) - (winR + searchR),
+                  py >= winR + searchR, py < Int(height) - (winR + searchR) else { continue }
+            
+            var bestDx = 0
+            var bestDy = 0
+            var minSAD = Float.greatestFiniteMagnitude
+            
+            for dy in -searchR...searchR {
+                for dx in -searchR...searchR {
+                    var sad: Float = 0
+                    for wy in -winR...winR {
+                        for wx in -winR...winR {
+                            let pOff = (py + wy) * bytesPerRow + (px + wx) * 4
+                            let cOff = (py + dy + wy) * bytesPerRow + (px + dx + wx) * 4
+                            let pLum = Float(prevData[pOff]) * 0.114 + Float(prevData[pOff+1]) * 0.587 + Float(prevData[pOff+2]) * 0.299
+                            let cLum = Float(currData[cOff]) * 0.114 + Float(currData[cOff+1]) * 0.587 + Float(currData[cOff+2]) * 0.299
+                            sad += abs(pLum - cLum)
+                        }
+                    }
+                    if sad < minSAD {
+                        minSAD = sad
+                        bestDx = dx
+                        bestDy = dy
+                    }
+                }
+            }
+            
+            let avgErr = minSAD / Float((winR * 2 + 1) * (winR * 2 + 1))
+            if avgErr < 32.0 {
+                let normDx = CGFloat(bestDx) / width
+                let normDy = -CGFloat(bestDy) / height
+                displacedPoints.append(CGPoint(x: pt.x + normDx, y: pt.y + normDy))
+                displacementVectors.append(CGVector(dx: normDx, dy: normDy))
+            }
+        }
+        
+        guard displacementVectors.count >= 4 else { return nil }
+        
+        let sortedDx = displacementVectors.map { $0.dx }.sorted()
+        let sortedDy = displacementVectors.map { $0.dy }.sorted()
+        let medianDx = sortedDx[sortedDx.count / 2]
+        let medianDy = sortedDy[sortedDy.count / 2]
+        
+        var inliers: [CGPoint] = []
+        for (i, v) in displacementVectors.enumerated() {
+            if hypot(v.dx - medianDx, v.dy - medianDy) < 0.035 {
+                inliers.append(displacedPoints[i])
+            }
+        }
+        
+        guard !inliers.isEmpty else { return nil }
+        
+        let avgX = inliers.map { $0.x }.reduce(0, +) / CGFloat(inliers.count)
+        let avgY = inliers.map { $0.y }.reduce(0, +) / CGFloat(inliers.count)
+        self.kltTrackedPoints = inliers
+        
+        let uiPoint = CGPoint(x: avgX, y: 1.0 - avgY)
+        let inlierRatio = Double(inliers.count) / Double(max(1, kltTrackedPoints.count))
+        let confidence = max(0.70, min(0.95, 0.60 + inlierRatio * 0.35))
+        return (uiPoint, confidence)
     }
     
     private func extractFeaturePrint(from buffer: CVPixelBuffer, regionOfInterest: CGRect) -> VNFeaturePrintObservation? {
@@ -297,11 +518,23 @@ public final class VisionFramingEngine: @unchecked Sendable {
             
             // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
             if self.isTrackingTarget, let prevObs = self.lastTargetObservation {
+                // Tối ưu hóa dải tương phản động cục bộ (Adaptive Local CLAHE)
+                self.enhanceROIContrast(in: pixelBuffer, roi: prevObs.boundingBox)
+                
                 if self.referenceFeaturePrint == nil {
                     self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: prevObs.boundingBox)
                     self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: prevObs.boundingBox)
                 }
                 
+                if self.kltTrackedPoints.isEmpty {
+                    self.kltTrackedPoints = self.extractKLTFeaturePoints(in: prevObs.boundingBox, buffer: pixelBuffer)
+                    self.kltPreviousBuffer = pixelBuffer
+                }
+                
+                // 1A. Tracking chùm điểm hình học KLT (Lucas-Kanade + RANSAC Consensus)
+                let kltResult = self.trackKLTCluster(in: pixelBuffer)
+                
+                // 1B. Tracking quang học tương quan (VNTrackObjectRequest)
                 let trackRequest = VNTrackObjectRequest(detectedObjectObservation: prevObs)
                 trackRequest.trackingLevel = .accurate
                 
@@ -317,17 +550,22 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             var uiX = newObs.boundingBox.midX
                             var uiY = 1.0 - newObs.boundingBox.midY
                             
+                            // Dung hợp với chùm điểm hình học KLT để tăng độ chính xác sub-pixel
+                            if let klt = kltResult {
+                                uiX = uiX * 0.45 + klt.uiPoint.x * 0.55
+                                uiY = uiY * 0.45 + klt.uiPoint.y * 0.55
+                            }
+                            
                             // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
                             if self.currentSceneType.isDeformableNature {
                                 if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
-                                    // Chuyển dịch tâm về trọng tâm toàn bộ tán cây/cụm cảnh
                                     uiX = uiX * 0.4 + salientCentroid.x * 0.6
                                     uiY = uiY * 0.4 + (1.0 - salientCentroid.y) * 0.6
                                 }
                             }
                             
                             trackedPoint = CGPoint(x: uiX, y: uiY)
-                            trackedConfidence = Double(newObs.confidence)
+                            trackedConfidence = max(Double(newObs.confidence), kltResult?.confidence ?? Double(newObs.confidence))
                         } else {
                             self.consecutiveLostFrames += 1
                         }
@@ -336,7 +574,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     self.consecutiveLostFrames += 1
                 }
                 
-                // Khi mất dấu quang học: Thử Color Histogram Match + Deep Neural Re-ID
+                // 1C. Nếu VNTrackObject tạm thời mất dấu nhưng KLT chùm điểm vẫn bám tốt
+                if trackedPoint == nil, let klt = kltResult {
+                    trackedPoint = klt.uiPoint
+                    trackedConfidence = klt.confidence
+                    self.consecutiveLostFrames = 0
+                }
+                
+                // 1D. Khi mất dấu quang học hoàn toàn: Thử Color Histogram Match + Deep Neural Re-ID
                 if trackedPoint == nil && (self.consecutiveLostFrames >= 2) {
                     let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
@@ -355,6 +600,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         trackedPoint = reIdPoint
                         trackedConfidence = reIdConfidence
                         self.consecutiveLostFrames = 0
+                        self.kltTrackedPoints = [] // Reset để re-seed chùm điểm mới
                     }
                 }
                 

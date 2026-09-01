@@ -570,6 +570,11 @@ public final class CameraViewModel: ObservableObject {
         // 2. Khởi động Động cơ Tracking Không Gian Duy Nhất
         SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
         
+        // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
+        let focusTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
+        let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
+        cameraService.setSmartFocusAndExposure(at: devPoint)
+        
         haptics.triggerSelectionChange()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) {
             aiSessionState = .targetPlaced(locked: true)
