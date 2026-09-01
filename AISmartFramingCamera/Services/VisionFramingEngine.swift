@@ -432,27 +432,43 @@ public final class VisionFramingEngine: @unchecked Sendable {
         guard let refPrint = self.referenceFeaturePrint else { return nil }
         
         var candidateBoxes: [CGRect] = []
+        let boxSize: CGFloat = 0.16
+        
+        // Mở rộng lưới tìm kiếm 3x3 quanh spatialPoint (vị trí ước lượng chuyển động)
         if let fb = fallbackPoint {
-            let fbVisionY = 1.0 - fb.y - 0.10
-            let fbVisionX = fb.x - 0.10
-            candidateBoxes.append(CGRect(x: max(0, min(0.8, fbVisionX)), y: max(0, min(0.8, fbVisionY)), width: 0.20, height: 0.20))
+            let offsets: [CGFloat] = [-0.08, 0.0, 0.08]
+            for dy in offsets {
+                for dx in offsets {
+                    let testUix = fb.x + dx
+                    let testUiy = fb.y + dy
+                    let vx = testUix - boxSize / 2
+                    let vy = 1.0 - testUiy - boxSize / 2
+                    let clampedBox = CGRect(x: max(0, min(1.0 - boxSize, vx)),
+                                            y: max(0, min(1.0 - boxSize, vy)),
+                                            width: boxSize,
+                                            height: boxSize)
+                    candidateBoxes.append(clampedBox)
+                }
+            }
         }
         
-        let searchPoints: [CGPoint] = [
+        // Bổ sung các điểm mốc cơ bản toàn khung hình
+        let anchorPoints: [CGPoint] = [
             CGPoint(x: 0.5, y: 0.5),
-            CGPoint(x: 0.35, y: 0.35),
-            CGPoint(x: 0.65, y: 0.35),
-            CGPoint(x: 0.35, y: 0.65),
-            CGPoint(x: 0.65, y: 0.65)
+            CGPoint(x: 0.33, y: 0.33),
+            CGPoint(x: 0.67, y: 0.33),
+            CGPoint(x: 0.33, y: 0.67),
+            CGPoint(x: 0.67, y: 0.67)
         ]
-        for p in searchPoints {
-            let vy = 1.0 - p.y - 0.10
-            let vx = p.x - 0.10
-            candidateBoxes.append(CGRect(x: max(0, min(0.8, vx)), y: max(0, min(0.8, vy)), width: 0.20, height: 0.20))
+        for p in anchorPoints {
+            let vx = p.x - boxSize / 2
+            let vy = 1.0 - p.y - boxSize / 2
+            candidateBoxes.append(CGRect(x: max(0, min(1.0 - boxSize, vx)), y: max(0, min(1.0 - boxSize, vy)), width: boxSize, height: boxSize))
         }
         
         var bestBox: CGRect? = nil
         var minDistance: Float = Float.greatestFiniteMagnitude
+        var bestColorSim: Double = 0.0
         
         for box in candidateBoxes {
             let req = VNGenerateImageFeaturePrintRequest()
@@ -464,9 +480,18 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 if let candidatePrint = req.results?.first as? VNFeaturePrintObservation {
                     var dist: Float = 0
                     try refPrint.computeDistance(&dist, to: candidatePrint)
-                    if dist < minDistance {
+                    
+                    var colorSim: Double = 1.0
+                    if let refHist = self.referenceColorHistogram {
+                        let candHist = self.extractColorHistogram(from: buffer, region: box)
+                        colorSim = self.compareColorHistograms(refHist, candHist)
+                    }
+                    
+                    // Kết hợp cả điều kiện feature print distance và tương đồng màu sắc tối thiểu 0.50
+                    if dist < minDistance && colorSim >= 0.50 {
                         minDistance = dist
                         bestBox = box
+                        bestColorSim = colorSim
                     }
                 }
             } catch {
@@ -475,13 +500,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
         
         if let matchedBox = bestBox, minDistance < 0.48 {
-            CameraLogger.info("🎯 Deep Neural Re-ID thành công! Tìm lại được mục tiêu (Distance: \(String(format: "%.3f", minDistance)))", category: .tracking)
+            CameraLogger.info("🎯 Deep Neural Re-ID thành công! (Feature Distance: \(String(format: "%.3f", minDistance)), Color Sim: \(String(format: "%.2f", bestColorSim)))", category: .tracking)
             let newObs = VNDetectedObjectObservation(boundingBox: matchedBox)
             self.lastTargetObservation = newObs
             self.sequenceHandler = VNSequenceRequestHandler()
             let uiX = matchedBox.midX
             let uiY = 1.0 - matchedBox.midY
-            let confidence = max(0.65, Double(1.0 - (minDistance / 0.50)))
+            let confidence = max(0.60, Double(1.0 - (minDistance / 0.50)) * 0.8 + bestColorSim * 0.2)
             return (CGPoint(x: uiX, y: uiY), confidence)
         }
         
@@ -518,9 +543,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             
             // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
             if self.isTrackingTarget, let prevObs = self.lastTargetObservation {
-                // Tối ưu hóa dải tương phản động cục bộ (Adaptive Local CLAHE)
-                self.enhanceROIContrast(in: pixelBuffer, roi: prevObs.boundingBox)
-                
+                // Không mutate pixelBuffer in-place để tránh tạo cạnh giả trên nền frame trước
                 if self.referenceFeaturePrint == nil {
                     self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: prevObs.boundingBox)
                     self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: prevObs.boundingBox)
@@ -536,22 +559,36 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 do {
                     try self.sequenceHandler.perform([trackRequest], on: pixelBuffer, orientation: orientation)
                     if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first {
-                        if newObs.confidence > 0.20 {
-                            self.lastTargetObservation = newObs
-                            self.consecutiveLostFrames = 0
-                            var uiX = newObs.boundingBox.midX
-                            var uiY = 1.0 - newObs.boundingBox.midY
-                            
-                            // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
-                            if self.currentSceneType.isDeformableNature {
-                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
-                                    uiX = uiX * 0.4 + salientCentroid.x * 0.6
-                                    uiY = uiY * 0.4 + (1.0 - salientCentroid.y) * 0.6
+                        // Nâng ngưỡng confidence lên tối thiểu 0.45 và kiểm tra tương đồng màu sắc histogram
+                        if newObs.confidence >= 0.45 {
+                            var isVisualMatch = true
+                            if let refHist = self.referenceColorHistogram {
+                                let currentHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
+                                let colorSim = self.compareColorHistograms(refHist, currentHist)
+                                if colorSim < 0.40 {
+                                    isVisualMatch = false
                                 }
                             }
                             
-                            trackedPoint = CGPoint(x: uiX, y: uiY)
-                            trackedConfidence = Double(newObs.confidence)
+                            if isVisualMatch {
+                                self.lastTargetObservation = newObs
+                                self.consecutiveLostFrames = 0
+                                var uiX = newObs.boundingBox.midX
+                                var uiY = 1.0 - newObs.boundingBox.midY
+                                
+                                // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
+                                if self.currentSceneType.isDeformableNature {
+                                    if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                        uiX = uiX * 0.4 + salientCentroid.x * 0.6
+                                        uiY = uiY * 0.4 + (1.0 - salientCentroid.y) * 0.6
+                                    }
+                                }
+                                
+                                trackedPoint = CGPoint(x: uiX, y: uiY)
+                                trackedConfidence = Double(newObs.confidence)
+                            } else {
+                                self.consecutiveLostFrames += 1
+                            }
                         } else {
                             self.consecutiveLostFrames += 1
                         }

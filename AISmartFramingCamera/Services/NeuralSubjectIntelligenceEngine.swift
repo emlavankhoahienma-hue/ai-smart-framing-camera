@@ -165,7 +165,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // 4. Trích xuất Vật thể tiền cảnh thực tế (Objectness Saliency)
         if let saliency = saliencyObjectRequest.results?.first,
            let salientObjects = saliency.salientObjects {
-            for obj in salientObjects where obj.confidence > 0.35 {
+            for obj in salientObjects where obj.confidence >= 0.48 {
                 let rect = convertVisionRectToUIRect(obj.boundingBox)
                 if isValidSubjectRect(rect) {
                     // Kiểm tra xem vật thể này có bị trùng lặp với người/mặt/thú cưng đã phát hiện không
@@ -229,8 +229,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let areaScore: Double
         if area < 0.02 {
             areaScore = area / 0.02 * 0.5 // Quá nhỏ
-        } else if area > 0.70 {
-            areaScore = 0.4 // Quá to, khả năng là hậu cảnh/tường
+        } else if area > 0.55 {
+            // Giảm mạnh điểm diện tích với các vùng quá lớn (tường/nhà/hậu cảnh tối)
+            if area >= 0.85 {
+                areaScore = 0.02
+            } else {
+                areaScore = max(0.05, 0.40 * (1.0 - (area - 0.55) / 0.30))
+            }
         } else {
             areaScore = 1.0 - abs(area - 0.25) * 1.2
         }
@@ -246,7 +251,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         
         // Điểm tổng hợp
         let totalScore = Double(confidence) * 1.5 * areaScore * centerScore * categoryWeight
-        return max(0.1, totalScore)
+        return max(0.05, totalScore)
     }
     
     // MARK: - Helpers

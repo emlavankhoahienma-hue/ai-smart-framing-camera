@@ -70,7 +70,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             guard let self = self, error == nil else { return }
             
             if let results = req.results as? [VNRecognizedObjectObservation] {
-                for obs in results where obs.confidence > 0.35 {
+                for obs in results where obs.confidence >= 0.48 {
                     guard let topLabel = obs.labels.first else { continue }
                     let category = self.mapYOLOLabelToCategory(topLabel.identifier)
                     let localizedName = self.localizeYOLOLabel(topLabel.identifier)
@@ -183,8 +183,13 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         let areaScore: Double
         if area < 0.02 {
             areaScore = area / 0.02 * 0.5
-        } else if area > 0.70 {
-            areaScore = 0.4
+        } else if area > 0.55 {
+            // Giảm mạnh điểm diện tích với các vùng quá lớn (tường/hậu cảnh tối)
+            if area >= 0.85 {
+                areaScore = 0.02
+            } else {
+                areaScore = max(0.05, 0.40 * (1.0 - (area - 0.55) / 0.30))
+            }
         } else {
             areaScore = 1.0 - abs(area - 0.25) * 1.2
         }

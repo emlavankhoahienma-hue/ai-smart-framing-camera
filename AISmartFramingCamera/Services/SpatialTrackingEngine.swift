@@ -74,6 +74,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     }
     
     private var lastMotionTime: TimeInterval = 0
+    private var deadReckoningFrameCount: Int = 0
     
     // MARK: - Khởi động cảm biến 60Hz Gyroscope & Accelerometer
     private func startMotionSensors() {
@@ -83,6 +84,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         }
         
         lastMotionTime = CACurrentMediaTime()
+        deadReckoningFrameCount = 0
         motionManager.deviceMotionUpdateInterval = 1.0 / 60.0 // 60 FPS
         
         motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
@@ -108,13 +110,30 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let dy = -rateX * dt * scaleY
             
             // Khi quang học tạm thời mất nét / lia máy nhanh (optical confidence <= 0.40):
-            // Cập nhật vị trí mỏ neo không gian theo chuyển động quán tính thực tế
+            // Cập nhật vị trí mỏ neo không gian theo chuyển động quán tính thực tế (Dead-Reckoning)
             if self.lastOpticalConfidence <= 0.40 {
+                self.deadReckoningFrameCount += 1
                 self.stateX = min(0.98, max(0.02, self.stateX + dx))
                 self.stateY = min(0.98, max(0.02, self.stateY + dy))
                 let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                
+                // Giới hạn sai số tích lũy: nếu quá 45 frame (~0.75-1.5s) chạy dead-reckoning không có optical confirmation, suy giảm dần confidence
+                let decayedConf: Double
+                let quality: TrackingQuality
+                if self.deadReckoningFrameCount > 90 {
+                    decayedConf = 0.15
+                    quality = .lost
+                } else if self.deadReckoningFrameCount > 45 {
+                    let decayFactor = pow(0.96, Double(self.deadReckoningFrameCount - 45))
+                    decayedConf = max(0.20, 0.40 * decayFactor)
+                    quality = .predicting
+                } else {
+                    decayedConf = max(0.35, self.lastOpticalConfidence)
+                    quality = .predicting
+                }
+                
                 DispatchQueue.main.async {
-                    self.onSpatialTargetUpdated?(targetPoint, max(0.40, self.lastOpticalConfidence), .predicting)
+                    self.onSpatialTargetUpdated?(targetPoint, decayedConf, quality)
                 }
             }
         }
@@ -132,27 +151,32 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         var effectiveConfidence = confidence
         var activePoint = point
         
-        if let visualPoint = point, let buffer = pixelBuffer {
+        // Chỉ dùng NeuralTargetTracker hỗ trợ phụ khi có model thật hợp lệ, không cho phép 1 mình đẩy vượt ngưỡng
+        if let visualPoint = point, let buffer = pixelBuffer, NeuralTargetTracker.shared.hasActiveTrainedModel {
             let (bestPt, neuralSim) = NeuralTargetTracker.shared.findBestMatchingPoint(in: buffer, around: visualPoint, searchRadius: 0.03)
-            if neuralSim >= 0.50 {
+            if neuralSim >= 0.65 {
                 activePoint = bestPt
-                effectiveConfidence = max(confidence, neuralSim * 0.95)
+                effectiveConfidence = max(confidence, min(confidence + 0.10, neuralSim * 0.90))
             }
         }
         
         let effectiveThreshold = isLowTextureAnchor ? 0.75 : 0.25
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
+            self.deadReckoningFrameCount = 0
             let obsX = Double(visualPoint.x)
             let obsY = Double(visualPoint.y)
             
-            // Lọc outlier cực đoan (> 0.40 màn hình trong 1 frame)
+            // Lọc outlier jump dựa trên vận tốc chuyển động và dt
             let jump = hypot(obsX - self.stateX, obsY - self.stateY)
-            if jump > 0.40 && effectiveConfidence < 0.70 {
+            let expectedVelocityJump = hypot(velocityX, velocityY) * dt * 2.5 + 0.15
+            let maxAllowedJump = max(0.12, min(0.35, expectedVelocityJump))
+            if jump > maxAllowedJump && confidence < 0.85 {
                 return
             }
             
-            // Quang học + Neural Peak là Ground Truth: Bám trực tiếp vào tâm vật thể thực tế
-            let kGain = max(0.80, min(0.98, effectiveConfidence))
+            // Kalman gain tỉ lệ thuận thực sự với confidence trong toàn dải hợp lệ (không có sàn cứng 0.80)
+            let normalizedConf = max(0.0, min(1.0, (effectiveConfidence - effectiveThreshold) / (1.0 - effectiveThreshold)))
+            let kGain = max(0.15, min(0.95, 0.15 + 0.80 * normalizedConf))
             let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
             let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
             
@@ -211,6 +235,7 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     
     private var anchorEmbedding: [Float]? = nil
     private var isModelLoaded: Bool = false
+    public private(set) var hasActiveTrainedModel: Bool = false
     
     public init() {
         loadModelWeights()
@@ -238,6 +263,22 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         let b2Count = embeddingDim
         
         guard floatCount >= (w1Count + b1Count + w2Count + b2Count) else {
+            CameraLogger.warning("File RobustTargetEmbedder.bin không đủ kích thước trọng số (\(floatCount) floats), kích hoạt fallback weights", category: .tracking)
+            initFallbackWeights()
+            return
+        }
+        
+        // Kiểm tra tính hợp lệ của trọng số: không chứa NaN, Inf hoặc giá trị bất thường (|w| > 5.0)
+        var hasInvalidWeight = false
+        for f in floats {
+            if f.isNaN || f.isInfinite || abs(f) > 5.0 {
+                hasInvalidWeight = true
+                break
+            }
+        }
+        
+        if hasInvalidWeight {
+            CameraLogger.warning("Trọng số RobustTargetEmbedder.bin không hợp lệ (chứa NaN/Inf/Out-of-range), vô hiệu hóa neural assist và chuyển sang fallback weights", category: .tracking)
             initFallbackWeights()
             return
         }
@@ -248,7 +289,8 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         W2 = Array(floats[offset..<offset+w2Count]); offset += w2Count
         b2 = Array(floats[offset..<offset+b2Count]); offset += b2Count
         isModelLoaded = true
-        CameraLogger.info("Đã nạp thành công Neural Target Embedder Weights (413 KB)", category: .tracking)
+        hasActiveTrainedModel = true
+        CameraLogger.info("Đã nạp và xác thực thành công Neural Target Embedder Weights (\(data.count / 1024) KB)", category: .tracking)
     }
     
     private func initFallbackWeights() {
@@ -260,6 +302,7 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         W2 = (0..<(hiddenDim * embeddingDim)).map { _ in Float.random(in: -std2...std2) }
         b2 = [Float](repeating: 0, count: embeddingDim)
         isModelLoaded = true
+        hasActiveTrainedModel = false
     }
     
     // MARK: - 1. Lưu Vân Tay Mỏ Neo Ban Đầu (Anchor Fingerprint)
@@ -418,8 +461,49 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         let totalH = Float(boxSize * boxSize)
         for i in 0..<24 { hist[i] /= totalH }
         
-        // 3. Gradient Variance (6 values)
-        var grad = [Float](repeating: 0.1, count: 6)
+        // 3. Gradient Variance & Texture Features (6 values: 4 quadrants + patch variance + directional ratio)
+        var grad = [Float](repeating: 0, count: 6)
+        var quadGrads = [[Float](), [Float](), [Float](), [Float]()]
+        var allGrads = [Float]()
+        allGrads.reserveCapacity(boxSize * boxSize)
+        var totalGx: Float = 0
+        var totalGy: Float = 0
+        
+        for y in 1..<(boxSize - 1) {
+            for x in 1..<(boxSize - 1) {
+                let pLeft = (startY + y) * bytesPerRow + (startX + x - 1) * 4
+                let pRight = (startY + y) * bytesPerRow + (startX + x + 1) * 4
+                let pUp = (startY + y - 1) * bytesPerRow + (startX + x) * 4
+                let pDown = (startY + y + 1) * bytesPerRow + (startX + x) * 4
+                
+                let lumL = Float(buffer[pLeft]) * 0.114 + Float(buffer[pLeft+1]) * 0.587 + Float(buffer[pLeft+2]) * 0.299
+                let lumR = Float(buffer[pRight]) * 0.114 + Float(buffer[pRight+1]) * 0.587 + Float(buffer[pRight+2]) * 0.299
+                let lumU = Float(buffer[pUp]) * 0.114 + Float(buffer[pUp+1]) * 0.587 + Float(buffer[pUp+2]) * 0.299
+                let lumD = Float(buffer[pDown]) * 0.114 + Float(buffer[pDown+1]) * 0.587 + Float(buffer[pDown+2]) * 0.299
+                
+                let gx = abs(lumR - lumL)
+                let gy = abs(lumD - lumU)
+                let mag = sqrtf(gx * gx + gy * gy) / 255.0
+                
+                allGrads.append(mag)
+                totalGx += gx
+                totalGy += gy
+                
+                let qx = x < (boxSize / 2) ? 0 : 1
+                let qy = y < (boxSize / 2) ? 0 : 1
+                quadGrads[qy * 2 + qx].append(mag)
+            }
+        }
+        
+        for q in 0..<4 {
+            let count = Float(max(1, quadGrads[q].count))
+            grad[q] = quadGrads[q].reduce(0, +) / count
+        }
+        let allCount = Float(max(1, allGrads.count))
+        let meanGrad = allGrads.reduce(0, +) / allCount
+        let gradVar = allGrads.reduce(0) { $0 + powf($1 - meanGrad, 2) } / allCount
+        grad[4] = gradVar * 10.0
+        grad[5] = (totalGx + totalGy) > 0 ? (totalGx / (totalGx + totalGy)) : 0.5
         
         var features = [Float]()
         features.reserveCapacity(inputDim)

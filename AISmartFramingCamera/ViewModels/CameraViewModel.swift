@@ -571,6 +571,20 @@ public final class CameraViewModel: ObservableObject {
     private var shouldCheckTextureOnNextFrame: Bool = false
     
     // MARK: - Low Texture Analysis (Bầu trời, Tường phẳng)
+    private var isCurrentlyLowTexture: Bool = false
+    
+    private func applyTextureVarianceHysteresis(variance: Double) {
+        // Hysteresis 2 ngưỡng: Bật Low-Texture khi < 20.0, Tắt khi > 30.0
+        if variance < 20.0 {
+            isCurrentlyLowTexture = true
+        } else if variance > 30.0 {
+            isCurrentlyLowTexture = false
+        }
+        // Nếu nằm giữa 20.0 và 30.0: giữ nguyên trạng thái trước đó
+        SpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
+        CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
+    }
+    
     private func computeTextureVariance(pixelBuffer: CVPixelBuffer, normalizedRect: CGRect) -> Double {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
@@ -650,9 +664,7 @@ public final class CameraViewModel: ObservableObject {
         if let buffer = latestPixelBuffer {
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: buffer, normalizedRect: region)
-            let isLow = variance < 25.0
-            SpatialTrackingEngine.shared.setLowTextureFlag(isLow)
-            CameraLogger.info("Texture Variance của mục tiêu: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isLow ? "CÓ" : "KHÔNG")", category: .tracking)
+            applyTextureVarianceHysteresis(variance: variance)
             NeuralTargetTracker.shared.setAnchorTemplate(from: buffer, at: anchorTarget)
         } else {
             shouldCheckTextureOnNextFrame = true
@@ -683,9 +695,7 @@ public final class CameraViewModel: ObservableObject {
             shouldCheckTextureOnNextFrame = false
             let region = CGRect(x: max(0, target.x - 0.08), y: max(0, target.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: pixelBuffer, normalizedRect: region)
-            let isLow = variance < 25.0
-            SpatialTrackingEngine.shared.setLowTextureFlag(isLow)
-            CameraLogger.info("Texture Variance (Frame 1): \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isLow ? "CÓ" : "KHÔNG")", category: .tracking)
+            applyTextureVarianceHysteresis(variance: variance)
         }
         
         // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào SpatialTrackingEngine
