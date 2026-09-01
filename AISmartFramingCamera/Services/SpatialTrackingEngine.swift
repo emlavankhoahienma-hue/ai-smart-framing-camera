@@ -100,13 +100,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // - Tilting ngửa LÊN (hướng về mục tiêu phía trên) -> rotationRate.x < 0 -> Khung cảnh dịch xuống DƯỚI -> dy > 0 (hội tụ về tâm 0.5)
             // - Tilting cúi XUỐNG -> rotationRate.x > 0 -> Khung cảnh dịch lên TRÊN -> dy < 0
             let zoomScale = self.currentZoom
-            let scaleX = 0.80 * zoomScale
-            let scaleY = 0.99 * zoomScale
+            let scaleX = 0.85 * zoomScale
+            let scaleY = 0.95 * zoomScale
             
             let rateY = motion.rotationRate.y
             let rateX = motion.rotationRate.x
             
-            let dx = -rateY * dt * scaleX
+            // Chuẩn hóa cực tính con quay hồi chuyển:
+            // - Lia máy sang PHẢI (hướng về target bên phải) -> rateY < 0 -> Target dịch sang TRÁI (dx < 0) hội tụ chuẩn về tâm 0.5
+            // - Lia máy sang TRÁI -> rateY > 0 -> Target dịch sang PHẢI (dx > 0) hội tụ chuẩn về tâm 0.5
+            // - Nghiêng máy ngửa LÊN -> rateX < 0 -> Target dịch XUỐNG DƯỚI (dy > 0) hội tụ chuẩn về tâm 0.5
+            // - Nghiêng máy cúi XUỐNG -> rateX > 0 -> Target dịch LÊN TRÊN (dy < 0) hội tụ chuẩn về tâm 0.5
+            let dx = rateY * dt * scaleX
             let dy = -rateX * dt * scaleY
             
             // Khi quang học tạm thời mất nét / lia máy nhanh (optical confidence <= 0.40):
@@ -163,16 +168,19 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let effectiveThreshold = isLowTextureAnchor ? 0.70 : 0.20
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
             self.deadReckoningFrameCount = 0
-            let obsX = Double(visualPoint.x)
-            let obsY = Double(visualPoint.y)
+            var obsX = Double(visualPoint.x)
+            var obsY = Double(visualPoint.y)
             
-            // Lọc outlier cực đoan (> 0.45 màn hình trong 1 frame)
+            // Chống teleport / nhảy bậy ra bầu trời, cửa, nước:
+            // Nếu điểm quang học đột ngột nhảy quá 0.10 màn hình trong 1 frame duy nhất -> giới hạn tốc độ dịch chuyển mượt mà
             let jump = hypot(obsX - self.stateX, obsY - self.stateY)
-            if jump > 0.45 && effectiveConfidence < 0.75 {
-                return
+            if jump > 0.10 && effectiveConfidence < 0.88 {
+                let jumpAngle = atan2(obsY - self.stateY, obsX - self.stateX)
+                obsX = self.stateX + cos(jumpAngle) * 0.04
+                obsY = self.stateY + sin(jumpAngle) * 0.04
             }
             
-            // Quang học là Ground Truth: Bám trực tiếp, nhanh và mượt vào vật thể thực tế (như Build 79)
+            // Quang học là Ground Truth: Bám trực tiếp, nhanh và mượt vào vật thể thực tế
             let kGain = max(0.70, min(0.92, effectiveConfidence))
             let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
             let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
@@ -238,10 +246,33 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         loadModelWeights()
     }
     
-    private func loadModelWeights() {
-        // Tìm file RobustTargetEmbedder.bin trong Bundle hoặc thư mục app
-        if let url = Bundle.main.url(forResource: "RobustTargetEmbedder", withExtension: "bin"),
+    public func loadModelWeights() {
+        // 1. Kiểm tra file AlignAI_SubjectRanker_Weights.bin trong Documents directory (nếu người dùng copy vào qua iTunes/Files)
+        if let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let docModelUrl = docsDir.appendingPathComponent("AlignAI_SubjectRanker_Weights.bin")
+            if let data = try? Data(contentsOf: docModelUrl), data.count > 1000 {
+                CameraLogger.info("Đã tìm thấy mô hình AlignAI_SubjectRanker_Weights.bin trong Documents directory, bắt đầu nạp trọng số", category: .tracking)
+                loadFromData(data)
+                return
+            }
+        }
+        
+        // 2. Tìm file AlignAI_SubjectRanker_Weights.bin hoặc RobustTargetEmbedder.bin trong Bundle
+        if let url = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "bin"),
            let data = try? Data(contentsOf: url) {
+            CameraLogger.info("Đã nạp thành công mô hình AlignAI_SubjectRanker_Weights.bin từ Bundle", category: .tracking)
+            loadFromData(data)
+        } else if let url1 = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "part1"),
+                  let url2 = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "part2"),
+                  let d1 = try? Data(contentsOf: url1),
+                  let d2 = try? Data(contentsOf: url2) {
+            var combined = d1
+            combined.append(d2)
+            CameraLogger.info("Đã nạp thành công mô hình AlignAI_SubjectRanker_Weights 114MB từ Part1+Part2", category: .tracking)
+            loadFromData(combined)
+        } else if let url = Bundle.main.url(forResource: "RobustTargetEmbedder", withExtension: "bin"),
+                  let data = try? Data(contentsOf: url) {
+            CameraLogger.info("Đã nạp thành công mô hình RobustTargetEmbedder.bin từ Bundle", category: .tracking)
             loadFromData(data)
         } else {
             // Fallback tạo trọng số chuẩn hóa Xavier

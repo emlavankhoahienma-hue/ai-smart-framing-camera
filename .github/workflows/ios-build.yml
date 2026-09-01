@@ -74,6 +74,11 @@ jobs:
             cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
             echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
           fi
+          if [ -f "AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part1" ]; then
+            cat AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part* > Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin
+            cp Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin Payload/AISmartFramingCamera.app/RobustTargetEmbedder.bin
+            echo "✓ Đã tích hợp thành công AlignAI_SubjectRanker_Weights (114 MB) vào App Bundle!"
+          fi
 
       - name: Package IPA
         run: |

@@ -415,7 +415,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 for obj in salientObjects {
                     let objCenter = CGPoint(x: obj.boundingBox.midX, y: obj.boundingBox.midY)
                     let d = hypot(objCenter.x - boxCenter.x, objCenter.y - boxCenter.y)
-                    if d < minDistance && d < 0.35 {
+                    // Chỉ cho phép hút cực hẹp trong phạm vi chính vật thể đó (d < 0.08)
+                    if d < minDistance && d < 0.08 {
                         minDistance = d
                         closestCentroid = objCenter
                     }
@@ -429,41 +430,25 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
     
     private func attemptNeuralReIdentification(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, fallbackPoint: CGPoint?) -> (CGPoint, Double)? {
-        guard let refPrint = self.referenceFeaturePrint else { return nil }
+        guard let refPrint = self.referenceFeaturePrint, let fb = fallbackPoint else { return nil }
         
         var candidateBoxes: [CGRect] = []
-        let boxSize: CGFloat = 0.16
+        let boxSize: CGFloat = 0.14
         
-        // Mở rộng lưới tìm kiếm 3x3 quanh spatialPoint (vị trí ước lượng chuyển động)
-        if let fb = fallbackPoint {
-            let offsets: [CGFloat] = [-0.08, 0.0, 0.08]
-            for dy in offsets {
-                for dx in offsets {
-                    let testUix = fb.x + dx
-                    let testUiy = fb.y + dy
-                    let vx = testUix - boxSize / 2
-                    let vy = 1.0 - testUiy - boxSize / 2
-                    let clampedBox = CGRect(x: max(0, min(1.0 - boxSize, vx)),
-                                            y: max(0, min(1.0 - boxSize, vy)),
-                                            width: boxSize,
-                                            height: boxSize)
-                    candidateBoxes.append(clampedBox)
-                }
+        // CHỈ tìm kiếm trong phạm vi hẹp cục bộ quanh vị trí vật thể thực tế (bán kính <= 0.06), TUYỆT ĐỐI KHÔNG quét toàn màn hình để tránh nhảy vào bầu trời, cửa, nước
+        let offsets: [CGFloat] = [-0.05, 0.0, 0.05]
+        for dy in offsets {
+            for dx in offsets {
+                let testUix = fb.x + dx
+                let testUiy = fb.y + dy
+                let vx = testUix - boxSize / 2
+                let vy = 1.0 - testUiy - boxSize / 2
+                let clampedBox = CGRect(x: max(0.01, min(1.0 - boxSize - 0.01, vx)),
+                                        y: max(0.01, min(1.0 - boxSize - 0.01, vy)),
+                                        width: boxSize,
+                                        height: boxSize)
+                candidateBoxes.append(clampedBox)
             }
-        }
-        
-        // Bổ sung các điểm mốc cơ bản toàn khung hình
-        let anchorPoints: [CGPoint] = [
-            CGPoint(x: 0.5, y: 0.5),
-            CGPoint(x: 0.33, y: 0.33),
-            CGPoint(x: 0.67, y: 0.33),
-            CGPoint(x: 0.33, y: 0.67),
-            CGPoint(x: 0.67, y: 0.67)
-        ]
-        for p in anchorPoints {
-            let vx = p.x - boxSize / 2
-            let vy = 1.0 - p.y - boxSize / 2
-            candidateBoxes.append(CGRect(x: max(0, min(1.0 - boxSize, vx)), y: max(0, min(1.0 - boxSize, vy)), width: boxSize, height: boxSize))
         }
         
         var bestBox: CGRect? = nil
@@ -487,8 +472,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         colorSim = Double(self.compareColorHistograms(refHist, candHist))
                     }
                     
-                    // Kết hợp cả điều kiện feature print distance và tương đồng màu sắc tối thiểu 0.50
-                    if dist < minDistance && colorSim >= 0.50 {
+                    // Siết chặt điều kiện: distance < 0.32 và colorSim >= 0.70 (chỉ nhận đúng vật thể ban đầu)
+                    if dist < minDistance && dist < 0.32 && colorSim >= 0.70 {
                         minDistance = dist
                         bestBox = box
                         bestColorSim = colorSim
@@ -499,14 +484,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
         
-        if let matchedBox = bestBox, minDistance < 0.48 {
-            CameraLogger.info("🎯 Deep Neural Re-ID thành công! (Feature Distance: \(String(format: "%.3f", minDistance)), Color Sim: \(String(format: "%.2f", bestColorSim)))", category: .tracking)
+        if let matchedBox = bestBox, minDistance < 0.32 {
+            CameraLogger.info("🎯 Local Neural Re-ID thành công quanh vật thể (Dist: \(String(format: "%.3f", minDistance)), Color: \(String(format: "%.2f", bestColorSim)))", category: .tracking)
             let newObs = VNDetectedObjectObservation(boundingBox: matchedBox)
             self.lastTargetObservation = newObs
             self.sequenceHandler = VNSequenceRequestHandler()
             let uiX = matchedBox.midX
             let uiY = 1.0 - matchedBox.midY
-            let confidence = max(0.60, Double(1.0 - (minDistance / 0.50)) * 0.8 + bestColorSim * 0.2)
+            let confidence = max(0.70, Double(1.0 - (minDistance / 0.32)) * 0.7 + bestColorSim * 0.3)
             return (CGPoint(x: uiX, y: uiY), confidence)
         }
         
@@ -583,24 +568,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     self.consecutiveLostFrames += 1
                 }
                 
-                // 1B. Khi mất dấu quang học (lia máy nhanh): Thử Deep Neural Re-ID + Color Histogram
+                // 1B. Khi mất dấu quang học tạm thời (lia máy nhanh): Tự động tái lập mỏ neo quang học chính xác tại toạ độ không gian
                 if trackedPoint == nil && (self.consecutiveLostFrames >= 2) {
                     let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
-                    if let refHist = self.referenceColorHistogram, self.currentSceneType.isDeformableNature {
-                        let testBox = CGRect(x: max(0, min(0.8, spatialPoint.x - 0.1)), y: max(0, min(0.8, (1.0 - spatialPoint.y) - 0.1)), width: 0.20, height: 0.20)
-                        let currentHist = self.extractColorHistogram(from: pixelBuffer, region: testBox)
-                        let colorSim = self.compareColorHistograms(refHist, currentHist)
-                        if colorSim > 0.68 {
-                            trackedPoint = spatialPoint
-                            trackedConfidence = Double(colorSim)
-                            self.consecutiveLostFrames = 0
-                        }
-                    }
-                    
-                    if trackedPoint == nil, let (reIdPoint, reIdConfidence) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, fallbackPoint: spatialPoint) {
+                    if let (reIdPoint, reIdConfidence) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, fallbackPoint: spatialPoint) {
                         trackedPoint = reIdPoint
                         trackedConfidence = reIdConfidence
+                        self.consecutiveLostFrames = 0
+                    } else {
+                        // Tự động tái lập mỏ neo VNTrackObjectRequest ngay tại vị trí không gian con quay hồi chuyển đang giữ
+                        let boxSize: CGFloat = 0.14
+                        let vx = max(0.01, min(1.0 - boxSize - 0.01, spatialPoint.x - boxSize / 2.0))
+                        let vy = max(0.01, min(1.0 - boxSize - 0.01, (1.0 - spatialPoint.y) - boxSize / 2.0))
+                        let reAnchorObs = VNDetectedObjectObservation(boundingBox: CGRect(x: vx, y: vy, width: boxSize, height: boxSize))
+                        self.lastTargetObservation = reAnchorObs
+                        self.sequenceHandler = VNSequenceRequestHandler()
+                        trackedPoint = spatialPoint
+                        trackedConfidence = 0.65
                         self.consecutiveLostFrames = 0
                     }
                 }
