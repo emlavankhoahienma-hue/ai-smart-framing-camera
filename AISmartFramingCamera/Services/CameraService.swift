@@ -105,11 +105,10 @@ public final class CameraService: NSObject {
             do {
                 try camera.lockForConfiguration()
                 if camera.activeFormat.isVideoHDRSupported {
-                    camera.automaticallyAdjustsVideoHDREnabled = false
-                    camera.isVideoHDREnabled = true
+                    camera.automaticallyAdjustsVideoHDREnabled = true
                 }
                 if camera.isLowLightBoostSupported {
-                    camera.automaticallyEnablesLowLightBoostWhenAvailable = true
+                    camera.automaticallyEnablesLowLightBoostWhenAvailable = false
                 }
                 camera.unlockForConfiguration()
             } catch {
