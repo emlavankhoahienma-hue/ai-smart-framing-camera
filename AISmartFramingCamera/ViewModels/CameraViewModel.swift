@@ -558,6 +558,10 @@ public final class CameraViewModel: ObservableObject {
         let dy = target.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
+        // Đồng bộ phân loại cảnh quan cho Dynamic EKF & Deformable Nature Tracking
+        visionEngine.currentSceneType = self.detectedScene
+        SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
+        
         // 1. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (YOLO / Neural Engine Subject)
         if let sRect = subjectRect {
             let sCenter = CGPoint(x: sRect.midX, y: sRect.midY)

@@ -32,11 +32,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
     public var captureNextFrameForGemini: Bool = false
     public var capturedGeminiFrame: CGImage? = nil
     
-    // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID)
+    // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID + Color Histogram)
     public private(set) var isTrackingTarget: Bool = false
+    public var currentSceneType: DetectedSceneType = .general
     private var sequenceHandler = VNSequenceRequestHandler()
     private var lastTargetObservation: VNDetectedObjectObservation? = nil
     private var referenceFeaturePrint: VNFeaturePrintObservation? = nil
+    private var referenceColorHistogram: [Float]? = nil
     private var consecutiveLostFrames: Int = 0
     
     // Vision Detection Requests
@@ -90,6 +92,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let initialObservation = VNDetectedObjectObservation(boundingBox: clampedRect)
         self.lastTargetObservation = initialObservation
         self.referenceFeaturePrint = nil
+        self.referenceColorHistogram = nil
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
         self.isTrackingTarget = true
@@ -99,6 +102,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.isTrackingTarget = false
         self.lastTargetObservation = nil
         self.referenceFeaturePrint = nil
+        self.referenceColorHistogram = nil
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
     }
@@ -119,6 +123,88 @@ public final class VisionFramingEngine: @unchecked Sendable {
         } catch {
             return nil
         }
+    }
+    
+    private func extractColorHistogram(from buffer: CVPixelBuffer, region: CGRect) -> [Float] {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return Array(repeating: 0, count: 24) }
+        
+        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
+        var hist = Array(repeating: Float(0), count: 24)
+        var totalPixels: Float = 0
+        
+        let minX = max(0, min(width - 1, Int(region.origin.x * CGFloat(width))))
+        let minY = max(0, min(height - 1, Int((1.0 - region.origin.y - region.size.height) * CGFloat(height))))
+        let maxX = max(minX + 1, min(width, Int((region.origin.x + region.size.width) * CGFloat(width))))
+        let maxY = max(minY + 1, min(height, Int((1.0 - region.origin.y) * CGFloat(height))))
+        
+        let step = max(1, (maxX - minX) / 16)
+        
+        for y in stride(from: minY, to: maxY, by: max(1, step)) {
+            for x in stride(from: minX, to: maxX, by: max(1, step)) {
+                let offset = y * bytesPerRow + x * 4
+                let b = Float(data[offset])
+                let g = Float(data[offset + 1])
+                let r = Float(data[offset + 2])
+                
+                let rBin = min(7, Int(r / 32))
+                let gBin = min(7, Int(g / 32)) + 8
+                let bBin = min(7, Int(b / 32)) + 16
+                
+                hist[rBin] += 1
+                hist[gBin] += 1
+                hist[bBin] += 1
+                totalPixels += 3
+            }
+        }
+        
+        if totalPixels > 0 {
+            for i in 0..<24 {
+                hist[i] /= totalPixels
+            }
+        }
+        return hist
+    }
+    
+    private func compareColorHistograms(_ h1: [Float], _ h2: [Float]) -> Float {
+        guard h1.count == h2.count && !h1.isEmpty else { return 0 }
+        var bhattacharyya: Float = 0
+        for i in 0..<h1.count {
+            bhattacharyya += sqrt(max(0, h1[i] * h2[i]))
+        }
+        return bhattacharyya
+    }
+    
+    private func extractSaliencyCentroid(from buffer: CVPixelBuffer, near visionBox: CGRect) -> CGPoint? {
+        let req = VNGenerateObjectnessBasedSaliencyImageRequest()
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, options: [:])
+        do {
+            try handler.perform([req])
+            if let result = req.results?.first as? VNSaliencyImageObservation,
+               let salientObjects = result.salientObjects {
+                let boxCenter = CGPoint(x: visionBox.midX, y: visionBox.midY)
+                var closestCentroid: CGPoint? = nil
+                var minDistance: CGFloat = CGFloat.greatestFiniteMagnitude
+                
+                for obj in salientObjects {
+                    let objCenter = CGPoint(x: obj.boundingBox.midX, y: obj.boundingBox.midY)
+                    let d = hypot(objCenter.x - boxCenter.x, objCenter.y - boxCenter.y)
+                    if d < minDistance && d < 0.35 {
+                        minDistance = d
+                        closestCentroid = objCenter
+                    }
+                }
+                return closestCentroid
+            }
+        } catch {
+            return nil
+        }
+        return nil
     }
     
     private func attemptNeuralReIdentification(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, fallbackPoint: CGPoint?) -> (CGPoint, Double)? {
@@ -209,10 +295,19 @@ public final class VisionFramingEngine: @unchecked Sendable {
             guard let self = self else { return }
             defer { self.isProcessingFrame = false }
             
-            // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed) -> Chạy VNTrackObjectRequest + Neural Re-ID
+            // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
             if self.isTrackingTarget, let prevObs = self.lastTargetObservation {
+                // Dynamic EKF: Bầu trời / Đám mây -> bỏ qua optical jitter, nhường 100% cho 3D Gyro
+                if self.currentSceneType.isSkyOrInfiniteHorizon {
+                    DispatchQueue.main.async {
+                        self.onTargetTracked?(nil, 0.95, pixelBuffer)
+                    }
+                    return
+                }
+                
                 if self.referenceFeaturePrint == nil {
                     self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: prevObs.boundingBox)
+                    self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: prevObs.boundingBox)
                 }
                 
                 let trackRequest = VNTrackObjectRequest(detectedObjectObservation: prevObs)
@@ -227,8 +322,18 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         if newObs.confidence > 0.25 {
                             self.lastTargetObservation = newObs
                             self.consecutiveLostFrames = 0
-                            let uiX = newObs.boundingBox.midX
-                            let uiY = 1.0 - newObs.boundingBox.midY
+                            var uiX = newObs.boundingBox.midX
+                            var uiY = 1.0 - newObs.boundingBox.midY
+                            
+                            // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
+                            if self.currentSceneType.isDeformableNature {
+                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                    // Chuyển dịch tâm về trọng tâm toàn bộ tán cây/cụm cảnh
+                                    uiX = uiX * 0.4 + salientCentroid.x * 0.6
+                                    uiY = uiY * 0.4 + (1.0 - salientCentroid.y) * 0.6
+                                }
+                            }
+                            
                             trackedPoint = CGPoint(x: uiX, y: uiY)
                             trackedConfidence = Double(newObs.confidence)
                         } else {
@@ -239,10 +344,22 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     self.consecutiveLostFrames += 1
                 }
                 
-                // Khi mất dấu quang học do lia máy nhanh: Kích hoạt Deep Neural Re-ID
+                // Khi mất dấu quang học: Thử Color Histogram Match + Deep Neural Re-ID
                 if trackedPoint == nil && (self.consecutiveLostFrames >= 2) {
                     let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
-                    if let (reIdPoint, reIdConfidence) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, fallbackPoint: spatialPoint) {
+                    
+                    if let refHist = self.referenceColorHistogram, self.currentSceneType.isDeformableNature {
+                        let testBox = CGRect(x: max(0, min(0.8, spatialPoint.x - 0.1)), y: max(0, min(0.8, (1.0 - spatialPoint.y) - 0.1)), width: 0.20, height: 0.20)
+                        let currentHist = self.extractColorHistogram(from: pixelBuffer, region: testBox)
+                        let colorSim = self.compareColorHistograms(refHist, currentHist)
+                        if colorSim > 0.68 {
+                            trackedPoint = spatialPoint
+                            trackedConfidence = Double(colorSim)
+                            self.consecutiveLostFrames = 0
+                        }
+                    }
+                    
+                    if trackedPoint == nil, let (reIdPoint, reIdConfidence) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, fallbackPoint: spatialPoint) {
                         trackedPoint = reIdPoint
                         trackedConfidence = reIdConfidence
                         self.consecutiveLostFrames = 0

@@ -165,11 +165,22 @@ public enum DetectedSceneType: String, CaseIterable {
     case landscape = "Landscape"
     case sunset = "Sunset / Golden Hour"
     case architecture = "Architecture"
+    case sky = "Sky / Cloud"
+    case water = "Water / Sea"
+    case foliage = "Foliage / Nature"
     case night = "Night Scene"
     case food = "Food"
     case macro = "Macro / Close-up"
     case street = "Street Life"
     case general = "Auto General"
+    
+    public var isSkyOrInfiniteHorizon: Bool {
+        return self == .sky || self == .landscape || self == .sunset
+    }
+    
+    public var isDeformableNature: Bool {
+        return self == .foliage || self == .water
+    }
     
     public var iconName: String {
         switch self {
@@ -178,6 +189,9 @@ public enum DetectedSceneType: String, CaseIterable {
         case .landscape: return "mountain.2.fill"
         case .sunset: return "sun.horizon.fill"
         case .architecture: return "building.columns.fill"
+        case .sky: return "cloud.sun.fill"
+        case .water: return "water.waves"
+        case .foliage: return "leaf.fill"
         case .night: return "moon.stars.fill"
         case .food: return "fork.knife"
         case .macro: return "camera.macro"
@@ -193,6 +207,9 @@ public enum DetectedSceneType: String, CaseIterable {
         case .landscape: return .kodakPortra400
         case .sunset: return .sunsetGlow
         case .architecture: return .cinemaTealOrange
+        case .sky: return .kodakPortra400
+        case .water: return .cinemaTealOrange
+        case .foliage: return .fujiPro400H
         case .night: return .monochromeNoir
         case .food: return .vintageWarm
         case .macro: return .fujiPro400H
@@ -214,6 +231,12 @@ public enum DetectedSceneType: String, CaseIterable {
             return AIColorParameters(warmthShift: 0.30, saturationBoost: 1.35, contrastCurve: 1.15, shadowLift: 0.06, highlightRoll: 0.88, filmGrain: 0.12, vignetteAmount: 0.35, colorGrade: .golden)
         case .architecture:
             return AIColorParameters(warmthShift: -0.05, saturationBoost: 1.08, contrastCurve: 1.20, shadowLift: 0.00, highlightRoll: 1.00, filmGrain: 0.05, vignetteAmount: 0.15, colorGrade: .tealOrange)
+        case .sky:
+            return AIColorParameters(warmthShift: -0.10, saturationBoost: 1.25, contrastCurve: 1.10, shadowLift: 0.01, highlightRoll: 0.98, filmGrain: 0.05, vignetteAmount: 0.20, colorGrade: .coolnatural)
+        case .water:
+            return AIColorParameters(warmthShift: -0.12, saturationBoost: 1.20, contrastCurve: 1.15, shadowLift: 0.02, highlightRoll: 0.95, filmGrain: 0.08, vignetteAmount: 0.22, colorGrade: .coolnatural)
+        case .foliage:
+            return AIColorParameters(warmthShift: 0.02, saturationBoost: 1.22, contrastCurve: 1.08, shadowLift: 0.04, highlightRoll: 0.94, filmGrain: 0.08, vignetteAmount: 0.18, colorGrade: .vibrant)
         case .night:
             return AIColorParameters(warmthShift: -0.15, saturationBoost: 0.80, contrastCurve: 1.35, shadowLift: 0.08, highlightRoll: 0.85, filmGrain: 0.35, vignetteAmount: 0.55, colorGrade: .moody)
         case .food:
@@ -234,6 +257,9 @@ public enum DetectedSceneType: String, CaseIterable {
         case .landscape: return "Phong cảnh (Landscape)"
         case .sunset: return "Hoàng hôn (Golden Hour)"
         case .architecture: return "Kiến trúc (Architecture)"
+        case .sky: return "Bầu trời / Mây (Sky)"
+        case .water: return "Mặt nước (Water)"
+        case .foliage: return "Cây cối / Lá (Foliage)"
         case .night: return "Ban đêm (Night Scene)"
         case .food: return "Ẩm thực (Food)"
         case .macro: return "Cận cảnh (Macro)"

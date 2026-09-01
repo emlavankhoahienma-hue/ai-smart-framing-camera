@@ -28,6 +28,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     
     // Trạng thái hoạt động
     public private(set) var isTrackingActive: Bool = false
+    public var activeSceneType: DetectedSceneType = .general
     private var currentZoom: Double = 1.0
     private var lastOpticalConfidence: Double = 1.0
     private var lastUpdateTime: CFTimeInterval = 0
@@ -136,6 +137,26 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
         lastUpdateTime = now
+        
+        // Dynamic EKF Weighting cho Bầu trời / Mây / Chân trời (Sky / Infinite Horizon)
+        // Ép trọng số quang học W_optical = 0.0, IMU = 1.0 vì bầu trời ở vô cực, thuần xoay góc
+        if activeSceneType.isSkyOrInfiniteHorizon {
+            if let motion = motionManager.deviceMotion, let worldVec = anchorWorldVector {
+                let q = motion.attitude.quaternion
+                let currentQuat = simd_quatd(ix: q.x, iy: q.y, iz: q.z, r: q.w)
+                let camRay = currentQuat.inverse.act(worldVec)
+                if camRay.z > 0.05 {
+                    let f = self.baseFocalLength * self.currentZoom
+                    let projX = 0.5 + (camRay.x / camRay.z) * f
+                    let projY = 0.5 - (camRay.y / camRay.z) * f
+                    self.stateX = min(0.98, max(0.02, projX))
+                    self.stateY = min(0.98, max(0.02, projY))
+                    let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                    self.onSpatialTargetUpdated?(targetPoint, 0.95, .locked)
+                    return
+                }
+            }
+        }
         
         if let visualPoint = point, confidence >= 0.28 {
             let obsX = Double(visualPoint.x)
