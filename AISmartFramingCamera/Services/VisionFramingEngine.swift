@@ -484,7 +484,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     var colorSim: Double = 1.0
                     if let refHist = self.referenceColorHistogram {
                         let candHist = self.extractColorHistogram(from: buffer, region: box)
-                        colorSim = self.compareColorHistograms(refHist, candHist)
+                        colorSim = Double(self.compareColorHistograms(refHist, candHist))
                     }
                     
                     // Kết hợp cả điều kiện feature print distance và tương đồng màu sắc tối thiểu 0.50
@@ -564,7 +564,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             var isVisualMatch = true
                             if let refHist = self.referenceColorHistogram {
                                 let currentHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
-                                let colorSim = self.compareColorHistograms(refHist, currentHist)
+                                let colorSim = Double(self.compareColorHistograms(refHist, currentHist))
                                 if colorSim < 0.40 {
                                     isVisualMatch = false
                                 }
