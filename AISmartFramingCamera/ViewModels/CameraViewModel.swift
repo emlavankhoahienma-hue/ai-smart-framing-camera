@@ -69,6 +69,8 @@ public final class CameraViewModel: ObservableObject {
         let col = t < 0.28 ? Color(red: 0.15, green: 0.45, blue: 0.95) : (t < 0.72 ? Color(red: 0.40, green: 0.90, blue: 0.60) : Color(red: 0.95, green: 0.45, blue: 0.20))
         return HistogramBarData(id: $0, height: 0.10, color: col)
     }
+    private var lastHistogramComputeTime: CFTimeInterval = 0
+    
     @Published public var isRecordingVideo: Bool = false
     @Published public var recordedVideoURL: URL? = nil
     @Published public var isShowingVideoPreview: Bool = false
