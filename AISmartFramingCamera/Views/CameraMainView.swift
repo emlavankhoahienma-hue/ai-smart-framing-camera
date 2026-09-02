@@ -170,11 +170,12 @@ struct TopCameraBar: View {
                             Image(systemName: "stop.circle")
                                 .font(.system(size: 14, weight: .bold))
                         } else {
-                            Image("iconbuttonAI")
-                                .renderingMode(.template)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 16, height: 16)
+                            CustomAppIconView(
+                                name: "iconbuttonAI",
+                                fallbackSF: "wand.and.stars",
+                                size: 16,
+                                color: .yellow
+                            )
                         }
                         
                         Text("AI")

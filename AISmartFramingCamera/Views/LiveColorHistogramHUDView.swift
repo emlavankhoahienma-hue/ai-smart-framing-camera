@@ -1,4 +1,4 @@
-﻿import SwiftUI
+import SwiftUI
 
 public struct LiveColorHistogramHUDView: View {
     @ObservedObject var viewModel: CameraViewModel
@@ -9,15 +9,19 @@ public struct LiveColorHistogramHUDView: View {
     
     public var body: some View {
         HStack(spacing: 12) {
-            // 1. Photo Save Format Selector (JPEG / DNG)
-            VStack(alignment: .leading, spacing: 1) {
+            // 1. Photo Save Format Selector (JPEG / HEIC / DNG)
+            VStack(alignment: .leading, spacing: 0.5) {
                 Text("JPEG")
-                    .font(.system(size: 9, weight: viewModel.selectedPhotoFormat == .jpeg ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedPhotoFormat == .jpeg ? .white : .white.opacity(0.35))
+                    .font(.system(size: 8, weight: viewModel.selectedPhotoFormat == .jpeg ? .heavy : .medium, design: .rounded))
+                    .foregroundColor(viewModel.selectedPhotoFormat == .jpeg ? .white : .white.opacity(0.3))
+                
+                Text("HEIC")
+                    .font(.system(size: 8, weight: viewModel.selectedPhotoFormat == .heic ? .heavy : .medium, design: .rounded))
+                    .foregroundColor(viewModel.selectedPhotoFormat == .heic ? .cyan : .white.opacity(0.3))
                 
                 Text("DNG")
-                    .font(.system(size: 9, weight: viewModel.selectedPhotoFormat == .dng ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedPhotoFormat == .dng ? .yellow : .white.opacity(0.35))
+                    .font(.system(size: 8, weight: viewModel.selectedPhotoFormat == .dng ? .heavy : .medium, design: .rounded))
+                    .foregroundColor(viewModel.selectedPhotoFormat == .dng ? .yellow : .white.opacity(0.3))
             }
             .contentShape(Rectangle())
             .onTapGesture {

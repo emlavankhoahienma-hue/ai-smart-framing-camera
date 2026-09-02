@@ -72,6 +72,36 @@ public struct CameraControlsView: View {
     }
 }
 
+// MARK: - Reliable Custom App Icon Component (Assets Catalog + Bundle Fallback + SF Symbols)
+public struct CustomAppIconView: View {
+    let name: String
+    let fallbackSF: String
+    let size: CGFloat
+    let color: Color
+    
+    public init(name: String, fallbackSF: String, size: CGFloat, color: Color = .white) {
+        self.name = name
+        self.fallbackSF = fallbackSF
+        self.size = size
+        self.color = color
+    }
+    
+    public var body: some View {
+        if let uiImage = UIImage(named: name) ?? UIImage(contentsOfFile: Bundle.main.path(forResource: name, ofType: "png") ?? "") {
+            Image(uiImage: uiImage)
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size, height: size)
+                .foregroundColor(color)
+        } else {
+            Image(systemName: fallbackSF)
+                .font(.system(size: size * 0.70, weight: .bold))
+                .foregroundColor(color)
+        }
+    }
+}
+
 // MARK: - Main Capture Button (Photo AI / Photo Manual / Video Recording)
 struct MainCaptureButton: View {
     @ObservedObject var viewModel: CameraViewModel
@@ -98,6 +128,7 @@ struct MainCaptureButton: View {
                                 .frame(width: 62, height: 62)
                         }
                     }
+                    .contentShape(Circle())
                 }
                 .buttonStyle(PlainButtonStyle())
             } else {
@@ -111,16 +142,21 @@ struct MainCaptureButton: View {
                         }) {
                             ZStack {
                                 Circle()
-                                    .stroke(Color.yellow, lineWidth: 2.5)
+                                    .fill(Color.black.opacity(0.60))
                                     .frame(width: 72, height: 72)
                                 
-                                Image("iconbuttonAI")
-                                    .renderingMode(.template)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 38, height: 38)
-                                    .foregroundColor(.yellow)
+                                Circle()
+                                    .stroke(Color.yellow, lineWidth: 2.8)
+                                    .frame(width: 72, height: 72)
+                                
+                                CustomAppIconView(
+                                    name: "iconbuttonAI",
+                                    fallbackSF: "wand.and.stars",
+                                    size: 38,
+                                    color: .yellow
+                                )
                             }
+                            .contentShape(Circle())
                         }
                         .buttonStyle(PlainButtonStyle())
                         
@@ -265,14 +301,15 @@ struct GalleryThumbnailButton: View {
                         .frame(width: 48, height: 48)
                         .clipShape(RoundedRectangle(cornerRadius: 11))
                 } else {
-                    Image("iconnutxemanhganday")
-                        .renderingMode(.template)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 28, height: 28)
-                        .foregroundColor(.white.opacity(0.85))
+                    CustomAppIconView(
+                        name: "iconnutxemanhganday",
+                        fallbackSF: "photo.on.rectangle.angled",
+                        size: 28,
+                        color: .white.opacity(0.88)
+                    )
                 }
             }
+            .contentShape(Rectangle())
         }
     }
 }
@@ -289,20 +326,21 @@ struct FilterToggleButton: View {
         }) {
             ZStack {
                 Circle()
-                    .fill(Color.black.opacity(0.45))
+                    .fill(Color.black.opacity(0.55))
                     .frame(width: 50, height: 50)
                 
                 Circle()
                     .stroke(viewModel.isAIFullColorEnabled ? Color.cyan : Color.white.opacity(0.35), lineWidth: 1.5)
                     .frame(width: 50, height: 50)
                 
-                Image("iconchonmau")
-                    .renderingMode(.template)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 28, height: 28)
-                    .foregroundColor(viewModel.isAIFullColorEnabled ? .cyan : .white)
+                CustomAppIconView(
+                    name: "iconchonmau",
+                    fallbackSF: "camera.filters",
+                    size: 28,
+                    color: viewModel.isAIFullColorEnabled ? .cyan : .white
+                )
             }
+            .contentShape(Circle())
         }
     }
 }

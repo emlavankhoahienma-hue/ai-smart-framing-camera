@@ -454,6 +454,7 @@ public struct SubjectDetectionResult {
 // MARK: - Photo Save Format
 public enum PhotoSaveFormat: String, CaseIterable, Identifiable {
     case jpeg = "JPEG"
+    case heic = "HEIC"
     case dng = "DNG"
     case heif = "HEIF"
     

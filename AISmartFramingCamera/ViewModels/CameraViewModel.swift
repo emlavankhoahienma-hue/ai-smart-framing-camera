@@ -359,9 +359,10 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut(duration: 0.2)) {
             switch selectedPhotoFormat {
-            case .jpeg: selectedPhotoFormat = .dng
+            case .jpeg: selectedPhotoFormat = .heic
+            case .heic: selectedPhotoFormat = .dng
             case .dng: selectedPhotoFormat = .jpeg
-            case .heif: selectedPhotoFormat = .jpeg
+            case .heif: selectedPhotoFormat = .heic
             }
         }
     }
@@ -1128,14 +1129,38 @@ public final class CameraViewModel: ObservableObject {
                     }
                 }
             } else {
-                // LƯU ẢNH TĨNH THƯỜNG
+                // LƯU ẢNH TĨNH THƯỜNG (HEIC / JPEG / DNG)
+                if self.selectedPhotoFormat == .heic {
+                    let ciImage = CIImage(cgImage: item.processedImage)
+                    let context = CIContext()
+                    let colorSpace = ciImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+                    if let heicData = context.heifRepresentation(of: ciImage, format: .RGBA8, colorSpace: colorSpace, options: [:]) {
+                        PHPhotoLibrary.shared().performChanges({
+                            let creationRequest = PHAssetCreationRequest.forAsset()
+                            creationRequest.addResource(with: .photo, data: heicData, options: nil)
+                        }) { success, error in
+                            DispatchQueue.main.async {
+                                if success {
+                                    CameraLogger.success("✅ Đã lưu ảnh HEIC vào Cuộn Camera thành công!", category: .photoKit)
+                                    self.haptics.triggerSuccess()
+                                    self.saveErrorMessage = nil
+                                } else {
+                                    CameraLogger.error("Lưu ảnh HEIC thất bại, thử lưu JPEG dự phòng", error: error, category: .photoKit)
+                                    self.saveFallbackStaticPhoto(item)
+                                }
+                            }
+                        }
+                        return
+                    }
+                }
+                
                 let image = UIImage(cgImage: item.processedImage)
                 PHPhotoLibrary.shared().performChanges({
                     PHAssetChangeRequest.creationRequestForAsset(from: image)
                 }) { success, error in
                     DispatchQueue.main.async {
                         if success {
-                            CameraLogger.success("✅ Đã lưu ảnh tĩnh vào Cuộn Camera thành công!", category: .photoKit)
+                            CameraLogger.success("✅ Đã lưu ảnh vào Cuộn Camera thành công!", category: .photoKit)
                             self.haptics.triggerSuccess()
                             self.saveErrorMessage = nil
                         } else {
