@@ -67,98 +67,174 @@ struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     
     var body: some View {
-        HStack(spacing: 14) {
-            // Flash Mode Toggle
-            Button(action: {
-                viewModel.toggleFlash()
-            }) {
-                Image(systemName: flashIconName)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(viewModel.activeFlashMode == .off ? .white.opacity(0.8) : .yellow)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color.black.opacity(0.45)))
-            }
-            
-            // Live Photo Toggle (Bật / Tắt Live Photo như Camera gốc của iOS)
-            Button(action: {
-                viewModel.toggleLivePhoto()
-            }) {
-                Image(systemName: viewModel.isLivePhotoEnabled ? "livephoto" : "livephoto.slash")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(viewModel.isLivePhotoEnabled ? .yellow : .white.opacity(0.8))
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color.black.opacity(0.45)))
-            }
-            
-            // AI Framing Session Button (Top bar shortcut)
-            Button(action: {
-                if viewModel.aiSessionState.isSessionActive {
-                    viewModel.cancelAISession()
-                } else {
-                    viewModel.startAISession()
+        if viewModel.captureMode == .video {
+            HStack(spacing: 12) {
+                // Flash / Torch Toggle
+                Button(action: {
+                    viewModel.toggleFlash()
+                }) {
+                    Image(systemName: flashIconName)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(viewModel.activeFlashMode == .off ? .white.opacity(0.8) : .yellow)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
                 }
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: viewModel.aiSessionState.isSessionActive ? "stop.circle" : "wand.and.stars")
-                        .font(.system(size: 14, weight: .bold))
+                
+                Spacer()
+                
+                // Video HUD: Thời gian quay (00:00:00) & Độ phân giải/FPS phần cứng
+                HStack(spacing: 8) {
+                    // Timer Capsule (00:00:00)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(viewModel.isRecordingVideo ? Color.red : Color.gray.opacity(0.8))
+                            .frame(width: 8, height: 8)
+                        
+                        Text(viewModel.videoRecordingTimeString)
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.65))
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(viewModel.isRecordingVideo ? Color.red.opacity(0.6) : Color.white.opacity(0.2), lineWidth: 1)
+                    )
                     
-                    Text("AI")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    // Hardware Resolution & FPS Badge (Chỉ đọc từ Cài đặt Camera iOS)
+                    HStack(spacing: 4) {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(viewModel.activeVideoResolutionString)
+                            .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                    }
+                    .foregroundColor(.yellow)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.65))
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(Color.yellow.opacity(0.4), lineWidth: 1)
+                    )
                 }
-                .foregroundColor(viewModel.aiSessionState.isSessionActive ? .red : .white.opacity(0.85))
-                .padding(.horizontal, 10)
-                .frame(height: 40)
-                .background(Capsule().fill(Color.black.opacity(0.45)))
+                
+                Spacer()
+                
+                // Settings Button
+                Button(action: {
+                    viewModel.isShowingSettings = true
+                }) {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
+                }
             }
-            
-            // Rule Selector Menu
-            Menu {
-                ForEach(CompositionRule.allCases) { rule in
-                    Button(action: {
-                        viewModel.selectRule(rule)
-                    }) {
-                        HStack {
-                            Image(systemName: rule.iconName)
-                            Text(rule.displayNameVietnamese)
-                            if viewModel.activeCompositionRule == rule {
-                                Image(systemName: "checkmark")
+            .padding(.horizontal, 16)
+        } else {
+            HStack(spacing: 14) {
+                // Flash Mode Toggle
+                Button(action: {
+                    viewModel.toggleFlash()
+                }) {
+                    Image(systemName: flashIconName)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(viewModel.activeFlashMode == .off ? .white.opacity(0.8) : .yellow)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
+                }
+                
+                // Live Photo Toggle (Bật / Tắt Live Photo như Camera gốc của iOS)
+                Button(action: {
+                    viewModel.toggleLivePhoto()
+                }) {
+                    Image(systemName: viewModel.isLivePhotoEnabled ? "livephoto" : "livephoto.slash")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(viewModel.isLivePhotoEnabled ? .yellow : .white.opacity(0.8))
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
+                }
+                
+                // AI Framing Session Button (Top bar shortcut with custom icon)
+                Button(action: {
+                    if viewModel.aiSessionState.isSessionActive {
+                        viewModel.cancelAISession()
+                    } else {
+                        viewModel.startAISession()
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        if viewModel.aiSessionState.isSessionActive {
+                            Image(systemName: "stop.circle")
+                                .font(.system(size: 14, weight: .bold))
+                        } else {
+                            Image("iconbuttonAI")
+                                .renderingMode(.template)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 16, height: 16)
+                        }
+                        
+                        Text("AI")
+                            .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    }
+                    .foregroundColor(viewModel.aiSessionState.isSessionActive ? .red : .yellow)
+                    .padding(.horizontal, 10)
+                    .frame(height: 40)
+                    .background(Capsule().fill(Color.black.opacity(0.45)))
+                }
+                
+                // Rule Selector Menu
+                Menu {
+                    ForEach(CompositionRule.allCases) { rule in
+                        Button(action: {
+                            viewModel.selectRule(rule)
+                        }) {
+                            HStack {
+                                Image(systemName: rule.iconName)
+                                Text(rule.displayNameVietnamese)
+                                if viewModel.activeCompositionRule == rule {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
+                } label: {
+                    Image(systemName: viewModel.activeCompositionRule.iconName)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
                 }
-            } label: {
-                Image(systemName: viewModel.activeCompositionRule.iconName)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.white)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color.black.opacity(0.45)))
+                
+                Spacer()
+                
+                // AR Spatial Mode Toggle
+                Button(action: {
+                    viewModel.toggleARMode()
+                }) {
+                    Image(systemName: viewModel.isARModeEnabled ? "arkit" : "viewfinder")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(viewModel.isARModeEnabled ? .cyan : .white)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
+                }
+                
+                // Settings Button
+                Button(action: {
+                    viewModel.isShowingSettings = true
+                }) {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.black.opacity(0.45)))
+                }
             }
-            
-            Spacer()
-            
-            // AR Spatial Mode Toggle
-            Button(action: {
-                viewModel.toggleARMode()
-            }) {
-                Image(systemName: viewModel.isARModeEnabled ? "arkit" : "viewfinder")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(viewModel.isARModeEnabled ? .cyan : .white)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color.black.opacity(0.45)))
-            }
-            
-            // Settings Button
-            Button(action: {
-                viewModel.isShowingSettings = true
-            }) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.white)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(Color.black.opacity(0.45)))
-            }
+            .padding(.horizontal, 16)
         }
-        .padding(.horizontal, 16)
     }
     
     private var flashIconName: String {

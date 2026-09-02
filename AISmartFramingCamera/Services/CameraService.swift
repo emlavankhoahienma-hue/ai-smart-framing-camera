@@ -58,6 +58,9 @@ public final class CameraService: NSObject {
     public var flashMode: AVCaptureDevice.FlashMode = .auto
     public var isLivePhotoMode = false
     
+    // Callback thông báo độ phân giải và FPS video phần cứng
+    public var onActiveVideoFormatChanged: ((String) -> Void)?
+    
     // Live Photo capture coordination state
     private var isCapturingLivePhotoRequest = false
     private var currentPhotoCaptured: (cgImage: CGImage, rawData: Data?, iso: Float, shutter: Double)?
@@ -452,7 +455,43 @@ public final class CameraService: NSObject {
                 }
             }
             self.captureSession.commitConfiguration()
-            CameraLogger.info("Đã chuyển chế độ: \(mode == .video ? "VIDEO" : "ẢNH") | LivePhotoSupported: \(self.photoOutput.isLivePhotoCaptureSupported)", category: .capture)
+            let formatStr = self.getActiveVideoResolutionAndFPS()
+            DispatchQueue.main.async {
+                self.onActiveVideoFormatChanged?(formatStr)
+            }
+            CameraLogger.info("Đã chuyển chế độ: \(mode == .video ? "VIDEO" : "ẢNH") (\(formatStr)) | LivePhotoSupported: \(self.photoOutput.isLivePhotoCaptureSupported)", category: .capture)
+        }
+    }
+    
+    // MARK: - Video Hardware Resolution & Frame Rate Query (Read-Only từ Cài đặt Camera iOS)
+    public func getActiveVideoResolutionAndFPS() -> String {
+        guard let camera = self.activeCamera else { return "1080P 30FPS" }
+        let format = camera.activeFormat
+        let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        let width = Int(dims.width)
+        let height = Int(dims.height)
+        
+        var fps = 30
+        let minDuration = camera.activeVideoMinFrameDuration
+        if minDuration.value > 0 {
+            fps = Int(round(Double(minDuration.timescale) / Double(minDuration.value)))
+        }
+        
+        let maxDim = max(width, height)
+        let minDim = min(width, height)
+        
+        if maxDim >= 7680 || minDim >= 4320 {
+            return "8K \(fps)FPS"
+        } else if maxDim >= 5760 || minDim >= 3240 {
+            return "6K \(fps)FPS"
+        } else if maxDim >= 3840 || minDim >= 2160 {
+            return "4K \(fps)FPS"
+        } else if maxDim >= 1920 || minDim >= 1080 {
+            return "1080P \(fps)FPS"
+        } else if maxDim >= 1280 || minDim >= 720 {
+            return "720P \(fps)FPS"
+        } else {
+            return "\(minDim)P \(fps)FPS"
         }
     }
     

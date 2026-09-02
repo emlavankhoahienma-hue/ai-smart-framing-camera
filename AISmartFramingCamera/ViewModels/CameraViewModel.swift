@@ -69,11 +69,16 @@ public final class CameraViewModel: ObservableObject {
         let col = t < 0.28 ? Color(red: 0.15, green: 0.45, blue: 0.95) : (t < 0.72 ? Color(red: 0.40, green: 0.90, blue: 0.60) : Color(red: 0.95, green: 0.45, blue: 0.20))
         return HistogramBarData(id: $0, height: 0.10, color: col)
     }
-    private var lastHistogramComputeTime: CFTimeInterval = 0
-    
     @Published public var isRecordingVideo: Bool = false
     @Published public var recordedVideoURL: URL? = nil
     @Published public var isShowingVideoPreview: Bool = false
+    
+    // Video Duration & Resolution Stats (Mặc định 00:00:00, Đọc từ cài đặt hệ thống Camera iOS)
+    @Published public var videoRecordingTimeString: String = "00:00:00"
+    @Published public var videoRecordedDurationSeconds: TimeInterval = 0
+    @Published public var activeVideoResolutionString: String = "1080P 30FPS"
+    private var videoRecordingTimer: Timer? = nil
+    private var videoRecordingStartTime: Date? = nil
     
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
@@ -300,12 +305,19 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self, success else { return }
             self.cameraService.updateCaptureMode(self.captureMode)
             self.cameraService.setLivePhotoCaptureEnabled(self.isLivePhotoEnabled)
+            self.activeVideoResolutionString = self.cameraService.getActiveVideoResolutionAndFPS()
             self.cameraService.start()
             self.isCameraReady = true
         }
     }
     
     private func setupCallbacks() {
+        cameraService.onActiveVideoFormatChanged = { [weak self] format in
+            DispatchQueue.main.async {
+                self?.activeVideoResolutionString = format
+            }
+        }
+        
         visionEngine.onDetectionCompleted = { [weak self] detection in
             guard let self = self else { return }
             self.handleVisionDetection(detection)
@@ -931,8 +943,27 @@ public final class CameraViewModel: ObservableObject {
             haptics.triggerShutterClick()
             cameraService.stopRecordingVideo()
             isRecordingVideo = false
+            videoRecordingTimer?.invalidate()
+            videoRecordingTimer = nil
+            videoRecordingStartTime = nil
+            videoRecordedDurationSeconds = 0
+            videoRecordingTimeString = "00:00:00"
         } else {
             haptics.triggerShutterClick()
+            videoRecordingStartTime = Date()
+            videoRecordedDurationSeconds = 0
+            videoRecordingTimeString = "00:00:00"
+            videoRecordingTimer?.invalidate()
+            videoRecordingTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+                guard let self = self, let start = self.videoRecordingStartTime, self.isRecordingVideo else { return }
+                let elapsed = Date().timeIntervalSince(start)
+                self.videoRecordedDurationSeconds = elapsed
+                let totalSec = Int(elapsed)
+                let hours = totalSec / 3600
+                let minutes = (totalSec % 3600) / 60
+                let seconds = totalSec % 60
+                self.videoRecordingTimeString = String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+            }
             cameraService.startRecordingVideo()
             isRecordingVideo = true
         }

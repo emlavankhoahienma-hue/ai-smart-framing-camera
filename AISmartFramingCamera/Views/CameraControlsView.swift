@@ -114,14 +114,12 @@ struct MainCaptureButton: View {
                                     .stroke(Color.yellow, lineWidth: 2.5)
                                     .frame(width: 72, height: 72)
                                 
-                                VStack(spacing: 2) {
-                                    Image(systemName: "wand.and.stars")
-                                        .font(.system(size: 20, weight: .bold))
-                                        .foregroundColor(.yellow)
-                                    Text("AI")
-                                        .font(.system(size: 10, weight: .heavy, design: .rounded))
-                                        .foregroundColor(.yellow)
-                                }
+                                Image("iconbuttonAI")
+                                    .renderingMode(.template)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 38, height: 38)
+                                    .foregroundColor(.yellow)
                             }
                         }
                         .buttonStyle(PlainButtonStyle())
@@ -267,9 +265,12 @@ struct GalleryThumbnailButton: View {
                         .frame(width: 48, height: 48)
                         .clipShape(RoundedRectangle(cornerRadius: 11))
                 } else {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 20))
-                        .foregroundColor(.white.opacity(0.6))
+                    Image("iconnutxemanhganday")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 28, height: 28)
+                        .foregroundColor(.white.opacity(0.85))
                 }
             }
         }
@@ -295,8 +296,11 @@ struct FilterToggleButton: View {
                     .stroke(viewModel.isAIFullColorEnabled ? Color.cyan : Color.white.opacity(0.35), lineWidth: 1.5)
                     .frame(width: 50, height: 50)
                 
-                Image(systemName: "camera.filters")
-                    .font(.system(size: 20, weight: .medium))
+                Image("iconchonmau")
+                    .renderingMode(.template)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
                     .foregroundColor(viewModel.isAIFullColorEnabled ? .cyan : .white)
             }
         }
