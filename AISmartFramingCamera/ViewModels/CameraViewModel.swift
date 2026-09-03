@@ -100,10 +100,7 @@ public final class CameraViewModel: ObservableObject {
     private var pendingTargetZoomForReveal: CGFloat = 1.0
     private var isZoomRampPhase: Bool = false
     
-    // MARK: - AE/AF Lock & Tap Focus (Chuẩn Camera iPhone)
-    @Published public var isAEAFManualLocked: Bool = false
-    public var isAEAFLocked: Bool { isAEAFManualLocked }
-    @Published public var aeafLockPoint: CGPoint? = nil
+    // MARK: - Sun Exposure Slider & Horizon Leveler
     @Published public var isShowingSunSlider: Bool = false
     @Published public var activeSunExposureBias: Float = 0.0
     
@@ -931,10 +928,13 @@ public final class CameraViewModel: ObservableObject {
     }
     
     public func lockAEAF(at normalizedPoint: CGPoint, devicePoint: CGPoint) {
-        haptics.triggerSelectionChange()
+        haptics.triggerSuccess()
         aeafLockPoint = normalizedPoint
+        activeFocusSquarePoint = normalizedPoint
         isAEAFLocked = true
+        isShowingSunSlider = true
         cameraService.lockFocusAndExposure(at: devicePoint)
+        CameraLogger.info("🔒 ĐÃ KHÓA AE/AF tại (\(String(format: "%.2f", normalizedPoint.x)), \(String(format: "%.2f", normalizedPoint.y)))", category: .capture)
     }
     
     public func unlockAEAF() {
@@ -942,7 +942,13 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
         isAEAFLocked = false
         aeafLockPoint = nil
+        isShowingSunSlider = false
+        activeSunExposureBias = 0.0
         cameraService.unlockFocusAndExposure()
+        withAnimation(.easeOut(duration: 0.25)) {
+            self.activeFocusSquarePoint = nil
+        }
+        CameraLogger.info("🔓 ĐÃ MỞ KHÓA AE/AF", category: .capture)
     }
     
     public func toggleFlash() {
@@ -1120,32 +1126,8 @@ public final class CameraViewModel: ObservableObject {
     }
     
     public func userDidLongPressToLockAEAF(at normalizedPoint: CGPoint) {
-        haptics.triggerSuccess()
-        
-        isAEAFManualLocked = true
-        aeafLockPoint = normalizedPoint
-        activeFocusSquarePoint = normalizedPoint
-        isShowingSunSlider = true
-        
         let devPoint = CameraService.convertUIPointToDevicePoint(normalizedPoint)
-        cameraService.lockFocusAndExposure(at: devPoint)
-        CameraLogger.info("🔒 ĐÃ KHÓA AE/AF tại (\(String(format: "%.2f", normalizedPoint.x)), \(String(format: "%.2f", normalizedPoint.y)))", category: .capture)
-    }
-    
-    public func unlockAEAF() {
-        guard isAEAFManualLocked else { return }
-        haptics.triggerSelectionChange()
-        
-        isAEAFManualLocked = false
-        aeafLockPoint = nil
-        isShowingSunSlider = false
-        activeSunExposureBias = 0.0
-        
-        cameraService.unlockFocusAndExposure()
-        withAnimation(.easeOut(duration: 0.25)) {
-            self.activeFocusSquarePoint = nil
-        }
-        CameraLogger.info("🔓 ĐÃ MỞ KHÓA AE/AF", category: .capture)
+        lockAEAF(at: normalizedPoint, devicePoint: devPoint)
     }
     
     public func adjustSunExposureBias(delta: Float) {
@@ -1158,10 +1140,10 @@ public final class CameraViewModel: ObservableObject {
     private func startHorizonLeveler() {
         guard horizonMotionManager.isDeviceMotionAvailable else { return }
         horizonMotionManager.deviceMotionUpdateInterval = 1.0 / 30.0
-        horizonMotionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] motion, error in
+        horizonMotionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: OperationQueue.main) { [weak self] (motion: CMDeviceMotion?, error: Error?) in
             guard let self = self, let motion = motion, self.isHorizonLevelerEnabled else { return }
-            let gx = motion.gravity.x
-            let gy = motion.gravity.y
+            let gx = Double(motion.gravity.x)
+            let gy = Double(motion.gravity.y)
             let roll = atan2(gx, -gy) * 180.0 / .pi
             self.currentRollDegrees = roll
             let level = abs(roll) <= 0.8
