@@ -4,6 +4,7 @@ import AVFoundation
 import CoreImage
 import Photos
 import QuartzCore
+import CoreMotion
 
 @MainActor
 public final class CameraViewModel: ObservableObject {
@@ -1098,7 +1099,7 @@ public final class CameraViewModel: ObservableObject {
         focusSquareHideTask = Task {
             try? await Task.sleep(nanoseconds: 2_600_000_000)
             await MainActor.run {
-                if !self.isAEAFManualLocked && self.activeFocusSquarePoint == point {
+                if !self.isAEAFLocked && self.activeFocusSquarePoint == point {
                     withAnimation(.easeIn(duration: 0.3)) {
                         self.activeFocusSquarePoint = nil
                         self.isShowingSunSlider = false
@@ -1110,7 +1111,7 @@ public final class CameraViewModel: ObservableObject {
     
     // MARK: - Chạm Lấy Nét & Khóa AE/AF (iPhone Camera Standard)
     public func userDidTapToFocus(at normalizedPoint: CGPoint) {
-        if isAEAFManualLocked {
+        if isAEAFLocked {
             unlockAEAF()
             return
         }
