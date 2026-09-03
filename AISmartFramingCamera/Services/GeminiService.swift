@@ -636,8 +636,10 @@ public final class GeminiService {
     // MARK: - Response Parsing
     
     private static func parseGeminiResponse(_ json: [String: Any], modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
-        let targetX = parseCGFloat(json["target_x"], defaultVal: 0.618)
-        let targetY = parseCGFloat(json["target_y"], defaultVal: 0.382)
+        // Default là TÂM MÀN HÌNH (vị trí trung lập) — trước đây 0.618/0.382 khiến pin
+        // lệch xa chủ thể thật khi model không trả target_x/target_y
+        let targetX = parseCGFloat(json["target_x"], defaultVal: 0.5)
+        let targetY = parseCGFloat(json["target_y"], defaultVal: 0.5)
         let suggestedZoom = parseCGFloat(json["suggested_zoom"], defaultVal: 1.0)
         let explanation = (json["explanation"] as? String) ?? "AI phân tích bố cục hoàn tất"
         

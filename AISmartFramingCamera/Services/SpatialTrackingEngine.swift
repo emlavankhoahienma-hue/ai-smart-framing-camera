@@ -35,6 +35,15 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var lastOpticalConfidence: Double = 1.0
     private var lastUpdateTime: CFTimeInterval = 0
     
+    // Đồng bộ state giữa luồng optical (main) và gyro (motionQueue) — chống data race
+    private let stateLock = NSLock()
+    private var lastOpticalAcceptTime: CFTimeInterval = 0
+    private var outlierStreak: Int = 0
+    
+    // Giản luật chống nhảy đột biến (ViewModel nạp theo trackingSensitivity)
+    public var maxObservationJump: CGFloat = 0.12
+    public var opticalAcceptThreshold: Double = 0.20
+    
     // MARK: - Bộ Lọc 1-Euro Thích Nghi (Adaptive 1-Euro Filter)
     // Tự động chuyển đổi: Khi đứng yên -> Tần số cắt thấp (triệt rung tay); Khi lia máy -> Tần số cắt cao (Zero Latency)
     private var filterXPrev: Double = 0.5
@@ -52,6 +61,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private let sensitivityFactor: Double = 0.88
     
     public var currentEstimatedScreenPoint: CGPoint {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         return CGPoint(x: stateX, y: stateY)
     }
     
@@ -82,6 +93,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         self.filterInitialized = true
         
         self.lastOpticalConfidence = 1.0
+        self.lastOpticalAcceptTime = CACurrentMediaTime()
+        self.outlierStreak = 0
         self.lastUpdateTime = CACurrentMediaTime()
         self.referenceAttitude = nil
         self.isTrackingActive = true
@@ -136,32 +149,41 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let dx = rateY * dt * scaleX
             let dy = -rateX * dt * scaleY
             
-            // Khi quang học tạm thời mất nét / lia máy nhanh (optical confidence <= 0.40):
-            // Cập nhật vị trí mỏ neo không gian theo chuyển động quán tính thực tế (Dead-Reckoning)
-            if self.lastOpticalConfidence <= 0.40 {
-                self.deadReckoningFrameCount += 1
-                self.stateX = min(0.98, max(0.02, self.stateX + dx))
-                self.stateY = min(0.98, max(0.02, self.stateY + dy))
-                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                
-                // Giới hạn sai số tích lũy: nếu quá 45 frame (~0.75-1.5s) chạy dead-reckoning không có optical confirmation, suy giảm dần confidence
-                let decayedConf: Double
-                let quality: TrackingQuality
-                if self.deadReckoningFrameCount > 90 {
-                    decayedConf = 0.15
-                    quality = .lost
-                } else if self.deadReckoningFrameCount > 45 {
-                    let decayFactor = pow(0.96, Double(self.deadReckoningFrameCount - 45))
-                    decayedConf = max(0.20, 0.40 * decayFactor)
-                    quality = .predicting
-                } else {
-                    decayedConf = max(0.35, self.lastOpticalConfidence)
-                    quality = .predicting
-                }
-                
-                DispatchQueue.main.async {
-                    self.onSpatialTargetUpdated?(targetPoint, decayedConf, quality)
-                }
+            // CHỈ dead-reckoning khi quang học CHƯA CẬP NHẬT trong 0.12s gần nhất (time-based gate).
+            // Tránh tính GẤP ĐÔI góc xoay khi optical vẫn đang nhận điểm ở vùng confidence 0.2-0.4
+            // (trước đây: ngưỡng dead-reckoning <= 0.40 chồng lên ngưỡng nhận optical >= 0.20)
+            self.stateLock.lock()
+            let timeSinceOptical = self.lastOpticalAcceptTime > 0 ? (now - self.lastOpticalAcceptTime) : 1.0
+            self.stateLock.unlock()
+            guard timeSinceOptical > 0.12 else { return }
+            
+            self.stateLock.lock()
+            self.deadReckoningFrameCount += 1
+            self.stateX = min(0.98, max(0.02, self.stateX + dx))
+            self.stateY = min(0.98, max(0.02, self.stateY + dy))
+            let count = self.deadReckoningFrameCount
+            let lastConf = self.lastOpticalConfidence
+            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+            self.stateLock.unlock()
+            
+            // Giới hạn sai số tích lũy theo thời gian chạy dead-reckoning không có optical confirmation
+            let decayedConf: Double
+            let quality: TrackingQuality
+            if count > 90 {
+                decayedConf = 0.15
+                quality = .lost
+            } else if count > 30 {
+                let decayFactor = pow(0.96, Double(count - 30))
+                decayedConf = max(0.20, 0.40 * decayFactor)
+                quality = .predicting
+            } else {
+                // 0.5s đầu: đang trong cửa sổ re-acquisition (Vision engine đang tìm lại target)
+                decayedConf = max(0.35, lastConf)
+                quality = .reacquiring
+            }
+            
+            DispatchQueue.main.async {
+                self.onSpatialTargetUpdated?(targetPoint, decayedConf, quality)
             }
         }
     }
@@ -169,7 +191,6 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     // MARK: - Dung hợp Dữ liệu Quang Học (Vision Optical Observation Update)
     public func updateWithOpticalDetection(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer? = nil) {
         guard isTrackingActive else { return }
-        self.lastOpticalConfidence = confidence
         
         let now = CACurrentMediaTime()
         let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
@@ -187,11 +208,33 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             }
         }
         
-        let effectiveThreshold = isLowTextureAnchor ? 0.60 : 0.20
+        // Ngưỡng nhận = max(threshold theo sensitivity, 0.60 nếu anchor low-texture)
+        let effectiveThreshold = max(self.opticalAcceptThreshold, self.isLowTextureAnchor ? 0.60 : 0.0)
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
+            self.stateLock.lock()
+            self.lastOpticalConfidence = effectiveConfidence
+            self.lastOpticalAcceptTime = now
             self.deadReckoningFrameCount = 0
-            let rawObsX = Double(visualPoint.x)
-            let rawObsY = Double(visualPoint.y)
+            
+            // CHỐNG OBSERVATION ĐỘT BIẾN (tracker trôi / re-ID sai / homography lỗi):
+            // kẹp trong bán kính maxObservationJump; nếu lệch liên tục 6 frame -> coi là
+            // re-acquisition thật (target thực sự ở đó) -> reset 1-Euro và snap
+            var rawObsX = Double(visualPoint.x)
+            var rawObsY = Double(visualPoint.y)
+            let jump = hypot(rawObsX - self.stateX, rawObsY - self.stateY)
+            if jump > Double(self.maxObservationJump) {
+                self.outlierStreak += 1
+                if self.outlierStreak >= 6 {
+                    self.outlierStreak = 0
+                    self.filterInitialized = false
+                } else {
+                    let k = Double(self.maxObservationJump) / jump
+                    rawObsX = self.stateX + (rawObsX - self.stateX) * k
+                    rawObsY = self.stateY + (rawObsY - self.stateY) * k
+                }
+            } else {
+                self.outlierStreak = 0
+            }
             
             // Bộ lọc 1-Euro thích nghi:
             // - Khi giữ máy đứng yên: tự động hạ tần số cắt -> triệt tiêu toàn bộ rung tay vi mô
@@ -199,18 +242,24 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let (smoothX, smoothY) = applyOneEuroFilter(obsX: rawObsX, obsY: rawObsY, timestamp: now, dt: dt)
             self.stateX = min(0.98, max(0.02, smoothX))
             self.stateY = min(0.98, max(0.02, smoothY))
+            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+            self.stateLock.unlock()
             
             if effectiveConfidence > 0.65, let buffer = pixelBuffer {
-                VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: CGPoint(x: self.stateX, y: self.stateY))
+                VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: targetPoint)
             }
             
-            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
             self.onSpatialTargetUpdated?(targetPoint, effectiveConfidence, .locked)
         } else {
+            self.stateLock.lock()
+            self.lastOpticalConfidence = confidence
+            self.stateLock.unlock()
+            
             // Khi quang học tạm thời mất nét:
             if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
                 let voX = Double(voPoint.x)
                 let voY = Double(voPoint.y)
+                self.stateLock.lock()
                 let voDist = hypot(voX - self.stateX, voY - self.stateY)
                 // Chỉ nhận khi độ dịch chuyển hợp lý (< 0.12 màn hình) và hòa trộn mượt 0.30 để tránh teleport do homography lỗi
                 if voDist < 0.12 {
@@ -220,7 +269,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                     self.filterXPrev = self.stateX
                     self.filterYPrev = self.stateY
                     let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                    self.stateLock.unlock()
                     self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
+                } else {
+                    self.stateLock.unlock()
                 }
             }
         }

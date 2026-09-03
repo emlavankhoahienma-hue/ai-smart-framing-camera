@@ -236,7 +236,10 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Advanced Predictive Tracking State Machine
     @Published public var trackingQuality: TrackingQuality = .locked
     @Published public var trackingSensitivity: TrackingSensitivityPreset = .medium {
-        didSet { UserDefaults.standard.set(trackingSensitivity.rawValue, forKey: "trackingSensitivity") }
+        didSet {
+            UserDefaults.standard.set(trackingSensitivity.rawValue, forKey: "trackingSensitivity")
+            applyTrackingSensitivityToEngines()
+        }
     }
     
     public var confidenceAcceptThreshold: Double {
@@ -325,6 +328,9 @@ public final class CameraViewModel: ObservableObject {
            let flash = AVCaptureDevice.FlashMode(rawValue: flashRaw) {
             self.activeFlashMode = flash
         }
+        
+        // didSet không fire khi gán trong init -> gọi trực tiếp để engine nhận đúng ngưỡng
+        applyTrackingSensitivityToEngines()
         
         setupCallbacks()
         setupMotionCallbacks()
@@ -420,9 +426,13 @@ public final class CameraViewModel: ObservableObject {
         SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
             guard let self = self, !self.isStreetTrackingModeEnabled else { return }
             self.lastVisualConfidence = confidence
+            // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
             self.currentTargetPoint = point
             self.trackingQuality = quality
-            self.evaluateAlignment(at: point)
+            // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
+            if case .targetPlaced = self.aiSessionState {
+                self.evaluateAlignment(at: point)
+            }
         }
         
         // Động cơ Tracking Không Gian Chuyên Dụng Đi Đường: Chế độ Đi Đường
@@ -431,8 +441,19 @@ public final class CameraViewModel: ObservableObject {
             self.lastVisualConfidence = confidence
             self.currentTargetPoint = point
             self.trackingQuality = quality
-            self.evaluateAlignment(at: point)
+            if case .targetPlaced = self.aiSessionState {
+                self.evaluateAlignment(at: point)
+            }
         }
+    }
+    
+    // Nạp thông số chống nhảy đột biến & ngưỡng nhận confidence của ViewModel (theo trackingSensitivity)
+    // xuống 2 engine spatial — trước đây các tham số này là dead code không được dùng
+    private func applyTrackingSensitivityToEngines() {
+        SpatialTrackingEngine.shared.maxObservationJump = maxJumpPerFrame
+        SpatialTrackingEngine.shared.opticalAcceptThreshold = confidenceAcceptThreshold
+        StreetSpatialTrackingEngine.shared.maxObservationJump = maxJumpPerFrame
+        StreetSpatialTrackingEngine.shared.opticalAcceptThreshold = confidenceAcceptThreshold
     }
     
     // MARK: - AI Session Control (One-Shot Trigger)
@@ -705,10 +726,15 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
     
     public func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect? = nil) {
-        initialTargetPoint = target
-        currentTargetPoint = target
-        lastTrackedVisualPoint = target
-        gyroAnchorPoint = target
+        // PIN TẠI TÂM CHỦ THỂ THẬT (không phải điểm rule) — khớp với vị trí khung tracking
+        // VNTrackObjectRequest bám, tránh vòng vàng nhảy trên frame đầu của session
+        let sCenter: CGPoint? = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) }
+        let pinPoint = sCenter ?? target
+        
+        initialTargetPoint = pinPoint
+        currentTargetPoint = pinPoint
+        lastTrackedVisualPoint = pinPoint
+        gyroAnchorPoint = pinPoint
         lastVisualConfidence = 1.0
         lastVisualUpdateTime = CACurrentMediaTime()
         consecutiveLowConfidenceFrames = 0
@@ -716,18 +742,20 @@ public final class CameraViewModel: ObservableObject {
         trackingQuality = .locked
         hasExecutedAutoZoomForSession = false
         
-        let dx = target.x - 0.5
-        let dy = target.y - 0.5
+        let dx = pinPoint.x - 0.5
+        let dy = pinPoint.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
         
         // Đồng bộ phân loại cảnh quan cho Dynamic EKF & Deformable Nature Tracking
         visionEngine.currentSceneType = self.detectedScene
+        // Thông báo cho Vision engine: anchor low-texture (vật trắng/đơn sắc) -> siết ngưỡng re-ID
+        visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
         if isStreetTrackingModeEnabled {
             StreetSpatialTrackingEngine.shared.activeSceneType = self.detectedScene
-            StreetSpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
+            StreetSpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
         } else {
             SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
-            SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
+            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
         }
         
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
@@ -776,7 +804,14 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
     
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer) {
-        guard case .targetPlaced = aiSessionState else { return }
+        // Tiếp nhận cập nhật cả trong alignmentPerfect (zoom reveal) để vòng vàng bám vật thể
+        // xuyên suốt quá trình zoom — tránh nhảy vị trí khi zoom hoàn tất
+        switch aiSessionState {
+        case .targetPlaced, .alignmentPerfect:
+            break
+        default:
+            return
+        }
         self.lastVisualConfidence = confidence
         
         if shouldCheckTextureOnNextFrame, let target = currentTargetPoint ?? initialTargetPoint {
@@ -913,6 +948,9 @@ public final class CameraViewModel: ObservableObject {
         arSessionService.clearTarget()
         motionService.stopTracking()
         visionEngine.stopTrackingObject()
+        // Dừng hẳn engine spatial — trước đây 60Hz gyro vẫn chạy nền sau khi chụp
+        SpatialTrackingEngine.shared.stopTracking()
+        StreetSpatialTrackingEngine.shared.stopTracking()
         haptics.triggerShutterClick()
         
         withAnimation(.easeInOut(duration: 0.05)) { activeFlashMode2 = true }

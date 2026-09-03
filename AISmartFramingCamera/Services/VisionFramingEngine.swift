@@ -45,6 +45,16 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var kltTrackedPoints: [CGPoint] = []
     private var kltPreviousBuffer: CVPixelBuffer? = nil
     private var kltTargetBox: CGRect = .zero
+
+    // Xác minh danh tính vật thể liên tuyến (chống tracker trôi sang vật thể khác)
+    private var lastVerifiedUIPoint: CGPoint? = nil
+    private var identitySuspicionFrames: Int = 0
+    private var histogramCheckCounter: Int = 0
+    private var featurePrintCheckCounter: Int = 0
+    private var stableLockFrames: Int = 0
+    private var anchorBoxSize: CGSize = CGSize(width: 0.14, height: 0.14)
+    private var lastReIdAttemptTime: CFTimeInterval = 0
+    public var isLowTextureAnchor: Bool = false
     
     // Vision Detection Requests
     private var faceDetectionRequest: VNDetectFaceRectanglesRequest!
@@ -85,12 +95,15 @@ public final class VisionFramingEngine: @unchecked Sendable {
     /// Khởi động tracking bám dính vào vùng cảnh vật/vật thể/chữ tại toạ độ mục tiêu
     public func startTrackingObject(at normalizedPoint: CGPoint, size: CGSize = CGSize(width: 0.12, height: 0.12)) {
         // Convert UI coordinate (top-left origin) to Vision coordinate (bottom-left origin)
-        let visionY = 1.0 - normalizedPoint.y - (size.height / 2.0)
-        let visionX = normalizedPoint.x - (size.width / 2.0)
+        // Kẹp TÂM box trong frame (thay vì kẹp origin) để box lớn gần mép không bị thò ra ngoài
+        let halfW = size.width / 2.0
+        let halfH = size.height / 2.0
+        let centerX = min(1.0 - halfW - 0.005, max(0.005, normalizedPoint.x))
+        let centerYVision = min(1.0 - halfH - 0.005, max(0.005, 1.0 - normalizedPoint.y))
         
         let clampedRect = CGRect(
-            x: max(0.01, min(0.80, visionX)),
-            y: max(0.01, min(0.80, visionY)),
+            x: centerX - halfW,
+            y: centerYVision - halfH,
             width: size.width,
             height: size.height
         )
@@ -110,6 +123,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.kltTargetBox = clampedRect
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
+        // Reset toàn bộ trạng thái xác minh danh tính & re-acquisition
+        self.lastVerifiedUIPoint = normalizedPoint
+        self.identitySuspicionFrames = 0
+        self.histogramCheckCounter = 0
+        self.featurePrintCheckCounter = 0
+        self.stableLockFrames = 0
+        self.anchorBoxSize = size
+        self.lastReIdAttemptTime = 0
         self.isTrackingTarget = true
         CameraLogger.info("🎯 [Vision] Khởi tạo VNTrackObjectRequest duy nhất tại: (\(String(format: "%.3f", normalizedPoint.x)), \(String(format: "%.3f", normalizedPoint.y))), size: \(size)", category: .tracking)
     }
@@ -125,6 +146,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.kltPreviousBuffer = nil
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
+        self.lastVerifiedUIPoint = nil
+        self.identitySuspicionFrames = 0
+        self.histogramCheckCounter = 0
+        self.featurePrintCheckCounter = 0
+        self.stableLockFrames = 0
+        self.lastReIdAttemptTime = 0
         CameraLogger.info("🎯 [Vision] Đã dừng và giải phóng VNTrackObjectRequest", category: .tracking)
     }
     
@@ -440,73 +467,99 @@ public final class VisionFramingEngine: @unchecked Sendable {
         return nil
     }
     
-    private func attemptNeuralReIdentification(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, fallbackPoint: CGPoint?) -> (CGPoint, Double)? {
-        guard let refPrint = self.referenceFeaturePrint, let fb = fallbackPoint else { return nil }
+    /// Tái chiếm target sau khi mất dấu — chỉ nhận khi ứng viên TỐT HƠN RÕ RỆT so với các ứng viên còn lại
+    /// (margin chống mơ hồ) để tránh bám nhầm sang vật thể khác nằm gần đó (đặc biệt vật thể trắng/nền trắng).
+    /// - searchCenter: tâm tìm kiếm (trung điểm giữa vị trí quang học cuối đã xác nhận và ước lượng không gian)
+    /// - anchorSize: kích thước box gốc lúc pin (không dùng box cố định)
+    private func attemptNeuralReIdentification(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, searchCenter: CGPoint, anchorSize: CGSize) -> (CGPoint, Double, CGRect)? {
+        guard let refPrint = self.referenceFeaturePrint else { return nil }
         
-        var candidateBoxes: [CGRect] = []
-        let boxSize: CGFloat = 0.14
+        let boxW = max(0.10, min(0.45, anchorSize.width))
+        let boxH = max(0.10, min(0.45, anchorSize.height))
+        // Vật thể low-texture (trắng/đơn sắc): feature print kém phân biệt hơn -> siết ngưỡng chặt hơn
+        let minColorSim: Double = self.isLowTextureAnchor ? 0.80 : 0.70
+        let maxDist: Float = self.isLowTextureAnchor ? 0.25 : 0.28
         
-        // CHỈ tìm kiếm trong phạm vi hẹp cục bộ quanh vị trí vật thể thực tế (bán kính <= 0.06), TUYỆT ĐỐI KHÔNG quét toàn màn hình để tránh nhảy vào bầu trời, cửa, nước
+        var candidates: [(box: CGRect, dist: Float, colorSim: Double)] = []
+        
+        // CHỈ tìm kiếm trong phạm vi hẹp cục bộ quanh tâm tìm kiếm (bán kính <= 0.05), TUYỆT ĐỐI KHÔNG quét toàn màn hình
         let offsets: [CGFloat] = [-0.05, 0.0, 0.05]
+        
         for dy in offsets {
             for dx in offsets {
-                let testUix = fb.x + dx
-                let testUiy = fb.y + dy
-                let vx = testUix - boxSize / 2
-                let vy = 1.0 - testUiy - boxSize / 2
-                let clampedBox = CGRect(x: max(0.01, min(1.0 - boxSize - 0.01, vx)),
-                                        y: max(0.01, min(1.0 - boxSize - 0.01, vy)),
-                                        width: boxSize,
-                                        height: boxSize)
-                candidateBoxes.append(clampedBox)
-            }
-        }
-        
-        var bestBox: CGRect? = nil
-        var minDistance: Float = Float.greatestFiniteMagnitude
-        var bestColorSim: Double = 0.0
-        
-        for box in candidateBoxes {
-            let req = VNGenerateImageFeaturePrintRequest()
-            req.imageCropAndScaleOption = .scaleFit
-            req.regionOfInterest = box
-            let h = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-            do {
-                try h.perform([req])
-                if let candidatePrint = req.results?.first as? VNFeaturePrintObservation {
+                let testUix = min(0.94, max(0.06, searchCenter.x + dx))
+                let testUiy = min(0.94, max(0.06, searchCenter.y + dy))
+                let vx = max(0.01, min(1.0 - boxW - 0.01, testUix - boxW / 2))
+                let vy = max(0.01, min(1.0 - boxH - 0.01, (1.0 - testUiy) - boxH / 2))
+                let clampedBox = CGRect(x: vx, y: vy, width: boxW, height: boxH)
+                
+                let req = VNGenerateImageFeaturePrintRequest()
+                req.imageCropAndScaleOption = .scaleFit
+                req.regionOfInterest = clampedBox
+                let h = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+                do {
+                    try h.perform([req])
+                    guard let candidatePrint = req.results?.first as? VNFeaturePrintObservation else { continue }
                     var dist: Float = 0
                     try refPrint.computeDistance(&dist, to: candidatePrint)
                     
-                    var colorSim: Double = 1.0
+                    let colorSim: Double
                     if let refHist = self.referenceColorHistogram {
-                        let candHist = self.extractColorHistogram(from: buffer, region: box)
+                        let candHist = self.extractColorHistogram(from: buffer, region: clampedBox)
                         colorSim = Double(self.compareColorHistograms(refHist, candHist))
+                    } else {
+                        colorSim = 1.0
                     }
                     
-                    // Siết chặt điều kiện: distance < 0.32 và colorSim >= 0.70 (chỉ nhận đúng vật thể ban đầu)
-                    if dist < minDistance && dist < 0.32 && colorSim >= 0.70 {
-                        minDistance = dist
-                        bestBox = box
-                        bestColorSim = colorSim
+                    if dist < maxDist && colorSim >= minColorSim {
+                        candidates.append((clampedBox, dist, colorSim))
                     }
+                } catch {
+                    continue
                 }
-            } catch {
-                continue
             }
         }
         
-        if let matchedBox = bestBox, minDistance < 0.32 {
-            CameraLogger.info("🎯 Local Neural Re-ID thành công quanh vật thể (Dist: \(String(format: "%.3f", minDistance)), Color: \(String(format: "%.2f", bestColorSim)))", category: .tracking)
-            let newObs = VNDetectedObjectObservation(boundingBox: matchedBox)
-            self.lastTargetObservation = newObs
-            self.sequenceHandler = VNSequenceRequestHandler()
-            let uiX = matchedBox.midX
-            let uiY = 1.0 - matchedBox.midY
-            let confidence = max(0.70, Double(1.0 - (minDistance / 0.32)) * 0.7 + bestColorSim * 0.3)
-            return (CGPoint(x: uiX, y: uiY), confidence)
+        guard !candidates.isEmpty else { return nil }
+        
+        let sorted = candidates.sorted { $0.dist < $1.dist }
+        let best = sorted[0]
+        
+        // Loại kết quả MƠ HỒI: ứng viên thứ 2 gần ngang ứng viên tốt nhất -> không dám chắc là vật thể thật
+        if sorted.count > 1, sorted[1].dist - best.dist < 0.04 {
+            CameraLogger.info("🎯 [Vision] Re-ID bỏ qua — kết quả mơ hồ (best: \(String(format: "%.3f", best.dist)), runner-up: \(String(format: "%.3f", sorted[1].dist)))", category: .tracking)
+            return nil
         }
         
-        return nil
+        CameraLogger.info("🎯 [Vision] Re-ID thành công (Dist: \(String(format: "%.3f", best.dist)), Color: \(String(format: "%.2f", best.colorSim)), candidates: \(candidates.count))", category: .tracking)
+        let uiX = best.box.midX
+        let uiY = 1.0 - best.box.midY
+        let confidence = max(0.70, Double(1.0 - (Double(best.dist) / Double(maxDist))) * 0.7 + best.colorSim * 0.3)
+        return (CGPoint(x: uiX, y: uiY), confidence, best.box)
+    }
+    
+    /// Cầu nối KLT cho các frame mất dấu ngắn (lia máy nhanh / nhòe chuyển động):
+    /// seed điểm từ buffer TRƯỚC (đã giữ nóng) theo box tracker cuối, rồi dò dịch chuyển sang frame hiện tại
+    private func kltBridgePoint(in currentBuffer: CVPixelBuffer) -> (CGPoint, Double)? {
+        guard let lastObs = self.lastTargetObservation, let prevBuffer = self.kltPreviousBuffer else { return nil }
+        
+        if self.kltTrackedPoints.isEmpty {
+            self.kltTrackedPoints = self.extractKLTFeaturePoints(in: lastObs.boundingBox, buffer: prevBuffer)
+            guard self.kltTrackedPoints.count >= 4 else { return nil }
+        }
+        
+        guard let (pt, conf) = self.trackKLTCluster(in: currentBuffer) else {
+            self.kltTrackedPoints = [] // seed lại từ frame kế tiếp
+            return nil
+        }
+        
+        // Sanity: điểm KLT phải nằm gần vị trí cuối đã xác nhận (chống KLT bắt nhầm cụm điểm nền)
+        if let verified = self.lastVerifiedUIPoint, hypot(pt.x - verified.x, pt.y - verified.y) >= 0.12 {
+            self.kltTrackedPoints = []
+            return nil
+        }
+        
+        return (pt, conf)
     }
     
     // MARK: - Process Incoming Video PixelBuffer
@@ -539,7 +592,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             
             // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
             if self.isTrackingTarget, let trackRequest = self.currentTrackRequest {
-                // Không mutate pixelBuffer in-place để tránh tạo cạnh giả trên nền frame trước
+                // Khởi tạo vân tay tham chiếu đúng 1 lần tại khung đầu
                 if self.referenceFeaturePrint == nil, let obs = self.lastTargetObservation {
                     self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: obs.boundingBox)
                     self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: obs.boundingBox)
@@ -547,29 +600,96 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 
                 var trackedPoint: CGPoint? = nil
                 var trackedConfidence: Double = 0.0
+                var trackerIdentityLost = false
                 
                 do {
                     // Truyền lại request gốc vào sequenceHandler để Apple Vision tích lũy vector vận tốc và bộ lọc Kalman
                     try self.sequenceHandler.perform([trackRequest], on: pixelBuffer, orientation: orientation)
-                    if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first {
-                        if newObs.confidence > 0.20 {
-                            self.lastTargetObservation = newObs
-                            trackRequest.inputObservation = newObs
+                    if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first,
+                       newObs.confidence > 0.20 {
+                        
+                        // ── XÁC MINH DANH TÍNH VẬT THỂ LIÊN TUYẾN (chống tracker trôi sang vật thể khác) ──
+                        var identityOK = true
+                        
+                        // 1) Histogram màu 24-bin (rẻ): kiểm tra mỗi 3 frame
+                        self.histogramCheckCounter += 1
+                        if self.histogramCheckCounter >= 3, let refHist = self.referenceColorHistogram {
+                            self.histogramCheckCounter = 0
+                            let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
+                            if self.compareColorHistograms(refHist, curHist) < 0.78 {
+                                identityOK = false
+                                CameraLogger.info("🎯 [Vision] Mất khớp histogram — nghi tracker trôi, giữ mỏ neo cuối", category: .tracking)
+                            }
+                        }
+                        
+                        // 2) Deep Feature Print (đắt): kiểm tra mỗi 20 frame
+                        if identityOK, let refPrint = self.referenceFeaturePrint {
+                            self.featurePrintCheckCounter += 1
+                            if self.featurePrintCheckCounter >= 20 {
+                                self.featurePrintCheckCounter = 0
+                                if let curPrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: newObs.boundingBox) {
+                                    var dist: Float = 0
+                                    if (try? refPrint.computeDistance(&dist, to: curPrint)) != nil, dist > 0.50 {
+                                        identityOK = false
+                                        CameraLogger.info("🎯 [Vision] Mất khớp feature print (dist: \(String(format: "%.2f", dist))) — nghi tracker trôi", category: .tracking)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if identityOK {
+                            // ── KHUNG HỢP LỆ: nối tiếp sequence, cập nhật mỏ neo & vị trí đã xác nhận ──
+                            self.identitySuspicionFrames = 0
                             self.consecutiveLostFrames = 0
+                            self.stableLockFrames += 1
+                            trackRequest.inputObservation = newObs
+                            self.lastTargetObservation = newObs
+                            self.anchorBoxSize = CGSize(width: max(0.08, min(0.5, newObs.boundingBox.width)),
+                                                        height: max(0.08, min(0.5, newObs.boundingBox.height)))
+                            self.lastVerifiedUIPoint = CGPoint(x: newObs.boundingBox.midX, y: 1.0 - newObs.boundingBox.midY)
+                            
+                            // Thích nghi chậm reference theo thay đổi phơi sáng (mỗi ~2s lock ổn định)
+                            if self.stableLockFrames >= 60 {
+                                self.stableLockFrames = 0
+                                if let refHist = self.referenceColorHistogram,
+                                   let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox),
+                                   refHist.count == curHist.count {
+                                    var blended = [Float](repeating: 0, count: refHist.count)
+                                    for i in 0..<refHist.count { blended[i] = refHist[i] * 0.85 + curHist[i] * 0.15 }
+                                    self.referenceColorHistogram = blended
+                                }
+                            }
+                            
                             var uiX = newObs.boundingBox.midX
                             var uiY = 1.0 - newObs.boundingBox.midY
                             
                             // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
-                            if self.currentSceneType.isDeformableNature {
-                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
-                                    uiX = uiX * 0.4 + salientCentroid.x * 0.6
-                                    uiY = uiY * 0.4 + (1.0 - salientCentroid.y) * 0.6
+                            // CHỈ hút khi centroid saliency nằm TRONG box đang bám, giới hạn độ lệch <= 40% cạnh ngắn
+                            // của box — không cho phép bị kéo ra xa vật thể như trước
+                            if self.currentSceneType.isDeformableNature,
+                               let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                let box = newObs.boundingBox
+                                let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
+                                let centroidUI = CGPoint(x: salientCentroid.x, y: 1.0 - salientCentroid.y)
+                                if boxUI.contains(centroidUI) {
+                                    let maxOffset = min(box.width, box.height) * 0.40
+                                    var dx = centroidUI.x - uiX
+                                    var dy = centroidUI.y - uiY
+                                    dx = max(-maxOffset, min(maxOffset, dx))
+                                    dy = max(-maxOffset, min(maxOffset, dy))
+                                    uiX += dx * 0.6
+                                    uiY += dy * 0.6
                                 }
                             }
                             
                             trackedPoint = CGPoint(x: uiX, y: uiY)
                             trackedConfidence = Double(newObs.confidence)
                         } else {
+                            // ── NGHI TRICKER TRÔI: KHÔNG nối tiếp inputObservation (đông băng mỏ neo tại box cuối hợp lệ),
+                            //    đếm frame mất để kích hoạt re-acquisition khi cần ──
+                            trackerIdentityLost = true
+                            self.identitySuspicionFrames += 1
+                            self.stableLockFrames = 0
                             self.consecutiveLostFrames += 1
                         }
                     } else {
@@ -579,28 +699,66 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     self.consecutiveLostFrames += 1
                 }
                 
-                // 1B. Khi tạm thời mất dấu quang học (do lia máy nhanh / nhòe chuyển động):
-                if trackedPoint == nil && self.consecutiveLostFrames >= 20 {
+                // 1A. Cầu nối KLT cho mất dấu NGẮN (1-10 frame: lia máy nhanh / nhòe chuyển động)
+                if trackedPoint == nil, self.consecutiveLostFrames <= 10,
+                   let (kltPoint, kltConfidence) = self.kltBridgePoint(in: pixelBuffer) {
+                    trackedPoint = kltPoint
+                    // KLT là observation trung: đủ để engine tin (>= ngưỡng nhận) nhưng không reset VO reference
+                    trackedConfidence = min(0.55, kltConfidence)
+                    self.consecutiveLostFrames = min(self.consecutiveLostFrames, 4)
+                }
+                
+                // 1B. Re-acquisition: chỉ khi mất dấu đủ lâu (>= 20 frame), HOẶC tracker bị nghi trôi
+                // xa vị trí đã xác nhận; rate-limit 0.4s/lần để không nghẽn vision queue
+                let forceReacquire: Bool = {
+                    guard trackerIdentityLost, self.identitySuspicionFrames >= 5,
+                          let verified = self.lastVerifiedUIPoint, let lastObs = self.lastTargetObservation else { return false }
+                    let drifted = hypot(lastObs.boundingBox.midX - verified.x, (1.0 - lastObs.boundingBox.midY) - verified.y)
+                    return drifted > 0.06
+                }()
+                
+                if trackedPoint == nil,
+                   (self.consecutiveLostFrames >= 20 || forceReacquire),
+                   self.consecutiveLostFrames <= 150,
+                   CACurrentMediaTime() - self.lastReIdAttemptTime >= 0.4 {
+                    self.lastReIdAttemptTime = CACurrentMediaTime()
+                    
                     let spatialPoint = StreetSpatialTrackingEngine.shared.isTrackingActive ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
-                    // Chỉ nạp lại mỏ neo khi Neural Re-ID xác nhận ĐÚNG 100% là vật thể ban đầu
-                    if let (reIdPoint, reIdConfidence) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, fallbackPoint: spatialPoint) {
+                    // Tâm tìm kiếm = trung điểm giữa vị trí quang học CUỐI CÙNG ĐÃ XÁC NHẬN và ước lượng không gian (gyro)
+                    let verified = self.lastVerifiedUIPoint
+                    let searchCenter = CGPoint(
+                        x: min(0.94, max(0.06, ((verified?.x ?? spatialPoint.x) + spatialPoint.x) / 2.0)),
+                        y: min(0.94, max(0.06, ((verified?.y ?? spatialPoint.y) + spatialPoint.y) / 2.0))
+                    )
+                    
+                    // Chỉ nạp lại mỏ neo khi Neural Re-ID xác nhận rõ ràng là vật thể ban đầu
+                    if let (reIdPoint, reIdConfidence, reIdBox) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, searchCenter: searchCenter, anchorSize: self.anchorBoxSize) {
                         trackedPoint = reIdPoint
                         trackedConfidence = reIdConfidence
                         self.consecutiveLostFrames = 0
+                        self.identitySuspicionFrames = 0
+                        self.stableLockFrames = 0
+                        self.kltTrackedPoints = []
                         
-                        // Cập nhật lại mỏ neo chuẩn cho request
-                        let boxSize: CGFloat = 0.14
-                        let vx = max(0.01, min(1.0 - boxSize - 0.01, reIdPoint.x - boxSize / 2.0))
-                        let vy = max(0.01, min(1.0 - boxSize - 0.01, (1.0 - reIdPoint.y) - boxSize / 2.0))
-                        let reObs = VNDetectedObjectObservation(boundingBox: CGRect(x: vx, y: vy, width: boxSize, height: boxSize))
+                        let reObs = VNDetectedObjectObservation(boundingBox: reIdBox)
                         self.lastTargetObservation = reObs
+                        self.anchorBoxSize = CGSize(width: max(0.08, min(0.5, reIdBox.width)),
+                                                    height: max(0.08, min(0.5, reIdBox.height)))
+                        self.lastVerifiedUIPoint = reIdPoint
                         let newReq = VNTrackObjectRequest(detectedObjectObservation: reObs)
                         newReq.trackingLevel = .accurate
                         self.currentTrackRequest = newReq
                         self.sequenceHandler = VNSequenceRequestHandler()
+                        
+                        // QUAN TRỌNG: cập nhật lại vân tay tham chiếu từ box mới (reference cũ đã lạc hậu)
+                        self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: reIdBox)
+                        self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: reIdBox)
                     }
                 }
+                
+                // Giữ nóng buffer trước cho KLT (retain 1 frame; pool không ghi đè buffer đang giữ)
+                self.kltPreviousBuffer = pixelBuffer
                 
                 DispatchQueue.main.async {
                     self.onTargetTracked?(trackedPoint, trackedConfidence, pixelBuffer)

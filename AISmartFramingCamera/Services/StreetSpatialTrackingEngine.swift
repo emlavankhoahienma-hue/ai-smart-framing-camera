@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import CoreMotion
 import CoreGraphics
 import UIKit
@@ -53,10 +53,21 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
     private var deadReckoningFrameCount: Int = 0
     private var isLowTextureAnchor: Bool = false
     
+    // Đồng bộ state giữa luồng optical (main) và gyro (motionQueue) — chống data race
+    private let stateLock = NSLock()
+    private var lastOpticalAcceptTime: CFTimeInterval = 0
+    private var outlierStreak: Int = 0
+    
+    // Giản luật chống nhảy đột biến (ViewModel nạp theo trackingSensitivity)
+    public var maxObservationJump: CGFloat = 0.12
+    public var opticalAcceptThreshold: Double = 0.20
+    
     // Callback truyền tọa độ về ViewModel
     public var onSpatialTargetUpdated: ((CGPoint, Double, TrackingQuality) -> Void)?
     
     public var currentEstimatedScreenPoint: CGPoint {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         return CGPoint(x: stateX, y: stateY)
     }
     
@@ -90,6 +101,8 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
         self.filterInitialized = true
         
         self.lastOpticalConfidence = 1.0
+        self.lastOpticalAcceptTime = CACurrentMediaTime()
+        self.outlierStreak = 0
         self.deadReckoningFrameCount = 0
         self.lastUpdateTime = CACurrentMediaTime()
         self.lastRawGyroX = 0.0
@@ -148,22 +161,29 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
             let dx = effRateY * dt * scaleX
             let dy = -effRateX * dt * scaleY
             
-            // Khi quang học mất nét (chạy qua bóng cây, đèn đường lóa nắng, optical <= 0.40)
-            if self.lastOpticalConfidence <= 0.40 {
-                self.deadReckoningFrameCount += 1
-                
-                self.stateX = min(0.98, max(0.02, self.stateX + dx))
-                self.stateY = min(0.98, max(0.02, self.stateY + dy))
-                self.filterXPrev = self.stateX
-                self.filterYPrev = self.stateY
-                
-                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                let quality: TrackingQuality = self.deadReckoningFrameCount > 90 ? .lost : (self.deadReckoningFrameCount > 45 ? .predicting : .locked)
-                let decayedConf = max(0.25, 0.45 * pow(0.98, Double(max(0, self.deadReckoningFrameCount - 30))))
-                
-                DispatchQueue.main.async {
-                    self.onSpatialTargetUpdated?(targetPoint, decayedConf, quality)
-                }
+            // CHỈ dead-reckoning khi quang học CHƯA CẬP NHẬT trong 0.12s gần nhất (time-based gate) —
+            // tránh tính gấp đôi góc xoay khi optical vẫn đang nhận điểm ở vùng confidence 0.2-0.4
+            self.stateLock.lock()
+            let timeSinceOptical = self.lastOpticalAcceptTime > 0 ? (now - self.lastOpticalAcceptTime) : 1.0
+            self.stateLock.unlock()
+            guard timeSinceOptical > 0.12 else { return }
+            
+            self.stateLock.lock()
+            self.deadReckoningFrameCount += 1
+            self.stateX = min(0.98, max(0.02, self.stateX + dx))
+            self.stateY = min(0.98, max(0.02, self.stateY + dy))
+            self.filterXPrev = self.stateX
+            self.filterYPrev = self.stateY
+            let count = self.deadReckoningFrameCount
+            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+            self.stateLock.unlock()
+            
+            // Khi quang học mất nét (chạy qua bóng cây, đèn đường lóa nắng)
+            let quality: TrackingQuality = count > 90 ? .lost : (count > 30 ? .predicting : .reacquiring)
+            let decayedConf = max(0.25, 0.45 * pow(0.98, Double(max(0, count - 30))))
+            
+            DispatchQueue.main.async {
+                self.onSpatialTargetUpdated?(targetPoint, decayedConf, quality)
             }
         }
     }
@@ -171,7 +191,6 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
     // MARK: - 3. Cập Nhật Quang Học Bằng 1-Euro Filter Thích Nghi
     public func updateWithOpticalDetection(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer? = nil) {
         guard isTrackingActive else { return }
-        self.lastOpticalConfidence = confidence
         
         let now = CACurrentMediaTime()
         let dt = lastUpdateTime > 0 ? min(0.1, max(0.005, now - lastUpdateTime)) : (1.0 / 30.0)
@@ -189,36 +208,55 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
             }
         }
         
-        let effectiveThreshold = isLowTextureAnchor ? 0.60 : 0.20
+        // Ngưỡng nhận = max(threshold theo sensitivity, 0.60 nếu anchor low-texture)
+        let effectiveThreshold = max(self.opticalAcceptThreshold, self.isLowTextureAnchor ? 0.60 : 0.0)
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
+            self.stateLock.lock()
+            self.lastOpticalConfidence = effectiveConfidence
+            self.lastOpticalAcceptTime = now
             self.deadReckoningFrameCount = 0
             var rawObsX = Double(visualPoint.x)
             var rawObsY = Double(visualPoint.y)
             
-            // Chống giật nhảy dịch chuyển đột ngột vượt quá 0.20 màn hình trong 1 frame
+            // CHỐNG OBSERVATION ĐỘT BIẾN (tracker trôi / re-ID sai / homography lỗi):
+            // kẹp trong bán kính maxObservationJump; lệch liên tục 6 frame -> re-acquisition thật, snap
             let jump = hypot(rawObsX - self.stateX, rawObsY - self.stateY)
-            if jump > 0.20 && effectiveConfidence < 0.88 {
-                let jumpAngle = atan2(rawObsY - self.stateY, rawObsX - self.stateX)
-                rawObsX = self.stateX + cos(jumpAngle) * 0.08
-                rawObsY = self.stateY + sin(jumpAngle) * 0.08
+            if jump > Double(self.maxObservationJump) {
+                self.outlierStreak += 1
+                if self.outlierStreak >= 6 {
+                    self.outlierStreak = 0
+                    self.filterInitialized = false
+                } else {
+                    let k = Double(self.maxObservationJump) / jump
+                    rawObsX = self.stateX + (rawObsX - self.stateX) * k
+                    rawObsY = self.stateY + (rawObsY - self.stateY) * k
+                }
+            } else {
+                self.outlierStreak = 0
             }
             
             // --- THUẬT TOÁN 1-EURO FILTER 2D ---
             let (smoothX, smoothY) = applyOneEuroFilter(obsX: rawObsX, obsY: rawObsY, timestamp: now, dt: dt)
-            self.stateX = smoothX
-            self.stateY = smoothY
+            self.stateX = min(0.98, max(0.02, smoothX))
+            self.stateY = min(0.98, max(0.02, smoothY))
+            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+            self.stateLock.unlock()
             
             if effectiveConfidence > 0.65, let buffer = pixelBuffer {
-                VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: CGPoint(x: self.stateX, y: self.stateY))
+                VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: targetPoint)
             }
             
-            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
             self.onSpatialTargetUpdated?(targetPoint, effectiveConfidence, .locked)
         } else {
+            self.stateLock.lock()
+            self.lastOpticalConfidence = confidence
+            self.stateLock.unlock()
+            
             // Khi quang học tạm thời thiếu sáng / lóa, dùng Visual Odometry phụ trợ
             if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
                 let voX = Double(voPoint.x)
                 let voY = Double(voPoint.y)
+                self.stateLock.lock()
                 let voDist = hypot(voX - self.stateX, voY - self.stateY)
                 if voDist < 0.15 {
                     let kVO = 0.35
@@ -227,7 +265,10 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
                     self.filterXPrev = self.stateX
                     self.filterYPrev = self.stateY
                     let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                    self.stateLock.unlock()
                     self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
+                } else {
+                    self.stateLock.unlock()
                 }
             }
         }
