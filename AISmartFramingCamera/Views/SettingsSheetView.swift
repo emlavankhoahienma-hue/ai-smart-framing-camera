@@ -262,6 +262,27 @@ public struct SettingsSheetView: View {
                     }
                 }
                 
+                // MARK: - 4A. Focus Peaking (Viền Neon Báo Nét Điện Ảnh)
+                Section(header: Text("🟢 FOCUS PEAKING (VIỀN BÁO NÉT ĐIỆN ẢNH)")) {
+                    Toggle("Bật Focus Peaking", isOn: $viewModel.isFocusPeakingEnabled)
+                    
+                    if viewModel.isFocusPeakingEnabled {
+                        Picker("Màu viền báo nét", selection: $viewModel.focusPeakingColor) {
+                            ForEach(FocusPeakingColor.allCases) { color in
+                                HStack {
+                                    Circle().fill(color.swiftUIColor).frame(width: 10, height: 10)
+                                    Text(color.rawValue)
+                                }.tag(color)
+                            }
+                        }
+                        
+                        Text("• Cơ chế: Sử dụng thuật toán Sobel GPU Metal quét trực tiếp khung hình để tìm vùng nét căng nhất. Các chi tiết đạt độ nét chuẩn sẽ sáng bừng viền Neon.\n• Ứng dụng: Giúp bạn biết chính xác chủ thể đã nét căng 100% trước khi bấm chụp hay bấm quay video.")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.8))
+                            .padding(.vertical, 2)
+                    }
+                }
+                
                 // MARK: - 4B. Film Presets Visual Showcase (Ảnh mẫu từng màu Film)
                 Section(header: Text("🎞️ BỘ SƯU TẬP MÀU FILM & ẢNH MẪU")) {
                     ScrollView(.horizontal, showsIndicators: false) {

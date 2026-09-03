@@ -14,6 +14,18 @@ public struct ARFramingOverlayView: View {
             let screenCenter = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
             
             ZStack {
+                // 0. Focus Peaking Neon Edges (Báo nét điện ảnh)
+                if viewModel.isFocusPeakingEnabled, let peakingImage = viewModel.focusPeakingCGImage {
+                    Image(decorative: peakingImage, scale: 1.0, orientation: .up)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size.width, height: size.height)
+                        .clipped()
+                        .allowsHitTesting(false)
+                        .blendMode(.screen)
+                        .opacity(0.92)
+                }
+                
                 // 1. Composition Grid Lines (hiện khi AI session active)
                 if viewModel.isAISessionActive {
                     CompositionGridLines(rule: viewModel.activeCompositionRule, size: size)

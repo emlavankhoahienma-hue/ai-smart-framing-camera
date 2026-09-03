@@ -36,6 +36,7 @@
 		B20000000000000000000021 /* LiveColorHistogramHUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000024 /* LiveColorHistogramHUDView.swift */; };
 		B20000000000000000000022 /* PresetThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000025 /* PresetThumbnailProvider.swift */; };
 		B20000000000000000000023 /* StreetSpatialTrackingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */; };
+		B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000027 /* FocusPeakingEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -71,6 +72,7 @@
 		B100000000000000000000024 /* LiveColorHistogramHUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveColorHistogramHUDView.swift; sourceTree = "<group>"; };
 		B100000000000000000000025 /* PresetThumbnailProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresetThumbnailProvider.swift; sourceTree = "<group>"; };
 		B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreetSpatialTrackingEngine.swift; sourceTree = "<group>"; };
+		B100000000000000000000027 /* FocusPeakingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPeakingEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -141,6 +143,7 @@
 				B100000000000000000000023 /* RealtimeHistogramEngine.swift */,
 				B100000000000000000000025 /* PresetThumbnailProvider.swift */,
 				B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */,
+				B100000000000000000000027 /* FocusPeakingEngine.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -275,6 +278,7 @@
 				B20000000000000000000021 /* LiveColorHistogramHUDView.swift in Sources */,
 				B20000000000000000000022 /* PresetThumbnailProvider.swift in Sources */,
 				B20000000000000000000023 /* StreetSpatialTrackingEngine.swift in Sources */,
+				B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

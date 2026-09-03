@@ -97,6 +97,19 @@ public struct AIStatusHUDView: View {
                         .cornerRadius(6)
                     }
                     
+                    // Focus Peaking Active Badge
+                    if viewModel.isFocusPeakingEnabled {
+                        HStack(spacing: 3) {
+                            Circle().fill(viewModel.focusPeakingColor.swiftUIColor).frame(width: 5, height: 5)
+                            Text("PEAK")
+                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        }
+                        .foregroundColor(viewModel.focusPeakingColor.swiftUIColor)
+                        .padding(.horizontal, 4).padding(.vertical, 2)
+                        .background(viewModel.focusPeakingColor.swiftUIColor.opacity(0.2))
+                        .cornerRadius(6)
+                    }
+                    
                     // Engine Source Badge (Cloud AI vs Local 114MB AI vs YOLOv11 NPU vs Apple ANE)
                     if let engine = viewModel.activeEngineSource, viewModel.aiSessionState != .idle {
                         HStack(spacing: 3) {

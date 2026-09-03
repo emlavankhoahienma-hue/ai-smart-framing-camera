@@ -114,6 +114,16 @@ public final class CameraViewModel: ObservableObject {
     private let horizonMotionManager = CMMotionManager()
     private var hasTriggeredLevelHaptic: Bool = false
     
+    // MARK: - Focus Peaking (Viền Báo Nét Điện Ảnh)
+    @Published public var isFocusPeakingEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(isFocusPeakingEnabled, forKey: "isFocusPeakingEnabled") }
+    }
+    @Published public var focusPeakingColor: FocusPeakingColor = .green {
+        didSet { UserDefaults.standard.set(focusPeakingColor.rawValue, forKey: "focusPeakingColor") }
+    }
+    @Published public var focusPeakingCGImage: CGImage? = nil
+    private var lastFocusPeakingComputeTime: CFTimeInterval = 0
+    
     public var zoomRevealRect: CGRect {
         guard isRevealingZoomTarget, pendingTargetZoomForReveal > 1.0 else {
             return CGRect(x: 0.5, y: 0.5, width: 0, height: 0)
@@ -301,6 +311,12 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "isHorizonLevelerEnabled") != nil {
             self.isHorizonLevelerEnabled = defaults.bool(forKey: "isHorizonLevelerEnabled")
+        }
+        if defaults.object(forKey: "isFocusPeakingEnabled") != nil {
+            self.isFocusPeakingEnabled = defaults.bool(forKey: "isFocusPeakingEnabled")
+        }
+        if let colorRaw = defaults.string(forKey: "focusPeakingColor"), let color = FocusPeakingColor(rawValue: colorRaw) {
+            self.focusPeakingColor = color
         }
         if let sensitivityRaw = defaults.string(forKey: "trackingSensitivity"), let sensitivity = TrackingSensitivityPreset(rawValue: sensitivityRaw) {
             self.trackingSensitivity = sensitivity
@@ -1336,6 +1352,20 @@ extension CameraViewModel: CameraServiceDelegate {
                 let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
                 DispatchQueue.main.async {
                     self.histogramBars = bars
+                }
+            }
+            
+            // Focus Peaking: Chỉ chạy khi người dùng bật trong Cài đặt (Zero overhead khi tắt)
+            if self.isFocusPeakingEnabled && now - self.lastFocusPeakingComputeTime >= 0.033 {
+                self.lastFocusPeakingComputeTime = now
+                FocusPeakingEngine.shared.processFrame(pixelBuffer: pixelBuffer, color: self.focusPeakingColor) { [weak self] cgImage in
+                    DispatchQueue.main.async {
+                        self?.focusPeakingCGImage = cgImage
+                    }
+                }
+            } else if !self.isFocusPeakingEnabled && self.focusPeakingCGImage != nil {
+                DispatchQueue.main.async {
+                    self.focusPeakingCGImage = nil
                 }
             }
         }
