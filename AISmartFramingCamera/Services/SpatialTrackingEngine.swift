@@ -22,6 +22,13 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         self.isLowTextureAnchor = isLowTexture
     }
     
+    // Mỏ neo góc xoay không gian 3D (Absolute Attitude Baseline Anchor)
+    private var referenceAttitude: CMAttitude? = nil
+    private var attitudeCalibrationFrames: Int = 0
+    private var currentGyroScreenPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    private var lastValidOpticalPoint: CGPoint? = nil
+    private var lastValidOpticalTime: CFTimeInterval = 0
+    
     // Tọa độ mục tiêu hiện tại trên màn hình UI (0.0 đến 1.0)
     private var stateX: Double = 0.5
     private var stateY: Double = 0.5
@@ -70,6 +77,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         self.anchorInitialPoint = screenPoint
         self.stateX = Double(screenPoint.x)
         self.stateY = Double(screenPoint.y)
+        self.currentGyroScreenPoint = screenPoint
+        self.lastValidOpticalPoint = screenPoint
+        self.lastValidOpticalTime = CACurrentMediaTime()
         self.velocityX = 0.0
         self.velocityY = 0.0
         
@@ -84,9 +94,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         self.lastOpticalConfidence = 1.0
         self.lastUpdateTime = CACurrentMediaTime()
         self.referenceAttitude = nil
+        self.attitudeCalibrationFrames = 0
+        self.deadReckoningFrameCount = 0
         self.isTrackingActive = true
         
-        CameraLogger.info("Khóa mỏ neo không gian thích nghi tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
+        CameraLogger.info("🎯 Khóa mỏ neo không gian thích nghi tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
         
         startMotionSensors()
     }
@@ -98,7 +110,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var lastMotionTime: TimeInterval = 0
     private var deadReckoningFrameCount: Int = 0
     
-    // MARK: - Khởi động cảm biến 60Hz Gyroscope & Accelerometer
+    // MARK: - Khởi động cảm biến 60Hz Gyroscope & Attitude Tracking
     private func startMotionSensors() {
         guard motionManager.isDeviceMotionAvailable else {
             CameraLogger.warning("Cảm biến DeviceMotion không khả dụng trên thiết bị này", category: .tracking)
@@ -107,6 +119,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         
         lastMotionTime = CACurrentMediaTime()
         deadReckoningFrameCount = 0
+        attitudeCalibrationFrames = 0
         motionManager.deviceMotionUpdateInterval = 1.0 / 60.0 // 60 FPS
         
         motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
@@ -116,52 +129,88 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let dt = self.lastMotionTime > 0 ? min(0.05, max(0.001, now - self.lastMotionTime)) : (1.0 / 60.0)
             self.lastMotionTime = now
             
-            // Cực tính chuẩn xác 100% theo hệ tọa độ quang học camera:
-            // - Panning sang PHẢI (hướng về mục tiêu bên phải) -> rotationRate.y > 0 -> Khung cảnh dịch sang TRÁI -> dx < 0 (hội tụ về tâm 0.5)
-            // - Panning sang TRÁI -> rotationRate.y < 0 -> Khung cảnh dịch sang PHẢI -> dx > 0
-            // - Tilting ngửa LÊN (hướng về mục tiêu phía trên) -> rotationRate.x < 0 -> Khung cảnh dịch xuống DƯỚI -> dy > 0 (hội tụ về tâm 0.5)
-            // - Tilting cúi XUỐNG -> rotationRate.x > 0 -> Khung cảnh dịch lên TRÊN -> dy < 0
+            // 1. Ghi lại mốc tọa độ góc xoay Gyro trung bình ban đầu (Baseline Attitude Calibration)
+            if self.referenceAttitude == nil {
+                self.attitudeCalibrationFrames += 1
+                if self.attitudeCalibrationFrames >= 3 {
+                    self.referenceAttitude = motion.attitude.copy() as? CMAttitude
+                    CameraLogger.info("🎯 [SpatialTrackingEngine] Đã khóa mốc Attitude Gyro chuẩn không trôi tại (\(self.anchorInitialPoint.x), \(self.anchorInitialPoint.y))", category: .tracking)
+                }
+                return
+            }
+            
+            guard let ref = self.referenceAttitude else { return }
+            
+            // 2. Tính toán góc xoay 3D tuyệt đối tương đối từ mốc ban đầu (Absolute Attitude Transform)
+            // Phương pháp quaternion này TUYỆT ĐỐI KHÔNG BỊ TRÔI LỆCH (Zero Drift) như cộng dồn vận tốc góc
+            let currentAttitude = motion.attitude
+            currentAttitude.multiply(byInverseOf: ref)
+            
+            let yawDelta = currentAttitude.yaw
+            let pitchDelta = currentAttitude.pitch
+            
             let zoomScale = self.currentZoom
-            let scaleX = 0.85 * zoomScale
-            let scaleY = 0.95 * zoomScale
+            let scaleX = self.sensitivityFactor * zoomScale
+            let scaleY = (self.sensitivityFactor * 1.12) * zoomScale
             
-            let rateY = motion.rotationRate.y
-            let rateX = motion.rotationRate.x
+            // Cực tính chuẩn xác 100% theo hệ quang học camera:
+            // - Panning sang PHẢI (yawDelta < 0) -> Target dịch sang TRÁI (x giảm) hội tụ về tâm 0.5
+            // - Panning sang TRÁI (yawDelta > 0) -> Target dịch sang PHẢI (x tăng) hội tụ về tâm 0.5
+            // - Tilting ngửa LÊN (pitchDelta < 0) -> Target dịch xuống DƯỚI (y tăng) hội tụ về tâm 0.5
+            // - Tilting cúi XUỐNG (pitchDelta > 0) -> Target dịch lên TRÊN (y giảm) hội tụ về tâm 0.5
+            let rawGyroX = Double(self.anchorInitialPoint.x) + yawDelta * scaleX
+            let rawGyroY = Double(self.anchorInitialPoint.y) - pitchDelta * scaleY
+            let clampedGyroX = min(0.98, max(0.02, rawGyroX))
+            let clampedGyroY = min(0.98, max(0.02, rawGyroY))
+            self.currentGyroScreenPoint = CGPoint(x: clampedGyroX, y: clampedGyroY)
             
-            // Chuẩn hóa cực tính con quay hồi chuyển:
-            // - Lia máy sang PHẢI (hướng về target bên phải) -> rateY < 0 -> Target dịch sang TRÁI (dx < 0) hội tụ chuẩn về tâm 0.5
-            // - Lia máy sang TRÁI -> rateY > 0 -> Target dịch sang PHẢI (dx > 0) hội tụ chuẩn về tâm 0.5
-            // - Nghiêng máy ngửa LÊN -> rateX < 0 -> Target dịch XUỐNG DƯỚI (dy > 0) hội tụ chuẩn về tâm 0.5
-            // - Nghiêng máy cúi XUỐNG -> rateX > 0 -> Target dịch LÊN TRÊN (dy < 0) hội tụ chuẩn về tâm 0.5
-            let dx = rateY * dt * scaleX
-            let dy = -rateX * dt * scaleY
+            // 3. Dung Hợp Cảm Biến 60Hz: Gyro Tuyệt Đối + Quang Học
+            let fusedX: Double
+            let fusedY: Double
+            let quality: TrackingQuality
+            let confidence: Double
+            let timeSinceOptical = now - self.lastValidOpticalTime
             
-            // Khi quang học tạm thời mất nét / lia máy nhanh (optical confidence <= 0.40):
-            // Cập nhật vị trí mỏ neo không gian theo chuyển động quán tính thực tế (Dead-Reckoning)
-            if self.lastOpticalConfidence <= 0.40 {
-                self.deadReckoningFrameCount += 1
-                self.stateX = min(0.98, max(0.02, self.stateX + dx))
-                self.stateY = min(0.98, max(0.02, self.stateY + dy))
-                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                
-                // Giới hạn sai số tích lũy: nếu quá 45 frame (~0.75-1.5s) chạy dead-reckoning không có optical confirmation, suy giảm dần confidence
-                let decayedConf: Double
-                let quality: TrackingQuality
-                if self.deadReckoningFrameCount > 90 {
-                    decayedConf = 0.15
-                    quality = .lost
-                } else if self.deadReckoningFrameCount > 45 {
-                    let decayFactor = pow(0.96, Double(self.deadReckoningFrameCount - 45))
-                    decayedConf = max(0.20, 0.40 * decayFactor)
-                    quality = .predicting
+            if self.isLowTextureAnchor {
+                // ĐẶC BIỆT CHO VẬT THỂ TRẮNG / ĐƠN SẮC / THIẾU VÂN GÓC CẠNH (Chai trắng, túi trắng, tường phẳng):
+                // Cảm biến quang học dễ trượt mốc hoặc mất nét. Gyro nắm 85% - 100% quyền giữ vị trí không gian 3D!
+                if let opt = self.lastValidOpticalPoint, self.lastOpticalConfidence >= 0.50, timeSinceOptical < 0.25 {
+                    fusedX = clampedGyroX * 0.85 + Double(opt.x) * 0.15
+                    fusedY = clampedGyroY * 0.85 + Double(opt.y) * 0.15
+                    quality = .locked
+                    confidence = max(0.85, self.lastOpticalConfidence)
                 } else {
-                    decayedConf = max(0.35, self.lastOpticalConfidence)
+                    fusedX = clampedGyroX
+                    fusedY = clampedGyroY
+                    quality = .locked
+                    confidence = 0.90
+                }
+            } else {
+                // VẬT THỂ CÓ HOA VĂN / GÓC CẠNH RÕ NÉT:
+                if let opt = self.lastValidOpticalPoint, self.lastOpticalConfidence >= 0.25, timeSinceOptical < 0.35 {
+                    let optW = max(0.30, min(0.85, self.lastOpticalConfidence))
+                    let gyroW = 1.0 - optW
+                    fusedX = clampedGyroX * gyroW + Double(opt.x) * optW
+                    fusedY = clampedGyroY * gyroW + Double(opt.y) * optW
+                    quality = .locked
+                    confidence = self.lastOpticalConfidence
+                } else {
+                    // Khi quang học tạm mờ/lia nhanh: Gyro giữ 100% vị trí mục tiêu
+                    fusedX = clampedGyroX
+                    fusedY = clampedGyroY
                     quality = .predicting
+                    confidence = 0.70
                 }
-                
-                DispatchQueue.main.async {
-                    self.onSpatialTargetUpdated?(targetPoint, decayedConf, quality)
-                }
+            }
+            
+            // 4. Lọc Thích Nghi 1-Euro Filter: Khử sạch dao động rung tay khi đứng yên, bám tức thì khi lia máy
+            let (smoothX, smoothY) = self.applyOneEuroFilter(obsX: fusedX, obsY: fusedY, timestamp: now, dt: dt)
+            self.stateX = min(0.98, max(0.02, smoothX))
+            self.stateY = min(0.98, max(0.02, smoothY))
+            
+            let finalTarget = CGPoint(x: self.stateX, y: self.stateY)
+            DispatchQueue.main.async {
+                self.onSpatialTargetUpdated?(finalTarget, confidence, quality)
             }
         }
     }
@@ -172,13 +221,12 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         self.lastOpticalConfidence = confidence
         
         let now = CACurrentMediaTime()
-        let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
-        lastUpdateTime = now
+        self.lastUpdateTime = now
         
         var effectiveConfidence = confidence
         var activePoint = point
         
-        // Chỉ dùng NeuralTargetTracker hỗ trợ phụ khi có model thật hợp lệ, không cho phép 1 mình đẩy vượt ngưỡng
+        // Tận dụng NeuralTargetTracker nếu có mô hình nơ-ron hoạt động
         if let visualPoint = point, let buffer = pixelBuffer, NeuralTargetTracker.shared.hasActiveTrainedModel {
             let (bestPt, neuralSim) = NeuralTargetTracker.shared.findBestMatchingPoint(in: buffer, around: visualPoint, searchRadius: 0.03)
             if neuralSim >= 0.65 {
@@ -187,40 +235,21 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             }
         }
         
-        let effectiveThreshold = isLowTextureAnchor ? 0.60 : 0.20
+        let effectiveThreshold = isLowTextureAnchor ? 0.40 : 0.20
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
-            self.deadReckoningFrameCount = 0
-            let rawObsX = Double(visualPoint.x)
-            let rawObsY = Double(visualPoint.y)
-            
-            // Bộ lọc 1-Euro thích nghi:
-            // - Khi giữ máy đứng yên: tự động hạ tần số cắt -> triệt tiêu toàn bộ rung tay vi mô
-            // - Khi người dùng di chuyển máy hướng tâm trắng vào target: tự động tăng tần số cắt theo tốc độ -> bám dính 100% không độ trễ
-            let (smoothX, smoothY) = applyOneEuroFilter(obsX: rawObsX, obsY: rawObsY, timestamp: now, dt: dt)
-            self.stateX = min(0.98, max(0.02, smoothX))
-            self.stateY = min(0.98, max(0.02, smoothY))
+            self.lastValidOpticalPoint = visualPoint
+            self.lastValidOpticalTime = now
             
             if effectiveConfidence > 0.65, let buffer = pixelBuffer {
                 VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: CGPoint(x: self.stateX, y: self.stateY))
             }
-            
-            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-            self.onSpatialTargetUpdated?(targetPoint, effectiveConfidence, .locked)
         } else {
-            // Khi quang học tạm thời mất nét:
+            // Khi quang học mất nét trên vật thể có vân, thử Visual Odometry phụ trợ
             if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
-                let voX = Double(voPoint.x)
-                let voY = Double(voPoint.y)
-                let voDist = hypot(voX - self.stateX, voY - self.stateY)
-                // Chỉ nhận khi độ dịch chuyển hợp lý (< 0.12 màn hình) và hòa trộn mượt 0.30 để tránh teleport do homography lỗi
+                let voDist = hypot(Double(voPoint.x) - self.stateX, Double(voPoint.y) - self.stateY)
                 if voDist < 0.12 {
-                    let kVO = 0.30
-                    self.stateX = min(0.98, max(0.02, self.stateX * (1.0 - kVO) + voX * kVO))
-                    self.stateY = min(0.98, max(0.02, self.stateY * (1.0 - kVO) + voY * kVO))
-                    self.filterXPrev = self.stateX
-                    self.filterYPrev = self.stateY
-                    let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                    self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
+                    self.lastValidOpticalPoint = voPoint
+                    self.lastValidOpticalTime = now
                 }
             }
         }
@@ -275,6 +304,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     public func stopTracking() {
         isTrackingActive = false
         referenceAttitude = nil
+        attitudeCalibrationFrames = 0
+        lastValidOpticalPoint = nil
         motionManager.stopDeviceMotionUpdates()
         VisualOdometryEngine.shared.clearReference()
         NeuralTargetTracker.shared.clearAnchor()

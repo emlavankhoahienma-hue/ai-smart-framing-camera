@@ -654,16 +654,17 @@ public final class CameraViewModel: ObservableObject {
     private var isCurrentlyLowTexture: Bool = false
     
     private func applyTextureVarianceHysteresis(variance: Double) {
-        // Hysteresis 2 ngưỡng: Bật Low-Texture khi < 20.0, Tắt khi > 30.0
-        if variance < 20.0 {
+        // Hysteresis 2 ngưỡng cho vật thể trắng/đơn sắc/thiếu góc cạnh (như chai nhựa trắng, túi trắng, cốc trắng, tường):
+        // Bật ưu tiên Gyro khi variance < 160.0, Tắt khi variance > 220.0
+        if variance < 160.0 {
             isCurrentlyLowTexture = true
-        } else if variance > 30.0 {
+        } else if variance > 220.0 {
             isCurrentlyLowTexture = false
         }
-        // Nếu nằm giữa 20.0 và 30.0: giữ nguyên trạng thái trước đó
+        // Nếu nằm giữa 160.0 và 220.0: giữ nguyên trạng thái trước đó
         SpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
         StreetSpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
-        CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
+        CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> Vật thể trắng/đơn sắc (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
     }
     
     private func computeTextureVariance(pixelBuffer: CVPixelBuffer, normalizedRect: CGRect) -> Double {
