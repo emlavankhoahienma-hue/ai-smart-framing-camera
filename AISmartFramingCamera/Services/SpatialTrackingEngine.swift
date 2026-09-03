@@ -13,8 +13,6 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private let motionManager = CMMotionManager()
     private let motionQueue = OperationQueue()
     
-    // Mốc tọa độ quán tính khi khóa target
-    private var referenceAttitude: CMAttitude? = nil
     private var anchorInitialPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     private var isLowTextureAnchor: Bool = false
     
