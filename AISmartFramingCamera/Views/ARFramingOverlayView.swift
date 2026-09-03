@@ -6,6 +6,7 @@ public struct ARFramingOverlayView: View {
     @State private var radarPulse: CGFloat = 1.0
     @State private var radarOpacity: Double = 0.8
     @State private var dashOffset: CGFloat = 0
+    @State private var touchLocation: CGPoint = .zero
     
     public var body: some View {
         GeometryReader { proxy in
@@ -124,31 +125,43 @@ public struct ARFramingOverlayView: View {
                     }
                 }
                 
-                // 8b. AE/AF LOCK badge — hiện liên tục, không tự ẩn, cho tới khi chạm ra ngoài
-                if viewModel.isAEAFLocked, let lockPoint = viewModel.aeafLockPoint {
-                    ZStack {
-                        Rectangle()
-                            .stroke(Color.yellow, lineWidth: 1.5)
-                            .frame(width: 70, height: 70)
-                    }
-                    .position(x: lockPoint.x * size.width, y: lockPoint.y * size.height)
-                    
+                // 8b. Khóa AE/AF Banner (Chuẩn Camera iPhone)
+                if viewModel.isAEAFLocked {
                     VStack {
-                        Text("AE/AF LOCK")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(.yellow)
-                            .padding(.horizontal, 12).padding(.vertical, 5)
-                            .background(Capsule().fill(Color.black.opacity(0.6)))
-                            .padding(.top, 50)
+                        HStack(spacing: 5) {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("KHÓA AE/AF")
+                                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        }
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 14).padding(.vertical, 5)
+                        .background(Capsule().fill(Color.yellow))
+                        .padding(.top, 46)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        
                         Spacer()
                     }
                 }
                 
-                // 9. Smart Autofocus Yellow Square Indicator (Apple Camera App style)
+                // 8c. Thước Đo Cân Bằng Chân Trời (Virtual Horizon Leveler)
+                if viewModel.isHorizonLevelerEnabled && !viewModel.isAISessionActive && viewModel.captureMode == .photo {
+                    HorizonLevelerView(rollDegrees: viewModel.currentRollDegrees, isLevel: viewModel.isDeviceLevel)
+                        .position(screenCenter)
+                }
+                
+                // 9. Smart Autofocus Yellow Square Indicator with Sun Exposure Slider (Apple Camera Style)
                 if let focusPoint = viewModel.activeFocusSquarePoint {
-                    FocusSquareView()
-                        .position(x: focusPoint.x * size.width, y: focusPoint.y * size.height)
-                        .transition(.scale.combined(with: .opacity))
+                    FocusSquareWithSunSlider(
+                        isLocked: viewModel.isAEAFLocked,
+                        showSun: viewModel.isShowingSunSlider,
+                        exposureBias: viewModel.activeSunExposureBias,
+                        onAdjustBias: { delta in
+                            viewModel.adjustSunExposureBias(delta: delta)
+                        }
+                    )
+                    .position(x: focusPoint.x * size.width, y: focusPoint.y * size.height)
+                    .transition(.scale.combined(with: .opacity))
                 }
                 
                 // 10. Capture Flash
@@ -163,14 +176,34 @@ public struct ARFramingOverlayView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture { location in
-                if case .targetPlaced = viewModel.aiSessionState {
-                    let normalizedPoint = CGPoint(
-                        x: max(0.05, min(0.95, location.x / size.width)),
-                        y: max(0.05, min(0.95, location.y / size.height))
-                    )
-                    viewModel.pinTargetAndStartMotion(at: normalizedPoint)
+                let norm = CGPoint(
+                    x: max(0.05, min(0.95, location.x / size.width)),
+                    y: max(0.05, min(0.95, location.y / size.height))
+                )
+                if viewModel.isAEAFLocked {
+                    viewModel.unlockAEAF()
+                } else if case .targetPlaced = viewModel.aiSessionState {
+                    viewModel.pinTargetAndStartMotion(at: norm)
+                } else {
+                    viewModel.userDidTapToFocus(at: norm)
                 }
             }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { val in
+                        touchLocation = val.startLocation
+                    }
+            )
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.45)
+                    .onEnded { _ in
+                        let norm = CGPoint(
+                            x: max(0.05, min(0.95, touchLocation.x / size.width)),
+                            y: max(0.05, min(0.95, touchLocation.y / size.height))
+                        )
+                        viewModel.userDidLongPressToLockAEAF(at: norm)
+                    }
+            )
             .clipped()
             .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
             .onAppear { startAnimations() }
@@ -446,44 +479,99 @@ struct SubjectHighlightBox: View {
     }
 }
 
-// MARK: - Smart Focus Square Indicator (Apple Camera App Style)
+// MARK: - Smart Focus Square Indicator with Sun EV Slider (Apple Camera Style)
 
-struct FocusSquareView: View {
+struct FocusSquareWithSunSlider: View {
+    let isLocked: Bool
+    let showSun: Bool
+    let exposureBias: Float
+    let onAdjustBias: (Float) -> Void
+    
     @State private var scale: CGFloat = 1.3
-    @State private var opacity: Double = 1.0
     
     var body: some View {
-        ZStack {
-            Rectangle()
-                .stroke(Color.yellow, lineWidth: 1.5)
+        HStack(spacing: 8) {
+            // Focus Box
+            ZStack {
+                Rectangle()
+                    .stroke(Color.yellow, lineWidth: isLocked ? 2.0 : 1.5)
+                    .frame(width: 65, height: 65)
+                
+                // 4 Corner tick marks
+                VStack {
+                    HStack {
+                        Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
+                        Spacer()
+                        Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
+                    }
+                    Spacer()
+                    HStack {
+                        Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
+                        Spacer()
+                        Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
+                    }
+                }
                 .frame(width: 65, height: 65)
-            
-            // 4 Corner tick marks
-            VStack {
-                HStack {
-                    Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
-                    Spacer()
-                    Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
-                }
-                Spacer()
-                HStack {
-                    Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
-                    Spacer()
-                    Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
-                }
             }
-            .frame(width: 65, height: 65)
+            .scaleEffect(scale)
+            
+            // Vertical Sun Exposure Slider (Apple Camera Standard)
+            if showSun || isLocked {
+                VStack(spacing: 4) {
+                    ZStack(alignment: .center) {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.35))
+                            .frame(width: 1.5, height: 65)
+                        
+                        let sunOffset = CGFloat(-exposureBias / 2.0) * 26.0
+                        Image(systemName: "sun.max.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.yellow)
+                            .offset(y: sunOffset)
+                    }
+                    .frame(width: 32, height: 75)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 1)
+                            .onChanged { val in
+                                let delta = Float(-val.translation.height / 75.0) * 0.25
+                                onAdjustBias(delta)
+                            }
+                    )
+                }
+                .transition(.opacity)
+            }
         }
-        .scaleEffect(scale)
-        .opacity(opacity)
         .onAppear {
             withAnimation(.easeOut(duration: 0.2)) {
                 scale = 1.0
             }
-            withAnimation(.easeIn(duration: 0.3).delay(0.6)) {
-                opacity = 0.0
-            }
         }
+    }
+}
+
+// MARK: - Virtual Horizon Leveler (Thước Cân Bằng Chân Trời)
+struct HorizonLevelerView: View {
+    let rollDegrees: Double
+    let isLevel: Bool
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Rectangle()
+                .fill(isLevel ? Color.yellow : Color.white.opacity(0.65))
+                .frame(width: 38, height: isLevel ? 2.0 : 1.2)
+            
+            Circle()
+                .stroke(isLevel ? Color.yellow : Color.white.opacity(0.65), lineWidth: isLevel ? 2.0 : 1.2)
+                .frame(width: 8, height: 8)
+            
+            Rectangle()
+                .fill(isLevel ? Color.yellow : Color.white.opacity(0.65))
+                .frame(width: 38, height: isLevel ? 2.0 : 1.2)
+        }
+        .rotationEffect(.degrees(-rollDegrees))
+        .opacity(abs(rollDegrees) > 25.0 ? 0.0 : (isLevel ? 1.0 : max(0.25, 1.0 - abs(rollDegrees) / 20.0)))
+        .animation(.easeInOut(duration: 0.15), value: isLevel)
     }
 }
 

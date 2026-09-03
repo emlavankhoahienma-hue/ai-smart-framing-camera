@@ -231,6 +231,7 @@ public struct SettingsSheetView: View {
                     Toggle("Tự động Zoom theo AI (Auto-Zoom)", isOn: $viewModel.isAutoZoomEnabled)
                     Toggle("Màu Leica / Hasselblad Natural", isOn: $viewModel.isAIFullColorEnabled)
                     Toggle("Không gian 3D ARKit", isOn: $viewModel.isARModeEnabled)
+                    Toggle("Thước Cân Bằng Chân Trời (Leveler)", isOn: $viewModel.isHorizonLevelerEnabled)
                     
                     Toggle(isOn: $viewModel.isStreetTrackingModeEnabled) {
                         HStack {

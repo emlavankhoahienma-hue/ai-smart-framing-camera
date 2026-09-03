@@ -100,6 +100,22 @@ public final class CameraViewModel: ObservableObject {
     private var pendingTargetZoomForReveal: CGFloat = 1.0
     private var isZoomRampPhase: Bool = false
     
+    // MARK: - AE/AF Lock & Tap Focus (Chuẩn Camera iPhone)
+    @Published public var isAEAFManualLocked: Bool = false
+    public var isAEAFLocked: Bool { isAEAFManualLocked }
+    @Published public var aeafLockPoint: CGPoint? = nil
+    @Published public var isShowingSunSlider: Bool = false
+    @Published public var activeSunExposureBias: Float = 0.0
+    
+    // MARK: - Thước Đo Cân Bằng Chân Trời (Horizon Leveler)
+    @Published public var isHorizonLevelerEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(isHorizonLevelerEnabled, forKey: "isHorizonLevelerEnabled") }
+    }
+    @Published public var currentRollDegrees: Double = 0.0
+    @Published public var isDeviceLevel: Bool = false
+    private let horizonMotionManager = CMMotionManager()
+    private var hasTriggeredLevelHaptic: Bool = false
+    
     public var zoomRevealRect: CGRect {
         guard isRevealingZoomTarget, pendingTargetZoomForReveal > 1.0 else {
             return CGRect(x: 0.5, y: 0.5, width: 0, height: 0)
@@ -285,6 +301,9 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "isStreetTrackingModeEnabled") != nil {
             self.isStreetTrackingModeEnabled = defaults.bool(forKey: "isStreetTrackingModeEnabled")
         }
+        if defaults.object(forKey: "isHorizonLevelerEnabled") != nil {
+            self.isHorizonLevelerEnabled = defaults.bool(forKey: "isHorizonLevelerEnabled")
+        }
         if let sensitivityRaw = defaults.string(forKey: "trackingSensitivity"), let sensitivity = TrackingSensitivityPreset(rawValue: sensitivityRaw) {
             self.trackingSensitivity = sensitivity
         }
@@ -295,6 +314,7 @@ public final class CameraViewModel: ObservableObject {
         
         setupCallbacks()
         setupMotionCallbacks()
+        startHorizonLeveler()
     }
     
     // MARK: - Initialization & Permissions
@@ -1064,6 +1084,97 @@ public final class CameraViewModel: ObservableObject {
         applyFocusAndExposure(to: point, source: type)
     }
     
+    public func triggerFocusSquareAnimation(at point: CGPoint) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            self.activeFocusSquarePoint = point
+        }
+        focusSquareHideTask?.cancel()
+        focusSquareHideTask = Task {
+            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            await MainActor.run {
+                if !self.isAEAFManualLocked && self.activeFocusSquarePoint == point {
+                    withAnimation(.easeIn(duration: 0.3)) {
+                        self.activeFocusSquarePoint = nil
+                        self.isShowingSunSlider = false
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Chạm Lấy Nét & Khóa AE/AF (iPhone Camera Standard)
+    public func userDidTapToFocus(at normalizedPoint: CGPoint) {
+        if isAEAFManualLocked {
+            unlockAEAF()
+            return
+        }
+        
+        haptics.triggerSelectionChange()
+        lastFocusPoint = normalizedPoint
+        activeFocusSquarePoint = normalizedPoint
+        isShowingSunSlider = true
+        
+        let devPoint = CameraService.convertUIPointToDevicePoint(normalizedPoint)
+        cameraService.focusAndExpose(at: devPoint)
+        triggerFocusSquareAnimation(at: normalizedPoint)
+    }
+    
+    public func userDidLongPressToLockAEAF(at normalizedPoint: CGPoint) {
+        haptics.triggerSuccess()
+        
+        isAEAFManualLocked = true
+        aeafLockPoint = normalizedPoint
+        activeFocusSquarePoint = normalizedPoint
+        isShowingSunSlider = true
+        
+        let devPoint = CameraService.convertUIPointToDevicePoint(normalizedPoint)
+        cameraService.lockFocusAndExposure(at: devPoint)
+        CameraLogger.info("🔒 ĐÃ KHÓA AE/AF tại (\(String(format: "%.2f", normalizedPoint.x)), \(String(format: "%.2f", normalizedPoint.y)))", category: .capture)
+    }
+    
+    public func unlockAEAF() {
+        guard isAEAFManualLocked else { return }
+        haptics.triggerSelectionChange()
+        
+        isAEAFManualLocked = false
+        aeafLockPoint = nil
+        isShowingSunSlider = false
+        activeSunExposureBias = 0.0
+        
+        cameraService.unlockFocusAndExposure()
+        withAnimation(.easeOut(duration: 0.25)) {
+            self.activeFocusSquarePoint = nil
+        }
+        CameraLogger.info("🔓 ĐÃ MỞ KHÓA AE/AF", category: .capture)
+    }
+    
+    public func adjustSunExposureBias(delta: Float) {
+        let newBias = max(-2.0, min(2.0, activeSunExposureBias + delta))
+        activeSunExposureBias = newBias
+        setExposure(newBias)
+    }
+    
+    // MARK: - Thước Cân Bằng Chân Trời (Virtual Horizon Leveler)
+    private func startHorizonLeveler() {
+        guard horizonMotionManager.isDeviceMotionAvailable else { return }
+        horizonMotionManager.deviceMotionUpdateInterval = 1.0 / 30.0
+        horizonMotionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] motion, error in
+            guard let self = self, let motion = motion, self.isHorizonLevelerEnabled else { return }
+            let gx = motion.gravity.x
+            let gy = motion.gravity.y
+            let roll = atan2(gx, -gy) * 180.0 / .pi
+            self.currentRollDegrees = roll
+            let level = abs(roll) <= 0.8
+            if level && !self.isDeviceLevel && !self.hasTriggeredLevelHaptic {
+                self.haptics.triggerSelectionChange()
+                self.hasTriggeredLevelHaptic = true
+            } else if !level {
+                self.hasTriggeredLevelHaptic = false
+            }
+            self.isDeviceLevel = level
+        }
+    }
+    
     public func applyFocusAndExposure(to point: CGPoint, source: SmartFocusType, force: Bool = false) {
         let dx = point.x - lastFocusPoint.x
         let dy = point.y - lastFocusPoint.y
@@ -1078,22 +1189,6 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     
-    public func triggerFocusSquareAnimation(at point: CGPoint) {
-        withAnimation(.easeOut(duration: 0.15)) {
-            self.activeFocusSquarePoint = point
-        }
-        focusSquareHideTask?.cancel()
-        focusSquareHideTask = Task {
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            await MainActor.run {
-                withAnimation(.easeIn(duration: 0.3)) {
-                    if self.activeFocusSquarePoint == point {
-                        self.activeFocusSquarePoint = nil
-                    }
-                }
-            }
-        }
-    }
     
     // MARK: - Manual Shutter Click (Nút chụp màu trắng)
     public func takePhotoManual() {

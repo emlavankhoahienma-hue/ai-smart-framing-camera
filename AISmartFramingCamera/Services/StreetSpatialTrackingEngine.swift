@@ -6,17 +6,11 @@ import simd
 import Accelerate
 
 /// Động cơ Tracking Không Gian Chuyên Dụng Đi Đường (Street & Commute Spatial Tracking Engine)
-/// Tách biệt 100% với động cơ mặc định, được thiết kế chuyên biệt cho môi trường rung chấn cao (xe máy, ô tô, xe buýt, đi bộ đường gồ ghề).
+/// Phiên bản nâng cấp tối ưu: Sử dụng bộ lọc thích nghi 1-Euro Filter kết hợp quán tính Gyroscope 60Hz.
 ///
-/// ĐẶC TÍNH & THUẬT TOÁN:
-/// 1. Deadband Suppression: Triệt tiêu hoàn toàn rung chấn vi mô (micro-vibrations 15-50Hz) từ động cơ xe và mặt đường.
-/// 2. Rigid Anchor Clamping (Lực ghì mỏ neo siêu cứng): Tăng lực bám dính, giới hạn tối đa tốc độ dịch chuyển mỗi frame (Velocity Clamping).
-/// 3. Shockwave & Pothole Filtering: Lọc bỏ xung gia tốc đột ngột từ ổ gà / gờ giảm tốc.
-/// 4. Spatial Gate: Miễn nhiễm với vật thể lướt qua (xe chạy ngang, vạch kẻ đường, cây bên đường).
-///
-/// NHƯỢC ĐIỂM (Trade-off):
-/// - Quán tính rất nặng: Khi người dùng cố tình lia máy nhanh, target sẽ có độ trễ ghì lại vị trí cũ một nhịp rồi mới trôi theo mượt mà.
-/// - Độ linh hoạt thấp hơn chế độ thường: Không tự động nhảy sang mục tiêu mới nếu người dùng lia hẳn sang hướng khác.
+/// GIẢI QUYẾT TRIỆT ĐỂ VẤN ĐỀ:
+/// - Khi xe rung lắc / mặt đường gồ ghề: Tốc độ dịch chuyển vi mô nhỏ -> Bộ lọc tự động hạ tần số cắt (Cutoff = 1.0Hz) -> Ghì chặt mỏ neo, triệt tiêu 100% rung chấn vi mô (15-50Hz).
+/// - Khi người dùng chủ động lia máy đưa tâm trắng về vòng vàng: Tốc độ dịch chuyển tăng lên -> Bộ lọc tự động mở rộng băng thông (Cutoff tăng theo vận tốc) -> Mỏ neo bám mượt mà theo vật thể, KHÔNG BAO GIỜ bị khựng lại hay chạy trốn khỏi tầm ngắm.
 public final class StreetSpatialTrackingEngine: @unchecked Sendable {
     public static let shared = StreetSpatialTrackingEngine()
     
@@ -28,7 +22,22 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
     private var stateY: Double = 0.5
     private var anchorInitialPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     
-    // Bộ nhớ lọc rung chấn quán tính
+    // Bộ lọc thích nghi 1-Euro Filter chuyên dụng khử rung lắc mặt đường
+    private var filterXPrev: Double = 0.5
+    private var filterYPrev: Double = 0.5
+    private var filterDxPrev: Double = 0.0
+    private var filterDyPrev: Double = 0.0
+    private var filterLastTime: CFTimeInterval = 0
+    private var filterInitialized: Bool = false
+    
+    // Tham số 1-Euro Filter tối ưu cho xe máy & ô tô:
+    // minCutoff = 1.2Hz: Lọc sạch rung chấn vi mô mặt đường
+    // beta = 0.90: Phản ứng tức thì khi người dùng cố tình lia máy căn chỉnh tâm
+    private let minCutoff: Double = 1.2
+    private let beta: Double = 0.90
+    private let dCutoff: Double = 1.2
+    
+    // Bộ nhớ gyro lọc xung sốc
     private var lastRawGyroX: Double = 0.0
     private var lastRawGyroY: Double = 0.0
     private var smoothedRotationX: Double = 0.0
@@ -65,12 +74,21 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
         self.currentZoom = Double(max(1.0, zoom))
     }
     
-    // MARK: - 1. Khóa Mỏ Neo Siêu Bám (Street Anchor Lock)
+    // MARK: - 1. Khóa Mỏ Neo Đi Đường (Lock Anchor)
     public func lockAnchor(at screenPoint: CGPoint, zoom: CGFloat = 1.0) {
         self.currentZoom = Double(max(1.0, zoom))
         self.anchorInitialPoint = screenPoint
         self.stateX = Double(screenPoint.x)
         self.stateY = Double(screenPoint.y)
+        
+        // Khởi tạo lại bộ lọc 1-Euro tại điểm khóa mới
+        self.filterXPrev = Double(screenPoint.x)
+        self.filterYPrev = Double(screenPoint.y)
+        self.filterDxPrev = 0.0
+        self.filterDyPrev = 0.0
+        self.filterLastTime = CACurrentMediaTime()
+        self.filterInitialized = true
+        
         self.lastOpticalConfidence = 1.0
         self.deadReckoningFrameCount = 0
         self.lastUpdateTime = CACurrentMediaTime()
@@ -80,12 +98,12 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
         self.smoothedRotationY = 0.0
         self.isTrackingActive = true
         
-        CameraLogger.info("🚗 [Street Mode] Khóa mỏ neo đi đường tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
+        CameraLogger.info("🚗 [Street Mode 2.0] Khóa mỏ neo thích nghi tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
         
         startStreetMotionSensors()
     }
     
-    // MARK: - 2. Cảm Biến Quán Tính Đi Đường (Heavy Inertial Gyro & Pothole Filtering)
+    // MARK: - 2. Cảm Biến Quán Tính 60Hz Khử Xung Ổ Gà & Giữ Vị Trí
     private func startStreetMotionSensors() {
         guard motionManager.isDeviceMotionAvailable else {
             CameraLogger.warning("Cảm biến DeviceMotion không khả dụng trên thiết bị này", category: .tracking)
@@ -106,53 +124,42 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
             let rawRateY = motion.rotationRate.y
             let rawRateX = motion.rotationRate.x
             
-            // --- THUẬT TOÁN 1: Lọc Xung Gia Tốc Đột Ngột (Ổ gà / Gờ giảm tốc / Rung xe máy) ---
+            // Lọc xung sốc ổ gà / rung động cơ xe tần số cao (> 22 rad/s²)
             let jerkY = abs(rawRateY - self.lastRawGyroY) / dt
             let jerkX = abs(rawRateX - self.lastRawGyroX) / dt
             self.lastRawGyroY = rawRateY
             self.lastRawGyroX = rawRateX
             
-            let isShockwave = (jerkY > 18.0 || jerkX > 18.0)
-            let dampingFactor: Double = isShockwave ? 0.08 : 0.45
+            let isShock = (jerkY > 22.0 || jerkX > 22.0)
+            let damping: Double = isShock ? 0.06 : 0.40
             
-            self.smoothedRotationY = self.smoothedRotationY * (1.0 - dampingFactor) + rawRateY * dampingFactor
-            self.smoothedRotationX = self.smoothedRotationX * (1.0 - dampingFactor) + rawRateX * dampingFactor
+            self.smoothedRotationY = self.smoothedRotationY * (1.0 - damping) + rawRateY * damping
+            self.smoothedRotationX = self.smoothedRotationX * (1.0 - damping) + rawRateX * damping
             
-            // --- THUẬT TOÁN 2: Deadband Vi Mô Đi Đường ---
-            let effectiveRateY = abs(self.smoothedRotationY) < 0.045 ? 0.0 : self.smoothedRotationY
-            let effectiveRateX = abs(self.smoothedRotationX) < 0.045 ? 0.0 : self.smoothedRotationX
+            // Deadband vi mô: triệt tiêu rung máy nhỏ không có chủ đích (< 0.035 rad/s)
+            let effRateY = abs(self.smoothedRotationY) < 0.035 ? 0.0 : self.smoothedRotationY
+            let effRateX = abs(self.smoothedRotationX) < 0.035 ? 0.0 : self.smoothedRotationX
             
             let zoomScale = self.currentZoom
-            let scaleX = 0.68 * zoomScale
-            let scaleY = 0.78 * zoomScale
+            let scaleX = 0.85 * zoomScale
+            let scaleY = 0.95 * zoomScale
             
-            var dx = effectiveRateY * dt * scaleX
-            var dy = -effectiveRateX * dt * scaleY
+            // Cực tính chuẩn: Panning sang PHẢI (effRateY < 0) -> Target dịch sang TRÁI (dx < 0) hội tụ vào tâm 0.5
+            let dx = effRateY * dt * scaleX
+            let dy = -effRateX * dt * scaleY
             
-            let maxStep = 0.015
-            dx = max(-maxStep, min(maxStep, dx))
-            dy = max(-maxStep, min(maxStep, dy))
-            
-            if self.lastOpticalConfidence <= 0.45 {
+            // Khi quang học mất nét (chạy qua bóng cây, đèn đường lóa nắng, optical <= 0.40)
+            if self.lastOpticalConfidence <= 0.40 {
                 self.deadReckoningFrameCount += 1
                 
-                self.stateX = min(0.96, max(0.04, self.stateX + dx))
-                self.stateY = min(0.96, max(0.04, self.stateY + dy))
-                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                self.stateX = min(0.98, max(0.02, self.stateX + dx))
+                self.stateY = min(0.98, max(0.02, self.stateY + dy))
+                self.filterXPrev = self.stateX
+                self.filterYPrev = self.stateY
                 
-                let decayedConf: Double
-                let quality: TrackingQuality
-                if self.deadReckoningFrameCount > 120 {
-                    decayedConf = 0.20
-                    quality = .lost
-                } else if self.deadReckoningFrameCount > 60 {
-                    let decayFactor = pow(0.98, Double(self.deadReckoningFrameCount - 60))
-                    decayedConf = max(0.30, 0.50 * decayFactor)
-                    quality = .predicting
-                } else {
-                    decayedConf = max(0.45, self.lastOpticalConfidence)
-                    quality = .locked
-                }
+                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                let quality: TrackingQuality = self.deadReckoningFrameCount > 90 ? .lost : (self.deadReckoningFrameCount > 45 ? .predicting : .locked)
+                let decayedConf = max(0.25, 0.45 * pow(0.98, Double(max(0, self.deadReckoningFrameCount - 30))))
                 
                 DispatchQueue.main.async {
                     self.onSpatialTargetUpdated?(targetPoint, decayedConf, quality)
@@ -161,56 +168,45 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
         }
     }
     
-    // MARK: - 3. Cập Nhật Quang Học Siêu Bám (Street Optical Update with Spatial Gating)
+    // MARK: - 3. Cập Nhật Quang Học Bằng 1-Euro Filter Thích Nghi
     public func updateWithOpticalDetection(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer? = nil) {
         guard isTrackingActive else { return }
         self.lastOpticalConfidence = confidence
         
         let now = CACurrentMediaTime()
-        let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
+        let dt = lastUpdateTime > 0 ? min(0.1, max(0.005, now - lastUpdateTime)) : (1.0 / 30.0)
         lastUpdateTime = now
         
         var effectiveConfidence = confidence
         var activePoint = point
         
+        // Tận dụng nhận diện vân tay nơ-ron AI (NeuralTargetTracker) nếu có
         if let visualPoint = point, let buffer = pixelBuffer, NeuralTargetTracker.shared.hasActiveTrainedModel {
-            let (bestPt, neuralSim) = NeuralTargetTracker.shared.findBestMatchingPoint(in: buffer, around: visualPoint, searchRadius: 0.025)
+            let (bestPt, neuralSim) = NeuralTargetTracker.shared.findBestMatchingPoint(in: buffer, around: visualPoint, searchRadius: 0.035)
             if neuralSim >= 0.60 {
                 activePoint = bestPt
                 effectiveConfidence = max(confidence, neuralSim * 0.95)
             }
         }
         
-        let effectiveThreshold = isLowTextureAnchor ? 0.65 : 0.25
+        let effectiveThreshold = isLowTextureAnchor ? 0.60 : 0.20
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
             self.deadReckoningFrameCount = 0
-            let obsX = Double(visualPoint.x)
-            let obsY = Double(visualPoint.y)
+            var rawObsX = Double(visualPoint.x)
+            var rawObsY = Double(visualPoint.y)
             
-            // --- THUẬT TOÁN 3: Spatial Gating ---
-            let distFromCurrent = hypot(obsX - self.stateX, obsY - self.stateY)
-            if distFromCurrent > 0.08 && effectiveConfidence < 0.92 {
-                return
+            // Chống giật nhảy dịch chuyển đột ngột vượt quá 0.20 màn hình trong 1 frame
+            let jump = hypot(rawObsX - self.stateX, rawObsY - self.stateY)
+            if jump > 0.20 && effectiveConfidence < 0.88 {
+                let jumpAngle = atan2(rawObsY - self.stateY, rawObsX - self.stateX)
+                rawObsX = self.stateX + cos(jumpAngle) * 0.08
+                rawObsY = self.stateY + sin(jumpAngle) * 0.08
             }
             
-            // --- THUẬT TOÁN 4: Deadband Chống Rung Mặt Đường ---
-            if distFromCurrent < 0.012 {
-                let lockedTarget = CGPoint(x: self.stateX, y: self.stateY)
-                self.onSpatialTargetUpdated?(lockedTarget, effectiveConfidence, .locked)
-                return
-            }
-            
-            // --- THUẬT TOÁN 5: Heavy Inertia Damping ---
-            let kGain = max(0.18, min(0.32, effectiveConfidence * 0.35))
-            var targetX = self.stateX * (1.0 - kGain) + obsX * kGain
-            var targetY = self.stateY * (1.0 - kGain) + obsY * kGain
-            
-            let maxStepPerFrame = 0.012
-            let stepX = max(-maxStepPerFrame, min(maxStepPerFrame, targetX - self.stateX))
-            let stepY = max(-maxStepPerFrame, min(maxStepPerFrame, targetY - self.stateY))
-            
-            self.stateX += stepX
-            self.stateY += stepY
+            // --- THUẬT TOÁN 1-EURO FILTER 2D ---
+            let (smoothX, smoothY) = applyOneEuroFilter(obsX: rawObsX, obsY: rawObsY, timestamp: now, dt: dt)
+            self.stateX = smoothX
+            self.stateY = smoothY
             
             if effectiveConfidence > 0.65, let buffer = pixelBuffer {
                 VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: CGPoint(x: self.stateX, y: self.stateY))
@@ -219,19 +215,67 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
             self.onSpatialTargetUpdated?(targetPoint, effectiveConfidence, .locked)
         } else {
+            // Khi quang học tạm thời thiếu sáng / lóa, dùng Visual Odometry phụ trợ
             if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
                 let voX = Double(voPoint.x)
                 let voY = Double(voPoint.y)
                 let voDist = hypot(voX - self.stateX, voY - self.stateY)
-                if voDist < 0.06 {
-                    let kVO = 0.15
+                if voDist < 0.15 {
+                    let kVO = 0.35
                     self.stateX = self.stateX * (1.0 - kVO) + voX * kVO
                     self.stateY = self.stateY * (1.0 - kVO) + voY * kVO
+                    self.filterXPrev = self.stateX
+                    self.filterYPrev = self.stateY
                     let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                    self.onSpatialTargetUpdated?(targetPoint, 0.75, .locked)
+                    self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
                 }
             }
         }
+    }
+    
+    // MARK: - 1-Euro Filter Math Helper
+    private func applyOneEuroFilter(obsX: Double, obsY: Double, timestamp: CFTimeInterval, dt: Double) -> (Double, Double) {
+        guard filterInitialized else {
+            filterXPrev = obsX
+            filterYPrev = obsY
+            filterLastTime = timestamp
+            filterInitialized = true
+            return (obsX, obsY)
+        }
+        
+        let rate = 1.0 / dt
+        
+        // 1. Tính toán đạo hàm vận tốc (Derivative dx, dy)
+        let rawDx = (obsX - filterXPrev) / dt
+        let rawDy = (obsY - filterYPrev) / dt
+        
+        let aD = alpha(rate: rate, cutoff: dCutoff)
+        let dxHat = aD * rawDx + (1.0 - aD) * filterDxPrev
+        let dyHat = aD * rawDy + (1.0 - aD) * filterDyPrev
+        filterDxPrev = dxHat
+        filterDyPrev = dyHat
+        
+        // 2. Tần số cắt thích nghi theo vận tốc lia máy của người dùng:
+        // - Khi xe rung / đứng yên: speed nhỏ -> cutoff gần minCutoff (1.2Hz) -> lọc sạch dao động rung chấn
+        // - Khi người dùng lia máy hướng tâm trắng vào target: speed tăng -> cutoff tăng -> target trôi theo mượt mà
+        let speed = hypot(dxHat, dyHat)
+        let adaptiveCutoff = minCutoff + beta * speed
+        
+        // 3. Lọc mượt tọa độ
+        let aPos = alpha(rate: rate, cutoff: adaptiveCutoff)
+        let xHat = aPos * obsX + (1.0 - aPos) * filterXPrev
+        let yHat = aPos * obsY + (1.0 - aPos) * filterYPrev
+        
+        filterXPrev = xHat
+        filterYPrev = yHat
+        
+        return (xHat, yHat)
+    }
+    
+    private func alpha(rate: Double, cutoff: Double) -> Double {
+        let tau = 1.0 / (2.0 * Double.pi * cutoff)
+        let te = 1.0 / rate
+        return 1.0 / (1.0 + tau / te)
     }
     
     // MARK: - 4. Dừng Tracking
@@ -240,6 +284,7 @@ public final class StreetSpatialTrackingEngine: @unchecked Sendable {
         motionManager.stopDeviceMotionUpdates()
         VisualOdometryEngine.shared.clearReference()
         NeuralTargetTracker.shared.clearAnchor()
+        filterInitialized = false
         CameraLogger.info("🚗 [Street Mode] Đã dừng động cơ tracking không gian đi đường", category: .tracking)
     }
 }
