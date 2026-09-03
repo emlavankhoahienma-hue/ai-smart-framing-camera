@@ -35,6 +35,19 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var lastOpticalConfidence: Double = 1.0
     private var lastUpdateTime: CFTimeInterval = 0
     
+    // MARK: - Bộ Lọc 1-Euro Thích Nghi (Adaptive 1-Euro Filter)
+    // Tự động chuyển đổi: Khi đứng yên -> Tần số cắt thấp (triệt rung tay); Khi lia máy -> Tần số cắt cao (Zero Latency)
+    private var filterXPrev: Double = 0.5
+    private var filterYPrev: Double = 0.5
+    private var filterDxPrev: Double = 0.0
+    private var filterDyPrev: Double = 0.0
+    private var filterLastTime: CFTimeInterval = 0.0
+    private var filterInitialized: Bool = false
+    
+    private let oneEuroMinCutoff: Double = 1.2
+    private let oneEuroBeta: Double = 1.0
+    private let oneEuroDCutoff: Double = 1.0
+    
     // Hệ số FOV camera chuẩn hóa (~65 độ FOV trên ống kính Wide iPhone)
     private let sensitivityFactor: Double = 0.88
     
@@ -59,12 +72,21 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         self.stateY = Double(screenPoint.y)
         self.velocityX = 0.0
         self.velocityY = 0.0
+        
+        // Khởi tạo bộ lọc 1-Euro tại điểm khóa mới
+        self.filterXPrev = Double(screenPoint.x)
+        self.filterYPrev = Double(screenPoint.y)
+        self.filterDxPrev = 0.0
+        self.filterDyPrev = 0.0
+        self.filterLastTime = CACurrentMediaTime()
+        self.filterInitialized = true
+        
         self.lastOpticalConfidence = 1.0
         self.lastUpdateTime = CACurrentMediaTime()
         self.referenceAttitude = nil
         self.isTrackingActive = true
         
-        CameraLogger.info("Khóa mỏ neo không gian tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
+        CameraLogger.info("Khóa mỏ neo không gian thích nghi tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
         
         startMotionSensors()
     }
@@ -165,37 +187,20 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             }
         }
         
-        let effectiveThreshold = isLowTextureAnchor ? 0.70 : 0.20
+        let effectiveThreshold = isLowTextureAnchor ? 0.60 : 0.20
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
             self.deadReckoningFrameCount = 0
-            var obsX = Double(visualPoint.x)
-            var obsY = Double(visualPoint.y)
+            let rawObsX = Double(visualPoint.x)
+            let rawObsY = Double(visualPoint.y)
             
-            // Chống teleport / nhảy bậy ra bầu trời, cửa, nước:
-            // Nếu điểm quang học đột ngột nhảy quá 0.10 màn hình trong 1 frame duy nhất -> giới hạn tốc độ dịch chuyển mượt mà
-            let jump = hypot(obsX - self.stateX, obsY - self.stateY)
-            if jump > 0.10 && effectiveConfidence < 0.88 {
-                let jumpAngle = atan2(obsY - self.stateY, obsX - self.stateX)
-                obsX = self.stateX + cos(jumpAngle) * 0.04
-                obsY = self.stateY + sin(jumpAngle) * 0.04
-            }
+            // Bộ lọc 1-Euro thích nghi:
+            // - Khi giữ máy đứng yên: tự động hạ tần số cắt -> triệt tiêu toàn bộ rung tay vi mô
+            // - Khi người dùng di chuyển máy hướng tâm trắng vào target: tự động tăng tần số cắt theo tốc độ -> bám dính 100% không độ trễ
+            let (smoothX, smoothY) = applyOneEuroFilter(obsX: rawObsX, obsY: rawObsY, timestamp: now, dt: dt)
+            self.stateX = min(0.98, max(0.02, smoothX))
+            self.stateY = min(0.98, max(0.02, smoothY))
             
-            // Quang học là Ground Truth: Bám trực tiếp, nhanh và mượt vào vật thể thực tế
-            let kGain = max(0.70, min(0.92, effectiveConfidence))
-            let smoothX = self.stateX * (1.0 - kGain) + obsX * kGain
-            let smoothY = self.stateY * (1.0 - kGain) + obsY * kGain
-            
-            if dt > 0.005 {
-                let rawVx = (smoothX - self.stateX) / dt
-                let rawVy = (smoothY - self.stateY) / dt
-                self.velocityX = self.velocityX * 0.6 + max(-2.0, min(2.0, rawVx)) * 0.4
-                self.velocityY = self.velocityY * 0.6 + max(-2.0, min(2.0, rawVy)) * 0.4
-            }
-            
-            self.stateX = smoothX
-            self.stateY = smoothY
-            
-            if effectiveConfidence > 0.60, let buffer = pixelBuffer {
+            if effectiveConfidence > 0.65, let buffer = pixelBuffer {
                 VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: CGPoint(x: self.stateX, y: self.stateY))
             }
             
@@ -204,12 +209,66 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         } else {
             // Khi quang học tạm thời mất nét:
             if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
-                self.stateX = min(0.98, max(0.02, Double(voPoint.x)))
-                self.stateY = min(0.98, max(0.02, Double(voPoint.y)))
-                let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
-                self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
+                let voX = Double(voPoint.x)
+                let voY = Double(voPoint.y)
+                let voDist = hypot(voX - self.stateX, voY - self.stateY)
+                // Chỉ nhận khi độ dịch chuyển hợp lý (< 0.12 màn hình) và hòa trộn mượt 0.30 để tránh teleport do homography lỗi
+                if voDist < 0.12 {
+                    let kVO = 0.30
+                    self.stateX = min(0.98, max(0.02, self.stateX * (1.0 - kVO) + voX * kVO))
+                    self.stateY = min(0.98, max(0.02, self.stateY * (1.0 - kVO) + voY * kVO))
+                    self.filterXPrev = self.stateX
+                    self.filterYPrev = self.stateY
+                    let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                    self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
+                }
             }
         }
+    }
+    
+    // MARK: - 1-Euro Filter Math Helper
+    private func applyOneEuroFilter(obsX: Double, obsY: Double, timestamp: CFTimeInterval, dt: Double) -> (Double, Double) {
+        guard filterInitialized else {
+            filterXPrev = obsX
+            filterYPrev = obsY
+            filterLastTime = timestamp
+            filterInitialized = true
+            return (obsX, obsY)
+        }
+        
+        let rate = 1.0 / max(0.005, dt)
+        
+        // 1. Tính toán đạo hàm vận tốc (Derivative dx, dy)
+        let rawDx = (obsX - filterXPrev) / max(0.005, dt)
+        let rawDy = (obsY - filterYPrev) / max(0.005, dt)
+        
+        let aD = alpha(rate: rate, cutoff: oneEuroDCutoff)
+        let dxHat = aD * rawDx + (1.0 - aD) * filterDxPrev
+        let dyHat = aD * rawDy + (1.0 - aD) * filterDyPrev
+        filterDxPrev = dxHat
+        filterDyPrev = dyHat
+        
+        // 2. Tần số cắt thích nghi theo vận tốc di chuyển camera:
+        // - Khi đứng yên: speed nhỏ -> cutoff gần minCutoff (1.2Hz) -> triệt rung tay
+        // - Khi di chuyển tâm trắng đến target: speed tăng -> cutoff tăng tức thì -> target bám dính mượt mà
+        let speed = hypot(dxHat, dyHat)
+        let adaptiveCutoff = oneEuroMinCutoff + oneEuroBeta * speed
+        
+        // 3. Lọc mượt tọa độ
+        let aPos = alpha(rate: rate, cutoff: adaptiveCutoff)
+        let xHat = aPos * obsX + (1.0 - aPos) * filterXPrev
+        let yHat = aPos * obsY + (1.0 - aPos) * filterYPrev
+        
+        filterXPrev = xHat
+        filterYPrev = yHat
+        
+        return (xHat, yHat)
+    }
+    
+    private func alpha(rate: Double, cutoff: Double) -> Double {
+        let tau = 1.0 / (2.0 * Double.pi * cutoff)
+        let te = 1.0 / rate
+        return 1.0 / (1.0 + tau / te)
     }
     
     // MARK: - Dừng Tracking
@@ -219,6 +278,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         motionManager.stopDeviceMotionUpdates()
         VisualOdometryEngine.shared.clearReference()
         NeuralTargetTracker.shared.clearAnchor()
+        filterInitialized = false
         CameraLogger.info("Đã dừng động cơ tracking không gian", category: .tracking)
     }
 }

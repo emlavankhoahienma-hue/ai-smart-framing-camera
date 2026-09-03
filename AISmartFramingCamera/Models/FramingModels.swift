@@ -135,13 +135,13 @@ public enum AIEngineSource: Equatable {
         switch self {
         case .geminiCloud(let model):
             let short = model.replacingOccurrences(of: "gemini-", with: "").uppercased()
-            return "CLOUD AI (\(short))"
+            return "CLOUD (\(short))"
         case .localTrained114MB:
-            return "AI LOCAL 114MB"
+            return "AI 114MB"
         case .yoloNeural(let label):
-            return "YOLOv11 (\(label.uppercased()))"
+            return "YOLO (\(label.uppercased()))"
         case .appleNeuralEngine:
-            return "NPU CHIP A-SERIES"
+            return "NPU"
         }
     }
     

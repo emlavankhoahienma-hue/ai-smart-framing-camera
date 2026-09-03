@@ -568,24 +568,15 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     self.consecutiveLostFrames += 1
                 }
                 
-                // 1B. Khi mất dấu quang học tạm thời (lia máy nhanh): Tự động tái lập mỏ neo quang học chính xác tại toạ độ không gian
-                if trackedPoint == nil && (self.consecutiveLostFrames >= 2) {
+                // 1B. Khi tạm thời mất dấu quang học (do lia máy nhanh / nhòe chuyển động):
+                // Duy trì sequenceHandler hiện tại, KHÔNG reset và KHÔNG bao giờ tạo mỏ neo bậy lên nền tường/bàn
+                if trackedPoint == nil && self.consecutiveLostFrames >= 20 {
                     let spatialPoint = StreetSpatialTrackingEngine.shared.isTrackingActive ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
+                    // Chỉ nạp lại mỏ neo khi Neural Re-ID xác nhận ĐÚNG 100% là vật thể ban đầu
                     if let (reIdPoint, reIdConfidence) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, fallbackPoint: spatialPoint) {
                         trackedPoint = reIdPoint
                         trackedConfidence = reIdConfidence
-                        self.consecutiveLostFrames = 0
-                    } else {
-                        // Tự động tái lập mỏ neo VNTrackObjectRequest ngay tại vị trí không gian con quay hồi chuyển đang giữ
-                        let boxSize: CGFloat = 0.14
-                        let vx = max(0.01, min(1.0 - boxSize - 0.01, spatialPoint.x - boxSize / 2.0))
-                        let vy = max(0.01, min(1.0 - boxSize - 0.01, (1.0 - spatialPoint.y) - boxSize / 2.0))
-                        let reAnchorObs = VNDetectedObjectObservation(boundingBox: CGRect(x: vx, y: vy, width: boxSize, height: boxSize))
-                        self.lastTargetObservation = reAnchorObs
-                        self.sequenceHandler = VNSequenceRequestHandler()
-                        trackedPoint = spatialPoint
-                        trackedConfidence = 0.65
                         self.consecutiveLostFrames = 0
                     }
                 }
