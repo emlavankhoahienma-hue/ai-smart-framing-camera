@@ -730,20 +730,7 @@ public final class CameraViewModel: ObservableObject {
             SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
         }
         
-        // 1. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (YOLO / Neural Engine Subject)
-        if let sRect = subjectRect {
-            let sCenter = CGPoint(x: sRect.midX, y: sRect.midY)
-            self.initialPhysicalSubjectCenter = sCenter
-            let clampedW = min(0.50, max(0.08, sRect.width * 1.10))
-            let clampedH = min(0.50, max(0.08, sRect.height * 1.10))
-            visionEngine.startTrackingObject(at: sCenter, size: CGSize(width: clampedW, height: clampedH))
-        } else {
-            self.initialPhysicalSubjectCenter = target
-            // Kích thước khung tracking tối ưu 0.14x0.14 ôm trọn vật thể
-            visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.14, height: 0.14))
-        }
-        
-        // 2b. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI (Neural Embedder)
+        // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
         if let buffer = latestPixelBuffer {
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
@@ -752,6 +739,23 @@ public final class CameraViewModel: ObservableObject {
             NeuralTargetTracker.shared.setAnchorTemplate(from: buffer, at: anchorTarget)
         } else {
             shouldCheckTextureOnNextFrame = true
+        }
+        
+        // 2. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (Apple Vision VNTrackObjectRequest)
+        // Khi vật thể là màu trắng/đơn sắc (isCurrentlyLowTexture): Mở rộng khung bám để bao quát đường viền cạnh tương phản với nền
+        let isLow = isCurrentlyLowTexture
+        if let sRect = subjectRect {
+            let sCenter = CGPoint(x: sRect.midX, y: sRect.midY)
+            self.initialPhysicalSubjectCenter = sCenter
+            let expandRatio: CGFloat = isLow ? 1.35 : 1.10
+            let minBox: CGFloat = isLow ? 0.20 : 0.08
+            let clampedW = min(0.60, max(minBox, sRect.width * expandRatio))
+            let clampedH = min(0.60, max(minBox, sRect.height * expandRatio))
+            visionEngine.startTrackingObject(at: sCenter, size: CGSize(width: clampedW, height: clampedH))
+        } else {
+            self.initialPhysicalSubjectCenter = target
+            let targetSize: CGFloat = isLow ? 0.22 : 0.14
+            visionEngine.startTrackingObject(at: target, size: CGSize(width: targetSize, height: targetSize))
         }
         
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu

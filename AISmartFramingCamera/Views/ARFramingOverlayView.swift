@@ -35,33 +35,21 @@ public struct ARFramingOverlayView: View {
                 // 2. Detected Faces preview
                 ForEach(0..<viewModel.detectedFaceRects.count, id: \.self) { i in
                     let rect = viewModel.detectedFaceRects[i]
-                    FaceDetectionBox(rect: CGRect(
-                        x: rect.origin.x * size.width,
-                        y: rect.origin.y * size.height,
-                        width: rect.width * size.width,
-                        height: rect.height * size.height
-                    ))
+                    FaceDetectionBox(rect: convertBufferRectToScreen(rect, in: size))
                 }
                 
                 // 3. Subject highlight rects
                 if viewModel.isAISessionActive {
                     ForEach(0..<viewModel.detectedSubjectRects.count, id: \.self) { i in
                         let rect = viewModel.detectedSubjectRects[i]
-                        SubjectHighlightBox(rect: CGRect(
-                            x: rect.origin.x * size.width,
-                            y: rect.origin.y * size.height,
-                            width: rect.width * size.width,
-                            height: rect.height * size.height
-                        ))
+                        SubjectHighlightBox(rect: convertBufferRectToScreen(rect, in: size))
                     }
                 }
                 
                 // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
+                // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
                 if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
-                    let targetScreen = CGPoint(
-                        x: targetPoint.x * size.width,
-                        y: targetPoint.y * size.height
-                    )
+                    let targetScreen = convertBufferPointToScreen(targetPoint, in: size)
                     
                     // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
                     if viewModel.showGuidanceRay {
@@ -187,10 +175,7 @@ public struct ARFramingOverlayView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture { location in
-                let norm = CGPoint(
-                    x: max(0.05, min(0.95, location.x / size.width)),
-                    y: max(0.05, min(0.95, location.y / size.height))
-                )
+                let norm = convertScreenPointToBuffer(location, in: size)
                 if viewModel.isAEAFLocked {
                     viewModel.unlockAEAF()
                 } else if case .targetPlaced = viewModel.aiSessionState {
@@ -208,16 +193,67 @@ public struct ARFramingOverlayView: View {
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.45)
                     .onEnded { _ in
-                        let norm = CGPoint(
-                            x: max(0.05, min(0.95, touchLocation.x / size.width)),
-                            y: max(0.05, min(0.95, touchLocation.y / size.height))
-                        )
+                        let norm = convertScreenPointToBuffer(touchLocation, in: size)
                         viewModel.userDidLongPressToLockAEAF(at: norm)
                     }
             )
             .clipped()
             .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
             .onAppear { startAnimations() }
+        }
+    }
+    
+    // MARK: - AspectFill Coordinate Conversion Helpers
+    // Chuyển đổi toạ độ chuẩn hóa từ Camera Buffer (4:3) sang màn hình Preview (AspectFill tràn viền)
+    private func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
+        // Tỉ lệ cảm biến camera iOS ở chế độ portrait: 3:4 (width / height = 0.75)
+        let bufferAspect: CGFloat = 3.0 / 4.0
+        let screenAspect = screenSize.width / max(1.0, screenSize.height)
+        
+        if screenAspect < bufferAspect {
+            // Màn hình hẹp hơn khung camera (VD: iPhone 19.5:9 so với 4:3) -> Bị crop 2 bên trái/phải
+            let displayedWidth = screenSize.height * bufferAspect
+            let horizontalCropOffset = (displayedWidth - screenSize.width) / 2.0
+            let screenX = point.x * displayedWidth - horizontalCropOffset
+            let screenY = point.y * screenSize.height
+            return CGPoint(x: screenX, y: screenY)
+        } else {
+            // Màn hình rộng hơn khung camera -> Bị crop trên/dưới
+            let displayedHeight = screenSize.width / bufferAspect
+            let verticalCropOffset = (displayedHeight - screenSize.height) / 2.0
+            let screenX = point.x * screenSize.width
+            let screenY = point.y * displayedHeight - verticalCropOffset
+            return CGPoint(x: screenX, y: screenY)
+        }
+    }
+    
+    private func convertBufferRectToScreen(_ rect: CGRect, in screenSize: CGSize) -> CGRect {
+        let topLeft = convertBufferPointToScreen(rect.origin, in: screenSize)
+        let bottomRight = convertBufferPointToScreen(CGPoint(x: rect.maxX, y: rect.maxY), in: screenSize)
+        return CGRect(
+            x: topLeft.x,
+            y: topLeft.y,
+            width: max(0, bottomRight.x - topLeft.x),
+            height: max(0, bottomRight.y - topLeft.y)
+        )
+    }
+    
+    private func convertScreenPointToBuffer(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
+        let bufferAspect: CGFloat = 3.0 / 4.0
+        let screenAspect = screenSize.width / max(1.0, screenSize.height)
+        
+        if screenAspect < bufferAspect {
+            let displayedWidth = screenSize.height * bufferAspect
+            let horizontalCropOffset = (displayedWidth - screenSize.width) / 2.0
+            let bufferX = (point.x + horizontalCropOffset) / displayedWidth
+            let bufferY = point.y / screenSize.height
+            return CGPoint(x: max(0.02, min(0.98, bufferX)), y: max(0.02, min(0.98, bufferY)))
+        } else {
+            let displayedHeight = screenSize.width / bufferAspect
+            let verticalCropOffset = (displayedHeight - screenSize.height) / 2.0
+            let bufferX = point.x / screenSize.width
+            let bufferY = (point.y + verticalCropOffset) / displayedHeight
+            return CGPoint(x: max(0.02, min(0.98, bufferX)), y: max(0.02, min(0.98, bufferY)))
         }
     }
     

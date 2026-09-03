@@ -80,6 +80,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
     
     // MARK: - Visual Object Tracking Control
+    private var currentTrackRequest: VNTrackObjectRequest? = nil
     
     /// Khởi động tracking bám dính vào vùng cảnh vật/vật thể/chữ tại toạ độ mục tiêu
     public func startTrackingObject(at normalizedPoint: CGPoint, size: CGSize = CGSize(width: 0.12, height: 0.12)) {
@@ -96,6 +97,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         let initialObservation = VNDetectedObjectObservation(boundingBox: clampedRect)
         self.lastTargetObservation = initialObservation
+        
+        // Chuẩn Apple WWDC: Khởi tạo VNTrackObjectRequest ĐÚNG 1 LẦN DUY NHẤT để tích lũy bộ nhớ tracking
+        let req = VNTrackObjectRequest(detectedObjectObservation: initialObservation)
+        req.trackingLevel = .accurate
+        self.currentTrackRequest = req
+        
         self.referenceFeaturePrint = nil
         self.referenceColorHistogram = nil
         self.kltTrackedPoints = []
@@ -104,10 +111,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
         self.isTrackingTarget = true
+        CameraLogger.info("🎯 [Vision] Khởi tạo VNTrackObjectRequest duy nhất tại: (\(String(format: "%.3f", normalizedPoint.x)), \(String(format: "%.3f", normalizedPoint.y))), size: \(size)", category: .tracking)
     }
     
     public func stopTrackingObject() {
         self.isTrackingTarget = false
+        self.currentTrackRequest?.isLastFrame = true
+        self.currentTrackRequest = nil
         self.lastTargetObservation = nil
         self.referenceFeaturePrint = nil
         self.referenceColorHistogram = nil
@@ -115,6 +125,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.kltPreviousBuffer = nil
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
+        CameraLogger.info("🎯 [Vision] Đã dừng và giải phóng VNTrackObjectRequest", category: .tracking)
     }
     
     // MARK: - Cân Bằng Sáng Cục Bộ Thích Nghi (Adaptive ROI Dynamic Range & Local CLAHE)
@@ -527,25 +538,23 @@ public final class VisionFramingEngine: @unchecked Sendable {
             defer { self.isProcessingFrame = false }
             
             // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
-            if self.isTrackingTarget, let prevObs = self.lastTargetObservation {
+            if self.isTrackingTarget, let trackRequest = self.currentTrackRequest {
                 // Không mutate pixelBuffer in-place để tránh tạo cạnh giả trên nền frame trước
-                if self.referenceFeaturePrint == nil {
-                    self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: prevObs.boundingBox)
-                    self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: prevObs.boundingBox)
+                if self.referenceFeaturePrint == nil, let obs = self.lastTargetObservation {
+                    self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: obs.boundingBox)
+                    self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: obs.boundingBox)
                 }
-                
-                // 1A. Tracking quang học phần cứng trực tiếp (Apple VNTrackObjectRequest)
-                let trackRequest = VNTrackObjectRequest(detectedObjectObservation: prevObs)
-                trackRequest.trackingLevel = .accurate
                 
                 var trackedPoint: CGPoint? = nil
                 var trackedConfidence: Double = 0.0
                 
                 do {
+                    // Truyền lại request gốc vào sequenceHandler để Apple Vision tích lũy vector vận tốc và bộ lọc Kalman
                     try self.sequenceHandler.perform([trackRequest], on: pixelBuffer, orientation: orientation)
                     if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first {
                         if newObs.confidence > 0.20 {
                             self.lastTargetObservation = newObs
+                            trackRequest.inputObservation = newObs
                             self.consecutiveLostFrames = 0
                             var uiX = newObs.boundingBox.midX
                             var uiY = 1.0 - newObs.boundingBox.midY
@@ -563,13 +572,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         } else {
                             self.consecutiveLostFrames += 1
                         }
+                    } else {
+                        self.consecutiveLostFrames += 1
                     }
                 } catch {
                     self.consecutiveLostFrames += 1
                 }
                 
                 // 1B. Khi tạm thời mất dấu quang học (do lia máy nhanh / nhòe chuyển động):
-                // Duy trì sequenceHandler hiện tại, KHÔNG reset và KHÔNG bao giờ tạo mỏ neo bậy lên nền tường/bàn
                 if trackedPoint == nil && self.consecutiveLostFrames >= 20 {
                     let spatialPoint = StreetSpatialTrackingEngine.shared.isTrackingActive ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
@@ -578,6 +588,17 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         trackedPoint = reIdPoint
                         trackedConfidence = reIdConfidence
                         self.consecutiveLostFrames = 0
+                        
+                        // Cập nhật lại mỏ neo chuẩn cho request
+                        let boxSize: CGFloat = 0.14
+                        let vx = max(0.01, min(1.0 - boxSize - 0.01, reIdPoint.x - boxSize / 2.0))
+                        let vy = max(0.01, min(1.0 - boxSize - 0.01, (1.0 - reIdPoint.y) - boxSize / 2.0))
+                        let reObs = VNDetectedObjectObservation(boundingBox: CGRect(x: vx, y: vy, width: boxSize, height: boxSize))
+                        self.lastTargetObservation = reObs
+                        let newReq = VNTrackObjectRequest(detectedObjectObservation: reObs)
+                        newReq.trackingLevel = .accurate
+                        self.currentTrackRequest = newReq
+                        self.sequenceHandler = VNSequenceRequestHandler()
                     }
                 }
                 
