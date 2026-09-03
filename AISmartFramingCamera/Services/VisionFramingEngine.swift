@@ -629,9 +629,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                 self.featurePrintCheckCounter = 0
                                 if let curPrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: newObs.boundingBox) {
                                     var dist: Float = 0
-                                    if (try? refPrint.computeDistance(&dist, to: curPrint)) != nil, dist > 0.50 {
-                                        identityOK = false
-                                        CameraLogger.info("🎯 [Vision] Mất khớp feature print (dist: \(String(format: "%.2f", dist))) — nghi tracker trôi", category: .tracking)
+                                    do {
+                                        try refPrint.computeDistance(&dist, to: curPrint)
+                                        if dist > 0.50 {
+                                            identityOK = false
+                                            CameraLogger.info("🎯 [Vision] Mất khớp feature print (dist: \(String(format: "%.2f", dist))) — nghi tracker trôi", category: .tracking)
+                                        }
+                                    } catch {
+                                        // Lỗi tính distance: bỏ qua lần kiểm tra này
                                     }
                                 }
                             }
