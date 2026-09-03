@@ -605,24 +605,11 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                     ciImage = ciImage.oriented(.right)
                 }
                 
-                if zoomAtCapture > 1.02 {
-                    let fullExtent = ciImage.extent
-                    let cropWidth = fullExtent.width / zoomAtCapture
-                    let cropHeight = fullExtent.height / zoomAtCapture
-                    let cropX = fullExtent.midX - (cropWidth / 2.0)
-                    let cropY = fullExtent.midY - (cropHeight / 2.0)
-                    let cropRect = CGRect(x: cropX, y: cropY, width: cropWidth, height: cropHeight)
-                    ciImage = ciImage.cropped(to: cropRect)
-                }
-                
                 finalCGImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent)
             }
             
             if finalCGImage == nil, let data = rawData, let uiImage = UIImage(data: data) {
-                var uprightImage = Self.fixOrientation(uiImage)
-                if zoomAtCapture > 1.02, let cropped = Self.cropImageForZoom(uprightImage, zoom: zoomAtCapture) {
-                    uprightImage = cropped
-                }
+                let uprightImage = Self.fixOrientation(uiImage)
                 finalCGImage = uprightImage.cgImage
             }
             

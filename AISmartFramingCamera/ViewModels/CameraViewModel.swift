@@ -1358,7 +1358,8 @@ extension CameraViewModel: CameraServiceDelegate {
             // Focus Peaking: Chỉ chạy khi người dùng bật trong Cài đặt (Zero overhead khi tắt)
             if self.isFocusPeakingEnabled && now - self.lastFocusPeakingComputeTime >= 0.033 {
                 self.lastFocusPeakingComputeTime = now
-                FocusPeakingEngine.shared.processFrame(pixelBuffer: pixelBuffer, color: self.focusPeakingColor) { [weak self] cgImage in
+                let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+                FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: self.focusPeakingColor) { [weak self] cgImage in
                     DispatchQueue.main.async {
                         self?.focusPeakingCGImage = cgImage
                     }

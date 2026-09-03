@@ -22,8 +22,7 @@ public struct ARFramingOverlayView: View {
                         .frame(width: size.width, height: size.height)
                         .clipped()
                         .allowsHitTesting(false)
-                        .blendMode(.screen)
-                        .opacity(0.92)
+                        .opacity(1.0)
                 }
                 
                 // 1. Composition Grid Lines (hiện khi AI session active)

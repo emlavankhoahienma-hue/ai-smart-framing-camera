@@ -27,41 +27,41 @@ public enum FocusPeakingColor: String, CaseIterable, Identifiable {
         case .green:
             return (
                 r: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                g: CIVector(x: 1.8, y: 1.8, z: 1.8, w: 0.0),
+                g: CIVector(x: 1.3, y: 1.3, z: 1.3, w: 0.0),
                 b: CIVector(x: 0.2, y: 0.2, z: 0.2, w: 0.0),
-                a: CIVector(x: 2.2, y: 2.2, z: 2.2, w: 0.0),
-                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.32)
+                a: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
+                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.10)
             )
         case .yellow:
             return (
-                r: CIVector(x: 1.8, y: 1.8, z: 1.8, w: 0.0),
-                g: CIVector(x: 1.6, y: 1.6, z: 1.6, w: 0.0),
+                r: CIVector(x: 1.3, y: 1.3, z: 1.3, w: 0.0),
+                g: CIVector(x: 1.2, y: 1.2, z: 1.2, w: 0.0),
                 b: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                a: CIVector(x: 2.2, y: 2.2, z: 2.2, w: 0.0),
-                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.32)
+                a: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
+                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.10)
             )
         case .red:
             return (
-                r: CIVector(x: 2.0, y: 2.0, z: 2.0, w: 0.0),
+                r: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
                 g: CIVector(x: 0.1, y: 0.1, z: 0.1, w: 0.0),
                 b: CIVector(x: 0.1, y: 0.1, z: 0.1, w: 0.0),
-                a: CIVector(x: 2.2, y: 2.2, z: 2.2, w: 0.0),
-                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.32)
+                a: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
+                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.10)
             )
         case .cyan:
             return (
                 r: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                g: CIVector(x: 1.6, y: 1.6, z: 1.6, w: 0.0),
-                b: CIVector(x: 1.8, y: 1.8, z: 1.8, w: 0.0),
-                a: CIVector(x: 2.2, y: 2.2, z: 2.2, w: 0.0),
-                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.32)
+                g: CIVector(x: 1.2, y: 1.2, z: 1.2, w: 0.0),
+                b: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
+                a: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
+                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.10)
             )
         }
     }
 }
 
-/// Động cơ Focus Peaking Báo Nét Điện Ảnh Chuyên Nghiệp (Tách biệt hoàn toàn)
-/// Thuật toán lọc đạo hàm biên cạnh Laplacian/Sobel thời gian thực trên GPU Metal.
+/// Động cơ Focus Peaking Báo Nét Điện Ảnh Chuyên Nghiệp
+/// Thuật toán Sobel Edge Detection + High-pass Frequency Isolation gia tốc phần cứng trên GPU Metal.
 public final class FocusPeakingEngine: @unchecked Sendable {
     public static let shared = FocusPeakingEngine()
     
@@ -77,50 +77,40 @@ public final class FocusPeakingEngine: @unchecked Sendable {
         }
     }
     
-    /// Xử lý khung hình CVPixelBuffer và trả về ảnh viền nét mờ trong suốt
-    public func processFrame(pixelBuffer: CVPixelBuffer, color: FocusPeakingColor, completion: @escaping @Sendable (CGImage?) -> Void) {
+    /// Xử lý khung hình CIImage và trả về ảnh viền nét mờ trong suốt (Không bao giờ ghi đè nil khi drop frame)
+    public func processFrame(ciImage: CIImage, color: FocusPeakingColor, completion: @escaping @Sendable (CGImage?) -> Void) {
         guard !isProcessing else {
-            completion(nil)
+            // Đang xử lý khung hình trước: Bỏ qua khung hình này mà KHÔNG gọi completion(nil) để tránh chớp giật
             return
         }
         
         isProcessing = true
         
         processingQueue.async { [weak self] in
-            guard let self = self else {
-                completion(nil)
-                return
-            }
-            
+            guard let self = self else { return }
             defer { self.isProcessing = false }
             
-            let sourceCI = CIImage(cvPixelBuffer: pixelBuffer)
-            
             // 1. Downscale tối ưu để tăng tốc độ xử lý GPU lên 60FPS
-            let width = sourceCI.extent.width
+            let width = ciImage.extent.width
             let targetWidth: CGFloat = 720.0
             let scale = width > targetWidth ? targetWidth / width : 1.0
+            let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             
-            let scaledImage = sourceCI.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            // 2. Chuyển đổi đơn sắc và tăng tương phản tần số cao
+            guard let colorControls = CIFilter(name: "CIColorControls") else { return }
+            colorControls.setValue(scaledImage, forKey: kCIInputImageKey)
+            colorControls.setValue(0.0, forKey: kCIInputSaturationKey)
+            colorControls.setValue(1.8, forKey: kCIInputContrastKey)
+            guard let monoImage = colorControls.outputImage else { return }
             
-            // 2. Phát hiện biên cạnh độ tương phản cao (Sobel Edge Detection)
-            guard let edgesFilter = CIFilter(name: "CIEdges") else {
-                completion(nil)
-                return
-            }
-            edgesFilter.setValue(scaledImage, forKey: kCIInputImageKey)
-            edgesFilter.setValue(3.5, forKey: "inputIntensity")
+            // 3. Phát hiện biên cạnh độ tương phản cao (Sobel Edge Detection) với cường độ cao
+            guard let edgesFilter = CIFilter(name: "CIEdges") else { return }
+            edgesFilter.setValue(monoImage, forKey: kCIInputImageKey)
+            edgesFilter.setValue(8.0, forKey: "inputIntensity")
+            guard let edgeOutput = edgesFilter.outputImage else { return }
             
-            guard let edgeOutput = edgesFilter.outputImage else {
-                completion(nil)
-                return
-            }
-            
-            // 3. Phủ màu Neon và triệt tiêu vùng nền đen (Transparent Alpha Masking)
-            guard let colorMatrixFilter = CIFilter(name: "CIColorMatrix") else {
-                completion(nil)
-                return
-            }
+            // 4. Phủ màu Neon và triệt tiêu vùng nền đen (Transparent Alpha Masking)
+            guard let colorMatrixFilter = CIFilter(name: "CIColorMatrix") else { return }
             let vectors = color.colorMatrixVectors
             colorMatrixFilter.setValue(edgeOutput, forKey: kCIInputImageKey)
             colorMatrixFilter.setValue(vectors.r, forKey: "inputRVector")
@@ -128,17 +118,11 @@ public final class FocusPeakingEngine: @unchecked Sendable {
             colorMatrixFilter.setValue(vectors.b, forKey: "inputBVector")
             colorMatrixFilter.setValue(vectors.a, forKey: "inputAVector")
             colorMatrixFilter.setValue(vectors.bias, forKey: "inputBiasVector")
+            guard let finalOutput = colorMatrixFilter.outputImage else { return }
             
-            guard let finalOutput = colorMatrixFilter.outputImage else {
-                completion(nil)
-                return
-            }
-            
-            // 4. Kết xuất CGImage GPU siêu tốc
+            // 5. Kết xuất CGImage GPU siêu tốc
             if let cgImage = self.ciContext.createCGImage(finalOutput, from: finalOutput.extent) {
                 completion(cgImage)
-            } else {
-                completion(nil)
             }
         }
     }
