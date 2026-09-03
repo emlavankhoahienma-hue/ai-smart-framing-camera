@@ -656,9 +656,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             // Thích nghi chậm reference theo thay đổi phơi sáng (mỗi ~2s lock ổn định)
                             if self.stableLockFrames >= 60 {
                                 self.stableLockFrames = 0
-                                if let refHist = self.referenceColorHistogram,
-                                   let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox),
-                                   refHist.count == curHist.count {
+                                let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
+                                if let refHist = self.referenceColorHistogram, refHist.count == curHist.count {
                                     var blended = [Float](repeating: 0, count: refHist.count)
                                     for i in 0..<refHist.count { blended[i] = refHist[i] * 0.85 + curHist[i] * 0.15 }
                                     self.referenceColorHistogram = blended
