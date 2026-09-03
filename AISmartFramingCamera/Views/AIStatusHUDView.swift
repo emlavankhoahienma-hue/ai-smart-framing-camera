@@ -83,6 +83,20 @@ public struct AIStatusHUDView: View {
                         }
                     }
                     
+                    // Street Tracking Mode Badge (Chế độ Đi Đường Siêu Bám)
+                    if viewModel.isStreetTrackingModeEnabled {
+                        HStack(spacing: 3) {
+                            Image(systemName: "car.fill")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("ĐI ĐƯỜNG")
+                                .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                        }
+                        .foregroundColor(.yellow)
+                        .padding(.horizontal, 4).padding(.vertical, 2)
+                        .background(Color.yellow.opacity(0.25))
+                        .cornerRadius(6)
+                    }
+                    
                     // Engine Source Badge (Cloud AI vs Local 114MB AI vs YOLOv11 NPU vs Apple ANE)
                     if let engine = viewModel.activeEngineSource, viewModel.aiSessionState != .idle {
                         HStack(spacing: 3) {

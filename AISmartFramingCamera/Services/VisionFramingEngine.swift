@@ -570,7 +570,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 
                 // 1B. Khi mất dấu quang học tạm thời (lia máy nhanh): Tự động tái lập mỏ neo quang học chính xác tại toạ độ không gian
                 if trackedPoint == nil && (self.consecutiveLostFrames >= 2) {
-                    let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+                    let spatialPoint = StreetSpatialTrackingEngine.shared.isTrackingActive ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
                     if let (reIdPoint, reIdConfidence) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, fallbackPoint: spatialPoint) {
                         trackedPoint = reIdPoint

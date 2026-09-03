@@ -62,6 +62,16 @@ public final class CameraViewModel: ObservableObject {
     @Published public var selectedPhotoFormat: PhotoSaveFormat = .jpeg {
         didSet { UserDefaults.standard.set(selectedPhotoFormat.rawValue, forKey: "selectedPhotoFormat") }
     }
+    @Published public var isStreetTrackingModeEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isStreetTrackingModeEnabled, forKey: "isStreetTrackingModeEnabled")
+            if !isStreetTrackingModeEnabled {
+                StreetSpatialTrackingEngine.shared.stopTracking()
+            } else {
+                SpatialTrackingEngine.shared.stopTracking()
+            }
+        }
+    }
     @Published public var liveISO: String = "ISO 32"
     @Published public var liveShutterSpeed: String = "1/400 s"
     @Published public var histogramBars: [HistogramBarData] = (0..<32).map {
@@ -135,6 +145,7 @@ public final class CameraViewModel: ObservableObject {
             self.cameraService.smoothZoomFactor(to: targetZoom, rate: 1.8)
             self.currentZoom = targetZoom
             SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
+            StreetSpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
             
             let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.8 + 0.25
             DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
@@ -271,6 +282,9 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "useGeminiForAnalysis") != nil {
             self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
         }
+        if defaults.object(forKey: "isStreetTrackingModeEnabled") != nil {
+            self.isStreetTrackingModeEnabled = defaults.bool(forKey: "isStreetTrackingModeEnabled")
+        }
         if let sensitivityRaw = defaults.string(forKey: "trackingSensitivity"), let sensitivity = TrackingSensitivityPreset(rawValue: sensitivityRaw) {
             self.trackingSensitivity = sensitivity
         }
@@ -368,9 +382,18 @@ public final class CameraViewModel: ObservableObject {
     }
     
     private func setupMotionCallbacks() {
-        // Động cơ Tracking Không Gian Duy Nhất (Single Source of Truth)
+        // Động cơ Tracking Không Gian Chuẩn: Chế độ Thường
         SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
-            guard let self = self else { return }
+            guard let self = self, !self.isStreetTrackingModeEnabled else { return }
+            self.lastVisualConfidence = confidence
+            self.currentTargetPoint = point
+            self.trackingQuality = quality
+            self.evaluateAlignment(at: point)
+        }
+        
+        // Động cơ Tracking Không Gian Chuyên Dụng Đi Đường: Chế độ Đi Đường
+        StreetSpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
+            guard let self = self, self.isStreetTrackingModeEnabled else { return }
             self.lastVisualConfidence = confidence
             self.currentTargetPoint = point
             self.trackingQuality = quality
@@ -388,6 +411,7 @@ public final class CameraViewModel: ObservableObject {
         // Reset state
         arSessionService.clearTarget()
         SpatialTrackingEngine.shared.stopTracking()
+        StreetSpatialTrackingEngine.shared.stopTracking()
         visionEngine.stopTrackingObject()
         analysisFrames = []
         initialTargetPoint = nil
@@ -421,6 +445,7 @@ public final class CameraViewModel: ObservableObject {
         arSessionService.clearTarget()
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
+        StreetSpatialTrackingEngine.shared.stopTracking()
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
         consecutiveLowConfidenceFrames = 0
@@ -603,6 +628,7 @@ public final class CameraViewModel: ObservableObject {
         }
         // Nếu nằm giữa 20.0 và 30.0: giữ nguyên trạng thái trước đó
         SpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
+        StreetSpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
         CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
     }
     
@@ -662,7 +688,13 @@ public final class CameraViewModel: ObservableObject {
         
         // Đồng bộ phân loại cảnh quan cho Dynamic EKF & Deformable Nature Tracking
         visionEngine.currentSceneType = self.detectedScene
-        SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
+        if isStreetTrackingModeEnabled {
+            StreetSpatialTrackingEngine.shared.activeSceneType = self.detectedScene
+            StreetSpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
+        } else {
+            SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
+            SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
+        }
         
         // 1. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (YOLO / Neural Engine Subject)
         if let sRect = subjectRect {
@@ -676,9 +708,6 @@ public final class CameraViewModel: ObservableObject {
             // Kích thước khung tracking tối ưu 0.14x0.14 ôm trọn vật thể
             visionEngine.startTrackingObject(at: target, size: CGSize(width: 0.14, height: 0.14))
         }
-        
-        // 2. Khởi động Động cơ Tracking Không Gian Duy Nhất
-        SpatialTrackingEngine.shared.lockAnchor(at: target, zoom: currentZoom)
         
         // 2b. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI (Neural Embedder)
         let anchorTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
@@ -719,15 +748,19 @@ public final class CameraViewModel: ObservableObject {
             applyTextureVarianceHysteresis(variance: variance)
         }
         
-        // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào SpatialTrackingEngine
-        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
+        // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào Động cơ tương ứng
+        if isStreetTrackingModeEnabled {
+            StreetSpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
+        } else {
+            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
+        }
     }
 
     // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che / lia máy nhanh)
     private func handleTrackingDegraded() {
         consecutiveLowConfidenceFrames += 1
         
-        let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+        let spatialPoint = isStreetTrackingModeEnabled ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
         let fallback = self.currentTargetPoint ?? lastTrackedVisualPoint ?? spatialPoint
         let target = (spatialPoint.x >= 0.02 && spatialPoint.x <= 0.98) ? spatialPoint : fallback
         
@@ -861,6 +894,7 @@ public final class CameraViewModel: ObservableObject {
         currentZoom = zoom
         cameraService.setZoomFactor(zoom)
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+        StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
     
     public func setZoomFromButton(_ zoom: CGFloat) {
@@ -868,6 +902,7 @@ public final class CameraViewModel: ObservableObject {
         currentZoom = zoom
         cameraService.smoothZoomFactor(to: zoom, rate: 2.5)
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+        StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
     
     public func setExposure(_ bias: Float) {

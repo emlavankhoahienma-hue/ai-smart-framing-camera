@@ -231,6 +231,34 @@ public struct SettingsSheetView: View {
                     Toggle("Tự động Zoom theo AI (Auto-Zoom)", isOn: $viewModel.isAutoZoomEnabled)
                     Toggle("Màu Leica / Hasselblad Natural", isOn: $viewModel.isAIFullColorEnabled)
                     Toggle("Không gian 3D ARKit", isOn: $viewModel.isARModeEnabled)
+                    
+                    Toggle(isOn: $viewModel.isStreetTrackingModeEnabled) {
+                        HStack {
+                            Image(systemName: "car.fill")
+                                .foregroundColor(.yellow)
+                            Text("Chế độ Đi Đường (Street Tracking)")
+                        }
+                    }
+                    
+                    if viewModel.isStreetTrackingModeEnabled {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 4) {
+                                Circle().fill(Color.yellow).frame(width: 6, height: 6)
+                                Text("ĐÃ BẬT MỎ NEO SIÊU BÁM DÍNH")
+                                    .font(.caption2.bold())
+                                    .foregroundColor(.yellow)
+                            }
+                            Text("• Cơ chế: Dùng động cơ StreetSpatialTracking riêng biệt với bộ lọc Deadband triệt tiêu rung chấn động cơ/mặt đường và lọc sốc ổ gà.")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.85))
+                            Text("• Nhược điểm: Target có lực ghì quán tính rất nặng, khi xoay máy nhanh sẽ có độ trễ ghì lại vị trí cũ thay vì di chuyển linh hoạt.")
+                                .font(.caption2)
+                                .foregroundColor(.orange.opacity(0.9))
+                        }
+                        .padding(8)
+                        .background(Color.yellow.opacity(0.12))
+                        .cornerRadius(8)
+                    }
                 }
                 
                 // MARK: - 4B. Film Presets Visual Showcase (Ảnh mẫu từng màu Film)
