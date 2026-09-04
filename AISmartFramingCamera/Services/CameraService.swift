@@ -41,6 +41,8 @@ public final class CameraService: NSObject {
     private let videoDataQueue = DispatchQueue(label: "com.alignai.camera.videoDataQueue", qos: .userInteractive)
     
     private var activeCamera: AVCaptureDevice?
+    public var currentActiveCamera: AVCaptureDevice? { return activeCamera }
+    public var currentSessionQueue: DispatchQueue { return sessionQueue }
     private var zoomObservation: NSKeyValueObservation?
     public var onLiveZoomFactorChanged: ((CGFloat) -> Void)?
     private var videoDeviceInput: AVCaptureDeviceInput?
@@ -458,7 +460,7 @@ public final class CameraService: NSObject {
         self.selectedVideoFormatOption = option
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            if self.currentCaptureMode == .video {
+            if self.currentCaptureMode.isVideo {
                 self.configureVideoFormatInternal(option: option)
             }
             let formatStr = self.getActiveVideoResolutionAndFPS()
@@ -543,7 +545,7 @@ public final class CameraService: NSObject {
             guard let self = self else { return }
             self.currentCaptureMode = mode
             self.captureSession.beginConfiguration()
-            if mode == .video {
+            if mode.isVideo {
                 if self.photoOutput.isLivePhotoCaptureEnabled {
                     self.photoOutput.isLivePhotoCaptureEnabled = false
                 }
@@ -572,7 +574,7 @@ public final class CameraService: NSObject {
             DispatchQueue.main.async {
                 self.onActiveVideoFormatChanged?(formatStr)
             }
-            CameraLogger.info("Đã chuyển chế độ: \(mode == .video ? "VIDEO" : "ẢNH") (\(formatStr)) | LivePhotoSupported: \(self.photoOutput.isLivePhotoCaptureSupported)", category: .capture)
+            CameraLogger.info("Đã chuyển chế độ: \(mode.rawValue) (\(formatStr)) | LivePhotoSupported: \(self.photoOutput.isLivePhotoCaptureSupported)", category: .capture)
         }
     }
     

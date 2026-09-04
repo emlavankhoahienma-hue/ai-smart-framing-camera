@@ -10,7 +10,7 @@ public struct LiveColorHistogramHUDView: View {
     public var body: some View {
         HStack(spacing: 12) {
             // 1. Format / Codec Selector (Video: HEVC / H.264, Photo: JPEG / HEIC / DNG)
-            if viewModel.captureMode == .video {
+            if viewModel.captureMode.isVideo {
                 VStack(alignment: .leading, spacing: 1.5) {
                     Text("HEVC")
                         .font(.system(size: 8, weight: viewModel.selectedVideoCodec == .hevc ? .heavy : .medium, design: .rounded))

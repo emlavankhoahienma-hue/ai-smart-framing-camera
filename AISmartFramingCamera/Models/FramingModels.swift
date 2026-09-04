@@ -37,8 +37,32 @@ public enum CompositionRule: String, CaseIterable, Identifiable {
 public enum CameraCaptureMode: String, CaseIterable, Identifiable {
     case photo = "ẢNH"
     case video = "VIDEO"
+    case proVideo = "VIDEO PRO"
     
     public var id: String { rawValue }
+    
+    public var isVideo: Bool {
+        return self == .video || self == .proVideo
+    }
+}
+
+// MARK: - Pro Video Parameter Tabs
+public enum ProVideoParameterTab: String, CaseIterable, Identifiable {
+    case iso = "ISO"
+    case shutter = "SHUTTER"
+    case aperture = "KHẨU/EV"
+    case wb = "WB"
+    
+    public var id: String { rawValue }
+    
+    public var iconName: String {
+        switch self {
+        case .iso: return "gauge.medium"
+        case .shutter: return "timer"
+        case .aperture: return "camera.aperture"
+        case .wb: return "sun.max.fill"
+        }
+    }
 }
 
 // MARK: - Video Format Options & Codecs

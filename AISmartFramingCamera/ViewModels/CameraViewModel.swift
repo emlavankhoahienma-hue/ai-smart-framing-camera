@@ -52,6 +52,11 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode")
             cameraService.updateCaptureMode(captureMode)
+            if oldValue == .proVideo && captureMode != .proVideo {
+                proVideoService.resetToFullAuto()
+            } else if captureMode == .proVideo {
+                proVideoService.syncHardwareCapabilities()
+            }
         }
     }
     @Published public var isLivePhotoEnabled: Bool = false {
@@ -107,6 +112,11 @@ public final class CameraViewModel: ObservableObject {
     private let videoProcessingQueue = DispatchQueue(label: "com.aismartframing.video.processing", qos: .userInitiated)
     private var videoRecordingTimer: Timer? = nil
     private var videoRecordingStartTime: Date? = nil
+    
+    // Pro Video Manual Controls Service & State
+    public let proVideoService = ProVideoManualControlsService.shared
+    @Published public var selectedProTab: ProVideoParameterTab = .iso
+    @Published public var isShowingProControlsDrawer: Bool = true
     
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
@@ -431,6 +441,7 @@ public final class CameraViewModel: ObservableObject {
             let isoInt = Int(round(stats.iso))
             self.liveISO = "ISO \(isoInt)"
             self.liveShutterSpeed = stats.shutterSpeedString
+            self.proVideoService.updateLiveMeasurements(iso: stats.iso, shutterDuration: stats.exposureDurationSeconds)
         }
     }
     
@@ -1310,7 +1321,7 @@ public final class CameraViewModel: ObservableObject {
     
     // MARK: - Manual Shutter Click (Nút chụp màu trắng)
     public func takePhotoManual() {
-        if captureMode == .video {
+        if captureMode.isVideo {
             toggleVideoRecording()
             return
         }

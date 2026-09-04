@@ -34,6 +34,13 @@ public struct CameraMainView: View {
                     LiveColorHistogramHUDView(viewModel: viewModel)
                         .padding(.bottom, 6)
                     
+                    // Pro Video Manual Controls View (Only in VIDEO PRO mode)
+                    if viewModel.captureMode == .proVideo {
+                        ProVideoManualControlsView(viewModel: viewModel)
+                            .padding(.bottom, 6)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    
                     // Bottom Control Deck (Zoom, Mode, Shutter, Presets)
                     CameraControlsView(viewModel: viewModel)
                 }
@@ -67,7 +74,7 @@ struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     
     var body: some View {
-        if viewModel.captureMode == .video {
+        if viewModel.captureMode.isVideo {
             HStack(spacing: 12) {
                 // Flash / Torch Toggle
                 Button(action: {

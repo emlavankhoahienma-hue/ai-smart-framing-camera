@@ -17,8 +17,8 @@ public struct CameraControlsView: View {
             ZoomSelectorPills(viewModel: viewModel, options: zoomOptions)
                 .padding(.bottom, 4)
             
-            // Mode Switcher (ẢNH / VIDEO)
-            HStack(spacing: 24) {
+            // Mode Switcher (ẢNH / VIDEO / VIDEO PRO)
+            HStack(spacing: 20) {
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         viewModel.captureMode = .photo
@@ -37,6 +37,20 @@ public struct CameraControlsView: View {
                     Text("VIDEO")
                         .font(.system(size: 13, weight: viewModel.captureMode == .video ? .heavy : .medium))
                         .foregroundColor(viewModel.captureMode == .video ? .yellow : .gray)
+                }
+                
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.captureMode = .proVideo
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("VIDEO PRO")
+                            .font(.system(size: 13, weight: viewModel.captureMode == .proVideo ? .heavy : .medium))
+                    }
+                    .foregroundColor(viewModel.captureMode == .proVideo ? .yellow : .gray)
                 }
             }
             .padding(.bottom, 8)
@@ -108,7 +122,7 @@ struct MainCaptureButton: View {
     
     var body: some View {
         VStack(spacing: 6) {
-            if viewModel.captureMode == .video {
+            if viewModel.captureMode.isVideo {
                 // Video Record Button (Red circle with square when recording)
                 Button(action: {
                     viewModel.toggleVideoRecording()
