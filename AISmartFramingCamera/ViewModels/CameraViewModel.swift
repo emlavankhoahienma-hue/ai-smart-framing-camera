@@ -441,6 +441,7 @@ public final class CameraViewModel: ObservableObject {
             case .jpeg: selectedPhotoFormat = .heic
             case .heic: selectedPhotoFormat = .dng
             case .dng: selectedPhotoFormat = .jpeg
+            case .heif: selectedPhotoFormat = .heic
             }
         }
     }
