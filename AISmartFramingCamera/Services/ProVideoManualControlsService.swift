@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import AVFoundation
 import UIKit
 import Combine
@@ -194,7 +194,7 @@ public final class ProVideoManualControlsService: ObservableObject {
                         targetDuration = camera.exposureDuration
                     } else {
                         let sec = 1.0 / self.currentShutterSpeed
-                        let cmSec = CMTime(seconds: sec, timescale: 1000000)
+                        let cmSec = CMTime(seconds: sec, preferredTimescale: 1000000)
                         targetDuration = max(camera.activeFormat.minExposureDuration, min(cmSec, camera.activeFormat.maxExposureDuration))
                     }
                     
