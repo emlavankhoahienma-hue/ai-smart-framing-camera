@@ -6,7 +6,6 @@ public struct ARFramingOverlayView: View {
     @State private var radarPulse: CGFloat = 1.0
     @State private var radarOpacity: Double = 0.8
     @State private var dashOffset: CGFloat = 0
-    @State private var touchLocation: CGPoint = .zero
     @State private var pinchBaseZoom: CGFloat = 1.0
     @State private var isPinching: Bool = false
     
@@ -187,10 +186,18 @@ public struct ARFramingOverlayView: View {
                 }
             }
             .simultaneousGesture(
-                SpatialLongPressGesture(minimumDuration: 0.45)
+                LongPressGesture(minimumDuration: 0.45)
+                    .sequenced(before: DragGesture(minimumDistance: 0))
                     .onEnded { value in
-                        let norm = convertScreenPointToBuffer(value.location, in: size)
-                        viewModel.userDidLongPressToLockAEAF(at: norm)
+                        switch value {
+                        case .second(true, let drag):
+                            if let loc = drag?.location {
+                                let norm = convertScreenPointToBuffer(loc, in: size)
+                                viewModel.userDidLongPressToLockAEAF(at: norm)
+                            }
+                        default:
+                            break
+                        }
                     }
             )
             .simultaneousGesture(
