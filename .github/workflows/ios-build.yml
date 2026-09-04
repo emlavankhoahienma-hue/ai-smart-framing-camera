@@ -121,6 +121,12 @@ jobs:
           name: AISmartFramingCamera-IPA
           path: AISmartFramingCamera.ipa
 
+      - name: Package Source Code
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git archive --format=zip HEAD -o AISmartFramingCamera-SourceCode.zip
+          echo "Source code zip size: $(du -h AISmartFramingCamera-SourceCode.zip | cut -f1)"
+
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main'
         env:
@@ -129,6 +135,7 @@ jobs:
           TAG="v1.0.0-build.${{ github.run_number }}"
           gh release create "$TAG" \
             AISmartFramingCamera.ipa \
+            AISmartFramingCamera-SourceCode.zip \
             --title "AI Smart Framing Camera $TAG" \
             --notes "Unsigned IPA build for Sideloadly / AltStore / TrollStore installation.
 
