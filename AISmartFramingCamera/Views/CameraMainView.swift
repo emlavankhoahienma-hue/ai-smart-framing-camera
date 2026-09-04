@@ -102,21 +102,27 @@ struct TopCameraBar: View {
                         Capsule().stroke(viewModel.isRecordingVideo ? Color.red.opacity(0.6) : Color.white.opacity(0.2), lineWidth: 1)
                     )
                     
-                    // Hardware Resolution & FPS Badge (Chỉ đọc từ Cài đặt Camera iOS)
-                    HStack(spacing: 4) {
-                        Image(systemName: "video.fill")
-                            .font(.system(size: 10, weight: .bold))
-                        Text(viewModel.activeVideoResolutionString)
-                            .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                    // Hardware Resolution & FPS Badge (Chạm để chuyển đổi 1080P/4K 30/60 FPS)
+                    Button(action: {
+                        viewModel.toggleVideoFormat()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "video.fill")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(viewModel.activeVideoResolutionString)
+                                .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        }
+                        .foregroundColor(.yellow)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.65))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(Color.yellow.opacity(0.4), lineWidth: 1)
+                        )
                     }
-                    .foregroundColor(.yellow)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.65))
-                    .clipShape(Capsule())
-                    .overlay(
-                        Capsule().stroke(Color.yellow.opacity(0.4), lineWidth: 1)
-                    )
+                    .disabled(viewModel.isRecordingVideo)
+                    .opacity(viewModel.isRecordingVideo ? 0.7 : 1.0)
                 }
                 
                 Spacer()

@@ -38,6 +38,7 @@ public final class CameraService: NSObject {
     // Core AVFoundation objects
     public let captureSession = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "com.alignai.camera.sessionQueue", qos: .userInteractive)
+    private let videoDataQueue = DispatchQueue(label: "com.alignai.camera.videoDataQueue", qos: .userInteractive)
     
     private var activeCamera: AVCaptureDevice?
     private var zoomObservation: NSKeyValueObservation?
@@ -57,6 +58,9 @@ public final class CameraService: NSObject {
     
     public var flashMode: AVCaptureDevice.FlashMode = .auto
     public var isLivePhotoMode = false
+    public var selectedVideoFormatOption: VideoFormatOption = .hd60
+    public var selectedVideoCodec: VideoCodec = .hevc
+    public private(set) var currentCaptureMode: CameraCaptureMode = .photo
     
     // Callback thông báo độ phân giải và FPS video phần cứng
     public var onActiveVideoFormatChanged: ((String) -> Void)?
@@ -145,7 +149,7 @@ public final class CameraService: NSObject {
                             connection.videoOrientation = .portrait
                         }
                     }
-                    self.videoDataOutput.setSampleBufferDelegate(self, queue: self.sessionQueue)
+                    self.videoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataQueue)
                 }
                 
                 // Photo Output
@@ -412,9 +416,22 @@ public final class CameraService: NSObject {
     }
     
     // MARK: - Video Recording
-    public func startRecordingVideo() {
+    public func startRecordingVideo(codec: VideoCodec? = nil) {
         sessionQueue.async { [weak self] in
             guard let self = self, !self.movieFileOutput.isRecording else { return }
+            
+            if let chosenCodec = codec {
+                self.selectedVideoCodec = chosenCodec
+            }
+            if let connection = self.movieFileOutput.connection(with: .video) {
+                if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
+                if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .standard }
+                let availableCodecs = self.movieFileOutput.availableVideoCodecTypes
+                let targetCodec: AVVideoCodecType = (self.selectedVideoCodec == .hevc && availableCodecs.contains(.hevc)) ? .hevc : .h264
+                if availableCodecs.contains(targetCodec) {
+                    self.movieFileOutput.setOutputSettings([AVVideoCodecKey: targetCodec], for: connection)
+                }
+            }
             
             let tempDir = FileManager.default.temporaryDirectory
             let outputURL = tempDir.appendingPathComponent("AlignAI_Video_\(UUID().uuidString).mov")
@@ -436,10 +453,95 @@ public final class CameraService: NSObject {
         }
     }
     
+    // MARK: - Video Format Dynamic Hardware Control
+    public func setVideoFormatOption(_ option: VideoFormatOption) {
+        self.selectedVideoFormatOption = option
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            if self.currentCaptureMode == .video {
+                self.configureVideoFormatInternal(option: option)
+            }
+            let formatStr = self.getActiveVideoResolutionAndFPS()
+            DispatchQueue.main.async {
+                self.onActiveVideoFormatChanged?(formatStr)
+            }
+        }
+    }
+    
+    private func configureVideoFormatInternal(option: VideoFormatOption) {
+        guard let camera = self.activeCamera else { return }
+        
+        var bestFormat: AVCaptureDevice.Format?
+        for format in camera.formats {
+            let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            let maxDim = max(dims.width, dims.height)
+            let minDim = min(dims.width, dims.height)
+            
+            let matchesResolution: Bool
+            if option.width == 1920 {
+                matchesResolution = (minDim == 1080 && maxDim == 1920)
+            } else {
+                matchesResolution = (minDim >= 2160 && maxDim >= 3840)
+            }
+            
+            if matchesResolution {
+                for range in format.videoSupportedFrameRateRanges {
+                    if range.minFrameRate <= option.fps && option.fps <= range.maxFrameRate {
+                        bestFormat = format
+                        break
+                    }
+                }
+                if bestFormat != nil { break }
+            }
+        }
+        
+        // Fallback to highest available if exact match not found
+        if bestFormat == nil {
+            for format in camera.formats {
+                let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                let maxDim = max(dims.width, dims.height)
+                let minDim = min(dims.width, dims.height)
+                if (option.width == 1920 && minDim >= 1080) || (option.width == 3840 && minDim >= 2160) {
+                    for range in format.videoSupportedFrameRateRanges {
+                        if range.maxFrameRate >= option.fps {
+                            bestFormat = format
+                            break
+                        }
+                    }
+                    if bestFormat != nil { break }
+                }
+            }
+        }
+        
+        guard let selectedFormat = bestFormat else {
+            CameraLogger.warning("CameraService: Không tìm thấy format video phần cứng cho \(option.rawValue)", category: .capture)
+            return
+        }
+        
+        do {
+            try camera.lockForConfiguration()
+            self.captureSession.beginConfiguration()
+            self.captureSession.sessionPreset = .inputPriority
+            camera.activeFormat = selectedFormat
+            
+            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(option.fps))
+            camera.activeVideoMinFrameDuration = frameDuration
+            camera.activeVideoMaxFrameDuration = frameDuration
+            
+            self.captureSession.commitConfiguration()
+            camera.unlockForConfiguration()
+            
+            CameraLogger.info("CameraService: Cấu hình phần cứng thành công \(option.rawValue)", category: .capture)
+        } catch {
+            CameraLogger.error("CameraService: Lỗi cấu hình video format \(option.rawValue)", error: error, category: .capture)
+        }
+    }
+    
     // MARK: - Capture Mode & Live Photo Dynamic Control
     public func updateCaptureMode(_ mode: CameraCaptureMode) {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
+            self.currentCaptureMode = mode
             self.captureSession.beginConfiguration()
             if mode == .video {
                 if self.photoOutput.isLivePhotoCaptureEnabled {
@@ -449,9 +551,13 @@ public final class CameraService: NSObject {
                     self.captureSession.addOutput(self.movieFileOutput)
                     if let connection = self.movieFileOutput.connection(with: .video) {
                         if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
-                        if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .cinematicExtended }
+                        if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .standard }
                     }
                 }
+                self.captureSession.commitConfiguration()
+                
+                // Configure hardware video format & frame rate
+                self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
             } else {
                 if self.captureSession.outputs.contains(self.movieFileOutput) {
                     self.captureSession.removeOutput(self.movieFileOutput)
@@ -459,8 +565,9 @@ public final class CameraService: NSObject {
                 if self.photoOutput.isLivePhotoCaptureSupported {
                     self.photoOutput.isLivePhotoCaptureEnabled = true
                 }
+                self.captureSession.sessionPreset = .photo
+                self.captureSession.commitConfiguration()
             }
-            self.captureSession.commitConfiguration()
             let formatStr = self.getActiveVideoResolutionAndFPS()
             DispatchQueue.main.async {
                 self.onActiveVideoFormatChanged?(formatStr)
@@ -575,13 +682,14 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
             currentStats = LiveCameraStats(iso: iso, shutterSpeedString: shutterString, exposureDurationSeconds: seconds)
         }
         
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            if let stats = currentStats {
-                self.onLiveCameraStatsUpdated?(stats)
+        if let stats = currentStats {
+            DispatchQueue.main.async { [weak self] in
+                self?.onLiveCameraStatsUpdated?(stats)
             }
-            self.delegate?.cameraService(self, didOutputSampleBuffer: sampleBuffer)
         }
+        
+        // Deliver sampleBuffer directly to delegate on background queue (prevents main thread stutter)
+        self.delegate?.cameraService(self, didOutputSampleBuffer: sampleBuffer)
     }
 }
 

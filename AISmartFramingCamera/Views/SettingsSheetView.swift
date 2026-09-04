@@ -262,6 +262,25 @@ public struct SettingsSheetView: View {
                     }
                 }
                 
+                // MARK: - 4AA. Video Recording Settings (Format, FPS & Codec)
+                Section(header: Text("📹 CẤU HÌNH QUAY VIDEO (ĐỘ PHÂN GIẢI & CODEC)")) {
+                    Picker("Độ phân giải & Tần số", selection: $viewModel.selectedVideoFormatOption) {
+                        ForEach(VideoFormatOption.allCases) { opt in
+                            Text(opt.rawValue).tag(opt)
+                        }
+                    }
+                    
+                    Picker("Bộ giải mã (Codec)", selection: $viewModel.selectedVideoCodec) {
+                        ForEach(VideoCodec.allCases) { codec in
+                            Text(codec.rawValue).tag(codec)
+                        }
+                    }
+                    
+                    Text("💡 Mẹo: Bạn cũng có thể bấm trực tiếp vào huy hiệu FPS trên đỉnh màn hình để chuyển đổi nhanh định dạng quay.")
+                        .font(.caption2)
+                        .foregroundColor(.cyan)
+                }
+                
                 // MARK: - 4A. Focus Peaking (Viền Neon Báo Nét Điện Ảnh)
                 Section(header: Text("🟢 FOCUS PEAKING (VIỀN BÁO NÉT ĐIỆN ẢNH)")) {
                     Toggle("Bật Focus Peaking", isOn: $viewModel.isFocusPeakingEnabled)

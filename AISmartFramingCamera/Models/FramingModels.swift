@@ -41,6 +41,44 @@ public enum CameraCaptureMode: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+// MARK: - Video Format Options & Codecs
+public enum VideoFormatOption: String, CaseIterable, Identifiable {
+    case hd60 = "1080P 60FPS"
+    case hd30 = "1080P 30FPS"
+    case uhd60 = "4K 60FPS"
+    case uhd30 = "4K 30FPS"
+    
+    public var id: String { rawValue }
+    
+    public var width: Int32 {
+        switch self {
+        case .hd60, .hd30: return 1920
+        case .uhd60, .uhd30: return 3840
+        }
+    }
+    
+    public var height: Int32 {
+        switch self {
+        case .hd60, .hd30: return 1080
+        case .uhd60, .uhd30: return 2160
+        }
+    }
+    
+    public var fps: Double {
+        switch self {
+        case .hd60, .uhd60: return 60.0
+        case .hd30, .uhd30: return 30.0
+        }
+    }
+}
+
+public enum VideoCodec: String, CaseIterable, Identifiable {
+    case hevc = "HEVC"
+    case h264 = "H.264"
+    
+    public var id: String { rawValue }
+}
+
 // MARK: - AI Framing Session State Machine
 /// Đây là trạng thái tổng thể của phiên AI — thay thế bool đơn giản
 public enum AISessionState: Equatable {

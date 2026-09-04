@@ -90,6 +90,21 @@ public final class CameraViewModel: ObservableObject {
     @Published public var videoRecordingTimeString: String = "00:00:00"
     @Published public var videoRecordedDurationSeconds: TimeInterval = 0
     @Published public var activeVideoResolutionString: String = "1080P 30FPS"
+    @Published public var selectedVideoCodec: VideoCodec = .hevc {
+        didSet {
+            UserDefaults.standard.set(selectedVideoCodec.rawValue, forKey: "selectedVideoCodec")
+            cameraService.selectedVideoCodec = selectedVideoCodec
+        }
+    }
+    @Published public var selectedVideoFormatOption: VideoFormatOption = .hd60 {
+        didSet {
+            UserDefaults.standard.set(selectedVideoFormatOption.rawValue, forKey: "selectedVideoFormatOption")
+            cameraService.setVideoFormatOption(selectedVideoFormatOption)
+        }
+    }
+    
+    // Dedicated background queue for CV / Vision / Frame processing (keeps UI 100% fluid)
+    private let videoProcessingQueue = DispatchQueue(label: "com.aismartframing.video.processing", qos: .userInitiated)
     private var videoRecordingTimer: Timer? = nil
     private var videoRecordingStartTime: Date? = nil
     
@@ -284,6 +299,8 @@ public final class CameraViewModel: ObservableObject {
     private var pendingSmartFocusPoint: CGPoint?
     private var pendingSmartFocusStableCount: Int = 0
     private var focusSquareHideTask: Task<Void, Never>? = nil
+    private var manualFocusLockUntil: CFTimeInterval = 0
+    private let manualFocusCooldown: CFTimeInterval = 4.0
     
     public init() {
         // Load saved settings
@@ -328,6 +345,14 @@ public final class CameraViewModel: ObservableObject {
            let flash = AVCaptureDevice.FlashMode(rawValue: flashRaw) {
             self.activeFlashMode = flash
         }
+        if let codecRaw = defaults.string(forKey: "selectedVideoCodec"), let codec = VideoCodec(rawValue: codecRaw) {
+            self.selectedVideoCodec = codec
+        }
+        if let formatRaw = defaults.string(forKey: "selectedVideoFormatOption"), let format = VideoFormatOption(rawValue: formatRaw) {
+            self.selectedVideoFormatOption = format
+        }
+        self.cameraService.selectedVideoCodec = self.selectedVideoCodec
+        self.cameraService.selectedVideoFormatOption = self.selectedVideoFormatOption
         
         // didSet không fire khi gán trong init -> gọi trực tiếp để engine nhận đúng ngưỡng
         applyTrackingSensitivityToEngines()
@@ -416,10 +441,29 @@ public final class CameraViewModel: ObservableObject {
             case .jpeg: selectedPhotoFormat = .heic
             case .heic: selectedPhotoFormat = .dng
             case .dng: selectedPhotoFormat = .jpeg
-            case .heif: selectedPhotoFormat = .heic
             }
         }
     }
+    
+    public func toggleVideoCodec() {
+        haptics.triggerSelectionChange()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            selectedVideoCodec = (selectedVideoCodec == .hevc) ? .h264 : .hevc
+        }
+    }
+    
+    public func toggleVideoFormat() {
+        guard !isRecordingVideo else { return }
+        haptics.triggerSelectionChange()
+        let allCases = VideoFormatOption.allCases
+        if let idx = allCases.firstIndex(of: selectedVideoFormatOption) {
+            let nextIdx = (idx + 1) % allCases.count
+            selectedVideoFormatOption = allCases[nextIdx]
+        } else {
+            selectedVideoFormatOption = .hd60
+        }
+    }
+
     
     private func setupMotionCallbacks() {
         // Động cơ Tracking Không Gian Chuẩn: Chế độ Thường
@@ -1027,6 +1071,7 @@ public final class CameraViewModel: ObservableObject {
         guard isAEAFLocked else { return }
         haptics.triggerSelectionChange()
         isAEAFLocked = false
+        manualFocusLockUntil = 0
         aeafLockPoint = nil
         isShowingSunSlider = false
         activeSunExposureBias = 0.0
@@ -1114,7 +1159,7 @@ public final class CameraViewModel: ObservableObject {
                 let seconds = totalSec % 60
                 self.videoRecordingTimeString = String(format: "%02d:%02d:%02d", hours, minutes, seconds)
             }
-            cameraService.startRecordingVideo()
+            cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
             isRecordingVideo = true
         }
     }
@@ -1129,6 +1174,7 @@ public final class CameraViewModel: ObservableObject {
     
     private func handleSubjectAreaChanged() {
         let now = CACurrentMediaTime()
+        guard now >= manualFocusLockUntil, !isAEAFLocked else { return }
         guard now - lastForcedResetTime >= 1.5 else {
             CameraLogger.info("Bỏ qua subject area change - vừa reset gần đây, tránh vòng lặp phơi sáng", category: .general)
             return
@@ -1144,6 +1190,9 @@ public final class CameraViewModel: ObservableObject {
     }
     
     private func handleSmartFocusCalculated(point: CGPoint, type: SmartFocusType) {
+        let now = CACurrentMediaTime()
+        guard now >= manualFocusLockUntil, !isAEAFLocked else { return }
+        
         // 1. Ưu tiên số 1: Nếu AI đã khóa mục tiêu target (vòng tròn vàng), luôn lấy nét vào target
         if showTargetCircle, let target = currentTargetPoint {
             applyFocusAndExposure(to: target, source: .aiTarget)
@@ -1169,7 +1218,6 @@ public final class CameraViewModel: ObservableObject {
             return
         }
         
-        let now = CACurrentMediaTime()
         guard pendingSmartFocusStableCount >= 2, now - lastSmartFocusExposureTime >= 1.0 else { return }
         
         lastSmartFocusExposureTime = now
@@ -1195,18 +1243,19 @@ public final class CameraViewModel: ObservableObject {
     }
     
     // MARK: - Chạm Lấy Nét & Khóa AE/AF (iPhone Camera Standard)
-    public func userDidTapToFocus(at normalizedPoint: CGPoint) {
+    public func userDidTapToFocus(at normalizedPoint: CGPoint, devicePoint: CGPoint? = nil) {
         if isAEAFLocked {
             unlockAEAF()
             return
         }
         
         haptics.triggerSelectionChange()
+        manualFocusLockUntil = CACurrentMediaTime() + manualFocusCooldown
         lastFocusPoint = normalizedPoint
         activeFocusSquarePoint = normalizedPoint
         isShowingSunSlider = true
         
-        let devPoint = CameraService.convertUIPointToDevicePoint(normalizedPoint)
+        let devPoint = devicePoint ?? CameraService.convertUIPointToDevicePoint(normalizedPoint)
         cameraService.focusAndExpose(at: devPoint)
         triggerFocusSquareAnimation(at: normalizedPoint)
     }
@@ -1409,33 +1458,37 @@ public final class CameraViewModel: ObservableObject {
 // MARK: - CameraServiceDelegate
 extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
-        // Video connection is already set to .portrait in CameraService, so pixelBuffer is upright (.up)
-        visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: .up)
-        
-        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-            self.latestPixelBuffer = pixelBuffer
+        videoProcessingQueue.async { [weak self] in
+            guard let self = self else { return }
             
-            let now = CACurrentMediaTime()
-            if now - lastHistogramComputeTime >= 0.04 {
-                lastHistogramComputeTime = now
-                let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
-                DispatchQueue.main.async {
-                    self.histogramBars = bars
-                }
-            }
+            // Video connection is already set to .portrait in CameraService, so pixelBuffer is upright (.up)
+            self.visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: .up)
             
-            // Focus Peaking: Chỉ chạy khi người dùng bật trong Cài đặt (Zero overhead khi tắt)
-            if self.isFocusPeakingEnabled && now - self.lastFocusPeakingComputeTime >= 0.033 {
-                self.lastFocusPeakingComputeTime = now
-                let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-                FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: self.focusPeakingColor) { [weak self] cgImage in
+            if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+                self.latestPixelBuffer = pixelBuffer
+                
+                let now = CACurrentMediaTime()
+                if now - self.lastHistogramComputeTime >= 0.05 {
+                    self.lastHistogramComputeTime = now
+                    let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
                     DispatchQueue.main.async {
-                        self?.focusPeakingCGImage = cgImage
+                        self.histogramBars = bars
                     }
                 }
-            } else if !self.isFocusPeakingEnabled && self.focusPeakingCGImage != nil {
-                DispatchQueue.main.async {
-                    self.focusPeakingCGImage = nil
+                
+                // Focus Peaking: Chỉ chạy khi người dùng bật trong Cài đặt (Zero overhead khi tắt)
+                if self.isFocusPeakingEnabled && now - self.lastFocusPeakingComputeTime >= 0.04 {
+                    self.lastFocusPeakingComputeTime = now
+                    let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+                    FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: self.focusPeakingColor) { [weak self] cgImage in
+                        DispatchQueue.main.async {
+                            self?.focusPeakingCGImage = cgImage
+                        }
+                    }
+                } else if !self.isFocusPeakingEnabled && self.focusPeakingCGImage != nil {
+                    DispatchQueue.main.async {
+                        self.focusPeakingCGImage = nil
+                    }
                 }
             }
         }

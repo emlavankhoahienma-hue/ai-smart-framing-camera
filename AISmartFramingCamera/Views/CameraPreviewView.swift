@@ -52,8 +52,9 @@ public struct CameraPreviewView: UIViewRepresentable {
                 return
             }
             
+            let normalizedPoint = CGPoint(x: location.x / max(1.0, view.bounds.width), y: location.y / max(1.0, view.bounds.height))
             let devicePoint = view.previewLayer.captureDevicePointConverted(fromLayerPoint: location)
-            parent.viewModel.cameraService.focusAndExpose(at: devicePoint)
+            parent.viewModel.userDidTapToFocus(at: normalizedPoint, devicePoint: devicePoint)
             view.showFocusRing(at: location)
         }
         
