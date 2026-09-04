@@ -275,6 +275,18 @@ struct ZoomSelectorPills: View {
                         )
                 }
             }
+            
+            // Chỉ báo mức zoom thực tế khi người dùng pinch-to-zoom thủ công ở các khoảng giữa
+            let matchesStandardPill = options.contains { abs(viewModel.currentZoom - $0) < 0.15 }
+            if !matchesStandardPill {
+                Text(String(format: "%.1f×", viewModel.currentZoom))
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.yellow))
+                    .transition(.scale.combined(with: .opacity))
+            }
         }
     }
 }

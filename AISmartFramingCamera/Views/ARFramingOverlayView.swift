@@ -7,6 +7,8 @@ public struct ARFramingOverlayView: View {
     @State private var radarOpacity: Double = 0.8
     @State private var dashOffset: CGFloat = 0
     @State private var touchLocation: CGPoint = .zero
+    @State private var pinchBaseZoom: CGFloat = 1.0
+    @State private var isPinching: Bool = false
     
     public var body: some View {
         GeometryReader { proxy in
@@ -185,16 +187,31 @@ public struct ARFramingOverlayView: View {
                 }
             }
             .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { val in
-                        touchLocation = val.startLocation
+                SpatialLongPressGesture(minimumDuration: 0.45)
+                    .onEnded { value in
+                        let norm = convertScreenPointToBuffer(value.location, in: size)
+                        viewModel.userDidLongPressToLockAEAF(at: norm)
                     }
             )
             .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.45)
-                    .onEnded { _ in
-                        let norm = convertScreenPointToBuffer(touchLocation, in: size)
-                        viewModel.userDidLongPressToLockAEAF(at: norm)
+                MagnificationGesture()
+                    .onChanged { scale in
+                        if !isPinching {
+                            isPinching = true
+                            pinchBaseZoom = viewModel.currentZoom
+                        }
+                        let minZ = viewModel.cameraService.minZoom
+                        let maxZ = viewModel.cameraService.maxZoom
+                        let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
+                        viewModel.setZoomContinuous(targetZoom)
+                    }
+                    .onEnded { scale in
+                        let minZ = viewModel.cameraService.minZoom
+                        let maxZ = viewModel.cameraService.maxZoom
+                        let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
+                        viewModel.finishZoomGesture(targetZoom)
+                        isPinching = false
+                        pinchBaseZoom = targetZoom
                     }
             )
             .clipped()

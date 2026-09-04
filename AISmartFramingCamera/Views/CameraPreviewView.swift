@@ -60,16 +60,15 @@ public struct CameraPreviewView: UIViewRepresentable {
         @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
             if gesture.state == .began {
                 initialZoom = parent.viewModel.currentZoom
-                lastZoomPublishTime = 0
             }
-            let newZoom = max(1.0, min(initialZoom * gesture.scale, 10.0))
-            parent.viewModel.cameraService.setZoomFactor(newZoom)
+            let minZ = parent.viewModel.cameraService.minZoom
+            let maxZ = parent.viewModel.cameraService.maxZoom
+            let newZoom = max(minZ, min(initialZoom * gesture.scale, maxZ))
             
-            let now = CACurrentMediaTime()
-            let isFinished = gesture.state == .ended || gesture.state == .cancelled
-            if now - lastZoomPublishTime >= 0.05 || isFinished {
-                lastZoomPublishTime = now
-                parent.viewModel.currentZoom = newZoom
+            if gesture.state == .ended || gesture.state == .cancelled {
+                parent.viewModel.finishZoomGesture(newZoom)
+            } else {
+                parent.viewModel.setZoomContinuous(newZoom)
             }
         }
         

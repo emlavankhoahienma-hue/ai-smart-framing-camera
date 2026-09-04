@@ -966,11 +966,38 @@ public final class CameraViewModel: ObservableObject {
     }
     
     // MARK: - Actions
+    private var lastContinuousZoomTime: CFTimeInterval = 0
+    private var lastContinuousAppliedZoom: CGFloat = 1.0
+
     public func setZoom(_ zoom: CGFloat) {
         currentZoom = zoom
         cameraService.setZoomFactor(zoom)
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)
         StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
+    }
+
+    /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
+    /// Tự động throttle AVFoundation calls (25ms) để chống nghẽn hàng đợi camera phần cứng
+    public func setZoomContinuous(_ zoom: CGFloat) {
+        currentZoom = zoom
+        let now = CACurrentMediaTime()
+        if now - lastContinuousZoomTime >= 0.025 || abs(zoom - lastContinuousAppliedZoom) > 0.08 {
+            lastContinuousZoomTime = now
+            lastContinuousAppliedZoom = zoom
+            cameraService.setZoomFactor(zoom)
+            SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+            StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
+        }
+    }
+
+    /// Chốt zoom cuối cùng khi người dùng nhấc ngón tay kết thúc pinch
+    public func finishZoomGesture(_ finalZoom: CGFloat) {
+        currentZoom = finalZoom
+        lastContinuousAppliedZoom = finalZoom
+        cameraService.setZoomFactor(finalZoom)
+        SpatialTrackingEngine.shared.updateZoomFactor(finalZoom)
+        StreetSpatialTrackingEngine.shared.updateZoomFactor(finalZoom)
+        haptics.triggerSelectionChange()
     }
     
     public func setZoomFromButton(_ zoom: CGFloat) {
@@ -1477,5 +1504,7 @@ extension CameraViewModel: CameraServiceDelegate {
     
     public func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {
         self.currentZoom = zoom
+        SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+        StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
 }

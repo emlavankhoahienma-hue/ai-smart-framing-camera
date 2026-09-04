@@ -252,6 +252,9 @@ public final class CameraService: NSObject {
                 camera.videoZoomFactor = clampedZoom
                 camera.unlockForConfiguration()
                 self.currentZoom = clampedZoom
+                DispatchQueue.main.async {
+                    self.delegate?.cameraService(self, didChangeZoomFactor: clampedZoom)
+                }
             } catch {
                 print("CameraService: Error setting zoom \(error)")
             }
@@ -267,6 +270,9 @@ public final class CameraService: NSObject {
                 camera.ramp(toVideoZoomFactor: clampedZoom, withRate: rate)
                 camera.unlockForConfiguration()
                 self.currentZoom = clampedZoom
+                DispatchQueue.main.async {
+                    self.delegate?.cameraService(self, didChangeZoomFactor: clampedZoom)
+                }
             } catch {
                 print("CameraService: Error smooth zoom \(error)")
             }
