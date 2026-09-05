@@ -1,0 +1,67 @@
+# Build errors - run 33950717441 - f6a52b856cdb18c340392d21b39a8235123d28bb
+
+=== Swift/clang error lines ===
+335:/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/GeminiService.swift:572:45: error: value of type 'DetectedSceneType' has no member 'displayName'
+338:/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/GeminiService.swift:573:57: error: value of type 'CompositionRule' has no member 'displayName'
+
+=== Last 60 lines of xcodebuild output ===
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift:1545:33: warning: capture of 'finalColorParams' with non-sendable type 'AIColorParameters?' in a `@Sendable` closure
+                if let params = finalColorParams {
+                                ^
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Models/FramingModels.swift:359:15: note: consider making struct 'AIColorParameters' conform to the 'Sendable' protocol
+public struct AIColorParameters {
+              ^
+                                : Sendable
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift:1548:93: warning: capture of 'activePreset' with non-sendable type 'FilmPreset' in a `@Sendable` closure
+                    processedImageResult = self.filterEngine.applyPreset(to: photo, preset: activePreset) ?? photo
+                                                                                            ^
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Models/FramingModels.swift:404:13: note: consider making enum 'FilmPreset' conform to the 'Sendable' protocol
+public enum FilmPreset: String, CaseIterable, Identifiable {
+            ^
+                                                          , Sendable
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift:1557:28: warning: capture of 'activeScene' with non-sendable type 'DetectedSceneType' in a `@Sendable` closure
+                sceneType: activeScene,
+                           ^
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Models/FramingModels.swift:238:13: note: consider making enum 'DetectedSceneType' conform to the 'Sendable' protocol
+public enum DetectedSceneType: String, CaseIterable {
+            ^
+                                                   , Sendable
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift:1559:34: warning: capture of 'activeRule' with non-sendable type 'CompositionRule' in a `@Sendable` closure
+                compositionRule: activeRule,
+                                 ^
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Models/FramingModels.swift:6:13: note: consider making enum 'CompositionRule' conform to the 'Sendable' protocol
+public enum CompositionRule: String, CaseIterable, Identifiable {
+            ^
+                                                               , Sendable
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift:1546:49: warning: main actor-isolated property 'filterEngine' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+                    processedImageResult = self.filterEngine.applyAIColorParameters(to: photo, params: params) ?? photo
+                                                ^
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift:15:16: note: property declared here
+    public let filterEngine = FilmFilterEngine.shared
+               ^
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift:1548:49: warning: main actor-isolated property 'filterEngine' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+                    processedImageResult = self.filterEngine.applyPreset(to: photo, preset: activePreset) ?? photo
+                                                ^
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift:15:16: note: property declared here
+    public let filterEngine = FilmFilterEngine.shared
+               ^
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/GeminiService.swift:152:35: warning: immutable value 'msg' was never used; consider replacing with '_' or removing it
+        case .allModelsFailed(let msg):
+                              ~~~~^~~
+                              _
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/GeminiService.swift:572:45: error: value of type 'DetectedSceneType' has no member 'displayName'
+                sceneType: result.sceneType.displayName,
+                           ~~~~~~~~~~~~~~~~ ^~~~~~~~~~~
+/Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/GeminiService.swift:573:57: error: value of type 'CompositionRule' has no member 'displayName'
+                compositionRule: result.compositionRule.displayName,
+                                 ~~~~~~~~~~~~~~~~~~~~~~ ^~~~~~~~~~~
+
+note: Disabling previews because SWIFT_VERSION is set and SWIFT_OPTIMIZATION_LEVEL=-O, expected -Onone (in target 'AISmartFramingCamera' from project 'AISmartFramingCamera')
+** BUILD FAILED **
+
+
+The following build commands failed:
+	CompileSwift normal arm64 (in target 'AISmartFramingCamera' from project 'AISmartFramingCamera')
+	SwiftCompile normal arm64 Compiling\ AISmartFramingCameraApp.swift,\ FramingModels.swift,\ CameraService.swift,\ VisionFramingEngine.swift,\ CompositionCalculator.swift,\ FilmFilterEngine.swift,\ HapticFeedbackService.swift,\ ARCompositionSession.swift,\ CameraViewModel.swift,\ CameraMainView.swift,\ CameraPreviewView.swift,\ ARFramingOverlayView.swift,\ AIStatusHUDView.swift,\ CameraControlsView.swift,\ CapturedPhotoPreviewView.swift,\ SettingsSheetView.swift,\ GeminiService.swift,\ DeviceMotionService.swift,\ VideoPreviewSheetView.swift,\ CameraLogger.swift,\ SpatialTrackingEngine.swift,\ NeuralSubjectIntelligenceEngine.swift,\ YOLODetectionEngine.swift,\ VisualOdometryEngine.swift,\ FeedbackView.swift,\ RealtimeHistogramEngine.swift,\ LiveColorHistogramHUDView.swift,\ PresetThumbnailProvider.swift,\ StreetSpatialTrackingEngine.swift,\ FocusPeakingEngine.swift,\ ProVideoManualControlsService.swift,\ ProVideoManualControlsView.swift,\ AICloudReportServer.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/App/AISmartFramingCameraApp.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Models/FramingModels.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/CameraService.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/VisionFramingEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/CompositionCalculator.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/FilmFilterEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/HapticFeedbackService.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/ARCompositionSession.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/ViewModels/CameraViewModel.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/CameraMainView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/CameraPreviewView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/ARFramingOverlayView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/AIStatusHUDView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/CameraControlsView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/CapturedPhotoPreviewView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/SettingsSheetView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/GeminiService.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/DeviceMotionService.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/VideoPreviewSheetView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/CameraLogger.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/SpatialTrackingEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/YOLODetectionEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/VisualOdometryEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/FeedbackView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/RealtimeHistogramEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/LiveColorHistogramHUDView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/PresetThumbnailProvider.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/FocusPeakingEngine.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/ProVideoManualControlsService.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Views/ProVideoManualControlsView.swift /Users/runner/work/ai-smart-framing-camera/ai-smart-framing-camera/AISmartFramingCamera/Services/AICloudReportServer.swift (in target 'AISmartFramingCamera' from project 'AISmartFramingCamera')
+	Building project AISmartFramingCamera with scheme AISmartFramingCamera and configuration Release
+(3 failures)
