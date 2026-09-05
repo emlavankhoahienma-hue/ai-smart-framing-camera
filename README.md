@@ -1,4 +1,4 @@
-﻿# 📸 AlignAI Studio (AI Smart Framing Camera) — iOS 16 - 18 Pro Max
+# 📸 AlignAI Studio (AI Smart Framing Camera) — iOS 16 - 18 Pro Max
 
 <div align="center">
 
@@ -388,16 +388,19 @@ AISmartFramingCamera/
 
 ## 👨‍💻 Thông Tin Tác Giả & Liên Hệ Hỗ Trợ
 
-* **Kỹ sư trưởng & Phát triển chính**: **VanKhoa** (*iOS & AI Camera Engineer*)
+* **Kỹ sư trưởng & Phát triển chính**: **VanKhoa** (*Vibe Coding 100%*)
 * **Email liên hệ**: [tranvantrinhhd@gmail.com](mailto:tranvantrinhhd@gmail.com)
 * **Hotline / Zalo hỗ trợ**: `+84 344 197 212`
+* **Ủng hộ / Donate cho tác giả**:
+  * **MoMo / ZaloPay**: `0344197212` (Trần Văn Trình)
+  * **Ngân hàng MB Bank**: `0344197212` (Trần Văn Trình)
 * **Mã nguồn dự án**: [GitHub Repository](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera)
 
 ---
 
 <div align="center">
 
-⭐ **Nếu bạn yêu thích dự án, hãy tặng 1 Star trên GitHub để ủng hộ tác giả tiếp tục phát triển!** ⭐
+☕ **Nếu bạn yêu thích dự án, hãy Donate ly cafe hoặc tặng 1 Star trên GitHub để ủng hộ tác giả phát triển tiếp nhé!** ☕
 
 *Copyright © 2026 VanKhoa. Phát hành theo giấy phép mã nguồn mở MIT.*
 

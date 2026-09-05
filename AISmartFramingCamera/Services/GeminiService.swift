@@ -556,6 +556,26 @@ public final class GeminiService {
             self.lastModelUsed = modelID
             let result = Self.parseGeminiResponse(parsed, modelUsed: modelID, latencyMs: latency)
             self.lastExplanation = result.explanation
+            
+            // Ghi nhận và phát báo cáo HTML qua Web Server máy tính
+            let recipeSummary = "Nhiệt độ: \(result.colorRecipe.temperatureK)K | Bão hòa: \(result.colorRecipe.saturation) | Tương phản: \(result.colorRecipe.contrast) | Style: \(result.colorRecipe.colorGrade.displayName)"
+            let sessionReport = AICloudSessionReport(
+                deviceIP: AICloudReportServer.shared.deviceIP,
+                modelUsed: modelID,
+                latencyMs: latency,
+                sentPrompt: prompt,
+                rawAIResponseText: cleanText,
+                fullImageBase64: base64Image,
+                targetX: result.targetX,
+                targetY: result.targetY,
+                suggestedZoom: result.suggestedZoom,
+                sceneType: result.sceneType.displayName,
+                compositionRule: result.compositionRule.displayName,
+                explanation: result.explanation,
+                colorRecipeSummary: recipeSummary
+            )
+            AICloudReportServer.shared.recordSession(report: sessionReport)
+            
             DispatchQueue.main.async { completion(.success(result)) }
         }.resume()
     }

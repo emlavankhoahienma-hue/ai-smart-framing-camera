@@ -15,6 +15,17 @@ public struct SettingsSheetView: View {
     @State private var testResult: String? = nil
     @State private var showDevConsole: Bool = false
     
+    // Donate & Vibe Coding State
+    @State private var donateCopiedMessage: String? = nil
+    @State private var showVietQR: Bool = false
+    
+    // Web HTML Report Server State
+    @ObservedObject private var reportServer = AICloudReportServer.shared
+    @State private var isReportServerEnabled: Bool = true
+    @State private var webURLCopiedMessage: String? = nil
+    @State private var showShareSheet: Bool = false
+    @State private var shareFileURL: URL? = nil
+    
     public var body: some View {
         NavigationView {
             Form {
@@ -30,9 +41,14 @@ public struct SettingsSheetView: View {
                                 Text("VanKhoa")
                                     .font(.headline.bold())
                                     .foregroundColor(.white)
-                                Text("iOS & AI Camera Engineer")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
+                                HStack(spacing: 4) {
+                                    Image(systemName: "flame.fill")
+                                        .font(.caption2.bold())
+                                        .foregroundColor(.orange)
+                                    Text("Vibe Coding 100%")
+                                        .font(.caption.bold())
+                                        .foregroundColor(.orange)
+                                }
                             }
                             Spacer()
                         }
@@ -62,7 +78,140 @@ public struct SettingsSheetView: View {
                     .padding(.vertical, 4)
                 }
                 
-                // MARK: - 2. Gemini AI Key & Connection
+                // MARK: - 2. Donate / Support Author
+                Section(header: Text("☕ ỦNG HỘ & DONATE CHO TÁC GIẢ")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Nếu bạn thấy app hữu ích, hãy gửi tặng tác giả 1 ly cafe để tiếp thêm động lực phát triển nhé!")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        // Momo
+                        HStack {
+                            Image(systemName: "wallet.pass.fill")
+                                .foregroundColor(.pink)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Ví MoMo / ZaloPay")
+                                    .font(.caption.bold())
+                                    .foregroundColor(.white)
+                                Text("0344197212 (Trần Văn Trình)")
+                                    .font(.caption2.monospaced())
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                            Button(action: {
+                                UIPasteboard.general.string = "0344197212"
+                                donateCopiedMessage = "Đã chép SĐT MoMo: 0344197212"
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { donateCopiedMessage = nil }
+                            }) {
+                                Text("Sao chép")
+                                    .font(.caption.bold())
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Color.pink.opacity(0.2))
+                                    .foregroundColor(.pink)
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(BorderlessButtonStyle())
+                        }
+                        
+                        Divider().background(Color.gray.opacity(0.3))
+                        
+                        // MB Bank
+                        HStack {
+                            Image(systemName: "building.columns.fill")
+                                .foregroundColor(.blue)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Ngân hàng MB Bank (Quân Đội)")
+                                    .font(.caption.bold())
+                                    .foregroundColor(.white)
+                                Text("STK: 0344197212 - TRAN VAN TRINH")
+                                    .font(.caption2.monospaced())
+                                    .foregroundColor(.gray)
+                            }
+                            Spacer()
+                            Button(action: {
+                                UIPasteboard.general.string = "0344197212"
+                                donateCopiedMessage = "Đã chép STK MB: 0344197212"
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { donateCopiedMessage = nil }
+                            }) {
+                                Text("Sao chép")
+                                    .font(.caption.bold())
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue.opacity(0.2))
+                                    .foregroundColor(.cyan)
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(BorderlessButtonStyle())
+                        }
+                        
+                        if let msg = donateCopiedMessage {
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                Text(msg)
+                                    .font(.caption.bold())
+                                    .foregroundColor(.green)
+                            }
+                            .padding(.top, 2)
+                            .transition(.opacity)
+                        }
+                        
+                        // Show VietQR Toggle / Button
+                        Button(action: {
+                            showVietQR.toggle()
+                        }) {
+                            HStack {
+                                Image(systemName: showVietQR ? "qrcode.viewfinder" : "qrcode")
+                                Text(showVietQR ? "Ẩn mã VietQR chuyển khoản" : "Xem mã VietQR chuyển khoản nhanh")
+                                    .font(.caption.bold())
+                                Spacer()
+                                Image(systemName: showVietQR ? "chevron.up" : "chevron.down")
+                                    .font(.caption2)
+                            }
+                            .foregroundColor(.yellow)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(BorderlessButtonStyle())
+                        
+                        if showVietQR {
+                            VStack(spacing: 8) {
+                                AsyncImage(url: URL(string: "https://img.vietqr.io/image/mbbank-0344197212-compact2.png?amount=50000&addInfo=Donate%20AlignAI%20Camera&accountName=TRAN%20VAN%20TRINH")) { phase in
+                                    switch phase {
+                                    case .success(let image):
+                                        image
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(maxHeight: 260)
+                                            .cornerRadius(12)
+                                            .shadow(color: .black.opacity(0.4), radius: 8)
+                                    case .failure:
+                                        VStack(spacing: 4) {
+                                            Image(systemName: "exclamationmark.triangle")
+                                                .foregroundColor(.orange)
+                                            Text("Không thể tải ảnh QR. Vui lòng dùng số tài khoản phía trên.")
+                                                .font(.caption2)
+                                                .foregroundColor(.gray)
+                                        }
+                                        .padding()
+                                    default:
+                                        ProgressView()
+                                            .padding()
+                                    }
+                                }
+                                
+                                Text("Quét mã bằng app ngân hàng bất kỳ để ủng hộ tác giả")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                // MARK: - 3. Gemini AI Key & Connection
                 Section(header: Text("🔑 CẤU HÌNH GOOGLE GEMINI API")) {
                     // Status row
                     HStack {
@@ -211,7 +360,137 @@ public struct SettingsSheetView: View {
                         .foregroundColor(.cyan)
                 }
                 
-                // MARK: - 4. Framing, Auto-Zoom & Color Science
+                // MARK: - 4. Web Report Server (PC Live HTML Sync)
+                Section(header: Text("🖥️ BÁO CÁO AI CLOUD VỀ MÁY TÍNH (WEB HTML)")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Bật Web Server Báo Cáo", isOn: $isReportServerEnabled)
+                            .onChange(of: isReportServerEnabled) { enabled in
+                                if enabled {
+                                    reportServer.startServer()
+                                } else {
+                                    reportServer.stopServer()
+                                }
+                            }
+                        
+                        if reportServer.isRunning {
+                            HStack {
+                                Label("Trạng thái Server:", systemImage: "network")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                Spacer()
+                                HStack(spacing: 5) {
+                                    Circle().fill(Color.green).frame(width: 8, height: 8)
+                                    Text("Đang chạy (Cổng \(String(reportServer.serverPort)))")
+                                        .font(.caption.bold())
+                                        .foregroundColor(.green)
+                                }
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Địa chỉ Web mở trên Máy Tính:")
+                                    .font(.caption.bold())
+                                    .foregroundColor(.yellow)
+                                HStack {
+                                    Text(reportServer.serverURLString)
+                                        .font(.subheadline.monospaced().bold())
+                                        .foregroundColor(.cyan)
+                                    Spacer()
+                                    Button(action: {
+                                        UIPasteboard.general.string = reportServer.serverURLString
+                                        webURLCopiedMessage = "Đã chép: \(reportServer.serverURLString)"
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { webURLCopiedMessage = nil }
+                                    }) {
+                                        Text("Sao chép")
+                                            .font(.caption.bold())
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 4)
+                                            .background(Color.cyan.opacity(0.2))
+                                            .foregroundColor(.cyan)
+                                            .cornerRadius(6)
+                                    }
+                                    .buttonStyle(BorderlessButtonStyle())
+                                }
+                            }
+                            .padding(8)
+                            .background(Color.white.opacity(0.04))
+                            .cornerRadius(8)
+                            
+                            if let msg = webURLCopiedMessage {
+                                Text(msg)
+                                    .font(.caption2.bold())
+                                    .foregroundColor(.green)
+                            }
+                            
+                            Text("💡 Hướng dẫn: Mở trình duyệt (Chrome/Edge/Firefox) trên máy tính cùng mạng Wi-Fi và truy cập địa chỉ trên để xem ảnh full gốc, tọa độ và toàn văn câu trả lời của AI theo thời gian thực.")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineSpacing(2)
+                            
+                            HStack(spacing: 10) {
+                                Button(action: {
+                                    if let url = URL(string: reportServer.serverURLString) {
+                                        UIApplication.shared.open(url)
+                                    }
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "safari")
+                                        Text("Xem trên iPhone")
+                                    }
+                                    .font(.caption.bold())
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(Color.blue.opacity(0.3))
+                                    .cornerRadius(8)
+                                }
+                                .buttonStyle(BorderlessButtonStyle())
+                                
+                                Button(action: {
+                                    if let report = reportServer.latestReport, let fileURL = reportServer.saveStandaloneHTMLReport(report: report) {
+                                        shareFileURL = fileURL
+                                        showShareSheet = true
+                                    } else {
+                                        // Tao bao cao trong neu chua chup
+                                        let dummy = AICloudSessionReport(
+                                            deviceIP: reportServer.deviceIP,
+                                            modelUsed: "Chưa chụp",
+                                            latencyMs: 0,
+                                            sentPrompt: "Chưa có dữ liệu",
+                                            rawAIResponseText: "{}",
+                                            fullImageBase64: "",
+                                            targetX: 0.5,
+                                            targetY: 0.5,
+                                            suggestedZoom: 1.0,
+                                            sceneType: "Mặc định",
+                                            compositionRule: "Tự động",
+                                            explanation: "Chưa có phiên chụp nào.",
+                                            colorRecipeSummary: "Chuẩn"
+                                        )
+                                        if let fileURL = reportServer.saveStandaloneHTMLReport(report: dummy) {
+                                            shareFileURL = fileURL
+                                            showShareSheet = true
+                                        }
+                                    }
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "square.and.arrow.up")
+                                        Text("Chia sẻ file HTML")
+                                    }
+                                    .font(.caption.bold())
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(Color.gray.opacity(0.3))
+                                    .cornerRadius(8)
+                                }
+                                .buttonStyle(BorderlessButtonStyle())
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                // MARK: - 5. Framing, Auto-Zoom & Color Science
                 Section(header: Text("🎯 TÙY CHỈNH CHỤP & BÁM MỤC TIÊU")) {
                     Picker("Quy tắc bố cục", selection: $viewModel.activeCompositionRule) {
                         ForEach(CompositionRule.allCases) { rule in
@@ -409,6 +688,12 @@ public struct SettingsSheetView: View {
             .onAppear {
                 selectedModel = viewModel.geminiService.selectedModel
                 customModelInput = viewModel.geminiService.customModelName
+                reportServer.refreshDeviceIP()
+            }
+            .sheet(isPresented: $showShareSheet) {
+                if let url = shareFileURL {
+                    ActivityShareView(activityItems: [url])
+                }
             }
         }
     }
@@ -421,3 +706,17 @@ public struct SettingsSheetView: View {
         }
     }
 }
+
+// MARK: - Activity Share Sheet for AirDrop & Export
+struct ActivityShareView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let applicationActivities: [UIActivity]? = nil
+
+    func makeUIViewController(context: UIViewControllerRepresentableContext<ActivityShareView>) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: applicationActivities)
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: UIViewControllerRepresentableContext<ActivityShareView>) {}
+}
+
