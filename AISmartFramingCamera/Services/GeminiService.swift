@@ -558,7 +558,7 @@ public final class GeminiService {
             self.lastExplanation = result.explanation
             
             // Ghi nhận và phát báo cáo HTML qua Web Server máy tính
-            let recipeSummary = "Nhiệt độ: \(result.colorRecipe.temperatureK)K | Bão hòa: \(result.colorRecipe.saturation) | Tương phản: \(result.colorRecipe.contrast) | Style: \(result.colorRecipe.colorGrade.displayName)"
+            let recipeSummary = "Nhiệt độ: \(result.colorRecipe.temperatureK)K | Bão hòa: \(result.colorRecipe.saturation) | Tương phản: \(result.colorRecipe.contrast) | Style: \(result.colorRecipe.colorGrade.rawValue)"
             let sessionReport = AICloudSessionReport(
                 deviceIP: AICloudReportServer.shared.deviceIP,
                 modelUsed: modelID,
