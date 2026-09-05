@@ -410,18 +410,18 @@ public final class CameraViewModel: ObservableObject {
         }
         
         visionEngine.onDetectionCompleted = { [weak self] detection in
-            guard let self = self else { return }
+            guard let self = self, !self.isShowingSettings else { return }
             self.handleVisionDetection(detection)
         }
         
         visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence, pixelBuffer in
-            guard let self = self else { return }
+            guard let self = self, !self.isShowingSettings else { return }
             self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence, pixelBuffer: pixelBuffer)
         }
         
         // Smart Autofocus (Face Priority > Saliency > Center)
         visionEngine.onSmartFocusPointCalculated = { [weak self] point, focusType in
-            guard let self = self else { return }
+            guard let self = self, !self.isShowingSettings else { return }
             self.handleSmartFocusCalculated(point: point, type: focusType)
         }
         
@@ -436,8 +436,10 @@ public final class CameraViewModel: ObservableObject {
         }
         
         // Realtime Exposure Stats Listener (ISO & Shutter Speed)
+        // Khi đang mở Cài đặt: bỏ qua cập nhật để không ép SwiftUI re-render toàn bộ
+        // Form cài đặt mỗi frame (gây lag khi lướt). Đóng cài đặt là tự cập nhật lại.
         cameraService.onLiveCameraStatsUpdated = { [weak self] stats in
-            guard let self = self else { return }
+            guard let self = self, !self.isShowingSettings else { return }
             let isoInt = Int(round(stats.iso))
             self.liveISO = "ISO \(isoInt)"
             self.liveShutterSpeed = stats.shutterSpeedString
@@ -480,7 +482,7 @@ public final class CameraViewModel: ObservableObject {
     private func setupMotionCallbacks() {
         // Động cơ Tracking Không Gian Chuẩn: Chế độ Thường
         SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
-            guard let self = self, !self.isStreetTrackingModeEnabled else { return }
+            guard let self = self, !self.isStreetTrackingModeEnabled, !self.isShowingSettings else { return }
             self.lastVisualConfidence = confidence
             // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
             self.currentTargetPoint = point
@@ -493,7 +495,7 @@ public final class CameraViewModel: ObservableObject {
         
         // Động cơ Tracking Không Gian Chuyên Dụng Đi Đường: Chế độ Đi Đường
         StreetSpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
-            guard let self = self, self.isStreetTrackingModeEnabled else { return }
+            guard let self = self, self.isStreetTrackingModeEnabled, !self.isShowingSettings else { return }
             self.lastVisualConfidence = confidence
             self.currentTargetPoint = point
             self.trackingQuality = quality
@@ -782,10 +784,11 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
     
     public func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect? = nil) {
-        // PIN TẠI TÂM CHỦ THỂ THẬT (không phải điểm rule) — khớp với vị trí khung tracking
-        // VNTrackObjectRequest bám, tránh vòng vàng nhảy trên frame đầu của session
-        let sCenter: CGPoint? = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) }
-        let pinPoint = sCenter ?? target
+        // KHÔNG dùng tâm chủ thể để đè lên tọa độ AI nữa.
+        // Ảnh gửi cho AI (cloud & local) là FULL ẢNH nên AI trả về tọa độ CHUẨN THEO ẢNH.
+        // Target giờ PIN ĐÚNG TẠI TỌA ĐỘ AI TRẢ VỀ (target). subjectRect chỉ được dùng để
+        // lấy KÍCH THƯỚC khung bám & điểm lấy nét phần cứng, KHÔNG thay thế tọa độ target.
+        let pinPoint = target
         
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
@@ -815,7 +818,7 @@ public final class CameraViewModel: ObservableObject {
         }
         
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
-        let anchorTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
+        let anchorTarget = target
         if let buffer = latestPixelBuffer {
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: buffer, normalizedRect: region)
@@ -829,13 +832,14 @@ public final class CameraViewModel: ObservableObject {
         // Khi vật thể là màu trắng/đơn sắc (isCurrentlyLowTexture): Mở rộng khung bám để bao quát đường viền cạnh tương phản với nền
         let isLow = isCurrentlyLowTexture
         if let sRect = subjectRect {
-            let sCenter = CGPoint(x: sRect.midX, y: sRect.midY)
-            self.initialPhysicalSubjectCenter = sCenter
+            // Dùng TỌA ĐỘ AI (target) làm TÂM khung bám; chỉ lấy KÍCH THƯỚC từ subjectRect
+            // để box đủ lớn bao trọn chủ thể mà không làm lệch tâm target khỏi tọa độ AI.
+            self.initialPhysicalSubjectCenter = target
             let expandRatio: CGFloat = isLow ? 1.35 : 1.10
             let minBox: CGFloat = isLow ? 0.20 : 0.08
             let clampedW = min(0.60, max(minBox, sRect.width * expandRatio))
             let clampedH = min(0.60, max(minBox, sRect.height * expandRatio))
-            visionEngine.startTrackingObject(at: sCenter, size: CGSize(width: clampedW, height: clampedH))
+            visionEngine.startTrackingObject(at: target, size: CGSize(width: clampedW, height: clampedH))
         } else {
             self.initialPhysicalSubjectCenter = target
             let targetSize: CGFloat = isLow ? 0.22 : 0.14
@@ -1288,7 +1292,7 @@ public final class CameraViewModel: ObservableObject {
         guard horizonMotionManager.isDeviceMotionAvailable else { return }
         horizonMotionManager.deviceMotionUpdateInterval = 1.0 / 30.0
         horizonMotionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: OperationQueue.main) { [weak self] (motion: CMDeviceMotion?, error: Error?) in
-            guard let self = self, let motion = motion, self.isHorizonLevelerEnabled else { return }
+            guard let self = self, let motion = motion, self.isHorizonLevelerEnabled, !self.isShowingSettings else { return }
             let gx = Double(motion.gravity.x)
             let gy = Double(motion.gravity.y)
             let roll = atan2(gx, -gy) * 180.0 / .pi
@@ -1480,16 +1484,20 @@ extension CameraViewModel: CameraServiceDelegate {
                 self.latestPixelBuffer = pixelBuffer
                 
                 let now = CACurrentMediaTime()
+                // Khi mở Cài đặt: ngừng đẩy Histogram & Focus Peaking lên main để không ép
+                // Form cài đặt re-render liên tục (nguyên nhân lag khi lướt).
                 if now - self.lastHistogramComputeTime >= 0.05 {
                     self.lastHistogramComputeTime = now
-                    let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
-                    DispatchQueue.main.async {
-                        self.histogramBars = bars
+                    if !self.isShowingSettings {
+                        let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
+                        DispatchQueue.main.async {
+                            self.histogramBars = bars
+                        }
                     }
                 }
                 
                 // Focus Peaking: Chỉ chạy khi người dùng bật trong Cài đặt (Zero overhead khi tắt)
-                if self.isFocusPeakingEnabled && now - self.lastFocusPeakingComputeTime >= 0.04 {
+                if self.isFocusPeakingEnabled && !self.isShowingSettings && now - self.lastFocusPeakingComputeTime >= 0.04 {
                     self.lastFocusPeakingComputeTime = now
                     let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
                     FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: self.focusPeakingColor) { [weak self] cgImage in
