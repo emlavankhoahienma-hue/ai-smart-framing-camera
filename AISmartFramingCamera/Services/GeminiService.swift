@@ -569,8 +569,8 @@ public final class GeminiService {
                 targetX: result.targetX,
                 targetY: result.targetY,
                 suggestedZoom: result.suggestedZoom,
-                sceneType: result.sceneType.displayName,
-                compositionRule: result.compositionRule.displayName,
+                sceneType: result.sceneType.rawValue,
+                compositionRule: result.compositionRule.displayNameVietnamese,
                 explanation: result.explanation,
                 colorRecipeSummary: recipeSummary
             )
