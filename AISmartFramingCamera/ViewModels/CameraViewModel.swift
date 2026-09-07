@@ -703,8 +703,28 @@ public final class CameraViewModel: ObservableObject {
         
         var result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
         
-        // Tận dụng mô hình nơ-ron bố cục thẩm mỹ đã huấn luyện trên ảnh thực tế
-        if AestheticFramingNeuralEngine.shared.hasActiveModel,
+        // Ưu tiên Mô hình Nơ-ron Bố cục Cực đại Deep Master 150MB huấn luyện từ 8,010 ảnh thật
+        if LocalDeepFramingNeuralEngine.shared.hasActiveModel,
+           let buffer = latestPixelBuffer,
+           let deepResult = LocalDeepFramingNeuralEngine.shared.predictFraming(pixelBuffer: buffer) {
+            let offset = CGVector(dx: deepResult.targetPoint.x - 0.5, dy: deepResult.targetPoint.y - 0.5)
+            let dist = sqrt(offset.dx * offset.dx + offset.dy * offset.dy)
+            let angle = atan2(offset.dy, offset.dx) * 180.0 / .pi
+            let score = max(0.0, 1.0 - Double(dist) * 2.5)
+            result = FramingTargetResult(
+                targetPoint: deepResult.targetPoint,
+                currentCenter: CGPoint(x: 0.5, y: 0.5),
+                offsetVector: offset,
+                distance: dist,
+                angleDegrees: angle,
+                alignmentScore: score,
+                isAligned: dist <= calculator.alignmentTolerance,
+                recommendedZoomFactor: CGFloat(deepResult.suggestedZoom),
+                optimalRule: activeCompositionRule,
+                guideDescription: "🎯 Deep Master \(Int(deepResult.modelSizeMb))MB: \(deepResult.sceneType) • \(deepResult.compositionRule)"
+            )
+            self.activeEngineSource = .deepMasterNeural(scene: deepResult.sceneType, rule: deepResult.compositionRule, modelMb: deepResult.modelSizeMb)
+        } else if AestheticFramingNeuralEngine.shared.hasActiveModel,
            let buffer = latestPixelBuffer,
            let neuralResult = AestheticFramingNeuralEngine.shared.predictFraming(pixelBuffer: buffer) {
             let offset = CGVector(dx: neuralResult.targetPoint.x - 0.5, dy: neuralResult.targetPoint.y - 0.5)

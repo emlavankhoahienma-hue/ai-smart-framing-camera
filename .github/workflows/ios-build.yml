@@ -97,6 +97,10 @@ jobs:
             cp -r AestheticFramingModel.mlmodelc Payload/AISmartFramingCamera.app/
             echo "✓ Đã tích hợp thành công AestheticFramingModel.mlmodelc (ANE) vào App Bundle!"
           fi
+          if [ -f "scripts/AlignAI_DeepMaster_Weights.bin.part1" ]; then
+            cp scripts/AlignAI_DeepMaster_Weights.bin.part* Payload/AISmartFramingCamera.app/
+            echo "✓ Đã tích hợp thành công Deep Master Weights (150MB) vào App Bundle!"
+          fi
 
       - name: Package IPA
         run: |

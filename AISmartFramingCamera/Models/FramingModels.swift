@@ -176,6 +176,7 @@ public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
 // MARK: - AI Framing Engine Source Indicator
 public enum AIEngineSource: Equatable {
     case geminiCloud(model: String)
+    case deepMasterNeural(scene: String, rule: String, modelMb: Double)
     case aestheticNeural(scene: String, rule: String)
     case localTrained114MB(category: String)
     case yoloNeural(label: String)
@@ -185,6 +186,8 @@ public enum AIEngineSource: Equatable {
         switch self {
         case .geminiCloud(let model):
             return "✨ Cloud AI: \(model)"
+        case .deepMasterNeural(let scene, let rule, let mb):
+            return "🎯 Deep Master \(Int(mb))MB: \(scene) • \(rule)"
         case .aestheticNeural(let scene, let rule):
             return "🎯 Bố Cục Nơ-ron: \(scene) • \(rule)"
         case .localTrained114MB(let cat):
@@ -201,6 +204,8 @@ public enum AIEngineSource: Equatable {
         case .geminiCloud(let model):
             let short = model.replacingOccurrences(of: "gemini-", with: "").uppercased()
             return "CLOUD (\(short))"
+        case .deepMasterNeural(_, _, let mb):
+            return "DEEP \(Int(mb))MB"
         case .aestheticNeural(_, let rule):
             let shortRule = rule.contains("0.618") ? "TỶ LỆ VÀNG" : (rule.contains("1/3") ? "QUY TẮC 1/3" : "ANE BỐ CỤC")
             return shortRule
@@ -216,6 +221,7 @@ public enum AIEngineSource: Equatable {
     public var iconName: String {
         switch self {
         case .geminiCloud: return "sparkles"
+        case .deepMasterNeural: return "brain.head.profile"
         case .aestheticNeural: return "sparkles.square.filled.on.square"
         case .localTrained114MB: return "brain.head.profile"
         case .yoloNeural: return "bolt.shield.fill"
@@ -226,6 +232,7 @@ public enum AIEngineSource: Equatable {
     public var badgeColor: Color {
         switch self {
         case .geminiCloud: return .cyan
+        case .deepMasterNeural: return .purple
         case .aestheticNeural: return .green
         case .localTrained114MB: return .yellow
         case .yoloNeural: return .orange

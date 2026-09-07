@@ -27,7 +27,11 @@ Payload/
 Thumbs.db
 
 # Datasets
-data/photography_dataset/images/
+data/
+scripts/AlignAI_DeepMaster_Weights.bin
+scripts/AlignAI_DeepMaster_Weights.npz
+scripts/current_preview.jpg
+scripts/training_state.json
 *.jpg
 *.jpeg
 *.png
