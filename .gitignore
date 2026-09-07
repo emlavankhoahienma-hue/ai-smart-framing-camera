@@ -25,3 +25,11 @@ Payload/
 # OS
 .DS_Store
 Thumbs.db
+
+# Datasets
+data/photography_dataset/images/
+*.jpg
+*.jpeg
+*.png
+!AISmartFramingCamera/Resources/*.png
+!AISmartFramingCamera/Assets.xcassets/**/*.png

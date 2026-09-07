@@ -36,15 +36,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Export & Compile YOLO CoreML Model
+      - name: Compile AestheticFraming CoreML Model
         run: |
-          pip install --upgrade pip "ultralytics>=8.3.0" "coremltools>=8.0"
-          python -c "
-          from ultralytics import YOLO
-          model = YOLO('yolov8n.pt')
-          model.export(format='coreml', nms=True)
-          "
-          xcrun coremlc compile yolov8n.mlpackage .
+          pip install --upgrade pip "coremltools>=8.0" numpy
+          python scripts/export_coreml_model.py
+          xcrun coremlc compile AestheticFramingModel.mlmodel .
           ls -la
 
       - name: Build for iOS (unsigned)
@@ -97,17 +93,9 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
-          if [ -d "yolov8n.mlmodelc" ]; then
-            cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
-            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
-          elif [ -d "yolo11n.mlmodelc" ]; then
-            cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
-            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
-          fi
-          if [ -f "AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part1" ]; then
-            cat AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part* > Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin
-            cp Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin Payload/AISmartFramingCamera.app/RobustTargetEmbedder.bin
-            echo "✓ Đã tích hợp thành công AlignAI_SubjectRanker_Weights (114 MB) vào App Bundle!"
+          if [ -d "AestheticFramingModel.mlmodelc" ]; then
+            cp -r AestheticFramingModel.mlmodelc Payload/AISmartFramingCamera.app/
+            echo "✓ Đã tích hợp thành công AestheticFramingModel.mlmodelc (ANE) vào App Bundle!"
           fi
 
       - name: Package IPA

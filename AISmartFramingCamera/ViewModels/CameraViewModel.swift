@@ -701,16 +701,37 @@ public final class CameraViewModel: ObservableObject {
             }
         }
         
-        let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
-        self.framingResult = result
-        // Xác định chính xác nguồn Engine AI đang hoạt động để hiển thị rõ ràng trên HUD
-        if NeuralTargetTracker.shared.hasActiveTrainedModel {
+        var result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
+        
+        // Tận dụng mô hình nơ-ron bố cục thẩm mỹ đã huấn luyện trên ảnh thực tế
+        if AestheticFramingNeuralEngine.shared.hasActiveModel,
+           let buffer = latestPixelBuffer,
+           let neuralResult = AestheticFramingNeuralEngine.shared.predictFraming(pixelBuffer: buffer) {
+            let offset = CGVector(dx: neuralResult.targetPoint.x - 0.5, dy: neuralResult.targetPoint.y - 0.5)
+            let dist = sqrt(offset.dx * offset.dx + offset.dy * offset.dy)
+            let angle = atan2(offset.dy, offset.dx) * 180.0 / .pi
+            let score = max(0.0, 1.0 - Double(dist) * 2.5)
+            result = FramingTargetResult(
+                targetPoint: neuralResult.targetPoint,
+                currentCenter: CGPoint(x: 0.5, y: 0.5),
+                offsetVector: offset,
+                distance: dist,
+                angleDegrees: angle,
+                alignmentScore: score,
+                isAligned: dist <= calculator.alignmentTolerance,
+                recommendedZoomFactor: CGFloat(neuralResult.suggestedZoom),
+                optimalRule: activeCompositionRule,
+                guideDescription: "🎯 Bố cục Nơ-ron: \(neuralResult.sceneType) • \(neuralResult.compositionRule)"
+            )
+            self.activeEngineSource = .aestheticNeural(scene: neuralResult.sceneType, rule: neuralResult.compositionRule)
+        } else if NeuralTargetTracker.shared.hasActiveTrainedModel {
             self.activeEngineSource = .localTrained114MB(category: dominantScene.localizedName)
         } else if YOLODetectionEngine.shared.hasYOLOModel {
             self.activeEngineSource = .yoloNeural(label: dominantScene.localizedName)
         } else {
             self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
         }
+        self.framingResult = result
         
         if isAIFullColorEnabled {
             currentAIColorParams = dominantScene.aiFullColorParameters
