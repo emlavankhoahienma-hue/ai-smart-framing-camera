@@ -31,6 +31,10 @@ public enum CompositionRule: String, CaseIterable, Identifiable {
         case .dynamicAI: return "AI Tự động tối ưu"
         }
     }
+    
+    public var localizedName: String {
+        return displayNameVietnamese
+    }
 }
 
 // MARK: - Camera Capture Mode
@@ -176,9 +180,7 @@ public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
 // MARK: - AI Framing Engine Source Indicator
 public enum AIEngineSource: Equatable {
     case geminiCloud(model: String)
-    case deepMasterNeural(scene: String, rule: String, modelMb: Double)
-    case aestheticNeural(scene: String, rule: String)
-    case localTrained114MB(category: String)
+    case appleVisionSaliency(rule: String, salientType: String, score: Double)
     case yoloNeural(label: String)
     case appleNeuralEngine(scene: String)
     
@@ -186,12 +188,8 @@ public enum AIEngineSource: Equatable {
         switch self {
         case .geminiCloud(let model):
             return "✨ Cloud AI: \(model)"
-        case .deepMasterNeural(let scene, let rule, let mb):
-            return "🎯 Deep Master \(Int(mb))MB: \(scene) • \(rule)"
-        case .aestheticNeural(let scene, let rule):
-            return "🎯 Bố Cục Nơ-ron: \(scene) • \(rule)"
-        case .localTrained114MB(let cat):
-            return "🧠 AI Local 114MB (\(cat))"
+        case .appleVisionSaliency(let rule, let salientType, let score):
+            return "🎯 Vision Saliency: \(salientType) • \(rule) (\(String(format: "%.1f", score))/10)"
         case .yoloNeural(let label):
             return "⚡ YOLOv11 Neural (\(label))"
         case .appleNeuralEngine(let scene):
@@ -204,13 +202,8 @@ public enum AIEngineSource: Equatable {
         case .geminiCloud(let model):
             let short = model.replacingOccurrences(of: "gemini-", with: "").uppercased()
             return "CLOUD (\(short))"
-        case .deepMasterNeural(_, _, let mb):
-            return "DEEP \(Int(mb))MB"
-        case .aestheticNeural(_, let rule):
-            let shortRule = rule.contains("0.618") ? "TỶ LỆ VÀNG" : (rule.contains("1/3") ? "QUY TẮC 1/3" : "ANE BỐ CỤC")
-            return shortRule
-        case .localTrained114MB:
-            return "AI 114MB"
+        case .appleVisionSaliency:
+            return "VISION ANE"
         case .yoloNeural(let label):
             return "YOLO (\(label.uppercased()))"
         case .appleNeuralEngine:
@@ -221,9 +214,7 @@ public enum AIEngineSource: Equatable {
     public var iconName: String {
         switch self {
         case .geminiCloud: return "sparkles"
-        case .deepMasterNeural: return "brain.head.profile"
-        case .aestheticNeural: return "sparkles.square.filled.on.square"
-        case .localTrained114MB: return "brain.head.profile"
+        case .appleVisionSaliency: return "eye.circle.fill"
         case .yoloNeural: return "bolt.shield.fill"
         case .appleNeuralEngine: return "cpu.fill"
         }
@@ -232,9 +223,7 @@ public enum AIEngineSource: Equatable {
     public var badgeColor: Color {
         switch self {
         case .geminiCloud: return .cyan
-        case .deepMasterNeural: return .purple
-        case .aestheticNeural: return .green
-        case .localTrained114MB: return .yellow
+        case .appleVisionSaliency: return .green
         case .yoloNeural: return .orange
         case .appleNeuralEngine: return .green
         }
@@ -512,11 +501,17 @@ public struct CapturedPhotoItem: Identifiable {
 // MARK: - Subject AI Data Model
 public struct SubjectDetectionResult {
     public var faceRectangles: [CGRect] = []
+    public var humanRectangles: [CGRect] = []
+    public var animalRectangles: [CGRect] = []
     public var humanBodyPoses: [CGPoint] = []
     public var saliencyPoints: [CGPoint] = []
     public var dominantSubjectRect: CGRect?
     public var primaryEyePosition: CGPoint?
     public var lookingDirection: CGVector = CGVector(dx: 0, dy: 0)
+    public var attentionCentroid: CGPoint? = nil
+    public var objectnessCentroid: CGPoint? = nil
+    public var headroomRatio: CGFloat = 0.15
+    public var aestheticScore: Double = 8.5
     public var detectedScene: DetectedSceneType = .general
     public var confidence: Float = 0.0
     public var sceneConfidenceMap: [DetectedSceneType: Float] = [:]

@@ -771,18 +771,18 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
             
             // 2. Chế độ phát hiện thông minh đa tầng bằng NeuralSubjectIntelligenceEngine (Apple Neural Engine ANE)
-            let (primaryCandidate, allCandidates, detectedScene) = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
+            let (primaryCandidate, allCandidates, detectedScene, detectionResult) = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
                 pixelBuffer: pixelBuffer,
                 orientation: orientation
             )
             
-            var result = SubjectDetectionResult()
+            var result = detectionResult
             result.detectedScene = detectedScene
             
             if let primary = primaryCandidate {
                 result.dominantSubjectRect = primary.boundingBox
                 result.confidence = primary.confidence
-                if primary.category == .face {
+                if primary.category == .face && result.faceRectangles.isEmpty {
                     result.faceRectangles = [primary.boundingBox]
                 }
             }

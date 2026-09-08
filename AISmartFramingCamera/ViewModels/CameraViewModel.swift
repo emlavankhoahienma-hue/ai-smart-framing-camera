@@ -699,58 +699,36 @@ public final class CameraViewModel: ObservableObject {
             if let faceFrame = analysisFrames.first(where: { !$0.faceRectangles.isEmpty }) {
                 avgDetection.faceRectangles = faceFrame.faceRectangles
             }
+            if let humanFrame = analysisFrames.first(where: { !$0.humanRectangles.isEmpty }) {
+                avgDetection.humanRectangles = humanFrame.humanRectangles
+            }
+            if let animalFrame = analysisFrames.first(where: { !$0.animalRectangles.isEmpty }) {
+                avgDetection.animalRectangles = animalFrame.animalRectangles
+            }
+            if let attentionFrame = analysisFrames.first(where: { $0.attentionCentroid != nil }) {
+                avgDetection.attentionCentroid = attentionFrame.attentionCentroid
+            }
+            if let objCentroidFrame = analysisFrames.first(where: { $0.objectnessCentroid != nil }) {
+                avgDetection.objectnessCentroid = objCentroidFrame.objectnessCentroid
+            }
+            if let eyeFrame = analysisFrames.first(where: { $0.primaryEyePosition != nil }) {
+                avgDetection.primaryEyePosition = eyeFrame.primaryEyePosition
+            }
+            if let lookFrame = analysisFrames.first(where: { $0.lookingDirection != .zero }) {
+                avgDetection.lookingDirection = lookFrame.lookingDirection
+            }
+            if let saliencyPointsFrame = analysisFrames.first(where: { !$0.saliencyPoints.isEmpty }) {
+                avgDetection.saliencyPoints = saliencyPointsFrame.saliencyPoints
+            }
+            avgDetection.headroomRatio = analysisFrames.compactMap { $0.headroomRatio }.first ?? 0.15
         }
         
-        var result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
-        
-        // Ưu tiên Mô hình Nơ-ron Bố cục Cực đại Deep Master 150MB huấn luyện từ 8,010 ảnh thật
-        if LocalDeepFramingNeuralEngine.shared.hasActiveModel,
-           let buffer = latestPixelBuffer,
-           let deepResult = LocalDeepFramingNeuralEngine.shared.predictFraming(pixelBuffer: buffer) {
-            let offset = CGVector(dx: deepResult.targetPoint.x - 0.5, dy: deepResult.targetPoint.y - 0.5)
-            let dist = sqrt(offset.dx * offset.dx + offset.dy * offset.dy)
-            let angle = atan2(offset.dy, offset.dx) * 180.0 / .pi
-            let score = max(0.0, 1.0 - Double(dist) * 2.5)
-            result = FramingTargetResult(
-                targetPoint: deepResult.targetPoint,
-                currentCenter: CGPoint(x: 0.5, y: 0.5),
-                offsetVector: offset,
-                distance: dist,
-                angleDegrees: angle,
-                alignmentScore: score,
-                isAligned: dist <= calculator.alignmentTolerance,
-                recommendedZoomFactor: CGFloat(deepResult.suggestedZoom),
-                optimalRule: activeCompositionRule,
-                guideDescription: "🎯 Deep Master \(Int(deepResult.modelSizeMb))MB: \(deepResult.sceneType) • \(deepResult.compositionRule)"
-            )
-            self.activeEngineSource = .deepMasterNeural(scene: deepResult.sceneType, rule: deepResult.compositionRule, modelMb: deepResult.modelSizeMb)
-        } else if AestheticFramingNeuralEngine.shared.hasActiveModel,
-           let buffer = latestPixelBuffer,
-           let neuralResult = AestheticFramingNeuralEngine.shared.predictFraming(pixelBuffer: buffer) {
-            let offset = CGVector(dx: neuralResult.targetPoint.x - 0.5, dy: neuralResult.targetPoint.y - 0.5)
-            let dist = sqrt(offset.dx * offset.dx + offset.dy * offset.dy)
-            let angle = atan2(offset.dy, offset.dx) * 180.0 / .pi
-            let score = max(0.0, 1.0 - Double(dist) * 2.5)
-            result = FramingTargetResult(
-                targetPoint: neuralResult.targetPoint,
-                currentCenter: CGPoint(x: 0.5, y: 0.5),
-                offsetVector: offset,
-                distance: dist,
-                angleDegrees: angle,
-                alignmentScore: score,
-                isAligned: dist <= calculator.alignmentTolerance,
-                recommendedZoomFactor: CGFloat(neuralResult.suggestedZoom),
-                optimalRule: activeCompositionRule,
-                guideDescription: "🎯 Bố cục Nơ-ron: \(neuralResult.sceneType) • \(neuralResult.compositionRule)"
-            )
-            self.activeEngineSource = .aestheticNeural(scene: neuralResult.sceneType, rule: neuralResult.compositionRule)
-        } else if NeuralTargetTracker.shared.hasActiveTrainedModel {
-            self.activeEngineSource = .localTrained114MB(category: dominantScene.localizedName)
-        } else if YOLODetectionEngine.shared.hasYOLOModel {
-            self.activeEngineSource = .yoloNeural(label: dominantScene.localizedName)
-        } else {
-            self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
-        }
+        let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
+        self.activeEngineSource = .appleVisionSaliency(
+            rule: result.optimalRule.localizedName,
+            salientType: avgDetection.detectedScene.localizedName,
+            score: result.aestheticScore
+        )
         self.framingResult = result
         
         if isAIFullColorEnabled {

@@ -31,18 +31,6 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Compile AestheticFraming CoreML Model
-        run: |
-          pip install --upgrade pip "coremltools>=8.0" numpy
-          python scripts/export_coreml_model.py
-          xcrun coremlc compile AestheticFramingModel.mlmodel .
-          ls -la
-
       - name: Build for iOS (unsigned)
         run: |
           set -o pipefail
@@ -93,14 +81,7 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
-          if [ -d "AestheticFramingModel.mlmodelc" ]; then
-            cp -r AestheticFramingModel.mlmodelc Payload/AISmartFramingCamera.app/
-            echo "✓ Đã tích hợp thành công AestheticFramingModel.mlmodelc (ANE) vào App Bundle!"
-          fi
-          if [ -f "scripts/AlignAI_DeepMaster_Weights.bin.part1" ]; then
-            cp scripts/AlignAI_DeepMaster_Weights.bin.part* Payload/AISmartFramingCamera.app/
-            echo "✓ Đã tích hợp thành công Deep Master Weights (150MB) vào App Bundle!"
-          fi
+
 
       - name: Package IPA
         run: |
