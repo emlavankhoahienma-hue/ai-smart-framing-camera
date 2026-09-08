@@ -39,7 +39,7 @@ jobs:
       - name: Export Google NIMA CoreML Model
         run: |
           pip install --upgrade pip
-          pip install coremltools tensorflow h5py pillow
+          pip install tf-keras "tensorflow<2.16" coremltools h5py pillow || pip install tf-keras tensorflow coremltools h5py pillow
           python scripts/export_nima_coreml.py
           xcrun coremlc compile NIMAAestheticScorer.mlpackage .
           ls -la NIMAAestheticScorer.mlmodelc || true
@@ -75,19 +75,23 @@ jobs:
           {
             echo "# Build errors - run ${{ github.run_id }} - ${{ github.sha }}"
             echo
-            echo "=== Swift/clang error lines ==="
-            grep -nE " error: |fatal error: " build.log | head -80
-            echo
-            echo "=== Last 60 lines of xcodebuild output ==="
-            tail -60 build.log
+            if [ -f build.log ]; then
+              echo "=== Swift/clang error lines ==="
+              grep -nE " error: |fatal error: " build.log | head -80 || true
+              echo
+              echo "=== Last 60 lines of xcodebuild output ==="
+              tail -60 build.log || true
+            else
+              echo "No build.log found."
+            fi
           } > BUILD_ERROR.txt
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan ci-build-report
+          git checkout --orphan ci-build-report || git checkout -B ci-build-report
           git rm -rfq . || true
           git add BUILD_ERROR.txt
-          git commit -qm "ci: build report"
-          git push -fq origin HEAD:refs/heads/arena/build-report
+          git commit -qm "ci: build report" || true
+          git push -fq origin HEAD:refs/heads/arena/build-report || true
           echo "✓ Đã push BUILD_ERROR.txt lên branch arena/build-report"
 
       - name: Create Payload directory
