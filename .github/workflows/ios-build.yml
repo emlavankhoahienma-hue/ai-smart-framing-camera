@@ -31,6 +31,19 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Export Google NIMA CoreML Model
+        run: |
+          pip install --upgrade pip
+          pip install coremltools tensorflow h5py pillow
+          python scripts/export_nima_coreml.py
+          xcrun coremlc compile NIMAAestheticScorer.mlpackage .
+          ls -la NIMAAestheticScorer.mlmodelc || true
+
       - name: Build for iOS (unsigned)
         run: |
           set -o pipefail
@@ -81,7 +94,12 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
-
+          if [ -d "NIMAAestheticScorer.mlmodelc" ]; then
+            cp -r NIMAAestheticScorer.mlmodelc Payload/AISmartFramingCamera.app/
+            echo "✅ Included NIMAAestheticScorer.mlmodelc into App Bundle!"
+          else
+            echo "⚠️ NIMAAestheticScorer.mlmodelc not found, proceeding with heuristic fallback."
+          fi
 
       - name: Package IPA
         run: |
@@ -113,6 +131,8 @@ jobs:
             --notes "Unsigned IPA build for Sideloadly / AltStore / TrollStore installation.
 
           ## Features
+          - ✨ Google NIMA (Neural Image Assessment) Deep Aesthetic Scoring (ANE)
+          - 🖼️ 5-Angle Candidate Framing Optimization
           - 🎯 Real-time AI Subject & Face Tracking (Neural Engine accelerated)
           - 📐 Rule of Thirds & Golden Ratio Framing Guides
           - ⚡ Magnetic Snap Haptics & Auto-Alignment Crosshair

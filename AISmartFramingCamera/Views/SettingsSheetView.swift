@@ -541,6 +541,59 @@ public struct SettingsSheetView: View {
                     }
                 }
                 
+                // MARK: - 4A. Google NIMA Aesthetic Scoring
+                Section(header: Text("✨ ĐÁNH GIÁ THẨM MỸ NÂNG CAO (GOOGLE NIMA)")) {
+                    Toggle(isOn: $viewModel.nimaScoringEnabled) {
+                        HStack {
+                            Image(systemName: "sparkles.square.filled.on.square")
+                                .foregroundColor(.purple)
+                            Text("Bật chấm điểm học sâu NIMA")
+                        }
+                    }
+                    
+                    if viewModel.nimaScoringEnabled {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Trạng thái Neural Engine:")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                if NIMAEvaluationEngine.shared.isAvailable {
+                                    Label("Sẵn sàng (ANE)", systemImage: "checkmark.circle.fill")
+                                        .font(.caption.bold())
+                                        .foregroundColor(.green)
+                                } else {
+                                    Label("Đang nạp / Heuristic Fallback", systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption.bold())
+                                        .foregroundColor(.orange)
+                                }
+                            }
+                            
+                            if viewModel.lastNIMAScore > 0 {
+                                HStack {
+                                    Text("Điểm NIMA gần nhất:")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text(String(format: "%.1f / 10.0", viewModel.lastNIMAScore))
+                                        .font(.caption.bold().monospaced())
+                                        .foregroundColor(.purple)
+                                }
+                            }
+                            
+                            Text("• Cơ chế: Sử dụng mạng nơ-ron MobileNet AVA được Google huấn luyện trên hàng trăm nghìn bức ảnh, chạy trực tiếp trên Apple Neural Engine (ANE).")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.85))
+                            Text("• Tối ưu bố cục: Tự động đánh giá 5 góc crop ứng viên quanh chủ thể và chọn khung hình có điểm số thẩm mỹ cao nhất.")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.85))
+                        }
+                        .padding(8)
+                        .background(Color.purple.opacity(0.12))
+                        .cornerRadius(8)
+                    }
+                }
+                
                 // MARK: - 4AA. Video Recording Settings (Format, FPS & Codec)
                 Section(header: Text("📹 CẤU HÌNH QUAY VIDEO (ĐỘ PHÂN GIẢI & CODEC)")) {
                     Picker("Độ phân giải & Tần số", selection: $viewModel.selectedVideoFormatOption) {

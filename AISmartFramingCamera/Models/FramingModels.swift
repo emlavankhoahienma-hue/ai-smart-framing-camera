@@ -181,6 +181,7 @@ public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
 public enum AIEngineSource: Equatable {
     case geminiCloud(model: String)
     case appleVisionSaliency(rule: String, salientType: String, score: Double)
+    case nimaNeural(nimaScore: Double, heuristicScore: Double, blendedScore: Double)
     case yoloNeural(label: String)
     case appleNeuralEngine(scene: String)
     
@@ -190,6 +191,8 @@ public enum AIEngineSource: Equatable {
             return "✨ Cloud AI: \(model)"
         case .appleVisionSaliency(let rule, let salientType, let score):
             return "🎯 Vision Saliency: \(salientType) • \(rule) (\(String(format: "%.1f", score))/10)"
+        case .nimaNeural(let nimaScore, let heuristicScore, let blendedScore):
+            return "🎨 NIMA AI: \(String(format: "%.1f", blendedScore))/10 (NIMA \(String(format: "%.1f", nimaScore)) • Heuristic \(String(format: "%.1f", heuristicScore)))"
         case .yoloNeural(let label):
             return "⚡ YOLOv11 Neural (\(label))"
         case .appleNeuralEngine(let scene):
@@ -204,6 +207,8 @@ public enum AIEngineSource: Equatable {
             return "CLOUD (\(short))"
         case .appleVisionSaliency:
             return "VISION ANE"
+        case .nimaNeural:
+            return "NIMA ANE"
         case .yoloNeural(let label):
             return "YOLO (\(label.uppercased()))"
         case .appleNeuralEngine:
@@ -215,6 +220,7 @@ public enum AIEngineSource: Equatable {
         switch self {
         case .geminiCloud: return "sparkles"
         case .appleVisionSaliency: return "eye.circle.fill"
+        case .nimaNeural: return "sparkles.square.filled.on.square"
         case .yoloNeural: return "bolt.shield.fill"
         case .appleNeuralEngine: return "cpu.fill"
         }
@@ -224,6 +230,7 @@ public enum AIEngineSource: Equatable {
         switch self {
         case .geminiCloud: return .cyan
         case .appleVisionSaliency: return .green
+        case .nimaNeural: return .purple
         case .yoloNeural: return .orange
         case .appleNeuralEngine: return .green
         }
