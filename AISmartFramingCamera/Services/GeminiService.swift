@@ -2,6 +2,52 @@ import Foundation
 import UIKit
 import CoreGraphics
 import QuartzCore
+import Security
+
+// MARK: - Keychain Security Helper
+public struct KeychainHelper {
+    public static let standard = KeychainHelper()
+    private let service = "com.alignai.camera.keychain"
+
+    public func save(_ string: String, forKey key: String) {
+        guard let data = string.data(using: .utf8) else { return }
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: key
+        ]
+        SecItemDelete(query as CFDictionary)
+
+        var newQuery = query
+        newQuery[kSecValueData] = data
+        SecItemAdd(newQuery as CFDictionary, nil)
+    }
+
+    public func read(forKey key: String) -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: key,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+        var dataTypeRef: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &dataTypeRef)
+        if status == errSecSuccess, let data = dataTypeRef as? Data {
+            return String(data: data, encoding: .utf8)
+        }
+        return nil
+    }
+
+    public func delete(forKey key: String) {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: key
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
 
 // MARK: - Supported AI Vision Models
 
@@ -160,10 +206,29 @@ public enum GeminiError: LocalizedError {
 public final class GeminiService {
     public static let shared = GeminiService()
     
-    // Persistent API Key
+    // Persistent API Key (Secure Keychain with UserDefaults migration fallback)
     public var apiKey: String {
-        get { (UserDefaults.standard.string(forKey: "gemini_api_key") ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
-        set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "gemini_api_key") }
+        get {
+            if let keychainVal = KeychainHelper.standard.read(forKey: "gemini_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !keychainVal.isEmpty {
+                return keychainVal
+            }
+            // Auto-migrate from legacy UserDefaults if present
+            if let legacyKey = UserDefaults.standard.string(forKey: "gemini_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !legacyKey.isEmpty {
+                KeychainHelper.standard.save(legacyKey, forKey: "gemini_api_key")
+                UserDefaults.standard.removeObject(forKey: "gemini_api_key")
+                return legacyKey
+            }
+            return ""
+        }
+        set {
+            let clean = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if clean.isEmpty {
+                KeychainHelper.standard.delete(forKey: "gemini_api_key")
+            } else {
+                KeychainHelper.standard.save(clean, forKey: "gemini_api_key")
+            }
+            UserDefaults.standard.removeObject(forKey: "gemini_api_key")
+        }
     }
     
     public var hasAPIKey: Bool { !apiKey.isEmpty }
@@ -201,6 +266,14 @@ public final class GeminiService {
     
     // MARK: - Test API Key Connection (Fast Multi-Model Ping & Auto-Discovery)
     
+    public func testAPIKey() async -> (Bool, String) {
+        await withCheckedContinuation { continuation in
+            testAPIKey { success, message in
+                continuation.resume(returning: (success, message))
+            }
+        }
+    }
+
     public func testAPIKey(completion: @escaping (Bool, String) -> Void) {
         let key = apiKey
         guard !key.isEmpty else {

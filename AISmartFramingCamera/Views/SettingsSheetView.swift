@@ -1,524 +1,156 @@
 import SwiftUI
 import UIKit
 
+// MARK: - Settings Tab Category
+public enum SettingsSheetTab: String, CaseIterable, Identifiable {
+    case capture = "Chụp ảnh"
+    case ai = "AI & Bố cục"
+    case advanced = "Nâng cao"
+
+    public var id: String { rawValue }
+
+    public var icon: String {
+        switch self {
+        case .capture: return "camera.fill"
+        case .ai: return "sparkles"
+        case .advanced: return "slider.horizontal.3"
+        }
+    }
+}
+
+// MARK: - Main Settings View
 public struct SettingsSheetView: View {
     @ObservedObject var viewModel: CameraViewModel
     @Environment(\.presentationMode) var presentationMode
 
+    @State private var selectedTab: SettingsSheetTab = .capture
+    @State private var searchText: String = ""
+
+    // Gemini API Key State
     @State private var geminiKeyInput: String = ""
-    @State private var showKeyInput: Bool = false
     @State private var isKeyVisible: Bool = false
-    @State private var keySavedMessage: String? = nil
     @State private var selectedModel: AIVisionModel = .autoStrongest
     @State private var customModelInput: String = ""
     @State private var isTestingKey: Bool = false
     @State private var testResult: String? = nil
+    @State private var showDeleteKeyConfirmation: Bool = false
+
+    // Diagnostics & Reset
+    @State private var showResetSessionConfirmation: Bool = false
     @State private var showDevConsole: Bool = false
 
-    // Donate & Vibe Coding State
-    @State private var donateCopiedMessage: String? = nil
-    @State private var showVietQR: Bool = false
+    // Unified Toast Message
+    @State private var toastMessage: String? = nil
 
     // Web HTML Report Server State
     @ObservedObject private var reportServer = AICloudReportServer.shared
     @State private var isReportServerEnabled: Bool = true
-    @State private var webURLCopiedMessage: String? = nil
     @State private var showShareSheet: Bool = false
     @State private var shareFileURL: URL? = nil
 
+    private let haptic = UISelectionFeedbackGenerator()
+
+    public init(viewModel: CameraViewModel) {
+        self.viewModel = viewModel
+    }
+
     public var body: some View {
         NavigationView {
-            Form {
-                // MARK: - Group 1: Chụp ảnh
-                Section(header: Text("Chụp ảnh")) {
-                    Picker("Định dạng ảnh", selection: $viewModel.selectedPhotoFormat) {
-                        ForEach(PhotoSaveFormat.allCases) { format in
-                            Text(format.rawValue).tag(format)
-                        }
-                    }
+            ZStack {
+                Color(red: 0.05, green: 0.05, blue: 0.06)
+                    .ignoresSafeArea()
 
-                    Toggle("Live Photo", isOn: $viewModel.isLivePhotoEnabled)
+                VStack(spacing: 0) {
+                    // MARK: - Top Segmented Pill Bar
+                    tabSelectorPills
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                        .padding(.bottom, 12)
 
-                    Toggle("Lưu ảnh gốc không chỉnh", isOn: $viewModel.isSaveOriginalPhotoEnabled)
-
-                    Toggle("Rung phản hồi khi căn đúng", isOn: $viewModel.isProximityHapticsEnabled)
-
-                    Toggle("Giữ màn hình luôn sáng", isOn: $viewModel.isKeepScreenAwakeEnabled)
-
-                    Toggle("Tự chụp khi khớp bố cục", isOn: $viewModel.isAutoCaptureOnAlignEnabled)
-                }
-
-                // MARK: - Group 2: Bố cục thông minh
-                Section(header: Text("Bố cục thông minh")) {
-                    Picker("Bố cục mặc định", selection: $viewModel.activeCompositionRule) {
-                        ForEach(CompositionRule.allCases) { rule in
-                            HStack {
-                                Image(systemName: rule.iconName)
-                                Text(rule.displayNameVietnamese)
-                            }.tag(rule)
-                        }
-                    }
-
-                    Toggle("Tự động zoom theo chủ thể", isOn: $viewModel.isAutoZoomEnabled)
-
-                    Toggle("Tự chụp khi khớp", isOn: $viewModel.isAutoCaptureOnAlignEnabled)
-
-                    Toggle("Hiển thị đường hướng dẫn", isOn: $viewModel.isGuidanceRayEnabled)
-
-                    Picker("Độ nhạy bám chủ thể", selection: $viewModel.trackingSensitivity) {
-                        ForEach(TrackingSensitivityPreset.allCases) { preset in
-                            Text(preset.rawValue).tag(preset)
-                        }
-                    }
-                }
-
-                // MARK: - Group 3: Khung ngắm
-                Section(header: Text("Khung ngắm")) {
-                    Toggle("Cân bằng đường chân trời", isOn: $viewModel.isHorizonLevelerEnabled)
-
-                    Toggle("Focus peaking (Báo nét)", isOn: $viewModel.isFocusPeakingEnabled)
-
-                    if viewModel.isFocusPeakingEnabled {
-                        Picker("Màu viền báo nét", selection: $viewModel.focusPeakingColor) {
-                            ForEach(FocusPeakingColor.allCases) { color in
-                                HStack {
-                                    Circle().fill(color.swiftUIColor).frame(width: 10, height: 10)
-                                    Text(color.rawValue)
-                                }.tag(color)
-                            }
-                        }
-                    }
-
-                    Toggle("Hiển thị vùng nhận diện", isOn: $viewModel.showDetectionBoxes)
-
-                    Toggle("Thanh thông số & biểu đồ HUD", isOn: $viewModel.showHistogramInViewfinder)
-
-                    if viewModel.showHistogramInViewfinder {
-                        Toggle("Mở rộng thanh màu báo cháy sáng", isOn: $viewModel.isHistogramBarExpanded)
-                    }
-                }
-
-                // MARK: - Group 4: Màu sắc
-                Section(header: Text("Màu sắc")) {
-                    Toggle("Tự động theo cảnh", isOn: $viewModel.isAIFullColorEnabled)
-
-                    Picker("Preset màu hiện tại", selection: $viewModel.selectedFilmPreset) {
-                        ForEach(FilmPreset.allCases) { preset in
-                            Text(preset.displayName).tag(preset)
-                        }
-                    }
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(FilmPreset.allCases) { preset in
-                                let isSelected = viewModel.selectedFilmPreset == preset
-                                let thumb = PresetThumbnailProvider.shared.thumbnail(for: preset)
-
-                                Button(action: {
-                                    viewModel.selectPreset(preset)
-                                }) {
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        ZStack(alignment: .topTrailing) {
-                                            Image(uiImage: thumb)
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                                .frame(width: 96, height: 96)
-                                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 10)
-                                                        .stroke(isSelected ? Color.yellow : Color.white.opacity(0.12), lineWidth: isSelected ? 2.5 : 1)
-                                                )
-
-                                            if isSelected {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .font(.system(size: 16, weight: .bold))
-                                                    .foregroundColor(.yellow)
-                                                    .background(Circle().fill(Color.black).padding(1))
-                                                    .padding(5)
-                                            }
-                                        }
-
-                                        Text(preset.displayName)
-                                            .font(.caption.bold())
-                                            .foregroundColor(isSelected ? .yellow : .white)
-                                            .lineLimit(1)
-                                    }
-                                    .frame(width: 96)
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-
-                // MARK: - Group 5: Video
-                Section(header: Text("Video")) {
-                    Picker("Độ phân giải & Tần số", selection: $viewModel.selectedVideoFormatOption) {
-                        ForEach(VideoFormatOption.allCases) { opt in
-                            Text(opt.rawValue).tag(opt)
-                        }
-                    }
-
-                    Picker("Bộ giải mã (Codec)", selection: $viewModel.selectedVideoCodec) {
-                        ForEach(VideoCodec.allCases) { codec in
-                            Text(codec.rawValue).tag(codec)
-                        }
-                    }
-                }
-
-                // MARK: - Group 6: Video Pro
-                Section(header: Text("Video Pro")) {
-                    HStack {
-                        Text("Khẩu độ phần cứng")
-                        Spacer()
-                        Text("f/\(String(format: "%.1f", viewModel.proVideoService.hardwareLensAperture)) · Cố định")
-                            .font(.subheadline.monospaced())
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("ISO mặc định")
-                        Spacer()
-                        Text(viewModel.proVideoService.isAutoISO ? "Tự động" : "\(Int(viewModel.proVideoService.currentISO))")
-                            .font(.subheadline.monospaced())
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("Tốc độ màn trập")
-                        Spacer()
-                        Text(viewModel.proVideoService.isAutoShutter ? "Tự động" : "1/\(Int(viewModel.proVideoService.currentShutterSpeed)) s")
-                            .font(.subheadline.monospaced())
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("Bù phơi sáng EV")
-                        Spacer()
-                        Text(String(format: "%+.1f EV", viewModel.proVideoService.currentEVBias))
-                            .font(.subheadline.monospaced())
-                            .foregroundColor(.gray)
-                    }
-                }
-
-                // MARK: - Group 7: AI & Quyền riêng tư
-                Section(header: Text("AI & Quyền riêng tư")) {
-                    Toggle("Phân tích trực tuyến", isOn: $viewModel.useGeminiForAnalysis)
-
-                    HStack {
-                        Text("Trạng thái API")
-                        Spacer()
-                        if viewModel.geminiService.hasAPIKey {
-                            HStack(spacing: 5) {
-                                Circle().fill(Color.green).frame(width: 8, height: 8)
-                                Text("Đã kết nối").font(.subheadline.bold()).foregroundColor(.green)
-                            }
-                        } else {
-                            HStack(spacing: 5) {
-                                Circle().fill(Color.gray).frame(width: 8, height: 8)
-                                Text("Chưa thiết lập").font(.subheadline).foregroundColor(.gray)
-                            }
-                        }
-                    }
-
-                    Picker("Mô hình AI", selection: $selectedModel) {
-                        ForEach(AIVisionModel.allCases) { model in
-                            Text(model.displayName).tag(model)
-                        }
-                    }
-                    .onChange(of: selectedModel) { newModel in
-                        viewModel.geminiService.selectedModel = newModel
-                    }
-
-                    // API Key Management (Masked, no plain text)
-                    if viewModel.geminiService.hasAPIKey {
-                        HStack {
-                            Text("API Key:")
-                            Spacer()
-                            Text("••••••••••••••••")
-                                .font(.caption.monospaced())
-                                .foregroundColor(.gray)
-                            Button("Xóa") {
-                                viewModel.geminiService.apiKey = ""
-                                geminiKeyInput = ""
-                                keySavedMessage = "Đã xóa API Key"
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { keySavedMessage = nil }
-                            }
-                            .font(.caption.bold())
-                            .foregroundColor(.red)
-                        }
-                    } else {
-                        HStack(spacing: 8) {
-                            SecureField("Nhập hoặc dán API Key", text: $geminiKeyInput)
-                                .font(.caption.monospaced())
-
-                            Button("Lưu") {
-                                let trimmed = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !trimmed.isEmpty {
-                                    viewModel.geminiService.apiKey = trimmed
-                                    geminiKeyInput = ""
-                                    keySavedMessage = "Đã lưu API Key"
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { keySavedMessage = nil }
-                                }
-                            }
-                            .font(.caption.bold())
-                            .foregroundColor(.yellow)
-                        }
-                    }
-
-                    // Test connection button
-                    Button(action: {
-                        isTestingKey = true
-                        testResult = nil
-                        viewModel.geminiService.testAPIKey { success, message in
-                            isTestingKey = false
-                            testResult = message
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            if isTestingKey {
-                                ProgressView().scaleEffect(0.7)
+                    // MARK: - Content Scroll Area
+                    ScrollView {
+                        VStack(spacing: 16) {
+                            if !searchText.isEmpty {
+                                searchResultsView
                             } else {
-                                Image(systemName: "antenna.radiowaves.left.and.right")
-                            }
-                            Text(isTestingKey ? "Đang kiểm tra..." : "Kiểm tra kết nối")
-                        }
-                        .font(.caption.bold())
-                    }
-
-                    if let res = testResult {
-                        Text(res)
-                            .font(.caption2)
-                            .foregroundColor(res.contains("✅") ? .green : .red)
-                    }
-
-                    if let msg = keySavedMessage {
-                        Text(msg)
-                            .font(.caption2.bold())
-                            .foregroundColor(.green)
-                    }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Khi bật phân tích trực tuyến, một khung hình có thể được gửi đến dịch vụ bên ngoài để nhận gợi ý bố cục và màu sắc.\n\nKhi tắt, ứng dụng chỉ sử dụng xử lý trên thiết bị.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.gray)
-                            .lineSpacing(2)
-                    }
-                    .padding(.vertical, 2)
-                }
-
-                // MARK: - Group 8: Nâng cao
-                Section(header: Text("Nâng cao")) {
-                    Toggle("Chế độ đi đường (Street Tracking)", isOn: $viewModel.isStreetTrackingModeEnabled)
-
-                    Toggle("Không gian 3D ARKit", isOn: $viewModel.isARModeEnabled)
-
-                    DisclosureGroup("Web Report Server (Đồng bộ máy tính)") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle("Bật Server", isOn: $isReportServerEnabled)
-                                .onChange(of: isReportServerEnabled) { enabled in
-                                    if enabled { reportServer.startServer() } else { reportServer.stopServer() }
-                                }
-
-                            if reportServer.isRunning {
-                                HStack {
-                                    Text(reportServer.serverURLString)
-                                        .font(.caption.monospaced())
-                                        .foregroundColor(.yellow)
-                                    Spacer()
-                                    Button("Sao chép") {
-                                        UIPasteboard.general.string = reportServer.serverURLString
-                                        webURLCopiedMessage = "Đã chép địa chỉ"
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { webURLCopiedMessage = nil }
-                                    }
-                                    .font(.caption.bold())
-                                }
-
-                                if let msg = webURLCopiedMessage {
-                                    Text(msg).font(.caption2).foregroundColor(.green)
+                                switch selectedTab {
+                                case .capture:
+                                    PhotoCaptureSettingsSection(viewModel: viewModel)
+                                case .ai:
+                                    AIFramingSettingsSection(
+                                        viewModel: viewModel,
+                                        geminiKeyInput: $geminiKeyInput,
+                                        isKeyVisible: $isKeyVisible,
+                                        selectedModel: $selectedModel,
+                                        isTestingKey: $isTestingKey,
+                                        testResult: $testResult,
+                                        showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
+                                        toastMessage: $toastMessage
+                                    )
+                                case .advanced:
+                                    AdvancedSettingsSection(
+                                        viewModel: viewModel,
+                                        reportServer: reportServer,
+                                        isReportServerEnabled: $isReportServerEnabled,
+                                        showResetSessionConfirmation: $showResetSessionConfirmation,
+                                        showDevConsole: $showDevConsole,
+                                        toastMessage: $toastMessage
+                                    )
                                 }
                             }
                         }
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 32)
                     }
                 }
 
-                // MARK: - Group 9: Chẩn đoán
-                Section(header: Text("Chẩn đoán")) {
-                    HStack {
-                        Text("Mô hình đang dùng")
+                // MARK: - Toast Banner Notification
+                if let msg = toastMessage {
+                    VStack {
                         Spacer()
-                        Text(viewModel.activeModelUsedName.isEmpty ? "Cục bộ on-device" : viewModel.activeModelUsedName)
-                            .font(.caption.monospaced())
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("Động cơ thị giác")
-                        Spacer()
-                        Text("Apple Vision + Spatial Fusion")
-                            .font(.caption.monospaced())
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("Model cục bộ")
-                        Spacer()
-                        Text("AlignAI 114MB + YOLO")
-                            .font(.caption.monospaced())
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("Độ trễ gần nhất")
-                        Spacer()
-                        Text(viewModel.geminiLatencyMs > 0 ? "\(viewModel.geminiLatencyMs) ms" : "0 ms")
-                            .font(.caption.monospaced())
-                            .foregroundColor(.gray)
-                    }
-
-                    Button("Đặt lại phiên làm việc hiện tại") {
-                        viewModel.cancelAISession()
-                    }
-                    .foregroundColor(.orange)
-
-                    DisclosureGroup("Nhật ký kỹ thuật", isExpanded: $showDevConsole) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            if let err = viewModel.geminiError {
-                                Text("Lỗi gần nhất: \(err)")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(.red)
-                            } else {
-                                Text("Không có lỗi hệ thống.")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-
-                // MARK: - Group 10: Hỗ trợ & Giới thiệu
-                Section(header: Text("Hỗ trợ & Giới thiệu")) {
-                    NavigationLink("Gửi góp ý & phản hồi", destination: FeedbackView())
-
-                    // Donate Card
-                    DisclosureGroup("Ủng hộ tác giả") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Nếu thấy ứng dụng hữu ích, bạn có thể gửi tặng tác giả 1 ly cà phê.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
-                            // Momo
-                            HStack {
-                                Image(systemName: "wallet.pass.fill")
-                                    .foregroundColor(.pink)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("MoMo / ZaloPay")
-                                        .font(.caption.bold())
-                                    Text("0344197212 - Trần Văn Trình")
-                                        .font(.caption2.monospaced())
-                                        .foregroundColor(.gray)
-                                }
-                                Spacer()
-                                Button("Sao chép") {
-                                    UIPasteboard.general.string = "0344197212"
-                                    donateCopiedMessage = "Đã chép SĐT MoMo: 0344197212"
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { donateCopiedMessage = nil }
-                                }
-                                .font(.caption.bold())
-                                .foregroundColor(.yellow)
-                            }
-
-                            // MB Bank
-                            HStack {
-                                Image(systemName: "building.columns.fill")
-                                    .foregroundColor(.blue)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("MB Bank (Quân Đội)")
-                                        .font(.caption.bold())
-                                    Text("STK: 0344197212 - TRAN VAN TRINH")
-                                        .font(.caption2.monospaced())
-                                        .foregroundColor(.gray)
-                                }
-                                Spacer()
-                                Button("Sao chép") {
-                                    UIPasteboard.general.string = "0344197212"
-                                    donateCopiedMessage = "Đã chép STK MB: 0344197212"
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { donateCopiedMessage = nil }
-                                }
-                                .font(.caption.bold())
-                                .foregroundColor(.yellow)
-                            }
-
-                            if let msg = donateCopiedMessage {
-                                Text(msg).font(.caption2.bold()).foregroundColor(.green)
-                            }
-
-                            // QR Toggle
-                            Button(action: { showVietQR.toggle() }) {
-                                HStack {
-                                    Image(systemName: showVietQR ? "qrcode.viewfinder" : "qrcode")
-                                    Text(showVietQR ? "Ẩn mã VietQR" : "Xem mã VietQR chuyển khoản nhanh")
-                                        .font(.caption.bold())
-                                    Spacer()
-                                    Image(systemName: showVietQR ? "chevron.up" : "chevron.down")
-                                        .font(.caption2)
-                                }
-                                .foregroundColor(.yellow)
-                            }
-
-                            if showVietQR {
-                                AsyncImage(url: URL(string: "https://img.vietqr.io/image/mbbank-0344197212-compact2.png?amount=50000&addInfo=Donate%20AlignAI%20Camera&accountName=TRAN%20VAN%20TRINH")) { phase in
-                                    switch phase {
-                                    case .success(let image):
-                                        image
-                                            .resizable()
-                                            .scaledToFit()
-                                            .frame(maxHeight: 220)
-                                            .cornerRadius(10)
-                                    default:
-                                        ProgressView().padding()
-                                    }
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-
-                    // Developer info
-                    HStack {
-                        Text("Tác giả")
-                        Spacer()
-                        Text("VanKhoa (Trần Văn Trình)")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("Liên hệ")
-                        Spacer()
-                        Text("tranvantrinhhd@gmail.com")
-                            .font(.caption.monospaced())
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("Phiên bản")
-                        Spacer()
-                        Text("AlignAI Studio v1.0.0 (Build 128)")
-                            .font(.caption.monospaced())
-                            .foregroundColor(.gray)
+                        ToastBanner(message: msg)
+                            .padding(.bottom, 24)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
             }
             .navigationBarTitle("Cài đặt", displayMode: .inline)
             .navigationBarItems(
-                trailing: Button("Xong") { presentationMode.wrappedValue.dismiss() }
-                    .foregroundColor(.yellow)
+                trailing: Button("Xong") {
+                    presentationMode.wrappedValue.dismiss()
+                }
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundColor(.yellow)
             )
+            .searchable(text: $searchText, prompt: "Tìm kiếm thông số, cài đặt...")
+            .preferredColorScheme(.dark)
+            .confirmationDialog(
+                "Xác nhận xóa Gemini API Key?",
+                isPresented: $showDeleteKeyConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Xóa API Key", role: .destructive) {
+                    viewModel.geminiService.apiKey = ""
+                    geminiKeyInput = ""
+                    showToast("Đã xóa an toàn API Key khỏi Keychain")
+                }
+                Button("Hủy", role: .cancel) {}
+            } message: {
+                Text("API Key sẽ bị xóa hoàn toàn khỏi Keychain bảo mật của thiết bị.")
+            }
+            .confirmationDialog(
+                "Đặt lại phiên căn bố cục hiện tại?",
+                isPresented: $showResetSessionConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Đặt lại phiên", role: .destructive) {
+                    viewModel.cancelAISession()
+                    showToast("Đã đặt lại trạng thái phiên AI về ban đầu")
+                }
+                Button("Hủy", role: .cancel) {}
+            } message: {
+                Text("Thao tác này sẽ hủy khóa chủ thể hiện tại, dừng theo dõi con quay và đưa camera về trạng thái ngắm tự do.")
+            }
             .onAppear {
                 selectedModel = viewModel.geminiService.selectedModel
                 customModelInput = viewModel.geminiService.customModelName
@@ -530,6 +162,1044 @@ public struct SettingsSheetView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Segmented Tab Selector Pills
+    private var tabSelectorPills: some View {
+        HStack(spacing: 8) {
+            ForEach(SettingsSheetTab.allCases) { tab in
+                let isSelected = selectedTab == tab
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedTab = tab
+                        haptic.selectionChanged()
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(tab.rawValue)
+                            .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
+                    }
+                    .foregroundColor(isSelected ? .black : .white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? Color.yellow : Color(red: 0.08, green: 0.08, blue: 0.09))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(isSelected ? Color.yellow : Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+    }
+
+    // MARK: - Search Results View
+    @ViewBuilder
+    private var searchResultsView: some View {
+        let q = searchText.lowercased()
+        VStack(spacing: 16) {
+            if "định dạng ảnh raw jpeg heic dng live photo lưu ảnh gốc".contains(q) {
+                PhotoCaptureSettingsSection(viewModel: viewModel)
+            }
+            if "bố cục tỷ lệ vàng 1/3 tam giác xoắn ốc ai zoom bám chủ thể".contains(q) {
+                AIFramingSettingsSection(
+                    viewModel: viewModel,
+                    geminiKeyInput: $geminiKeyInput,
+                    isKeyVisible: $isKeyVisible,
+                    selectedModel: $selectedModel,
+                    isTestingKey: $isTestingKey,
+                    testResult: $testResult,
+                    showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
+                    toastMessage: $toastMessage
+                )
+            }
+            if "gemini api key model trực tuyến đám mây quota".contains(q) {
+                AIFramingSettingsSection(
+                    viewModel: viewModel,
+                    geminiKeyInput: $geminiKeyInput,
+                    isKeyVisible: $isKeyVisible,
+                    selectedModel: $selectedModel,
+                    isTestingKey: $isTestingKey,
+                    testResult: $testResult,
+                    showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
+                    toastMessage: $toastMessage
+                )
+            }
+            if "server web wifi chẩn đoán nhật ký donate ủng hộ góp ý feedback".contains(q) {
+                AdvancedSettingsSection(
+                    viewModel: viewModel,
+                    reportServer: reportServer,
+                    isReportServerEnabled: $isReportServerEnabled,
+                    showResetSessionConfirmation: $showResetSessionConfirmation,
+                    showDevConsole: $showDevConsole,
+                    toastMessage: $toastMessage
+                )
+            }
+        }
+    }
+
+    private func showToast(_ msg: String) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            toastMessage = msg
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                if toastMessage == msg {
+                    toastMessage = nil
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 1. Photo Capture Settings Section
+struct PhotoCaptureSettingsSection: View {
+    @ObservedObject var viewModel: CameraViewModel
+
+    var body: some View {
+        VStack(spacing: 14) {
+            // Card: Định dạng ảnh & Lưu
+            SettingsSectionCard(title: "CHỤP ẢNH & ĐỊNH DẠNG", icon: "camera.fill") {
+                VStack(spacing: 12) {
+                    SettingsPickerRow(title: "Định dạng lưu ảnh", icon: "doc.badge.gearshape") {
+                        Picker("", selection: $viewModel.selectedPhotoFormat) {
+                            ForEach(PhotoSaveFormat.allCases) { format in
+                                Text(format.rawValue).tag(format)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Live Photo",
+                        subtitle: "Ghi lại khoảnh khắc động kèm âm thanh trước và sau khi bấm",
+                        icon: "livephoto",
+                        isOn: $viewModel.isLivePhotoEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Lưu ảnh gốc không chỉnh",
+                        subtitle: "Giữ file ảnh nguyên bản không áp dụng bộ lọc màu film",
+                        icon: "photo.on.rectangle.angled",
+                        isOn: $viewModel.isSaveOriginalPhotoEnabled
+                    )
+                }
+            }
+
+            // Card: Video & Codec
+            SettingsSectionCard(title: "QUAY PHIM (VIDEO)", icon: "video.fill") {
+                VStack(spacing: 12) {
+                    SettingsPickerRow(title: "Độ phân giải & FPS", icon: "speedometer") {
+                        Picker("", selection: $viewModel.selectedVideoFormatOption) {
+                            ForEach(VideoFormatOption.allCases) { opt in
+                                Text(opt.rawValue).tag(opt)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsPickerRow(title: "Bộ giải mã (Codec)", icon: "film") {
+                        Picker("", selection: $viewModel.selectedVideoCodec) {
+                            ForEach(VideoCodec.allCases) { codec in
+                                Text(codec.rawValue).tag(codec)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+                }
+            }
+
+            // Card: Video Pro Manual Specs
+            SettingsSectionCard(title: "THÔNG SỐ PHẦN CỨNG VIDEO PRO", icon: "slider.horizontal.3") {
+                VStack(spacing: 10) {
+                    specRow(label: "Khẩu độ ống kính", value: "f/\(String(format: "%.1f", viewModel.proVideoService.hardwareLensAperture)) · Cố định")
+                    specRow(label: "Độ nhạy ISO", value: viewModel.proVideoService.isAutoISO ? "AUTO (\(Int(viewModel.proVideoService.measuredLiveISO)))" : "\(Int(viewModel.proVideoService.currentISO))")
+                    specRow(label: "Tốc độ màn trập", value: viewModel.proVideoService.isAutoShutter ? "AUTO" : "1/\(Int(viewModel.proVideoService.currentShutterSpeed))s")
+                    specRow(label: "Bù phơi sáng EV", value: String(format: "%+.1f EV", viewModel.proVideoService.currentEVBias))
+                }
+            }
+
+            // Card: Màu sắc film
+            SettingsSectionCard(title: "BỘ MÀU FILM NGHỆ THUẬT", icon: "paintpalette.fill") {
+                VStack(alignment: .leading, spacing: 12) {
+                    SettingsToggleRow(
+                        title: "Tự động phân tích màu theo cảnh",
+                        subtitle: "AI nhận diện bối cảnh để cân chỉnh độ tương phản và nhiệt độ màu",
+                        icon: "wand.and.stars",
+                        isOn: $viewModel.isAIFullColorEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    Text("CHỌN MẪU FILM:")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(.gray)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(FilmPreset.allCases) { preset in
+                                let isSelected = viewModel.selectedFilmPreset == preset
+                                let thumb = PresetThumbnailProvider.shared.thumbnail(for: preset)
+
+                                Button(action: {
+                                    viewModel.selectPreset(preset)
+                                }) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        ZStack(alignment: .topTrailing) {
+                                            Image(uiImage: thumb)
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fill)
+                                                .frame(width: 80, height: 80)
+                                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 10)
+                                                        .stroke(isSelected ? Color.yellow : Color.white.opacity(0.12), lineWidth: isSelected ? 2 : 1)
+                                                )
+
+                                            if isSelected {
+                                                Image(systemName: "checkmark.circle.fill")
+                                                    .font(.system(size: 14, weight: .bold))
+                                                    .foregroundColor(.yellow)
+                                                    .background(Circle().fill(Color.black).padding(1))
+                                                    .padding(4)
+                                            }
+                                        }
+
+                                        Text(preset.displayName)
+                                            .font(.system(size: 10, weight: isSelected ? .bold : .medium))
+                                            .foregroundColor(isSelected ? .yellow : .white)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(width: 80)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Card: Khung ngắm & HUD
+            SettingsSectionCard(title: "KHUNG NGẮM & CHỈ BÁO HUD", icon: "viewfinder") {
+                VStack(spacing: 12) {
+                    SettingsToggleRow(
+                        title: "Cân bằng đường chân trời",
+                        subtitle: "Hiển thị thước đo góc nghiêng gyro hỗ trợ giữ thẳng khung hình",
+                        icon: "gyroscope",
+                        isOn: $viewModel.isHorizonLevelerEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Focus peaking (Báo nét)",
+                        subtitle: "Tô sáng viền tương phản của các điểm đang nằm trong vùng nét",
+                        icon: "scope",
+                        isOn: $viewModel.isFocusPeakingEnabled
+                    )
+
+                    if viewModel.isFocusPeakingEnabled {
+                        SettingsPickerRow(title: "Màu viền báo nét", icon: "circle.circle.fill") {
+                            Picker("", selection: $viewModel.focusPeakingColor) {
+                                ForEach(FocusPeakingColor.allCases) { color in
+                                    HStack {
+                                        Circle().fill(color.swiftUIColor).frame(width: 8, height: 8)
+                                        Text(color.rawValue)
+                                    }.tag(color)
+                                }
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                        }
+                    }
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Hiển thị khung nhận diện chủ thể",
+                        subtitle: "Hiện bounding box xung quanh người, khuôn mặt hoặc đồ vật",
+                        icon: "boundingbox",
+                        isOn: $viewModel.showDetectionBoxes
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Thanh thông số & Biểu đồ HUD",
+                        subtitle: "Hiển thị Shutter, ISO, Định dạng và Histogram trên màn hình chính",
+                        icon: "chart.bar.fill",
+                        isOn: $viewModel.showHistogramInViewfinder
+                    )
+
+                    if viewModel.showHistogramInViewfinder {
+                        Divider().background(Color.white.opacity(0.08))
+
+                        SettingsToggleRow(
+                            title: "Mở rộng 32 cột màu báo cháy sáng",
+                            subtitle: "Hiển thị dải quang phổ RGB và cảnh báo clipping ở vùng sáng",
+                            icon: "waveform.path.ecg",
+                            isOn: $viewModel.isHistogramBarExpanded
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func specRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.white.opacity(0.85))
+            Spacer()
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(.gray)
+        }
+    }
+}
+
+// MARK: - 2. AI Framing Settings Section
+struct AIFramingSettingsSection: View {
+    @ObservedObject var viewModel: CameraViewModel
+    @Binding var geminiKeyInput: String
+    @Binding var isKeyVisible: Bool
+    @Binding var selectedModel: AIVisionModel
+    @Binding var isTestingKey: Bool
+    @Binding var testResult: String?
+    @Binding var showDeleteKeyConfirmation: Bool
+    @Binding var toastMessage: String?
+
+    var body: some View {
+        VStack(spacing: 14) {
+            // Card: Bố cục thông minh
+            SettingsSectionCard(title: "QUY TẮC BỐ CỤC THÔNG MINH", icon: "wand.and.stars") {
+                VStack(spacing: 12) {
+                    SettingsPickerRow(title: "Bố cục mặc định", icon: viewModel.activeCompositionRule.iconName) {
+                        Picker("", selection: $viewModel.activeCompositionRule) {
+                            ForEach(CompositionRule.allCases) { rule in
+                                HStack {
+                                    Image(systemName: rule.iconName)
+                                    Text(rule.displayNameVietnamese)
+                                }.tag(rule)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Tự động zoom theo chủ thể",
+                        subtitle: "Tự điều chỉnh độ phóng đại camera để đạt tỷ lệ bố cục chuẩn nhất",
+                        icon: "arrow.up.left.and.down.right.magnifyingglass",
+                        isOn: $viewModel.isAutoZoomEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Tự chụp khi khớp bố cục",
+                        subtitle: "Tự động kích hoạt màn trập ngay khi vòng tròn đạt độ khớp hoàn hảo",
+                        icon: "camera.badge.ellipsis",
+                        isOn: $viewModel.isAutoCaptureOnAlignEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Hiển thị tia hướng dẫn",
+                        subtitle: "Vẽ đường định hướng nối từ tâm camera tới vị trí vàng đề xuất",
+                        icon: "line.diagonal",
+                        isOn: $viewModel.isGuidanceRayEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsPickerRow(title: "Độ nhạy bám chủ thể", icon: "bolt.badge.clock.fill") {
+                        Picker("", selection: $viewModel.trackingSensitivity) {
+                            ForEach(TrackingSensitivityPreset.allCases) { preset in
+                                Text(preset.rawValue).tag(preset)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                    }
+                }
+            }
+
+            // Card: AI Cloud & Gemini API Key
+            SettingsSectionCard(title: "AI CLOUD & BẢO MẬT API KEY", icon: "lock.shield.fill") {
+                VStack(alignment: .leading, spacing: 12) {
+                    SettingsToggleRow(
+                        title: "Phân tích trực tuyến (Gemini Vision)",
+                        subtitle: "Gửi 1 khung hình chất lượng cao lên AI để nhận đánh giá chi tiết",
+                        icon: "network",
+                        isOn: $viewModel.useGeminiForAnalysis
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    // API Status & Model Picker
+                    HStack {
+                        Label("Trạng thái API Key", systemImage: "key.fill")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.white.opacity(0.85))
+                        Spacer()
+                        if viewModel.geminiService.hasAPIKey {
+                            HStack(spacing: 5) {
+                                Circle().fill(Color.green).frame(width: 7, height: 7)
+                                Text("Đã lưu Keychain").font(.system(size: 12, weight: .bold)).foregroundColor(.green)
+                            }
+                        } else {
+                            HStack(spacing: 5) {
+                                Circle().fill(Color.gray).frame(width: 7, height: 7)
+                                Text("Chưa thiết lập").font(.system(size: 12)).foregroundColor(.gray)
+                            }
+                        }
+                    }
+
+                    SettingsPickerRow(title: "Mô hình Gemini", icon: "cpu") {
+                        Picker("", selection: $selectedModel) {
+                            ForEach(AIVisionModel.allCases) { model in
+                                Text(model.displayName).tag(model)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                        .onChange(of: selectedModel) { newModel in
+                            viewModel.geminiService.selectedModel = newModel
+                        }
+                    }
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    // Key Input / Management
+                    if viewModel.geminiService.hasAPIKey {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("API Key bảo mật")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(.white)
+                                Text("••••••••••••••••••••••••")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(.gray)
+                            }
+
+                            Spacer()
+
+                            Button(role: .destructive, action: {
+                                showDeleteKeyConfirmation = true
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "trash.fill")
+                                    Text("Xóa")
+                                }
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.red.opacity(0.12))
+                                .cornerRadius(8)
+                            }
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                SecureField("Dán Gemini API Key tại đây", text: $geminiKeyInput)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .padding(8)
+                                    .background(Color.black.opacity(0.5))
+                                    .cornerRadius(8)
+
+                                Button("Lưu") {
+                                    let trimmed = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    if !trimmed.isEmpty {
+                                        viewModel.geminiService.apiKey = trimmed
+                                        geminiKeyInput = ""
+                                        withAnimation {
+                                            toastMessage = "Đã lưu an toàn API Key vào Keychain!"
+                                        }
+                                    }
+                                }
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.yellow)
+                                .cornerRadius(8)
+                            }
+                        }
+                    }
+
+                    // Test Connection Button (Async)
+                    Button(action: {
+                        isTestingKey = true
+                        testResult = nil
+                        Task {
+                            let (_, msg) = await viewModel.geminiService.testAPIKey()
+                            await MainActor.run {
+                                isTestingKey = false
+                                testResult = msg
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            if isTestingKey {
+                                ProgressView().scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "antenna.radiowaves.left.and.right")
+                            }
+                            Text(isTestingKey ? "Đang gửi ping kiểm tra..." : "Kiểm tra kết nối API Key")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        .foregroundColor(.yellow)
+                        .padding(.vertical, 6)
+                    }
+
+                    if let res = testResult {
+                        Text(res)
+                            .font(.system(size: 11))
+                            .foregroundColor(res.contains("❌") ? .red : .green)
+                            .padding(8)
+                            .background(Color.black.opacity(0.4))
+                            .cornerRadius(6)
+                    }
+
+                    Text("🔒 Quyền riêng tư: API Key được mã hóa lưu trữ độc quyền trong Apple Keychain của máy. Chỉ gửi 1 frame xem trước duy nhất khi người dùng ấn nút AI Compose. Không lưu trữ ảnh người dùng.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.gray)
+                        .lineSpacing(2)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 3. Advanced Settings Section
+struct AdvancedSettingsSection: View {
+    @ObservedObject var viewModel: CameraViewModel
+    @ObservedObject var reportServer: AICloudReportServer
+    @Binding var isReportServerEnabled: Bool
+    @Binding var showResetSessionConfirmation: Bool
+    @Binding var showDevConsole: Bool
+    @Binding var toastMessage: String?
+
+    var body: some View {
+        VStack(spacing: 14) {
+            // Card: Mở rộng tiện ích
+            SettingsSectionCard(title: "TÍNH NĂNG MỞ RỘNG", icon: "gearshape.2.fill") {
+                VStack(spacing: 12) {
+                    SettingsToggleRow(
+                        title: "Chế độ đi đường (Street Tracking)",
+                        subtitle: "Tăng cường độ mượt và bù trừ rung lắc khi vừa đi bộ vừa chụp",
+                        icon: "figure.walk",
+                        isOn: $viewModel.isStreetTrackingModeEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Không gian 3D ARKit",
+                        subtitle: "Ước tính khoảng cách thực tế và neo vòng tròn bố cục trong không gian 3 chiều",
+                        icon: "arkit",
+                        isOn: $viewModel.isARModeEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Rung phản hồi khi căn đúng",
+                        subtitle: "Phát nhịp rung Haptics thông minh khi tâm camera hút vào điểm tỷ lệ vàng",
+                        icon: "hand.tap.fill",
+                        isOn: $viewModel.isProximityHapticsEnabled
+                    )
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    SettingsToggleRow(
+                        title: "Giữ màn hình luôn sáng",
+                        subtitle: "Ngăn thiết bị tự động khóa màn hình trong suốt buổi chụp ảnh",
+                        icon: "sun.max.fill",
+                        isOn: $viewModel.isKeepScreenAwakeEnabled
+                    )
+                }
+            }
+
+            // Card: Web Report Server
+            SettingsSectionCard(title: "WEB REPORT SERVER (ĐỒNG BỘ MÁY TÍNH)", icon: "laptopcomputer.and.iphone") {
+                VStack(alignment: .leading, spacing: 10) {
+                    SettingsToggleRow(
+                        title: "Bật Web Server WiFi",
+                        subtitle: "Truy cập dashboard máy tính xem thông số, ảnh chụp và nhật ký hệ thống",
+                        icon: "wifi",
+                        isOn: $isReportServerEnabled
+                    )
+                    .onChange(of: isReportServerEnabled) { enabled in
+                        if enabled { reportServer.startServer() } else { reportServer.stopServer() }
+                    }
+
+                    if reportServer.isRunning {
+                        Divider().background(Color.white.opacity(0.08))
+
+                        HStack {
+                            Text(reportServer.serverURLString)
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(.yellow)
+                            Spacer()
+                            Button(action: {
+                                UIPasteboard.general.string = reportServer.serverURLString
+                                withAnimation {
+                                    toastMessage = "Đã sao chép: \(reportServer.serverURLString)"
+                                }
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.on.doc")
+                                    Text("Sao chép")
+                                }
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.yellow)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Color.yellow.opacity(0.15))
+                                .cornerRadius(6)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Card: Chẩn đoán & Quản trị hệ thống (Collapsible)
+            SettingsSectionCard(title: "CHẨN ĐOÁN & ENGINE HỆ THỐNG", icon: "cross.case.fill") {
+                VStack(alignment: .leading, spacing: 12) {
+                    diagRow(label: "Động cơ thị giác", value: "Apple Vision + Optical Flow + Gyro Fusion")
+                    diagRow(label: "AI Neural Engine", value: "AlignAI 114MB + CoreML YOLO")
+                    diagRow(label: "Model hoạt động", value: viewModel.activeModelUsedName.isEmpty ? "Cục bộ on-device (A-Series Neural Engine)" : viewModel.activeModelUsedName)
+                    diagRow(label: "Độ trễ phân tích", value: viewModel.geminiLatencyMs > 0 ? "\(viewModel.geminiLatencyMs) ms" : "0 ms (Realtime 60fps)")
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    Button(role: .destructive, action: {
+                        showResetSessionConfirmation = true
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.counterclockwise.circle.fill")
+                            Text("Đặt lại phiên căn bố cục hiện tại")
+                        }
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.orange)
+                    }
+
+                    DisclosureGroup("Nhật ký kỹ thuật (Debug Console)", isExpanded: $showDevConsole) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let err = viewModel.geminiError {
+                                Text("Lỗi ghi nhận: \(err)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.red)
+                            } else {
+                                Text("✓ Hệ thống đang chạy ổn định. Không có cảnh báo lỗi.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+
+            // Card: Hỗ trợ, Đóng góp & Thông tin
+            SettingsSectionCard(title: "HỖ TRỢ & THÔNG TIN", icon: "info.circle.fill") {
+                VStack(spacing: 12) {
+                    NavigationLink(destination: FeedbackView()) {
+                        HStack {
+                            Label("Gửi góp ý & phản hồi", systemImage: "envelope.fill")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.white)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12))
+                                .foregroundColor(.gray)
+                        }
+                    }
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    NavigationLink(destination: SupportDeveloperView()) {
+                        HStack {
+                            Label("Ủng hộ tác giả ☕", systemImage: "cup.and.saucer.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.yellow)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12))
+                                .foregroundColor(.gray)
+                        }
+                    }
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    diagRow(label: "Tác giả", value: "VanKhoa (Trần Văn Trình)")
+                    diagRow(label: "Liên hệ", value: "tranvantrinhhd@gmail.com")
+                    diagRow(label: "Phiên bản", value: "AlignAI Studio v1.0.0 (Build 133)")
+                }
+            }
+        }
+    }
+
+    private func diagRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.white.opacity(0.85))
+            Spacer()
+            Text(value)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(.gray)
+        }
+    }
+}
+
+// MARK: - Dedicated Support Developer View (Ủng Hộ Tác Giả)
+public struct SupportDeveloperView: View {
+    @State private var toastMessage: String? = nil
+    @State private var showVietQR: Bool = false
+    @State private var qrReloadID = UUID()
+
+    private let vietQRURLString = "https://img.vietqr.io/image/mbbank-0344197212-compact2.png?amount=50000&addInfo=Donate%20AlignAI%20Camera&accountName=TRAN%20VAN%20TRINH"
+
+    public init() {}
+
+    public var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Header Note
+                VStack(spacing: 6) {
+                    Image(systemName: "cup.and.saucer.fill")
+                        .font(.system(size: 34))
+                        .foregroundColor(.yellow)
+                        .padding(.bottom, 4)
+
+                    Text("Ủng hộ tác giả")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+
+                    Text("Nếu bạn yêu thích AlignAI Camera và thấy ứng dụng hỗ trợ đắc lực trong nhiếp ảnh, bạn có thể mời tác giả một ly cà phê để tiếp thêm năng lượng phát triển các tính năng mới.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(2)
+                        .padding(.horizontal, 12)
+                }
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+
+                // MoMo Card
+                SettingsSectionCard(title: "VÍ ĐIỆN TỬ MOMO / ZALOPAY", icon: "wallet.pass.fill") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Trần Văn Trình")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                            Text("0344197212")
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.yellow)
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            UIPasteboard.general.string = "0344197212"
+                            showToast("Đã chép số MoMo: 0344197212")
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.on.doc")
+                                Text("Sao chép")
+                            }
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.yellow)
+                            .cornerRadius(8)
+                        }
+                    }
+                }
+
+                // MB Bank Card
+                SettingsSectionCard(title: "NGÂN HÀNG QUÂN ĐỘI (MB BANK)", icon: "building.columns.fill") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("TRAN VAN TRINH")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                            Text("STK: 0344197212")
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.yellow)
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            UIPasteboard.general.string = "0344197212"
+                            showToast("Đã chép STK MB Bank: 0344197212")
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.on.doc")
+                                Text("Sao chép")
+                            }
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.yellow)
+                            .cornerRadius(8)
+                        }
+                    }
+                }
+
+                // VietQR Toggle & Card with .failure handling
+                SettingsSectionCard(title: "MÃ VIETQR CHUYỂN KHOẢN NHANH", icon: "qrcode.viewfinder") {
+                    VStack(spacing: 12) {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                showVietQR.toggle()
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: showVietQR ? "qrcode.viewfinder" : "qrcode")
+                                Text(showVietQR ? "Thu gọn mã QR" : "Hiện mã VietQR tự động điền số tiền")
+                                    .font(.system(size: 13, weight: .bold))
+                                Spacer()
+                                Image(systemName: showVietQR ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 12))
+                            }
+                            .foregroundColor(.yellow)
+                        }
+
+                        if showVietQR {
+                            AsyncImage(url: URL(string: vietQRURLString)) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(maxHeight: 240)
+                                        .cornerRadius(12)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                                        )
+                                case .failure:
+                                    VStack(spacing: 8) {
+                                        Image(systemName: "wifi.slash")
+                                            .font(.system(size: 32))
+                                            .foregroundColor(.gray)
+                                        Text("Không thể tải mã VietQR (Vui lòng kiểm tra kết nối mạng)")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.gray)
+                                        Button("Thử lại") {
+                                            qrReloadID = UUID()
+                                        }
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(.yellow)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 6)
+                                        .background(Color.yellow.opacity(0.15))
+                                        .cornerRadius(6)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(20)
+                                default:
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
+                                        .padding(24)
+                                }
+                            }
+                            .id(qrReloadID)
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .background(Color(red: 0.05, green: 0.05, blue: 0.06).ignoresSafeArea())
+        .navigationTitle("Ủng hộ tác giả")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay(
+            Group {
+                if let msg = toastMessage {
+                    VStack {
+                        Spacer()
+                        ToastBanner(message: msg)
+                            .padding(.bottom, 24)
+                    }
+                }
+            }
+        )
+    }
+
+    private func showToast(_ msg: String) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            toastMessage = msg
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                if toastMessage == msg {
+                    toastMessage = nil
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Reusable UI Components
+
+// 1. SettingsSectionCard
+public struct SettingsSectionCard<Content: View>: View {
+    let title: String
+    let icon: String
+    let content: Content
+
+    public init(title: String, icon: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.icon = icon
+        self.content = content()
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.yellow.opacity(0.18))
+                        .frame(width: 22, height: 22)
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.yellow)
+                }
+
+                Text(title)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(.gray)
+
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 0) {
+                content
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(red: 0.08, green: 0.08, blue: 0.09))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+        }
+    }
+}
+
+// 2. SettingsToggleRow
+public struct SettingsToggleRow: View {
+    let title: String
+    var subtitle: String? = nil
+    let icon: String
+    @Binding var isOn: Bool
+
+    public var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.yellow)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white)
+
+                if let sub = subtitle {
+                    Text(sub)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(.gray)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .tint(.yellow)
+        }
+    }
+}
+
+// 3. SettingsPickerRow
+public struct SettingsPickerRow<Content: View>: View {
+    let title: String
+    let icon: String
+    let picker: Content
+
+    public init(title: String, icon: String, @ViewBuilder picker: () -> Content) {
+        self.title = title
+        self.icon = icon
+        self.picker = picker()
+    }
+
+    public var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.yellow)
+                .frame(width: 24)
+
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.white)
+
+            Spacer()
+
+            picker
+        }
+    }
+}
+
+// 4. ToastBanner
+public struct ToastBanner: View {
+    let message: String
+
+    public var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.green)
+            Text(message)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(
+            Capsule()
+                .fill(Color(red: 0.12, green: 0.12, blue: 0.14).opacity(0.95))
+                .overlay(
+                    Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.5), radius: 10, x: 0, y: 4)
+        )
     }
 }
 
