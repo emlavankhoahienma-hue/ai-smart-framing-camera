@@ -4,6 +4,7 @@ import UIKit
 
 public struct CapturedPhotoPreviewView: View {
     let item: CapturedPhotoItem
+    var viewModel: CameraViewModel? = nil
     @Environment(\.presentationMode) var presentationMode
 
     @State private var currentProcessedImage: CGImage
@@ -18,8 +19,9 @@ public struct CapturedPhotoPreviewView: View {
     private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
     private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
 
-    public init(item: CapturedPhotoItem) {
+    public init(item: CapturedPhotoItem, viewModel: CameraViewModel? = nil) {
         self.item = item
+        self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
     }
 
@@ -132,12 +134,16 @@ public struct CapturedPhotoPreviewView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {
                                     if item.isLivePhoto {
-                                        Text("LIVE")
-                                            .font(.system(size: 10, weight: .bold))
-                                            .foregroundColor(champagne)
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 2)
-                                            .background(Capsule().fill(champagne.opacity(0.15)))
+                                        HStack(spacing: 3) {
+                                             Image(systemName: "livephoto")
+                                                 .font(.system(size: 10, weight: .bold))
+                                             Text("LIVE PHOTO")
+                                                 .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                        }
+                                        .foregroundColor(.yellow)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Capsule().fill(Color.yellow.opacity(0.18)))
                                     }
                                     Text(item.appliedPreset.displayName)
                                         .font(.system(size: 14, weight: .semibold))
@@ -263,7 +269,7 @@ public struct CapturedPhotoPreviewView: View {
                             self.splitOffset = 1.0
                         }
                         self.aiOptimizationSuccessNote = "\(response.colorRecipe.diagnosis) (\(response.latencyMs)ms)"
-                        self.saveEnhancedImageToPhotos(enhanced)
+                        self.saveEnhancedImageToPhotos(enhanced, aiParams: aiParams)
                     }
                 case .failure(let error):
                     self.aiErrorMessage = "Lỗi: \(error.localizedDescription)"
@@ -272,14 +278,55 @@ public struct CapturedPhotoPreviewView: View {
         }
     }
 
-    private func saveEnhancedImageToPhotos(_ cgImage: CGImage) {
-        let uiImage = UIImage(cgImage: cgImage)
-        PHPhotoLibrary.shared().performChanges({
-            PHAssetChangeRequest.creationRequestForAsset(from: uiImage)
-        }) { success, error in
-            DispatchQueue.main.async {
-                if success {
-                    self.hasSavedNewEnhancement = true
+    private func saveEnhancedImageToPhotos(_ cgImage: CGImage, aiParams: AIColorParameters? = nil) {
+        if let vm = viewModel {
+            // Giữ trọn vẹn Live Photo: ghép đôi với video pairedMovie gốc và nhúng Content Identifier
+            let updatedItem = CapturedPhotoItem(
+                originalImage: item.originalImage,
+                processedImage: cgImage,
+                rawPhotoData: item.rawPhotoData,
+                livePhotoMovieURL: item.livePhotoMovieURL,
+                sceneType: item.sceneType,
+                appliedPreset: item.appliedPreset,
+                compositionRule: item.compositionRule,
+                alignmentScore: item.alignmentScore,
+                timestamp: Date(),
+                iso: item.iso,
+                shutterSpeed: item.shutterSpeed,
+                aiColorParameters: aiParams ?? item.aiColorParameters
+            )
+            vm.savePhotoToLibrary(updatedItem)
+            self.hasSavedNewEnhancement = true
+        } else {
+            // Fallback lưu độc lập: vẫn giữ Live Photo nếu có video movieURL
+            if let liveMovieURL = item.livePhotoMovieURL, FileManager.default.fileExists(atPath: liveMovieURL.path) {
+                PHPhotoLibrary.shared().performChanges({
+                    let creationRequest = PHAssetCreationRequest.forAsset()
+                    let photoOptions = PHAssetResourceCreationOptions()
+                    let uiImage = UIImage(cgImage: cgImage)
+                    if let jpegData = uiImage.jpegData(compressionQuality: 0.95) {
+                        creationRequest.addResource(with: .photo, data: jpegData, options: photoOptions)
+                    }
+                    let videoOptions = PHAssetResourceCreationOptions()
+                    videoOptions.shouldMoveFile = false
+                    creationRequest.addResource(with: .pairedVideo, fileURL: liveMovieURL, options: videoOptions)
+                }) { success, error in
+                    DispatchQueue.main.async {
+                        if success {
+                            self.hasSavedNewEnhancement = true
+                        }
+                    }
+                }
+            } else {
+                let uiImage = UIImage(cgImage: cgImage)
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAsset(from: uiImage)
+                }) { success, error in
+                    DispatchQueue.main.async {
+                        if success {
+                            self.hasSavedNewEnhancement = true
+                        }
+                    }
                 }
             }
         }

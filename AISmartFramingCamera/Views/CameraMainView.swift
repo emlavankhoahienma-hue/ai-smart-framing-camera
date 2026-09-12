@@ -60,7 +60,7 @@ public struct CameraMainView: View {
         }
         .sheet(isPresented: $viewModel.isShowingPhotoDetail) {
             if let latest = viewModel.latestCapturedPhoto {
-                CapturedPhotoPreviewView(item: latest)
+                CapturedPhotoPreviewView(item: latest, viewModel: viewModel)
             }
         }
         .sheet(isPresented: $viewModel.isShowingVideoPreview) {
