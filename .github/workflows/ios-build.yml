@@ -36,13 +36,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Export Google NIMA CoreML Model
+      - name: Export & Compile YOLO CoreML Model
         run: |
-          pip install --upgrade pip
-          pip install tf-keras "tensorflow<2.16" coremltools h5py pillow || pip install tf-keras tensorflow coremltools h5py pillow
-          python scripts/export_nima_coreml.py
-          xcrun coremlc compile NIMAAestheticScorer.mlpackage .
-          ls -la NIMAAestheticScorer.mlmodelc || true
+          pip install --upgrade pip "ultralytics>=8.3.0" "coremltools>=8.0"
+          python -c "
+          from ultralytics import YOLO
+          model = YOLO('yolov8n.pt')
+          model.export(format='coreml', nms=True)
+          "
+          xcrun coremlc compile yolov8n.mlpackage .
+          ls -la
 
       - name: Build for iOS (unsigned)
         run: |
@@ -75,34 +78,36 @@ jobs:
           {
             echo "# Build errors - run ${{ github.run_id }} - ${{ github.sha }}"
             echo
-            if [ -f build.log ]; then
-              echo "=== Swift/clang error lines ==="
-              grep -nE " error: |fatal error: " build.log | head -80 || true
-              echo
-              echo "=== Last 60 lines of xcodebuild output ==="
-              tail -60 build.log || true
-            else
-              echo "No build.log found."
-            fi
+            echo "=== Swift/clang error lines ==="
+            grep -nE " error: |fatal error: " build.log | head -80
+            echo
+            echo "=== Last 60 lines of xcodebuild output ==="
+            tail -60 build.log
           } > BUILD_ERROR.txt
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan ci-build-report || git checkout -B ci-build-report
+          git checkout --orphan ci-build-report
           git rm -rfq . || true
           git add BUILD_ERROR.txt
-          git commit -qm "ci: build report" || true
-          git push -fq origin HEAD:refs/heads/arena/build-report || true
+          git commit -qm "ci: build report"
+          git push -fq origin HEAD:refs/heads/arena/build-report
           echo "✓ Đã push BUILD_ERROR.txt lên branch arena/build-report"
 
       - name: Create Payload directory
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
-          if [ -d "NIMAAestheticScorer.mlmodelc" ]; then
-            cp -r NIMAAestheticScorer.mlmodelc Payload/AISmartFramingCamera.app/
-            echo "✅ Included NIMAAestheticScorer.mlmodelc into App Bundle!"
-          else
-            echo "⚠️ NIMAAestheticScorer.mlmodelc not found, proceeding with heuristic fallback."
+          if [ -d "yolov8n.mlmodelc" ]; then
+            cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
+            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
+          elif [ -d "yolo11n.mlmodelc" ]; then
+            cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
+            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
+          fi
+          if [ -f "AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part1" ]; then
+            cat AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part* > Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin
+            cp Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin Payload/AISmartFramingCamera.app/RobustTargetEmbedder.bin
+            echo "✓ Đã tích hợp thành công AlignAI_SubjectRanker_Weights (114 MB) vào App Bundle!"
           fi
 
       - name: Package IPA
@@ -135,8 +140,6 @@ jobs:
             --notes "Unsigned IPA build for Sideloadly / AltStore / TrollStore installation.
 
           ## Features
-          - ✨ Google NIMA (Neural Image Assessment) Deep Aesthetic Scoring (ANE)
-          - 🖼️ 5-Angle Candidate Framing Optimization
           - 🎯 Real-time AI Subject & Face Tracking (Neural Engine accelerated)
           - 📐 Rule of Thirds & Golden Ratio Framing Guides
           - ⚡ Magnetic Snap Haptics & Auto-Alignment Crosshair

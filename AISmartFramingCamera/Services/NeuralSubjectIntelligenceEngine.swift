@@ -51,9 +51,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     private var animalRequest: VNRecognizeAnimalsRequest!
     private var humanBodyRequest: VNDetectHumanRectanglesRequest!
     private var faceRequest: VNDetectFaceRectanglesRequest!
-    private var faceLandmarksRequest: VNDetectFaceLandmarksRequest!
     private var saliencyObjectRequest: VNGenerateObjectnessBasedSaliencyImageRequest!
-    private var saliencyAttentionRequest: VNGenerateAttentionBasedSaliencyImageRequest!
     private var sceneClassifierRequest: VNClassifyImageRequest!
     
     public init() {
@@ -74,19 +72,11 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         faceRequest = VNDetectFaceRectanglesRequest()
         faceRequest.revision = VNDetectFaceRectanglesRequestRevision3
         
-        // 4. Nhận diện Điểm mốc Khuôn mặt & Hướng nhìn (Eyes, Nose, Yaw, Gaze)
-        faceLandmarksRequest = VNDetectFaceLandmarksRequest()
-        faceLandmarksRequest.revision = VNDetectFaceLandmarksRequestRevision3
-        
-        // 5. Nhận diện Vật thể tiền cảnh thực tế (Objectness Saliency)
+        // 4. Nhận diện Vật thể tiền cảnh thực tế (Objectness Saliency)
         saliencyObjectRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
         saliencyObjectRequest.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
         
-        // 6. Nhận diện Vùng tập trung thị giác mắt người (Attention-based Saliency)
-        saliencyAttentionRequest = VNGenerateAttentionBasedSaliencyImageRequest()
-        saliencyAttentionRequest.revision = VNGenerateAttentionBasedSaliencyImageRequestRevision1
-        
-        // 7. Phân loại Cảnh quan tổng thể
+        // 5. Phân loại Cảnh quan tổng thể
         sceneClassifierRequest = VNClassifyImageRequest()
         sceneClassifierRequest.revision = VNClassifyImageRequestRevision1
     }
@@ -95,26 +85,23 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public func analyzeFrame(
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation = .up
-    ) -> (primaryCandidate: NeuralSubjectCandidate?, allCandidates: [NeuralSubjectCandidate], detectedScene: DetectedSceneType, detectionResult: SubjectDetectionResult) {
+    ) -> (primaryCandidate: NeuralSubjectCandidate?, allCandidates: [NeuralSubjectCandidate], detectedScene: DetectedSceneType) {
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         
         do {
             try handler.perform([
                 self.humanBodyRequest,
                 self.faceRequest,
-                self.faceLandmarksRequest,
                 self.animalRequest,
                 self.saliencyObjectRequest,
-                self.saliencyAttentionRequest,
                 self.sceneClassifierRequest
             ])
         } catch {
             CameraLogger.error("Lỗi thực thi Neural Vision Request", error: error, category: .ai)
-            return (nil, [], .general, SubjectDetectionResult())
+            return (nil, [], .general)
         }
         
         var candidates: [NeuralSubjectCandidate] = []
-        var detectionResult = SubjectDetectionResult()
         
         // 0. Nhận diện vật thể bằng YOLOv11 CoreML (nếu có model)
         if YOLODetectionEngine.shared.hasYOLOModel {
@@ -139,7 +126,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         
-        // 2. Trích xuất Khuôn mặt (Face) & Face Landmarks (Mắt, Mũi, Hướng nhìn Gaze, Headroom)
+        // 2. Trích xuất Khuôn mặt (Face)
         if let faces = faceRequest.results {
             for face in faces where face.confidence > 0.45 {
                 let rect = convertVisionRectToUIRect(face.boundingBox)
@@ -152,40 +139,6 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                         label: "Khuôn mặt",
                         prominenceScore: score
                     ))
-                }
-            }
-        }
-        
-        // Trích xuất Headroom & Hướng nhìn (Yaw / Gaze) & Primary Eye từ Face Landmarks
-        if let faceObs = (faceLandmarksRequest.results as? [VNFaceObservation])?.first ?? faceRequest.results?.first {
-            let faceUIRect = convertVisionRectToUIRect(faceObs.boundingBox)
-            // Headroom: khoảng cách từ cạnh trên khuôn mặt đến mép trên khung hình UI
-            detectionResult.headroomRatio = max(0.0, min(1.0, faceUIRect.minY))
-            
-            // Góc quay đầu (Yaw) xác định hướng nhìn (Looking room)
-            if let yawNum = faceObs.yaw {
-                let yaw = yawNum.doubleValue
-                detectionResult.lookingDirection = CGVector(dx: sin(yaw), dy: 0)
-            }
-            
-            // Toạ độ mắt chính xác (Primary Eye Position)
-            if let landmarks = faceObs.landmarks,
-               let leftEye = landmarks.leftEye,
-               let rightEye = landmarks.rightEye {
-                let leftPts = leftEye.normalizedPoints
-                let rightPts = rightEye.normalizedPoints
-                if !leftPts.isEmpty && !rightPts.isEmpty {
-                    let avgLX = leftPts.map { $0.x }.reduce(0, +) / CGFloat(leftPts.count)
-                    let avgLY = leftPts.map { $0.y }.reduce(0, +) / CGFloat(leftPts.count)
-                    let avgRX = rightPts.map { $0.x }.reduce(0, +) / CGFloat(rightPts.count)
-                    let avgRY = rightPts.map { $0.y }.reduce(0, +) / CGFloat(rightPts.count)
-                    
-                    let midX = (avgLX + avgRX) / 2.0
-                    let midY = (avgLY + avgRY) / 2.0
-                    let box = faceObs.boundingBox
-                    let visionEyeX = box.origin.x + midX * box.width
-                    let visionEyeY = box.origin.y + midY * box.height
-                    detectionResult.primaryEyePosition = CGPoint(x: visionEyeX, y: 1.0 - visionEyeY)
                 }
             }
         }
@@ -209,29 +162,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         
-        // 4. Trích xuất Attention-based Saliency (Vùng thu hút mắt người nhìn trước tiên)
-        if let attentionObs = saliencyAttentionRequest.results?.first {
-            if let salientObjects = attentionObs.salientObjects, !salientObjects.isEmpty {
-                let bestAttention = salientObjects.max(by: { $0.confidence < $1.confidence }) ?? salientObjects[0]
-                let uiRect = convertVisionRectToUIRect(bestAttention.boundingBox)
-                detectionResult.attentionCentroid = CGPoint(x: uiRect.midX, y: uiRect.midY)
-                detectionResult.saliencyPoints = salientObjects.map {
-                    let r = convertVisionRectToUIRect($0.boundingBox)
-                    return CGPoint(x: r.midX, y: r.midY)
-                }
-            }
-        }
-        
-        // 5. Trích xuất Objectness-based Saliency (Vật thể tiền cảnh thực tế)
+        // 4. Trích xuất Vật thể tiền cảnh thực tế (Objectness Saliency)
         if let saliency = saliencyObjectRequest.results?.first,
            let salientObjects = saliency.salientObjects {
-            if let bestObj = salientObjects.first {
-                let uiRect = convertVisionRectToUIRect(bestObj.boundingBox)
-                detectionResult.objectnessCentroid = CGPoint(x: uiRect.midX, y: uiRect.midY)
-            }
             for obj in salientObjects where obj.confidence >= 0.48 {
                 let rect = convertVisionRectToUIRect(obj.boundingBox)
                 if isValidSubjectRect(rect) {
+                    // Kiểm tra xem vật thể này có bị trùng lặp với người/mặt/thú cưng đã phát hiện không
                     let overlapsWithExisting = candidates.contains { existing in
                         existing.boundingBox.intersection(rect).width * existing.boundingBox.intersection(rect).height > (rect.width * rect.height * 0.45)
                     }
@@ -249,7 +186,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         
-        // 6. Phân loại Cảnh quan
+        // 5. Phân loại Cảnh quan
         var scene: DetectedSceneType = .general
         if let classifications = sceneClassifierRequest.results,
            let topClass = classifications.first(where: { $0.confidence > 0.20 }) {
@@ -273,22 +210,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         
-        // 7. Xếp hạng và chọn ra VẬT THỂ CHÍNH NỔI BẬT NHẤT (True Primary Subject)
+        // 6. Xếp hạng và chọn ra VẬT THỂ CHÍNH NỔI BẬT NHẤT (True Primary Subject)
         let sortedCandidates = candidates.sorted { $0.prominenceScore > $1.prominenceScore }
         let primary = sortedCandidates.first
         
-        detectionResult.humanRectangles = candidates.filter { $0.category == .human }.map { $0.boundingBox }
-        detectionResult.faceRectangles = candidates.filter { $0.category == .face }.map { $0.boundingBox }
-        detectionResult.animalRectangles = candidates.filter { $0.category == .animal }.map { $0.boundingBox }
-        detectionResult.detectedScene = scene
-        
         if let p = primary {
-            detectionResult.dominantSubjectRect = p.boundingBox
-            detectionResult.confidence = p.confidence
             CameraLogger.info("Đã chọn Vật thể chính: \(p.category.rawValue) - \(p.label) (Điểm: \(String(format: "%.2f", p.prominenceScore)), Độ tin cậy: \(Int(p.confidence * 100))%)", category: .ai)
         }
         
-        return (primary, sortedCandidates, scene, detectionResult)
+        return (primary, sortedCandidates, scene)
     }
     
     // MARK: - Thuật toán Tính Điểm Nổi Bật (Prominence Scoring Formula)

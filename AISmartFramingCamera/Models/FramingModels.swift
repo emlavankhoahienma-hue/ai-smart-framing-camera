@@ -31,10 +31,6 @@ public enum CompositionRule: String, CaseIterable, Identifiable {
         case .dynamicAI: return "AI Tự động tối ưu"
         }
     }
-    
-    public var localizedName: String {
-        return displayNameVietnamese
-    }
 }
 
 // MARK: - Camera Capture Mode
@@ -180,8 +176,7 @@ public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
 // MARK: - AI Framing Engine Source Indicator
 public enum AIEngineSource: Equatable {
     case geminiCloud(model: String)
-    case appleVisionSaliency(rule: String, salientType: String, score: Double)
-    case nimaNeural(nimaScore: Double, heuristicScore: Double, blendedScore: Double)
+    case localTrained114MB(category: String)
     case yoloNeural(label: String)
     case appleNeuralEngine(scene: String)
     
@@ -189,10 +184,8 @@ public enum AIEngineSource: Equatable {
         switch self {
         case .geminiCloud(let model):
             return "✨ Cloud AI: \(model)"
-        case .appleVisionSaliency(let rule, let salientType, let score):
-            return "🎯 Vision Saliency: \(salientType) • \(rule) (\(String(format: "%.1f", score))/10)"
-        case .nimaNeural(let nimaScore, let heuristicScore, let blendedScore):
-            return "🎨 NIMA AI: \(String(format: "%.1f", blendedScore))/10 (NIMA \(String(format: "%.1f", nimaScore)) • Heuristic \(String(format: "%.1f", heuristicScore)))"
+        case .localTrained114MB(let cat):
+            return "🧠 AI Local 114MB (\(cat))"
         case .yoloNeural(let label):
             return "⚡ YOLOv11 Neural (\(label))"
         case .appleNeuralEngine(let scene):
@@ -205,10 +198,8 @@ public enum AIEngineSource: Equatable {
         case .geminiCloud(let model):
             let short = model.replacingOccurrences(of: "gemini-", with: "").uppercased()
             return "CLOUD (\(short))"
-        case .appleVisionSaliency:
-            return "VISION ANE"
-        case .nimaNeural:
-            return "NIMA ANE"
+        case .localTrained114MB:
+            return "AI 114MB"
         case .yoloNeural(let label):
             return "YOLO (\(label.uppercased()))"
         case .appleNeuralEngine:
@@ -219,8 +210,7 @@ public enum AIEngineSource: Equatable {
     public var iconName: String {
         switch self {
         case .geminiCloud: return "sparkles"
-        case .appleVisionSaliency: return "eye.circle.fill"
-        case .nimaNeural: return "sparkles.square.filled.on.square"
+        case .localTrained114MB: return "brain.head.profile"
         case .yoloNeural: return "bolt.shield.fill"
         case .appleNeuralEngine: return "cpu.fill"
         }
@@ -229,8 +219,7 @@ public enum AIEngineSource: Equatable {
     public var badgeColor: Color {
         switch self {
         case .geminiCloud: return .cyan
-        case .appleVisionSaliency: return .green
-        case .nimaNeural: return .purple
+        case .localTrained114MB: return .yellow
         case .yoloNeural: return .orange
         case .appleNeuralEngine: return .green
         }
@@ -508,17 +497,11 @@ public struct CapturedPhotoItem: Identifiable {
 // MARK: - Subject AI Data Model
 public struct SubjectDetectionResult {
     public var faceRectangles: [CGRect] = []
-    public var humanRectangles: [CGRect] = []
-    public var animalRectangles: [CGRect] = []
     public var humanBodyPoses: [CGPoint] = []
     public var saliencyPoints: [CGPoint] = []
     public var dominantSubjectRect: CGRect?
     public var primaryEyePosition: CGPoint?
     public var lookingDirection: CGVector = CGVector(dx: 0, dy: 0)
-    public var attentionCentroid: CGPoint? = nil
-    public var objectnessCentroid: CGPoint? = nil
-    public var headroomRatio: CGFloat = 0.15
-    public var aestheticScore: Double = 8.5
     public var detectedScene: DetectedSceneType = .general
     public var confidence: Float = 0.0
     public var sceneConfidenceMap: [DetectedSceneType: Float] = [:]

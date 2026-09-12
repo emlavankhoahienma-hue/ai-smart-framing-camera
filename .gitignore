@@ -25,15 +25,3 @@ Payload/
 # OS
 .DS_Store
 Thumbs.db
-
-# Datasets
-data/
-scripts/AlignAI_DeepMaster_Weights.bin
-scripts/AlignAI_DeepMaster_Weights.npz
-scripts/current_preview.jpg
-scripts/training_state.json
-*.jpg
-*.jpeg
-*.png
-!AISmartFramingCamera/Resources/*.png
-!AISmartFramingCamera/Assets.xcassets/**/*.png

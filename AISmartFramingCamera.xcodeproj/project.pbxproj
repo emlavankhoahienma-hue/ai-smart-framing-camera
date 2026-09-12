@@ -40,7 +40,6 @@
 		B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000028 /* ProVideoManualControlsService.swift */; };
 		B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000029 /* ProVideoManualControlsView.swift */; };
 		B20000000000000000000027 /* AICloudReportServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000030 /* AICloudReportServer.swift */; };
-		B20000000000000000000028 /* NIMAEvaluationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000031 /* NIMAEvaluationEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -80,7 +79,6 @@
 		B100000000000000000000028 /* ProVideoManualControlsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProVideoManualControlsService.swift; sourceTree = "<group>"; };
 		B100000000000000000000029 /* ProVideoManualControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProVideoManualControlsView.swift; sourceTree = "<group>"; };
 		B100000000000000000000030 /* AICloudReportServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AICloudReportServer.swift; sourceTree = "<group>"; };
-		B100000000000000000000031 /* NIMAEvaluationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NIMAEvaluationEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -154,7 +152,6 @@
 				B100000000000000000000027 /* FocusPeakingEngine.swift */,
 				B100000000000000000000028 /* ProVideoManualControlsService.swift */,
 				B100000000000000000000030 /* AICloudReportServer.swift */,
-				B100000000000000000000031 /* NIMAEvaluationEngine.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -294,7 +291,6 @@
 				B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */,
 				B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */,
 				B20000000000000000000027 /* AICloudReportServer.swift in Sources */,
-				B20000000000000000000028 /* NIMAEvaluationEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

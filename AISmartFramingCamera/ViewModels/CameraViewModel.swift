@@ -258,15 +258,6 @@ public final class CameraViewModel: ObservableObject {
     @Published public var aeafLockPoint: CGPoint? = nil
     @Published public var saveErrorMessage: String? = nil
     
-    // MARK: - Google NIMA Deep Learning Aesthetic Scoring
-    @Published public var nimaScoringEnabled: Bool = false {
-        didSet {
-            UserDefaults.standard.set(nimaScoringEnabled, forKey: "nimaScoringEnabled")
-            NIMAEvaluationEngine.shared.isEnabled = nimaScoringEnabled
-        }
-    }
-    @Published public var lastNIMAScore: Double = 0.0
-    
     // MARK: - Advanced Predictive Tracking State Machine
     @Published public var trackingQuality: TrackingQuality = .locked
     @Published public var trackingSensitivity: TrackingSensitivityPreset = .medium {
@@ -372,11 +363,6 @@ public final class CameraViewModel: ObservableObject {
         }
         self.cameraService.selectedVideoCodec = self.selectedVideoCodec
         self.cameraService.selectedVideoFormatOption = self.selectedVideoFormatOption
-        
-        if defaults.object(forKey: "nimaScoringEnabled") != nil {
-            self.nimaScoringEnabled = defaults.bool(forKey: "nimaScoringEnabled")
-        }
-        NIMAEvaluationEngine.shared.isEnabled = self.nimaScoringEnabled
         
         // didSet không fire khi gán trong init -> gọi trực tiếp để engine nhận đúng ngưỡng
         applyTrackingSensitivityToEngines()
@@ -713,31 +699,18 @@ public final class CameraViewModel: ObservableObject {
             if let faceFrame = analysisFrames.first(where: { !$0.faceRectangles.isEmpty }) {
                 avgDetection.faceRectangles = faceFrame.faceRectangles
             }
-            if let humanFrame = analysisFrames.first(where: { !$0.humanRectangles.isEmpty }) {
-                avgDetection.humanRectangles = humanFrame.humanRectangles
-            }
-            if let animalFrame = analysisFrames.first(where: { !$0.animalRectangles.isEmpty }) {
-                avgDetection.animalRectangles = animalFrame.animalRectangles
-            }
-            if let attentionFrame = analysisFrames.first(where: { $0.attentionCentroid != nil }) {
-                avgDetection.attentionCentroid = attentionFrame.attentionCentroid
-            }
-            if let objCentroidFrame = analysisFrames.first(where: { $0.objectnessCentroid != nil }) {
-                avgDetection.objectnessCentroid = objCentroidFrame.objectnessCentroid
-            }
-            if let eyeFrame = analysisFrames.first(where: { $0.primaryEyePosition != nil }) {
-                avgDetection.primaryEyePosition = eyeFrame.primaryEyePosition
-            }
-            if let lookFrame = analysisFrames.first(where: { $0.lookingDirection != .zero }) {
-                avgDetection.lookingDirection = lookFrame.lookingDirection
-            }
-            if let saliencyPointsFrame = analysisFrames.first(where: { !$0.saliencyPoints.isEmpty }) {
-                avgDetection.saliencyPoints = saliencyPointsFrame.saliencyPoints
-            }
-            avgDetection.headroomRatio = analysisFrames.compactMap { $0.headroomRatio }.first ?? 0.15
         }
         
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
+        self.framingResult = result
+        // Xác định chính xác nguồn Engine AI đang hoạt động để hiển thị rõ ràng trên HUD
+        if NeuralTargetTracker.shared.hasActiveTrainedModel {
+            self.activeEngineSource = .localTrained114MB(category: dominantScene.localizedName)
+        } else if YOLODetectionEngine.shared.hasYOLOModel {
+            self.activeEngineSource = .yoloNeural(label: dominantScene.localizedName)
+        } else {
+            self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
+        }
         
         if isAIFullColorEnabled {
             currentAIColorParams = dominantScene.aiFullColorParameters
@@ -745,50 +718,7 @@ public final class CameraViewModel: ObservableObject {
             setExposure(max(-1.0, min(1.0, lumaError * 1.2)))
         }
         
-        if self.nimaScoringEnabled && NIMAEvaluationEngine.shared.isAvailable, let buffer = self.latestPixelBuffer {
-            let saliencyRect = avgDetection.dominantSubjectRect ?? CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
-            let faceRect = avgDetection.faceRectangles.first
-            let candidates = NIMAEvaluationEngine.shared.generateCandidates(saliencyRect: saliencyRect, faceRect: faceRect)
-            
-            NIMAEvaluationEngine.shared.pickBestCandidate(from: buffer, candidates: candidates) { [weak self] bestCrop, nimaScore in
-                guard let self = self else { return }
-                self.lastNIMAScore = nimaScore
-                let heuristicScore = result.aestheticScore
-                let blendedScore = NIMAEvaluationEngine.blendScores(nimaScore: nimaScore, heuristicScore: heuristicScore)
-                
-                let nimaTargetPoint = CGPoint(x: bestCrop.midX, y: bestCrop.midY)
-                
-                self.activeEngineSource = .nimaNeural(
-                    nimaScore: nimaScore,
-                    heuristicScore: heuristicScore,
-                    blendedScore: blendedScore
-                )
-                
-                let updatedResult = FramingTargetResult(
-                    targetPoint: nimaTargetPoint,
-                    currentCenter: result.currentCenter,
-                    offsetVector: CGVector(dx: nimaTargetPoint.x - result.currentCenter.x, dy: nimaTargetPoint.y - result.currentCenter.y),
-                    distance: sqrt(pow(nimaTargetPoint.x - result.currentCenter.x, 2) + pow(nimaTargetPoint.y - result.currentCenter.y, 2)),
-                    angleDegrees: result.angleDegrees,
-                    alignmentScore: result.alignmentScore,
-                    isAligned: result.isAligned,
-                    recommendedZoomFactor: result.recommendedZoomFactor,
-                    optimalRule: result.optimalRule,
-                    guideDescription: "NIMA AI: Bố cục điểm vàng (\(String(format: "%.1f", blendedScore))/10)",
-                    aestheticScore: blendedScore
-                )
-                self.framingResult = updatedResult
-                self.pinTargetAndStartMotion(at: nimaTargetPoint, subjectRect: avgDetection.dominantSubjectRect)
-            }
-        } else {
-            self.activeEngineSource = .appleVisionSaliency(
-                rule: result.optimalRule.localizedName,
-                salientType: avgDetection.detectedScene.localizedName,
-                score: result.aestheticScore
-            )
-            self.framingResult = result
-            self.pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
-        }
+        pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
     }
     
     // MARK: - State for Hybrid Optical Visual + Gyro Tracking

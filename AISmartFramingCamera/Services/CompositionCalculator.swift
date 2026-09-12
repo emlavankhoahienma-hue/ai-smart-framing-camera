@@ -12,33 +12,6 @@ public struct FramingTargetResult {
     public let recommendedZoomFactor: CGFloat// Recommended zoom (1.0x, 2.0x, 3.0x...)
     public let optimalRule: CompositionRule  // Active or auto-selected rule
     public let guideDescription: String      // Actionable advice for the photographer
-    public let aestheticScore: Double        // 1.0 - 10.0 score based on photographic harmony
-    
-    public init(
-        targetPoint: CGPoint,
-        currentCenter: CGPoint,
-        offsetVector: CGVector,
-        distance: CGFloat,
-        angleDegrees: CGFloat,
-        alignmentScore: Double,
-        isAligned: Bool,
-        recommendedZoomFactor: CGFloat,
-        optimalRule: CompositionRule,
-        guideDescription: String,
-        aestheticScore: Double = 8.5
-    ) {
-        self.targetPoint = targetPoint
-        self.currentCenter = currentCenter
-        self.offsetVector = offsetVector
-        self.distance = distance
-        self.angleDegrees = angleDegrees
-        self.alignmentScore = alignmentScore
-        self.isAligned = isAligned
-        self.recommendedZoomFactor = recommendedZoomFactor
-        self.optimalRule = optimalRule
-        self.guideDescription = guideDescription
-        self.aestheticScore = aestheticScore
-    }
 }
 
 public final class CompositionCalculator {
@@ -116,13 +89,6 @@ public final class CompositionCalculator {
             advice = "Bố cục hoàn hảo! Chạm nút chụp ngay"
         }
         
-        // Aesthetic Scoring (Candidate Aesthetic Ranking 1.0 - 10.0)
-        let aestheticScore = computeAestheticScore(
-            targetPoint: targetPoint,
-            detection: detection,
-            rule: resolvedRule
-        )
-        
         return FramingTargetResult(
             targetPoint: targetPoint,
             currentCenter: center,
@@ -133,8 +99,7 @@ public final class CompositionCalculator {
             isAligned: isAligned,
             recommendedZoomFactor: recommendedZoom,
             optimalRule: resolvedRule,
-            guideDescription: advice,
-            aestheticScore: aestheticScore
+            guideDescription: advice
         )
     }
     
@@ -154,104 +119,66 @@ public final class CompositionCalculator {
         }
     }
     
-    // MARK: - Determining Visual Focal Anchor
-    private func determineFocalPoint(detection: SubjectDetectionResult) -> CGPoint {
-        if let eye = detection.primaryEyePosition {
-            return eye
-        }
-        if let face = detection.faceRectangles.first {
-            return CGPoint(x: face.midX, y: face.minY + face.height * 0.35)
-        }
-        if let subject = detection.dominantSubjectRect {
-            return CGPoint(x: subject.midX, y: subject.midY)
-        }
-        if let attention = detection.attentionCentroid {
-            return attention
-        }
-        if let objectness = detection.objectnessCentroid {
-            return objectness
-        }
-        return CGPoint(x: 0.5, y: 0.5)
-    }
-    
     // MARK: - Rule of Thirds Calculation
     private func computeRuleOfThirdsTarget(detection: SubjectDetectionResult) -> (CGPoint, String) {
         let thirdsX: [CGFloat] = [1.0 / 3.0, 2.0 / 3.0]
         let thirdsY: [CGFloat] = [1.0 / 3.0, 2.0 / 3.0]
         
-        let focal = determineFocalPoint(detection: detection)
-        
-        // 1. Leading Room / Looking Room:
-        // If subject is gazing right, place subject on the left third to provide open leading space on the right.
-        var targetX: CGFloat = focal.x < 0.5 ? thirdsX[0] : thirdsX[1]
-        if detection.lookingDirection.dx > 0.08 {
-            targetX = thirdsX[0] // Look right -> place left
-        } else if detection.lookingDirection.dx < -0.08 {
-            targetX = thirdsX[1] // Look left -> place right
+        guard let subject = detection.dominantSubjectRect else {
+            // Default landscape rule of thirds horizon
+            return (CGPoint(x: 2.0 / 3.0, y: 1.0 / 3.0), "Hướng góc chụp về điểm 1/3 góc trên")
         }
         
-        // 2. Headroom & Eye-level alignment:
-        var targetY: CGFloat = thirdsY[0]
-        var advice = "Đặt mắt / chủ thể lên đường 1/3 phía trên"
+        let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
         
-        if let face = detection.faceRectangles.first {
-            // Calculate ideal headroom based on face size:
-            // Large face (close-up) -> tighter headroom (~10-12%)
-            // Small face (full shot) -> generous headroom (~15-18%)
-            let idealHeadroom = max(0.09, min(0.18, 0.20 - face.height * 0.25))
-            let currentHeadroom = max(0.0, face.minY)
-            let headroomDelta = idealHeadroom - currentHeadroom
+        // Find nearest 1/3 vertical line with lead room
+        var targetX: CGFloat = subjectCenter.x < 0.5 ? thirdsX[0] : thirdsX[1]
+        if detection.lookingDirection.dx > 0.15 {
+            targetX = thirdsX[0] // Look to right -> place subject on left
+        } else if detection.lookingDirection.dx < -0.15 {
+            targetX = thirdsX[1] // Look to left -> place subject on right
+        }
+        
+        // For faces/people, eye line should be placed on the upper 1/3 line
+        let targetY: CGFloat = (detection.primaryEyePosition != nil || !detection.faceRectangles.isEmpty)
+            ? thirdsY[0]
+            : (subjectCenter.y < 0.5 ? thirdsY[0] : thirdsY[1])
             
-            // Adjust target Y to achieve ideal headroom
-            targetY = max(0.20, min(0.45, thirdsY[0] + headroomDelta * 0.5))
-            advice = "Căn đỉnh đầu chuẩn khoảng thở (Headroom \(Int(idealHeadroom * 100))%)"
-        } else if detection.detectedScene.isSkyOrInfiniteHorizon {
-            // Horizon: place at upper 1/3 if emphasizing ground, or lower 1/3 if emphasizing sky
-            targetY = focal.y < 0.5 ? thirdsY[0] : thirdsY[1]
-            advice = "Căn đường chân trời theo đường 1/3"
-        } else {
-            targetY = focal.y < 0.5 ? thirdsY[0] : thirdsY[1]
-        }
-        
+        let advice = "Đặt mắt / chủ thể lên đường 1/3 phía trên"
         return (CGPoint(x: targetX, y: targetY), advice)
     }
     
     // MARK: - Golden Ratio Calculation (1:1.618)
     private func computeGoldenRatioTarget(detection: SubjectDetectionResult) -> (CGPoint, String) {
-        let goldX: [CGFloat] = [phiInverseRatio, phiRatio] // 0.382, 0.618
-        let goldY: [CGFloat] = [phiInverseRatio, phiRatio] // 0.382, 0.618
+        let goldX: [CGFloat] = [phiInverseRatio, phiRatio]
+        let goldY: [CGFloat] = [phiInverseRatio, phiRatio]
         
-        let focal = determineFocalPoint(detection: detection)
-        
-        var targetX = focal.x < 0.5 ? goldX[0] : goldX[1]
-        if detection.lookingDirection.dx > 0.08 {
-            targetX = goldX[0] // Look right -> golden left
-        } else if detection.lookingDirection.dx < -0.08 {
-            targetX = goldX[1] // Look left -> golden right
+        guard let subject = detection.dominantSubjectRect else {
+            return (CGPoint(x: phiRatio, y: phiInverseRatio), "Căn chỉnh theo tỷ lệ vàng 1.618")
         }
         
-        var targetY = goldY[0]
-        var advice = "Căn chỉnh chủ thể vào giao điểm tỷ lệ vàng"
+        let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
+        var targetX = subjectCenter.x < 0.5 ? goldX[0] : goldX[1]
         
-        if let face = detection.faceRectangles.first {
-            let idealHeadroom = max(0.09, min(0.18, 0.20 - face.height * 0.25))
-            let currentHeadroom = max(0.0, face.minY)
-            let headroomDelta = idealHeadroom - currentHeadroom
-            targetY = max(0.22, min(0.48, goldY[0] + headroomDelta * 0.5))
-            advice = "Giao điểm tỷ lệ vàng • Chuẩn khoảng thở chân dung"
-        } else {
-            targetY = focal.y < 0.5 ? goldY[0] : goldY[1]
+        if detection.lookingDirection.dx > 0.15 {
+            targetX = goldX[0]
+        } else if detection.lookingDirection.dx < -0.15 {
+            targetX = goldX[1]
         }
         
+        let targetY: CGFloat = (detection.primaryEyePosition != nil || !detection.faceRectangles.isEmpty)
+            ? goldY[0]
+            : (subjectCenter.y < 0.5 ? goldY[0] : goldY[1])
+            
+        let advice = "Căn chỉnh chủ thể vào giao điểm tỷ lệ vàng"
         return (CGPoint(x: targetX, y: targetY), advice)
     }
     
     // MARK: - Golden Spiral Calculation
     private func computeGoldenSpiralTarget(detection: SubjectDetectionResult) -> (CGPoint, String) {
-        let focal = determineFocalPoint(detection: detection)
-        let spiralX = focal.x < 0.5 ? phiInverseRatio : phiRatio
-        let spiralY = phiInverseRatio
-        return (CGPoint(x: spiralX, y: spiralY), "Uốn lượn bố cục theo xoắn ốc Fibonacci")
+        // Core vertex focus point of Fibonacci logarithmic spiral
+        let spiralFocus = CGPoint(x: phiRatio, y: phiInverseRatio)
+        return (spiralFocus, "Uốn lượn bố cục theo xoắn ốc Fibonacci")
     }
     
     // MARK: - Auto-Zoom Computation
@@ -270,83 +197,5 @@ public final class CompositionCalculator {
         } else {
             return currentZoom
         }
-    }
-    
-    // MARK: - Deterministic Aesthetic Scoring (1.0 to 10.0)
-    public func computeAestheticScore(
-        targetPoint: CGPoint,
-        detection: SubjectDetectionResult,
-        rule: CompositionRule
-    ) -> Double {
-        let focal = determineFocalPoint(detection: detection)
-        
-        // 1. Rule Adherence Score (0 - 10): Distance from visual focal point to ideal target
-        let dx = focal.x - targetPoint.x
-        let dy = focal.y - targetPoint.y
-        let dist = sqrt(dx * dx + dy * dy)
-        let ruleAdherenceScore = 10.0 * exp(-4.0 * Double(dist * dist))
-        
-        // 2. Visual Balance Score (0 - 10): Weighs visual mass distribution
-        let centerDist = sqrt(pow(focal.x - 0.5, 2) + pow(focal.y - 0.5, 2))
-        let balanceScore: Double
-        if rule == .centerSymmetry {
-            balanceScore = 10.0 * max(0.0, 1.0 - Double(centerDist) * 3.0)
-        } else {
-            // For thirds and golden ratio, balanced offset from center is desirable (~0.15 - 0.25)
-            let optimalOffset: CGFloat = 0.20
-            let offsetError = abs(centerDist - optimalOffset)
-            balanceScore = 10.0 * max(0.0, 1.0 - Double(offsetError) * 3.5)
-        }
-        
-        // 3. Headroom Score (0 - 10)
-        let headroomScore: Double
-        if let face = detection.faceRectangles.first {
-            let idealHeadroom = max(0.09, min(0.18, 0.20 - face.height * 0.25))
-            let currentHeadroom = max(0.0, face.minY)
-            let err = abs(currentHeadroom - idealHeadroom)
-            headroomScore = 10.0 * max(0.0, 1.0 - Double(err / 0.15))
-        } else {
-            headroomScore = 9.0 // Non-portrait scenes default to harmonious score
-        }
-        
-        // 4. Leading Room Score (0 - 10)
-        let leadingRoomScore: Double
-        if abs(detection.lookingDirection.dx) > 0.08 {
-            let lookingRight = detection.lookingDirection.dx > 0
-            let placedLeft = targetPoint.x < 0.5
-            if (lookingRight && placedLeft) || (!lookingRight && !placedLeft) {
-                leadingRoomScore = 9.6 // Perfect looking space
-            } else {
-                leadingRoomScore = 5.5 // Cramped gaze against frame edge
-            }
-        } else {
-            leadingRoomScore = 8.8
-        }
-        
-        // 5. Scene Simplicity Score (0 - 10): Fewer distracting salient clusters = cleaner composition
-        let clutterCount = detection.saliencyPoints.count
-        let simplicityScore: Double
-        if clutterCount <= 2 {
-            simplicityScore = 9.5
-        } else if clutterCount <= 5 {
-            simplicityScore = 8.6
-        } else if clutterCount <= 8 {
-            simplicityScore = 7.4
-        } else {
-            simplicityScore = 6.2
-        }
-        
-        // Weighted composite aesthetic formula
-        let rawScore = (
-            ruleAdherenceScore * 0.35 +
-            balanceScore * 0.25 +
-            headroomScore * 0.20 +
-            leadingRoomScore * 0.10 +
-            simplicityScore * 0.10
-        )
-        
-        // Clamp to a natural professional range (6.0 - 9.8) and round to 1 decimal place
-        let clampedScore = max(6.0, min(9.8, rawScore))
-        return (clampedScore * 10.0).rounded() / 10.0
     }
 }
