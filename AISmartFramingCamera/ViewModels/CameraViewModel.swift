@@ -1425,7 +1425,7 @@ public final class CameraViewModel: ObservableObject {
 
         let makerAppleKey = kCGImagePropertyMakerAppleDictionary as String
         guard let makerDict = metadata[makerAppleKey] as? [String: Any],
-              let contentIdentifier = (makerDict["17"] as? String) ?? (makerDict[17 as AnyHashable] as? String) else {
+              let contentIdentifier = makerDict["17"] as? String else {
             CameraLogger.warning("Không tìm thấy Apple Maker Note Content Identifier (tag 17) trong raw metadata", category: .photoKit)
             return nil
         }
