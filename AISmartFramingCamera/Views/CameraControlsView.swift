@@ -87,39 +87,22 @@ struct CameraModeSegmentedSwitcher: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var modeAnimationNamespace
 
-    private let modes: [(mode: CaptureMode, title: String)] = [
-        (.photo, "Ảnh"),
-        (.video, "Video"),
-        (.proVideo, "Pro")
+    private struct ModeItem: Identifiable {
+        let mode: CameraCaptureMode
+        let title: String
+        var id: String { title }
+    }
+
+    private let modes: [ModeItem] = [
+        ModeItem(mode: .photo, title: "Ảnh"),
+        ModeItem(mode: .video, title: "Video"),
+        ModeItem(mode: .proVideo, title: "Pro")
     ]
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(modes, id: \.mode) { item in
-                let isSelected = viewModel.captureMode == item.mode
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        viewModel.captureMode = item.mode
-                    }
-                }) {
-                    Text(item.title)
-                        .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
-                        .foregroundColor(isSelected ? .black : .white.opacity(0.85))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(
-                            ZStack {
-                                if isSelected {
-                                    Capsule()
-                                        .fill(Color.yellow)
-                                        .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
-                                        .shadow(color: Color.yellow.opacity(0.35), radius: 4)
-                                }
-                            }
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Chế độ \(item.title)")
+            ForEach(modes) { item in
+                modeButton(for: item)
             }
         }
         .padding(3)
@@ -131,6 +114,37 @@ struct CameraModeSegmentedSwitcher: View {
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
         )
+    }
+
+    @ViewBuilder
+    private func modeButton(for item: ModeItem) -> some View {
+        let isSelected = viewModel.captureMode == item.mode
+        Button(action: {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                viewModel.captureMode = item.mode
+            }
+        }) {
+            Text(item.title)
+                .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
+                .foregroundColor(isSelected ? .black : .white.opacity(0.85))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(modePillBackground(isSelected: isSelected))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("Chế độ \(item.title)")
+    }
+
+    @ViewBuilder
+    private func modePillBackground(isSelected: Bool) -> some View {
+        if isSelected {
+            Capsule()
+                .fill(Color.yellow)
+                .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
+                .shadow(color: Color.yellow.opacity(0.35), radius: 4)
+        } else {
+            Color.clear
+        }
     }
 }
 
