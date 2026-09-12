@@ -9,9 +9,9 @@ public enum CompositionRule: String, CaseIterable, Identifiable {
     case goldenSpiral = "Golden Spiral"
     case centerSymmetry = "Center Pro"
     case dynamicAI = "AI Auto-Select"
-    
+
     public var id: String { rawValue }
-    
+
     public var iconName: String {
         switch self {
         case .ruleOfThirds: return "grid"
@@ -21,7 +21,7 @@ public enum CompositionRule: String, CaseIterable, Identifiable {
         case .dynamicAI: return "wand.and.stars"
         }
     }
-    
+
     public var displayNameVietnamese: String {
         switch self {
         case .ruleOfThirds: return "Quy tắc 1/3"
@@ -38,9 +38,9 @@ public enum CameraCaptureMode: String, CaseIterable, Identifiable {
     case photo = "ẢNH"
     case video = "VIDEO"
     case proVideo = "VIDEO PRO"
-    
+
     public var id: String { rawValue }
-    
+
     public var isVideo: Bool {
         return self == .video || self == .proVideo
     }
@@ -52,9 +52,9 @@ public enum ProVideoParameterTab: String, CaseIterable, Identifiable {
     case shutter = "SHUTTER"
     case aperture = "KHẨU/EV"
     case wb = "WB"
-    
+
     public var id: String { rawValue }
-    
+
     public var iconName: String {
         switch self {
         case .iso: return "gauge.medium"
@@ -71,23 +71,23 @@ public enum VideoFormatOption: String, CaseIterable, Identifiable {
     case hd30 = "1080P 30FPS"
     case uhd60 = "4K 60FPS"
     case uhd30 = "4K 30FPS"
-    
+
     public var id: String { rawValue }
-    
+
     public var width: Int32 {
         switch self {
         case .hd60, .hd30: return 1920
         case .uhd60, .uhd30: return 3840
         }
     }
-    
+
     public var height: Int32 {
         switch self {
         case .hd60, .hd30: return 1080
         case .uhd60, .uhd30: return 2160
         }
     }
-    
+
     public var fps: Double {
         switch self {
         case .hd60, .uhd60: return 60.0
@@ -99,7 +99,7 @@ public enum VideoFormatOption: String, CaseIterable, Identifiable {
 public enum VideoCodec: String, CaseIterable, Identifiable {
     case hevc = "HEVC"
     case h264 = "H.264"
-    
+
     public var id: String { rawValue }
 }
 
@@ -112,7 +112,7 @@ public enum AISessionState: Equatable {
     case alignmentPerfect              // Tâm trắng trùng vòng vàng — đang countdown chụp
     case capturing                     // Đang thực hiện chụp ảnh
     case done                          // Đã chụp xong — hiển thị kết quả
-    
+
     public var displayMessage: String {
         switch self {
         case .idle:
@@ -129,7 +129,7 @@ public enum AISessionState: Equatable {
             return "Hoàn tất!"
         }
     }
-    
+
     public var accentColor: Color {
         switch self {
         case .idle: return Color.white.opacity(0.5)
@@ -139,7 +139,7 @@ public enum AISessionState: Equatable {
         case .capturing, .done: return Color.cyan
         }
     }
-    
+
     public var isSessionActive: Bool {
         switch self {
         case .idle, .done: return false
@@ -161,9 +161,9 @@ public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
     case low = "Thấp (Ổn định, chống giật)"
     case medium = "Vừa (Cân bằng tiêu chuẩn)"
     case high = "Cao (Phản hồi tức thì)"
-    
+
     public var id: String { rawValue }
-    
+
     public var shortName: String {
         switch self {
         case .low: return "Thấp"
@@ -179,7 +179,7 @@ public enum AIEngineSource: Equatable {
     case localTrained114MB(category: String)
     case yoloNeural(label: String)
     case appleNeuralEngine(scene: String)
-    
+
     public var title: String {
         switch self {
         case .geminiCloud(let model):
@@ -192,7 +192,7 @@ public enum AIEngineSource: Equatable {
             return "⚡ Apple Neural Engine (\(scene))"
         }
     }
-    
+
     public var badgeName: String {
         switch self {
         case .geminiCloud(let model):
@@ -206,7 +206,7 @@ public enum AIEngineSource: Equatable {
             return "NPU"
         }
     }
-    
+
     public var iconName: String {
         switch self {
         case .geminiCloud: return "sparkles"
@@ -215,7 +215,7 @@ public enum AIEngineSource: Equatable {
         case .appleNeuralEngine: return "cpu.fill"
         }
     }
-    
+
     public var badgeColor: Color {
         switch self {
         case .geminiCloud: return .cyan
@@ -249,15 +249,15 @@ public enum DetectedSceneType: String, CaseIterable {
     case macro = "Macro / Close-up"
     case street = "Street Life"
     case general = "Auto General"
-    
+
     public var isSkyOrInfiniteHorizon: Bool {
         return self == .sky || self == .landscape || self == .sunset
     }
-    
+
     public var isDeformableNature: Bool {
         return self == .foliage || self == .water
     }
-    
+
     public var iconName: String {
         switch self {
         case .portrait: return "person.crop.rectangle.fill"
@@ -275,7 +275,7 @@ public enum DetectedSceneType: String, CaseIterable {
         case .general: return "sparkles"
         }
     }
-    
+
     public var recommendedFilter: FilmPreset {
         switch self {
         case .portrait: return .fujiPro400H
@@ -293,7 +293,7 @@ public enum DetectedSceneType: String, CaseIterable {
         case .general: return .fujiPro400H
         }
     }
-    
+
     /// AI Full Color Mode — tham số màu tối ưu hoàn toàn bởi AI
     public var aiFullColorParameters: AIColorParameters {
         switch self {
@@ -325,7 +325,7 @@ public enum DetectedSceneType: String, CaseIterable {
             return AIColorParameters(warmthShift: 0.0, saturationBoost: 1.05, contrastCurve: 1.05, shadowLift: 0.02, highlightRoll: 0.98, filmGrain: 0.10, vignetteAmount: 0.10, colorGrade: .softwarm)
         }
     }
-    
+
     public var localizedName: String {
         switch self {
         case .portrait: return "Chân dung (Portrait)"
@@ -381,7 +381,7 @@ public enum FramingAlignmentState: Equatable {
     case guiding(distance: CGFloat, angle: CGFloat)
     case aligned(score: Double)
     case locked
-    
+
     public var statusDescription: String {
         switch self {
         case .analyzing: return "Đang phân tích bối cảnh AI..."
@@ -390,7 +390,7 @@ public enum FramingAlignmentState: Equatable {
         case .locked: return "Khung hình khóa mục tiêu"
         }
     }
-    
+
     public var statusColor: Color {
         switch self {
         case .analyzing: return Color.yellow
@@ -411,23 +411,37 @@ public enum FilmPreset: String, CaseIterable, Identifiable {
     case vintageWarm = "Vintage Warm 70s"
     case streetClassic = "Street Classic"
     case aiFullAuto = "AI Full Auto Color"
-    
+
     public var id: String { rawValue }
-    
-    public var shortTitle: String {
+
+    public var displayName: String {
         switch self {
-        case .standard: return "STD"
-        case .fujiPro400H: return "FUJI"
-        case .kodakPortra400: return "PORTRA"
-        case .cinemaTealOrange: return "CINE"
-        case .sunsetGlow: return "SUNSET"
-        case .monochromeNoir: return "B&W"
-        case .vintageWarm: return "70s"
-        case .streetClassic: return "STREET"
-        case .aiFullAuto: return "AI✦"
+        case .standard: return "Tự nhiên"
+        case .fujiPro400H: return "Pastel dịu"
+        case .kodakPortra400: return "Ấm áp"
+        case .cinemaTealOrange: return "Điện ảnh"
+        case .sunsetGlow: return "Hoàng hôn"
+        case .monochromeNoir: return "Đen trắng"
+        case .vintageWarm: return "Hoài niệm"
+        case .streetClassic: return "Đường phố"
+        case .aiFullAuto: return "Tự động theo cảnh"
         }
     }
-    
+
+    public var shortTitle: String {
+        switch self {
+        case .standard: return "TỰ NHIÊN"
+        case .fujiPro400H: return "PASTEL"
+        case .kodakPortra400: return "ẤM ÁP"
+        case .cinemaTealOrange: return "ĐIỆN ẢNH"
+        case .sunsetGlow: return "HOÀNG HÔN"
+        case .monochromeNoir: return "ĐEN TRẮNG"
+        case .vintageWarm: return "HOÀI NIỆM"
+        case .streetClassic: return "ĐƯỜNG PHỐ"
+        case .aiFullAuto: return "TỰ ĐỘNG"
+        }
+    }
+
     public var description: String {
         switch self {
         case .standard: return "Màu thực tế trung thực, dải sáng tối đa"
@@ -438,10 +452,10 @@ public enum FilmPreset: String, CaseIterable, Identifiable {
         case .monochromeNoir: return "Đen trắng tương phản cao nghệ thuật"
         case .vintageWarm: return "Phong cách retro thập niên 70 hoài niệm"
         case .streetClassic: return "Màu đường phố sắc nét, chiều sâu khối tốt"
-        case .aiFullAuto: return "AI toàn quyền: tự động màu sắc, tone, grain, vignette"
+        case .aiFullAuto: return "Tự động cân chỉnh màu sắc và dải sáng theo ngữ cảnh"
         }
     }
-    
+
     public var isAIFullAuto: Bool { self == .aiFullAuto }
 }
 
@@ -460,11 +474,11 @@ public struct CapturedPhotoItem: Identifiable {
     public let iso: Float
     public let shutterSpeed: Double
     public let aiColorParameters: AIColorParameters?
-    
+
     public var isLivePhoto: Bool {
         return livePhotoMovieURL != nil
     }
-    
+
     public init(
         originalImage: CGImage,
         processedImage: CGImage,
@@ -509,7 +523,7 @@ public struct SubjectDetectionResult {
     public var averageLuminance: Float = 0.5
     /// Estimated color temperature (K): 2700 warm ~ 8000 cool
     public var estimatedColorTemp: Float = 5500
-    
+
     public init() {}
 }
 
@@ -519,7 +533,7 @@ public enum PhotoSaveFormat: String, CaseIterable, Identifiable {
     case heic = "HEIC"
     case dng = "DNG"
     case heif = "HEIF"
-    
+
     public var id: String { rawValue }
 }
 
@@ -528,7 +542,7 @@ public struct HistogramBarData: Identifiable {
     public let id: Int
     public var height: CGFloat // 0.05 to 1.0
     public var color: Color
-    
+
     public init(id: Int, height: CGFloat, color: Color) {
         self.id = id
         self.height = height

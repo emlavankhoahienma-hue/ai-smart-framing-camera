@@ -1,16 +1,16 @@
-﻿import SwiftUI
+import SwiftUI
 
 public struct ProVideoManualControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var proService = ProVideoManualControlsService.shared
-    
-    @State private var isCollapsed: Bool = false
+
+    @State private var isCollapsed: Bool = true
     private let haptic = UISelectionFeedbackGenerator()
-    
+
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
     }
-    
+
     public var body: some View {
         VStack(spacing: 8) {
             // MARK: - Floating Pro Top Tabs
@@ -22,7 +22,7 @@ public struct ProVideoManualControlsView: View {
                     valueString: proService.isAutoISO ? "AUTO (\(Int(proService.measuredLiveISO)))" : "\(Int(proService.currentISO))",
                     isAuto: proService.isAutoISO
                 )
-                
+
                 // Shutter Tab
                 proTabButton(
                     tab: .shutter,
@@ -30,7 +30,7 @@ public struct ProVideoManualControlsView: View {
                     valueString: proService.isAutoShutter ? "AUTO" : "1/\(Int(proService.currentShutterSpeed))s",
                     isAuto: proService.isAutoShutter
                 )
-                
+
                 // Aperture / EV Tab
                 proTabButton(
                     tab: .aperture,
@@ -38,7 +38,7 @@ public struct ProVideoManualControlsView: View {
                     valueString: proService.isAutoEV ? "0.0 EV" : String(format: "%+.1f EV", proService.currentEVBias),
                     isAuto: proService.isAutoEV
                 )
-                
+
                 // WB Tab
                 proTabButton(
                     tab: .wb,
@@ -46,7 +46,7 @@ public struct ProVideoManualControlsView: View {
                     valueString: proService.isAutoWB ? "AWB" : "\(Int(proService.currentKelvin))K",
                     isAuto: proService.isAutoWB
                 )
-                
+
                 // Collapse / Expand Toggle Button
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -70,7 +70,7 @@ public struct ProVideoManualControlsView: View {
                             .stroke(Color.white.opacity(0.15), lineWidth: 1)
                     )
             )
-            
+
             // MARK: - Expandable Adjustment Drawer Panel
             if !isCollapsed {
                 VStack(spacing: 10) {
@@ -102,7 +102,7 @@ public struct ProVideoManualControlsView: View {
             proService.syncHardwareCapabilities()
         }
     }
-    
+
     // MARK: - Tab Selector Pill
     private func proTabButton(tab: ProVideoParameterTab, title: String, valueString: String, isAuto: Bool) -> some View {
         let isSelected = viewModel.selectedProTab == tab
@@ -144,7 +144,7 @@ public struct ProVideoManualControlsView: View {
             )
         }
     }
-    
+
     // MARK: - 1. ISO Panel
     private var isoControlPanel: some View {
         VStack(spacing: 10) {
@@ -152,9 +152,9 @@ public struct ProVideoManualControlsView: View {
                 Text("ĐỘ NHẠY SÁNG ISO")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(.gray)
-                
+
                 Spacer()
-                
+
                 // AUTO Button
                 Button(action: {
                     proService.setAutoISO(!proService.isAutoISO)
@@ -174,7 +174,7 @@ public struct ProVideoManualControlsView: View {
                     .foregroundColor(proService.isAutoISO ? .green : .white)
                 }
             }
-            
+
             // Quick Presets
             let presets: [Float] = [50, 100, 200, 400, 800, 1600, 3200]
             ScrollView(.horizontal, showsIndicators: false) {
@@ -196,13 +196,13 @@ public struct ProVideoManualControlsView: View {
                     }
                 }
             }
-            
+
             // Slider
             HStack(spacing: 12) {
                 Text("\(Int(proService.minISO))")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.gray)
-                
+
                 Slider(
                     value: Binding(
                         get: { Double(proService.currentISO) },
@@ -215,14 +215,14 @@ public struct ProVideoManualControlsView: View {
                     step: 25.0
                 )
                 .accentColor(.yellow)
-                
+
                 Text("\(Int(proService.maxISO))")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.gray)
             }
         }
     }
-    
+
     // MARK: - 2. Shutter Speed Panel
     private var shutterControlPanel: some View {
         VStack(spacing: 10) {
@@ -230,9 +230,9 @@ public struct ProVideoManualControlsView: View {
                 Text("TỐC ĐỘ MÀN TRẬP (SHUTTER)")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(.gray)
-                
+
                 Spacer()
-                
+
                 Button(action: {
                     proService.setAutoShutter(!proService.isAutoShutter)
                     haptic.selectionChanged()
@@ -251,7 +251,7 @@ public struct ProVideoManualControlsView: View {
                     .foregroundColor(proService.isAutoShutter ? .green : .white)
                 }
             }
-            
+
             // Cine Shutter Speed Presets (180 deg cinema rule)
             let shutterPresets: [(label: String, val: Double)] = [
                 ("1/24", 24),
@@ -282,13 +282,13 @@ public struct ProVideoManualControlsView: View {
                     }
                 }
             }
-            
+
             // Slider
             HStack(spacing: 12) {
                 Text("1/\(Int(proService.minShutterSpeed))")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.gray)
-                
+
                 Slider(
                     value: Binding(
                         get: { proService.currentShutterSpeed },
@@ -301,29 +301,29 @@ public struct ProVideoManualControlsView: View {
                     step: 10.0
                 )
                 .accentColor(.yellow)
-                
+
                 Text("1/2000")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.gray)
             }
         }
     }
-    
+
     // MARK: - 3. Aperture & EV Panel
     private var apertureEVControlPanel: some View {
         VStack(spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("KHẨU ĐỘ VẬT LÝ:")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    Text("Khẩu độ f/\(String(format: "%.1f", proService.hardwareLensAperture)) · Cố định")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("Bù phơi sáng EV")
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.gray)
-                    Text("f/\(String(format: "%.1f", proService.hardwareLensAperture)) (Cố định quang học)")
-                        .font(.system(size: 12, weight: .heavy, design: .monospaced))
-                        .foregroundColor(.cyan)
                 }
-                
+
                 Spacer()
-                
+
                 // Auto / Reset EV Button
                 Button(action: {
                     proService.setAutoEV(true)
@@ -338,7 +338,7 @@ public struct ProVideoManualControlsView: View {
                         .foregroundColor(proService.currentEVBias == 0 ? .green : .white)
                 }
             }
-            
+
             // EV Presets
             let evPresets: [Float] = [-1.5, -1.0, -0.5, 0.0, +0.5, +1.0, +1.5]
             HStack(spacing: 8) {
@@ -358,13 +358,13 @@ public struct ProVideoManualControlsView: View {
                     }
                 }
             }
-            
+
             // Slider
             HStack(spacing: 12) {
                 Text("-2.0 EV")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.gray)
-                
+
                 Slider(
                     value: Binding(
                         get: { Double(proService.currentEVBias) },
@@ -377,14 +377,14 @@ public struct ProVideoManualControlsView: View {
                     step: 0.1
                 )
                 .accentColor(.yellow)
-                
+
                 Text("+2.0 EV")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.gray)
             }
         }
     }
-    
+
     // MARK: - 4. White Balance Panel
     private var whiteBalanceControlPanel: some View {
         VStack(spacing: 10) {
@@ -392,9 +392,9 @@ public struct ProVideoManualControlsView: View {
                 Text("CÂN BẰNG TRẮNG (WHITE BALANCE)")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(.gray)
-                
+
                 Spacer()
-                
+
                 Button(action: {
                     proService.setAutoWB(!proService.isAutoWB)
                     haptic.selectionChanged()
@@ -413,7 +413,7 @@ public struct ProVideoManualControlsView: View {
                     .foregroundColor(proService.isAutoWB ? .green : .white)
                 }
             }
-            
+
             // WB Scene Presets
             let wbPresets: [(name: String, kelvin: Float)] = [
                 ("3200K Vàng", 3200),
@@ -441,13 +441,13 @@ public struct ProVideoManualControlsView: View {
                     }
                 }
             }
-            
+
             // Kelvin Slider with warm-to-cool visual
             HStack(spacing: 12) {
                 Text("2500K")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.orange)
-                
+
                 Slider(
                     value: Binding(
                         get: { Double(proService.currentKelvin) },
@@ -460,22 +460,22 @@ public struct ProVideoManualControlsView: View {
                     step: 50.0
                 )
                 .accentColor(.cyan)
-                
+
                 Text("9000K")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(.cyan)
             }
-            
+
             // Tint Adjustment Row
             HStack(spacing: 10) {
                 Text("TINT:")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(.gray)
-                
+
                 Text("-30 G")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.green)
-                
+
                 Slider(
                     value: Binding(
                         get: { Double(proService.currentTint) },
@@ -488,7 +488,7 @@ public struct ProVideoManualControlsView: View {
                     step: 1.0
                 )
                 .accentColor(.purple)
-                
+
                 Text("+30 M")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.purple)

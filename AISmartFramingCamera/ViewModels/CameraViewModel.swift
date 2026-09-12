@@ -17,7 +17,7 @@ public final class CameraViewModel: ObservableObject {
     public let arSession = ARCompositionSession.shared
     public let geminiService = GeminiService.shared
     public let motionService = DeviceMotionService.shared
-    
+
     // MARK: - AI Session State Machine
     @Published public var aiSessionState: AISessionState = .idle {
         didSet {
@@ -29,11 +29,11 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     // MARK: - Published UI States (Persisted)
     @Published public var isCameraReady: Bool = false
     @Published public var hasCameraPermission: Bool = false
-    
+
     @Published public var activeCompositionRule: CompositionRule = .goldenRatio {
         didSet { UserDefaults.standard.set(activeCompositionRule.rawValue, forKey: "activeCompositionRule") }
     }
@@ -46,7 +46,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isAutoZoomEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isAutoZoomEnabled, forKey: "isAutoZoomEnabled") }
     }
-    
+
     // Camera Mode & Live Photo
     @Published public var captureMode: CameraCaptureMode = .photo {
         didSet {
@@ -86,11 +86,11 @@ public final class CameraViewModel: ObservableObject {
         return HistogramBarData(id: $0, height: 0.10, color: col)
     }
     private var lastHistogramComputeTime: CFTimeInterval = 0
-    
+
     @Published public var isRecordingVideo: Bool = false
     @Published public var recordedVideoURL: URL? = nil
     @Published public var isShowingVideoPreview: Bool = false
-    
+
     // Video Duration & Resolution Stats (Mặc định 00:00:00, Đọc từ cài đặt hệ thống Camera iOS)
     @Published public var videoRecordingTimeString: String = "00:00:00"
     @Published public var videoRecordedDurationSeconds: TimeInterval = 0
@@ -107,17 +107,17 @@ public final class CameraViewModel: ObservableObject {
             cameraService.setVideoFormatOption(selectedVideoFormatOption)
         }
     }
-    
+
     // Dedicated background queue for CV / Vision / Frame processing (keeps UI 100% fluid)
     private let videoProcessingQueue = DispatchQueue(label: "com.aismartframing.video.processing", qos: .userInitiated)
     private var videoRecordingTimer: Timer? = nil
     private var videoRecordingStartTime: Date? = nil
-    
+
     // Pro Video Manual Controls Service & State
     public let proVideoService = ProVideoManualControlsService.shared
     @Published public var selectedProTab: ProVideoParameterTab = .iso
     @Published public var isShowingProControlsDrawer: Bool = true
-    
+
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var isRevealingZoomTarget: Bool = false
@@ -125,11 +125,11 @@ public final class CameraViewModel: ObservableObject {
     @Published public var liveZoomFactorForReveal: CGFloat = 1.0
     private var pendingTargetZoomForReveal: CGFloat = 1.0
     private var isZoomRampPhase: Bool = false
-    
+
     // MARK: - Sun Exposure Slider & Horizon Leveler
     @Published public var isShowingSunSlider: Bool = false
     @Published public var activeSunExposureBias: Float = 0.0
-    
+
     // MARK: - Thước Đo Cân Bằng Chân Trời (Horizon Leveler)
     @Published public var isHorizonLevelerEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isHorizonLevelerEnabled, forKey: "isHorizonLevelerEnabled") }
@@ -138,7 +138,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isDeviceLevel: Bool = false
     private let horizonMotionManager = CMMotionManager()
     private var hasTriggeredLevelHaptic: Bool = false
-    
+
     // MARK: - Focus Peaking (Viền Báo Nét Điện Ảnh)
     @Published public var isFocusPeakingEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isFocusPeakingEnabled, forKey: "isFocusPeakingEnabled") }
@@ -148,13 +148,13 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var focusPeakingCGImage: CGImage? = nil
     private var lastFocusPeakingComputeTime: CFTimeInterval = 0
-    
+
     public var zoomRevealRect: CGRect {
         guard isRevealingZoomTarget, pendingTargetZoomForReveal > 1.0 else {
             return CGRect(x: 0.5, y: 0.5, width: 0, height: 0)
         }
         let initialSize = 1.0 / pendingTargetZoomForReveal
-        
+
         if !isZoomRampPhase {
             // Giai đoạn 1: khung lớn dần từ 1 điểm tới kích thước ban đầu, zoom CHƯA chạy
             let size = initialSize * lockOnProgress
@@ -167,15 +167,15 @@ public final class CameraViewModel: ObservableObject {
             return CGRect(x: origin, y: origin, width: ratio, height: ratio)
         }
     }
-    
+
     @Published public var exposureBias: Float = 0.0
     @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto {
         didSet { UserDefaults.standard.set(activeFlashMode.rawValue, forKey: "activeFlashMode") }
     }
-    
+
     private var pendingSuggestedZoom: CGFloat = 1.0
     private var hasExecutedAutoZoomForSession: Bool = false
-    
+
     public func triggerZoomRevealAnimation(targetZoom: CGFloat) {
         guard targetZoom > 1.0 else { return }
         pendingTargetZoomForReveal = targetZoom
@@ -183,11 +183,11 @@ public final class CameraViewModel: ObservableObject {
         isZoomRampPhase = false
         lockOnProgress = 0
         isRevealingZoomTarget = true
-        
+
         withAnimation(.easeOut(duration: 0.45)) {
             lockOnProgress = 1.0
         }
-        
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.48) { [weak self] in
             guard let self = self else { return }
             self.isZoomRampPhase = true
@@ -195,7 +195,7 @@ public final class CameraViewModel: ObservableObject {
             self.currentZoom = targetZoom
             SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
             StreetSpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
-            
+
             let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.8 + 0.25
             DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
                 guard let self = self else { return }
@@ -206,25 +206,25 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     // AI Framing & Composition
     @Published public var framingResult: FramingTargetResult?
     @Published public var alignmentState: FramingAlignmentState = .analyzing
     @Published public var detectedScene: DetectedSceneType = .general
     @Published public var detectedSubjectRects: [CGRect] = []
     @Published public var detectedFaceRects: [CGRect] = []
-    
+
     // MARK: - DOKA-STYLE TARGET TRACKING
     /// Initial target position determined ONCE by AI (normalized 0..1)
     @Published public var initialTargetPoint: CGPoint? = nil
-    
+
     /// Real-time target position on screen (moves with phone gyroscope towards center (0.5, 0.5))
     @Published public var currentTargetPoint: CGPoint? = nil
-    
+
     /// Distance from current target point to center (0.5, 0.5)
     @Published public var alignmentDistance: CGFloat = 1.0
     @Published public var isPerfectAlignment: Bool = false
-    
+
     // Gemini State
     @Published public var isGeminiAnalyzing: Bool = false
     @Published public var geminiError: String? = nil
@@ -236,7 +236,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeModelUsedName: String = ""
     @Published public var geminiLatencyMs: Int = 0
     @Published public var aiSuggestedZoom: CGFloat? = nil
-    
+
     // Capture & Review
     @Published public var latestCapturedPhoto: CapturedPhotoItem?
     @Published public var isShowingPhotoDetail: Bool = false
@@ -248,7 +248,31 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeFlashMode2: Bool = false
     @Published public var autoCaptureCountdown: Int = 0
     @Published public var currentAIColorParams: AIColorParameters? = nil
-    
+
+    // MARK: - Quiet Pro Camera User Settings
+    @Published public var isAutoCaptureOnAlignEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(isAutoCaptureOnAlignEnabled, forKey: "isAutoCaptureOnAlignEnabled") }
+    }
+    @Published public var showDetectionBoxes: Bool = false {
+        didSet { UserDefaults.standard.set(showDetectionBoxes, forKey: "showDetectionBoxes") }
+    }
+    @Published public var showHistogramInViewfinder: Bool = false {
+        didSet { UserDefaults.standard.set(showHistogramInViewfinder, forKey: "showHistogramInViewfinder") }
+    }
+    @Published public var isSaveOriginalPhotoEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(isSaveOriginalPhotoEnabled, forKey: "isSaveOriginalPhotoEnabled") }
+    }
+    @Published public var isKeepScreenAwakeEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(isKeepScreenAwakeEnabled, forKey: "isKeepScreenAwakeEnabled")
+            UIApplication.shared.isIdleTimerDisabled = isKeepScreenAwakeEnabled
+        }
+    }
+    @Published public var isProximityHapticsEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(isProximityHapticsEnabled, forKey: "isProximityHapticsEnabled") }
+    }
+    @Published public var isCompositionRuleSheetPresented: Bool = false
+
     // ARKit 3D World Tracking & Engine Source Indicator
     public let arSessionService = ARCompositionSession.shared
     @Published public var activeEngineSource: AIEngineSource? = nil
@@ -257,7 +281,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isAEAFLocked: Bool = false
     @Published public var aeafLockPoint: CGPoint? = nil
     @Published public var saveErrorMessage: String? = nil
-    
+
     // MARK: - Advanced Predictive Tracking State Machine
     @Published public var trackingQuality: TrackingQuality = .locked
     @Published public var trackingSensitivity: TrackingSensitivityPreset = .medium {
@@ -266,7 +290,7 @@ public final class CameraViewModel: ObservableObject {
             applyTrackingSensitivityToEngines()
         }
     }
-    
+
     public var confidenceAcceptThreshold: Double {
         switch trackingSensitivity {
         case .low: return 0.20
@@ -274,7 +298,7 @@ public final class CameraViewModel: ObservableObject {
         case .high: return 0.40
         }
     }
-    
+
     public var trackingEMAAlpha: CGFloat {
         switch trackingSensitivity {
         case .low: return 0.45
@@ -282,7 +306,7 @@ public final class CameraViewModel: ObservableObject {
         case .high: return 0.75
         }
     }
-    
+
     public var maxJumpPerFrame: CGFloat {
         switch trackingSensitivity {
         case .low: return 0.15
@@ -290,14 +314,14 @@ public final class CameraViewModel: ObservableObject {
         case .high: return 0.09
         }
     }
-    
+
     private var consecutiveLowConfidenceFrames: Int = 0
     private var smoothedVelocity: CGVector = .zero
     private var lastVisualUpdateTime: CFTimeInterval = 0
     private let predictionGraceFrames: Int = 24   // ~0.8s ở 30fps: còn được phép ngoại suy vận tốc
     private let reacquireGraceFrames: Int = 90    // ~3.0s: sau mốc này coi như mất hẳn
     private var lastProximityHapticTime: TimeInterval = 0
-    
+
     // Internal State
     private var autoCaptureTask: Task<Void, Never>? = nil
     private var analysisFrames: [SubjectDetectionResult] = []
@@ -311,7 +335,7 @@ public final class CameraViewModel: ObservableObject {
     private var focusSquareHideTask: Task<Void, Never>? = nil
     private var manualFocusLockUntil: CFTimeInterval = 0
     private let manualFocusCooldown: CFTimeInterval = 4.0
-    
+
     public init() {
         // Load saved settings
         let defaults = UserDefaults.standard
@@ -361,17 +385,38 @@ public final class CameraViewModel: ObservableObject {
         if let formatRaw = defaults.string(forKey: "selectedVideoFormatOption"), let format = VideoFormatOption(rawValue: formatRaw) {
             self.selectedVideoFormatOption = format
         }
+        if defaults.object(forKey: "isAutoCaptureOnAlignEnabled") != nil {
+            self.isAutoCaptureOnAlignEnabled = defaults.bool(forKey: "isAutoCaptureOnAlignEnabled")
+        }
+        if defaults.object(forKey: "showDetectionBoxes") != nil {
+            self.showDetectionBoxes = defaults.bool(forKey: "showDetectionBoxes")
+        }
+        if defaults.object(forKey: "showHistogramInViewfinder") != nil {
+            self.showHistogramInViewfinder = defaults.bool(forKey: "showHistogramInViewfinder")
+        }
+        if defaults.object(forKey: "isSaveOriginalPhotoEnabled") != nil {
+            self.isSaveOriginalPhotoEnabled = defaults.bool(forKey: "isSaveOriginalPhotoEnabled")
+        }
+        if defaults.object(forKey: "isKeepScreenAwakeEnabled") != nil {
+            self.isKeepScreenAwakeEnabled = defaults.bool(forKey: "isKeepScreenAwakeEnabled")
+        }
+        if defaults.object(forKey: "isProximityHapticsEnabled") != nil {
+            self.isProximityHapticsEnabled = defaults.bool(forKey: "isProximityHapticsEnabled")
+        }
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = self.isKeepScreenAwakeEnabled
+        }
         self.cameraService.selectedVideoCodec = self.selectedVideoCodec
         self.cameraService.selectedVideoFormatOption = self.selectedVideoFormatOption
-        
+
         // didSet không fire khi gán trong init -> gọi trực tiếp để engine nhận đúng ngưỡng
         applyTrackingSensitivityToEngines()
-        
+
         setupCallbacks()
         setupMotionCallbacks()
         startHorizonLeveler()
     }
-    
+
     // MARK: - Initialization & Permissions
     public func requestPermissionsAndStart() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -389,7 +434,7 @@ public final class CameraViewModel: ObservableObject {
             self.hasCameraPermission = false
         }
     }
-    
+
     private func startCamera() {
         cameraService.delegate = self
         cameraService.setupSession { [weak self] success in
@@ -401,40 +446,40 @@ public final class CameraViewModel: ObservableObject {
             self.isCameraReady = true
         }
     }
-    
+
     private func setupCallbacks() {
         cameraService.onActiveVideoFormatChanged = { [weak self] format in
             DispatchQueue.main.async {
                 self?.activeVideoResolutionString = format
             }
         }
-        
+
         visionEngine.onDetectionCompleted = { [weak self] detection in
             guard let self = self, !self.isShowingSettings else { return }
             self.handleVisionDetection(detection)
         }
-        
+
         visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence, pixelBuffer in
             guard let self = self, !self.isShowingSettings else { return }
             self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence, pixelBuffer: pixelBuffer)
         }
-        
+
         // Smart Autofocus (Face Priority > Saliency > Center)
         visionEngine.onSmartFocusPointCalculated = { [weak self] point, focusType in
             guard let self = self, !self.isShowingSettings else { return }
             self.handleSmartFocusCalculated(point: point, type: focusType)
         }
-        
+
         // Subject Area Did Change Observer (Apple Camera App style)
         cameraService.onSubjectAreaDidChange = { [weak self] in
             guard let self = self else { return }
             self.handleSubjectAreaChanged()
         }
-        
+
         cameraService.onLiveZoomFactorChanged = { [weak self] zoom in
             self?.liveZoomFactorForReveal = zoom
         }
-        
+
         // Realtime Exposure Stats Listener (ISO & Shutter Speed)
         // Khi đang mở Cài đặt: bỏ qua cập nhật để không ép SwiftUI re-render toàn bộ
         // Form cài đặt mỗi frame (gây lag khi lướt). Đóng cài đặt là tự cập nhật lại.
@@ -446,7 +491,7 @@ public final class CameraViewModel: ObservableObject {
             self.proVideoService.updateLiveMeasurements(iso: stats.iso, shutterDuration: stats.exposureDurationSeconds)
         }
     }
-    
+
     public func togglePhotoFormat() {
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut(duration: 0.2)) {
@@ -458,14 +503,14 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     public func toggleVideoCodec() {
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut(duration: 0.2)) {
             selectedVideoCodec = (selectedVideoCodec == .hevc) ? .h264 : .hevc
         }
     }
-    
+
     public func toggleVideoFormat() {
         guard !isRecordingVideo else { return }
         haptics.triggerSelectionChange()
@@ -478,7 +523,7 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    
+
     private func setupMotionCallbacks() {
         // Động cơ Tracking Không Gian Chuẩn: Chế độ Thường
         SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
@@ -492,7 +537,7 @@ public final class CameraViewModel: ObservableObject {
                 self.evaluateAlignment(at: point)
             }
         }
-        
+
         // Động cơ Tracking Không Gian Chuyên Dụng Đi Đường: Chế độ Đi Đường
         StreetSpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
             guard let self = self, self.isStreetTrackingModeEnabled, !self.isShowingSettings else { return }
@@ -504,7 +549,7 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     // Nạp thông số chống nhảy đột biến & ngưỡng nhận confidence của ViewModel (theo trackingSensitivity)
     // xuống 2 engine spatial — trước đây các tham số này là dead code không được dùng
     private func applyTrackingSensitivityToEngines() {
@@ -513,14 +558,14 @@ public final class CameraViewModel: ObservableObject {
         StreetSpatialTrackingEngine.shared.maxObservationJump = maxJumpPerFrame
         StreetSpatialTrackingEngine.shared.opticalAcceptThreshold = confidenceAcceptThreshold
     }
-    
+
     // MARK: - AI Session Control (One-Shot Trigger)
-    
+
     /// Bắt đầu phiên AI khi người dùng bấm nút AI — chỉ phân tích ĐÚNG 1 LẦN duy nhất
     public func startAISession() {
         guard aiSessionState == .idle || aiSessionState == .done else { return }
         haptics.triggerSelectionChange()
-        
+
         // Reset state
         arSessionService.clearTarget()
         SpatialTrackingEngine.shared.stopTracking()
@@ -543,15 +588,15 @@ public final class CameraViewModel: ObservableObject {
         activeModelUsedName = ""
         activeEngineSource = nil
         arTrackingWarning = nil
-        
+
         withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
             aiSessionState = .analyzing
         }
-        
+
         // Yêu cầu Vision Engine chụp 1 frame chất lượng cao gửi cho Gemini
         visionEngine.captureNextFrameForGemini = true
     }
-    
+
     public func cancelAISession() {
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
@@ -565,7 +610,7 @@ public final class CameraViewModel: ObservableObject {
         smoothedVelocity = .zero
         lastVisualUpdateTime = 0
         trackingQuality = .locked
-        
+
         withAnimation(.easeInOut(duration: 0.3)) {
             aiSessionState = .idle
             initialTargetPoint = nil
@@ -579,9 +624,9 @@ public final class CameraViewModel: ObservableObject {
             arTrackingWarning = nil
         }
     }
-    
+
     // MARK: - Vision & Gemini One-Shot Handling
-    
+
     private func handleVisionDetection(_ detection: SubjectDetectionResult) {
         switch aiSessionState {
         case .idle, .done:
@@ -589,41 +634,41 @@ public final class CameraViewModel: ObservableObject {
             self.detectedScene = detection.detectedScene
             self.detectedFaceRects = detection.faceRectangles
             return
-            
+
         case .capturing:
             return
-            
+
         case .targetPlaced, .alignmentPerfect:
             // ĐÃ KHÓA TARGET: Dừng toàn bộ phân tích Vision để không bị nhảy lung tung!
             // Chuyển động target lúc này hoàn toàn do con quay hồi chuyển Gyroscope điều khiển
             return
-            
+
         case .analyzing:
             // Giai đoạn phân tích 1 lần (One-shot)
             handleAnalyzingPhase(detection)
         }
     }
-    
+
     private func handleAnalyzingPhase(_ detection: SubjectDetectionResult) {
         guard !isOneShotCaptured else { return }
-        
+
         self.detectedScene = detection.detectedScene
         self.detectedFaceRects = detection.faceRectangles
         if let dominant = detection.dominantSubjectRect {
             self.detectedSubjectRects = [dominant]
         }
-        
+
         // Kiểm tra xem đã có frame chụp cho Gemini chưa
         if let frame = visionEngine.capturedGeminiFrame {
             visionEngine.capturedGeminiFrame = nil
-            
+
             if useGeminiForAnalysis && geminiService.hasAPIKey {
                 isOneShotCaptured = true
                 callGeminiAnalysis(frame: frame)
                 return
             }
         }
-        
+
         // Thu thập đủ 5 frames ban đầu để ổn định nhận diện cục bộ (nếu không dùng Gemini)
         analysisFrames.append(detection)
         if analysisFrames.count >= analysisFramesNeeded {
@@ -631,17 +676,17 @@ public final class CameraViewModel: ObservableObject {
             consolidateLocalAnalysisAndLockTarget()
         }
     }
-    
+
     // MARK: - Gemini Analysis (One-shot)
-    
+
     private func callGeminiAnalysis(frame: CGImage) {
         guard !isGeminiAnalyzing else { return }
         isGeminiAnalyzing = true
-        
+
         geminiService.analyzeForComposition(image: frame) { [weak self] result in
             guard let self = self else { return }
             self.isGeminiAnalyzing = false
-            
+
             switch result {
             case .success(let response):
                 self.handleGeminiResponse(response)
@@ -652,7 +697,7 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     private func handleGeminiResponse(_ response: GeminiFramingResponse) {
         self.geminiColorRecipe = response.colorRecipe
         self.geminiExplanation = response.explanation
@@ -664,27 +709,27 @@ public final class CameraViewModel: ObservableObject {
         self.aiSuggestedZoom = response.suggestedZoom
         self.pendingSuggestedZoom = response.suggestedZoom
         self.hasExecutedAutoZoomForSession = false
-        
+
         if isAIFullColorEnabled {
             currentAIColorParams = response.colorRecipe.asAIColorParameters
         }
-        
+
         let targetPoint = CGPoint(x: response.targetX, y: response.targetY)
         let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
         pinTargetAndStartMotion(at: targetPoint, subjectRect: subjectRect)
     }
-    
+
     // MARK: - Local Neural Engine Analysis (One-shot)
-    
+
     private func consolidateLocalAnalysisAndLockTarget() {
         var dominantScene: DetectedSceneType = .general
         var avgDetection = SubjectDetectionResult()
-        
+
         if !analysisFrames.isEmpty {
             var sceneCounts: [DetectedSceneType: Int] = [:]
             for f in analysisFrames { sceneCounts[f.detectedScene, default: 0] += 1 }
             dominantScene = sceneCounts.max(by: { $0.value < $1.value })?.key ?? .general
-            
+
             let validFrames = analysisFrames.filter { $0.dominantSubjectRect != nil }
             if !validFrames.isEmpty {
                 let avgX = validFrames.compactMap { $0.dominantSubjectRect?.midX }.reduce(0, +) / CGFloat(validFrames.count)
@@ -700,7 +745,7 @@ public final class CameraViewModel: ObservableObject {
                 avgDetection.faceRectangles = faceFrame.faceRectangles
             }
         }
-        
+
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
         self.framingResult = result
         // Xác định chính xác nguồn Engine AI đang hoạt động để hiển thị rõ ràng trên HUD
@@ -711,16 +756,16 @@ public final class CameraViewModel: ObservableObject {
         } else {
             self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
         }
-        
+
         if isAIFullColorEnabled {
             currentAIColorParams = dominantScene.aiFullColorParameters
             let lumaError: Float = 0.50 - avgDetection.averageLuminance
             setExposure(max(-1.0, min(1.0, lumaError * 1.2)))
         }
-        
+
         pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
     }
-    
+
     // MARK: - State for Hybrid Optical Visual + Gyro Tracking
     @Published public var lastVisualConfidence: Double = 0
     private var lastTrackedVisualPoint: CGPoint? = nil
@@ -728,10 +773,10 @@ public final class CameraViewModel: ObservableObject {
     private var initialPhysicalSubjectCenter: CGPoint? = nil
     private var latestPixelBuffer: CVPixelBuffer? = nil
     private var shouldCheckTextureOnNextFrame: Bool = false
-    
+
     // MARK: - Low Texture Analysis (Bầu trời, Tường phẳng)
     private var isCurrentlyLowTexture: Bool = false
-    
+
     private func applyTextureVarianceHysteresis(variance: Double) {
         // Hysteresis 2 ngưỡng: Bật Low-Texture khi < 20.0, Tắt khi > 30.0
         if variance < 20.0 {
@@ -744,7 +789,7 @@ public final class CameraViewModel: ObservableObject {
         StreetSpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
         CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
     }
-    
+
     private func computeTextureVariance(pixelBuffer: CVPixelBuffer, normalizedRect: CGRect) -> Double {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
@@ -753,12 +798,12 @@ public final class CameraViewModel: ObservableObject {
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         let buffer = baseAddress.assumingMemoryBound(to: UInt8.self)
-        
+
         let regionX = max(0, Int(normalizedRect.origin.x * CGFloat(width)))
         let regionY = max(0, Int(normalizedRect.origin.y * CGFloat(height)))
         let regionW = max(20, Int(normalizedRect.width * CGFloat(width)))
         let regionH = max(20, Int(normalizedRect.height * CGFloat(height)))
-        
+
         var values: [Double] = []
         var y = regionY
         while y < min(regionY + regionH, height) {
@@ -775,21 +820,21 @@ public final class CameraViewModel: ObservableObject {
             }
             y += 4
         }
-        
+
         guard values.count > 8 else { return 1000 }
         let mean = values.reduce(0, +) / Double(values.count)
         return values.reduce(0) { $0 + pow($1 - mean, 2) } / Double(values.count)
     }
-    
+
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
-    
+
     public func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect? = nil) {
         // KHÔNG dùng tâm chủ thể để đè lên tọa độ AI nữa.
         // Ảnh gửi cho AI (cloud & local) là FULL ẢNH nên AI trả về tọa độ CHUẨN THEO ẢNH.
         // Target giờ PIN ĐÚNG TẠI TỌA ĐỘ AI TRẢ VỀ (target). subjectRect chỉ được dùng để
         // lấy KÍCH THƯỚC khung bám & điểm lấy nét phần cứng, KHÔNG thay thế tọa độ target.
         let pinPoint = target
-        
+
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
         lastTrackedVisualPoint = pinPoint
@@ -800,11 +845,11 @@ public final class CameraViewModel: ObservableObject {
         smoothedVelocity = .zero
         trackingQuality = .locked
         hasExecutedAutoZoomForSession = false
-        
+
         let dx = pinPoint.x - 0.5
         let dy = pinPoint.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
-        
+
         // Đồng bộ phân loại cảnh quan cho Dynamic EKF & Deformable Nature Tracking
         visionEngine.currentSceneType = self.detectedScene
         // Thông báo cho Vision engine: anchor low-texture (vật trắng/đơn sắc) -> siết ngưỡng re-ID
@@ -816,7 +861,7 @@ public final class CameraViewModel: ObservableObject {
             SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
             SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
         }
-        
+
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = target
         if let buffer = latestPixelBuffer {
@@ -827,7 +872,7 @@ public final class CameraViewModel: ObservableObject {
         } else {
             shouldCheckTextureOnNextFrame = true
         }
-        
+
         // 2. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (Apple Vision VNTrackObjectRequest)
         // Khi vật thể là màu trắng/đơn sắc (isCurrentlyLowTexture): Mở rộng khung bám để bao quát đường viền cạnh tương phản với nền
         let isLow = isCurrentlyLowTexture
@@ -845,24 +890,24 @@ public final class CameraViewModel: ObservableObject {
             let targetSize: CGFloat = isLow ? 0.22 : 0.14
             visionEngine.startTrackingObject(at: target, size: CGSize(width: targetSize, height: targetSize))
         }
-        
+
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
         let focusTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
         let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
         cameraService.setSmartFocusAndExposure(at: devPoint)
-        
+
         haptics.triggerSelectionChange()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) {
             aiSessionState = .targetPlaced(locked: true)
         }
-        
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.haptics.triggerSuccess()
         }
     }
-    
+
     // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
-    
+
     private func handleVisualTargetTracked(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer) {
         // Tiếp nhận cập nhật cả trong alignmentPerfect (zoom reveal) để vòng vàng bám vật thể
         // xuyên suốt quá trình zoom — tránh nhảy vị trí khi zoom hoàn tất
@@ -873,14 +918,14 @@ public final class CameraViewModel: ObservableObject {
             return
         }
         self.lastVisualConfidence = confidence
-        
+
         if shouldCheckTextureOnNextFrame, let target = currentTargetPoint ?? initialTargetPoint {
             shouldCheckTextureOnNextFrame = false
             let region = CGRect(x: max(0, target.x - 0.08), y: max(0, target.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: pixelBuffer, normalizedRect: region)
             applyTextureVarianceHysteresis(variance: variance)
         }
-        
+
         // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào Động cơ tương ứng
         if isStreetTrackingModeEnabled {
             StreetSpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
@@ -892,47 +937,47 @@ public final class CameraViewModel: ObservableObject {
     // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che / lia máy nhanh)
     private func handleTrackingDegraded() {
         consecutiveLowConfidenceFrames += 1
-        
+
         let spatialPoint = isStreetTrackingModeEnabled ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
         let fallback = self.currentTargetPoint ?? lastTrackedVisualPoint ?? spatialPoint
         let target = (spatialPoint.x >= 0.02 && spatialPoint.x <= 0.98) ? spatialPoint : fallback
-        
+
         self.currentTargetPoint = target
         self.trackingQuality = .predicting
         evaluateAlignment(at: target)
     }
-    
+
     // MARK: - 3. 60Hz Gyro Motion Handler (Inertial Odometry khi lia máy nhanh hoặc mất dấu quang học)
-    
+
     private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
         guard case .targetPlaced = aiSessionState, let anchor = gyroAnchorPoint ?? initialTargetPoint else { return }
-        
+
         // Khi lia máy nhanh hoặc quang học tạm thời mờ/khuất (confidence thấp), Gyroscope giữ vị trí không gian từ mỏ neo gần nhất
         if lastVisualConfidence <= 0.35 {
             let zoomCompensation = max(1.0, currentZoom)
             let newX = anchor.x - deltaX * zoomCompensation
             let newY = anchor.y - deltaY * zoomCompensation
             let gyroPoint = CGPoint(x: min(0.98, max(0.02, newX)), y: min(0.98, max(0.02, newY)))
-            
+
             let current = self.currentTargetPoint ?? gyroPoint
             let alpha: CGFloat = 0.45
             let smoothedX = current.x * (1.0 - alpha) + gyroPoint.x * alpha
             let smoothedY = current.y * (1.0 - alpha) + gyroPoint.y * alpha
             let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
-            
+
             self.currentTargetPoint = smoothedPoint
             evaluateAlignment(at: smoothedPoint)
         }
     }
-    
+
     private func evaluateAlignment(at point: CGPoint) {
         let dx = point.x - 0.5
         let dy = point.y - 0.5
         let dist = sqrt(dx * dx + dy * dy)
         self.alignmentDistance = dist
-        
-        // Haptic rung khi tiến gần tâm — giới hạn tần suất, tránh dồn lệnh gây lag
-        if dist < 0.15 && dist > calculator.alignmentTolerance {
+
+        // Haptic rung khi tiến gần tâm — nếu người dùng bật
+        if isProximityHapticsEnabled && dist < 0.15 && dist > calculator.alignmentTolerance {
             let now = CACurrentMediaTime()
             if now - lastProximityHapticTime >= 0.1 {
                 lastProximityHapticTime = now
@@ -940,10 +985,10 @@ public final class CameraViewModel: ObservableObject {
                 haptics.triggerProximityPulse(intensity: intensity)
             }
         }
-        
+
         let isPerfect = dist <= calculator.alignmentTolerance
-        
-        // Kích hoạt tự động chụp khi tâm trắng đè khớp lên vùng target vàng!
+
+        // Kích hoạt khi tâm trắng đè khớp lên vùng target vàng!
         if isPerfect && !isPerfectAlignment && (trackingQuality == .locked || trackingQuality == .predicting) {
             isPerfectAlignment = true
             haptics.triggerMagneticSnap()
@@ -951,14 +996,16 @@ public final class CameraViewModel: ObservableObject {
                 aiSessionState = .alignmentPerfect
                 showAlignmentSuccessFlash = true
             }
-            
+
             // KÍCH HOẠT ZOOM REVEAL ĐÚNG KHI TÂM TRẮNG VÀO TÂM VÀNG!
             if isAutoZoomEnabled && pendingSuggestedZoom > 1.0 && !hasExecutedAutoZoomForSession {
                 hasExecutedAutoZoomForSession = true
                 triggerZoomRevealAnimation(targetZoom: pendingSuggestedZoom)
             }
-            
-            startAutoCaptureCountdown()
+
+            if isAutoCaptureOnAlignEnabled {
+                startAutoCaptureCountdown()
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 self.showAlignmentSuccessFlash = false
             }
@@ -971,7 +1018,7 @@ public final class CameraViewModel: ObservableObject {
                 aiSessionState = .targetPlaced(locked: true)
             }
         }
-        
+
         if !isPerfect {
             let angle = atan2(dy, dx) * 180 / .pi
             let normalizedAngle = angle < 0 ? angle + 360 : angle
@@ -980,15 +1027,15 @@ public final class CameraViewModel: ObservableObject {
             alignmentState = .aligned(score: 1.0)
         }
     }
-    
+
     private func startAutoCaptureCountdown() {
         autoCaptureTask?.cancel()
-        
+
         let hasPendingZoom = isAutoZoomEnabled && pendingSuggestedZoom > 1.0 && !hasExecutedAutoZoomForSession
         let initialWait: UInt64 = hasPendingZoom ? 1_200_000_000 : 800_000_000
-        
+
         autoCaptureCountdown = 1 // 1 giây phản hồi nhanh chụp ngay
-        
+
         autoCaptureTask = Task {
             try? await Task.sleep(nanoseconds: initialWait)
             await MainActor.run { self.autoCaptureCountdown = 0 }
@@ -1003,7 +1050,7 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     private func executeCapture() {
         arSessionService.clearTarget()
         motionService.stopTracking()
@@ -1012,19 +1059,19 @@ public final class CameraViewModel: ObservableObject {
         SpatialTrackingEngine.shared.stopTracking()
         StreetSpatialTrackingEngine.shared.stopTracking()
         haptics.triggerShutterClick()
-        
+
         withAnimation(.easeInOut(duration: 0.05)) { activeFlashMode2 = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { self.activeFlashMode2 = false }
-        
+
         withAnimation {
             aiSessionState = .capturing
             isShutterPressing = true
         }
-        
+
         cameraService.capturePhoto()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
-    
+
     // MARK: - Actions
     private var lastContinuousZoomTime: CFTimeInterval = 0
     private var lastContinuousAppliedZoom: CGFloat = 1.0
@@ -1059,7 +1106,7 @@ public final class CameraViewModel: ObservableObject {
         StreetSpatialTrackingEngine.shared.updateZoomFactor(finalZoom)
         haptics.triggerSelectionChange()
     }
-    
+
     public func setZoomFromButton(_ zoom: CGFloat) {
         haptics.triggerSelectionChange()
         currentZoom = zoom
@@ -1067,12 +1114,12 @@ public final class CameraViewModel: ObservableObject {
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)
         StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
-    
+
     public func setExposure(_ bias: Float) {
         exposureBias = bias
         cameraService.setExposureBias(bias)
     }
-    
+
     public func lockAEAF(at normalizedPoint: CGPoint, devicePoint: CGPoint) {
         haptics.triggerSuccess()
         aeafLockPoint = normalizedPoint
@@ -1082,7 +1129,7 @@ public final class CameraViewModel: ObservableObject {
         cameraService.lockFocusAndExposure(at: devicePoint)
         CameraLogger.info("🔒 ĐÃ KHÓA AE/AF tại (\(String(format: "%.2f", normalizedPoint.x)), \(String(format: "%.2f", normalizedPoint.y)))", category: .capture)
     }
-    
+
     public func unlockAEAF() {
         guard isAEAFLocked else { return }
         haptics.triggerSelectionChange()
@@ -1097,7 +1144,7 @@ public final class CameraViewModel: ObservableObject {
         }
         CameraLogger.info("🔓 ĐÃ MỞ KHÓA AE/AF", category: .capture)
     }
-    
+
     public func toggleFlash() {
         haptics.triggerSelectionChange()
         switch activeFlashMode {
@@ -1108,12 +1155,12 @@ public final class CameraViewModel: ObservableObject {
         }
         cameraService.flashMode = activeFlashMode
     }
-    
+
     public func selectRule(_ rule: CompositionRule) {
         haptics.triggerSelectionChange()
         withAnimation(.spring()) { activeCompositionRule = rule }
     }
-    
+
     public func selectPreset(_ preset: FilmPreset) {
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut) {
@@ -1127,7 +1174,7 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     public func toggleAIFullColor() {
         haptics.triggerSelectionChange()
         withAnimation(.spring()) {
@@ -1141,14 +1188,14 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     public func toggleLivePhoto() {
         haptics.triggerSelectionChange()
         isLivePhotoEnabled.toggle()
         cameraService.setLivePhotoCaptureEnabled(isLivePhotoEnabled)
         CameraLogger.info("Người dùng chuyển chế độ Live Photo: \(isLivePhotoEnabled ? "BẬT" : "TẮT")", category: .capture)
     }
-    
+
     public func toggleVideoRecording() {
         if isRecordingVideo {
             haptics.triggerShutterClick()
@@ -1179,15 +1226,15 @@ public final class CameraViewModel: ObservableObject {
             isRecordingVideo = true
         }
     }
-    
+
     public func toggleARMode() {
         haptics.triggerSelectionChange()
         isARModeEnabled.toggle()
         if isARModeEnabled { arSession.startSession() } else { arSession.pauseSession() }
     }
-    
+
     // MARK: - Smart Autofocus & Exposure Control (Apple Camera App Style)
-    
+
     private func handleSubjectAreaChanged() {
         let now = CACurrentMediaTime()
         guard now >= manualFocusLockUntil, !isAEAFLocked else { return }
@@ -1196,7 +1243,7 @@ public final class CameraViewModel: ObservableObject {
             return
         }
         lastForcedResetTime = now
-        
+
         // Cảnh vật hoặc chủ thể di chuyển -> Kích hoạt lấy nét lại ngay lập tức
         if showTargetCircle, let target = currentTargetPoint {
             applyFocusAndExposure(to: target, source: .aiTarget, force: true)
@@ -1204,20 +1251,20 @@ public final class CameraViewModel: ObservableObject {
             applyFocusAndExposure(to: lastFocusPoint, source: .center, force: true)
         }
     }
-    
+
     private func handleSmartFocusCalculated(point: CGPoint, type: SmartFocusType) {
         let now = CACurrentMediaTime()
         guard now >= manualFocusLockUntil, !isAEAFLocked else { return }
-        
+
         // 1. Ưu tiên số 1: Nếu AI đã khóa mục tiêu target (vòng tròn vàng), luôn lấy nét vào target
         if showTargetCircle, let target = currentTargetPoint {
             applyFocusAndExposure(to: target, source: .aiTarget)
             return
         }
-        
-        // 2. Chế độ rảnh (chưa khóa target, kể cả chưa bấm AI lần nào): lọc 
-        // nhiễu — chỉ đổi điểm đo sáng khi vật được phát hiện ổn định qua 
-        // nhiều lần liên tiếp, tránh nhảy loạn ISO do thuật toán saliency 
+
+        // 2. Chế độ rảnh (chưa khóa target, kể cả chưa bấm AI lần nào): lọc
+        // nhiễu — chỉ đổi điểm đo sáng khi vật được phát hiện ổn định qua
+        // nhiều lần liên tiếp, tránh nhảy loạn ISO do thuật toán saliency
         // chọn nhầm qua lại giữa 2 vật có điểm số gần bằng nhau.
         if let pending = pendingSmartFocusPoint {
             let dist = hypot(point.x - pending.x, point.y - pending.y)
@@ -1233,13 +1280,13 @@ public final class CameraViewModel: ObservableObject {
             pendingSmartFocusStableCount = 0
             return
         }
-        
+
         guard pendingSmartFocusStableCount >= 2, now - lastSmartFocusExposureTime >= 1.0 else { return }
-        
+
         lastSmartFocusExposureTime = now
         applyFocusAndExposure(to: point, source: type)
     }
-    
+
     public func triggerFocusSquareAnimation(at point: CGPoint) {
         withAnimation(.easeOut(duration: 0.15)) {
             self.activeFocusSquarePoint = point
@@ -1257,36 +1304,36 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     // MARK: - Chạm Lấy Nét & Khóa AE/AF (iPhone Camera Standard)
     public func userDidTapToFocus(at normalizedPoint: CGPoint, devicePoint: CGPoint? = nil) {
         if isAEAFLocked {
             unlockAEAF()
             return
         }
-        
+
         haptics.triggerSelectionChange()
         manualFocusLockUntil = CACurrentMediaTime() + manualFocusCooldown
         lastFocusPoint = normalizedPoint
         activeFocusSquarePoint = normalizedPoint
         isShowingSunSlider = true
-        
+
         let devPoint = devicePoint ?? CameraService.convertUIPointToDevicePoint(normalizedPoint)
         cameraService.focusAndExpose(at: devPoint)
         triggerFocusSquareAnimation(at: normalizedPoint)
     }
-    
+
     public func userDidLongPressToLockAEAF(at normalizedPoint: CGPoint) {
         let devPoint = CameraService.convertUIPointToDevicePoint(normalizedPoint)
         lockAEAF(at: normalizedPoint, devicePoint: devPoint)
     }
-    
+
     public func adjustSunExposureBias(delta: Float) {
         let newBias = max(-2.0, min(2.0, activeSunExposureBias + delta))
         activeSunExposureBias = newBias
         setExposure(newBias)
     }
-    
+
     // MARK: - Thước Cân Bằng Chân Trời (Virtual Horizon Leveler)
     private func startHorizonLeveler() {
         guard horizonMotionManager.isDeviceMotionAvailable else { return }
@@ -1307,12 +1354,12 @@ public final class CameraViewModel: ObservableObject {
             self.isDeviceLevel = level
         }
     }
-    
+
     public func applyFocusAndExposure(to point: CGPoint, source: SmartFocusType, force: Bool = false) {
         let dx = point.x - lastFocusPoint.x
         let dy = point.y - lastFocusPoint.y
         let dist = sqrt(dx * dx + dy * dy)
-        
+
         // Chỉ trigger refocus & animation khi điểm focus thay đổi đáng kể (> 0.08) hoặc khi cảnh thay đổi (force)
         if dist > 0.08 || force {
             lastFocusPoint = point
@@ -1321,32 +1368,32 @@ public final class CameraViewModel: ObservableObject {
             triggerFocusSquareAnimation(at: point)
         }
     }
-    
-    
+
+
     // MARK: - Manual Shutter Click (Nút chụp màu trắng)
     public func takePhotoManual() {
         if captureMode.isVideo {
             toggleVideoRecording()
             return
         }
-        
+
         // Cho phép chụp thủ công bất kỳ lúc nào (ngay cả khi chưa bật AI hoặc AI đã hoàn tất)
         haptics.triggerShutterClick()
         withAnimation(.easeInOut(duration: 0.05)) { activeFlashMode2 = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { self.activeFlashMode2 = false }
-        
+
         withAnimation {
             aiSessionState = .capturing
             isShutterPressing = true
         }
-        
+
         cameraService.capturePhoto()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
-    
+
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {
         CameraLogger.info("Bắt đầu lưu ảnh vào Cuộn Camera (Photo Library)... (Live Photo: \(item.isLivePhoto ? "CÓ" : "KHÔNG"))", category: .photoKit)
-        
+
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let self = self else { return }
             guard status == .authorized || status == .limited else {
@@ -1356,14 +1403,14 @@ public final class CameraViewModel: ObservableObject {
                 }
                 return
             }
-            
+
             if let liveMovieURL = item.livePhotoMovieURL, FileManager.default.fileExists(atPath: liveMovieURL.path) {
                 // LƯU LIVE PHOTO CHUẨN APPLE
                 CameraLogger.info("Đang tạo PHAssetCreationRequest cho Live Photo (Kèm video: \(liveMovieURL.lastPathComponent))", category: .photoKit)
-                
+
                 PHPhotoLibrary.shared().performChanges({
                     let creationRequest = PHAssetCreationRequest.forAsset()
-                    
+
                     // Thêm tài nguyên ảnh (raw data từ AVCapturePhoto có chứa Live Photo Content Identifier)
                     if let rawData = item.rawPhotoData {
                         let photoOptions = PHAssetResourceCreationOptions()
@@ -1374,7 +1421,7 @@ public final class CameraViewModel: ObservableObject {
                             creationRequest.addResource(with: .photo, data: jpegData, options: nil)
                         }
                     }
-                    
+
                     // Thêm tài nguyên video ghép đôi (Paired Video)
                     let videoOptions = PHAssetResourceCreationOptions()
                     videoOptions.shouldMoveFile = false
@@ -1416,10 +1463,14 @@ public final class CameraViewModel: ObservableObject {
                         return
                     }
                 }
-                
+
                 let image = UIImage(cgImage: item.processedImage)
+                let origImage = self.isSaveOriginalPhotoEnabled ? UIImage(cgImage: item.originalImage) : nil
                 PHPhotoLibrary.shared().performChanges({
                     PHAssetChangeRequest.creationRequestForAsset(from: image)
+                    if let orig = origImage {
+                        PHAssetChangeRequest.creationRequestForAsset(from: orig)
+                    }
                 }) { success, error in
                     DispatchQueue.main.async {
                         if success {
@@ -1435,11 +1486,15 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     private func saveFallbackStaticPhoto(_ item: CapturedPhotoItem) {
         let image = UIImage(cgImage: item.processedImage)
+        let origImage = self.isSaveOriginalPhotoEnabled ? UIImage(cgImage: item.originalImage) : nil
         PHPhotoLibrary.shared().performChanges({
             PHAssetChangeRequest.creationRequestForAsset(from: image)
+            if let orig = origImage {
+                PHAssetChangeRequest.creationRequestForAsset(from: orig)
+            }
         }) { success, error in
             DispatchQueue.main.async {
                 if success {
@@ -1452,17 +1507,17 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    
+
     // MARK: - Computed helpers
     public var isAISessionActive: Bool { aiSessionState.isSessionActive }
-    
+
     public var showTargetCircle: Bool {
         switch aiSessionState {
         case .targetPlaced, .alignmentPerfect: return currentTargetPoint != nil
         default: return false
         }
     }
-    
+
     public var showGuidanceRay: Bool {
         switch aiSessionState {
         case .targetPlaced: return !isPerfectAlignment && currentTargetPoint != nil
@@ -1476,13 +1531,13 @@ extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
         videoProcessingQueue.async { [weak self] in
             guard let self = self else { return }
-            
+
             // Video connection is already set to .portrait in CameraService, so pixelBuffer is upright (.up)
             self.visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: .up)
-            
+
             if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
                 self.latestPixelBuffer = pixelBuffer
-                
+
                 let now = CACurrentMediaTime()
                 // Khi mở Cài đặt: ngừng đẩy Histogram & Focus Peaking lên main để không ép
                 // Form cài đặt re-render liên tục (nguyên nhân lag khi lướt).
@@ -1495,7 +1550,7 @@ extension CameraViewModel: CameraServiceDelegate {
                         }
                     }
                 }
-                
+
                 // Focus Peaking: Chỉ chạy khi người dùng bật trong Cài đặt (Zero overhead khi tắt)
                 if self.isFocusPeakingEnabled && !self.isShowingSettings && now - self.lastFocusPeakingComputeTime >= 0.04 {
                     self.lastFocusPeakingComputeTime = now
@@ -1513,33 +1568,33 @@ extension CameraViewModel: CameraServiceDelegate {
             }
         }
     }
-    
+
     public func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {
         self.recordedVideoURL = url
         self.isShowingVideoPreview = true
         self.haptics.triggerSuccess()
     }
-    
+
     public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double) {
         CameraLogger.info("Bắt đầu xử lý bộ lọc ảnh màu AI (Kích thước: \(photo.width)x\(photo.height), LivePhoto: \(livePhotoMovieURL != nil ? "CÓ" : "KHÔNG"))", category: .capture)
-        
+
         let finalColorParams: AIColorParameters?
         if isAIFullColorEnabled {
             finalColorParams = geminiColorRecipe?.asAIColorParameters ?? currentAIColorParams ?? detectedScene.aiFullColorParameters
         } else {
             finalColorParams = nil
         }
-        
+
         let activePreset = self.selectedFilmPreset
         let activeScene = self.detectedScene
         let activeRule = self.activeCompositionRule
         let sessionState = self.aiSessionState
         let score: Double = (sessionState == .alignmentPerfect || sessionState == .capturing) ? 1.0 : (framingResult?.alignmentScore ?? 0.8)
-        
+
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            
+
             var processedImageResult: CGImage = photo
             autoreleasepool {
                 if let params = finalColorParams {
@@ -1548,7 +1603,7 @@ extension CameraViewModel: CameraServiceDelegate {
                     processedImageResult = self.filterEngine.applyPreset(to: photo, preset: activePreset) ?? photo
                 }
             }
-            
+
             let item = CapturedPhotoItem(
                 originalImage: photo,
                 processedImage: processedImageResult,
@@ -1562,7 +1617,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 shutterSpeed: shutterSpeed,
                 aiColorParameters: finalColorParams
             )
-            
+
             DispatchQueue.main.async {
                 CameraLogger.success("Render bộ lọc hoàn tất, hiển thị xem trước & lưu ảnh (LivePhoto: \(item.isLivePhoto))", category: .capture)
                 withAnimation {
@@ -1574,7 +1629,7 @@ extension CameraViewModel: CameraServiceDelegate {
             }
         }
     }
-    
+
     public func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {
         self.currentZoom = zoom
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)

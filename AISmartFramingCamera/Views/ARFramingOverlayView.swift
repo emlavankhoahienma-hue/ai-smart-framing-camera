@@ -2,18 +2,18 @@ import SwiftUI
 
 public struct ARFramingOverlayView: View {
     @ObservedObject var viewModel: CameraViewModel
-    
+
     @State private var radarPulse: CGFloat = 1.0
     @State private var radarOpacity: Double = 0.8
     @State private var dashOffset: CGFloat = 0
     @State private var pinchBaseZoom: CGFloat = 1.0
     @State private var isPinching: Bool = false
-    
+
     public var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
             let screenCenter = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
-            
+
             ZStack {
                 // 0. Focus Peaking Neon Edges (Báo nét điện ảnh)
                 if viewModel.isFocusPeakingEnabled, let peakingImage = viewModel.focusPeakingCGImage {
@@ -25,33 +25,34 @@ public struct ARFramingOverlayView: View {
                         .allowsHitTesting(false)
                         .opacity(1.0)
                 }
-                
+
                 // 1. Composition Grid Lines (hiện khi AI session active)
                 if viewModel.isAISessionActive {
                     CompositionGridLines(rule: viewModel.activeCompositionRule, size: size)
                         .opacity(0.28)
                         .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive)
                 }
-                
-                // 2. Detected Faces preview
-                ForEach(0..<viewModel.detectedFaceRects.count, id: \.self) { i in
-                    let rect = viewModel.detectedFaceRects[i]
-                    FaceDetectionBox(rect: convertBufferRectToScreen(rect, in: size))
-                }
-                
-                // 3. Subject highlight rects
-                if viewModel.isAISessionActive {
-                    ForEach(0..<viewModel.detectedSubjectRects.count, id: \.self) { i in
-                        let rect = viewModel.detectedSubjectRects[i]
-                        SubjectHighlightBox(rect: convertBufferRectToScreen(rect, in: size))
+
+                // 2. Detected Faces & Subject preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm)
+                if viewModel.showDetectionBoxes {
+                    ForEach(0..<viewModel.detectedFaceRects.count, id: \.self) { i in
+                        let rect = viewModel.detectedFaceRects[i]
+                        FaceDetectionBox(rect: convertBufferRectToScreen(rect, in: size))
+                    }
+
+                    if viewModel.isAISessionActive {
+                        ForEach(0..<viewModel.detectedSubjectRects.count, id: \.self) { i in
+                            let rect = viewModel.detectedSubjectRects[i]
+                            SubjectHighlightBox(rect: convertBufferRectToScreen(rect, in: size))
+                        }
                     }
                 }
-                
+
                 // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
                 // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
                 if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
                     let targetScreen = convertBufferPointToScreen(targetPoint, in: size)
-                    
+
                     // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
                     if viewModel.showGuidanceRay {
                         GuidanceRayLine(
@@ -61,7 +62,7 @@ public struct ARFramingOverlayView: View {
                             distance: viewModel.alignmentDistance
                         )
                     }
-                    
+
                     // Target Vàng
                     TargetCircleView(
                         isAligned: viewModel.isPerfectAlignment,
@@ -73,7 +74,7 @@ public struct ARFramingOverlayView: View {
                     )
                     .position(targetScreen)
                 }
-                
+
                 // 5. TÂM TRẮNG GIỮA MÀN HÌNH — CHỈ HIỆN KHI AI ĐÃ XÁC ĐỊNH ĐƯỢC TARGET
                 // Trước đó (idle/đang phân tích) tâm này ẨN, không hiện gì cả.
                 if viewModel.showTargetCircle {
@@ -85,12 +86,12 @@ public struct ARFramingOverlayView: View {
                     .position(screenCenter)
                     .transition(.opacity.combined(with: .scale(scale: 0.7)))
                 }
-                
+
                 // 6. Countdown Overlay khi 2 tâm đã trùng khớp
                 if case .alignmentPerfect = viewModel.aiSessionState {
                     CountdownOverlayView(countdown: viewModel.autoCaptureCountdown)
                 }
-                
+
                 // 7. Success Flash
                 if viewModel.showAlignmentSuccessFlash {
                     RoundedRectangle(cornerRadius: 16)
@@ -98,12 +99,12 @@ public struct ARFramingOverlayView: View {
                         .padding(4)
                         .transition(.opacity)
                 }
-                
+
                 // 8. Gemini analyzing toast
                 if viewModel.isGeminiAnalyzing {
                     GeminiAnalyzingBadge()
                 }
-                
+
                 // 8c. Save error toast — hiện khi lưu ảnh thất bại hoặc thiếu quyền Photos
                 if let errorMsg = viewModel.saveErrorMessage {
                     VStack {
@@ -124,32 +125,32 @@ public struct ARFramingOverlayView: View {
                         }
                     }
                 }
-                
+
                 // 8b. Khóa AE/AF Banner (Chuẩn Camera iPhone)
                 if viewModel.isAEAFLocked {
                     VStack {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Image(systemName: "lock.fill")
                                 .font(.system(size: 11, weight: .bold))
-                            Text("KHÓA AE/AF")
-                                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                            Text("Đã khóa sáng và nét")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
                         }
                         .foregroundColor(.black)
                         .padding(.horizontal, 14).padding(.vertical, 5)
                         .background(Capsule().fill(Color.yellow))
                         .padding(.top, 46)
                         .transition(.move(edge: .top).combined(with: .opacity))
-                        
+
                         Spacer()
                     }
                 }
-                
+
                 // 8c. Thước Đo Cân Bằng Chân Trời (Virtual Horizon Leveler)
                 if viewModel.isHorizonLevelerEnabled && !viewModel.isAISessionActive && viewModel.captureMode == .photo {
                     HorizonLevelerView(rollDegrees: viewModel.currentRollDegrees, isLevel: viewModel.isDeviceLevel)
                         .position(screenCenter)
                 }
-                
+
                 // 9. Smart Autofocus Yellow Square Indicator with Sun Exposure Slider (Apple Camera Style)
                 if let focusPoint = viewModel.activeFocusSquarePoint {
                     FocusSquareWithSunSlider(
@@ -163,14 +164,14 @@ public struct ARFramingOverlayView: View {
                     .position(x: focusPoint.x * size.width, y: focusPoint.y * size.height)
                     .transition(.scale.combined(with: .opacity))
                 }
-                
+
                 // 10. Capture Flash
                 if viewModel.activeFlashMode2 {
                     Color.white.opacity(0.55)
                         .ignoresSafeArea()
                         .transition(.opacity)
                 }
-                
+
                 // 11. AI Zoom Reveal Overlay (Khung vuông vùng AI sắp zoom + làm tối xung quanh)
                 ZoomRevealOverlay(rect: viewModel.zoomRevealRect, isVisible: viewModel.isRevealingZoomTarget)
             }
@@ -226,14 +227,14 @@ public struct ARFramingOverlayView: View {
             .onAppear { startAnimations() }
         }
     }
-    
+
     // MARK: - AspectFill Coordinate Conversion Helpers
     // Chuyển đổi toạ độ chuẩn hóa từ Camera Buffer (4:3) sang màn hình Preview (AspectFill tràn viền)
     private func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
         // Tỉ lệ cảm biến camera iOS ở chế độ portrait: 3:4 (width / height = 0.75)
         let bufferAspect: CGFloat = 3.0 / 4.0
         let screenAspect = screenSize.width / max(1.0, screenSize.height)
-        
+
         if screenAspect < bufferAspect {
             // Màn hình hẹp hơn khung camera (VD: iPhone 19.5:9 so với 4:3) -> Bị crop 2 bên trái/phải
             let displayedWidth = screenSize.height * bufferAspect
@@ -250,7 +251,7 @@ public struct ARFramingOverlayView: View {
             return CGPoint(x: screenX, y: screenY)
         }
     }
-    
+
     private func convertBufferRectToScreen(_ rect: CGRect, in screenSize: CGSize) -> CGRect {
         let topLeft = convertBufferPointToScreen(rect.origin, in: screenSize)
         let bottomRight = convertBufferPointToScreen(CGPoint(x: rect.maxX, y: rect.maxY), in: screenSize)
@@ -261,11 +262,11 @@ public struct ARFramingOverlayView: View {
             height: max(0, bottomRight.y - topLeft.y)
         )
     }
-    
+
     private func convertScreenPointToBuffer(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
         let bufferAspect: CGFloat = 3.0 / 4.0
         let screenAspect = screenSize.width / max(1.0, screenSize.height)
-        
+
         if screenAspect < bufferAspect {
             let displayedWidth = screenSize.height * bufferAspect
             let horizontalCropOffset = (displayedWidth - screenSize.width) / 2.0
@@ -280,7 +281,7 @@ public struct ARFramingOverlayView: View {
             return CGPoint(x: max(0.02, min(0.98, bufferX)), y: max(0.02, min(0.98, bufferY)))
         }
     }
-    
+
     private func startAnimations() {
         withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
             radarPulse = 1.40; radarOpacity = 0.15
@@ -296,7 +297,7 @@ public struct ARFramingOverlayView: View {
 struct CompositionGridLines: View {
     let rule: CompositionRule
     let size: CGSize
-    
+
     var body: some View {
         Path { path in
             switch rule {
@@ -338,16 +339,16 @@ struct CurrentCenterCrosshair: View {
     let isAligned: Bool
     let sessionState: AISessionState
     let distance: CGFloat
-    
+
     var body: some View {
         let color: Color = isAligned ? .green : ringColor
         let proximityScale: CGFloat = distance < 0.15 ? (1.0 + (0.15 - distance) * 1.2) : 1.0
-        
+
         ZStack {
             Circle()
                 .stroke(color, lineWidth: isAligned ? 2.5 : 1.8)
                 .frame(width: 38, height: 38)
-            
+
             ForEach([0, 90, 180, 270], id: \.self) { deg in
                 Rectangle()
                     .fill(color.opacity(0.9))
@@ -355,11 +356,11 @@ struct CurrentCenterCrosshair: View {
                     .offset(x: 25)
                     .rotationEffect(.degrees(Double(deg)))
             }
-            
+
             Circle()
                 .fill(color)
                 .frame(width: isAligned ? 6 : 4.5, height: isAligned ? 6 : 4.5)
-            
+
             if isAligned {
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .heavy))
@@ -371,7 +372,7 @@ struct CurrentCenterCrosshair: View {
         .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isAligned)
         .animation(.spring(response: 0.15, dampingFraction: 0.7), value: proximityScale)
     }
-    
+
     private var ringColor: Color {
         switch sessionState {
         case .idle: return Color.white.opacity(0.7)
@@ -391,7 +392,7 @@ struct TargetCircleView: View {
     let radarOpacity: Double
     let countdown: Int
     let trackingQuality: TrackingQuality
-    
+
     private var ringColor: Color {
         if isAligned { return .green }
         switch trackingQuality {
@@ -400,7 +401,7 @@ struct TargetCircleView: View {
         case .lost: return .red
         }
     }
-    
+
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
@@ -408,7 +409,7 @@ struct TargetCircleView: View {
                     .stroke(ringColor, lineWidth: isAligned ? 2.5 : 1.8)
                     .frame(width: 30, height: 30)
                     .shadow(color: ringColor.opacity(0.5), radius: isAligned ? 6 : 3)
-                
+
                 if isAligned {
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .heavy))
@@ -417,7 +418,7 @@ struct TargetCircleView: View {
             }
             .scaleEffect(isAligned ? 1.15 : 1.0)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
-            
+
             if trackingQuality == .reacquiring {
                 Text("Đang tìm lại mục tiêu…")
                     .font(.system(size: 9, weight: .bold, design: .rounded))
@@ -445,7 +446,7 @@ struct GuidanceRayLine: View {
     let to: CGPoint
     let dashOffset: CGFloat
     let distance: CGFloat
-    
+
     var body: some View {
         Path { path in
             path.move(to: from)
@@ -482,49 +483,27 @@ struct CountdownOverlayView: View {
 // MARK: - Gemini Analyzing Badge
 
 struct GeminiAnalyzingBadge: View {
-    @State private var rotation: Double = 0
-    @State private var pulse: CGFloat = 1.0
-    
     var body: some View {
         VStack {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(.cyan)
-                    .rotationEffect(.degrees(rotation))
-                    .scaleEffect(pulse)
-                    .onAppear {
-                        withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-                            rotation = 360
-                        }
-                        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                            pulse = 1.25
-                        }
-                    }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Google Gemini AI Live")
-                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                        .foregroundColor(.cyan)
-                    Text("Đang phân tích quang học & màu tự nhiên...")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                }
-                
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .cyan))
+                    .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
                     .scaleEffect(0.8)
+                Text("Đang phân tích…")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
             }
-            .padding(.horizontal, 16).padding(.vertical, 9)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.85))
-                    .overlay(Capsule().stroke(Color.cyan.opacity(0.6), lineWidth: 1.2))
-                    .shadow(color: Color.cyan.opacity(0.3), radius: 10)
+                    .fill(Color.black.opacity(0.65))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
             )
             Spacer()
         }
-        .padding(.top, 85)
+        .padding(.top, 50)
+        .transition(.opacity)
     }
 }
 
@@ -557,9 +536,9 @@ struct FocusSquareWithSunSlider: View {
     let showSun: Bool
     let exposureBias: Float
     let onAdjustBias: (Float) -> Void
-    
+
     @State private var scale: CGFloat = 1.3
-    
+
     var body: some View {
         HStack(spacing: 8) {
             // Focus Box
@@ -567,7 +546,7 @@ struct FocusSquareWithSunSlider: View {
                 Rectangle()
                     .stroke(Color.yellow, lineWidth: isLocked ? 2.0 : 1.5)
                     .frame(width: 65, height: 65)
-                
+
                 // 4 Corner tick marks
                 VStack {
                     HStack {
@@ -585,7 +564,7 @@ struct FocusSquareWithSunSlider: View {
                 .frame(width: 65, height: 65)
             }
             .scaleEffect(scale)
-            
+
             // Vertical Sun Exposure Slider (Apple Camera Standard)
             if showSun || isLocked {
                 VStack(spacing: 4) {
@@ -593,7 +572,7 @@ struct FocusSquareWithSunSlider: View {
                         Rectangle()
                             .fill(Color.white.opacity(0.35))
                             .frame(width: 1.5, height: 65)
-                        
+
                         let sunOffset = CGFloat(-exposureBias / 2.0) * 26.0
                         Image(systemName: "sun.max.fill")
                             .font(.system(size: 14, weight: .bold))
@@ -625,17 +604,17 @@ struct FocusSquareWithSunSlider: View {
 struct HorizonLevelerView: View {
     let rollDegrees: Double
     let isLevel: Bool
-    
+
     var body: some View {
         HStack(spacing: 12) {
             Rectangle()
                 .fill(isLevel ? Color.yellow : Color.white.opacity(0.65))
                 .frame(width: 38, height: isLevel ? 2.0 : 1.2)
-            
+
             Circle()
                 .stroke(isLevel ? Color.yellow : Color.white.opacity(0.65), lineWidth: isLevel ? 2.0 : 1.2)
                 .frame(width: 8, height: 8)
-            
+
             Rectangle()
                 .fill(isLevel ? Color.yellow : Color.white.opacity(0.65))
                 .frame(width: 38, height: isLevel ? 2.0 : 1.2)
@@ -650,7 +629,7 @@ struct HorizonLevelerView: View {
 struct ZoomRevealOverlay: View {
     let rect: CGRect
     let isVisible: Bool
-    
+
     var body: some View {
         GeometryReader { geo in
             let pixelRect = CGRect(
@@ -659,14 +638,14 @@ struct ZoomRevealOverlay: View {
                 width: rect.width * geo.size.width,
                 height: rect.height * geo.size.height
             )
-            
+
             ZStack {
                 Path { path in
                     path.addRect(CGRect(origin: .zero, size: geo.size))
                     path.addRoundedRect(in: pixelRect, cornerSize: CGSize(width: 14, height: 14))
                 }
                 .fill(Color.black.opacity(isVisible ? 0.55 : 0), style: FillStyle(eoFill: true))
-                
+
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(Color.yellow, lineWidth: 2.5)
                     .frame(width: pixelRect.width, height: pixelRect.height)

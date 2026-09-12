@@ -2,9 +2,9 @@ import SwiftUI
 
 public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
-    
-    let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0, 10.0]
-    
+
+    let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0]
+
     public var body: some View {
         VStack(spacing: 6) {
             // Film Preset Drawer (Expandable)
@@ -12,63 +12,62 @@ public struct CameraControlsView: View {
                 FilmPresetDrawer(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            
+
             // Zoom Selector Pills
             ZoomSelectorPills(viewModel: viewModel, options: zoomOptions)
                 .padding(.bottom, 4)
-            
-            // Mode Switcher (ẢNH / VIDEO / VIDEO PRO)
-            HStack(spacing: 20) {
+
+            // Mode Switcher (Ảnh / Video / Pro)
+            HStack(spacing: 24) {
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         viewModel.captureMode = .photo
                     }
                 }) {
-                    Text("ẢNH")
-                        .font(.system(size: 13, weight: viewModel.captureMode == .photo ? .heavy : .medium))
+                    Text("Ảnh")
+                        .font(.system(size: 14, weight: viewModel.captureMode == .photo ? .bold : .medium))
                         .foregroundColor(viewModel.captureMode == .photo ? .yellow : .gray)
                 }
-                
+                .accessibilityLabel("Chế độ chụp ảnh")
+
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         viewModel.captureMode = .video
                     }
                 }) {
-                    Text("VIDEO")
-                        .font(.system(size: 13, weight: viewModel.captureMode == .video ? .heavy : .medium))
+                    Text("Video")
+                        .font(.system(size: 14, weight: viewModel.captureMode == .video ? .bold : .medium))
                         .foregroundColor(viewModel.captureMode == .video ? .yellow : .gray)
                 }
-                
+                .accessibilityLabel("Chế độ quay video")
+
                 Button(action: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         viewModel.captureMode = .proVideo
                     }
                 }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("VIDEO PRO")
-                            .font(.system(size: 13, weight: viewModel.captureMode == .proVideo ? .heavy : .medium))
-                    }
-                    .foregroundColor(viewModel.captureMode == .proVideo ? .yellow : .gray)
+                    Text("Pro")
+                        .font(.system(size: 14, weight: viewModel.captureMode == .proVideo ? .bold : .medium))
+                        .foregroundColor(viewModel.captureMode == .proVideo ? .yellow : .gray)
                 }
+                .accessibilityLabel("Chế độ quay video Pro")
             }
             .padding(.bottom, 8)
-            
+
             // Main Bottom Control Deck
             HStack(alignment: .center) {
                 // Left: Gallery Thumbnail
                 GalleryThumbnailButton(viewModel: viewModel)
                     .frame(width: 60, height: 60)
-                
+
                 Spacer()
-                
-                // Center: Capture / Record Button
+
+                // Center: Single Primary Capture / Record Button
                 MainCaptureButton(viewModel: viewModel)
-                
+
                 Spacer()
-                
-                // Right: Filter / Color Toggle
+
+                // Right: Color Drawer Toggle
                 FilterToggleButton(viewModel: viewModel)
                     .frame(width: 60, height: 60)
             }
@@ -92,14 +91,14 @@ public struct CustomAppIconView: View {
     let fallbackSF: String
     let size: CGFloat
     let color: Color
-    
+
     public init(name: String, fallbackSF: String, size: CGFloat, color: Color = .white) {
         self.name = name
         self.fallbackSF = fallbackSF
         self.size = size
         self.color = color
     }
-    
+
     public var body: some View {
         if let uiImage = UIImage(named: name) ?? UIImage(contentsOfFile: Bundle.main.path(forResource: name, ofType: "png") ?? "") {
             Image(uiImage: uiImage)
@@ -116,153 +115,66 @@ public struct CustomAppIconView: View {
     }
 }
 
-// MARK: - Main Capture Button (Photo AI / Photo Manual / Video Recording)
+// MARK: - Main Capture Button (Quiet Pro: Single Primary Shutter)
 struct MainCaptureButton: View {
     @ObservedObject var viewModel: CameraViewModel
-    
+
     var body: some View {
-        VStack(spacing: 6) {
-            if viewModel.captureMode.isVideo {
-                // Video Record Button (Red circle with square when recording)
-                Button(action: {
-                    viewModel.toggleVideoRecording()
-                }) {
-                    ZStack {
+        if viewModel.captureMode.isVideo {
+            // Video Record Button (Red circle with square when recording)
+            Button(action: {
+                viewModel.toggleVideoRecording()
+            }) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white, lineWidth: 3.5)
+                        .frame(width: 76, height: 76)
+
+                    if viewModel.isRecordingVideo {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.red)
+                            .frame(width: 28, height: 28)
+                    } else {
                         Circle()
-                            .stroke(Color.white, lineWidth: 3.5)
-                            .frame(width: 76, height: 76)
-                        
-                        if viewModel.isRecordingVideo {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.red)
-                                .frame(width: 28, height: 28)
-                        } else {
-                            Circle()
-                                .fill(Color.red)
-                                .frame(width: 62, height: 62)
-                        }
+                            .fill(Color.red)
+                            .frame(width: 62, height: 62)
                     }
-                    .contentShape(Circle())
                 }
-                .buttonStyle(PlainButtonStyle())
-            } else {
-                // Photo Mode
-                switch viewModel.aiSessionState {
-                case .idle, .done:
-                    HStack(spacing: 16) {
-                        // AI START button
-                        Button(action: {
-                            viewModel.startAISession()
-                        }) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.black.opacity(0.60))
-                                    .frame(width: 72, height: 72)
-                                
-                                Circle()
-                                    .stroke(Color.yellow, lineWidth: 2.8)
-                                    .frame(width: 72, height: 72)
-                                
-                                CustomAppIconView(
-                                    name: "iconbuttonAI",
-                                    fallbackSF: "wand.and.stars",
-                                    size: 38,
-                                    color: .yellow
-                                )
-                            }
-                            .contentShape(Circle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        
-                        // MANUAL SHUTTER
-                        Button(action: {
-                            viewModel.takePhotoManual()
-                        }) {
-                            ZStack {
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 3)
-                                    .frame(width: 72, height: 72)
-                                
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(
-                                        width: viewModel.isShutterPressing ? 52 : 60,
-                                        height: viewModel.isShutterPressing ? 52 : 60
-                                    )
-                            }
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .scaleEffect(viewModel.isShutterPressing ? 0.92 : 1.0)
-                        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: viewModel.isShutterPressing)
-                    }
-                    
-                case .analyzing:
-                    Button(action: {
-                        viewModel.cancelAISession()
-                    }) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.yellow.opacity(0.18))
-                                .frame(width: 80, height: 80)
-                            
-                            Circle()
-                                .stroke(Color.yellow, lineWidth: 2.5)
-                                .frame(width: 80, height: 80)
-                            
-                            VStack(spacing: 4) {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
-                                Text("HỦY")
-                                    .font(.system(size: 10, weight: .heavy, design: .rounded))
-                                    .foregroundColor(.yellow)
-                            }
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    
-                case .targetPlaced:
-                    Button(action: {
-                        viewModel.cancelAISession()
-                    }) {
-                        ZStack {
-                            Circle()
-                                .stroke(Color.orange, lineWidth: 2)
-                                .frame(width: 76, height: 76)
-                            
-                            VStack(spacing: 3) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 16, weight: .bold))
-                                    .foregroundColor(.orange)
-                                Text("HỦY AI")
-                                    .font(.system(size: 9, weight: .heavy, design: .rounded))
-                                    .foregroundColor(.orange)
-                            }
-                        }
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    
-                case .alignmentPerfect:
-                    ZStack {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 76, height: 76)
-                        
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 26, weight: .black))
-                            .foregroundColor(.black)
-                    }
-                    .scaleEffect(1.08)
-                    
-                case .capturing:
-                    ZStack {
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: 76, height: 76)
+                .contentShape(Circle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel(viewModel.isRecordingVideo ? "Dừng quay video" : "Bắt đầu quay video")
+        } else {
+            // Photo Mode: Single primary shutter button (White ring + white inner circle)
+            Button(action: {
+                if viewModel.aiSessionState != .capturing {
+                    viewModel.takePhotoManual()
+                }
+            }) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white, lineWidth: 3.5)
+                        .frame(width: 76, height: 76)
+
+                    Circle()
+                        .fill(Color.white)
+                        .frame(
+                            width: viewModel.isShutterPressing ? 54 : 62,
+                            height: viewModel.isShutterPressing ? 54 : 62
+                        )
+
+                    if case .capturing = viewModel.aiSessionState {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle(tint: .black))
                     }
                 }
+                .contentShape(Circle())
             }
+            .buttonStyle(PlainButtonStyle())
+            .scaleEffect(viewModel.isShutterPressing ? 0.92 : 1.0)
+            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: viewModel.isShutterPressing)
+            .disabled(viewModel.aiSessionState == .capturing)
+            .accessibilityLabel("Chụp ảnh")
         }
     }
 }
@@ -271,7 +183,7 @@ struct MainCaptureButton: View {
 struct ZoomSelectorPills: View {
     @ObservedObject var viewModel: CameraViewModel
     let options: [CGFloat]
-    
+
     var body: some View {
         HStack(spacing: 8) {
             ForEach(options, id: \.self) { zoom in
@@ -289,7 +201,7 @@ struct ZoomSelectorPills: View {
                         )
                 }
             }
-            
+
             // Chỉ báo mức zoom thực tế khi người dùng pinch-to-zoom thủ công ở các khoảng giữa
             let matchesStandardPill = options.contains { abs(viewModel.currentZoom - $0) < 0.15 }
             if !matchesStandardPill {
@@ -308,7 +220,7 @@ struct ZoomSelectorPills: View {
 // MARK: - Gallery Thumbnail Button
 struct GalleryThumbnailButton: View {
     @ObservedObject var viewModel: CameraViewModel
-    
+
     var body: some View {
         Button(action: {
             if viewModel.latestCapturedPhoto != nil {
@@ -319,7 +231,7 @@ struct GalleryThumbnailButton: View {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
                     .frame(width: 50, height: 50)
-                
+
                 if let photo = viewModel.latestCapturedPhoto {
                     Image(decorative: photo.processedImage, scale: 1.0, orientation: .up)
                         .resizable()
@@ -343,7 +255,7 @@ struct GalleryThumbnailButton: View {
 // MARK: - Filter Toggle Button
 struct FilterToggleButton: View {
     @ObservedObject var viewModel: CameraViewModel
-    
+
     var body: some View {
         Button(action: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
@@ -354,11 +266,11 @@ struct FilterToggleButton: View {
                 Circle()
                     .fill(Color.black.opacity(0.55))
                     .frame(width: 50, height: 50)
-                
+
                 Circle()
                     .stroke(viewModel.isAIFullColorEnabled ? Color.cyan : Color.white.opacity(0.35), lineWidth: 1.5)
                     .frame(width: 50, height: 50)
-                
+
                 CustomAppIconView(
                     name: "iconchonmau",
                     fallbackSF: "camera.filters",
@@ -374,42 +286,43 @@ struct FilterToggleButton: View {
 // MARK: - Film Preset Drawer (Thư Viện Màu Film Trực Quan Có Hình Ảnh Mẫu)
 struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
-    
+
     var body: some View {
         VStack(spacing: 8) {
             // Header: Tiêu đề & Tắt
             HStack {
-                HStack(spacing: 5) {
+                HStack(spacing: 6) {
                     Image(systemName: "camera.filters")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.yellow)
-                    Text("BỘ MÀU FILM NGHỆ THUẬT")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                    Text("Màu sắc")
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                 }
-                
+
                 Spacer()
-                
+
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                         viewModel.isShowingFilmDrawer = false
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 16))
+                        .font(.system(size: 18))
                         .foregroundColor(.white.opacity(0.6))
                 }
+                .accessibilityLabel("Đóng bảng màu")
             }
             .padding(.horizontal, 16)
             .padding(.top, 4)
-            
+
             // Danh sách ảnh mẫu ngang
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(FilmPreset.allCases) { preset in
                         let isSelected = viewModel.selectedFilmPreset == preset
                         let thumbImage = PresetThumbnailProvider.shared.thumbnail(for: preset)
-                        
+
                         Button(action: {
                             viewModel.selectPreset(preset)
                         }) {
@@ -433,16 +346,16 @@ struct FilmPresetDrawer: View {
                                         .overlay(
                                             // Viền nổi bật khi được chọn
                                             RoundedRectangle(cornerRadius: 12)
-                                                .stroke(isSelected ? (preset == .aiFullAuto ? Color.cyan : Color.yellow) : Color.white.opacity(0.15), lineWidth: isSelected ? 2.5 : 1)
+                                                .stroke(isSelected ? Color.yellow : Color.white.opacity(0.15), lineWidth: isSelected ? 2.5 : 1)
                                         )
-                                        .shadow(color: isSelected ? (preset == .aiFullAuto ? Color.cyan.opacity(0.4) : Color.yellow.opacity(0.4)) : Color.clear, radius: 6)
-                                    
+                                        .shadow(color: isSelected ? Color.yellow.opacity(0.4) : Color.clear, radius: 6)
+
                                     // 2. Tên viết tắt trên ảnh
                                     Text(preset.shortTitle)
                                         .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
                                         .foregroundColor(.white)
                                         .padding(.bottom, 3)
-                                    
+
                                     // 3. Dấu tích chọn góc trên
                                     if isSelected {
                                         VStack {
@@ -450,7 +363,7 @@ struct FilmPresetDrawer: View {
                                                 Spacer()
                                                 Image(systemName: "checkmark.circle.fill")
                                                     .font(.system(size: 13, weight: .bold))
-                                                    .foregroundColor(preset == .aiFullAuto ? .cyan : .yellow)
+                                                    .foregroundColor(.yellow)
                                                     .background(Circle().fill(Color.black).padding(1))
                                                     .padding(3)
                                             }
@@ -459,16 +372,18 @@ struct FilmPresetDrawer: View {
                                     }
                                 }
                                 .frame(width: 66, height: 66)
-                                
-                                // Tên đầy đủ bên dưới
-                                Text(preset.rawValue.components(separatedBy: " ").first ?? "")
+
+                                // Tên thân thiện bên dưới
+                                Text(preset.displayName)
                                     .font(.system(size: 10, weight: isSelected ? .bold : .medium))
-                                    .foregroundColor(isSelected ? (preset == .aiFullAuto ? .cyan : .yellow) : .white.opacity(0.85))
+                                    .foregroundColor(isSelected ? .yellow : .white.opacity(0.85))
                                     .lineLimit(1)
                             }
                             .scaleEffect(isSelected ? 1.04 : 1.0)
                             .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isSelected)
                         }
+                        .buttonStyle(PlainButtonStyle())
+                        .accessibilityLabel("Chọn màu \(preset.displayName)")
                     }
                 }
                 .padding(.horizontal, 16)
