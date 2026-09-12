@@ -3,7 +3,7 @@ import CoreGraphics
 import SwiftUI
 
 // MARK: - Composition Rule Types
-public enum CompositionRule: String, CaseIterable, Identifiable {
+public enum CompositionRule: String, CaseIterable, Identifiable, Sendable {
     case ruleOfThirds = "Rule of Thirds"
     case goldenRatio = "Golden Ratio"
     case goldenSpiral = "Golden Spiral"
@@ -29,6 +29,16 @@ public enum CompositionRule: String, CaseIterable, Identifiable {
         case .goldenSpiral: return "Xoắn ốc Fibonacci"
         case .centerSymmetry: return "Tâm đối xứng"
         case .dynamicAI: return "AI Tự động tối ưu"
+        }
+    }
+
+    public var descriptionVietnamese: String {
+        switch self {
+        case .ruleOfThirds: return "Đặt chủ thể tại 4 điểm giao thoa kinh điển"
+        case .goldenRatio: return "Bố cục tỷ lệ vàng 1:1.618 chuẩn thị giác"
+        case .goldenSpiral: return "Đường xoắn ốc dẫn dắt ánh nhìn vào tâm điểm"
+        case .centerSymmetry: return "Căn chủ thể chính xác tại tâm đối xứng"
+        case .dynamicAI: return "Tự động đề xuất bố cục theo ngữ cảnh"
         }
     }
 }
