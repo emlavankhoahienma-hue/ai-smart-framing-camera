@@ -356,6 +356,12 @@ public final class CameraViewModel: ObservableObject {
         if let modeRaw = defaults.string(forKey: "captureMode"), let mode = CameraCaptureMode(rawValue: modeRaw) {
             self.captureMode = mode
         }
+        if let photoFormatRaw = defaults.string(forKey: "selectedPhotoFormat"), let photoFormat = PhotoSaveFormat(rawValue: photoFormatRaw) {
+            self.selectedPhotoFormat = photoFormat
+        }
+        if defaults.object(forKey: "isGuidanceRayEnabled") != nil {
+            self.isGuidanceRayEnabled = defaults.bool(forKey: "isGuidanceRayEnabled")
+        }
         if defaults.object(forKey: "isAIFullColorEnabled") != nil {
             self.isAIFullColorEnabled = defaults.bool(forKey: "isAIFullColorEnabled")
         }
@@ -706,7 +712,7 @@ public final class CameraViewModel: ObservableObject {
         guard !isGeminiAnalyzing else { return }
         isGeminiAnalyzing = true
 
-        geminiService.analyzeForComposition(image: frame) { [weak self] result in
+        geminiService.analyzeForComposition(image: frame, sceneContext: self.detectedScene) { [weak self] result in
             guard let self = self else { return }
             self.isGeminiAnalyzing = false
 
@@ -1436,6 +1442,27 @@ public final class CameraViewModel: ObservableObject {
         var updatedMakerDict = makerDict
         updatedMakerDict["17"] = contentIdentifier
         updatedMetadata[makerAppleKey] = updatedMakerDict
+
+        // QUAN TRỌNG: SỬA LỖI XOAY NGANG LIVE PHOTO KHI XEM ẢNH TĨNH TRONG PHOTOS
+        // processedCGImage đã được xoay vật lý thành ảnh đứng (portrait) tại CameraService.
+        // Cần ghi đè EXIF Orientation về 1 (.up / Top, left) và cập nhật kích thước ảnh,
+        // nếu không Apple Photos sẽ xoay thêm 90 độ khiến ảnh tĩnh bị nằm ngang!
+        updatedMetadata[kCGImagePropertyOrientation as String] = 1
+        if var tiffDict = updatedMetadata[kCGImagePropertyTIFFDictionary as String] as? [String: Any] {
+            tiffDict[kCGImagePropertyTIFFOrientation as String] = 1
+            updatedMetadata[kCGImagePropertyTIFFDictionary as String] = tiffDict
+        }
+        if var iptcDict = updatedMetadata[kCGImagePropertyIPTCDictionary as String] as? [String: Any] {
+            iptcDict["Orientation"] = 1
+            updatedMetadata[kCGImagePropertyIPTCDictionary as String] = iptcDict
+        }
+        updatedMetadata[kCGImagePropertyPixelWidth as String] = processedCGImage.width
+        updatedMetadata[kCGImagePropertyPixelHeight as String] = processedCGImage.height
+        if var exifDict = updatedMetadata[kCGImagePropertyExifDictionary as String] as? [String: Any] {
+            exifDict[kCGImagePropertyExifPixelXDimension as String] = processedCGImage.width
+            exifDict[kCGImagePropertyExifPixelYDimension as String] = processedCGImage.height
+            updatedMetadata[kCGImagePropertyExifDictionary as String] = exifDict
+        }
 
         let outputData = NSMutableData()
         let uti: CFString = (selectedPhotoFormat == .heic) ? (UTType.heic.identifier as CFString) : (UTType.jpeg.identifier as CFString)

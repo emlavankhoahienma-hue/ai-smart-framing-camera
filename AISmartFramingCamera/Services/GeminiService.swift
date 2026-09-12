@@ -59,13 +59,13 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     case gemini31Pro = "gemini-3.1-pro"
     case gemini25Flash = "gemini-2.5-flash"
     case gemini20Flash = "gemini-2.0-flash"
-    
+
     // Legacy support
     case gemini15Flash = "gemini-1.5-flash"
     case gemini15Pro = "gemini-1.5-pro"
-    
+
     public var id: String { rawValue }
-    
+
     public var displayName: String {
         switch self {
         case .autoStrongest:
@@ -88,7 +88,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             return "💎 Gemini 1.5 Pro"
         }
     }
-    
+
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
@@ -97,7 +97,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             return rawValue
         }
     }
-    
+
     /// Sequence of standard verified models to try in auto mode
     public static var autoFallbackChain: [String] {
         [
@@ -115,17 +115,31 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
 // MARK: - Gemini Response Models
 
+public struct ImageColorMetrics {
+    public let averageLuma: Float
+    public let avgRed: Float
+    public let avgGreen: Float
+    public let avgBlue: Float
+    public let warmthCast: Float
+    public let tintCast: Float
+    public let contrastScore: Float
+    public let lightingSummary: String
+}
+
 public struct GeminiColorRecipe {
-    public let temperatureK: Float     // 5200 - 6800 (tự nhiên chân thực)
-    public let saturation: Float       // 0.95 - 1.08 (tươi tắn dịu nhẹ)
-    public let contrast: Float         // 0.98 - 1.06 (micro-contrast mượt mà)
-    public let shadowLift: Float       // 0.00 - 0.03 (vùng tối mềm mại)
-    public let highlightRoll: Float    // 0.96 - 1.00 (giữ chi tiết mây trời)
-    public let grain: Float            // 0.00 - 0.02 (sạch sẽ không nhiễu)
-    public let vignette: Float         // 0.00 - 0.04 (tự nhiên)
-    public let warmthShift: Float      // -0.10 đến +0.10 (vi mô)
+    public let temperatureK: Float     // 3500 - 8500
+    public let saturation: Float       // 0.70 - 1.40
+    public let contrast: Float         // 0.85 - 1.30
+    public let shadowLift: Float       // 0.00 - 0.25
+    public let highlightRoll: Float    // 0.70 - 1.00
+    public let grain: Float            // 0.00 - 0.05
+    public let vignette: Float         // 0.00 - 0.35
+    public let warmthShift: Float      // -0.40 đến +0.40
+    public let tintShift: Float        // -0.30 đến +0.30
+    public let exposureBias: Float     // -1.2 đến +1.2 EV
     public let colorGrade: AIColorGrade
-    
+    public let diagnosis: String       // Lời giải thích và chẩn đoán bối cảnh màu
+
     public var asAIColorParameters: AIColorParameters {
         return AIColorParameters(
             warmthShift: CGFloat(warmthShift),
@@ -135,10 +149,12 @@ public struct GeminiColorRecipe {
             highlightRoll: CGFloat(highlightRoll),
             filmGrain: CGFloat(grain),
             vignetteAmount: CGFloat(vignette),
-            colorGrade: colorGrade
+            colorGrade: colorGrade,
+            exposureBias: CGFloat(exposureBias),
+            tintShift: CGFloat(tintShift)
         )
     }
-    
+
     public static let defaultRecipe = GeminiColorRecipe(
         temperatureK: 5500,
         saturation: 1.02,
@@ -148,7 +164,10 @@ public struct GeminiColorRecipe {
         grain: 0.00,
         vignette: 0.00,
         warmthShift: 0.0,
-        colorGrade: .softwarm
+        tintShift: 0.0,
+        exposureBias: 0.0,
+        colorGrade: .softwarm,
+        diagnosis: "Màu sắc tự nhiên cân bằng"
     )
 }
 
@@ -176,7 +195,7 @@ public enum GeminiError: LocalizedError {
     case invalidResponse
     case parseError(String)
     case allModelsFailed(String)
-    
+
     public var errorDescription: String? {
         switch self {
         case .noAPIKey:
@@ -205,7 +224,7 @@ public enum GeminiError: LocalizedError {
 
 public final class GeminiService {
     public static let shared = GeminiService()
-    
+
     // Persistent API Key (Secure Keychain with UserDefaults migration fallback)
     public var apiKey: String {
         get {
@@ -230,9 +249,9 @@ public final class GeminiService {
             UserDefaults.standard.removeObject(forKey: "gemini_api_key")
         }
     }
-    
+
     public var hasAPIKey: Bool { !apiKey.isEmpty }
-    
+
     // Selected Model Setting
     public var selectedModel: AIVisionModel {
         get {
@@ -243,29 +262,29 @@ public final class GeminiService {
             UserDefaults.standard.set(newValue.rawValue, forKey: "gemini_selected_model")
         }
     }
-    
+
     // Custom Model Name (if specified)
     public var customModelName: String {
         get { (UserDefaults.standard.string(forKey: "gemini_custom_model_name") ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
         set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "gemini_custom_model_name") }
     }
-    
+
     // Live Inspection Observables
     public private(set) var lastLatencyMs: Int = 0
     public private(set) var lastModelUsed: String = ""
     public private(set) var lastExplanation: String = ""
-    
+
     private let urlSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 40
         return URLSession(configuration: config)
     }()
-    
+
     public init() {}
-    
+
     // MARK: - Test API Key Connection (Fast Multi-Model Ping & Auto-Discovery)
-    
+
     public func testAPIKey() async -> (Bool, String) {
         await withCheckedContinuation { continuation in
             testAPIKey { success, message in
@@ -280,15 +299,15 @@ public final class GeminiService {
             completion(false, "API Key đang trống. Hãy dán key từ Google AI Studio.")
             return
         }
-        
+
         var testCandidates = AIVisionModel.autoFallbackChain
         if !customModelName.isEmpty {
             testCandidates.insert(customModelName, at: 0)
         }
-        
+
         testModelCandidate(candidates: testCandidates, index: 0, key: key, completion: completion)
     }
-    
+
     private func testModelCandidate(
         candidates: [String],
         index: Int,
@@ -299,24 +318,24 @@ public final class GeminiService {
             completion(false, "❌ Đã thử tất cả model nhưng key bị giới hạn quota hoặc chưa bật. Thử tạo key mới.")
             return
         }
-        
+
         let testModel = candidates[index]
         let isOpenRouter = key.hasPrefix("sk-or-")
-        
+
         guard let url = buildURL(for: testModel, key: key) else {
             completion(false, "URL không hợp lệ.")
             return
         }
-        
+
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         if isOpenRouter {
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             request.setValue("AlignAI Studio", forHTTPHeaderField: "HTTP-Referer")
             request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
-            
+
             let body: [String: Any] = [
                 "model": testModel,
                 "messages": [
@@ -337,22 +356,22 @@ public final class GeminiService {
             ]
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
-        
+
         let startTime = CACurrentMediaTime()
         urlSession.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
             let latency = Int((CACurrentMediaTime() - startTime) * 1000)
-            
+
             if let error = error {
                 DispatchQueue.main.async { completion(false, "Lỗi mạng: \(error.localizedDescription)") }
                 return
             }
-            
+
             guard let data = data, let http = response as? HTTPURLResponse else {
                 DispatchQueue.main.async { completion(false, "Không nhận được phản hồi.") }
                 return
             }
-            
+
             if http.statusCode == 200 {
                 self.lastModelUsed = testModel
                 DispatchQueue.main.async {
@@ -367,11 +386,89 @@ public final class GeminiService {
             }
         }.resume()
     }
-    
+
+    // MARK: - Color Metrics & Scene Lighting Extraction
+    public static func extractColorMetrics(from image: CGImage) -> ImageColorMetrics {
+        let width = 48
+        let height = 48
+        var rawBytes = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(
+            data: &rawBytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        )
+        context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var totalR: Float = 0
+        var totalG: Float = 0
+        var totalB: Float = 0
+        var totalLuma: Float = 0
+        var lumas: [Float] = []
+        lumas.reserveCapacity(width * height)
+
+        let totalPixels = Float(width * height)
+        for i in 0..<(width * height) {
+            let offset = i * 4
+            let r = Float(rawBytes[offset]) / 255.0
+            let g = Float(rawBytes[offset + 1]) / 255.0
+            let b = Float(rawBytes[offset + 2]) / 255.0
+            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            totalR += r
+            totalG += g
+            totalB += b
+            totalLuma += luma
+            lumas.append(luma)
+        }
+
+        let avgR = totalR / totalPixels
+        let avgG = totalG / totalPixels
+        let avgB = totalB / totalPixels
+        let avgLuma = totalLuma / totalPixels
+
+        let warmthCast = (avgR - avgB) / max(0.01, (avgR + avgB))
+        let tintCast = (avgG - (avgR + avgB) * 0.5) / max(0.01, avgG)
+
+        let variance = lumas.reduce(0) { $0 + pow($1 - avgLuma, 2) } / totalPixels
+        let contrastScore = sqrt(variance)
+
+        let summary: String
+        if avgLuma < 0.25 {
+            summary = "Thiếu sáng / Chụp đêm (Low-light)"
+        } else if avgLuma > 0.75 {
+            summary = "Thừa sáng / Chói nắng (Overexposed)"
+        } else if contrastScore > 0.28 {
+            summary = "Tương phản mạnh / Ngược sáng (High Contrast / Backlit)"
+        } else if warmthCast > 0.25 {
+            summary = "Ám vàng / Ánh sáng ấm hoàng hôn hoặc đèn sợi đốt (Warm Cast)"
+        } else if warmthCast < -0.25 {
+            summary = "Ám xanh / Ánh sáng lạnh hoặc bóng râm (Cool Cast)"
+        } else {
+            summary = "Ánh sáng tự nhiên cân bằng (Balanced Daylight)"
+        }
+
+        return ImageColorMetrics(
+            averageLuma: avgLuma,
+            avgRed: avgR,
+            avgGreen: avgG,
+            avgBlue: avgB,
+            warmthCast: warmthCast,
+            tintCast: tintCast,
+            contrastScore: contrastScore,
+            lightingSummary: summary
+        )
+    }
+
     // MARK: - Main Analysis Call with Intelligent Multi-Model Auto-Rotation
-    
+
     public func analyzeForComposition(
         image: CGImage,
+        sceneContext: DetectedSceneType? = nil,
+        colorMetrics: ImageColorMetrics? = nil,
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
         let key = apiKey
@@ -379,15 +476,16 @@ public final class GeminiService {
             completion(.failure(.noAPIKey))
             return
         }
-        
+
         let uiImage = UIImage(cgImage: image)
         guard let jpegData = uiImage.jpegData(compressionQuality: 0.65) else {
             completion(.failure(.imageConversionFailed))
             return
         }
         let base64Image = jpegData.base64EncodedString()
-        let prompt = buildPrompt()
-        
+        let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
+        let prompt = buildPrompt(sceneContext: sceneContext, colorMetrics: metrics)
+
         var chain = AIVisionModel.autoFallbackChain
         if !customModelName.isEmpty {
             chain.insert(customModelName, at: 0)
@@ -395,9 +493,9 @@ public final class GeminiService {
             chain.removeAll(where: { $0 == selectedModel.technicalModelID })
             chain.insert(selectedModel.technicalModelID, at: 0)
         }
-        
+
         let startTime = CACurrentMediaTime()
-        
+
         tryModelChain(
             chain: chain,
             index: 0,
@@ -409,7 +507,23 @@ public final class GeminiService {
             completion: completion
         )
     }
-    
+
+    public func analyzeSceneColorAndGrade(
+        image: CGImage,
+        sceneType: DetectedSceneType = .general,
+        completion: @escaping (Result<GeminiColorRecipe, GeminiError>) -> Void
+    ) {
+        let metrics = Self.extractColorMetrics(from: image)
+        analyzeForComposition(image: image, sceneContext: sceneType, colorMetrics: metrics) { result in
+            switch result {
+            case .success(let response):
+                completion(.success(response.colorRecipe))
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+
     private func tryModelChain(
         chain: [String],
         index: Int,
@@ -425,7 +539,7 @@ public final class GeminiService {
             completion(.failure(.allModelsFailed(finalMsg)))
             return
         }
-        
+
         let currentModelID = chain[index]
         executeModelCall(
             modelID: currentModelID,
@@ -444,7 +558,7 @@ public final class GeminiService {
                     completion(.failure(error))
                     return
                 }
-                
+
                 // On 429 quota or 404 or server error, immediately rotate to next model
                 self.tryModelChain(
                     chain: chain,
@@ -459,7 +573,7 @@ public final class GeminiService {
             }
         }
     }
-    
+
     private func executeModelCall(
         modelID: String,
         base64Image: String,
@@ -472,18 +586,18 @@ public final class GeminiService {
             completion(.failure(.invalidURL))
             return
         }
-        
+
         let isOpenRouter = key.hasPrefix("sk-or-")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         var requestBody: [String: Any] = [:]
         if isOpenRouter {
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             request.setValue("AlignAI Studio", forHTTPHeaderField: "HTTP-Referer")
             request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
-            
+
             requestBody = [
                 "model": modelID,
                 "messages": [
@@ -534,30 +648,30 @@ public final class GeminiService {
                 ]
             ]
         }
-        
+
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
             completion(.failure(.parseError("Không thể tạo JSON")))
             return
         }
         request.httpBody = bodyData
-        
+
         urlSession.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
             let latency = Int((CACurrentMediaTime() - startTime) * 1000)
-            
+
             if let error = error {
                 DispatchQueue.main.async { completion(.failure(.networkError(error))) }
                 return
             }
-            
+
             guard let data = data else {
                 DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
                 return
             }
-            
+
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
                 let errorDetails = Self.extractErrorMessage(from: data, isOpenRouter: isOpenRouter) ?? "HTTP \(httpResponse.statusCode)"
-                
+
                 if httpResponse.statusCode == 400 && (errorDetails.contains("API_KEY_INVALID") || errorDetails.contains("API key not valid")) {
                     DispatchQueue.main.async { completion(.failure(.invalidAPIKey(errorDetails))) }
                     return
@@ -570,15 +684,15 @@ public final class GeminiService {
                     DispatchQueue.main.async { completion(.failure(.rateLimited("\(modelID) hết quota (429)"))) }
                     return
                 }
-                
+
                 DispatchQueue.main.async {
                     completion(.failure(.parseError("\(modelID) [HTTP \(httpResponse.statusCode)]: \(errorDetails)")))
                 }
                 return
             }
-            
+
             var responseText: String?
-            
+
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 if isOpenRouter {
                     if let choices = json["choices"] as? [[String: Any]],
@@ -598,12 +712,12 @@ public final class GeminiService {
                     }
                 }
             }
-            
+
             guard let text = responseText else {
                 DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
                 return
             }
-            
+
             // Clean markdown if present
             var cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if cleanText.hasPrefix("```json") {
@@ -618,24 +732,24 @@ public final class GeminiService {
                 }
             }
             cleanText = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
-            
+
             guard let jsonData = cleanText.data(using: .utf8),
                   let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
                 DispatchQueue.main.async { completion(.failure(.parseError("JSON không hợp lệ: \(cleanText.prefix(80))"))) }
                 return
             }
-            
+
             self.lastLatencyMs = latency
             self.lastModelUsed = modelID
             let result = Self.parseGeminiResponse(parsed, modelUsed: modelID, latencyMs: latency)
             self.lastExplanation = result.explanation
-            
+
             DispatchQueue.main.async { completion(.success(result)) }
         }.resume()
     }
-    
+
     // MARK: - Helpers
-    
+
     private func buildURL(for modelID: String, key: String) -> URL? {
         let isOpenRouter = key.hasPrefix("sk-or-")
         if isOpenRouter {
@@ -644,99 +758,123 @@ public final class GeminiService {
         let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
         return URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelID):generateContent?key=\(encodedKey)")
     }
-    
+
     private static func extractErrorMessage(from data: Data, isOpenRouter: Bool = false) -> String? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        
+
         if isOpenRouter {
             if let errorObj = json["error"] as? [String: Any], let msg = errorObj["message"] as? String {
                 return msg
             }
         }
-        
+
         guard let errorObj = json["error"] as? [String: Any] else { return nil }
         return errorObj["message"] as? String
     }
-    
+
     // MARK: - Prompt
-    
-    private func buildPrompt() -> String {
-        """
-        You are a World-Class Master Cinematographer & Hasselblad / Leica Colorist AI. Analyze this camera image to optimize composition, focal zoom, and TRUE-TO-LIFE natural studio color science.
-        
-        CRITICAL COLOR SCIENCE RULES:
-        1. Produce NATURAL, TRUE-TO-LIFE, ORGANIC colors (Leica Natural Color Science).
-        2. DO NOT apply tacky, cartoonish, oversaturated, or heavy color cast filters.
-        3. Protect authentic human skin tones (rosy, natural, healthy — never yellowish or orange).
-        4. Suggest optimal focal zoom: 1.0 (for wide landscapes), 1.5 - 2.5 (for portraits, food, macro, text details to eliminate wide-angle lens facial distortion).
-        
-        Return ONLY valid JSON (no markdown fences, just pure JSON):
+
+    private func buildPrompt(sceneContext: DetectedSceneType? = nil, colorMetrics: ImageColorMetrics? = nil) -> String {
+        var contextInfo = ""
+        if let scene = sceneContext {
+            contextInfo += "\nBối cảnh khung cảnh nhận diện: \(scene.localizedName)"
+        }
+        if let metrics = colorMetrics {
+            contextInfo += """
+            \nThông số đo sáng & màu sắc thực tế từ cảm biến ảnh:
+            - Tình trạng ánh sáng: \(metrics.lightingSummary)
+            - Độ sáng trung bình (Luma): \(String(format: "%.2f", metrics.averageLuma)) (0.0=tối đen, 1.0=cháy trắng)
+            - Kênh màu trung bình: R: \(String(format: "%.2f", metrics.avgRed)), G: \(String(format: "%.2f", metrics.avgGreen)), B: \(String(format: "%.2f", metrics.avgBlue))
+            - Độ lệch ấm/lạnh (Warmth): \(String(format: "%.2f", metrics.warmthCast)) (-1.0=lạnh/xanh, +1.0=ấm/vàng)
+            - Độ tương phản thực tế: \(String(format: "%.2f", metrics.contrastScore))
+            """
+        }
+
+        return """
+        Bạn là Đạo diễn Hình ảnh & Chuyên gia Chỉnh màu Điện ảnh (Master Colorist & Cinematographer) của Leica và Hasselblad.
+        Hãy phân tích bức ảnh này cùng với bối cảnh và các thông số đo sáng thực tế dưới đây để đưa ra điểm bố cục tối ưu và bộ công thức cân chỉnh màu sắc chuyên nghiệp nhất.
+        \(contextInfo)
+
+        CHỈ THỊ CÂN CHỈNH MÀU SẮC (COLOR SCIENCE DIRECTIVES):
+        1. Phản ứng chuẩn xác theo điều kiện ánh sáng thực tế:
+           - Nếu thiếu sáng: nâng shadow (+0.08 đến +0.22), bù sáng exposure (+0.2 đến +0.6 EV), giữ contrast dịu.
+           - Nếu ngược sáng / chói: giảm highlight roll (0.75 đến 0.90), bù sáng nhẹ để làm rõ chủ thể mà không làm cháy phông nền.
+           - Nếu ám vàng hoặc ám xanh: tự động điều chỉnh nhiệt độ màu (warmth_shift) và sắc độ (tint_shift) để trả lại màu trắng trung tính và sắc màu chân thực.
+        2. Bảo vệ tuyệt đối màu da người: giữ da trắng hồng, tự nhiên, khỏe khoắn, không bị ám vàng nghệ hay đỏ gắt.
+        3. Chọn phong cách màu (color_grade) điện ảnh phù hợp nhất: ["softwarm", "vibrant", "coolnatural", "golden", "tealOrange", "moody", "classic", "cinematic"].
+
+        Trả về DUY NHẤT một chuỗi JSON hợp lệ (không chứa markdown fences ```):
         {
-          "target_x": 0.618,
-          "target_y": 0.382,
-          "suggested_zoom": 1.5,
+          "target_x": 0.5,
+          "target_y": 0.5,
+          "suggested_zoom": 1.0,
           "scene_type": "portrait",
           "composition_rule": "golden_ratio",
-          "explanation": "Chân dung tự nhiên: Khóa mắt vào giao điểm tỷ lệ vàng, tự động zoom 1.5x giảm méo góc rộng.",
+          "explanation": "Chân dung tự nhiên: Khóa mắt vào giao điểm tỷ lệ vàng, tự động zoom nhẹ giảm méo viền.",
           "color_recipe": {
-            "temperature_k": 5500,
-            "saturation": 1.02,
-            "contrast": 1.03,
-            "shadow_lift": 0.01,
-            "highlight_roll": 0.98,
+            "temperature_k": 5600,
+            "warmth_shift": 0.04,
+            "tint_shift": -0.02,
+            "exposure_bias": 0.15,
+            "saturation": 1.06,
+            "contrast": 1.04,
+            "shadow_lift": 0.06,
+            "highlight_roll": 0.92,
             "grain": 0.00,
-            "vignette": 0.00,
-            "warmth_shift": 0.00,
-            "color_grade": "softwarm"
+            "vignette": 0.04,
+            "color_grade": "softwarm",
+            "diagnosis": "Bối cảnh ngược sáng: bù sáng +0.15EV, nâng chi tiết bóng tối và giữ mây trời tự nhiên."
           }
         }
-        
-        Constraints:
-        - target_x: 0.05 to 0.95
-        - target_y: 0.05 to 0.95
-        - suggested_zoom: 1.0 to 3.0
-        - temperature_k: 5000 to 6500
-        - saturation: 0.95 to 1.08
-        - contrast: 0.98 to 1.06
-        - shadow_lift: 0.00 to 0.03
-        - highlight_roll: 0.96 to 1.00
-        - grain: 0.00 to 0.02
-        - vignette: 0.00 to 0.04
-        - warmth_shift: -0.10 to 0.10
-        - explanation: Short Vietnamese advice (1 sentence)
+
+        Giới hạn thông số:
+        - target_x, target_y: 0.05 đến 0.95
+        - suggested_zoom: 1.0 đến 3.0
+        - temperature_k: 3500 đến 8500
+        - warmth_shift: -0.40 đến 0.40
+        - tint_shift: -0.30 đến 0.30
+        - exposure_bias: -1.2 đến 1.2
+        - saturation: 0.70 đến 1.40
+        - contrast: 0.85 đến 1.30
+        - shadow_lift: 0.00 đến 0.25
+        - highlight_roll: 0.70 đến 1.00
+        - vignette: 0.00 đến 0.35
+        - explanation: 1 câu tư vấn bố cục tiếng Việt ngắn gọn
+        - diagnosis: 1 câu tóm tắt chẩn đoán ánh sáng và tinh chỉnh màu tiếng Việt
         """
     }
-    
+
     // MARK: - Response Parsing
-    
+
     private static func parseGeminiResponse(_ json: [String: Any], modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
-        // Default là TÂM MÀN HÌNH (vị trí trung lập) — trước đây 0.618/0.382 khiến pin
-        // lệch xa chủ thể thật khi model không trả target_x/target_y
         let targetX = parseCGFloat(json["target_x"], defaultVal: 0.5)
         let targetY = parseCGFloat(json["target_y"], defaultVal: 0.5)
         let suggestedZoom = parseCGFloat(json["suggested_zoom"], defaultVal: 1.0)
         let explanation = (json["explanation"] as? String) ?? "AI phân tích bố cục hoàn tất"
-        
+
         let sceneType = parseSceneType((json["scene_type"] as? String) ?? "general")
         let compositionRule = parseCompositionRule((json["composition_rule"] as? String) ?? "golden_ratio")
-        
+
         var colorRecipe = GeminiColorRecipe.defaultRecipe
         if let colorJson = json["color_recipe"] as? [String: Any] {
             let gradeStr = (colorJson["color_grade"] as? String) ?? "softwarm"
             let grade = parseColorGrade(gradeStr)
             colorRecipe = GeminiColorRecipe(
                 temperatureK: parseFloat(colorJson["temperature_k"], defaultVal: 5500),
-                saturation: clampF(colorJson["saturation"], 0.90, 1.15, 1.02),
-                contrast: clampF(colorJson["contrast"], 0.95, 1.10, 1.02),
-                shadowLift: clampF(colorJson["shadow_lift"], 0.00, 0.05, 0.01),
-                highlightRoll: clampF(colorJson["highlight_roll"], 0.95, 1.00, 0.98),
-                grain: clampF(colorJson["grain"], 0.00, 0.03, 0.00),
-                vignette: clampF(colorJson["vignette"], 0.00, 0.05, 0.00),
-                warmthShift: clampF(colorJson["warmth_shift"], -0.15, 0.15, 0.0),
-                colorGrade: grade
+                saturation: clampF(colorJson["saturation"], 0.70, 1.40, 1.04),
+                contrast: clampF(colorJson["contrast"], 0.85, 1.30, 1.04),
+                shadowLift: clampF(colorJson["shadow_lift"], 0.00, 0.25, 0.02),
+                highlightRoll: clampF(colorJson["highlight_roll"], 0.70, 1.00, 0.95),
+                grain: clampF(colorJson["grain"], 0.00, 0.05, 0.00),
+                vignette: clampF(colorJson["vignette"], 0.00, 0.35, 0.00),
+                warmthShift: clampF(colorJson["warmth_shift"], -0.40, 0.40, 0.0),
+                tintShift: clampF(colorJson["tint_shift"], -0.30, 0.30, 0.0),
+                exposureBias: clampF(colorJson["exposure_bias"], -1.2, 1.2, 0.0),
+                colorGrade: grade,
+                diagnosis: (colorJson["diagnosis"] as? String) ?? "Đã cân chỉnh màu sắc thích ứng bối cảnh"
             )
         }
-        
+
         return GeminiFramingResponse(
             targetX: max(0.05, min(0.95, targetX)),
             targetY: max(0.05, min(0.95, targetY)),
@@ -749,9 +887,9 @@ public final class GeminiService {
             latencyMs: latencyMs
         )
     }
-    
+
     // MARK: - Parse Helpers
-    
+
     private static func parseFloat(_ val: Any?, defaultVal: Float) -> Float {
         if let num = val as? NSNumber { return num.floatValue }
         if let d = val as? Double { return Float(d) }
@@ -759,7 +897,7 @@ public final class GeminiService {
         if let s = val as? String, let f = Float(s) { return f }
         return defaultVal
     }
-    
+
     private static func parseCGFloat(_ val: Any?, defaultVal: CGFloat) -> CGFloat {
         if let num = val as? NSNumber { return CGFloat(num.doubleValue) }
         if let d = val as? Double { return CGFloat(d) }
@@ -767,22 +905,22 @@ public final class GeminiService {
         if let s = val as? String, let d = Double(s) { return CGFloat(d) }
         return defaultVal
     }
-    
-    private static func clampF(_ val: Any?, _ lo: Float, _ hi: Float, _ def: Float) -> Float {
-        let f = parseFloat(val, defaultVal: def)
-        return max(lo, min(hi, f))
+
+    private static func clampF(_ val: Any?, _ minV: Float, _ maxV: Float, _ defV: Float) -> Float {
+        let v = parseFloat(val, defaultVal: defV)
+        return max(minV, min(maxV, v))
     }
-    
+
     private static func parseSceneType(_ s: String) -> DetectedSceneType {
         switch s.lowercased() {
-        case "portrait": return .portrait
-        case "pet", "animal": return .pet
-        case "landscape": return .landscape
+        case "portrait", "person", "human", "face": return .portrait
+        case "pet", "animal", "dog", "cat": return .pet
+        case "landscape", "nature", "outdoor": return .landscape
         case "sunset", "sunrise", "golden_hour": return .sunset
         case "architecture", "building": return .architecture
-        case "sky", "cloud", "clouds": return .sky
+        case "sky", "cloud": return .sky
         case "water", "sea", "ocean", "river": return .water
-        case "foliage", "tree", "plant", "nature": return .foliage
+        case "foliage", "plant", "flower", "tree": return .foliage
         case "night", "dark": return .night
         case "food": return .food
         case "macro": return .macro
@@ -790,7 +928,7 @@ public final class GeminiService {
         default: return .general
         }
     }
-    
+
     private static func parseCompositionRule(_ s: String) -> CompositionRule {
         switch s.lowercased() {
         case "rule_of_thirds", "ruleofthirds": return .ruleOfThirds
@@ -800,7 +938,7 @@ public final class GeminiService {
         default: return .goldenRatio
         }
     }
-    
+
     private static func parseColorGrade(_ s: String) -> AIColorGrade {
         switch s.lowercased() {
         case "softwarm": return .softwarm
@@ -810,6 +948,7 @@ public final class GeminiService {
         case "moody": return .moody
         case "vibrant": return .vibrant
         case "classic": return .classic
+        case "cinematic", "cinematic_film": return .cinematic
         default: return .softwarm
         }
     }

@@ -250,7 +250,8 @@ public struct CapturedPhotoPreviewView: View {
         aiErrorMessage = nil
         aiOptimizationSuccessNote = nil
 
-        GeminiService.shared.analyzeForComposition(image: item.originalImage) { result in
+        let metrics = GeminiService.extractColorMetrics(from: item.originalImage)
+        GeminiService.shared.analyzeForComposition(image: item.originalImage, sceneContext: item.sceneType, colorMetrics: metrics) { result in
             DispatchQueue.main.async {
                 self.isOptimizingWithAI = false
                 switch result {
@@ -261,7 +262,7 @@ public struct CapturedPhotoPreviewView: View {
                             self.currentProcessedImage = enhanced
                             self.splitOffset = 1.0
                         }
-                        self.aiOptimizationSuccessNote = "Đã tối ưu màu sắc (\(response.latencyMs)ms)"
+                        self.aiOptimizationSuccessNote = "\(response.colorRecipe.diagnosis) (\(response.latencyMs)ms)"
                         self.saveEnhancedImageToPhotos(enhanced)
                     }
                 case .failure(let error):

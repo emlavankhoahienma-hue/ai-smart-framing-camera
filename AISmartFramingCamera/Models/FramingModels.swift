@@ -364,6 +364,7 @@ public enum AIColorGrade: String {
     case moody = "Dark Moody"
     case vibrant = "Vibrant"
     case classic = "Classic BW"
+    case cinematic = "Cinematic Film"
 }
 
 public struct AIColorParameters {
@@ -373,9 +374,9 @@ public struct AIColorParameters {
     public let saturationBoost: CGFloat
     /// 0.8 (flat) to 1.5 (punchy)
     public let contrastCurve: CGFloat
-    /// 0.0 (deep blacks) to 0.1 (lifted shadows)
+    /// 0.0 (deep blacks) to 0.25 (lifted shadows)
     public let shadowLift: CGFloat
-    /// 0.85 (soft highlights) to 1.0 (hard highlights)
+    /// 0.75 (soft highlights) to 1.0 (hard highlights)
     public let highlightRoll: CGFloat
     /// 0.0 (no grain) to 0.5 (heavy grain)
     public let filmGrain: CGFloat
@@ -383,6 +384,34 @@ public struct AIColorParameters {
     public let vignetteAmount: CGFloat
     /// Color grading style
     public let colorGrade: AIColorGrade
+    /// -1.0 to +1.0 EV exposure compensation
+    public var exposureBias: CGFloat = 0.0
+    /// -0.3 (green) to +0.3 (magenta)
+    public var tintShift: CGFloat = 0.0
+
+    public init(
+        warmthShift: CGFloat,
+        saturationBoost: CGFloat,
+        contrastCurve: CGFloat,
+        shadowLift: CGFloat,
+        highlightRoll: CGFloat,
+        filmGrain: CGFloat,
+        vignetteAmount: CGFloat,
+        colorGrade: AIColorGrade,
+        exposureBias: CGFloat = 0.0,
+        tintShift: CGFloat = 0.0
+    ) {
+        self.warmthShift = warmthShift
+        self.saturationBoost = saturationBoost
+        self.contrastCurve = contrastCurve
+        self.shadowLift = shadowLift
+        self.highlightRoll = highlightRoll
+        self.filmGrain = filmGrain
+        self.vignetteAmount = vignetteAmount
+        self.colorGrade = colorGrade
+        self.exposureBias = exposureBias
+        self.tintShift = tintShift
+    }
 }
 
 // MARK: - Legacy FramingAlignmentState (kept for compatibility)

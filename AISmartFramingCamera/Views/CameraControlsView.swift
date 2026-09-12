@@ -151,74 +151,60 @@ struct CameraModeSegmentedSwitcher: View {
 // MARK: - Main Capture Button (Photo: AI Compose Pill + Central Shutter / Video: Record)
 struct MainCaptureButton: View {
     @ObservedObject var viewModel: CameraViewModel
+    @State private var dragOffset: CGFloat = 0
+    @State private var isDraggingToAI: Bool = false
+    @State private var hasTriggeredAI: Bool = false
 
     var body: some View {
         if viewModel.captureMode.isVideo {
             videoRecordButton
         } else {
-            photoCaptureColumn
+            photoCaptureControls
         }
     }
 
-    // MARK: - Photo Capture Column (AI Pill + Central Shutter)
-    private var photoCaptureColumn: some View {
-        VStack(spacing: 8) {
-            aiComposePill
-            centralShutterButton
+    // MARK: - Photo Capture Controls (Central Shutter + Drag-Left to AI Compose Dock)
+    private var photoCaptureControls: some View {
+        ZStack {
+            // AI Compose Left Dock Target (Hiển thị điểm khóa khi kéo sang trái)
+            aiComposeDockTarget
+
+            // Nút Chụp Trung Tâm với cử chỉ Chạm để chụp / Giữ & Kéo sang trái để AI Compose
+            centralShutterView
         }
+        .frame(width: 156, height: 74)
     }
 
-    // MARK: - AI Compose Pill (Compact ~28pt pill above shutter)
-    private var aiComposePill: some View {
-        Button(action: {
-            if viewModel.aiSessionState.isSessionActive {
-                viewModel.cancelAISession()
-            } else {
-                viewModel.startAISession()
-            }
-        }) {
-            HStack(spacing: 5) {
+    // MARK: - AI Compose Left Dock
+    private var aiComposeDockTarget: some View {
+        HStack {
+            ZStack {
+                Circle()
+                    .fill(Color.black.opacity(0.65))
+                    .frame(width: 44, height: 44)
+
+                Circle()
+                    .stroke(aiDockBorderColor, lineWidth: (isDraggingToAI || viewModel.aiSessionState.isSessionActive) ? 2.0 : 1.2)
+                    .frame(width: 44, height: 44)
+
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(aiPillColor)
-
-                Text(aiPillTitle)
-                    .font(.system(size: 11, weight: .heavy, design: .rounded))
-                    .foregroundColor(aiPillColor)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(aiDockIconColor)
+                    .scaleEffect((isDraggingToAI && dragOffset < -25) ? 1.22 : 1.0)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: dragOffset)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(Color.black.opacity(0.55))
-            )
-            .overlay(
-                Capsule()
-                    .stroke(aiPillBorderColor, lineWidth: 1.5)
-            )
-            .shadow(color: viewModel.aiSessionState.isSessionActive ? aiPillColor.opacity(0.4) : Color.clear, radius: 4)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel(viewModel.aiSessionState.isSessionActive ? "Hủy AI Compose" : "Bắt đầu AI Compose")
-    }
+            .shadow(color: viewModel.aiSessionState.isSessionActive ? Color.yellow.opacity(0.5) : Color.clear, radius: 6)
+            .offset(x: -54)
+            .opacity(viewModel.aiSessionState.isSessionActive || isDraggingToAI ? 1.0 : 0.60)
 
-    private var aiPillColor: Color {
-        switch viewModel.aiSessionState {
-        case .idle, .done:
-            return .white.opacity(0.9)
-        case .analyzing, .targetPlaced:
-            return .yellow
-        case .alignmentPerfect:
-            return .green
-        case .capturing:
-            return .yellow
+            Spacer()
         }
     }
 
-    private var aiPillBorderColor: Color {
+    private var aiDockBorderColor: Color {
         switch viewModel.aiSessionState {
         case .idle, .done:
-            return Color.white.opacity(0.25)
+            return isDraggingToAI ? Color.yellow : Color.white.opacity(0.3)
         case .analyzing, .targetPlaced:
             return Color.yellow
         case .alignmentPerfect:
@@ -228,54 +214,89 @@ struct MainCaptureButton: View {
         }
     }
 
-    private var aiPillTitle: String {
+    private var aiDockIconColor: Color {
         switch viewModel.aiSessionState {
         case .idle, .done:
-            return "AI COMPOSE"
-        case .analyzing:
-            return "TÌM CHỦ THỂ…"
-        case .targetPlaced:
-            return "HỦY AI"
+            return isDraggingToAI ? Color.yellow : Color.white.opacity(0.75)
+        case .analyzing, .targetPlaced:
+            return Color.yellow
         case .alignmentPerfect:
-            return "ĐÃ KHỚP"
+            return Color.green
         case .capturing:
-            return "ĐANG CHỤP"
+            return Color.yellow
         }
     }
 
-    // MARK: - Central Shutter Button (68×68)
-    private var centralShutterButton: some View {
-        Button(action: {
-            if viewModel.aiSessionState != .capturing {
-                viewModel.takePhotoManual()
-            }
-        }) {
-            ZStack {
-                // Viền ngoài: Trắng chuẩn, đổi sang vàng hoặc xanh lá khi AI session bám nét
-                Circle()
-                    .stroke(shutterRingColor, lineWidth: 3.2)
-                    .frame(width: 68, height: 68)
+    // MARK: - Central Shutter View (68×68)
+    private var centralShutterView: some View {
+        ZStack {
+            // Viền ngoài: Trắng chuẩn, đổi sang vàng hoặc xanh lá khi AI session bám nét
+            Circle()
+                .stroke(shutterRingColor, lineWidth: 3.2)
+                .frame(width: 68, height: 68)
 
-                // Vòng trong: Màu trắng, co lại khi nhấn
-                Circle()
-                    .fill(Color.white)
-                    .frame(
-                        width: viewModel.isShutterPressing ? 50 : 58,
-                        height: viewModel.isShutterPressing ? 50 : 58
-                    )
+            // Vòng trong: Màu trắng, co lại khi nhấn
+            Circle()
+                .fill(Color.white)
+                .frame(
+                    width: viewModel.isShutterPressing ? 50 : 58,
+                    height: viewModel.isShutterPressing ? 50 : 58
+                )
 
-                if case .capturing = viewModel.aiSessionState {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .black))
-                }
+            if case .capturing = viewModel.aiSessionState {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .black))
             }
-            .contentShape(Circle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .contentShape(Circle())
+        .offset(x: dragOffset)
         .scaleEffect(viewModel.isShutterPressing ? 0.92 : 1.0)
         .animation(.spring(response: 0.2, dampingFraction: 0.6), value: viewModel.isShutterPressing)
-        .disabled(viewModel.aiSessionState == .capturing)
-        .accessibilityLabel("Chụp ảnh")
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let transX = value.translation.width
+
+                    // Khi người dùng kéo trượt sang trái
+                    if transX < -10 {
+                        isDraggingToAI = true
+                        dragOffset = max(-54, transX)
+
+                        // Vượt ngưỡng -35pt: Kích hoạt haptic và toggle AI Compose
+                        if dragOffset <= -35 && !hasTriggeredAI {
+                            hasTriggeredAI = true
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.prepare()
+                            generator.impactOccurred()
+
+                            if viewModel.aiSessionState.isSessionActive {
+                                viewModel.cancelAISession()
+                            } else {
+                                viewModel.startAISession()
+                            }
+                        }
+                    }
+                }
+                .onEnded { value in
+                    let transX = value.translation.width
+                    let transY = value.translation.height
+
+                    // Nếu là nhấp chạm thông thường (không kéo sang trái): Chụp ảnh bình thường
+                    if !isDraggingToAI && abs(transX) < 15 && abs(transY) < 15 {
+                        if viewModel.aiSessionState != .capturing {
+                            viewModel.takePhotoManual()
+                        }
+                    }
+
+                    // Hồi phục vị trí nút chụp với animation nảy spring
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                        dragOffset = 0
+                        isDraggingToAI = false
+                    }
+                    hasTriggeredAI = false
+                }
+        )
+        .accessibilityLabel("Nút chụp ảnh: Chạm để chụp, giữ kéo sang trái để AI Compose")
     }
 
     private var shutterRingColor: Color {

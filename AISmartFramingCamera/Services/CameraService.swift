@@ -21,7 +21,7 @@ public struct LiveCameraStats {
     public var iso: Float
     public var shutterSpeedString: String
     public var exposureDurationSeconds: Double
-    
+
     public init(iso: Float, shutterSpeedString: String, exposureDurationSeconds: Double) {
         self.iso = iso
         self.shutterSpeedString = shutterSpeedString
@@ -31,15 +31,15 @@ public struct LiveCameraStats {
 
 public final class CameraService: NSObject {
     public static let shared = CameraService()
-    
+
     public weak var delegate: CameraServiceDelegate?
     public var onLiveCameraStatsUpdated: ((LiveCameraStats) -> Void)?
-    
+
     // Core AVFoundation objects
     public let captureSession = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "com.alignai.camera.sessionQueue", qos: .userInteractive)
     private let videoDataQueue = DispatchQueue(label: "com.alignai.camera.videoDataQueue", qos: .userInteractive)
-    
+
     private var activeCamera: AVCaptureDevice?
     public var currentActiveCamera: AVCaptureDevice? { return activeCamera }
     public var currentSessionQueue: DispatchQueue { return sessionQueue }
@@ -50,40 +50,40 @@ public final class CameraService: NSObject {
     private let photoOutput = AVCapturePhotoOutput()
     private let movieFileOutput = AVCaptureMovieFileOutput()
     private let sharedPhotoContext = CIContext(options: [.useSoftwareRenderer: false])
-    
+
     // State
     public private(set) var isSessionRunning = false
     public private(set) var currentZoom: CGFloat = 1.0
     public private(set) var minZoom: CGFloat = 1.0
     public private(set) var maxZoom: CGFloat = 10.0
     public private(set) var isRecordingVideo = false
-    
+
     public var flashMode: AVCaptureDevice.FlashMode = .auto
     public var isLivePhotoMode = false
     public var selectedVideoFormatOption: VideoFormatOption = .hd60
     public var selectedVideoCodec: VideoCodec = .hevc
     public private(set) var currentCaptureMode: CameraCaptureMode = .photo
-    
+
     // Callback thông báo độ phân giải và FPS video phần cứng
     public var onActiveVideoFormatChanged: ((String) -> Void)?
-    
+
     // Live Photo capture coordination state
     private var isCapturingLivePhotoRequest = false
     private var currentPhotoCaptured: (cgImage: CGImage, rawData: Data?, iso: Float, shutter: Double)?
     private var currentLivePhotoURL: URL?
-    
+
     private override init() {
         super.init()
     }
-    
+
     // MARK: - Session Setup
     public func setupSession(completion: @escaping (Bool) -> Void) {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            
+
             self.captureSession.beginConfiguration()
             self.captureSession.sessionPreset = .photo
-            
+
             let deviceDiscovery = AVCaptureDevice.DiscoverySession(
                 deviceTypes: [
                     .builtInTripleCamera,
@@ -93,13 +93,13 @@ public final class CameraService: NSObject {
                 mediaType: .video,
                 position: .back
             )
-            
+
             guard let camera = deviceDiscovery.devices.first else {
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(false) }
                 return
             }
-            
+
             self.activeCamera = camera
             self.zoomObservation?.invalidate()
             self.zoomObservation = camera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
@@ -110,27 +110,31 @@ public final class CameraService: NSObject {
             }
             self.minZoom = camera.minAvailableVideoZoomFactor
             self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
-            
+
             do {
                 try camera.lockForConfiguration()
                 if camera.activeFormat.isVideoHDRSupported {
                     camera.automaticallyAdjustsVideoHDREnabled = true
+                }
+                if camera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
+                    camera.activeColorSpace = .P3_D65
+                    CameraLogger.info("CameraService: Đã kích hoạt Apple Wide Color P3 (.P3_D65) cho Live View và Chụp ảnh", category: .capture)
                 }
                 if camera.isLowLightBoostSupported {
                     camera.automaticallyEnablesLowLightBoostWhenAvailable = false
                 }
                 camera.unlockForConfiguration()
             } catch {
-                print("Không thể bật HDR/LowLightBoost: \(error)")
+                print("Không thể bật HDR/LowLightBoost/P3: \(error)")
             }
-            
+
             do {
                 let videoInput = try AVCaptureDeviceInput(device: camera)
                 if self.captureSession.canAddInput(videoInput) {
                     self.captureSession.addInput(videoInput)
                     self.videoDeviceInput = videoInput
                 }
-                
+
                 // Add Audio Input for Video Recording
                 if let audioDevice = AVCaptureDevice.default(for: .audio) {
                     if let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
@@ -138,7 +142,7 @@ public final class CameraService: NSObject {
                         self.captureSession.addInput(audioInput)
                     }
                 }
-                
+
                 // Video Data Output for Real-time Vision
                 if self.captureSession.canAddOutput(self.videoDataOutput) {
                     self.captureSession.addOutput(self.videoDataOutput)
@@ -153,7 +157,7 @@ public final class CameraService: NSObject {
                     }
                     self.videoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataQueue)
                 }
-                
+
                 // Photo Output
                 if self.captureSession.canAddOutput(self.photoOutput) {
                     self.captureSession.addOutput(self.photoOutput)
@@ -171,10 +175,10 @@ public final class CameraService: NSObject {
                         }
                     }
                 }
-                
+
                 // Movie Output: Không add sẵn vào session để tránh vô hiệu hoá Live Photo ở chế độ Ảnh
                 // (Chỉ add khi người dùng chuyển sang chế độ VIDEO)
-                
+
                 // Initial Continuous Auto Focus & Exposure setup
                 try camera.lockForConfiguration()
                 if camera.isFocusModeSupported(.continuousAutoFocus) {
@@ -188,7 +192,7 @@ public final class CameraService: NSObject {
                 }
                 camera.isSubjectAreaChangeMonitoringEnabled = true
                 camera.unlockForConfiguration()
-                
+
                 // Subject Area Did Change Notification Observer (Apple Camera App style)
                 NotificationCenter.default.removeObserver(self, name: AVCaptureDevice.subjectAreaDidChangeNotification, object: nil)
                 NotificationCenter.default.addObserver(
@@ -198,7 +202,7 @@ public final class CameraService: NSObject {
                 ) { [weak self] _ in
                     self?.onSubjectAreaDidChange?()
                 }
-                
+
                 // Session Interruption Observers (Tự động phục hồi camera preview khi hết gián đoạn)
                 NotificationCenter.default.removeObserver(self, name: AVCaptureSession.wasInterruptedNotification, object: self.captureSession)
                 NotificationCenter.default.addObserver(
@@ -210,7 +214,7 @@ public final class CameraService: NSObject {
                     self.isSessionRunning = false
                     print("CameraService: AVCaptureSession was interrupted")
                 }
-                
+
                 NotificationCenter.default.removeObserver(self, name: AVCaptureSession.interruptionEndedNotification, object: self.captureSession)
                 NotificationCenter.default.addObserver(
                     forName: AVCaptureSession.interruptionEndedNotification,
@@ -221,7 +225,7 @@ public final class CameraService: NSObject {
                     print("CameraService: AVCaptureSession interruption ended, resuming...")
                     self.start()
                 }
-                
+
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(true) }
             } catch {
@@ -230,7 +234,7 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     // MARK: - Start / Stop Session
     public func start() {
         sessionQueue.async { [weak self] in
@@ -239,7 +243,7 @@ public final class CameraService: NSObject {
             self.isSessionRunning = self.captureSession.isRunning
         }
     }
-    
+
     public func stop() {
         sessionQueue.async { [weak self] in
             guard let self = self, self.captureSession.isRunning else { return }
@@ -247,7 +251,7 @@ public final class CameraService: NSObject {
             self.isSessionRunning = false
         }
     }
-    
+
     // MARK: - Zoom Control
     public func setZoomFactor(_ factor: CGFloat) {
         sessionQueue.async { [weak self] in
@@ -266,7 +270,7 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     public func smoothZoomFactor(to factor: CGFloat, rate: Float = 2.2) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
@@ -284,7 +288,7 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     // MARK: - Exposure Bias
     public func setExposureBias(_ bias: Float) {
         sessionQueue.async { [weak self] in
@@ -299,12 +303,12 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     public var onSubjectAreaDidChange: (() -> Void)?
     private var subjectAreaObserver: NSObjectProtocol?
-    
+
     // MARK: - Smart Focus & Exposure (Apple Camera App Style)
-    
+
     /// Chuyển đổi tọa độ chuẩn hóa UI (Top-Left 0,0) sang tọa độ AVCaptureDevice sensor (Portrait 0,0)
     public static func convertUIPointToDevicePoint(_ uiPoint: CGPoint) -> CGPoint {
         // Trên iOS Portrait: AVCaptureDevice point x = UI y, point y = 1.0 - UI x
@@ -312,7 +316,7 @@ public final class CameraService: NSObject {
         let devY = max(0.01, min(0.99, 1.0 - uiPoint.x))
         return CGPoint(x: devX, y: devY)
     }
-    
+
     /// Thiết lập lấy nét & đo sáng thông minh tự động (Smart Continuous AF/AE)
     public func setSmartFocusAndExposure(at devicePoint: CGPoint) {
         sessionQueue.async { [weak self] in
@@ -345,7 +349,7 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     // MARK: - Focus & Exposure Tap (Người dùng chạm màn hình lấy nét thủ công)
     public func focusAndExpose(at devicePoint: CGPoint) {
         sessionQueue.async { [weak self] in
@@ -370,7 +374,7 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     public func lockFocusAndExposure(at devicePoint: CGPoint) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
@@ -398,7 +402,7 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     public func unlockFocusAndExposure() {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
@@ -416,12 +420,12 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     // MARK: - Video Recording
     public func startRecordingVideo(codec: VideoCodec? = nil) {
         sessionQueue.async { [weak self] in
             guard let self = self, !self.movieFileOutput.isRecording else { return }
-            
+
             if let chosenCodec = codec {
                 self.selectedVideoCodec = chosenCodec
             }
@@ -434,19 +438,19 @@ public final class CameraService: NSObject {
                     self.movieFileOutput.setOutputSettings([AVVideoCodecKey: targetCodec], for: connection)
                 }
             }
-            
+
             let tempDir = FileManager.default.temporaryDirectory
             let outputURL = tempDir.appendingPathComponent("AlignAI_Video_\(UUID().uuidString).mov")
-            
+
             if FileManager.default.fileExists(atPath: outputURL.path) {
                 try? FileManager.default.removeItem(at: outputURL)
             }
-            
+
             self.movieFileOutput.startRecording(to: outputURL, recordingDelegate: self)
             DispatchQueue.main.async { self.isRecordingVideo = true }
         }
     }
-    
+
     public func stopRecordingVideo() {
         sessionQueue.async { [weak self] in
             guard let self = self, self.movieFileOutput.isRecording else { return }
@@ -454,7 +458,7 @@ public final class CameraService: NSObject {
             DispatchQueue.main.async { self.isRecordingVideo = false }
         }
     }
-    
+
     // MARK: - Video Format Dynamic Hardware Control
     public func setVideoFormatOption(_ option: VideoFormatOption) {
         self.selectedVideoFormatOption = option
@@ -469,23 +473,23 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     private func configureVideoFormatInternal(option: VideoFormatOption) {
         guard let camera = self.activeCamera else { return }
-        
+
         var bestFormat: AVCaptureDevice.Format?
         for format in camera.formats {
             let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             let maxDim = max(dims.width, dims.height)
             let minDim = min(dims.width, dims.height)
-            
+
             let matchesResolution: Bool
             if option.width == 1920 {
                 matchesResolution = (minDim == 1080 && maxDim == 1920)
             } else {
                 matchesResolution = (minDim >= 2160 && maxDim >= 3840)
             }
-            
+
             if matchesResolution {
                 for range in format.videoSupportedFrameRateRanges {
                     if range.minFrameRate <= option.fps && option.fps <= range.maxFrameRate {
@@ -496,7 +500,7 @@ public final class CameraService: NSObject {
                 if bestFormat != nil { break }
             }
         }
-        
+
         // Fallback to highest available if exact match not found
         if bestFormat == nil {
             for format in camera.formats {
@@ -514,31 +518,31 @@ public final class CameraService: NSObject {
                 }
             }
         }
-        
+
         guard let selectedFormat = bestFormat else {
             CameraLogger.warning("CameraService: Không tìm thấy format video phần cứng cho \(option.rawValue)", category: .capture)
             return
         }
-        
+
         do {
             try camera.lockForConfiguration()
             self.captureSession.beginConfiguration()
             self.captureSession.sessionPreset = .inputPriority
             camera.activeFormat = selectedFormat
-            
+
             let frameDuration = CMTime(value: 1, timescale: CMTimeScale(option.fps))
             camera.activeVideoMinFrameDuration = frameDuration
             camera.activeVideoMaxFrameDuration = frameDuration
-            
+
             self.captureSession.commitConfiguration()
             camera.unlockForConfiguration()
-            
+
             CameraLogger.info("CameraService: Cấu hình phần cứng thành công \(option.rawValue)", category: .capture)
         } catch {
             CameraLogger.error("CameraService: Lỗi cấu hình video format \(option.rawValue)", error: error, category: .capture)
         }
     }
-    
+
     // MARK: - Capture Mode & Live Photo Dynamic Control
     public func updateCaptureMode(_ mode: CameraCaptureMode) {
         sessionQueue.async { [weak self] in
@@ -557,7 +561,7 @@ public final class CameraService: NSObject {
                     }
                 }
                 self.captureSession.commitConfiguration()
-                
+
                 // Configure hardware video format & frame rate
                 self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
             } else {
@@ -568,6 +572,15 @@ public final class CameraService: NSObject {
                     self.photoOutput.isLivePhotoCaptureEnabled = true
                 }
                 self.captureSession.sessionPreset = .photo
+                if let camera = self.activeCamera {
+                    do {
+                        try camera.lockForConfiguration()
+                        if camera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
+                            camera.activeColorSpace = .P3_D65
+                        }
+                        camera.unlockForConfiguration()
+                    } catch {}
+                }
                 self.captureSession.commitConfiguration()
             }
             let formatStr = self.getActiveVideoResolutionAndFPS()
@@ -577,7 +590,7 @@ public final class CameraService: NSObject {
             CameraLogger.info("Đã chuyển chế độ: \(mode.rawValue) (\(formatStr)) | LivePhotoSupported: \(self.photoOutput.isLivePhotoCaptureSupported)", category: .capture)
         }
     }
-    
+
     // MARK: - Video Hardware Resolution & Frame Rate Query (Read-Only từ Cài đặt Camera iOS)
     public func getActiveVideoResolutionAndFPS() -> String {
         guard let camera = self.activeCamera else { return "1080P 30FPS" }
@@ -585,16 +598,16 @@ public final class CameraService: NSObject {
         let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
         let width = Int(dims.width)
         let height = Int(dims.height)
-        
+
         var fps = 30
         let minDuration = camera.activeVideoMinFrameDuration
         if minDuration.value > 0 {
             fps = Int(round(Double(minDuration.timescale) / Double(minDuration.value)))
         }
-        
+
         let maxDim = max(width, height)
         let minDim = min(width, height)
-        
+
         if maxDim >= 7680 || minDim >= 4320 {
             return "8K \(fps)FPS"
         } else if maxDim >= 5760 || minDim >= 3240 {
@@ -609,7 +622,7 @@ public final class CameraService: NSObject {
             return "\(minDim)P \(fps)FPS"
         }
     }
-    
+
     public func setLivePhotoCaptureEnabled(_ enabled: Bool) {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
@@ -626,7 +639,7 @@ public final class CameraService: NSObject {
             }
         }
     }
-    
+
     // MARK: - Capture Photo
     public func capturePhoto() {
         sessionQueue.async { [weak self] in
@@ -634,13 +647,13 @@ public final class CameraService: NSObject {
             self.currentPhotoCaptured = nil
             self.currentLivePhotoURL = nil
             self.isCapturingLivePhotoRequest = false
-            
+
             let photoSettings = AVCapturePhotoSettings()
             if self.activeCamera?.isFlashAvailable == true {
                 photoSettings.flashMode = self.flashMode
             }
             photoSettings.photoQualityPrioritization = .quality
-            
+
             if self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {
                 if !self.photoOutput.isLivePhotoCaptureEnabled {
                     self.captureSession.beginConfiguration()
@@ -656,7 +669,7 @@ public final class CameraService: NSObject {
             } else {
                 CameraLogger.info("📸 Chụp ẢNH TĨNH tiêu chuẩn", category: .capture)
             }
-            
+
             self.photoOutput.capturePhoto(with: photoSettings, delegate: self)
         }
     }
@@ -683,13 +696,13 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
             }
             currentStats = LiveCameraStats(iso: iso, shutterSpeedString: shutterString, exposureDurationSeconds: seconds)
         }
-        
+
         if let stats = currentStats {
             DispatchQueue.main.async { [weak self] in
                 self?.onLiveCameraStatsUpdated?(stats)
             }
         }
-        
+
         // Deliver sampleBuffer directly to delegate on background queue (prevents main thread stutter)
         self.delegate?.cameraService(self, didOutputSampleBuffer: sampleBuffer)
     }
@@ -702,16 +715,16 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             CameraLogger.error("Lỗi chụp ảnh từ phần cứng AVFoundation", error: error, category: .capture)
             return
         }
-        
+
         CameraLogger.info("Đã nhận buffer ảnh từ cảm biến camera", category: .capture)
         let zoomAtCapture = self.currentZoom
         let metadata = photo.metadata
         let (iso, shutter) = Self.parseExif(metadata)
         let rawData = photo.fileDataRepresentation()
-        
+
         autoreleasepool {
             var finalCGImage: CGImage? = nil
-            
+
             if let pixelBuffer = photo.pixelBuffer {
                 var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
                 if let orientationNum = metadata[kCGImagePropertyOrientation as String] as? UInt32,
@@ -720,22 +733,22 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 } else {
                     ciImage = ciImage.oriented(.right)
                 }
-                
+
                 finalCGImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent)
             }
-            
+
             if finalCGImage == nil, let data = rawData, let uiImage = UIImage(data: data) {
                 let uprightImage = Self.fixOrientation(uiImage)
                 finalCGImage = uprightImage.cgImage
             }
-            
+
             guard let cgImage = finalCGImage else {
                 CameraLogger.error("Không thể tạo CGImage từ AVCapturePhoto", category: .capture)
                 return
             }
-            
+
             CameraLogger.info("Đã render CGImage thành công (\(cgImage.width)x\(cgImage.height))", category: .capture)
-            
+
             if self.isCapturingLivePhotoRequest {
                 // Tạm lưu lại và chờ file video Live Photo hoàn tất
                 self.currentPhotoCaptured = (cgImage, rawData, iso, shutter)
@@ -748,7 +761,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             }
         }
     }
-    
+
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingLivePhotoToMovieFileAt outputFileURL: URL, duration: CMTime, photoDisplayTime: CMTime, resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
         if let error = error {
             CameraLogger.error("Lỗi ghi file video Live Photo: \(error.localizedDescription)", error: error, category: .capture)
@@ -758,7 +771,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             self.currentLivePhotoURL = outputFileURL
         }
     }
-    
+
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
         if self.isCapturingLivePhotoRequest {
             guard let captured = self.currentPhotoCaptured else { return }
@@ -766,7 +779,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             self.currentPhotoCaptured = nil
             self.currentLivePhotoURL = nil
             self.isCapturingLivePhotoRequest = false
-            
+
             CameraLogger.info("Hoàn tất phiên Live Photo -> Gửi ảnh + movie (\(movieURL?.lastPathComponent ?? "không có"))", category: .capture)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
@@ -774,9 +787,9 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             }
         }
     }
-    
+
     // MARK: - Helpers
-    
+
     private static func cropImageForZoom(_ image: UIImage, zoom: CGFloat) -> UIImage? {
         guard let cg = image.cgImage else { return image }
         let width = CGFloat(cg.width)
@@ -789,7 +802,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         guard let croppedCG = cg.cropping(to: cropRect) else { return image }
         return UIImage(cgImage: croppedCG, scale: image.scale, orientation: image.imageOrientation)
     }
-    
+
     private static func parseExif(_ metadata: [String: Any]) -> (iso: Float, shutter: Double) {
         var isoValue: Float = 100.0
         var shutterSpeed: Double = 0.016
@@ -803,7 +816,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         }
         return (isoValue, shutterSpeed)
     }
-    
+
     private static func fixOrientation(_ image: UIImage) -> UIImage {
         guard image.imageOrientation != .up else { return image }
         let format = UIGraphicsImageRendererFormat.default()
