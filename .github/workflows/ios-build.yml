@@ -106,13 +106,12 @@ jobs:
           fi
           if [ -f "AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part1" ]; then
             cat AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part* > Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin
-            cp Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin Payload/AISmartFramingCamera.app/RobustTargetEmbedder.bin
             echo "✓ Đã tích hợp thành công AlignAI_SubjectRanker_Weights (114 MB) vào App Bundle!"
           fi
 
       - name: Package IPA
         run: |
-          zip -r AISmartFramingCamera.ipa Payload/
+          zip -qry -9 AISmartFramingCamera.ipa Payload/
           echo "IPA size: $(du -h AISmartFramingCamera.ipa | cut -f1)"
 
       - name: Upload IPA artifact
@@ -133,11 +132,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v1.0.0-build.${{ github.run_number }}"
+          FAST_URL="https://gh-proxy.com/https://github.com/${{ github.repository }}/releases/download/$TAG/AISmartFramingCamera.ipa"
           gh release create "$TAG" \
             AISmartFramingCamera.ipa \
             AISmartFramingCamera-SourceCode.zip \
             --title "AI Smart Framing Camera $TAG" \
             --notes "Unsigned IPA build for Sideloadly / AltStore / TrollStore installation.
+
+          ### 🚀 Link tải tốc độ cao (Tối ưu cho Việt Nam / Chống bóp băng thông):
+          - **[Tải trực tiếp tốc độ cao qua Cloudflare HK CDN]($FAST_URL)** (Khuyến nghị cho mạng VNPT/Viettel/FPT, hỗ trợ tải tiếp khi rớt mạng).
 
           ## Features
           - 🎯 Real-time AI Subject & Face Tracking (Neural Engine accelerated)
