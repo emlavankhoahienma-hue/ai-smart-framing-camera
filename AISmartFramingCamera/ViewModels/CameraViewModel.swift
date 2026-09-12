@@ -1602,9 +1602,9 @@ extension CameraViewModel: CameraServiceDelegate {
             var processedImageResult: CGImage = photo
             autoreleasepool {
                 if let params = finalColorParams {
-                    processedImageResult = self.filterEngine.applyAIColorParameters(to: photo, params: params) ?? photo
+                    processedImageResult = FilmFilterEngine.shared.applyAIColorParameters(to: photo, params: params) ?? photo
                 } else {
-                    processedImageResult = self.filterEngine.applyPreset(to: photo, preset: activePreset) ?? photo
+                    processedImageResult = FilmFilterEngine.shared.applyPreset(to: photo, preset: activePreset) ?? photo
                 }
             }
 

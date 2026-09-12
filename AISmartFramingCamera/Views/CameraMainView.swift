@@ -252,51 +252,13 @@ struct CompositionRuleSheet: View {
     private var ruleListView: some View {
         VStack(spacing: 8) {
             ForEach(CompositionRule.allCases) { rule in
-                ruleRow(for: rule)
+                CompositionRuleRow(
+                    rule: rule,
+                    isSelected: viewModel.activeCompositionRule == rule,
+                    onSelect: { viewModel.selectRule(rule) }
+                )
             }
         }
-    }
-
-    private func ruleRow(for rule: CompositionRule) -> some View {
-        let isSelected = (viewModel.activeCompositionRule == rule)
-        return Button(action: {
-            viewModel.selectRule(rule)
-        }) {
-            HStack(spacing: 12) {
-                Image(systemName: rule.iconName)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(isSelected ? .yellow : .white.opacity(0.8))
-                    .frame(width: 28)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(rule.displayNameVietnamese)
-                        .font(.system(size: 15, weight: isSelected ? .bold : .medium))
-                        .foregroundColor(.white)
-                    Text(rule.descriptionVietnamese)
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
-                }
-
-                Spacer()
-
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.yellow)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? Color.yellow.opacity(0.12) : Color.white.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? Color.yellow.opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
     }
 
     private var bottomActionBar: some View {
@@ -338,6 +300,55 @@ struct CompositionRuleSheet: View {
             }
         }
         .background(Color(red: 0.08, green: 0.08, blue: 0.09))
+    }
+}
+
+// MARK: - Composition Rule Row
+
+struct CompositionRuleRow: View {
+    let rule: CompositionRule
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                Image(systemName: rule.iconName)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(isSelected ? Color.yellow : Color.white.opacity(0.8))
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(rule.displayNameVietnamese)
+                        .font(.system(size: 15, weight: isSelected ? .bold : .medium))
+                        .foregroundColor(Color.white)
+                    Text(rule.descriptionVietnamese)
+                        .font(.system(size: 12))
+                        .foregroundColor(Color.gray)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(Color.yellow)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(backgroundShape)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private var backgroundShape: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(isSelected ? Color.yellow.opacity(0.12) : Color.white.opacity(0.05))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.yellow.opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1)
+            )
     }
 }
 
