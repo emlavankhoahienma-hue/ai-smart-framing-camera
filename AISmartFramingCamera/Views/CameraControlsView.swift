@@ -177,7 +177,7 @@ struct MainCaptureButton: View {
                             .stroke(Color.white.opacity(0.20), lineWidth: 1)
                     )
                     .offset(x: -28)
-                    .opacity(min(1.0, max(0.0, (abs(dragOffset) - 6) / 30.0)))
+                    .opacity(trackOpacity)
                     .animation(.easeOut(duration: 0.15), value: dragOffset)
             }
 
@@ -188,6 +188,35 @@ struct MainCaptureButton: View {
             centralShutterView
         }
         .frame(width: 156, height: 74)
+    }
+
+    private var trackOpacity: Double {
+        let offsetVal: Double = abs(Double(dragOffset))
+        let progress: Double = (offsetVal - 6.0) / 30.0
+        return min(1.0, max(0.0, progress))
+    }
+
+    private var dockOpacity: Double {
+        guard isDraggingToAI else { return 0.0 }
+        let offsetVal: Double = abs(Double(dragOffset))
+        let progress: Double = (offsetVal - 6.0) / 25.0
+        return min(1.0, max(0.0, progress))
+    }
+
+    private var dockScale: CGFloat {
+        guard isDraggingToAI else { return 0.8 }
+        let progress = min(CGFloat(1.0), abs(dragOffset) / CGFloat(56.0))
+        return CGFloat(0.85) + progress * CGFloat(0.3)
+    }
+
+    private var shutterStretchX: CGFloat {
+        let stretch = min(CGFloat(0.10), abs(dragOffset) / CGFloat(200.0))
+        return CGFloat(1.0) + stretch
+    }
+
+    private var shutterStretchY: CGFloat {
+        let squish = min(CGFloat(0.05), abs(dragOffset) / CGFloat(400.0))
+        return CGFloat(1.0) - squish
     }
 
     // MARK: - AI Compose Left Dock Target (Tọa độ -56pt)
@@ -210,8 +239,8 @@ struct MainCaptureButton: View {
             }
             .shadow(color: hasReachedDock ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
             .offset(x: -56)
-            .scaleEffect(isDraggingToAI ? min(1.15, 0.85 + (abs(dragOffset) / 56.0) * 0.3) : 0.8)
-            .opacity(isDraggingToAI ? min(1.0, max(0.0, (abs(dragOffset) - 6) / 25.0)) : 0.0)
+            .scaleEffect(dockScale)
+            .opacity(dockOpacity)
             .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
 
             Spacer()
@@ -234,7 +263,7 @@ struct MainCaptureButton: View {
                     height: (isTouchingShutter || viewModel.isShutterPressing) ? 50 : 58
                 )
                 .offset(x: dragOffset)
-                .scaleEffect(x: 1.0 + min(0.10, abs(dragOffset) / 200.0), y: 1.0 - min(0.05, abs(dragOffset) / 400.0))
+                .scaleEffect(x: shutterStretchX, y: shutterStretchY)
 
             if case .capturing = viewModel.aiSessionState {
                 ProgressView()
