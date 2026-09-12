@@ -198,75 +198,92 @@ public struct FeedbackView: View {
             }
 
             HStack(spacing: 10) {
-                // Add Photos Button
                 if selectedImagesData.count < 3 {
-                    PhotosPicker(
-                        selection: $selectedPhotoItems,
-                        maxSelectionCount: 3 - selectedImagesData.count,
-                        matching: .images
-                    ) {
-                        VStack(spacing: 6) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 22))
-                                .foregroundColor(.yellow)
-                            Text("Thêm ảnh")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.85))
-                        }
-                        .frame(width: 80, height: 80)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(red: 0.08, green: 0.08, blue: 0.09))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.white.opacity(0.14), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                                )
-                        )
-                    }
-                    .onChange(of: selectedPhotoItems) { newItems in
-                        Task {
-                            for item in newItems {
-                                if let data = try? await item.loadTransferable(type: Data.self),
-                                   selectedImagesData.count < 3 {
-                                    selectedImagesData.append(data)
-                                }
-                            }
-                            selectedPhotoItems = []
-                        }
-                    }
+                    addPhotoPickerButton
                 }
 
-                // Thumbnails
-                ForEach(selectedImagesData.indices, id: \.self) { idx in
-                    let data = selectedImagesData[idx]
-                    if let uiImg = UIImage(data: data) {
-                        ZStack(alignment: .topTrailing) {
-                            Image(uiImage: uiImg)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 80, height: 80)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                                )
-
-                            Button(action: {
-                                withAnimation {
-                                    selectedImagesData.remove(at: idx)
-                                }
-                            }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(.red)
-                                    .background(Circle().fill(Color.black).padding(2))
-                            }
-                            .offset(x: 6, y: -6)
-                        }
-                    }
+                ForEach(0..<selectedImagesData.count, id: \.self) { idx in
+                    thumbnailPreview(index: idx)
                 }
 
                 Spacer()
+            }
+        }
+    }
+
+    private var addPhotoPickerButton: some View {
+        PhotosPicker(
+            selection: $selectedPhotoItems,
+            maxSelectionCount: max(1, 3 - selectedImagesData.count),
+            matching: .images
+        ) {
+            VStack(spacing: 6) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundColor(.yellow)
+                Text("Thêm ảnh")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.85))
+            }
+            .frame(width: 80, height: 80)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(red: 0.08, green: 0.08, blue: 0.09))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.14), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                    )
+            )
+        }
+        .onChange(of: selectedPhotoItems) { newItems in
+            handlePickedPhotos(newItems)
+        }
+    }
+
+    @ViewBuilder
+    private func thumbnailPreview(index: Int) -> some View {
+        if index < selectedImagesData.count, let uiImg = UIImage(data: selectedImagesData[index]) {
+            ZStack(alignment: .topTrailing) {
+                Image(uiImage: uiImg)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 80, height: 80)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    )
+
+                Button(action: {
+                    withAnimation {
+                        if index < selectedImagesData.count {
+                            selectedImagesData.remove(at: index)
+                        }
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(.red)
+                        .background(Circle().fill(Color.black).padding(2))
+                }
+                .offset(x: 6, y: -6)
+            }
+        }
+    }
+
+    private func handlePickedPhotos(_ items: [PhotosPickerItem]) {
+        Task {
+            for item in items {
+                if let data = try? await item.loadTransferable(type: Data.self) {
+                    await MainActor.run {
+                        if selectedImagesData.count < 3 {
+                            selectedImagesData.append(data)
+                        }
+                    }
+                }
+            }
+            await MainActor.run {
+                selectedPhotoItems = []
             }
         }
     }
