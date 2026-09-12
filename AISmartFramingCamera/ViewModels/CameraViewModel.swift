@@ -5,6 +5,8 @@ import CoreImage
 import Photos
 import QuartzCore
 import CoreMotion
+import ImageIO
+import UniformTypeIdentifiers
 
 @MainActor
 public final class CameraViewModel: ObservableObject {
@@ -1412,6 +1414,46 @@ public final class CameraViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
 
+    // MARK: - Live Photo Metadata Injection (Preserves Film Filter & Apple Content Identifier)
+    private func makeLivePhotoColorGradedData(from processedCGImage: CGImage, rawData: Data?) -> Data? {
+        guard let rawData = rawData,
+              let source = CGImageSourceCreateWithData(rawData as CFData, nil),
+              let metadata = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else {
+            CameraLogger.warning("Không thể đọc metadata từ rawPhotoData để trích xuất Content Identifier", category: .photoKit)
+            return nil
+        }
+
+        let makerAppleKey = kCGImagePropertyMakerAppleDictionary as String
+        guard let makerDict = metadata[makerAppleKey] as? [String: Any],
+              let contentIdentifier = (makerDict["17"] as? String) ?? (makerDict[17 as AnyHashable] as? String) else {
+            CameraLogger.warning("Không tìm thấy Apple Maker Note Content Identifier (tag 17) trong raw metadata", category: .photoKit)
+            return nil
+        }
+
+        CameraLogger.info("Đã trích xuất Live Photo Content Identifier: \(contentIdentifier)", category: .photoKit)
+
+        var updatedMetadata = metadata
+        var updatedMakerDict = makerDict
+        updatedMakerDict["17"] = contentIdentifier
+        updatedMetadata[makerAppleKey] = updatedMakerDict
+
+        let outputData = NSMutableData()
+        let uti: CFString = (selectedPhotoFormat == .heic) ? (UTType.heic.identifier as CFString) : (UTType.jpeg.identifier as CFString)
+        guard let destination = CGImageDestinationCreateWithData(outputData as CFMutableData, uti, 1, nil) else {
+            CameraLogger.error("Không thể tạo CGImageDestination cho Live Photo", category: .photoKit)
+            return nil
+        }
+
+        CGImageDestinationAddImage(destination, processedCGImage, updatedMetadata as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            CameraLogger.error("Không thể hoàn tất CGImageDestination cho Live Photo", category: .photoKit)
+            return nil
+        }
+
+        CameraLogger.success("✅ Đã nhúng Content Identifier vào ảnh đã lọc màu film thành công (\(outputData.length) bytes)", category: .photoKit)
+        return outputData as Data
+    }
+
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {
         CameraLogger.info("Bắt đầu lưu ảnh vào Cuộn Camera (Photo Library)... (Live Photo: \(item.isLivePhoto ? "CÓ" : "KHÔNG"))", category: .photoKit)
 
@@ -1432,14 +1474,17 @@ public final class CameraViewModel: ObservableObject {
                 PHPhotoLibrary.shared().performChanges({
                     let creationRequest = PHAssetCreationRequest.forAsset()
 
-                    // Thêm tài nguyên ảnh (raw data từ AVCapturePhoto có chứa Live Photo Content Identifier)
-                    if let rawData = item.rawPhotoData {
-                        let photoOptions = PHAssetResourceCreationOptions()
+                    // Thêm tài nguyên ảnh (ảnh đã lọc màu kèm Live Photo Content Identifier khớp với paired video)
+                    let photoOptions = PHAssetResourceCreationOptions()
+                    if let gradedData = self.makeLivePhotoColorGradedData(from: item.processedImage, rawData: item.rawPhotoData) {
+                        creationRequest.addResource(with: .photo, data: gradedData, options: photoOptions)
+                    } else if let rawData = item.rawPhotoData {
+                        CameraLogger.warning("Fallback dùng rawPhotoData gốc (giữ Live Photo, không màu film)", category: .photoKit)
                         creationRequest.addResource(with: .photo, data: rawData, options: photoOptions)
                     } else {
                         let image = UIImage(cgImage: item.processedImage)
                         if let jpegData = image.jpegData(compressionQuality: 0.95) {
-                            creationRequest.addResource(with: .photo, data: jpegData, options: nil)
+                            creationRequest.addResource(with: .photo, data: jpegData, options: photoOptions)
                         }
                     }
 

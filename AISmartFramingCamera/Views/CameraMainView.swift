@@ -166,10 +166,11 @@ struct TopCameraBar: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(viewModel.aiSessionState.isSessionActive ? .green : .yellow)
 
-                        Text("Bố cục thông minh · \(viewModel.activeCompositionRule.displayNameVietnamese)")
+                        Text(viewModel.activeCompositionRule.displayNameVietnamese)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.white.opacity(0.95))
                             .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)

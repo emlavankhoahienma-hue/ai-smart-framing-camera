@@ -42,12 +42,6 @@ public struct SettingsSheetView: View {
     // Unified Toast Message
     @State private var toastMessage: String? = nil
 
-    // Web HTML Report Server State
-    @ObservedObject private var reportServer = AICloudReportServer.shared
-    @State private var isReportServerEnabled: Bool = true
-    @State private var showShareSheet: Bool = false
-    @State private var shareFileURL: URL? = nil
-
     private let haptic = UISelectionFeedbackGenerator()
 
     public init(viewModel: CameraViewModel) {
@@ -90,8 +84,6 @@ public struct SettingsSheetView: View {
                                 case .advanced:
                                     AdvancedSettingsSection(
                                         viewModel: viewModel,
-                                        reportServer: reportServer,
-                                        isReportServerEnabled: $isReportServerEnabled,
                                         showResetSessionConfirmation: $showResetSessionConfirmation,
                                         showDevConsole: $showDevConsole,
                                         toastMessage: $toastMessage
@@ -154,12 +146,6 @@ public struct SettingsSheetView: View {
             .onAppear {
                 selectedModel = viewModel.geminiService.selectedModel
                 customModelInput = viewModel.geminiService.customModelName
-                reportServer.refreshDeviceIP()
-            }
-            .sheet(isPresented: $showShareSheet) {
-                if let url = shareFileURL {
-                    ActivityShareView(activityItems: [url])
-                }
             }
         }
     }
@@ -230,11 +216,9 @@ public struct SettingsSheetView: View {
                     toastMessage: $toastMessage
                 )
             }
-            if "server web wifi chẩn đoán nhật ký donate ủng hộ góp ý feedback".contains(q) {
+            if "chẩn đoán nhật ký donate ủng hộ góp ý feedback".contains(q) {
                 AdvancedSettingsSection(
                     viewModel: viewModel,
-                    reportServer: reportServer,
-                    isReportServerEnabled: $isReportServerEnabled,
                     showResetSessionConfirmation: $showResetSessionConfirmation,
                     showDevConsole: $showDevConsole,
                     toastMessage: $toastMessage
@@ -687,8 +671,6 @@ struct AIFramingSettingsSection: View {
 // MARK: - 3. Advanced Settings Section
 struct AdvancedSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
-    @ObservedObject var reportServer: AICloudReportServer
-    @Binding var isReportServerEnabled: Bool
     @Binding var showResetSessionConfirmation: Bool
     @Binding var showDevConsole: Bool
     @Binding var toastMessage: String?
@@ -731,49 +713,6 @@ struct AdvancedSettingsSection: View {
                         icon: "sun.max.fill",
                         isOn: $viewModel.isKeepScreenAwakeEnabled
                     )
-                }
-            }
-
-            // Card: Web Report Server
-            SettingsSectionCard(title: "WEB REPORT SERVER (ĐỒNG BỘ MÁY TÍNH)", icon: "laptopcomputer.and.iphone") {
-                VStack(alignment: .leading, spacing: 10) {
-                    SettingsToggleRow(
-                        title: "Bật Web Server WiFi",
-                        subtitle: "Truy cập dashboard máy tính xem thông số, ảnh chụp và nhật ký hệ thống",
-                        icon: "wifi",
-                        isOn: $isReportServerEnabled
-                    )
-                    .onChange(of: isReportServerEnabled) { enabled in
-                        if enabled { reportServer.startServer() } else { reportServer.stopServer() }
-                    }
-
-                    if reportServer.isRunning {
-                        Divider().background(Color.white.opacity(0.08))
-
-                        HStack {
-                            Text(reportServer.serverURLString)
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                .foregroundColor(.yellow)
-                            Spacer()
-                            Button(action: {
-                                UIPasteboard.general.string = reportServer.serverURLString
-                                withAnimation {
-                                    toastMessage = "Đã sao chép: \(reportServer.serverURLString)"
-                                }
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "doc.on.doc")
-                                    Text("Sao chép")
-                                }
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(.yellow)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(Color.yellow.opacity(0.15))
-                                .cornerRadius(6)
-                            }
-                        }
-                    }
                 }
             }
 
@@ -900,38 +839,6 @@ public struct SupportDeveloperView: View {
                 }
                 .padding(.top, 12)
                 .padding(.bottom, 6)
-
-                // MoMo Card
-                SettingsSectionCard(title: "VÍ ĐIỆN TỬ MOMO / ZALOPAY", icon: "wallet.pass.fill") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Trần Văn Trình")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(.white)
-                            Text("0344197212")
-                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.yellow)
-                        }
-
-                        Spacer()
-
-                        Button(action: {
-                            UIPasteboard.general.string = "0344197212"
-                            showToast("Đã chép số MoMo: 0344197212")
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "doc.on.doc")
-                                Text("Sao chép")
-                            }
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Color.yellow)
-                            .cornerRadius(8)
-                        }
-                    }
-                }
 
                 // MB Bank Card
                 SettingsSectionCard(title: "NGÂN HÀNG QUÂN ĐỘI (MB BANK)", icon: "building.columns.fill") {
