@@ -148,12 +148,13 @@ struct CameraModeSegmentedSwitcher: View {
     }
 }
 
-// MARK: - Main Capture Button (Photo: AI Compose Pill + Central Shutter / Video: Record)
+// MARK: - Main Capture Button (Photo: Apple-style Shutter with Drag-Left to AI Compose / Video: Record)
 struct MainCaptureButton: View {
     @ObservedObject var viewModel: CameraViewModel
     @State private var dragOffset: CGFloat = 0
     @State private var isDraggingToAI: Bool = false
-    @State private var hasTriggeredAI: Bool = false
+    @State private var hasReachedDock: Bool = false
+    @State private var isTouchingShutter: Bool = false
 
     var body: some View {
         if viewModel.captureMode.isVideo {
@@ -166,134 +167,151 @@ struct MainCaptureButton: View {
     // MARK: - Photo Capture Controls (Central Shutter + Drag-Left to AI Compose Dock)
     private var photoCaptureControls: some View {
         ZStack {
-            // AI Compose Left Dock Target (Hiển thị điểm khóa khi kéo sang trái)
+            // 1. Rãnh trượt kết nối (Track Slot) - Chỉ hiện khi kéo sang trái
+            if isDraggingToAI {
+                Capsule()
+                    .fill(Color.black.opacity(0.55))
+                    .frame(width: 72, height: 44)
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.20), lineWidth: 1)
+                    )
+                    .offset(x: -28)
+                    .opacity(min(1.0, max(0.0, (abs(dragOffset) - 6) / 30.0)))
+                    .animation(.easeOut(duration: 0.15), value: dragOffset)
+            }
+
+            // 2. AI Compose Left Dock Target (Chỉ hiện khi kéo sang trái)
             aiComposeDockTarget
 
-            // Nút Chụp Trung Tâm với cử chỉ Chạm để chụp / Giữ & Kéo sang trái để AI Compose
+            // 3. Nút Chụp Trung Tâm với viền cố định và lõi trượt mượt mà
             centralShutterView
         }
         .frame(width: 156, height: 74)
     }
 
-    // MARK: - AI Compose Left Dock
+    // MARK: - AI Compose Left Dock Target (Tọa độ -56pt)
     private var aiComposeDockTarget: some View {
         HStack {
             ZStack {
                 Circle()
-                    .fill(Color.black.opacity(0.65))
+                    .fill(Color.black.opacity(0.75))
                     .frame(width: 44, height: 44)
 
                 Circle()
-                    .stroke(aiDockBorderColor, lineWidth: (isDraggingToAI || viewModel.aiSessionState.isSessionActive) ? 2.0 : 1.2)
+                    .stroke(hasReachedDock ? Color.yellow : Color.white.opacity(0.35), lineWidth: hasReachedDock ? 2.5 : 1.2)
                     .frame(width: 44, height: 44)
 
                 Image(systemName: "wand.and.stars")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(aiDockIconColor)
-                    .scaleEffect((isDraggingToAI && dragOffset < -25) ? 1.22 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: dragOffset)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(hasReachedDock ? Color.yellow : Color.white.opacity(0.75))
+                    .scaleEffect(hasReachedDock ? 1.22 : 1.0)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
             }
-            .shadow(color: viewModel.aiSessionState.isSessionActive ? Color.yellow.opacity(0.5) : Color.clear, radius: 6)
-            .offset(x: -54)
-            .opacity(viewModel.aiSessionState.isSessionActive || isDraggingToAI ? 1.0 : 0.60)
+            .shadow(color: hasReachedDock ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
+            .offset(x: -56)
+            .scaleEffect(isDraggingToAI ? min(1.15, 0.85 + (abs(dragOffset) / 56.0) * 0.3) : 0.8)
+            .opacity(isDraggingToAI ? min(1.0, max(0.0, (abs(dragOffset) - 6) / 25.0)) : 0.0)
+            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
 
             Spacer()
-        }
-    }
-
-    private var aiDockBorderColor: Color {
-        switch viewModel.aiSessionState {
-        case .idle, .done:
-            return isDraggingToAI ? Color.yellow : Color.white.opacity(0.3)
-        case .analyzing, .targetPlaced:
-            return Color.yellow
-        case .alignmentPerfect:
-            return Color.green
-        case .capturing:
-            return Color.yellow
-        }
-    }
-
-    private var aiDockIconColor: Color {
-        switch viewModel.aiSessionState {
-        case .idle, .done:
-            return isDraggingToAI ? Color.yellow : Color.white.opacity(0.75)
-        case .analyzing, .targetPlaced:
-            return Color.yellow
-        case .alignmentPerfect:
-            return Color.green
-        case .capturing:
-            return Color.yellow
         }
     }
 
     // MARK: - Central Shutter View (68×68)
     private var centralShutterView: some View {
         ZStack {
-            // Viền ngoài: Trắng chuẩn, đổi sang vàng hoặc xanh lá khi AI session bám nét
+            // Viền ngoài cố định tại tâm: Trắng chuẩn, đổi sang vàng hoặc xanh lá khi AI session bám nét
             Circle()
                 .stroke(shutterRingColor, lineWidth: 3.2)
                 .frame(width: 68, height: 68)
 
-            // Vòng trong: Màu trắng, co lại khi nhấn
+            // Lõi trong: Màu trắng, trượt sang trái theo ngón tay khi kéo
             Circle()
                 .fill(Color.white)
                 .frame(
-                    width: viewModel.isShutterPressing ? 50 : 58,
-                    height: viewModel.isShutterPressing ? 50 : 58
+                    width: (isTouchingShutter || viewModel.isShutterPressing) ? 50 : 58,
+                    height: (isTouchingShutter || viewModel.isShutterPressing) ? 50 : 58
                 )
+                .offset(x: dragOffset)
+                .scaleEffect(x: 1.0 + min(0.10, abs(dragOffset) / 200.0), y: 1.0 - min(0.05, abs(dragOffset) / 400.0))
 
             if case .capturing = viewModel.aiSessionState {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                    .offset(x: dragOffset)
             }
         }
         .contentShape(Circle())
-        .offset(x: dragOffset)
-        .scaleEffect(viewModel.isShutterPressing ? 0.92 : 1.0)
-        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: viewModel.isShutterPressing)
+        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isTouchingShutter)
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
                     let transX = value.translation.width
 
-                    // Khi người dùng kéo trượt sang trái
-                    if transX < -10 {
-                        isDraggingToAI = true
-                        dragOffset = max(-54, transX)
+                    isTouchingShutter = true
 
-                        // Vượt ngưỡng -35pt: Kích hoạt haptic và toggle AI Compose
-                        if dragOffset <= -35 && !hasTriggeredAI {
-                            hasTriggeredAI = true
+                    // Khi người dùng kéo trượt sang trái (transX < 0)
+                    if transX < -6 {
+                        isDraggingToAI = true
+                        // Đàn hồi nhẹ nếu kéo vượt quá dock (-56pt)
+                        if transX < -56 {
+                            dragOffset = -56 + (transX + 56) * 0.25
+                        } else {
+                            dragOffset = transX
+                        }
+
+                        // Vượt ngưỡng -42pt: Chạm dock, kích hoạt haptic snap
+                        let reached = dragOffset <= -42
+                        if reached && !hasReachedDock {
+                            hasReachedDock = true
                             let generator = UIImpactFeedbackGenerator(style: .medium)
                             generator.prepare()
                             generator.impactOccurred()
-
-                            if viewModel.aiSessionState.isSessionActive {
-                                viewModel.cancelAISession()
-                            } else {
-                                viewModel.startAISession()
-                            }
+                        } else if !reached && hasReachedDock {
+                            hasReachedDock = false
                         }
+                    } else if transX > 0 {
+                        // Kháng cự đàn hồi nếu kéo sang phải (không kích hoạt AI)
+                        isDraggingToAI = false
+                        hasReachedDock = false
+                        dragOffset = min(15, transX * 0.2)
+                    } else {
+                        dragOffset = 0
+                        isDraggingToAI = false
+                        hasReachedDock = false
                     }
                 }
                 .onEnded { value in
                     let transX = value.translation.width
                     let transY = value.translation.height
+                    let didReachDock = hasReachedDock || dragOffset <= -42
 
-                    // Nếu là nhấp chạm thông thường (không kéo sang trái): Chụp ảnh bình thường
-                    if !isDraggingToAI && abs(transX) < 15 && abs(transY) < 15 {
+                    if didReachDock {
+                        // Đã kéo vào dock AI Compose: Rung mạnh & Bật/Tắt AI Compose
+                        let generator = UIImpactFeedbackGenerator(style: .heavy)
+                        generator.prepare()
+                        generator.impactOccurred()
+
+                        if viewModel.aiSessionState.isSessionActive {
+                            viewModel.cancelAISession()
+                        } else {
+                            viewModel.startAISession()
+                        }
+                    } else if !isDraggingToAI && abs(transX) < 14 && abs(transY) < 14 {
+                        // Nhấp chạm thông thường (không kéo): Chụp ảnh bình thường
                         if viewModel.aiSessionState != .capturing {
                             viewModel.takePhotoManual()
                         }
                     }
 
-                    // Hồi phục vị trí nút chụp với animation nảy spring
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                    // Hồi phục vị trí lõi nút chụp với animation nảy spring chuẩn Apple physics
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
                         dragOffset = 0
                         isDraggingToAI = false
+                        hasReachedDock = false
+                        isTouchingShutter = false
                     }
-                    hasTriggeredAI = false
                 }
         )
         .accessibilityLabel("Nút chụp ảnh: Chạm để chụp, giữ kéo sang trái để AI Compose")
@@ -443,27 +461,27 @@ struct FilterToggleButton: View {
     }
 }
 
-// MARK: - Film Preset Drawer (Thư Viện Màu Film Trực Quan Có Hình Ảnh Mẫu)
+// MARK: - Film Preset Drawer (Danh Sách Tên Màu Film Tối Giản Typography Chuẩn Pro)
 struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
 
     var body: some View {
         VStack(spacing: 8) {
-            // Header: Tiêu đề & Tắt
+            // Header: Tiêu đề & Nút đóng
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "camera.filters")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.yellow)
-                    Text("Màu sắc")
-                        .font(.system(size: 13, weight: .bold))
+                    Text("Bộ lọc màu film")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                 }
 
                 Spacer()
 
                 Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                         viewModel.isShowingFilmDrawer = false
                     }
                 }) {
@@ -476,73 +494,46 @@ struct FilmPresetDrawer: View {
             .padding(.horizontal, 16)
             .padding(.top, 4)
 
-            // Danh sách ảnh mẫu ngang
+            // Danh sách tên preset dạng Capsule/Pill tối giản chuẩn Pro Camera
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+                HStack(spacing: 8) {
                     ForEach(FilmPreset.allCases) { preset in
                         let isSelected = viewModel.selectedFilmPreset == preset
-                        let thumbImage = PresetThumbnailProvider.shared.thumbnail(for: preset)
 
                         Button(action: {
+                            let generator = UISelectionFeedbackGenerator()
+                            generator.prepare()
+                            generator.selectionChanged()
                             viewModel.selectPreset(preset)
                         }) {
-                            VStack(spacing: 5) {
-                                ZStack(alignment: .bottom) {
-                                    // 1. Ảnh mẫu trực quan thể hiện chuẩn màu của từng preset
-                                    Image(uiImage: thumbImage)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 66, height: 66)
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                                        .overlay(
-                                            // Gradient mờ ở đáy ảnh để chữ nổi bật
-                                            LinearGradient(
-                                                gradient: Gradient(colors: [Color.clear, Color.black.opacity(0.75)]),
-                                                startPoint: .center,
-                                                endPoint: .bottom
-                                            )
-                                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                                        )
-                                        .overlay(
-                                            // Viền nổi bật khi được chọn
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .stroke(isSelected ? Color.yellow : Color.white.opacity(0.15), lineWidth: isSelected ? 2.5 : 1)
-                                        )
-                                        .shadow(color: isSelected ? Color.yellow.opacity(0.4) : Color.clear, radius: 6)
-
-                                    // 2. Tên viết tắt trên ảnh
-                                    Text(preset.shortTitle)
-                                        .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
-                                        .foregroundColor(.white)
-                                        .padding(.bottom, 3)
-
-                                    // 3. Dấu tích chọn góc trên
-                                    if isSelected {
-                                        VStack {
-                                            HStack {
-                                                Spacer()
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .font(.system(size: 13, weight: .bold))
-                                                    .foregroundColor(.yellow)
-                                                    .background(Circle().fill(Color.black).padding(1))
-                                                    .padding(3)
-                                            }
-                                            Spacer()
-                                        }
-                                    }
+                            HStack(spacing: 5) {
+                                if preset.isAIFullAuto {
+                                    Image(systemName: "wand.and.stars")
+                                        .font(.system(size: 11, weight: .bold))
+                                } else if isSelected {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .heavy))
                                 }
-                                .frame(width: 66, height: 66)
 
-                                // Tên thân thiện bên dưới
                                 Text(preset.displayName)
-                                    .font(.system(size: 10, weight: isSelected ? .bold : .medium))
-                                    .foregroundColor(isSelected ? .yellow : .white.opacity(0.85))
-                                    .lineLimit(1)
+                                    .font(.system(size: 12.5, weight: isSelected ? .bold : .medium, design: .rounded))
                             }
-                            .scaleEffect(isSelected ? 1.04 : 1.0)
-                            .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isSelected)
+                            .foregroundColor(isSelected ? .black : .white.opacity(0.9))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? Color.yellow : Color.white.opacity(0.08))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(isSelected ? Color.yellow : Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                            .shadow(color: isSelected ? Color.yellow.opacity(0.35) : Color.clear, radius: 4)
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .scaleEffect(isSelected ? 1.04 : 1.0)
+                        .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isSelected)
                         .accessibilityLabel("Chọn màu \(preset.displayName)")
                     }
                 }
@@ -550,11 +541,11 @@ struct FilmPresetDrawer: View {
                 .padding(.bottom, 6)
             }
         }
-        .padding(.vertical, 8)
-        .frame(maxHeight: 140)
+        .padding(.vertical, 6)
+        .frame(maxHeight: 88)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.black.opacity(0.75))
+                .fill(Color.black.opacity(0.82))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
@@ -571,6 +562,6 @@ struct FilmPresetDrawer: View {
                 }
         )
         .padding(.horizontal, 12)
-        .padding(.bottom, 6)
+        .padding(.bottom, 4)
     }
 }

@@ -47,6 +47,26 @@ public struct ProVideoManualControlsView: View {
                     isAuto: proService.isAutoWB
                 )
 
+                // Focus Peaking Toggle Quick Button
+                Button(action: {
+                    viewModel.isFocusPeakingEnabled.toggle()
+                    haptic.selectionChanged()
+                }) {
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor : Color.gray.opacity(0.6))
+                            .frame(width: 6, height: 6)
+                        Text("PEAK")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundColor(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor : .white.opacity(0.8))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 5)
+                    .background(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor.opacity(0.22) : Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .accessibilityLabel("Bật tắt Focus Peaking báo nét")
+
                 // Collapse / Expand Toggle Button
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {

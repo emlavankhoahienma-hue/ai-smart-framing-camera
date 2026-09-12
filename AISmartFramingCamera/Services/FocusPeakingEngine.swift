@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import CoreImage
 import CoreVideo
 import SwiftUI
@@ -27,34 +27,34 @@ public enum FocusPeakingColor: String, CaseIterable, Identifiable {
         case .green:
             return (
                 r: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                g: CIVector(x: 1.3, y: 1.3, z: 1.3, w: 0.0),
-                b: CIVector(x: 0.2, y: 0.2, z: 0.2, w: 0.0),
-                a: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
-                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.10)
+                g: CIVector(x: 2.0, y: 2.0, z: 2.0, w: 0.0),
+                b: CIVector(x: 0.3, y: 0.3, z: 0.3, w: 0.0),
+                a: CIVector(x: 3.5, y: 3.5, z: 3.5, w: 0.0),
+                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.25)
             )
         case .yellow:
             return (
-                r: CIVector(x: 1.3, y: 1.3, z: 1.3, w: 0.0),
-                g: CIVector(x: 1.2, y: 1.2, z: 1.2, w: 0.0),
+                r: CIVector(x: 2.2, y: 2.2, z: 2.2, w: 0.0),
+                g: CIVector(x: 1.9, y: 1.9, z: 1.9, w: 0.0),
                 b: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                a: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
-                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.10)
+                a: CIVector(x: 3.5, y: 3.5, z: 3.5, w: 0.0),
+                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.25)
             )
         case .red:
             return (
-                r: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
+                r: CIVector(x: 2.5, y: 2.5, z: 2.5, w: 0.0),
                 g: CIVector(x: 0.1, y: 0.1, z: 0.1, w: 0.0),
                 b: CIVector(x: 0.1, y: 0.1, z: 0.1, w: 0.0),
-                a: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
-                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.10)
+                a: CIVector(x: 3.5, y: 3.5, z: 3.5, w: 0.0),
+                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.25)
             )
         case .cyan:
             return (
                 r: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                g: CIVector(x: 1.2, y: 1.2, z: 1.2, w: 0.0),
-                b: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
-                a: CIVector(x: 1.5, y: 1.5, z: 1.5, w: 0.0),
-                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.10)
+                g: CIVector(x: 2.0, y: 2.0, z: 2.0, w: 0.0),
+                b: CIVector(x: 2.5, y: 2.5, z: 2.5, w: 0.0),
+                a: CIVector(x: 3.5, y: 3.5, z: 3.5, w: 0.0),
+                bias: CIVector(x: 0.0, y: 0.0, z: 0.0, w: -0.25)
             )
         }
     }
@@ -92,9 +92,12 @@ public final class FocusPeakingEngine: @unchecked Sendable {
             
             // 1. Downscale tối ưu để tăng tốc độ xử lý GPU lên 60FPS
             let width = ciImage.extent.width
+            let height = ciImage.extent.height
+            guard width > 0, height > 0 else { return }
             let targetWidth: CGFloat = 720.0
             let scale = width > targetWidth ? targetWidth / width : 1.0
             let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            let renderRect = CGRect(origin: .zero, size: CGSize(width: scaledImage.extent.width, height: scaledImage.extent.height))
             
             // 2. Chuyển đổi đơn sắc và tăng tương phản tần số cao
             guard let colorControls = CIFilter(name: "CIColorControls") else { return }
@@ -106,7 +109,7 @@ public final class FocusPeakingEngine: @unchecked Sendable {
             // 3. Phát hiện biên cạnh độ tương phản cao (Sobel Edge Detection) với cường độ cao
             guard let edgesFilter = CIFilter(name: "CIEdges") else { return }
             edgesFilter.setValue(monoImage, forKey: kCIInputImageKey)
-            edgesFilter.setValue(8.0, forKey: "inputIntensity")
+            edgesFilter.setValue(10.0, forKey: "inputIntensity")
             guard let edgeOutput = edgesFilter.outputImage else { return }
             
             // 4. Phủ màu Neon và triệt tiêu vùng nền đen (Transparent Alpha Masking)
@@ -118,10 +121,14 @@ public final class FocusPeakingEngine: @unchecked Sendable {
             colorMatrixFilter.setValue(vectors.b, forKey: "inputBVector")
             colorMatrixFilter.setValue(vectors.a, forKey: "inputAVector")
             colorMatrixFilter.setValue(vectors.bias, forKey: "inputBiasVector")
-            guard let finalOutput = colorMatrixFilter.outputImage else { return }
+            guard let matrixOutput = colorMatrixFilter.outputImage else { return }
+            
+            // CẮT BỎ VÙNG VÔ HẠN: Do inputBiasVector có giá trị âm (-0.25), CoreImage đánh dấu extent là CGRect.infinite.
+            // Phải crop về renderRect hữu hạn thì ciContext.createCGImage mới thành công!
+            let finalOutput = matrixOutput.cropped(to: renderRect)
             
             // 5. Kết xuất CGImage GPU siêu tốc
-            if let cgImage = self.ciContext.createCGImage(finalOutput, from: finalOutput.extent) {
+            if let cgImage = self.ciContext.createCGImage(finalOutput, from: renderRect) {
                 completion(cgImage)
             }
         }
