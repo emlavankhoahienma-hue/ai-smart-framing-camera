@@ -271,6 +271,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isProximityHapticsEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isProximityHapticsEnabled, forKey: "isProximityHapticsEnabled") }
     }
+    @Published public var isGuidanceRayEnabled: Bool = UserDefaults.standard.object(forKey: "isGuidanceRayEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(isGuidanceRayEnabled, forKey: "isGuidanceRayEnabled") }
+    }
     @Published public var isCompositionRuleSheetPresented: Bool = false
 
     // ARKit 3D World Tracking & Engine Source Indicator
@@ -1519,6 +1522,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public var showGuidanceRay: Bool {
+        guard isGuidanceRayEnabled else { return false }
         switch aiSessionState {
         case .targetPlaced: return !isPerfectAlignment && currentTargetPoint != nil
         default: return false

@@ -224,49 +224,7 @@ struct CompositionRuleSheet: View {
                             .foregroundColor(.gray)
                             .padding(.horizontal, 4)
 
-                        VStack(spacing: 8) {
-                            ForEach(CompositionRule.allCases) { rule in
-                                let isSelected = viewModel.activeCompositionRule == rule
-                                Button(action: {
-                                    viewModel.selectRule(rule)
-                                }) {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: rule.iconName)
-                                            .font(.system(size: 18, weight: .semibold))
-                                            .foregroundColor(isSelected ? .yellow : .white.opacity(0.8))
-                                            .frame(width: 28)
-
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(rule.displayNameVietnamese)
-                                                .font(.system(size: 15, weight: isSelected ? .bold : .medium))
-                                                .foregroundColor(.white)
-                                            Text(rule.descriptionVietnamese)
-                                                .font(.system(size: 12))
-                                                .foregroundColor(.gray)
-                                        }
-
-                                        Spacer()
-
-                                        if isSelected {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .font(.system(size: 18, weight: .bold))
-                                                .foregroundColor(.yellow)
-                                        }
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .fill(isSelected ? Color.yellow.opacity(0.12) : Color.white.opacity(0.05))
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(isSelected ? Color.yellow.opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1)
-                                    )
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                            }
-                        }
+                        ruleListView
 
                         Divider().background(Color.gray.opacity(0.3)).padding(.vertical, 4)
 
@@ -280,45 +238,7 @@ struct CompositionRuleSheet: View {
                     .padding(16)
                 }
 
-                // Bottom action button
-                VStack(spacing: 0) {
-                    Divider().background(Color.gray.opacity(0.25))
-
-                    if viewModel.aiSessionState.isSessionActive {
-                        Button(action: {
-                            viewModel.cancelAISession()
-                            presentationMode.wrappedValue.dismiss()
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "stop.fill")
-                                Text("Dừng căn bố cục")
-                            }
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(Color.red.opacity(0.85)))
-                        }
-                        .padding(16)
-                    } else {
-                        Button(action: {
-                            presentationMode.wrappedValue.dismiss()
-                            viewModel.startAISession()
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "viewfinder")
-                                Text("Bắt đầu căn bố cục")
-                            }
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(Color.yellow))
-                        }
-                        .padding(16)
-                    }
-                }
-                .background(Color(red: 0.08, green: 0.08, blue: 0.09))
+                bottomActionBar
             }
             .background(Color(red: 0.05, green: 0.05, blue: 0.06).edgesIgnoringSafeArea(.all))
             .navigationBarTitle("Bố cục thông minh", displayMode: .inline)
@@ -327,6 +247,97 @@ struct CompositionRuleSheet: View {
                     .foregroundColor(.yellow)
             )
         }
+    }
+
+    private var ruleListView: some View {
+        VStack(spacing: 8) {
+            ForEach(CompositionRule.allCases) { rule in
+                ruleRow(for: rule)
+            }
+        }
+    }
+
+    private func ruleRow(for rule: CompositionRule) -> some View {
+        let isSelected = (viewModel.activeCompositionRule == rule)
+        return Button(action: {
+            viewModel.selectRule(rule)
+        }) {
+            HStack(spacing: 12) {
+                Image(systemName: rule.iconName)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(isSelected ? .yellow : .white.opacity(0.8))
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(rule.displayNameVietnamese)
+                        .font(.system(size: 15, weight: isSelected ? .bold : .medium))
+                        .foregroundColor(.white)
+                    Text(rule.descriptionVietnamese)
+                        .font(.system(size: 12))
+                        .foregroundColor(.gray)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(.yellow)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color.yellow.opacity(0.12) : Color.white.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? Color.yellow.opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private var bottomActionBar: some View {
+        VStack(spacing: 0) {
+            Divider().background(Color.gray.opacity(0.25))
+
+            if viewModel.aiSessionState.isSessionActive {
+                Button(action: {
+                    viewModel.cancelAISession()
+                    presentationMode.wrappedValue.dismiss()
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "stop.fill")
+                        Text("Dừng căn bố cục")
+                    }
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.red.opacity(0.85)))
+                }
+                .padding(16)
+            } else {
+                Button(action: {
+                    presentationMode.wrappedValue.dismiss()
+                    viewModel.startAISession()
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "viewfinder")
+                        Text("Bắt đầu căn bố cục")
+                    }
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(.black)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.yellow))
+                }
+                .padding(16)
+            }
+        }
+        .background(Color(red: 0.08, green: 0.08, blue: 0.09))
     }
 }
 

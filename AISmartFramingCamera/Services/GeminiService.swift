@@ -149,7 +149,7 @@ public enum GeminiError: LocalizedError {
             return "Dữ liệu AI trả về không đúng định dạng."
         case .parseError(let msg):
             return "Lỗi AI (\(msg))"
-        case .allModelsFailed(let msg):
+        case .allModelsFailed(_):
             return "Tất cả model Gemini đều bận hoặc hết hạn mức. Đang dùng AI Neural Engine cục bộ."
         }
     }

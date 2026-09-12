@@ -63,7 +63,7 @@ public struct SettingsSheetView: View {
 
                     Toggle("Tự chụp khi khớp", isOn: $viewModel.isAutoCaptureOnAlignEnabled)
 
-                    Toggle("Hiển thị đường hướng dẫn", isOn: $viewModel.showGuidanceRay)
+                    Toggle("Hiển thị đường hướng dẫn", isOn: $viewModel.isGuidanceRayEnabled)
 
                     Picker("Độ nhạy bám chủ thể", selection: $viewModel.trackingSensitivity) {
                         ForEach(TrackingSensitivityPreset.allCases) { preset in
