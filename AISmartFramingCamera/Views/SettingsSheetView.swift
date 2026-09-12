@@ -91,7 +91,11 @@ public struct SettingsSheetView: View {
 
                     Toggle("Hiển thị vùng nhận diện", isOn: $viewModel.showDetectionBoxes)
 
-                    Toggle("Biểu đồ quang phổ (Histogram)", isOn: $viewModel.showHistogramInViewfinder)
+                    Toggle("Thanh thông số & biểu đồ HUD", isOn: $viewModel.showHistogramInViewfinder)
+
+                    if viewModel.showHistogramInViewfinder {
+                        Toggle("Mở rộng thanh màu báo cháy sáng", isOn: $viewModel.isHistogramBarExpanded)
+                    }
                 }
 
                 // MARK: - Group 4: Màu sắc

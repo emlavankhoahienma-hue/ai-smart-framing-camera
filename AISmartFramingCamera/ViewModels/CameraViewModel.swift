@@ -256,8 +256,11 @@ public final class CameraViewModel: ObservableObject {
     @Published public var showDetectionBoxes: Bool = false {
         didSet { UserDefaults.standard.set(showDetectionBoxes, forKey: "showDetectionBoxes") }
     }
-    @Published public var showHistogramInViewfinder: Bool = false {
+    @Published public var showHistogramInViewfinder: Bool = true {
         didSet { UserDefaults.standard.set(showHistogramInViewfinder, forKey: "showHistogramInViewfinder") }
+    }
+    @Published public var isHistogramBarExpanded: Bool = true {
+        didSet { UserDefaults.standard.set(isHistogramBarExpanded, forKey: "isHistogramBarExpanded") }
     }
     @Published public var isSaveOriginalPhotoEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isSaveOriginalPhotoEnabled, forKey: "isSaveOriginalPhotoEnabled") }
@@ -394,8 +397,23 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "showDetectionBoxes") != nil {
             self.showDetectionBoxes = defaults.bool(forKey: "showDetectionBoxes")
         }
-        if defaults.object(forKey: "showHistogramInViewfinder") != nil {
-            self.showHistogramInViewfinder = defaults.bool(forKey: "showHistogramInViewfinder")
+        if defaults.object(forKey: "hasMigratedHistogramBuild133") == nil {
+            self.showHistogramInViewfinder = true
+            self.isHistogramBarExpanded = true
+            defaults.set(true, forKey: "hasMigratedHistogramBuild133")
+            defaults.set(true, forKey: "showHistogramInViewfinder")
+            defaults.set(true, forKey: "isHistogramBarExpanded")
+        } else {
+            if defaults.object(forKey: "showHistogramInViewfinder") != nil {
+                self.showHistogramInViewfinder = defaults.bool(forKey: "showHistogramInViewfinder")
+            } else {
+                self.showHistogramInViewfinder = true
+            }
+            if defaults.object(forKey: "isHistogramBarExpanded") != nil {
+                self.isHistogramBarExpanded = defaults.bool(forKey: "isHistogramBarExpanded")
+            } else {
+                self.isHistogramBarExpanded = true
+            }
         }
         if defaults.object(forKey: "isSaveOriginalPhotoEnabled") != nil {
             self.isSaveOriginalPhotoEnabled = defaults.bool(forKey: "isSaveOriginalPhotoEnabled")

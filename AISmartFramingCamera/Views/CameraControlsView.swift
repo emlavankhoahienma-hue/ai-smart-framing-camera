@@ -58,20 +58,20 @@ public struct CameraControlsView: View {
             HStack(alignment: .center) {
                 // Left: Gallery Thumbnail
                 GalleryThumbnailButton(viewModel: viewModel)
-                    .frame(width: 60, height: 60)
+                    .frame(width: 52, height: 52)
 
                 Spacer()
 
-                // Center: Single Primary Capture / Record Button
+                // Center: Capture / Record Controls (AI Compose + Shutter in Photo, Record in Video)
                 MainCaptureButton(viewModel: viewModel)
 
                 Spacer()
 
                 // Right: Color Drawer Toggle
                 FilterToggleButton(viewModel: viewModel)
-                    .frame(width: 60, height: 60)
+                    .frame(width: 52, height: 52)
             }
-            .padding(.horizontal, 28)
+            .padding(.horizontal, 20)
             .padding(.bottom, 24)
         }
         .background(
@@ -115,67 +115,143 @@ public struct CustomAppIconView: View {
     }
 }
 
-// MARK: - Main Capture Button (Quiet Pro: Single Primary Shutter)
+// MARK: - Main Capture Button (Photo AI Compose + Manual Shutter / Video Recording)
 struct MainCaptureButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
     var body: some View {
         if viewModel.captureMode.isVideo {
-            // Video Record Button (Red circle with square when recording)
-            Button(action: {
-                viewModel.toggleVideoRecording()
-            }) {
-                ZStack {
-                    Circle()
-                        .stroke(Color.white, lineWidth: 3.5)
-                        .frame(width: 76, height: 76)
-
-                    if viewModel.isRecordingVideo {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.red)
-                            .frame(width: 28, height: 28)
-                    } else {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 62, height: 62)
-                    }
-                }
-                .contentShape(Circle())
-            }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel(viewModel.isRecordingVideo ? "Dừng quay video" : "Bắt đầu quay video")
+            videoRecordButton
         } else {
-            // Photo Mode: Single primary shutter button (White ring + white inner circle)
-            Button(action: {
-                if viewModel.aiSessionState != .capturing {
-                    viewModel.takePhotoManual()
-                }
-            }) {
-                ZStack {
-                    Circle()
-                        .stroke(Color.white, lineWidth: 3.5)
-                        .frame(width: 76, height: 76)
-
-                    Circle()
-                        .fill(Color.white)
-                        .frame(
-                            width: viewModel.isShutterPressing ? 54 : 62,
-                            height: viewModel.isShutterPressing ? 54 : 62
-                        )
-
-                    if case .capturing = viewModel.aiSessionState {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .black))
-                    }
-                }
-                .contentShape(Circle())
+            HStack(spacing: 16) {
+                aiComposeButton
+                manualShutterButton
             }
-            .buttonStyle(PlainButtonStyle())
-            .scaleEffect(viewModel.isShutterPressing ? 0.92 : 1.0)
-            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: viewModel.isShutterPressing)
-            .disabled(viewModel.aiSessionState == .capturing)
-            .accessibilityLabel("Chụp ảnh")
         }
+    }
+
+    // MARK: - Video Record Button
+    private var videoRecordButton: some View {
+        Button(action: {
+            viewModel.toggleVideoRecording()
+        }) {
+            ZStack {
+                Circle()
+                    .stroke(Color.white, lineWidth: 3.5)
+                    .frame(width: 76, height: 76)
+
+                if viewModel.isRecordingVideo {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.red)
+                        .frame(width: 28, height: 28)
+                } else {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 62, height: 62)
+                }
+            }
+            .contentShape(Circle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(viewModel.isRecordingVideo ? "Dừng quay video" : "Bắt đầu quay video")
+    }
+
+    // MARK: - AI Compose Button
+    private var aiComposeButton: some View {
+        Button(action: {
+            if viewModel.aiSessionState.isSessionActive {
+                viewModel.cancelAISession()
+            } else {
+                viewModel.startAISession()
+            }
+        }) {
+            ZStack {
+                Circle()
+                    .fill(Color.black.opacity(0.65))
+                    .frame(width: 68, height: 68)
+
+                Circle()
+                    .stroke(viewModel.aiSessionState.isSessionActive ? Color.green : Color.yellow, lineWidth: 2.8)
+                    .frame(width: 68, height: 68)
+
+                switch viewModel.aiSessionState {
+                case .idle, .done:
+                    CustomAppIconView(
+                        name: "iconbuttonAI",
+                        fallbackSF: "wand.and.stars",
+                        size: 34,
+                        color: .yellow
+                    )
+                case .analyzing:
+                    VStack(spacing: 3) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
+                            .scaleEffect(0.9)
+                        Text("HỦY")
+                            .font(.system(size: 9, weight: .heavy, design: .rounded))
+                            .foregroundColor(.yellow)
+                    }
+                case .targetPlaced:
+                    VStack(spacing: 2) {
+                        Image(systemName: "viewfinder")
+                            .font(.system(size: 19, weight: .bold))
+                            .foregroundColor(.yellow)
+                        Text("HỦY AI")
+                            .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                            .foregroundColor(.yellow)
+                    }
+                case .alignmentPerfect:
+                    ZStack {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 62, height: 62)
+
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 24, weight: .black))
+                            .foregroundColor(.black)
+                    }
+                case .capturing:
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
+                }
+            }
+            .contentShape(Circle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(viewModel.aiSessionState.isSessionActive ? "Dừng AI Compose" : "Bắt đầu AI Compose")
+    }
+
+    // MARK: - Manual Shutter Button
+    private var manualShutterButton: some View {
+        Button(action: {
+            if viewModel.aiSessionState != .capturing {
+                viewModel.takePhotoManual()
+            }
+        }) {
+            ZStack {
+                Circle()
+                    .stroke(Color.white, lineWidth: 3.2)
+                    .frame(width: 68, height: 68)
+
+                Circle()
+                    .fill(Color.white)
+                    .frame(
+                        width: viewModel.isShutterPressing ? 50 : 58,
+                        height: viewModel.isShutterPressing ? 50 : 58
+                    )
+
+                if case .capturing = viewModel.aiSessionState {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                }
+            }
+            .contentShape(Circle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .scaleEffect(viewModel.isShutterPressing ? 0.92 : 1.0)
+        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: viewModel.isShutterPressing)
+        .disabled(viewModel.aiSessionState == .capturing)
+        .accessibilityLabel("Chụp ảnh thủ công")
     }
 }
 
