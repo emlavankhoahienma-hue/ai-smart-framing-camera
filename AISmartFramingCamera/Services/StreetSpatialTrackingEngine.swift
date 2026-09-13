@@ -2,5 +2,6 @@ import Foundation
 import CoreGraphics
 import CoreVideo
 
-/// Lo?i b? trùng l?p code: Alias tr?c ti?p sang SpatialTrackingEngine d? tái s? d?ng toàn b? logic tracking mà không làm phân m?nh ho?c xung d?t b? di?u khi?n
+// Typealias directly to SpatialTrackingEngine to eliminate duplicated tracking code
+// while keeping compatibility with existing call sites.
 public typealias StreetSpatialTrackingEngine = SpatialTrackingEngine

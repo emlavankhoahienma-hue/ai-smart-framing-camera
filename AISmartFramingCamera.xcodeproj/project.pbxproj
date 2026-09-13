@@ -13,8 +13,8 @@
 		B20000000000000000000004 /* VisionFramingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* VisionFramingEngine.swift */; };
 		B20000000000000000000005 /* CompositionCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* CompositionCalculator.swift */; };
 		B20000000000000000000006 /* FilmFilterEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* FilmFilterEngine.swift */; };
-		B20000000000000000000007 /* HapticFeedbackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000007 /* HapticFeedbackService.swift */; };
-		B20000000000000000000009 /* CameraViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000009 /* CameraViewModel.swift */; };
+		B20000000000000000000007 /* HapticFeedbackService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* HapticFeedbackService.swift */; };
+		B20000000000000000000009 /* CameraViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* CameraViewModel.swift */; };
 		B2000000000000000000000A /* CameraMainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* CameraMainView.swift */; };
 		B2000000000000000000000B /* CameraPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* CameraPreviewView.swift */; };
 		B2000000000000000000000C /* ARFramingOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* ARFramingOverlayView.swift */; };
