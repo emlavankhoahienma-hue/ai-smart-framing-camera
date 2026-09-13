@@ -17,6 +17,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     
     private let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
     
+    private let processingLock = NSLock()
     private var isProcessingFrame = false
     private var lastProcessTime: TimeInterval = 0
     private let frameThrottleInterval: TimeInterval = 0.033 // ~30 FPS for ultra-smooth optical tracking
@@ -567,11 +568,23 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let currentTime = CACurrentMediaTime()
         let effectiveThrottle = isIdlePreviewMode ? idleThrottleInterval : frameThrottleInterval
         guard currentTime - lastProcessTime >= effectiveThrottle else { return }
-        guard !isProcessingFrame else { return }
         
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let shouldProcess: Bool = {
+            processingLock.lock()
+            defer { processingLock.unlock() }
+            if isProcessingFrame { return false }
+            isProcessingFrame = true
+            return true
+        }()
+        guard shouldProcess else { return }
         
-        isProcessingFrame = true
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            processingLock.lock()
+            isProcessingFrame = false
+            processingLock.unlock()
+            return
+        }
+        
         lastProcessTime = currentTime
         
         // Capture frame for Gemini if requested
@@ -588,7 +601,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         visionQueue.async { [weak self] in
             guard let self = self else { return }
-            defer { self.isProcessingFrame = false }
+            defer {
+                self.processingLock.lock()
+                self.isProcessingFrame = false
+                self.processingLock.unlock()
+            }
             
             // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
             if self.isTrackingTarget, let trackRequest = self.currentTrackRequest {

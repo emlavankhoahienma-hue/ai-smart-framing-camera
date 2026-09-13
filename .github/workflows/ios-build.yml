@@ -16,20 +16,19 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16
+      - name: Select latest Xcode
         run: |
-          if [ -d "/Applications/Xcode_16.2.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-          elif [ -d "/Applications/Xcode_16.1.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
-          elif [ -d "/Applications/Xcode_16.0.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.0.app/Contents/Developer
+          echo "Available Xcode installations:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          latest=$(ls -d /Applications/Xcode_16*.app /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then
+            echo "Selecting latest Xcode: $latest"
+            sudo xcode-select -s "$latest/Contents/Developer"
           else
+            echo "Falling back to default Xcode.app"
             sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           fi
-
-      - name: Show Xcode version
-        run: xcodebuild -version
+          xcodebuild -version
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -54,12 +53,14 @@ jobs:
             -project AISmartFramingCamera.xcodeproj \
             -scheme AISmartFramingCamera \
             -destination 'generic/platform=iOS' \
+            -sdk iphoneos \
             -configuration Release \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO \
+            ENABLE_ON_DEMAND_RESOURCES=NO \
             ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS=NO \
             ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
             BUILD_DIR=${{ github.workspace }}/build 2>&1 | tee build.log
@@ -99,10 +100,16 @@ jobs:
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
           if [ -d "yolov8n.mlmodelc" ]; then
             cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
-            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
+            cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/yolov8n.mlmodelc
+            echo "✓ Đã tích hợp thành công YOLO CoreML vào App Bundle!"
           elif [ -d "yolo11n.mlmodelc" ]; then
             cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
-            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
+            cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/yolo11n.mlmodelc
+            echo "✓ Đã tích hợp thành công YOLO CoreML vào App Bundle!"
+          fi
+          if [ -f "AISmartFramingCamera/Services/RobustTargetEmbedder.bin" ]; then
+            cp AISmartFramingCamera/Services/RobustTargetEmbedder.bin Payload/AISmartFramingCamera.app/
+            echo "✓ Đã tích hợp thành công RobustTargetEmbedder.bin vào App Bundle!"
           fi
           if [ -f "AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part1" ]; then
             cat AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part* > Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin

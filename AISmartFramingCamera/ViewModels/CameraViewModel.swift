@@ -16,7 +16,6 @@ public final class CameraViewModel: ObservableObject {
     public let calculator = CompositionCalculator.shared
     public let filterEngine = FilmFilterEngine.shared
     public let haptics = HapticFeedbackService.shared
-    public let arSession = ARCompositionSession.shared
     public let geminiService = GeminiService.shared
     public let motionService = DeviceMotionService.shared
 
@@ -281,8 +280,7 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var isCompositionRuleSheetPresented: Bool = false
 
-    // ARKit 3D World Tracking & Engine Source Indicator
-    public let arSessionService = ARCompositionSession.shared
+    // Engine Source Indicator
     @Published public var activeEngineSource: AIEngineSource? = nil
     @Published public var arTrackingWarning: String? = nil
     @Published public var activeFocusSquarePoint: CGPoint? = nil
@@ -596,7 +594,6 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
 
         // Reset state
-        arSessionService.clearTarget()
         SpatialTrackingEngine.shared.stopTracking()
         StreetSpatialTrackingEngine.shared.stopTracking()
         visionEngine.stopTrackingObject()
@@ -629,7 +626,6 @@ public final class CameraViewModel: ObservableObject {
     public func cancelAISession() {
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
-        arSessionService.clearTarget()
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
         StreetSpatialTrackingEngine.shared.stopTracking()
@@ -1081,7 +1077,6 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func executeCapture() {
-        arSessionService.clearTarget()
         motionService.stopTracking()
         visionEngine.stopTrackingObject()
         // Dừng hẳn engine spatial — trước đây 60Hz gyro vẫn chạy nền sau khi chụp
@@ -1097,7 +1092,7 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        cameraService.capturePhoto()
+        cameraService.capturePhoto(isDNG: selectedPhotoFormat == .dng)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
 
@@ -1416,7 +1411,7 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        cameraService.capturePhoto()
+        cameraService.capturePhoto(isDNG: selectedPhotoFormat == .dng)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
 
@@ -1532,7 +1527,27 @@ public final class CameraViewModel: ObservableObject {
                     }
                 }
             } else {
-                // LƯU ẢNH TĨNH THƯỜNG (HEIC / JPEG / DNG)
+                // LƯU ẢNH TĨNH THƯỜNG (RAW DNG / HEIC / JPEG)
+                if self.selectedPhotoFormat == .dng, let rawData = item.rawPhotoData {
+                    PHPhotoLibrary.shared().performChanges({
+                        let creationRequest = PHAssetCreationRequest.forAsset()
+                        let options = PHAssetResourceCreationOptions()
+                        creationRequest.addResource(with: .photo, data: rawData, options: options)
+                    }) { success, error in
+                        DispatchQueue.main.async {
+                            if success {
+                                CameraLogger.success("✅ Đã lưu ảnh RAW DNG gốc vào Cuộn Camera thành công!", category: .photoKit)
+                                self.haptics.triggerSuccess()
+                                self.saveErrorMessage = nil
+                            } else {
+                                CameraLogger.error("Lưu ảnh RAW DNG thất bại, thử lưu JPEG dự phòng", error: error, category: .photoKit)
+                                self.saveFallbackStaticPhoto(item)
+                            }
+                        }
+                    }
+                    return
+                }
+
                 if self.selectedPhotoFormat == .heic {
                     let ciImage = CIImage(cgImage: item.processedImage)
                     let context = CIContext()

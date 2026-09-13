@@ -755,8 +755,7 @@ public final class GeminiService {
         if isOpenRouter {
             return URL(string: "https://openrouter.ai/api/v1/chat/completions")
         }
-        let encodedKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
-        return URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelID):generateContent?key=\(encodedKey)")
+        return URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelID):generateContent")
     }
 
     private static func extractErrorMessage(from data: Data, isOpenRouter: Bool = false) -> String? {

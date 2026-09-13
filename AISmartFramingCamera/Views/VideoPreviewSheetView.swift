@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import Photos
+import CoreImage
 
 public struct VideoPreviewSheetView: View {
     let videoURL: URL
@@ -11,6 +12,7 @@ public struct VideoPreviewSheetView: View {
     @State private var isGradingWithAI: Bool = false
     @State private var gradingSuccessNote: String? = nil
     @State private var hasSavedToPhotos: Bool = false
+    @State private var processedVideoURL: URL? = nil
 
     private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
     private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
@@ -70,7 +72,7 @@ public struct VideoPreviewSheetView: View {
                         }
                         .disabled(isGradingWithAI)
 
-                        Button(action: saveVideoToPhotos) {
+                        Button(action: { saveVideoToPhotos() }) {
                             HStack(spacing: 6) {
                                 Image(systemName: hasSavedToPhotos ? "checkmark" : "arrow.down")
                                     .font(.system(size: 13, weight: .semibold))
@@ -84,7 +86,7 @@ public struct VideoPreviewSheetView: View {
                             .cornerRadius(10)
                         }
 
-                        ShareLink(item: videoURL) {
+                        ShareLink(item: processedVideoURL ?? videoURL) {
                             HStack(spacing: 6) {
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 13, weight: .semibold))
@@ -121,38 +123,54 @@ public struct VideoPreviewSheetView: View {
 
     private func applyAICinematicColor() {
         isGradingWithAI = true
-        // Extract first frame from video and analyze color
         let asset = AVAsset(url: videoURL)
-        let imageGenerator = AVAssetImageGenerator(asset: asset)
-        imageGenerator.appliesPreferredTrackTransform = true
+        let filterPreset = viewModel.selectedFilmPreset
 
-        let time = CMTime(seconds: 0.5, preferredTimescale: 600)
-        if let cgImage = try? imageGenerator.copyCGImage(at: time, actualTime: nil) {
-            GeminiService.shared.analyzeForComposition(image: cgImage) { result in
-                DispatchQueue.main.async {
-                    self.isGradingWithAI = false
-                    switch result {
-                    case .success:
-                        self.gradingSuccessNote = "Đã tối ưu màu sắc video"
-                        self.saveVideoToPhotos()
-                    case .failure:
-                        self.gradingSuccessNote = "Đã áp dụng công thức màu"
-                        self.saveVideoToPhotos()
-                    }
-                }
+        let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
+            let source = request.sourceImage.clampedToExtent()
+            var output = source
+
+            if let filter = FilmFilterEngine.shared.createCIFilter(for: filterPreset, inputImage: output) {
+                output = filter.outputImage?.cropped(to: request.sourceImage.extent) ?? output
             }
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+
+            request.finish(with: output, context: nil)
+        })
+
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("graded_\(UUID().uuidString).mov")
+        try? FileManager.default.removeItem(at: tempURL)
+
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+            self.isGradingWithAI = false
+            return
+        }
+
+        exportSession.videoComposition = composition
+        exportSession.outputURL = tempURL
+        exportSession.outputFileType = .mov
+        exportSession.shouldOptimizeForNetworkUse = true
+
+        exportSession.exportAsynchronously {
+            DispatchQueue.main.async {
                 self.isGradingWithAI = false
-                self.gradingSuccessNote = "Đã tối ưu màu sắc video"
-                self.saveVideoToPhotos()
+                if exportSession.status == .completed {
+                    self.processedVideoURL = tempURL
+                    self.gradingSuccessNote = "Đã áp dụng màu film điện ảnh (\(filterPreset.displayName))"
+                    self.player = AVPlayer(url: tempURL)
+                    self.player?.play()
+                    self.saveVideoToPhotos(url: tempURL)
+                } else {
+                    CameraLogger.error("Xuất video chỉnh màu thất bại: \(String(describing: exportSession.error))", category: .photoKit)
+                    self.saveVideoToPhotos(url: self.videoURL)
+                }
             }
         }
     }
 
-    private func saveVideoToPhotos() {
+    private func saveVideoToPhotos(url: URL? = nil) {
+        let targetURL = url ?? processedVideoURL ?? videoURL
         PHPhotoLibrary.shared().performChanges({
-            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: self.videoURL)
+            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: targetURL)
         }) { success, error in
             DispatchQueue.main.async {
                 if success {
