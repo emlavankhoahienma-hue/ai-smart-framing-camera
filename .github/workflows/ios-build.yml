@@ -16,20 +16,19 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16
+      - name: Select latest Xcode
         run: |
-          if [ -d "/Applications/Xcode_16.2.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
-          elif [ -d "/Applications/Xcode_16.1.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
-          elif [ -d "/Applications/Xcode_16.0.app" ]; then
-            sudo xcode-select -s /Applications/Xcode_16.0.app/Contents/Developer
+          echo "Available Xcode installations:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          latest=$(ls -d /Applications/Xcode_16*.app /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then
+            echo "Selecting latest Xcode: $latest"
+            sudo xcode-select -s "$latest/Contents/Developer"
           else
+            echo "Falling back to default Xcode.app"
             sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           fi
-
-      - name: Show Xcode version
-        run: xcodebuild -version
+          xcodebuild -version
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
