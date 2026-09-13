@@ -54,12 +54,14 @@ jobs:
             -project AISmartFramingCamera.xcodeproj \
             -scheme AISmartFramingCamera \
             -destination 'generic/platform=iOS' \
+            -sdk iphoneos \
             -configuration Release \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO \
+            ENABLE_ON_DEMAND_RESOURCES=NO \
             ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS=NO \
             ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
             BUILD_DIR=${{ github.workspace }}/build 2>&1 | tee build.log
