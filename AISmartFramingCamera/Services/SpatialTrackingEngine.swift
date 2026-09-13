@@ -53,9 +53,15 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var filterLastTime: CFTimeInterval = 0.0
     private var filterInitialized: Bool = false
     
+    public var isStreetMode: Bool = false
+    
     private let oneEuroMinCutoff: Double = 1.2
     private let oneEuroBeta: Double = 1.0
     private let oneEuroDCutoff: Double = 1.0
+    
+    private var effectiveMinCutoff: Double { isStreetMode ? 1.2 : oneEuroMinCutoff }
+    private var effectiveBeta: Double { isStreetMode ? 0.90 : oneEuroBeta }
+    private var effectiveDCutoff: Double { isStreetMode ? 1.2 : oneEuroDCutoff }
     
     // Hệ số FOV camera chuẩn hóa (~65 độ FOV trên ống kính Wide iPhone)
     private let sensitivityFactor: Double = 0.88
@@ -294,7 +300,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let rawDx = (obsX - filterXPrev) / max(0.005, dt)
         let rawDy = (obsY - filterYPrev) / max(0.005, dt)
         
-        let aD = alpha(rate: rate, cutoff: oneEuroDCutoff)
+        let aD = alpha(rate: rate, cutoff: effectiveDCutoff)
         let dxHat = aD * rawDx + (1.0 - aD) * filterDxPrev
         let dyHat = aD * rawDy + (1.0 - aD) * filterDyPrev
         filterDxPrev = dxHat
@@ -304,7 +310,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         // - Khi đứng yên: speed nhỏ -> cutoff gần minCutoff (1.2Hz) -> triệt rung tay
         // - Khi di chuyển tâm trắng đến target: speed tăng -> cutoff tăng tức thì -> target bám dính mượt mà
         let speed = hypot(dxHat, dyHat)
-        let adaptiveCutoff = oneEuroMinCutoff + oneEuroBeta * speed
+        let adaptiveCutoff = effectiveMinCutoff + effectiveBeta * speed
         
         // 3. Lọc mượt tọa độ
         let aPos = alpha(rate: rate, cutoff: adaptiveCutoff)

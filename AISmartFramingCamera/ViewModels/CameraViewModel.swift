@@ -16,7 +16,6 @@ public final class CameraViewModel: ObservableObject {
     public let calculator = CompositionCalculator.shared
     public let filterEngine = FilmFilterEngine.shared
     public let haptics = HapticFeedbackService.shared
-    public let arSession = ARCompositionSession.shared
     public let geminiService = GeminiService.shared
     public let motionService = DeviceMotionService.shared
 
@@ -73,11 +72,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isStreetTrackingModeEnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(isStreetTrackingModeEnabled, forKey: "isStreetTrackingModeEnabled")
-            if !isStreetTrackingModeEnabled {
-                StreetSpatialTrackingEngine.shared.stopTracking()
-            } else {
-                SpatialTrackingEngine.shared.stopTracking()
-            }
+            SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
         }
     }
     @Published public var liveISO: String = "ISO 32"
@@ -196,7 +191,6 @@ public final class CameraViewModel: ObservableObject {
             self.cameraService.smoothZoomFactor(to: targetZoom, rate: 1.8)
             self.currentZoom = targetZoom
             SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
-            StreetSpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
 
             let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.8 + 0.25
             DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
@@ -246,7 +240,6 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isShowingFilmDrawer: Bool = false
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
-    @Published public var isARModeEnabled: Bool = false
     @Published public var activeFlashMode2: Bool = false
     @Published public var autoCaptureCountdown: Int = 0
     @Published public var currentAIColorParams: AIColorParameters? = nil
@@ -281,10 +274,7 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var isCompositionRuleSheetPresented: Bool = false
 
-    // ARKit 3D World Tracking & Engine Source Indicator
-    public let arSessionService = ARCompositionSession.shared
     @Published public var activeEngineSource: AIEngineSource? = nil
-    @Published public var arTrackingWarning: String? = nil
     @Published public var activeFocusSquarePoint: CGPoint? = nil
     @Published public var isAEAFLocked: Bool = false
     @Published public var aeafLockPoint: CGPoint? = nil
@@ -554,9 +544,13 @@ public final class CameraViewModel: ObservableObject {
 
 
     private func setupMotionCallbacks() {
-        // Động cơ Tracking Không Gian Chuẩn: Chế độ Thường
+        motionService.onMotionUpdate = { [weak self] dx, dy in
+            self?.handleGyroMotion(deltaX: dx, deltaY: dy)
+        }
+
+        SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
         SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
-            guard let self = self, !self.isStreetTrackingModeEnabled, !self.isShowingSettings else { return }
+            guard let self = self, !self.isShowingSettings else { return }
             self.lastVisualConfidence = confidence
             // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
             self.currentTargetPoint = point
@@ -566,26 +560,12 @@ public final class CameraViewModel: ObservableObject {
                 self.evaluateAlignment(at: point)
             }
         }
-
-        // Động cơ Tracking Không Gian Chuyên Dụng Đi Đường: Chế độ Đi Đường
-        StreetSpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
-            guard let self = self, self.isStreetTrackingModeEnabled, !self.isShowingSettings else { return }
-            self.lastVisualConfidence = confidence
-            self.currentTargetPoint = point
-            self.trackingQuality = quality
-            if case .targetPlaced = self.aiSessionState {
-                self.evaluateAlignment(at: point)
-            }
-        }
     }
 
     // Nạp thông số chống nhảy đột biến & ngưỡng nhận confidence của ViewModel (theo trackingSensitivity)
-    // xuống 2 engine spatial — trước đây các tham số này là dead code không được dùng
     private func applyTrackingSensitivityToEngines() {
         SpatialTrackingEngine.shared.maxObservationJump = maxJumpPerFrame
         SpatialTrackingEngine.shared.opticalAcceptThreshold = confidenceAcceptThreshold
-        StreetSpatialTrackingEngine.shared.maxObservationJump = maxJumpPerFrame
-        StreetSpatialTrackingEngine.shared.opticalAcceptThreshold = confidenceAcceptThreshold
     }
 
     // MARK: - AI Session Control (One-Shot Trigger)
@@ -596,9 +576,8 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
 
         // Reset state
-        arSessionService.clearTarget()
+        motionService.stopTracking()
         SpatialTrackingEngine.shared.stopTracking()
-        StreetSpatialTrackingEngine.shared.stopTracking()
         visionEngine.stopTrackingObject()
         analysisFrames = []
         initialTargetPoint = nil
@@ -616,7 +595,6 @@ public final class CameraViewModel: ObservableObject {
         geminiExplanation = ""
         activeModelUsedName = ""
         activeEngineSource = nil
-        arTrackingWarning = nil
 
         withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
             aiSessionState = .analyzing
@@ -629,10 +607,9 @@ public final class CameraViewModel: ObservableObject {
     public func cancelAISession() {
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
-        arSessionService.clearTarget()
+        motionService.stopTracking()
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
-        StreetSpatialTrackingEngine.shared.stopTracking()
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
         consecutiveLowConfidenceFrames = 0
@@ -650,7 +627,6 @@ public final class CameraViewModel: ObservableObject {
             detectedSubjectRects = []
             detectedFaceRects = []
             activeEngineSource = nil
-            arTrackingWarning = nil
         }
     }
 
@@ -815,7 +791,6 @@ public final class CameraViewModel: ObservableObject {
         }
         // Nếu nằm giữa 20.0 và 30.0: giữ nguyên trạng thái trước đó
         SpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
-        StreetSpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
         CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
     }
 
@@ -883,13 +858,10 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.currentSceneType = self.detectedScene
         // Thông báo cho Vision engine: anchor low-texture (vật trắng/đơn sắc) -> siết ngưỡng re-ID
         visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
-        if isStreetTrackingModeEnabled {
-            StreetSpatialTrackingEngine.shared.activeSceneType = self.detectedScene
-            StreetSpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
-        } else {
-            SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
-            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
-        }
+        SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
+        SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
+        SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
+        motionService.startTracking()
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = target
@@ -955,11 +927,18 @@ public final class CameraViewModel: ObservableObject {
             applyTextureVarianceHysteresis(variance: variance)
         }
 
-        // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào Động cơ tương ứng
-        if isStreetTrackingModeEnabled {
-            StreetSpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
-        } else {
-            SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
+        // Cập nhật mỏ neo gyro khi nhận diện quang học tốt
+        if let pt = point, confidence > 0.35 {
+            self.consecutiveLowConfidenceFrames = 0
+            self.gyroAnchorPoint = pt
+            self.motionService.resetReferenceAttitude()
+        }
+
+        // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào SpatialTrackingEngine
+        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
+
+        if point == nil || confidence <= 0.35 {
+            handleTrackingDegraded()
         }
     }
 
@@ -967,7 +946,7 @@ public final class CameraViewModel: ObservableObject {
     private func handleTrackingDegraded() {
         consecutiveLowConfidenceFrames += 1
 
-        let spatialPoint = isStreetTrackingModeEnabled ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+        let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
         let fallback = self.currentTargetPoint ?? lastTrackedVisualPoint ?? spatialPoint
         let target = (spatialPoint.x >= 0.02 && spatialPoint.x <= 0.98) ? spatialPoint : fallback
 
@@ -1081,12 +1060,9 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func executeCapture() {
-        arSessionService.clearTarget()
         motionService.stopTracking()
         visionEngine.stopTrackingObject()
-        // Dừng hẳn engine spatial — trước đây 60Hz gyro vẫn chạy nền sau khi chụp
         SpatialTrackingEngine.shared.stopTracking()
-        StreetSpatialTrackingEngine.shared.stopTracking()
         haptics.triggerShutterClick()
 
         withAnimation(.easeInOut(duration: 0.05)) { activeFlashMode2 = true }
@@ -1097,7 +1073,7 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        cameraService.capturePhoto()
+        cameraService.capturePhoto(isDNG: selectedPhotoFormat == .dng)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
 
@@ -1109,7 +1085,6 @@ public final class CameraViewModel: ObservableObject {
         currentZoom = zoom
         cameraService.setZoomFactor(zoom)
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)
-        StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
 
     /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
@@ -1122,7 +1097,6 @@ public final class CameraViewModel: ObservableObject {
             lastContinuousAppliedZoom = zoom
             cameraService.setZoomFactor(zoom)
             SpatialTrackingEngine.shared.updateZoomFactor(zoom)
-            StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
         }
     }
 
@@ -1132,7 +1106,6 @@ public final class CameraViewModel: ObservableObject {
         lastContinuousAppliedZoom = finalZoom
         cameraService.setZoomFactor(finalZoom)
         SpatialTrackingEngine.shared.updateZoomFactor(finalZoom)
-        StreetSpatialTrackingEngine.shared.updateZoomFactor(finalZoom)
         haptics.triggerSelectionChange()
     }
 
@@ -1141,7 +1114,6 @@ public final class CameraViewModel: ObservableObject {
         currentZoom = zoom
         cameraService.smoothZoomFactor(to: zoom, rate: 2.5)
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)
-        StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
 
     public func setExposure(_ bias: Float) {
@@ -1256,11 +1228,7 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    public func toggleARMode() {
-        haptics.triggerSelectionChange()
-        isARModeEnabled.toggle()
-        if isARModeEnabled { arSession.startSession() } else { arSession.pauseSession() }
-    }
+
 
     // MARK: - Smart Autofocus & Exposure Control (Apple Camera App Style)
 
@@ -1416,7 +1384,7 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        cameraService.capturePhoto()
+        cameraService.capturePhoto(isDNG: selectedPhotoFormat == .dng)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
 
@@ -1532,7 +1500,27 @@ public final class CameraViewModel: ObservableObject {
                     }
                 }
             } else {
-                // LƯU ẢNH TĨNH THƯỜNG (HEIC / JPEG / DNG)
+                // LƯU ẢNH TĨNH THƯỜNG (RAW DNG / HEIC / JPEG)
+                if self.selectedPhotoFormat == .dng, let rawData = item.rawPhotoData {
+                    PHPhotoLibrary.shared().performChanges({
+                        let creationRequest = PHAssetCreationRequest.forAsset()
+                        let options = PHAssetResourceCreationOptions()
+                        creationRequest.addResource(with: .photo, data: rawData, options: options)
+                    }) { success, error in
+                        DispatchQueue.main.async {
+                            if success {
+                                CameraLogger.success("✅ Đã lưu ảnh RAW DNG gốc vào Cuộn Camera thành công!", category: .photoKit)
+                                self.haptics.triggerSuccess()
+                                self.saveErrorMessage = nil
+                            } else {
+                                CameraLogger.error("Lưu ảnh RAW DNG thất bại, thử lưu JPEG dự phòng", error: error, category: .photoKit)
+                                self.saveFallbackStaticPhoto(item)
+                            }
+                        }
+                    }
+                    return
+                }
+
                 if self.selectedPhotoFormat == .heic {
                     let ciImage = CIImage(cgImage: item.processedImage)
                     let context = CIContext()
@@ -1727,6 +1715,5 @@ extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {
         self.currentZoom = zoom
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)
-        StreetSpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
 }

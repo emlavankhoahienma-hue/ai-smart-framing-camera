@@ -99,10 +99,16 @@ jobs:
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
           if [ -d "yolov8n.mlmodelc" ]; then
             cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
-            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
+            cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/yolov8n.mlmodelc
+            echo "✓ Đã tích hợp thành công YOLO CoreML vào App Bundle!"
           elif [ -d "yolo11n.mlmodelc" ]; then
             cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
-            echo "✓ Đã tích hợp thành công YOLOv11.mlmodelc vào App Bundle!"
+            cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/yolo11n.mlmodelc
+            echo "✓ Đã tích hợp thành công YOLO CoreML vào App Bundle!"
+          fi
+          if [ -f "AISmartFramingCamera/Services/RobustTargetEmbedder.bin" ]; then
+            cp AISmartFramingCamera/Services/RobustTargetEmbedder.bin Payload/AISmartFramingCamera.app/
+            echo "✓ Đã tích hợp thành công RobustTargetEmbedder.bin vào App Bundle!"
           fi
           if [ -f "AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part1" ]; then
             cat AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part* > Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin

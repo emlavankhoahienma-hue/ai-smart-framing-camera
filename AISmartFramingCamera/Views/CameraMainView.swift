@@ -230,11 +230,8 @@ struct CompositionRuleSheet: View {
                         Divider().background(Color.gray.opacity(0.3)).padding(.vertical, 4)
 
                         // Tiện ích nhanh
-                        VStack(spacing: 10) {
-                            Toggle("Live Photo", isOn: $viewModel.isLivePhotoEnabled)
-                            Toggle("Không gian 3D ARKit", isOn: $viewModel.isARModeEnabled)
-                        }
-                        .padding(.horizontal, 4)
+                        Toggle("Live Photo", isOn: $viewModel.isLivePhotoEnabled)
+                            .padding(.horizontal, 4)
                     }
                     .padding(16)
                 }

@@ -34,6 +34,7 @@ public final class CameraService: NSObject {
 
     public weak var delegate: CameraServiceDelegate?
     public var onLiveCameraStatsUpdated: ((LiveCameraStats) -> Void)?
+    private var lastStatsPublishTime: TimeInterval = 0
 
     // Core AVFoundation objects
     public let captureSession = AVCaptureSession()
@@ -641,20 +642,27 @@ public final class CameraService: NSObject {
     }
 
     // MARK: - Capture Photo
-    public func capturePhoto() {
+    public func capturePhoto(isDNG: Bool = false) {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             self.currentPhotoCaptured = nil
             self.currentLivePhotoURL = nil
             self.isCapturingLivePhotoRequest = false
 
-            let photoSettings = AVCapturePhotoSettings()
+            let photoSettings: AVCapturePhotoSettings
+            if isDNG, let rawFormat = self.photoOutput.availableRawPhotoPixelFormatTypes.first {
+                photoSettings = AVCapturePhotoSettings(rawPixelFormatType: rawFormat)
+                CameraLogger.info("📸 Kích hoạt chụp RAW/DNG cảm biến thực tế (Format: \(rawFormat))", category: .capture)
+            } else {
+                photoSettings = AVCapturePhotoSettings()
+            }
+
             if self.activeCamera?.isFlashAvailable == true {
                 photoSettings.flashMode = self.flashMode
             }
             photoSettings.photoQualityPrioritization = .quality
 
-            if self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {
+            if !isDNG && self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {
                 if !self.photoOutput.isLivePhotoCaptureEnabled {
                     self.captureSession.beginConfiguration()
                     self.photoOutput.isLivePhotoCaptureEnabled = true
@@ -666,7 +674,7 @@ public final class CameraService: NSObject {
                 photoSettings.livePhotoMovieFileURL = movieURL
                 self.isCapturingLivePhotoRequest = true
                 CameraLogger.info("📸 Kích hoạt chụp LIVE PHOTO (Movie URL: \(movieURL.lastPathComponent))", category: .capture)
-            } else {
+            } else if !isDNG {
                 CameraLogger.info("📸 Chụp ẢNH TĨNH tiêu chuẩn", category: .capture)
             }
 
@@ -678,28 +686,32 @@ public final class CameraService: NSObject {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        var currentStats: LiveCameraStats? = nil
-        if let camera = self.activeCamera {
-            let iso = camera.iso
-            let duration = camera.exposureDuration
-            let seconds = CMTimeGetSeconds(duration)
-            let shutterString: String
-            if seconds > 0 {
-                if seconds >= 1.0 {
-                    shutterString = String(format: "%.1f s", seconds)
+        let now = CACurrentMediaTime()
+        if now - self.lastStatsPublishTime >= 0.2 {
+            self.lastStatsPublishTime = now
+            var currentStats: LiveCameraStats? = nil
+            if let camera = self.activeCamera {
+                let iso = camera.iso
+                let duration = camera.exposureDuration
+                let seconds = CMTimeGetSeconds(duration)
+                let shutterString: String
+                if seconds > 0 {
+                    if seconds >= 1.0 {
+                        shutterString = String(format: "%.1f s", seconds)
+                    } else {
+                        let denom = Int(round(1.0 / seconds))
+                        shutterString = "1/\(denom) s"
+                    }
                 } else {
-                    let denom = Int(round(1.0 / seconds))
-                    shutterString = "1/\(denom) s"
+                    shutterString = "1/125 s"
                 }
-            } else {
-                shutterString = "1/125 s"
+                currentStats = LiveCameraStats(iso: iso, shutterSpeedString: shutterString, exposureDurationSeconds: seconds)
             }
-            currentStats = LiveCameraStats(iso: iso, shutterSpeedString: shutterString, exposureDurationSeconds: seconds)
-        }
 
-        if let stats = currentStats {
-            DispatchQueue.main.async { [weak self] in
-                self?.onLiveCameraStatsUpdated?(stats)
+            if let stats = currentStats {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onLiveCameraStatsUpdated?(stats)
+                }
             }
         }
 

@@ -53,6 +53,8 @@ public enum CameraLogger {
     private static let photosLog = OSLog(subsystem: subsystem, category: "PhotoKit")
     private static let aiLog = OSLog(subsystem: subsystem, category: "AI_Engine")
     
+    private static let dateFormatter = ISO8601DateFormatter()
+
     public enum Category: String {
         case capture = "📸 CAPTURE"
         case tracking = "🎯 TRACKING_6DOF"
@@ -62,7 +64,7 @@ public enum CameraLogger {
     }
     
     public static func info(_ message: String, category: Category = .general) {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let timestamp = dateFormatter.string(from: Date())
         let formatted = "[\(timestamp)] [\(category.rawValue)] ℹ️ \(message)"
         print(formatted)
         appendToFile(formatted)
@@ -77,7 +79,7 @@ public enum CameraLogger {
     }
     
     public static func success(_ message: String, category: Category = .general) {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let timestamp = dateFormatter.string(from: Date())
         let formatted = "[\(timestamp)] [\(category.rawValue)] ✅ \(message)"
         print(formatted)
         appendToFile(formatted)
@@ -85,7 +87,7 @@ public enum CameraLogger {
     }
     
     public static func warning(_ message: String, category: Category = .general) {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let timestamp = dateFormatter.string(from: Date())
         let formatted = "[\(timestamp)] [\(category.rawValue)] ⚠️ CẢNH BÁO: \(message)"
         print(formatted)
         appendToFile(formatted)
@@ -93,7 +95,7 @@ public enum CameraLogger {
     }
     
     public static func error(_ message: String, error: Error? = nil, category: Category = .general) {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let timestamp = dateFormatter.string(from: Date())
         let errDetail = error != nil ? " | Chi tiết: \(error!.localizedDescription)" : ""
         let formatted = "[\(timestamp)] [\(category.rawValue)] ❌ LỖI: \(message)\(errDetail)"
         print(formatted)

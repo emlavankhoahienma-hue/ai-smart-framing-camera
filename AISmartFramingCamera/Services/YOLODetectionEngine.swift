@@ -20,7 +20,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     public func loadYOLOModel() {
         // Tìm file .mlmodelc (đã biên dịch) hoặc .mlpackage trong App Bundle
         if let modelURL = Bundle.main.url(forResource: "YOLOv11", withExtension: "mlmodelc") ??
-                          Bundle.main.url(forResource: "yolo11n", withExtension: "mlmodelc") {
+                          Bundle.main.url(forResource: "yolo11n", withExtension: "mlmodelc") ??
+                          Bundle.main.url(forResource: "yolov8n", withExtension: "mlmodelc") {
             do {
                 let config = MLModelConfiguration()
                 config.computeUnits = .all // Tận dụng tối đa Apple Neural Engine + GPU + CPU
@@ -28,12 +29,13 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 let vnModel = try VNCoreMLModel(for: mlModel)
                 self.yoloCoreMLModel = vnModel
                 self.isModelLoaded = true
-                CameraLogger.success("Đã nạp thành công Model YOLOv11 CoreML (Neural Engine ANE)", category: .ai)
+                CameraLogger.success("Đã nạp thành công Model YOLO CoreML (Neural Engine ANE)", category: .ai)
             } catch {
-                CameraLogger.warning("Không thể nạp YOLOv11 compiled model: \(error)", category: .ai)
+                CameraLogger.warning("Không thể nạp YOLO compiled model: \(error)", category: .ai)
             }
         } else if let packageURL = Bundle.main.url(forResource: "YOLOv11", withExtension: "mlpackage") ??
-                                   Bundle.main.url(forResource: "yolo11n", withExtension: "mlpackage") {
+                                   Bundle.main.url(forResource: "yolo11n", withExtension: "mlpackage") ??
+                                   Bundle.main.url(forResource: "yolov8n", withExtension: "mlpackage") {
             do {
                 let compiledURL = try MLModel.compileModel(at: packageURL)
                 let config = MLModelConfiguration()

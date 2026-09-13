@@ -687,14 +687,7 @@ struct AdvancedSettingsSection: View {
                         isOn: $viewModel.isStreetTrackingModeEnabled
                     )
 
-                    Divider().background(Color.white.opacity(0.08))
 
-                    SettingsToggleRow(
-                        title: "Không gian 3D ARKit",
-                        subtitle: "Ước tính khoảng cách thực tế và neo vòng tròn bố cục trong không gian 3 chiều",
-                        icon: "arkit",
-                        isOn: $viewModel.isARModeEnabled
-                    )
 
                     Divider().background(Color.white.opacity(0.08))
 
