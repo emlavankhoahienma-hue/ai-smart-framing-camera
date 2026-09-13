@@ -245,7 +245,6 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isShowingFilmDrawer: Bool = false
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
-    @Published public var isARModeEnabled: Bool = false
     @Published public var activeFlashMode2: Bool = false
     @Published public var autoCaptureCountdown: Int = 0
     @Published public var currentAIColorParams: AIColorParameters? = nil
@@ -1251,11 +1250,6 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    public func toggleARMode() {
-        haptics.triggerSelectionChange()
-        isARModeEnabled.toggle()
-        if isARModeEnabled { arSession.startSession() } else { arSession.pauseSession() }
-    }
 
     // MARK: - Smart Autofocus & Exposure Control (Apple Camera App Style)
 

@@ -232,7 +232,6 @@ struct CompositionRuleSheet: View {
                         // Tiện ích nhanh
                         VStack(spacing: 10) {
                             Toggle("Live Photo", isOn: $viewModel.isLivePhotoEnabled)
-                            Toggle("Không gian 3D ARKit", isOn: $viewModel.isARModeEnabled)
                         }
                         .padding(.horizontal, 4)
                     }

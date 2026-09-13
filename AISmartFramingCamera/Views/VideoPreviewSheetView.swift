@@ -130,10 +130,16 @@ public struct VideoPreviewSheetView: View {
             let source = request.sourceImage.clampedToExtent()
             var output = source
 
-            if let filter = FilmFilterEngine.shared.createCIFilter(for: filterPreset, inputImage: output) {
-                output = filter.outputImage?.cropped(to: request.sourceImage.extent) ?? output
+            if let filtered = FilmFilterEngine.shared.applyPreset(to: output, preset: filterPreset) {
+                output = filtered
             }
 
+            if let aiParams = viewModel.currentAIColorParams,
+               let aiFiltered = FilmFilterEngine.shared.applyAIColorParameters(to: output, params: aiParams) {
+                output = aiFiltered
+            }
+
+            output = output.cropped(to: request.sourceImage.extent)
             request.finish(with: output, context: nil)
         })
 

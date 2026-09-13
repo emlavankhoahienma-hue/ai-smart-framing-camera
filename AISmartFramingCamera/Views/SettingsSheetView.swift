@@ -690,15 +690,6 @@ struct AdvancedSettingsSection: View {
                     Divider().background(Color.white.opacity(0.08))
 
                     SettingsToggleRow(
-                        title: "Không gian 3D ARKit",
-                        subtitle: "Ước tính khoảng cách thực tế và neo vòng tròn bố cục trong không gian 3 chiều",
-                        icon: "arkit",
-                        isOn: $viewModel.isARModeEnabled
-                    )
-
-                    Divider().background(Color.white.opacity(0.08))
-
-                    SettingsToggleRow(
                         title: "Rung phản hồi khi căn đúng",
                         subtitle: "Phát nhịp rung Haptics thông minh khi tâm camera hút vào điểm tỷ lệ vàng",
                         icon: "hand.tap.fill",
