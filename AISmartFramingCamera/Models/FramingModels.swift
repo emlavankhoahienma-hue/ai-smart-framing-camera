@@ -234,7 +234,20 @@ public enum AIEngineSource: Equatable {
         case .appleNeuralEngine: return .green
         }
     }
+
+    public var isCloud: Bool {
+        if case .geminiCloud = self { return true }
+        return false
+    }
 }
+
+// MARK: - Active AI Indicator Type (Phân biệt nháy màu Local đỏ / Cloud vàng)
+public enum ActiveAIIndicatorType: Equatable {
+    case none
+    case local
+    case cloud
+}
+
 
 // MARK: - Smart Autofocus Target Type
 public enum SmartFocusType: Equatable {

@@ -17,6 +17,23 @@ public struct AIStatusHUDView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white.opacity(0.95))
                     .lineLimit(1)
+
+                // Huy hiệu nhận biết AI Cloud / Local
+                if viewModel.activeAIIndicatorType == .cloud {
+                    Text("CLOUD")
+                        .font(.system(size: 8, weight: .heavy, design: .rounded))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.yellow))
+                } else if viewModel.activeAIIndicatorType == .local {
+                    Text("LOCAL")
+                        .font(.system(size: 8, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.red))
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)

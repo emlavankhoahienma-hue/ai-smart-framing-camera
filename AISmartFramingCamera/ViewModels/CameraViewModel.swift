@@ -147,18 +147,19 @@ public final class CameraViewModel: ObservableObject {
     private var lastFocusPeakingComputeTime: CFTimeInterval = 0
 
     public var zoomRevealRect: CGRect {
-        guard isRevealingZoomTarget, pendingTargetZoomForReveal > 1.0 else {
-            return CGRect(x: 0.5, y: 0.5, width: 0, height: 0)
+        guard isRevealingZoomTarget, pendingTargetZoomForReveal > 1.05 else {
+            return CGRect(x: 0, y: 0, width: 1.0, height: 1.0)
         }
-        let initialSize = 1.0 / pendingTargetZoomForReveal
+        let targetSize = 1.0 / pendingTargetZoomForReveal
 
         if !isZoomRampPhase {
-            // Giai đoạn 1: khung lớn dần từ 1 điểm tới kích thước ban đầu, zoom CHƯA chạy
-            let size = initialSize * lockOnProgress
+            // Giai đoạn 1: khung lướt nhẹ từ toàn cảnh (1.0) về vùng crop dự kiến
+            let p = max(0.0, min(1.0, lockOnProgress))
+            let size = 1.0 - (1.0 - targetSize) * p
             let origin = (1.0 - size) / 2.0
             return CGRect(x: origin, y: origin, width: size, height: size)
         } else {
-            // Giai đoạn 2: khung lớn dần ĐÚNG THEO tỉ lệ zoom thật đang chạy
+            // Giai đoạn 2: khi camera phần cứng đang ramp zoom, khung đồng bộ mở rộng ra mép màn hình
             let ratio = min(1.0, liveZoomFactorForReveal / pendingTargetZoomForReveal)
             let origin = (1.0 - ratio) / 2.0
             return CGRect(x: origin, y: origin, width: ratio, height: ratio)
@@ -174,31 +175,32 @@ public final class CameraViewModel: ObservableObject {
     private var hasExecutedAutoZoomForSession: Bool = false
 
     public func triggerZoomRevealAnimation(targetZoom: CGFloat) {
-        guard targetZoom > 1.0 else { return }
+        guard targetZoom > 1.05, abs(targetZoom - currentZoom) > 0.05 else { return }
         pendingTargetZoomForReveal = targetZoom
         liveZoomFactorForReveal = currentZoom
         isZoomRampPhase = false
         lockOnProgress = 0
         isRevealingZoomTarget = true
 
-        withAnimation(.easeOut(duration: 0.45)) {
+        withAnimation(.easeOut(duration: 0.35)) {
             lockOnProgress = 1.0
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48) { [weak self] in
+        // Bắt đầu zoom quang/kỹ thuật số mượt mà sau 0.22s
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
             guard let self = self else { return }
             self.isZoomRampPhase = true
-            self.cameraService.smoothZoomFactor(to: targetZoom, rate: 1.8)
-            self.currentZoom = targetZoom
-            SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
+            // Rate 1.6: Tốc độ zoom điện ảnh chuẩn xác, mượt mà, không giật
+            self.cameraService.smoothZoomFactor(to: targetZoom, rate: 1.6)
 
-            let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.8 + 0.25
+            let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.6 + 0.40
             DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
                 guard let self = self else { return }
-                withAnimation(.easeOut(duration: 0.3)) {
+                withAnimation(.easeOut(duration: 0.35)) {
                     self.isRevealingZoomTarget = false
                 }
                 self.isZoomRampPhase = false
+                self.haptics.triggerLight()
             }
         }
     }
@@ -232,6 +234,18 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeModelUsedName: String = ""
     @Published public var geminiLatencyMs: Int = 0
     @Published public var aiSuggestedZoom: CGFloat? = nil
+
+    // MARK: - Chỉ Báo Nháy Màu AI (Local: Đỏ, Cloud: Vàng)
+    public var activeAIIndicatorType: ActiveAIIndicatorType {
+        guard aiSessionState != .idle else { return .none }
+        if let source = activeEngineSource {
+            return source.isCloud ? .cloud : .local
+        }
+        if aiSessionState == .analyzing {
+            return (useGeminiForAnalysis && geminiService.hasAPIKey) ? .cloud : .local
+        }
+        return .none
+    }
 
     // Capture & Review
     @Published public var latestCapturedPhoto: CapturedPhotoItem?
@@ -499,7 +513,10 @@ public final class CameraViewModel: ObservableObject {
         }
 
         cameraService.onLiveZoomFactorChanged = { [weak self] zoom in
-            self?.liveZoomFactorForReveal = zoom
+            guard let self = self else { return }
+            self.liveZoomFactorForReveal = zoom
+            self.currentZoom = zoom
+            SpatialTrackingEngine.shared.updateZoomFactor(zoom)
         }
 
         // Realtime Exposure Stats Listener (ISO & Shutter Speed)
@@ -722,6 +739,15 @@ public final class CameraViewModel: ObservableObject {
         let targetPoint = CGPoint(x: response.targetX, y: response.targetY)
         let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
         pinTargetAndStartMotion(at: targetPoint, subjectRect: subjectRect)
+
+        // TỰ ĐỘNG ZOOM ĐẾN BỐ CỤC AI CLOUD ĐỀ XUẤT NGAY KHI KHÓA MỤC TIÊU!
+        if isAutoZoomEnabled && response.suggestedZoom > 1.05 && abs(response.suggestedZoom - currentZoom) > 0.08 {
+            self.hasExecutedAutoZoomForSession = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+                guard let self = self, case .targetPlaced = self.aiSessionState else { return }
+                self.triggerZoomRevealAnimation(targetZoom: response.suggestedZoom)
+            }
+        }
     }
 
     // MARK: - Local Neural Engine Analysis (One-shot)
@@ -753,6 +779,10 @@ public final class CameraViewModel: ObservableObject {
 
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
         self.framingResult = result
+        self.aiSuggestedZoom = result.recommendedZoomFactor
+        self.pendingSuggestedZoom = result.recommendedZoomFactor
+        self.hasExecutedAutoZoomForSession = false
+
         // Xác định chính xác nguồn Engine AI đang hoạt động để hiển thị rõ ràng trên HUD
         if NeuralTargetTracker.shared.hasActiveTrainedModel {
             self.activeEngineSource = .localTrained114MB(category: dominantScene.localizedName)
@@ -769,6 +799,15 @@ public final class CameraViewModel: ObservableObject {
         }
 
         pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
+
+        // TỰ ĐỘNG ZOOM ĐẾN BỐ CỤC AI LOCAL ĐỀ XUẤT NGAY KHI KHÓA MỤC TIÊU!
+        if isAutoZoomEnabled && result.recommendedZoomFactor > 1.05 && abs(result.recommendedZoomFactor - currentZoom) > 0.08 {
+            self.hasExecutedAutoZoomForSession = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+                guard let self = self, case .targetPlaced = self.aiSessionState else { return }
+                self.triggerZoomRevealAnimation(targetZoom: result.recommendedZoomFactor)
+            }
+        }
     }
 
     // MARK: - State for Hybrid Optical Visual + Gyro Tracking

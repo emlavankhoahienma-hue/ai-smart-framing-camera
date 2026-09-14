@@ -4,6 +4,8 @@ public struct LiveColorHistogramHUDView: View {
     @ObservedObject var viewModel: CameraViewModel
     private let haptic = UISelectionFeedbackGenerator()
 
+    @State private var isAIPulsePhase: Bool = false
+
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
     }
@@ -48,6 +50,11 @@ public struct LiveColorHistogramHUDView: View {
                 .shadow(color: Color.black.opacity(0.4), radius: 6, x: 0, y: 3)
         )
         .animation(.spring(response: 0.32, dampingFraction: 0.78), value: viewModel.isHistogramBarExpanded)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true)) {
+                isAIPulsePhase = true
+            }
+        }
     }
 
     // MARK: - 1. Format / Codec Selector
@@ -70,9 +77,12 @@ public struct LiveColorHistogramHUDView: View {
             .padding(.trailing, 2)
         } else {
             VStack(alignment: .leading, spacing: 0.5) {
+                // Nháy đỏ (AI Local) hoặc nháy vàng (AI Cloud) tại chữ JPEG
                 Text("JPEG")
-                    .font(.system(size: 8, weight: viewModel.selectedPhotoFormat == .jpeg ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedPhotoFormat == .jpeg ? .white : .white.opacity(0.3))
+                    .font(.system(size: 8, weight: (viewModel.activeAIIndicatorType != .none || viewModel.selectedPhotoFormat == .jpeg) ? .heavy : .medium, design: .rounded))
+                    .foregroundColor(jpegTextColor)
+                    .opacity(jpegTextOpacity)
+                    .shadow(color: jpegGlowColor, radius: 4, x: 0, y: 0)
 
                 Text("HEIC")
                     .font(.system(size: 8, weight: viewModel.selectedPhotoFormat == .heic ? .heavy : .medium, design: .rounded))
@@ -87,6 +97,37 @@ public struct LiveColorHistogramHUDView: View {
                 viewModel.togglePhotoFormat()
             }
             .padding(.trailing, 2)
+        }
+    }
+
+    private var jpegTextColor: Color {
+        switch viewModel.activeAIIndicatorType {
+        case .local:
+            return .red
+        case .cloud:
+            return .yellow
+        case .none:
+            return viewModel.selectedPhotoFormat == .jpeg ? .white : .white.opacity(0.3)
+        }
+    }
+
+    private var jpegTextOpacity: Double {
+        switch viewModel.activeAIIndicatorType {
+        case .local, .cloud:
+            return isAIPulsePhase ? 1.0 : 0.35
+        case .none:
+            return 1.0
+        }
+    }
+
+    private var jpegGlowColor: Color {
+        switch viewModel.activeAIIndicatorType {
+        case .local:
+            return Color.red.opacity(isAIPulsePhase ? 0.9 : 0.2)
+        case .cloud:
+            return Color.yellow.opacity(isAIPulsePhase ? 0.9 : 0.2)
+        case .none:
+            return .clear
         }
     }
 

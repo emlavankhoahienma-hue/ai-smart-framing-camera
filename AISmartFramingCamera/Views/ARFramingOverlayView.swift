@@ -172,8 +172,12 @@ public struct ARFramingOverlayView: View {
                         .transition(.opacity)
                 }
 
-                // 11. AI Zoom Reveal Overlay (Khung vuông vùng AI sắp zoom + làm tối xung quanh)
-                ZoomRevealOverlay(rect: viewModel.zoomRevealRect, isVisible: viewModel.isRevealingZoomTarget)
+                // 11. AI Zoom Reveal Overlay (Khung bố cục điện ảnh mượt mà, không làm tối màn hình)
+                ZoomRevealOverlay(
+                    rect: viewModel.zoomRevealRect,
+                    isVisible: viewModel.isRevealingZoomTarget,
+                    targetZoom: viewModel.aiSuggestedZoom ?? 2.0
+                )
             }
             .contentShape(Rectangle())
             .onTapGesture { location in
@@ -625,10 +629,11 @@ struct HorizonLevelerView: View {
     }
 }
 
-// MARK: - AI Zoom Reveal Overlay
+// MARK: - AI Zoom Reveal Overlay (Bố Cục Điện Ảnh Mượt Mà, Không Làm Tối Màn Hình)
 struct ZoomRevealOverlay: View {
     let rect: CGRect
     let isVisible: Bool
+    var targetZoom: CGFloat = 2.0
 
     var body: some View {
         GeometryReader { geo in
@@ -639,22 +644,81 @@ struct ZoomRevealOverlay: View {
                 height: rect.height * geo.size.height
             )
 
-            ZStack {
-                Path { path in
-                    path.addRect(CGRect(origin: .zero, size: geo.size))
-                    path.addRoundedRect(in: pixelRect, cornerSize: CGSize(width: 14, height: 14))
-                }
-                .fill(Color.black.opacity(isVisible ? 0.55 : 0), style: FillStyle(eoFill: true))
+            if isVisible {
+                ZStack {
+                    // Viền khung ngắm vàng mỏng nhẹ 1.8px (giữ màn hình sáng tự nhiên)
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.yellow, Color.yellow.opacity(0.65), Color.yellow],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.8
+                        )
+                        .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
+                        .position(x: pixelRect.midX, y: pixelRect.midY)
+                        .shadow(color: Color.yellow.opacity(0.35), radius: 8, x: 0, y: 0)
 
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.yellow, lineWidth: 2.5)
-                    .frame(width: pixelRect.width, height: pixelRect.height)
-                    .position(x: pixelRect.midX, y: pixelRect.midY)
-                    .opacity(isVisible ? 1 : 0)
-                    .scaleEffect(isVisible ? 1.0 : 1.2)
+                    // 4 góc ngắm bố cục điện ảnh (Cinematic Corner Ticks)
+                    CinematicCornerTicks(rect: pixelRect)
+
+                    // Huy hiệu AI ZOOM ở mép trên khung
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("AI ZOOM \(String(format: "%.1f", targetZoom))x")
+                            .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(Color.yellow))
+                    .shadow(color: Color.black.opacity(0.35), radius: 4, x: 0, y: 2)
+                    .position(x: pixelRect.midX, y: max(24, pixelRect.minY - 12))
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .animation(.easeInOut(duration: 0.3), value: isVisible)
             }
-            .animation(.easeInOut(duration: 0.4), value: isVisible)
         }
         .allowsHitTesting(false)
+    }
+}
+
+// 4 Góc ngắm bố cục điện ảnh (Corner Ticks)
+struct CinematicCornerTicks: View {
+    let rect: CGRect
+    private let tickLength: CGFloat = 16
+    private let tickWidth: CGFloat = 2.5
+
+    var body: some View {
+        Path { path in
+            let r: CGFloat = 8
+            // Góc trên trái
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY + tickLength))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+            path.addArc(center: CGPoint(x: rect.minX + r, y: rect.minY + r), radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.minX + tickLength, y: rect.minY))
+
+            // Góc trên phải
+            path.move(to: CGPoint(x: rect.maxX - tickLength, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+            path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.minY + r), radius: r, startAngle: .degrees(270), endAngle: .degrees(0), clockwise: false)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + tickLength))
+
+            // Góc dưới trái
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY - tickLength))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - r))
+            path.addArc(center: CGPoint(x: rect.minX + r, y: rect.maxY - r), radius: r, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
+            path.addLine(to: CGPoint(x: rect.minX + tickLength, y: rect.maxY))
+
+            // Góc dưới phải
+            path.move(to: CGPoint(x: rect.maxX - tickLength, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.maxY))
+            path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.maxY - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - tickLength))
+        }
+        .stroke(Color.yellow, lineWidth: tickWidth)
+        .shadow(color: Color.yellow.opacity(0.6), radius: 4)
     }
 }

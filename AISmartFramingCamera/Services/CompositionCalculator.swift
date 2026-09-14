@@ -69,6 +69,8 @@ public final class CompositionCalculator {
         // Auto-Zoom evaluation based on subject bounding box scale
         if let dominantRect = detection.dominantSubjectRect {
             recommendedZoom = computeOptimalZoom(subjectRect: dominantRect, currentZoom: currentZoom)
+        } else if let faceRect = detection.faceRectangles.first {
+            recommendedZoom = computeOptimalZoom(subjectRect: faceRect, currentZoom: currentZoom)
         }
         
         // Calculate offset vector and metrics
