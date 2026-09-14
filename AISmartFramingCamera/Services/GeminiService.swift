@@ -530,7 +530,7 @@ public final class GeminiService {
             saturation = 1.04
             contrast = 1.02
             colorGrade = .softwarm
-        case .landscape, .nature:
+        case .landscape, .foliage, .water, .sky, .sunset:
             saturation = 1.10
             contrast = 1.06
             colorGrade = .vibrant
