@@ -53,46 +53,35 @@ public struct KeychainHelper {
 
 public enum AIVisionModel: String, CaseIterable, Identifiable {
     case autoStrongest = "auto"
-    case gemini37Flash = "gemini-3.7-flash"
-    case gemini36Flash = "gemini-3.6-flash"
-    case gemini35Flash = "gemini-3.5-flash"
-    case gemini31Pro = "gemini-3.1-pro"
-    case gemini25Flash = "gemini-2.5-flash"
     case gemini20Flash = "gemini-2.0-flash"
-
-    // Legacy support
+    case gemini20FlashLite = "gemini-2.0-flash-lite"
     case gemini15Flash = "gemini-1.5-flash"
     case gemini15Pro = "gemini-1.5-pro"
+    case gemini15Flash8B = "gemini-1.5-flash-8b"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
         case .autoStrongest:
-            return "⚡ Tự động luân chuyển model (Khuyên dùng - Không lo hết Quota)"
-        case .gemini37Flash:
-            return "🚀 Gemini 3.7 Flash (Mới nhất)"
-        case .gemini36Flash:
-            return "⚡ Gemini 3.6 Flash"
-        case .gemini35Flash:
-            return "⚡ Gemini 3.5 Flash"
-        case .gemini31Pro:
-            return "💎 Gemini 3.1 Pro (Bố cục Studio)"
-        case .gemini25Flash:
-            return "⚡ Gemini 2.5 Flash"
+            return "⚡ Tự động luân chuyển (Khuyên dùng - Không lo hết Quota)"
         case .gemini20Flash:
-            return "🔥 Gemini 2.0 Flash (Thị giác thế hệ mới)"
+            return "🔥 Gemini 2.0 Flash (Chuẩn Studio, nhanh nhất)"
+        case .gemini20FlashLite:
+            return "🚀 Gemini 2.0 Flash-Lite (Siêu tốc & Tiết kiệm Quota)"
         case .gemini15Flash:
-            return "🚀 Gemini 1.5 Flash (Ổn định)"
+            return "✨ Gemini 1.5 Flash (Bền bỉ, ổn định)"
         case .gemini15Pro:
-            return "💎 Gemini 1.5 Pro"
+            return "💎 Gemini 1.5 Pro (Độ sâu màu & Chi tiết cao cấp)"
+        case .gemini15Flash8B:
+            return "⚡ Gemini 1.5 Flash-8B (Nhẹ & Phản hồi tức thì)"
         }
     }
 
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "gemini-3.7-flash"
+            return "gemini-2.0-flash"
         default:
             return rawValue
         }
@@ -101,15 +90,24 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Sequence of standard verified models to try in auto mode
     public static var autoFallbackChain: [String] {
         [
-            "gemini-3.7-flash",
-            "gemini-3.1-pro",
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
-            "gemini-2.5-flash",
             "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash",
             "gemini-1.5-pro",
-            "gemini-1.5-flash"
+            "gemini-1.5-flash-8b"
         ]
+    }
+
+    public static func fallbackChain(for key: String) -> [String] {
+        if key.hasPrefix("sk-or-") {
+            return [
+                "google/gemini-2.0-flash-001",
+                "google/gemini-flash-1.5",
+                "google/gemini-pro-1.5"
+            ]
+        } else {
+            return autoFallbackChain
+        }
     }
 }
 
@@ -214,8 +212,11 @@ public enum GeminiError: LocalizedError {
             return "Dữ liệu AI trả về không đúng định dạng."
         case .parseError(let msg):
             return "Lỗi AI (\(msg))"
-        case .allModelsFailed(_):
-            return "Tất cả model Gemini đều bận hoặc hết hạn mức. Đang dùng AI Neural Engine cục bộ."
+        case .allModelsFailed(let msg):
+            if msg.isEmpty || msg == "Tất cả model Gemini đều bận." {
+                return "Tất cả model Gemini đều bận hoặc hết hạn mức. Đang dùng AI Neural Engine cục bộ."
+            }
+            return "Tất cả model Gemini đều bận: \(msg)"
         }
     }
 }
@@ -300,7 +301,7 @@ public final class GeminiService {
             return
         }
 
-        var testCandidates = AIVisionModel.autoFallbackChain
+        var testCandidates = AIVisionModel.fallbackChain(for: key)
         if !customModelName.isEmpty {
             testCandidates.insert(customModelName, at: 0)
         }
@@ -463,6 +464,108 @@ public final class GeminiService {
         )
     }
 
+    // MARK: - Image Downscaling & Optimization for AI Vision Analysis
+    public static func prepareImageForAnalysis(_ image: CGImage, maxDimension: CGFloat = 1280) -> Data? {
+        let originalWidth = CGFloat(image.width)
+        let originalHeight = CGFloat(image.height)
+        let maxOrig = max(originalWidth, originalHeight)
+
+        let targetWidth: Int
+        let targetHeight: Int
+        if maxOrig > maxDimension {
+            let scale = maxDimension / maxOrig
+            targetWidth = max(1, Int(originalWidth * scale))
+            targetHeight = max(1, Int(originalHeight * scale))
+        } else {
+            targetWidth = Int(originalWidth)
+            targetHeight = Int(originalHeight)
+        }
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bytesPerRow = targetWidth * 4
+        if let context = CGContext(
+            data: nil,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ) {
+            context.interpolationQuality = .medium
+            context.draw(image, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+            if let scaledCG = context.makeImage() {
+                let uiImage = UIImage(cgImage: scaledCG)
+                return uiImage.jpegData(compressionQuality: 0.60)
+            }
+        }
+
+        let uiImage = UIImage(cgImage: image)
+        return uiImage.jpegData(compressionQuality: 0.50)
+    }
+
+    // MARK: - Local Neural/Hardware Color Recipe Fallback (Offline & Zero-Quota Safety)
+    public static func generateLocalColorRecipe(from metrics: ImageColorMetrics, sceneType: DetectedSceneType) -> GeminiColorRecipe {
+        let exposureBias: Float
+        if metrics.averageLuma < 0.25 {
+            exposureBias = min(0.60, max(0.20, (0.45 - metrics.averageLuma) * 1.5))
+        } else if metrics.averageLuma > 0.72 {
+            exposureBias = max(-0.55, min(-0.15, (0.60 - metrics.averageLuma) * 1.2))
+        } else {
+            exposureBias = 0.08
+        }
+
+        let warmthShift = -metrics.warmthCast * 0.30
+        let tintShift = -metrics.tintCast * 0.20
+
+        let shadowLift: Float = (metrics.contrastScore > 0.22 || metrics.averageLuma < 0.35) ? 0.10 : 0.04
+        let highlightRoll: Float = (metrics.contrastScore > 0.22 || metrics.averageLuma > 0.65) ? 0.88 : 0.95
+
+        let saturation: Float
+        let contrast: Float
+        let colorGrade: AIColorGrade
+
+        switch sceneType {
+        case .portrait:
+            saturation = 1.04
+            contrast = 1.02
+            colorGrade = .softwarm
+        case .landscape, .nature:
+            saturation = 1.10
+            contrast = 1.06
+            colorGrade = .vibrant
+        case .street:
+            saturation = 1.02
+            contrast = 1.08
+            colorGrade = .classic
+        case .night:
+            saturation = 1.05
+            contrast = 1.04
+            colorGrade = .moody
+        default:
+            saturation = 1.06
+            contrast = 1.04
+            colorGrade = .softwarm
+        }
+
+        let diagnosis = "AI Cục bộ: Tự động cân bằng sáng tối (\(String(format: "%+.2f", exposureBias))EV) & sắc độ cảm biến"
+
+        return GeminiColorRecipe(
+            temperatureK: 5500,
+            saturation: saturation,
+            contrast: contrast,
+            shadowLift: shadowLift,
+            highlightRoll: highlightRoll,
+            grain: 0.0,
+            vignette: 0.02,
+            warmthShift: warmthShift,
+            tintShift: tintShift,
+            exposureBias: exposureBias,
+            colorGrade: colorGrade,
+            diagnosis: diagnosis
+        )
+    }
+
     // MARK: - Main Analysis Call with Intelligent Multi-Model Auto-Rotation
 
     public func analyzeForComposition(
@@ -477,8 +580,9 @@ public final class GeminiService {
             return
         }
 
-        let uiImage = UIImage(cgImage: image)
-        guard let jpegData = uiImage.jpegData(compressionQuality: 0.65) else {
+        // Tối ưu hóa dung lượng ảnh gửi AI: Downscale về chuẩn phân tích thị giác (max 1280px)
+        // Tránh lỗi 413 Payload Too Large / Request Entity Too Large trên ảnh chụp gốc 12MP-48MP
+        guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1280) else {
             completion(.failure(.imageConversionFailed))
             return
         }
@@ -486,7 +590,7 @@ public final class GeminiService {
         let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
         let prompt = buildPrompt(sceneContext: sceneContext, colorMetrics: metrics)
 
-        var chain = AIVisionModel.autoFallbackChain
+        var chain = AIVisionModel.fallbackChain(for: key)
         if !customModelName.isEmpty {
             chain.insert(customModelName, at: 0)
         } else if selectedModel != .autoStrongest {
@@ -511,9 +615,10 @@ public final class GeminiService {
     public func analyzeSceneColorAndGrade(
         image: CGImage,
         sceneType: DetectedSceneType = .general,
+        colorMetrics: ImageColorMetrics? = nil,
         completion: @escaping (Result<GeminiColorRecipe, GeminiError>) -> Void
     ) {
-        let metrics = Self.extractColorMetrics(from: image)
+        let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
         analyzeForComposition(image: image, sceneContext: sceneType, colorMetrics: metrics) { result in
             switch result {
             case .success(let response):

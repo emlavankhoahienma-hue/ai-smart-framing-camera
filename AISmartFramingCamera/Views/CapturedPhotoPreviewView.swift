@@ -257,6 +257,25 @@ public struct CapturedPhotoPreviewView: View {
         aiOptimizationSuccessNote = nil
 
         let metrics = GeminiService.extractColorMetrics(from: item.originalImage)
+
+        guard GeminiService.shared.hasAPIKey else {
+            // Chưa thiết lập API Key -> Tự động dùng AI Cục bộ cao cấp dựa trên cảm biến ảnh
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                self.isOptimizingWithAI = false
+                let localRecipe = GeminiService.generateLocalColorRecipe(from: metrics, sceneType: self.item.sceneType)
+                let localParams = localRecipe.asAIColorParameters
+                if let enhanced = FilmFilterEngine.shared.applyAIColorParameters(to: self.item.originalImage, params: localParams) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        self.currentProcessedImage = enhanced
+                        self.splitOffset = 1.0
+                    }
+                    self.aiOptimizationSuccessNote = "\(localRecipe.diagnosis)"
+                    self.saveEnhancedImageToPhotos(enhanced, aiParams: localParams)
+                }
+            }
+            return
+        }
+
         GeminiService.shared.analyzeForComposition(image: item.originalImage, sceneContext: item.sceneType, colorMetrics: metrics) { result in
             DispatchQueue.main.async {
                 self.isOptimizingWithAI = false
@@ -272,7 +291,19 @@ public struct CapturedPhotoPreviewView: View {
                         self.saveEnhancedImageToPhotos(enhanced, aiParams: aiParams)
                     }
                 case .failure(let error):
-                    self.aiErrorMessage = "Lỗi: \(error.localizedDescription)"
+                    // Khi mạng gián đoạn hoặc Gemini bận -> Tự động fallback sang AI Cục bộ ngay lập tức
+                    let fallbackRecipe = GeminiService.generateLocalColorRecipe(from: metrics, sceneType: self.item.sceneType)
+                    let fallbackParams = fallbackRecipe.asAIColorParameters
+                    if let enhanced = FilmFilterEngine.shared.applyAIColorParameters(to: self.item.originalImage, params: fallbackParams) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            self.currentProcessedImage = enhanced
+                            self.splitOffset = 1.0
+                        }
+                        self.aiOptimizationSuccessNote = "\(fallbackRecipe.diagnosis)"
+                        self.saveEnhancedImageToPhotos(enhanced, aiParams: fallbackParams)
+                    } else {
+                        self.aiErrorMessage = "Lỗi: \(error.localizedDescription)"
+                    }
                 }
             }
         }
