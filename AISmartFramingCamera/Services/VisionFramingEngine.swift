@@ -51,6 +51,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var lastVerifiedUIPoint: CGPoint? = nil
     private var identitySuspicionFrames: Int = 0
     private var histogramCheckCounter: Int = 0
+    private var histogramMismatchStreak: Int = 0
     private var featurePrintCheckCounter: Int = 0
     private var detectionCorrectionCounter: Int = 0
     private var stableLockFrames: Int = 0
@@ -231,6 +232,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.lastVerifiedUIPoint = targetPoint
         self.identitySuspicionFrames = 0
         self.histogramCheckCounter = 0
+        self.histogramMismatchStreak = 0
         self.featurePrintCheckCounter = 0
         self.detectionCorrectionCounter = 0
         self.stableLockFrames = 0
@@ -254,6 +256,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.lastVerifiedUIPoint = nil
         self.identitySuspicionFrames = 0
         self.histogramCheckCounter = 0
+        self.histogramMismatchStreak = 0
         self.featurePrintCheckCounter = 0
         self.detectionCorrectionCounter = 0
         self.stableLockFrames = 0
@@ -368,7 +371,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let maxDist = max(0.02, max(roi.width, roi.height) / 2.0)
         corners = corners.map { c in
             let d = hypot(c.point.x - boxCenter.x, c.point.y - boxCenter.y)
-            let centerWeight = Float(max(0.33, 1.0 - (d / maxDist)))
+            let centerWeight = Float(max(0.20, 1.0 - (d / maxDist)))
             return (point: c.point, score: c.score * centerWeight)
         }
         
@@ -745,14 +748,20 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         var identityOK = true
                         
                         // 1) Histogram màu 24-bin (rẻ): kiểm tra mỗi 3 frame
-                        // Huấn luyện 3D/2D: 0.84 triệt tiêu 100% hiện tượng trôi sang nền/vật thể cùng màu (0 frame hijacked)
+                        // Ngưỡng 0.68 kết hợp streak 3 lần liên tiếp: chống trôi sang nền/vật khác nhưng chịu được AE/AWB camera thực tế
                         self.histogramCheckCounter += 1
                         if self.histogramCheckCounter >= 3, let refHist = self.referenceColorHistogram {
                             self.histogramCheckCounter = 0
                             let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
-                            if self.compareColorHistograms(refHist, curHist) < 0.84 {
-                                identityOK = false
-                                CameraLogger.info("🎯 [Vision] Mất khớp histogram — nghi tracker trôi, giữ mỏ neo cuối", category: .tracking)
+                            let colorSim = self.compareColorHistograms(refHist, curHist)
+                            if colorSim < 0.68 {
+                                self.histogramMismatchStreak += 1
+                                if self.histogramMismatchStreak >= 3 {
+                                    identityOK = false
+                                    CameraLogger.info("🎯 [Vision] Mất khớp histogram liên tiếp (\(String(format: "%.2f", colorSim))) — giữ mỏ neo", category: .tracking)
+                                }
+                            } else {
+                                self.histogramMismatchStreak = 0
                             }
                         }
                         
@@ -765,7 +774,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                     var dist: Float = 0
                                     do {
                                         try refPrint.computeDistance(&dist, to: curPrint)
-                                        if dist > 0.50 {
+                                        if dist > 0.58 {
                                             identityOK = false
                                             CameraLogger.info("🎯 [Vision] Mất khớp feature print (dist: \(String(format: "%.2f", dist))) — nghi tracker trôi", category: .tracking)
                                         }
@@ -801,9 +810,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             var uiX = newObs.boundingBox.midX
                             var uiY = 1.0 - newObs.boundingBox.midY
                             
-                            // 3) Detection-based Periodic Correction (Nắn mỏ neo định kỳ mỗi 5 frame bằng Saliency Centroid với lực 0.23, chống giật nảy)
+                            // 3) Detection-based Periodic Correction (Nắn mỏ neo nhẹ nhàng mỗi 15 frame bằng Saliency Centroid với lực 0.08, chống rung giật)
                             self.detectionCorrectionCounter += 1
-                            if self.detectionCorrectionCounter >= 5 {
+                            if self.detectionCorrectionCounter >= 15 {
                                 self.detectionCorrectionCounter = 0
                                 if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
                                     let centroidUIX = salientCentroid.x
@@ -814,9 +823,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                     if boxUI.insetBy(dx: -0.02, dy: -0.02).contains(CGPoint(x: centroidUIX, y: centroidUIY)) {
                                         let drift = hypot(centroidUIX - uiX, centroidUIY - uiY)
                                         let maxOffset = min(box.width, box.height) * 0.45
-                                        if drift > 0.012 && drift < maxOffset {
-                                            uiX += (centroidUIX - uiX) * 0.23
-                                            uiY += (centroidUIY - uiY) * 0.23
+                                        if drift > 0.02 && drift < maxOffset {
+                                            uiX += (centroidUIX - uiX) * 0.08
+                                            uiY += (centroidUIY - uiY) * 0.08
                                         }
                                     }
                                 }
