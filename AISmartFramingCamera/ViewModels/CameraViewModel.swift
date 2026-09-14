@@ -309,9 +309,9 @@ public final class CameraViewModel: ObservableObject {
 
     public var maxJumpPerFrame: CGFloat {
         switch trackingSensitivity {
-        case .low: return 0.15
-        case .medium: return 0.12
-        case .high: return 0.09
+        case .low: return 0.22
+        case .medium: return 0.18 // Chuẩn tối ưu qua huấn luyện mô phỏng 3D/2D
+        case .high: return 0.14
         }
     }
 

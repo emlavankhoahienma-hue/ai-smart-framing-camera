@@ -1,0 +1,42 @@
+{
+  "baseline_metrics": {
+    "loss": 362.0046546314413,
+    "jitter_var": 1.0575051518026128e-06,
+    "lag_ms": 75.81837294376933,
+    "overshoot": 0.17941875817422018,
+    "rmse_dynamic": 0.045605078559974185,
+    "hijacked_frames": 84.0,
+    "drift_error": 0.01971748776394183,
+    "rmse_lowtex": 0.009404042782224018,
+    "handover_gap": 0.02090168510142125,
+    "recovery_ms": 83.33333333333333,
+    "rmse_static": 0.007679116500507375
+  },
+  "optimal_metrics": {
+    "loss": 18.602033864433878,
+    "jitter_var": 1.914697703117528e-06,
+    "lag_ms": 71.25566607624735,
+    "overshoot": 0.1743590353444597,
+    "rmse_dynamic": 0.02592069254357133,
+    "hijacked_frames": 0.0,
+    "drift_error": 0.005642811711038217,
+    "rmse_lowtex": 0.007529708021407685,
+    "handover_gap": 0.00026179425039186694,
+    "recovery_ms": 0.0,
+    "rmse_static": 0.005736381456984187
+  },
+  "optimal_parameters": {
+    "one_euro_min_cutoff": 2.176652233395931,
+    "one_euro_beta": 2.8,
+    "one_euro_d_cutoff": 2.0,
+    "gyro_scale_x": 1.1,
+    "gyro_scale_y": 0.843922823425329,
+    "optical_gate_time": 0.05,
+    "velocity_decay_window": 0.3593560739464812,
+    "max_observation_jump": 0.18,
+    "hist_accept_threshold": 0.8363212550208728,
+    "periodic_correction_interval": 5,
+    "periodic_correction_strength": 0.22740533024367912,
+    "klt_center_weight_min": 0.3361860874089878
+  }
+}

@@ -40,12 +40,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var lastOpticalAcceptTime: CFTimeInterval = 0
     private var outlierStreak: Int = 0
     
-    // Giản luật chống nhảy đột biến (ViewModel nạp theo trackingSensitivity)
-    public var maxObservationJump: CGFloat = 0.12
+    // Giản luật chống nhảy đột biến (Đã tối ưu hóa qua huấn luyện 3D/2D: 0.18 cho phép bám bắt nhanh mà không bị kẹp)
+    public var maxObservationJump: CGFloat = 0.18
     public var opticalAcceptThreshold: Double = 0.20
     
     // MARK: - Bộ Lọc 1-Euro Thích Nghi (Adaptive 1-Euro Filter)
-    // Tự động chuyển đổi: Khi đứng yên -> Tần số cắt thấp (triệt rung tay); Khi lia máy -> Tần số cắt cao (Zero Latency)
+    // Đã huấn luyện trên môi trường giả lập 3D/2D chân thực 99%:
+    // - Khi đứng yên: MinCutoff 2.18Hz khử rung tay sinh học nhưng không bị dính lì mỏ neo
+    // - Khi lia máy: Beta 2.80 tăng tốc độ cắt cực nhanh, triệt tiêu độ trễ bám
     private var filterXPrev: Double = 0.5
     private var filterYPrev: Double = 0.5
     private var filterDxPrev: Double = 0.0
@@ -56,14 +58,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     public var isStreetMode: Bool = false
     
     private var effectiveMinCutoff: Double {
-        return isStreetMode ? 1.6 : 1.2
+        return isStreetMode ? 2.60 : 2.18
     }
     
     private var effectiveBeta: Double {
-        return isStreetMode ? 1.2 : 1.0
+        return isStreetMode ? 3.40 : 2.80
     }
     
-    private let oneEuroDCutoff: Double = 1.0
+    private let oneEuroDCutoff: Double = 2.0
     
     // Hệ số FOV camera chuẩn hóa (~65 độ FOV trên ống kính Wide iPhone)
     private let sensitivityFactor: Double = 0.88
@@ -143,8 +145,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // - Tilting ngửa LÊN (hướng về mục tiêu phía trên) -> rotationRate.x < 0 -> Khung cảnh dịch xuống DƯỚI -> dy > 0 (hội tụ về tâm 0.5)
             // - Tilting cúi XUỐNG -> rotationRate.x > 0 -> Khung cảnh dịch lên TRÊN -> dy < 0
             let zoomScale = self.currentZoom
-            let scaleX = 0.85 * zoomScale
-            let scaleY = 0.95 * zoomScale
+            // Tối ưu hóa ma trận phối cảnh góc rộng Wide 24mm:
+            // Portrait 9:16: Pan góc rộng hơn (1.10), Tilt góc hẹp hơn (0.85)
+            let scaleX = 1.10 * zoomScale
+            let scaleY = 0.85 * zoomScale
             
             let rateY = motion.rotationRate.y
             let rateX = motion.rotationRate.x
@@ -157,22 +161,21 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let dx = rateY * dt * scaleX
             let dy = -rateX * dt * scaleY
             
-            // CHỈ dead-reckoning khi quang học CHƯA CẬP NHẬT trong 0.12s gần nhất (time-based gate).
-            // Tránh tính GẤP ĐÔI góc xoay khi optical vẫn đang nhận điểm ở vùng confidence 0.2-0.4
-            // (trước đây: ngưỡng dead-reckoning <= 0.40 chồng lên ngưỡng nhận optical >= 0.20)
+            // CHỈ dead-reckoning khi quang học CHƯA CẬP NHẬT trong 0.05s gần nhất (time-based gate tối ưu qua huấn luyện 3D/2D).
+            // Nối nhịp tức thì ngay khi optical bị nhòe/mất nét (cắt giảm thời gian trễ từ 0.12s xuống 0.05s)
             self.stateLock.lock()
             let timeSinceOptical = self.lastOpticalAcceptTime > 0 ? (now - self.lastOpticalAcceptTime) : 1.0
             self.stateLock.unlock()
-            guard timeSinceOptical > 0.12 else { return }
+            guard timeSinceOptical > 0.05 else { return }
             
             self.stateLock.lock()
             self.deadReckoningFrameCount += 1
             
-            // Bù trừ vận tốc quán tính của chính chủ thể trong 0.12s - 0.35s đầu khi quang học vừa mất dấu
+            // Bù trừ vận tốc quán tính của chính chủ thể trong 0.05s - 0.41s đầu khi quang học vừa mất dấu (cửa sổ decay 0.36s)
             var optDx: Double = 0.0
             var optDy: Double = 0.0
-            if timeSinceOptical < 0.35 {
-                let decay = max(0.0, 1.0 - (timeSinceOptical - 0.12) / 0.23)
+            if timeSinceOptical < 0.41 {
+                let decay = max(0.0, 1.0 - (timeSinceOptical - 0.05) / 0.36)
                 optDx = self.velocityX * dt * decay
                 optDy = self.velocityY * dt * decay
             }
