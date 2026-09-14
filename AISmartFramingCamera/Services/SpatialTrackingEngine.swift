@@ -41,8 +41,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var outlierStreak: Int = 0
     
     // Giản luật chống nhảy đột biến (ViewModel nạp theo trackingSensitivity)
+    // Giản luật chống nhảy đột biến & ngưỡng nhận (nạp từ TrackingConfiguration)
     public var maxObservationJump: CGFloat = 0.12
     public var opticalAcceptThreshold: Double = 0.20
+    public var lowTextureThreshold: Double = 0.60
     
     // MARK: - Bộ Lọc 1-Euro Thích Nghi (Adaptive 1-Euro Filter)
     // Tự động chuyển đổi: Khi đứng yên -> Tần số cắt thấp (triệt rung tay); Khi lia máy -> Tần số cắt cao (Zero Latency)
@@ -53,17 +55,45 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var filterLastTime: CFTimeInterval = 0.0
     private var filterInitialized: Bool = false
     
+    // Các thông số điều chỉnh linh hoạt qua Web Studio & Remote Config
+    public var oneEuroMinCutoff: Double = 1.2
+    public var oneEuroBeta: Double = 1.0
+    public var oneEuroMinCutoffStreet: Double = 1.6
+    public var oneEuroBetaStreet: Double = 1.2
+    public var oneEuroDCutoff: Double = 1.0
+    
+    public var gyroScaleX: Double = 0.85
+    public var gyroScaleY: Double = 0.95
+    public var opticalHandoverGate: Double = 0.12
+    public var velocityDecayWindow: Double = 0.23
+    
     public var isStreetMode: Bool = false
     
     private var effectiveMinCutoff: Double {
-        return isStreetMode ? 1.6 : 1.2
+        return isStreetMode ? oneEuroMinCutoffStreet : oneEuroMinCutoff
     }
     
     private var effectiveBeta: Double {
-        return isStreetMode ? 1.2 : 1.0
+        return isStreetMode ? oneEuroBetaStreet : oneEuroBeta
     }
     
-    private let oneEuroDCutoff: Double = 1.0
+    public func applyConfiguration(_ config: TrackingConfiguration) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        self.oneEuroMinCutoff = config.oneEuroMinCutoff
+        self.oneEuroBeta = config.oneEuroBeta
+        self.oneEuroMinCutoffStreet = config.oneEuroMinCutoffStreet
+        self.oneEuroBetaStreet = config.oneEuroBetaStreet
+        self.oneEuroDCutoff = config.oneEuroDCutoff
+        self.maxObservationJump = CGFloat(config.maxObservationJump)
+        self.opticalAcceptThreshold = config.opticalAcceptThreshold
+        self.lowTextureThreshold = config.lowTextureThreshold
+        self.gyroScaleX = config.gyroScaleX
+        self.gyroScaleY = config.gyroScaleY
+        self.opticalHandoverGate = config.opticalHandoverGate
+        self.velocityDecayWindow = config.velocityDecayWindow
+        CameraLogger.info("🎯 [Spatial] Đã nạp cấu hình cân chỉnh mới: MinCutoff=\(oneEuroMinCutoff), Beta=\(oneEuroBeta), Gyro=(\(gyroScaleX), \(gyroScaleY))", category: .tracking)
+    }
     
     // Hệ số FOV camera chuẩn hóa (~65 độ FOV trên ống kính Wide iPhone)
     private let sensitivityFactor: Double = 0.88
@@ -143,8 +173,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // - Tilting ngửa LÊN (hướng về mục tiêu phía trên) -> rotationRate.x < 0 -> Khung cảnh dịch xuống DƯỚI -> dy > 0 (hội tụ về tâm 0.5)
             // - Tilting cúi XUỐNG -> rotationRate.x > 0 -> Khung cảnh dịch lên TRÊN -> dy < 0
             let zoomScale = self.currentZoom
-            let scaleX = 0.85 * zoomScale
-            let scaleY = 0.95 * zoomScale
+            let scaleX = self.gyroScaleX * zoomScale
+            let scaleY = self.gyroScaleY * zoomScale
             
             let rateY = motion.rotationRate.y
             let rateX = motion.rotationRate.x
@@ -157,22 +187,22 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let dx = rateY * dt * scaleX
             let dy = -rateX * dt * scaleY
             
-            // CHỈ dead-reckoning khi quang học CHƯA CẬP NHẬT trong 0.12s gần nhất (time-based gate).
+            // CHỈ dead-reckoning khi quang học CHƯA CẬP NHẬT trong opticalHandoverGate gần nhất (time-based gate).
             // Tránh tính GẤP ĐÔI góc xoay khi optical vẫn đang nhận điểm ở vùng confidence 0.2-0.4
-            // (trước đây: ngưỡng dead-reckoning <= 0.40 chồng lên ngưỡng nhận optical >= 0.20)
             self.stateLock.lock()
             let timeSinceOptical = self.lastOpticalAcceptTime > 0 ? (now - self.lastOpticalAcceptTime) : 1.0
             self.stateLock.unlock()
-            guard timeSinceOptical > 0.12 else { return }
+            guard timeSinceOptical > self.opticalHandoverGate else { return }
             
             self.stateLock.lock()
             self.deadReckoningFrameCount += 1
             
-            // Bù trừ vận tốc quán tính của chính chủ thể trong 0.12s - 0.35s đầu khi quang học vừa mất dấu
+            // Bù trừ vận tốc quán tính của chính chủ thể trong velocityDecayWindow đầu khi quang học vừa mất dấu
             var optDx: Double = 0.0
             var optDy: Double = 0.0
-            if timeSinceOptical < 0.35 {
-                let decay = max(0.0, 1.0 - (timeSinceOptical - 0.12) / 0.23)
+            let handoverEnd = self.opticalHandoverGate + self.velocityDecayWindow
+            if timeSinceOptical < handoverEnd && self.velocityDecayWindow > 0 {
+                let decay = max(0.0, 1.0 - (timeSinceOptical - self.opticalHandoverGate) / self.velocityDecayWindow)
                 optDx = self.velocityX * dt * decay
                 optDy = self.velocityY * dt * decay
             }
@@ -226,8 +256,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             }
         }
         
-        // Ngưỡng nhận = max(threshold theo sensitivity, 0.60 nếu anchor low-texture)
-        let effectiveThreshold = max(self.opticalAcceptThreshold, self.isLowTextureAnchor ? 0.60 : 0.0)
+        // Ngưỡng nhận = max(threshold theo sensitivity, lowTextureThreshold nếu anchor low-texture)
+        let effectiveThreshold = max(self.opticalAcceptThreshold, self.isLowTextureAnchor ? self.lowTextureThreshold : 0.0)
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
             self.stateLock.lock()
             self.lastOpticalConfidence = effectiveConfidence

@@ -287,16 +287,39 @@ public final class CameraViewModel: ObservableObject {
     @Published public var trackingSensitivity: TrackingSensitivityPreset = .medium {
         didSet {
             UserDefaults.standard.set(trackingSensitivity.rawValue, forKey: "trackingSensitivity")
-            applyTrackingSensitivityToEngines()
+            switch trackingSensitivity {
+            case .low:
+                trackingConfig.oneEuroMinCutoff = 0.8
+                trackingConfig.oneEuroBeta = 0.6
+                trackingConfig.maxObservationJump = 0.15
+                trackingConfig.opticalAcceptThreshold = 0.20
+            case .medium:
+                trackingConfig.oneEuroMinCutoff = 1.2
+                trackingConfig.oneEuroBeta = 1.0
+                trackingConfig.maxObservationJump = 0.12
+                trackingConfig.opticalAcceptThreshold = 0.20
+            case .high:
+                trackingConfig.oneEuroMinCutoff = 1.8
+                trackingConfig.oneEuroBeta = 1.6
+                trackingConfig.maxObservationJump = 0.09
+                trackingConfig.opticalAcceptThreshold = 0.30
+            }
+            applyTrackingConfig(trackingConfig)
         }
     }
 
-    public var confidenceAcceptThreshold: Double {
-        switch trackingSensitivity {
-        case .low: return 0.20
-        case .medium: return 0.30
-        case .high: return 0.40
+    // MARK: - Remote & Dynamic Tracking Calibration
+    @Published public var trackingConfig: TrackingConfiguration = TrackingConfiguration.loadPersisted()
+    @Published public var remoteConfigURL: String = "https://gist.github.com/emlavankhoahienma-hue/cd69289609e0a2051e1210c4f927c405/raw/tracking_config.json" {
+        didSet {
+            UserDefaults.standard.set(remoteConfigURL, forKey: "trackingRemoteConfigURL")
         }
+    }
+    @Published public var isUpdatingRemoteConfig: Bool = false
+    @Published public var remoteConfigSyncStatus: String? = nil
+
+    public var confidenceAcceptThreshold: Double {
+        return trackingConfig.opticalAcceptThreshold
     }
 
     public var trackingEMAAlpha: CGFloat {
@@ -308,11 +331,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public var maxJumpPerFrame: CGFloat {
-        switch trackingSensitivity {
-        case .low: return 0.15
-        case .medium: return 0.12
-        case .high: return 0.09
-        }
+        return CGFloat(trackingConfig.maxObservationJump)
     }
 
     private var consecutiveLowConfidenceFrames: Int = 0
@@ -430,6 +449,12 @@ public final class CameraViewModel: ObservableObject {
         }
         self.cameraService.selectedVideoCodec = self.selectedVideoCodec
         self.cameraService.selectedVideoFormatOption = self.selectedVideoFormatOption
+
+        if let savedURL = defaults.string(forKey: "trackingRemoteConfigURL"), !savedURL.isEmpty {
+            self.remoteConfigURL = savedURL
+        }
+        self.trackingConfig = TrackingConfiguration.loadPersisted()
+        applyTrackingConfig(self.trackingConfig)
 
         // didSet không fire khi gán trong init -> gọi trực tiếp để engine nhận đúng ngưỡng
         applyTrackingSensitivityToEngines()
@@ -566,6 +591,84 @@ public final class CameraViewModel: ObservableObject {
     private func applyTrackingSensitivityToEngines() {
         SpatialTrackingEngine.shared.maxObservationJump = maxJumpPerFrame
         SpatialTrackingEngine.shared.opticalAcceptThreshold = confidenceAcceptThreshold
+        SpatialTrackingEngine.shared.applyConfiguration(self.trackingConfig)
+        visionEngine.applyConfiguration(self.trackingConfig)
+    }
+
+    // MARK: - Tracking Calibration & Cloud Sync
+    public func applyTrackingConfig(_ config: TrackingConfiguration) {
+        self.trackingConfig = config
+        config.persist()
+        SpatialTrackingEngine.shared.applyConfiguration(config)
+        visionEngine.applyConfiguration(config)
+        CameraLogger.info("🎯 [ViewModel] Đã áp dụng TrackingConfiguration mới xuống toàn bộ engine", category: .tracking)
+    }
+
+    public func updateTrackingConfigFromRemote() {
+        guard let url = URL(string: remoteConfigURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            self.remoteConfigSyncStatus = "❌ URL không hợp lệ"
+            return
+        }
+        self.isUpdatingRemoteConfig = true
+        self.remoteConfigSyncStatus = "⏳ Đang tải thông số từ Cloud..."
+
+        // Cache-buster parameter to guarantee fresh fetch from GitHub Gist CDN
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        var queryItems = components?.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "_cb", value: "\(Int(Date().timeIntervalSince1970))"))
+        components?.queryItems = queryItems
+        let finalURL = components?.url ?? url
+
+        var request = URLRequest(url: finalURL, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 12.0)
+        request.httpMethod = "GET"
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isUpdatingRemoteConfig = false
+                if let error = error {
+                    self.remoteConfigSyncStatus = "❌ Lỗi kết nối: \(error.localizedDescription)"
+                    CameraLogger.warning("Remote config fetch error: \(error)", category: .tracking)
+                    return
+                }
+                guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode),
+                      let data = data, let jsonString = String(data: data, encoding: .utf8) else {
+                    let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                    self.remoteConfigSyncStatus = "❌ Máy chủ phản hồi lỗi (\(code))"
+                    return
+                }
+                
+                if let decodedConfig = TrackingConfiguration.fromJSONString(jsonString) {
+                    self.applyTrackingConfig(decodedConfig)
+                    self.remoteConfigSyncStatus = "✅ Cập nhật thành công từ Web!"
+                    self.haptics.triggerSuccess()
+                    CameraLogger.info("✅ [Tracking] Đã tải và áp dụng cấu hình từ Cloud thành công!", category: .tracking)
+                } else {
+                    self.remoteConfigSyncStatus = "❌ Dữ liệu JSON không hợp lệ"
+                }
+            }
+        }.resume()
+    }
+
+    public func resetTrackingConfigToDefaults() {
+        TrackingConfiguration.resetPersisted()
+        let def = TrackingConfiguration.default
+        applyTrackingConfig(def)
+        self.remoteConfigSyncStatus = "🔄 Đã khôi phục thông số mặc định gốc"
+        haptics.triggerSelectionChange()
+    }
+
+    public func importTrackingConfigFromClipboard(_ string: String) -> Bool {
+        if let config = TrackingConfiguration.fromJSONString(string) {
+            applyTrackingConfig(config)
+            self.remoteConfigSyncStatus = "✅ Đã nhập cấu hình từ Clipboard!"
+            haptics.triggerSuccess()
+            return true
+        } else {
+            self.remoteConfigSyncStatus = "❌ Mã cấu hình trong Clipboard không hợp lệ"
+            haptics.triggerError()
+            return false
+        }
     }
 
     // MARK: - AI Session Control (One-Shot Trigger)

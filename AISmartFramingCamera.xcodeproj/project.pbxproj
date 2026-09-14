@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* AISmartFramingCameraApp.swift */; };
 		B20000000000000000000002 /* FramingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* FramingModels.swift */; };
+		B20000000000000000000099 /* TrackingConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000099 /* TrackingConfiguration.swift */; };
 		B20000000000000000000003 /* CameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* CameraService.swift */; };
 		B20000000000000000000004 /* VisionFramingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* VisionFramingEngine.swift */; };
 		B20000000000000000000005 /* CompositionCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* CompositionCalculator.swift */; };
@@ -48,6 +49,7 @@
 /* Begin PBXFileReference section */
 		B10000000000000000000001 /* AISmartFramingCameraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISmartFramingCameraApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* FramingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramingModels.swift; sourceTree = "<group>"; };
+		B10000000000000000000099 /* TrackingConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingConfiguration.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* CameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraService.swift; sourceTree = "<group>"; };
 		B10000000000000000000004 /* VisionFramingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionFramingEngine.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* CompositionCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionCalculator.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000002 /* FramingModels.swift */,
+				B10000000000000000000099 /* TrackingConfiguration.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -280,6 +283,7 @@
 			files = (
 				B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */,
 				B20000000000000000000002 /* FramingModels.swift in Sources */,
+				B20000000000000000000099 /* TrackingConfiguration.swift in Sources */,
 				B20000000000000000000003 /* CameraService.swift in Sources */,
 				B20000000000000000000004 /* VisionFramingEngine.swift in Sources */,
 				B20000000000000000000005 /* CompositionCalculator.swift in Sources */,

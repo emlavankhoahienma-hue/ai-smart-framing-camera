@@ -1,0 +1,21 @@
+﻿{
+  "oneEuroMinCutoff": 1.2,
+  "oneEuroBeta": 1.0,
+  "oneEuroMinCutoffStreet": 1.6,
+  "oneEuroBetaStreet": 1.2,
+  "oneEuroDCutoff": 1.0,
+  "maxObservationJump": 0.12,
+  "opticalAcceptThreshold": 0.20,
+  "lowTextureThreshold": 0.60,
+  "histogramAcceptThreshold": 0.78,
+  "featurePrintDistanceThreshold": 0.50,
+  "periodicCorrectionInterval": 4,
+  "periodicCorrectionStrength": 0.28,
+  "saliencyPaddingRatio": 1.15,
+  "kltCenterWeightMin": 0.15,
+  "kltGridCentralRatio": 0.60,
+  "gyroScaleX": 0.85,
+  "gyroScaleY": 0.95,
+  "opticalHandoverGate": 0.12,
+  "velocityDecayWindow": 0.23
+}

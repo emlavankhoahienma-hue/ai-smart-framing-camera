@@ -1,0 +1,1328 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlignAI Camera - Target Tracking Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #09090b;
+            --bg-card: #121216;
+            --bg-card-hover: #18181f;
+            --border-card: rgba(255, 255, 255, 0.08);
+            --gold-primary: #eab308;
+            --gold-glow: rgba(234, 179, 8, 0.25);
+            --text-main: #f4f4f5;
+            --text-muted: #a1a1aa;
+            --text-dim: #71717a;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-cyan: #06b6d4;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            padding: 24px 20px 60px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 24px;
+            border-bottom: 1px solid var(--border-card);
+            margin-bottom: 28px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .brand-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 4px 14px var(--gold-glow);
+        }
+
+        .brand-text h1 {
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .brand-text h1 span.badge {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(234, 179, 8, 0.15);
+            color: var(--gold-primary);
+            font-weight: 700;
+            border: 1px solid rgba(234, 179, 8, 0.3);
+        }
+
+        .brand-text p {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        /* Main Grid */
+        .layout-grid {
+            display: grid;
+            grid-template-columns: 460px 1fr;
+            gap: 28px;
+            align-items: start;
+        }
+
+        @media (max-width: 1100px) {
+            .layout-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Simulator Card (Sticky) */
+        .simulator-pane {
+            position: sticky;
+            top: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: 18px;
+            padding: 20px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Viewfinder Canvas */
+        .viewfinder-wrapper {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            background: #000000;
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.12);
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+            cursor: crosshair;
+        }
+
+        canvas#simCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .sim-overlay-info {
+            position: absolute;
+            bottom: 12px;
+            left: 12px;
+            right: 12px;
+            display: flex;
+            justify-content: space-between;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: rgba(255,255,255,0.75);
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(8px);
+            padding: 6px 12px;
+            border-radius: 8px;
+            pointer-events: none;
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .sim-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 9px 16px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            border: none;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--gold-primary);
+            color: #000;
+            box-shadow: 0 4px 14px var(--gold-glow);
+        }
+        .btn-primary:hover {
+            background: #facc15;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-main);
+            border: 1px solid var(--border-card);
+        }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.14);
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .btn-block {
+            width: 100%;
+        }
+
+        /* Preset Bar */
+        .preset-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .preset-btn {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-card);
+            border-radius: 10px;
+            padding: 10px 12px;
+            color: var(--text-main);
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .preset-btn:hover {
+            background: rgba(255,255,255,0.09);
+            border-color: rgba(234, 179, 8, 0.4);
+        }
+
+        .preset-btn.active {
+            background: rgba(234, 179, 8, 0.15);
+            border-color: var(--gold-primary);
+            color: var(--gold-primary);
+        }
+
+        .preset-btn .preset-title {
+            font-size: 13px;
+            font-weight: 700;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .preset-btn .preset-desc {
+            font-size: 10px;
+            color: var(--text-muted);
+            display: block;
+        }
+
+        /* Accordion Sections */
+        .settings-pane {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .param-group {
+            margin-bottom: 18px;
+        }
+
+        .param-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .param-group-title {
+            font-size: 13px;
+            font-weight: 800;
+            color: var(--gold-primary);
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px dashed rgba(234, 179, 8, 0.3);
+            padding-bottom: 6px;
+        }
+
+        /* Param Row */
+        .param-item {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-bottom: 12px;
+            transition: all 0.15s ease;
+        }
+
+        .param-item:hover {
+            background: rgba(255,255,255,0.04);
+            border-color: rgba(255,255,255,0.09);
+        }
+
+        .param-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .param-label {
+            font-size: 13.5px;
+            font-weight: 600;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .param-key {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-dim);
+            background: rgba(255,255,255,0.04);
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+
+        .param-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--gold-primary);
+            background: rgba(234, 179, 8, 0.1);
+            padding: 3px 8px;
+            border-radius: 6px;
+            border: 1px solid rgba(234, 179, 8, 0.25);
+            min-width: 60px;
+            text-align: right;
+        }
+
+        .param-desc {
+            font-size: 11.5px;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            line-height: 1.45;
+        }
+
+        .slider-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .slider-min, .slider-max {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-dim);
+            min-width: 32px;
+        }
+
+        .slider-max {
+            text-align: right;
+        }
+
+        input[type=range] {
+            flex: 1;
+            -webkit-appearance: none;
+            height: 6px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.12);
+            outline: none;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--gold-primary);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--gold-glow);
+            transition: all 0.15s ease;
+        }
+
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+            background: #fff;
+        }
+
+        /* Cloud Sync Panel */
+        .sync-box {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--border-card);
+            border-radius: 14px;
+            padding: 16px;
+            margin-top: 14px;
+        }
+
+        .sync-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .sync-input {
+            flex: 1;
+            background: rgba(0,0,0,0.6);
+            border: 1px solid var(--border-card);
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+
+        .sync-input:focus {
+            outline: none;
+            border-color: var(--gold-primary);
+        }
+
+        .sync-status {
+            margin-top: 10px;
+            font-size: 12px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .sync-status.success {
+            display: block;
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .sync-status.error {
+            display: block;
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        /* JSON Output Modal/Drawer */
+        pre.json-code {
+            background: #050507;
+            border: 1px solid var(--border-card);
+            border-radius: 10px;
+            padding: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            color: #7dd3fc;
+            max-height: 220px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            margin-top: 12px;
+        }
+
+        /* Instructions list */
+        .steps-list {
+            padding-left: 20px;
+            margin-top: 8px;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .steps-list li {
+            margin-bottom: 6px;
+        }
+
+        .steps-list li strong {
+            color: var(--text-main);
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <div class="brand">
+            <div class="brand-icon">🎯</div>
+            <div class="brand-text">
+                <h1>AlignAI Target Studio <span class="badge">Live Calibration</span></h1>
+                <p>Cân chỉnh trực quan 18 thông số bám mục tiêu thời gian thực & Đồng bộ Cloud vào App</p>
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-secondary btn-sm" onclick="resetToDefaults()">⏪ Mặc định gốc</button>
+            <button class="btn btn-secondary btn-sm" onclick="copyJSON()">📋 Chép JSON</button>
+            <button class="btn btn-primary btn-sm" onclick="pushToGist()">☁️ Cập nhật lên Cloud (Gist)</button>
+        </div>
+    </header>
+
+    <!-- Preset Selector -->
+    <div class="preset-container">
+        <div class="preset-btn active" onclick="applyPreset('default')" id="preset-default">
+            <span class="preset-title">🎯 Mặc định gốc</span>
+            <span class="preset-desc">Cân bằng mượt & nhạy</span>
+        </div>
+        <div class="preset-btn" onclick="applyPreset('action')" id="preset-action">
+            <span class="preset-title">⚡ Lia nhanh / Thể thao</span>
+            <span class="preset-desc">Bám tức thì, triệt độ trễ</span>
+        </div>
+        <div class="preset-btn" onclick="applyPreset('smooth')" id="preset-smooth">
+            <span class="preset-title">🪶 Cầm tay êm (Gimbal)</span>
+            <span class="preset-desc">Triệt run tay, đầm chắc</span>
+        </div>
+        <div class="preset-btn" onclick="applyPreset('street')" id="preset-street">
+            <span class="preset-title">🚶 Đi bộ đường phố</span>
+            <span class="preset-desc">Bù dằn xóc bước chân</span>
+        </div>
+    </div>
+
+    <div class="layout-grid">
+        <!-- Left: Interactive Visual Simulator -->
+        <div class="simulator-pane">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🎥 Mô Phỏng Trực Quan Thời Gian Thực</span>
+                    <span id="fpsBadge" style="font-family: 'JetBrains Mono'; font-size: 11px; color: var(--gold-primary);">60 FPS</span>
+                </div>
+                
+                <div class="viewfinder-wrapper" id="canvasContainer">
+                    <canvas id="simCanvas" width="460" height="345"></canvas>
+                    <div class="sim-overlay-info">
+                        <span id="simCoord">Target: (0.50, 0.50)</span>
+                        <span id="simFilter">1-Euro: Filtered</span>
+                    </div>
+                </div>
+
+                <div class="sim-controls">
+                    <button class="btn btn-secondary btn-sm btn-block" id="btnAutoPan" onclick="toggleAutoPan()">
+                        🔄 Bật mô phỏng lia máy tự động
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="triggerJitter()">
+                        💥 Rung tay
+                    </button>
+                </div>
+
+                <p style="font-size: 11px; color: var(--text-muted); margin-top: 10px; line-height: 1.4;">
+                    💡 <strong>Cách thử nghiệm:</strong> Rê chuột vào khung ngắm để di chuyển camera. Vòng chấm trắng là vật thể thật, vòng tròn vàng phát sáng là mỏ neo đã qua bộ lọc 1-Euro. Kéo các thanh trượt bên phải để thấy ngay độ trễ và độ mượt thay đổi trực tiếp!
+                </p>
+            </div>
+
+            <!-- Cloud Sync Card -->
+            <div class="card">
+                <div class="card-title" style="margin-bottom: 10px;">☁️ Đồng Bộ Cloud Vào iPhone</div>
+                <p style="font-size: 12px; color: var(--text-muted);">
+                    Cập nhật trực tiếp vào file JSON trên Cloud. Sau đó chỉ cần mở App trên iPhone và bấm <strong>"Cập nhật thông số từ Web"</strong> là xong!
+                </p>
+
+                <div class="sync-box">
+                    <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px;">GitHub Gist Public URL:</div>
+                    <div class="sync-row">
+                        <input type="text" id="gistUrl" class="sync-input" value="https://gist.github.com/emlavankhoahienma-hue/cd69289609e0a2051e1210c4f927c405/raw/tracking_config.json" readonly>
+                    </div>
+
+                    <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px;">GitHub Personal Access Token (tùy chọn để đẩy 1 chạm từ web):</div>
+                    <div class="sync-row">
+                        <input type="password" id="githubToken" class="sync-input" placeholder="ghp_xxxx (Chỉ cần quyền 'gist')">
+                        <button class="btn btn-primary btn-sm" onclick="pushToGist()">Đẩy lên Gist</button>
+                    </div>
+
+                    <div id="syncStatus" class="sync-status"></div>
+                </div>
+
+                <div style="display: flex; gap: 8px; margin-top: 14px;">
+                    <button class="btn btn-secondary btn-sm btn-block" onclick="copyJSON()">📋 Sao chép JSON</button>
+                    <button class="btn btn-secondary btn-sm btn-block" onclick="downloadJSON()">💾 Tải file JSON</button>
+                </div>
+
+                <pre class="json-code" id="jsonPreview"></pre>
+            </div>
+
+            <!-- Instructions -->
+            <div class="card">
+                <div class="card-title">📱 Cách Kích Hoạt Trong App</div>
+                <ol class="steps-list">
+                    <li>Kéo chỉnh các thanh trượt ở bảng bên phải theo ý muốn.</li>
+                    <li>Bấm nút <strong>"Cập nhật lên Cloud"</strong> hoặc <strong>"Sao chép JSON"</strong>.</li>
+                    <li>Mở app <strong>AlignAI Camera</strong> trên iPhone.</li>
+                    <li>Vào biểu tượng <strong>Cài đặt (Bánh răng)</strong> ➔ chọn tab <strong>AI & Bố cục</strong>.</li>
+                    <li>Cuộn tới mục <strong>"CÂN CHỈNH BÁM TARGET"</strong> ➔ bấm nút vàng <strong>"Cập nhật thông số từ Web"</strong> (hoặc "Dán từ Clipboard").</li>
+                    <li>🎉 <strong>Hoàn tất!</strong> Thuật toán bám target được làm mới ngay tức thì mà không cần build lại app!</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Right: 18 Parameters Sliders -->
+        <div class="settings-pane">
+            <!-- Nhóm 1: Bộ lọc 1-Euro -->
+            <div class="card">
+                <div class="param-group-title">1. BỘ LỌC CHỐNG RUNG 1-EURO (ĐỘ MƯỢT & ĐỘ NHẠY)</div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Tần số cắt đứng yên <span class="param-key">oneEuroMinCutoff</span></span>
+                        <span class="param-value" id="val-oneEuroMinCutoff">1.20 Hz</span>
+                    </div>
+                    <p class="param-desc">
+                        Tần số cắt tối thiểu khi camera đứng yên. <strong>Càng nhỏ</strong> (0.4 - 0.8Hz): mỏ neo đứng im phăng phắc, triệt hoàn toàn rung tay nhẹ; <strong>Càng lớn</strong> (1.8 - 2.5Hz): phản hồi nhạy bén với từng cử chỉ nhỏ nhưng dễ bị run giật theo tay.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.2</span>
+                        <input type="range" id="oneEuroMinCutoff" min="0.2" max="3.0" step="0.05" value="1.2" oninput="updateParam('oneEuroMinCutoff', this.value, 'Hz')">
+                        <span class="slider-max">3.0</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Độ nhạy lia máy theo vận tốc <span class="param-key">oneEuroBeta</span></span>
+                        <span class="param-value" id="val-oneEuroBeta">1.00</span>
+                    </div>
+                    <p class="param-desc">
+                        Hệ số gia tăng tần số khi di chuyển máy. <strong>Càng lớn</strong> (1.5 - 2.5): khi lia máy nhanh tâm bám tức thì không độ trễ; <strong>Càng nhỏ</strong> (0.3 - 0.7): mỏ neo bám đuổi chậm rãi kiểu cinematic mượt mà.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.1</span>
+                        <input type="range" id="oneEuroBeta" min="0.1" max="3.0" step="0.05" value="1.0" oninput="updateParam('oneEuroBeta', this.value, '')">
+                        <span class="slider-max">3.0</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Tần số cắt Street Mode (Đi bộ) <span class="param-key">oneEuroMinCutoffStreet</span></span>
+                        <span class="param-value" id="val-oneEuroMinCutoffStreet">1.60 Hz</span>
+                    </div>
+                    <p class="param-desc">
+                        Tần số cắt áp dụng khi người dùng bật toggle "Chế độ đi đường" trong app để triệt rung xóc nhịp chân bước.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.5</span>
+                        <input type="range" id="oneEuroMinCutoffStreet" min="0.5" max="4.0" step="0.1" value="1.6" oninput="updateParam('oneEuroMinCutoffStreet', this.value, 'Hz')">
+                        <span class="slider-max">4.0</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Độ nhạy vận tốc Street Mode <span class="param-key">oneEuroBetaStreet</span></span>
+                        <span class="param-value" id="val-oneEuroBetaStreet">1.20</span>
+                    </div>
+                    <p class="param-desc">
+                        Hệ số phản hồi lia máy khi đang ở chế độ đi bộ.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.5</span>
+                        <input type="range" id="oneEuroBetaStreet" min="0.5" max="3.0" step="0.1" value="1.2" oninput="updateParam('oneEuroBetaStreet', this.value, '')">
+                        <span class="slider-max">3.0</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Tần số cắt đạo hàm vận tốc <span class="param-key">oneEuroDCutoff</span></span>
+                        <span class="param-value" id="val-oneEuroDCutoff">1.00 Hz</span>
+                    </div>
+                    <p class="param-desc">
+                        Lọc nhiễu gia tốc vận tốc để chống nhảy số đột biến khi bắt đầu lia hoặc phanh máy đột ngột.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.5</span>
+                        <input type="range" id="oneEuroDCutoff" min="0.5" max="2.5" step="0.05" value="1.0" oninput="updateParam('oneEuroDCutoff', this.value, 'Hz')">
+                        <span class="slider-max">2.5</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Nhóm 2: Nhận diện Quang học & Noise Gate -->
+            <div class="card">
+                <div class="param-group-title">2. NHẬN DIỆN QUANG HỌC & NOISE GATE (CHỐNG NHẢY TRÔI)</div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Độ nhảy tối đa mỗi frame <span class="param-key">maxObservationJump</span></span>
+                        <span class="param-value" id="val-maxObservationJump">0.12</span>
+                    </div>
+                    <p class="param-desc">
+                        Giới hạn khoảng cách dịch chuyển tối đa trong 1 frame (tỷ lệ màn hình). Ngăn hiện tượng mỏ neo bị giật cục/teleport nếu Vision nhận diện nhầm vị trí trong 1 tích tắc.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.05</span>
+                        <input type="range" id="maxObservationJump" min="0.05" max="0.30" step="0.01" value="0.12" oninput="updateParam('maxObservationJump', this.value, '')">
+                        <span class="slider-max">0.30</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Ngưỡng nhận diện quang học <span class="param-key">opticalAcceptThreshold</span></span>
+                        <span class="param-value" id="val-opticalAcceptThreshold">0.20</span>
+                    </div>
+                    <p class="param-desc">
+                        Độ tin cậy tối thiểu của Vision để nhận frame (0.0 - 1.0). Hạ thấp (0.12) giúp bám bền hơn khi trời tối/nhòe; Tăng cao (0.35) giúp không bắt nhầm nền.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.10</span>
+                        <input type="range" id="opticalAcceptThreshold" min="0.10" max="0.50" step="0.02" value="0.20" oninput="updateParam('opticalAcceptThreshold', this.value, '')">
+                        <span class="slider-max">0.50</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Ngưỡng vật thể thiếu chi tiết (Low-texture) <span class="param-key">lowTextureThreshold</span></span>
+                        <span class="param-value" id="val-lowTextureThreshold">0.60</span>
+                    </div>
+                    <p class="param-desc">
+                        Áp dụng siết chặt kiểm tra khi khóa vào các vật thể đơn sắc, tường trắng, áo trắng ít hoa văn.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.30</span>
+                        <input type="range" id="lowTextureThreshold" min="0.30" max="0.90" step="0.05" value="0.60" oninput="updateParam('lowTextureThreshold', this.value, '')">
+                        <span class="slider-max">0.90</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Ngưỡng tương đồng màu (Color Histogram) <span class="param-key">histogramAcceptThreshold</span></span>
+                        <span class="param-value" id="val-histogramAcceptThreshold">0.78</span>
+                    </div>
+                    <p class="param-desc">
+                        Hệ số tương đồng Bhattacharyya giữa màu sắc hiện tại và mẫu tham chiếu. Chống mỏ neo trôi sang vật khác màu gần đó.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.50</span>
+                        <input type="range" id="histogramAcceptThreshold" min="0.50" max="0.95" step="0.02" value="0.78" oninput="updateParam('histogramAcceptThreshold', this.value, '')">
+                        <span class="slider-max">0.95</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Khoảng cách vector sâu ANE <span class="param-key">featurePrintDistanceThreshold</span></span>
+                        <span class="param-value" id="val-featurePrintDistanceThreshold">0.50</span>
+                    </div>
+                    <p class="param-desc">
+                        Khoảng cách FeaturePrint Vision tối đa cho phép. Càng nhỏ kiểm tra càng khắt khe; Càng lớn cho phép vật thể biến dạng góc nhìn khi đổi góc máy.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.20</span>
+                        <input type="range" id="featurePrintDistanceThreshold" min="0.20" max="0.80" step="0.02" value="0.50" oninput="updateParam('featurePrintDistanceThreshold', this.value, '')">
+                        <span class="slider-max">0.80</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Nhóm 3: Nắn tâm định kỳ & KLT -->
+            <div class="card">
+                <div class="param-group-title">3. NẮN TÂM ĐỊNH KỲ & TRỌNG SỐ KLT (ANTI-DRIFT)</div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Chu kỳ nắn tâm định kỳ <span class="param-key">periodicCorrectionInterval</span></span>
+                        <span class="param-value" id="val-periodicCorrectionInterval">4 frames</span>
+                    </div>
+                    <p class="param-desc">
+                        Mỗi N frame chạy Saliency Centroid để kéo tâm mỏ neo về đúng trọng tâm vật thể, triệt tiêu hoàn toàn sai số tích lũy lâu dài của Vision tracker.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">2</span>
+                        <input type="range" id="periodicCorrectionInterval" min="2" max="10" step="1" value="4" oninput="updateParam('periodicCorrectionInterval', this.value, ' frames')">
+                        <span class="slider-max">10</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Lực kéo nắn tâm <span class="param-key">periodicCorrectionStrength</span></span>
+                        <span class="param-value" id="val-periodicCorrectionStrength">28 %</span>
+                    </div>
+                    <p class="param-desc">
+                        Tỷ lệ kéo nắn tâm mỗi chu kỳ. Mặc định 28% (0.28) để chuyển động nắn êm ru không giật. Quá cao sẽ thấy tâm giật nhẹ; Quá thấp tâm sẽ sửa chậm.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">5%</span>
+                        <input type="range" id="periodicCorrectionStrength" min="0.05" max="0.60" step="0.02" value="0.28" oninput="updateParam('periodicCorrectionStrength', this.value, '%')">
+                        <span class="slider-max">60%</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Tỷ lệ nới biên ôm chủ thể <span class="param-key">saliencyPaddingRatio</span></span>
+                        <span class="param-value" id="val-saliencyPaddingRatio">1.15</span>
+                    </div>
+                    <p class="param-desc">
+                        Tỷ lệ padding khi tự động tinh chỉnh bounding box quanh điểm chạm mỏ neo. 1.15 tức là nới rộng thêm 15% để không cắt lẹm vào viền chủ thể.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">1.00</span>
+                        <input type="range" id="saliencyPaddingRatio" min="1.00" max="1.40" step="0.02" value="1.15" oninput="updateParam('saliencyPaddingRatio', this.value, '')">
+                        <span class="slider-max">1.40</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Trọng số tâm KLT tối thiểu <span class="param-key">kltCenterWeightMin</span></span>
+                        <span class="param-value" id="val-kltCenterWeightMin">0.15</span>
+                    </div>
+                    <p class="param-desc">
+                        Trọng số của điểm đặc trưng KLT ở sát viền biên. Giúp thuật toán ưu tiên bắt điểm ở ruột chủ thể thay vì viền tường, mép bàn.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.05</span>
+                        <input type="range" id="kltCenterWeightMin" min="0.05" max="0.40" step="0.02" value="0.15" oninput="updateParam('kltCenterWeightMin', this.value, '')">
+                        <span class="slider-max">0.40</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Tỷ lệ vùng trung tâm lưới KLT <span class="param-key">kltGridCentralRatio</span></span>
+                        <span class="param-value" id="val-kltGridCentralRatio">0.60</span>
+                    </div>
+                    <p class="param-desc">
+                        Tỷ lệ vùng trung tâm ROI cho lưới điểm fallback KLT (0.60 = 60% vùng giữa).
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.40</span>
+                        <input type="range" id="kltGridCentralRatio" min="0.40" max="0.80" step="0.05" value="0.60" oninput="updateParam('kltGridCentralRatio', this.value, '')">
+                        <span class="slider-max">0.80</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Nhóm 4: Gyro Odometry -->
+            <div class="card">
+                <div class="param-group-title">4. BÙ TRỪ CON QUAY HỒI CHUYỂN (GYROSCOPE ODOMETRY)</div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Bù góc lia ngang (Scale X) <span class="param-key">gyroScaleX</span></span>
+                        <span class="param-value" id="val-gyroScaleX">0.85</span>
+                    </div>
+                    <p class="param-desc">
+                        Hệ số bù trừ góc xoay quanh trục Y (panning trái/phải). Nếu lia máy mà tâm vàng bị trôi chậm hơn vật thật -> <strong>TĂNG</strong>; Nếu tâm vàng chạy nhanh vượt trước vật thật -> <strong>GIẢM</strong>.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.50</span>
+                        <input type="range" id="gyroScaleX" min="0.50" max="1.30" step="0.02" value="0.85" oninput="updateParam('gyroScaleX', this.value, '')">
+                        <span class="slider-max">1.30</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Bù góc ngửa / úp (Scale Y) <span class="param-key">gyroScaleY</span></span>
+                        <span class="param-value" id="val-gyroScaleY">0.95</span>
+                    </div>
+                    <p class="param-desc">
+                        Hệ số bù trừ góc xoay quanh trục X (tilting ngửa lên/gập xuống).
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.50</span>
+                        <input type="range" id="gyroScaleY" min="0.50" max="1.30" step="0.02" value="0.95" oninput="updateParam('gyroScaleY', this.value, '')">
+                        <span class="slider-max">1.30</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Độ trễ kích hoạt Gyro (Handover Gate) <span class="param-key">opticalHandoverGate</span></span>
+                        <span class="param-value" id="val-opticalHandoverGate">0.12 s</span>
+                    </div>
+                    <p class="param-desc">
+                        Thời gian chờ quang học mất nét trước khi kích hoạt bù Gyro hoàn toàn (giây).
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.05</span>
+                        <input type="range" id="opticalHandoverGate" min="0.05" max="0.30" step="0.01" value="0.12" oninput="updateParam('opticalHandoverGate', this.value, 's')">
+                        <span class="slider-max">0.30</span>
+                    </div>
+                </div>
+
+                <div class="param-item">
+                    <div class="param-header">
+                        <span class="param-label">Cửa sổ duy trì quán tính vận tốc <span class="param-key">velocityDecayWindow</span></span>
+                        <span class="param-value" id="val-velocityDecayWindow">0.23 s</span>
+                    </div>
+                    <p class="param-desc">
+                        Thời gian duy trì quán tính vận tốc quang học khi vừa mất dấu trước khi chuyển hẳn sang cảm biến quán tính.
+                    </p>
+                    <div class="slider-wrap">
+                        <span class="slider-min">0.05</span>
+                        <input type="range" id="velocityDecayWindow" min="0.05" max="0.50" step="0.02" value="0.23" oninput="updateParam('velocityDecayWindow', this.value, 's')">
+                        <span class="slider-max">0.50</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // State
+    const defaultConfig = {
+        oneEuroMinCutoff: 1.2,
+        oneEuroBeta: 1.0,
+        oneEuroMinCutoffStreet: 1.6,
+        oneEuroBetaStreet: 1.2,
+        oneEuroDCutoff: 1.0,
+        maxObservationJump: 0.12,
+        opticalAcceptThreshold: 0.20,
+        lowTextureThreshold: 0.60,
+        histogramAcceptThreshold: 0.78,
+        featurePrintDistanceThreshold: 0.50,
+        periodicCorrectionInterval: 4,
+        periodicCorrectionStrength: 0.28,
+        saliencyPaddingRatio: 1.15,
+        kltCenterWeightMin: 0.15,
+        kltGridCentralRatio: 0.60,
+        gyroScaleX: 0.85,
+        gyroScaleY: 0.95,
+        opticalHandoverGate: 0.12,
+        velocityDecayWindow: 0.23
+    };
+
+    let currentConfig = { ...defaultConfig };
+
+    const presets = {
+        default: { ...defaultConfig },
+        action: {
+            ...defaultConfig,
+            oneEuroMinCutoff: 1.8,
+            oneEuroBeta: 1.8,
+            maxObservationJump: 0.15,
+            opticalAcceptThreshold: 0.25,
+            periodicCorrectionInterval: 3,
+            periodicCorrectionStrength: 0.35,
+            gyroScaleX: 0.92,
+            gyroScaleY: 0.98
+        },
+        smooth: {
+            ...defaultConfig,
+            oneEuroMinCutoff: 0.7,
+            oneEuroBeta: 0.4,
+            maxObservationJump: 0.08,
+            opticalAcceptThreshold: 0.15,
+            periodicCorrectionInterval: 5,
+            periodicCorrectionStrength: 0.20
+        },
+        street: {
+            ...defaultConfig,
+            oneEuroMinCutoff: 1.6,
+            oneEuroBeta: 1.2,
+            oneEuroMinCutoffStreet: 2.0,
+            oneEuroBetaStreet: 1.5,
+            maxObservationJump: 0.14
+        }
+    };
+
+    function updateParam(key, val, unit) {
+        val = parseFloat(val);
+        currentConfig[key] = val;
+        
+        // Update display text
+        let displayVal = val.toFixed(2);
+        if (key === 'periodicCorrectionInterval') {
+            displayVal = parseInt(val) + (unit || '');
+        } else if (unit === '%') {
+            displayVal = Math.round(val * 100) + ' %';
+        } else {
+            displayVal = val.toFixed(2) + (unit ? ' ' + unit : '');
+        }
+        document.getElementById('val-' + key).innerText = displayVal;
+
+        // Clear active preset highlight
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+
+        renderJSON();
+    }
+
+    function applyPreset(name) {
+        const p = presets[name];
+        if (!p) return;
+        currentConfig = { ...p };
+
+        for (const [k, v] of Object.entries(currentConfig)) {
+            const el = document.getElementById(k);
+            if (el) {
+                el.value = v;
+                let unit = '';
+                if (k.includes('Cutoff') && !k.includes('Beta')) unit = 'Hz';
+                if (k === 'periodicCorrectionInterval') unit = ' frames';
+                if (k === 'periodicCorrectionStrength') unit = '%';
+                if (k.includes('Gate') || k.includes('Window')) unit = 's';
+                
+                let displayVal = v.toFixed(2);
+                if (k === 'periodicCorrectionInterval') displayVal = parseInt(v) + unit;
+                else if (unit === '%') displayVal = Math.round(v * 100) + ' %';
+                else displayVal = v.toFixed(2) + (unit ? ' ' + unit : '');
+                
+                const valEl = document.getElementById('val-' + k);
+                if (valEl) valEl.innerText = displayVal;
+            }
+        }
+
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+        const btn = document.getElementById('preset-' + name);
+        if (btn) btn.classList.add('active');
+
+        renderJSON();
+    }
+
+    function resetToDefaults() {
+        applyPreset('default');
+    }
+
+    function renderJSON() {
+        const str = JSON.stringify(currentConfig, null, 2);
+        document.getElementById('jsonPreview').innerText = str;
+    }
+
+    function copyJSON() {
+        const str = JSON.stringify(currentConfig, null, 2);
+        navigator.clipboard.writeText(str).then(() => {
+            showStatus('✅ Đã sao chép JSON vào Clipboard! Mở app iPhone -> Cài đặt -> Dán từ Clipboard.', 'success');
+        }).catch(() => {
+            showStatus('❌ Không thể sao chép, vui lòng bôi đen thủ công.', 'error');
+        });
+    }
+
+    function downloadJSON() {
+        const str = JSON.stringify(currentConfig, null, 2);
+        const blob = new Blob([str], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'tracking_config.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showStatus('✅ Đã tải file tracking_config.json về máy!', 'success');
+    }
+
+    async function pushToGist() {
+        const token = document.getElementById('githubToken').value.trim();
+        const gistId = 'cd69289609e0a2051e1210c4f927c405';
+
+        if (!token) {
+            showStatus('ℹ️ Để đẩy tự động từ web, hãy nhập GitHub Token (hoặc dùng Copy JSON / gh CLI).', 'error');
+            return;
+        }
+
+        showStatus('⏳ Đang gửi cấu hình lên GitHub Gist...', 'success');
+
+        try {
+            const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Accept': 'application/vnd.github+json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    description: 'AI Smart Framing Camera Tracking Config (Updated via Tracking Studio)',
+                    files: {
+                        'tracking_config.json': {
+                            content: JSON.stringify(currentConfig, null, 2)
+                        }
+                    }
+                })
+            });
+
+            if (res.ok) {
+                showStatus('🎉 Đã cập nhật lên Gist thành công! Trên iPhone, bấm "Cập nhật thông số từ Web" là xong!', 'success');
+            } else {
+                const err = await res.json();
+                showStatus(`❌ Lỗi GitHub API: ${err.message || res.statusText}`, 'error');
+            }
+        } catch (e) {
+            showStatus(`❌ Lỗi kết nối mạng: ${e.message}`, 'error');
+        }
+    }
+
+    function showStatus(msg, type) {
+        const el = document.getElementById('syncStatus');
+        el.className = 'sync-status ' + type;
+        el.innerText = msg;
+        el.style.display = 'block';
+    }
+
+    // ── Live 1-Euro Filter Simulation on Canvas ──
+    class OneEuroFilter {
+        constructor(freq = 60, mincutoff = 1.0, beta = 0.0, dcutoff = 1.0) {
+            this.freq = freq;
+            this.mincutoff = mincutoff;
+            this.beta = beta;
+            this.dcutoff = dcutoff;
+            this.x = null;
+            this.dx = 0;
+            this.lastTime = null;
+        }
+
+        alpha(cutoff) {
+            const te = 1.0 / this.freq;
+            const tau = 1.0 / (2 * Math.PI * cutoff);
+            return 1.0 / (1.0 + tau / te);
+        }
+
+        filter(val, timestamp = performance.now() / 1000) {
+            if (this.lastTime !== null && timestamp > this.lastTime) {
+                this.freq = 1.0 / (timestamp - this.lastTime);
+            }
+            this.lastTime = timestamp;
+
+            if (this.x === null) {
+                this.x = val;
+                return val;
+            }
+
+            const dval = (val - this.x) * this.freq;
+            const edx = (this.dx === 0) ? dval : (this.dx + this.alpha(this.dcutoff) * (dval - this.dx));
+            this.dx = edx;
+
+            const cutoff = this.mincutoff + this.beta * Math.abs(edx);
+            const a = this.alpha(cutoff);
+            this.x = this.x + a * (val - this.x);
+            return this.x;
+        }
+    }
+
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+    const filterX = new OneEuroFilter(60, 1.2, 1.0);
+    const filterY = new OneEuroFilter(60, 1.2, 1.0);
+
+    let rawTarget = { x: 230, y: 172 };
+    let filteredTarget = { x: 230, y: 172 };
+    let autoPan = false;
+    let autoPanAngle = 0;
+    let jitterOffset = { x: 0, y: 0 };
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (autoPan) return;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        rawTarget.x = (e.clientX - rect.left) * scaleX;
+        rawTarget.y = (e.clientY - rect.top) * scaleY;
+    });
+
+    function toggleAutoPan() {
+        autoPan = !autoPan;
+        const btn = document.getElementById('btnAutoPan');
+        if (autoPan) {
+            btn.innerText = '⏹️ Dừng lia máy tự động';
+            btn.style.background = 'rgba(234, 179, 8, 0.2)';
+            btn.style.color = '#eab308';
+        } else {
+            btn.innerText = '🔄 Bật mô phỏng lia máy tự động';
+            btn.style.background = '';
+            btn.style.color = '';
+        }
+    }
+
+    function triggerJitter() {
+        jitterOffset.x = (Math.random() - 0.5) * 50;
+        jitterOffset.y = (Math.random() - 0.5) * 50;
+        setTimeout(() => { jitterOffset = { x: 0, y: 0 }; }, 120);
+    }
+
+    let frameCount = 0;
+    let fpsTimer = performance.now();
+
+    function renderLoop(now) {
+        // FPS calculation
+        frameCount++;
+        if (now - fpsTimer >= 1000) {
+            document.getElementById('fpsBadge').innerText = frameCount + ' FPS';
+            frameCount = 0;
+            fpsTimer = now;
+        }
+
+        const t = now / 1000;
+
+        // Auto pan motion
+        if (autoPan) {
+            autoPanAngle += 0.03;
+            rawTarget.x = 230 + Math.cos(autoPanAngle) * 120 + Math.sin(autoPanAngle * 2.5) * 30;
+            rawTarget.y = 172 + Math.sin(autoPanAngle * 1.5) * 70;
+        }
+
+        // Add hand trembling noise
+        const trembleX = Math.sin(t * 18) * 1.5 + (Math.random() - 0.5) * 1.2 + jitterOffset.x;
+        const trembleY = Math.cos(t * 15) * 1.5 + (Math.random() - 0.5) * 1.2 + jitterOffset.y;
+        const noisyInputX = rawTarget.x + trembleX;
+        const noisyInputY = rawTarget.y + trembleY;
+
+        // Apply 1-Euro Filter with current dynamic parameters
+        filterX.mincutoff = currentConfig.oneEuroMinCutoff;
+        filterX.beta = currentConfig.oneEuroBeta;
+        filterX.dcutoff = currentConfig.oneEuroDCutoff;
+
+        filterY.mincutoff = currentConfig.oneEuroMinCutoff;
+        filterY.beta = currentConfig.oneEuroBeta;
+        filterY.dcutoff = currentConfig.oneEuroDCutoff;
+
+        filteredTarget.x = filterX.filter(noisyInputX, t);
+        filteredTarget.y = filterY.filter(noisyInputY, t);
+
+        // Draw Canvas
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Grid lines (Golden Ratio grid)
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const gx1 = canvas.width * 0.382;
+        const gx2 = canvas.width * 0.618;
+        const gy1 = canvas.height * 0.382;
+        const gy2 = canvas.height * 0.618;
+        ctx.moveTo(gx1, 0); ctx.lineTo(gx1, canvas.height);
+        ctx.moveTo(gx2, 0); ctx.lineTo(gx2, canvas.height);
+        ctx.moveTo(0, gy1); ctx.lineTo(canvas.width, gy1);
+        ctx.moveTo(0, gy2); ctx.lineTo(canvas.width, gy2);
+        ctx.stroke();
+
+        // Center Crosshair (Target Alignment Goal)
+        const cx = canvas.width / 2;
+        const cy = canvas.height / 2;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 28, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cx - 8, cy); ctx.lineTo(cx + 8, cy);
+        ctx.moveTo(cx, cy - 8); ctx.lineTo(cx, cy + 8);
+        ctx.stroke();
+
+        // Raw input ghost dot (White dot with tremor)
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.beginPath();
+        ctx.arc(noisyInputX, noisyInputY, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Tracked Anchor Box (Saliency Bounding Box)
+        const boxSize = 56 * currentConfig.saliencyPaddingRatio;
+        const bx = filteredTarget.x - boxSize / 2;
+        const by = filteredTarget.y - boxSize / 2;
+
+        ctx.strokeStyle = 'rgba(234, 179, 8, 0.35)';
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(bx, by, boxSize, boxSize);
+
+        // Filtered Target Gold Ring (The actual DOKA ring)
+        ctx.shadowColor = 'rgba(234, 179, 8, 0.6)';
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = '#eab308';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(filteredTarget.x, filteredTarget.y, 22, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Center dot of filtered target
+        ctx.fillStyle = '#eab308';
+        ctx.beginPath();
+        ctx.arc(filteredTarget.x, filteredTarget.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Guidance ray connecting Target to Center Crosshair
+        ctx.strokeStyle = 'rgba(234, 179, 8, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(filteredTarget.x, filteredTarget.y);
+        ctx.lineTo(cx, cy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Simulated KLT Feature Points
+        ctx.fillStyle = '#38bdf8';
+        const kltPoints = [
+            { x: -14, y: -10 }, { x: 12, y: -12 }, { x: -8, y: 14 },
+            { x: 15, y: 10 }, { x: 0, y: 6 }, { x: -5, y: -4 }
+        ];
+        for (const pt of kltPoints) {
+            ctx.beginPath();
+            ctx.arc(filteredTarget.x + pt.x, filteredTarget.y + pt.y, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Update info text
+        const normX = (filteredTarget.x / canvas.width).toFixed(2);
+        const normY = (filteredTarget.y / canvas.height).toFixed(2);
+        document.getElementById('simCoord').innerText = `Target: (${normX}, ${normY})`;
+
+        requestAnimationFrame(renderLoop);
+    }
+
+    // Init
+    renderJSON();
+    requestAnimationFrame(renderLoop);
+</script>
+</body>
+</html>

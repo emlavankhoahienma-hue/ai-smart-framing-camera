@@ -521,6 +521,9 @@ struct AIFramingSettingsSection: View {
                 }
             }
 
+            // Card: Cân chỉnh Thông số Bám Target (Live Calibration & Web Sync)
+            TrackingCalibrationCard(viewModel: viewModel)
+
             // Card: AI Cloud & Gemini API Key
             SettingsSectionCard(title: "AI CLOUD & BẢO MẬT API KEY", icon: "lock.shield.fill") {
                 VStack(alignment: .leading, spacing: 12) {
@@ -1112,4 +1115,327 @@ struct ActivityShareView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: UIViewControllerRepresentableContext<ActivityShareView>) {}
+}
+
+// MARK: - 5. Tracking Calibration Card (Live In-App Sliders & Cloud Sync)
+public struct TrackingCalibrationCard: View {
+    @ObservedObject var viewModel: CameraViewModel
+    @State private var isExpandedSliders: Bool = false
+    @State private var isEditingURL: Bool = false
+    @State private var urlInput: String = ""
+
+    public init(viewModel: CameraViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        SettingsSectionCard(title: "CÂN CHỈNH BÁM TARGET & ĐỒNG BỘ WEB", icon: "target") {
+            VStack(alignment: .leading, spacing: 14) {
+                // Header description
+                Text("Điều chỉnh các thông số thuật toán bám mỏ neo (1-Euro Filter, Optical Noise Gate, Gyro Fusion). Bạn có thể căn chỉnh trực quan trên giao diện Web rồi bấm nút Cập nhật bên dưới.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.gray)
+                    .lineSpacing(2)
+
+                // Sync URL Row
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("Cloud Config URL", systemImage: "link")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white.opacity(0.9))
+                        Spacer()
+                        Button(action: {
+                            if isEditingURL {
+                                let trimmed = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if !trimmed.isEmpty {
+                                    viewModel.remoteConfigURL = trimmed
+                                }
+                                isEditingURL = false
+                            } else {
+                                urlInput = viewModel.remoteConfigURL
+                                isEditingURL = true
+                            }
+                        }) {
+                            Text(isEditingURL ? "Xong" : "Sửa URL")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.yellow)
+                        }
+                    }
+
+                    if isEditingURL {
+                        TextField("Nhập URL raw JSON", text: $urlInput)
+                            .font(.system(size: 11, design: .monospaced))
+                            .padding(8)
+                            .background(Color.black.opacity(0.5))
+                            .cornerRadius(8)
+                            .foregroundColor(.white)
+                    } else {
+                        Text(viewModel.remoteConfigURL)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+
+                // Primary Web Update Action
+                Button(action: {
+                    viewModel.updateTrackingConfigFromRemote()
+                }) {
+                    HStack(spacing: 8) {
+                        if viewModel.isUpdatingRemoteConfig {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 14, weight: .bold))
+                        }
+                        Text(viewModel.isUpdatingRemoteConfig ? "Đang tải thông số..." : "Cập nhật thông số từ Web")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .foregroundColor(.black)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                    .background(Color.yellow)
+                    .cornerRadius(10)
+                }
+                .disabled(viewModel.isUpdatingRemoteConfig)
+
+                // Status Message if present
+                if let status = viewModel.remoteConfigSyncStatus {
+                    HStack(spacing: 6) {
+                        Text(status)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(status.contains("❌") ? .red : (status.contains("✅") ? .green : .yellow))
+                        Spacer()
+                    }
+                    .padding(8)
+                    .background(Color.black.opacity(0.4))
+                    .cornerRadius(8)
+                }
+
+                // Secondary Actions: Clipboard Import & Reset
+                HStack(spacing: 10) {
+                    Button(action: {
+                        if let clip = UIPasteboard.general.string {
+                            _ = viewModel.importTrackingConfigFromClipboard(clip)
+                        } else {
+                            viewModel.remoteConfigSyncStatus = "❌ Clipboard không có nội dung"
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.on.clipboard")
+                            Text("Dán từ Clipboard")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(8)
+                    }
+
+                    Button(action: {
+                        viewModel.resetTrackingConfigToDefaults()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.counterclockwise")
+                            Text("Mặc định gốc")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.orange.opacity(0.12))
+                        .cornerRadius(8)
+                    }
+                }
+
+                Divider().background(Color.white.opacity(0.08))
+
+                // Collapsible Manual Sliders
+                DisclosureGroup(isExpanded: $isExpandedSliders) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("1. BỘ LỌC CHỐNG RUNG (1-EURO)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.yellow)
+                            .padding(.top, 8)
+
+                        TrackingSliderRow(
+                            title: "Tần số cắt đứng yên (Min Cutoff)",
+                            valueStr: String(format: "%.2f Hz", viewModel.trackingConfig.oneEuroMinCutoff),
+                            desc: "Càng nhỏ càng triệt rung tay; càng lớn càng nhạy",
+                            value: Binding(
+                                get: { viewModel.trackingConfig.oneEuroMinCutoff },
+                                set: { viewModel.trackingConfig.oneEuroMinCutoff = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 0.2...3.0,
+                            step: 0.05
+                        )
+
+                        TrackingSliderRow(
+                            title: "Độ nhạy lia máy (Beta)",
+                            valueStr: String(format: "%.2f", viewModel.trackingConfig.oneEuroBeta),
+                            desc: "Càng lớn mỏ neo bám càng tức thì theo quán tính lia máy",
+                            value: Binding(
+                                get: { viewModel.trackingConfig.oneEuroBeta },
+                                set: { viewModel.trackingConfig.oneEuroBeta = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 0.1...3.0,
+                            step: 0.05
+                        )
+
+                        Text("2. NHẬN DIỆN & NOISE GATE")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.yellow)
+                            .padding(.top, 8)
+
+                        TrackingSliderRow(
+                            title: "Giới hạn nhảy / frame (Max Jump)",
+                            valueStr: String(format: "%.2f màn hình", viewModel.trackingConfig.maxObservationJump),
+                            desc: "Ngăn mỏ neo bị dịch chuyển đột ngột / giật giật",
+                            value: Binding(
+                                get: { viewModel.trackingConfig.maxObservationJump },
+                                set: { viewModel.trackingConfig.maxObservationJump = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 0.05...0.30,
+                            step: 0.01
+                        )
+
+                        TrackingSliderRow(
+                            title: "Ngưỡng nhận diện quang học",
+                            valueStr: String(format: "%.2f", viewModel.trackingConfig.opticalAcceptThreshold),
+                            desc: "Độ tin cậy tối thiểu của Vision để nhận diện đối tượng",
+                            value: Binding(
+                                get: { viewModel.trackingConfig.opticalAcceptThreshold },
+                                set: { viewModel.trackingConfig.opticalAcceptThreshold = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 0.10...0.50,
+                            step: 0.02
+                        )
+
+                        TrackingSliderRow(
+                            title: "Ngưỡng khớp màu Histogram",
+                            valueStr: String(format: "%.2f", viewModel.trackingConfig.histogramAcceptThreshold),
+                            desc: "Chống trôi target sang đối tượng hoặc nền khác màu",
+                            value: Binding(
+                                get: { viewModel.trackingConfig.histogramAcceptThreshold },
+                                set: { viewModel.trackingConfig.histogramAcceptThreshold = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 0.50...0.95,
+                            step: 0.02
+                        )
+
+                        Text("3. NẮN TÂM ĐỊNH KỲ (ANTI-DRIFT)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.yellow)
+                            .padding(.top, 8)
+
+                        TrackingSliderRow(
+                            title: "Chu kỳ nắn tâm",
+                            valueStr: "\(viewModel.trackingConfig.periodicCorrectionInterval) frame",
+                            desc: "Mỗi N frame chạy Saliency để kéo tâm về trọng tâm vật thể",
+                            value: Binding(
+                                get: { Double(viewModel.trackingConfig.periodicCorrectionInterval) },
+                                set: { viewModel.trackingConfig.periodicCorrectionInterval = Int($0); viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 2...10,
+                            step: 1
+                        )
+
+                        TrackingSliderRow(
+                            title: "Lực kéo nắn tâm",
+                            valueStr: String(format: "%.0f%%", viewModel.trackingConfig.periodicCorrectionStrength * 100),
+                            desc: "Tỷ lệ kéo nắn mỗi chu kỳ",
+                            value: Binding(
+                                get: { viewModel.trackingConfig.periodicCorrectionStrength },
+                                set: { viewModel.trackingConfig.periodicCorrectionStrength = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 0.05...0.60,
+                            step: 0.02
+                        )
+
+                        Text("4. CON QUAY HỒI CHUYỂN (GYRO)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.yellow)
+                            .padding(.top, 8)
+
+                        TrackingSliderRow(
+                            title: "Bù góc lia ngang (Scale X)",
+                            valueStr: String(format: "%.2f", viewModel.trackingConfig.gyroScaleX),
+                            desc: "Hệ số bù trừ góc lia máy sang trái / phải",
+                            value: Binding(
+                                get: { viewModel.trackingConfig.gyroScaleX },
+                                set: { viewModel.trackingConfig.gyroScaleX = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 0.50...1.30,
+                            step: 0.02
+                        )
+
+                        TrackingSliderRow(
+                            title: "Bù góc ngửa / úp (Scale Y)",
+                            valueStr: String(format: "%.2f", viewModel.trackingConfig.gyroScaleY),
+                            desc: "Hệ số bù trừ góc ngửa hoặc gập máy lên / xuống",
+                            value: Binding(
+                                get: { viewModel.trackingConfig.gyroScaleY },
+                                set: { viewModel.trackingConfig.gyroScaleY = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                            ),
+                            range: 0.50...1.30,
+                            step: 0.02
+                        )
+                    }
+                    .padding(.vertical, 8)
+                } label: {
+                    HStack {
+                        Image(systemName: "slider.horizontal.3")
+                            .foregroundColor(.yellow)
+                        Text("Kéo thanh trượt trực tiếp trong app")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.9))
+                        Spacer()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Reusable Tracking Slider Row
+public struct TrackingSliderRow: View {
+    let title: String
+    let valueStr: String
+    let desc: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+
+    public init(title: String, valueStr: String, desc: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double) {
+        self.title = title
+        self.valueStr = valueStr
+        self.desc = desc
+        self._value = value
+        self.range = range
+        self.step = step
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+                Spacer()
+                Text(valueStr)
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(.yellow)
+            }
+            Text(desc)
+                .font(.system(size: 10))
+                .foregroundColor(.gray)
+            Slider(value: $value, in: range, step: step)
+                .accentColor(.yellow)
+        }
+        .padding(.vertical, 2)
+    }
 }

@@ -58,6 +58,26 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var lastReIdAttemptTime: CFTimeInterval = 0
     public var isLowTextureAnchor: Bool = false
     
+    // Dynamic Calibration Parameters from TrackingConfiguration
+    public var periodicCorrectionInterval: Int = 4
+    public var periodicCorrectionStrength: Double = 0.28
+    public var saliencyPaddingRatio: Double = 1.15
+    public var kltCenterWeightMin: Double = 0.15
+    public var kltGridCentralRatio: Double = 0.60
+    public var histogramAcceptThreshold: Float = 0.78
+    public var featurePrintDistanceThreshold: Float = 0.50
+
+    public func applyConfiguration(_ config: TrackingConfiguration) {
+        self.periodicCorrectionInterval = config.periodicCorrectionInterval
+        self.periodicCorrectionStrength = config.periodicCorrectionStrength
+        self.saliencyPaddingRatio = config.saliencyPaddingRatio
+        self.kltCenterWeightMin = config.kltCenterWeightMin
+        self.kltGridCentralRatio = config.kltGridCentralRatio
+        self.histogramAcceptThreshold = Float(config.histogramAcceptThreshold)
+        self.featurePrintDistanceThreshold = Float(config.featurePrintDistanceThreshold)
+        CameraLogger.info("🎯 [Vision] Đã nạp cấu hình cân chỉnh mới: interval=\(periodicCorrectionInterval), strength=\(periodicCorrectionStrength), histThresh=\(histogramAcceptThreshold)", category: .tracking)
+    }
+    
     // Vision Detection Requests
     private var faceDetectionRequest: VNDetectFaceRectanglesRequest!
     private var faceLandmarksRequest: VNDetectFaceLandmarksRequest!
@@ -163,8 +183,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
            let objects = result.salientObjects, !objects.isEmpty {
             let candidates = objects.filter { $0.boundingBox.insetBy(dx: -0.03, dy: -0.03).contains(tapVision) }
             if let best = candidates.max(by: { $0.confidence < $1.confidence }) {
-                let w = min(0.65, max(0.10, best.boundingBox.width * 1.15))
-                let h = min(0.65, max(0.10, best.boundingBox.height * 1.15))
+                let pad = CGFloat(self.saliencyPaddingRatio)
+                let w = min(0.65, max(0.10, best.boundingBox.width * pad))
+                let h = min(0.65, max(0.10, best.boundingBox.height * pad))
                 return CGRect(
                     x: min(1.0 - w, max(0.01, best.boundingBox.midX - w / 2.0)),
                     y: min(1.0 - h, max(0.01, best.boundingBox.midY - h / 2.0)),
@@ -366,9 +387,10 @@ public final class VisionFramingEngine: @unchecked Sendable {
         // và giảm mạnh điểm của các điểm gần mép biên (thường là viền tường, mép bàn, hoa văn nền)
         let boxCenter = CGPoint(x: roi.midX, y: roi.midY)
         let maxDist = max(0.02, max(roi.width, roi.height) / 2.0)
+        let minWeight = Float(self.kltCenterWeightMin)
         corners = corners.map { c in
             let d = hypot(c.point.x - boxCenter.x, c.point.y - boxCenter.y)
-            let centerWeight = Float(max(0.15, 1.0 - (d / maxDist)))
+            let centerWeight = Float(max(minWeight, 1.0 - (Float(d) / Float(maxDist))))
             return (point: c.point, score: c.score * centerWeight)
         }
         
@@ -376,11 +398,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let top = corners.prefix(30).map { $0.point }
         if top.count < 8 {
             var grid: [CGPoint] = top
+            let centralRatio = CGFloat(self.kltGridCentralRatio)
+            let centralOffset = (1.0 - centralRatio) / 2.0
             for r in 0..<3 {
                 for c in 0..<3 {
-                    // Tập trung lưới điểm vào 60% vùng trung tâm ROI thay vì mép ngoài
-                    let gx = roi.origin.x + roi.size.width * (0.20 + 0.60 * (CGFloat(c) + 0.5) / 3.0)
-                    let gy = roi.origin.y + roi.size.height * (0.20 + 0.60 * (CGFloat(r) + 0.5) / 3.0)
+                    // Tập trung lưới điểm vào vùng trung tâm ROI theo kltGridCentralRatio thay vì mép ngoài
+                    let gx = roi.origin.x + roi.size.width * (centralOffset + centralRatio * (CGFloat(c) + 0.5) / 3.0)
+                    let gy = roi.origin.y + roi.size.height * (centralOffset + centralRatio * (CGFloat(r) + 0.5) / 3.0)
                     grid.append(CGPoint(x: gx, y: gy))
                 }
             }
@@ -749,7 +773,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         if self.histogramCheckCounter >= 3, let refHist = self.referenceColorHistogram {
                             self.histogramCheckCounter = 0
                             let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
-                            if self.compareColorHistograms(refHist, curHist) < 0.78 {
+                            if self.compareColorHistograms(refHist, curHist) < self.histogramAcceptThreshold {
                                 identityOK = false
                                 CameraLogger.info("🎯 [Vision] Mất khớp histogram — nghi tracker trôi, giữ mỏ neo cuối", category: .tracking)
                             }
@@ -764,7 +788,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                     var dist: Float = 0
                                     do {
                                         try refPrint.computeDistance(&dist, to: curPrint)
-                                        if dist > 0.50 {
+                                        if dist > self.featurePrintDistanceThreshold {
                                             identityOK = false
                                             CameraLogger.info("🎯 [Vision] Mất khớp feature print (dist: \(String(format: "%.2f", dist))) — nghi tracker trôi", category: .tracking)
                                         }
@@ -800,9 +824,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             var uiX = newObs.boundingBox.midX
                             var uiY = 1.0 - newObs.boundingBox.midY
                             
-                            // 3) Detection-based Periodic Correction (Nắn mỏ neo định kỳ mỗi 4 frame bằng Saliency Centroid)
+                            // 3) Detection-based Periodic Correction (Nắn mỏ neo định kỳ theo periodicCorrectionInterval bằng Saliency Centroid)
                             self.detectionCorrectionCounter += 1
-                            if self.detectionCorrectionCounter >= 4 {
+                            if self.detectionCorrectionCounter >= self.periodicCorrectionInterval {
                                 self.detectionCorrectionCounter = 0
                                 if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
                                     let centroidUIX = salientCentroid.x
@@ -814,8 +838,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                         let drift = hypot(centroidUIX - uiX, centroidUIY - uiY)
                                         let maxOffset = min(box.width, box.height) * 0.45
                                         if drift > 0.012 && drift < maxOffset {
-                                            uiX += (centroidUIX - uiX) * 0.28
-                                            uiY += (centroidUIY - uiY) * 0.28
+                                            let strength = CGFloat(self.periodicCorrectionStrength)
+                                            uiX += (centroidUIX - uiX) * strength
+                                            uiY += (centroidUIY - uiY) * strength
                                         }
                                     }
                                 }
