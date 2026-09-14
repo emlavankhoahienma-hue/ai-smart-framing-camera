@@ -39,6 +39,11 @@ public final class HapticFeedbackService {
         impactMedium.impactOccurred(intensity: 0.9)
     }
     
+    // MARK: - Light Tap / Zoom Snap
+    public func triggerLight() {
+        impactLight.impactOccurred(intensity: 0.7)
+    }
+
     // MARK: - Mode or Filter Selection
     public func triggerSelectionChange() {
         selectionFeedback.selectionChanged()
