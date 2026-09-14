@@ -739,15 +739,6 @@ public final class CameraViewModel: ObservableObject {
         let targetPoint = CGPoint(x: response.targetX, y: response.targetY)
         let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
         pinTargetAndStartMotion(at: targetPoint, subjectRect: subjectRect)
-
-        // TỰ ĐỘNG ZOOM ĐẾN BỐ CỤC AI CLOUD ĐỀ XUẤT NGAY KHI KHÓA MỤC TIÊU!
-        if isAutoZoomEnabled && response.suggestedZoom > 1.05 && abs(response.suggestedZoom - currentZoom) > 0.08 {
-            self.hasExecutedAutoZoomForSession = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
-                guard let self = self, case .targetPlaced = self.aiSessionState else { return }
-                self.triggerZoomRevealAnimation(targetZoom: response.suggestedZoom)
-            }
-        }
     }
 
     // MARK: - Local Neural Engine Analysis (One-shot)
@@ -799,15 +790,6 @@ public final class CameraViewModel: ObservableObject {
         }
 
         pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
-
-        // TỰ ĐỘNG ZOOM ĐẾN BỐ CỤC AI LOCAL ĐỀ XUẤT NGAY KHI KHÓA MỤC TIÊU!
-        if isAutoZoomEnabled && result.recommendedZoomFactor > 1.05 && abs(result.recommendedZoomFactor - currentZoom) > 0.08 {
-            self.hasExecutedAutoZoomForSession = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
-                guard let self = self, case .targetPlaced = self.aiSessionState else { return }
-                self.triggerZoomRevealAnimation(targetZoom: result.recommendedZoomFactor)
-            }
-        }
     }
 
     // MARK: - State for Hybrid Optical Visual + Gyro Tracking
@@ -1040,14 +1022,15 @@ public final class CameraViewModel: ObservableObject {
                 showAlignmentSuccessFlash = true
             }
 
-            // KÍCH HOẠT ZOOM REVEAL ĐÚNG KHI TÂM TRẮNG VÀO TÂM VÀNG!
-            if isAutoZoomEnabled && pendingSuggestedZoom > 1.0 && !hasExecutedAutoZoomForSession {
+            // KÍCH HOẠT ZOOM REVEAL ĐÚNG KHI TÂM TRẮNG KHỚP VÀO TÂM VÀNG!
+            let willZoom = isAutoZoomEnabled && pendingSuggestedZoom > 1.05 && !hasExecutedAutoZoomForSession
+            if willZoom {
                 hasExecutedAutoZoomForSession = true
                 triggerZoomRevealAnimation(targetZoom: pendingSuggestedZoom)
             }
 
             if isAutoCaptureOnAlignEnabled {
-                startAutoCaptureCountdown()
+                startAutoCaptureCountdown(isZooming: willZoom)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                 self.showAlignmentSuccessFlash = false
@@ -1071,11 +1054,10 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    private func startAutoCaptureCountdown() {
+    private func startAutoCaptureCountdown(isZooming: Bool = false) {
         autoCaptureTask?.cancel()
 
-        let hasPendingZoom = isAutoZoomEnabled && pendingSuggestedZoom > 1.0 && !hasExecutedAutoZoomForSession
-        let initialWait: UInt64 = hasPendingZoom ? 1_200_000_000 : 800_000_000
+        let initialWait: UInt64 = isZooming ? 1_400_000_000 : 800_000_000
 
         autoCaptureCountdown = 1 // 1 giây phản hồi nhanh chụp ngay
 
