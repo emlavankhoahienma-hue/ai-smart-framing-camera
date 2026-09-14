@@ -744,7 +744,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                    CACurrentMediaTime() - self.lastReIdAttemptTime >= 0.4 {
                     self.lastReIdAttemptTime = CACurrentMediaTime()
                     
-                    let spatialPoint = StreetSpatialTrackingEngine.shared.isTrackingActive ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+                    let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
                     // Tâm tìm kiếm = trung điểm giữa vị trí quang học CUỐI CÙNG ĐÃ XÁC NHẬN và ước lượng không gian (gyro)
                     let verified = self.lastVerifiedUIPoint
