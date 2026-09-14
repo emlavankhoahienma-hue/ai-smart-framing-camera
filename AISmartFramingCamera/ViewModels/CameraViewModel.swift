@@ -309,7 +309,13 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // MARK: - Remote & Dynamic Tracking Calibration
-    @Published public var trackingConfig: TrackingConfiguration = TrackingConfiguration.loadPersisted()
+    @Published public var trackingConfig: TrackingConfiguration = TrackingConfiguration.loadPersisted() {
+        didSet {
+            trackingConfig.persist()
+            SpatialTrackingEngine.shared.applyConfiguration(trackingConfig)
+            visionEngine.applyConfiguration(trackingConfig)
+        }
+    }
     @Published public var remoteConfigURL: String = "https://gist.github.com/emlavankhoahienma-hue/cd69289609e0a2051e1210c4f927c405/raw/tracking_config.json" {
         didSet {
             UserDefaults.standard.set(remoteConfigURL, forKey: "trackingRemoteConfigURL")
@@ -666,7 +672,7 @@ public final class CameraViewModel: ObservableObject {
             return true
         } else {
             self.remoteConfigSyncStatus = "❌ Mã cấu hình trong Clipboard không hợp lệ"
-            haptics.triggerError()
+            haptics.triggerTrackingLostWarning()
             return false
         }
     }

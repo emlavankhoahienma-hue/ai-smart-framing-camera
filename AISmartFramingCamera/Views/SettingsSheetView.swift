@@ -1266,10 +1266,7 @@ public struct TrackingCalibrationCard: View {
                             title: "Tần số cắt đứng yên (Min Cutoff)",
                             valueStr: String(format: "%.2f Hz", viewModel.trackingConfig.oneEuroMinCutoff),
                             desc: "Càng nhỏ càng triệt rung tay; càng lớn càng nhạy",
-                            value: Binding(
-                                get: { viewModel.trackingConfig.oneEuroMinCutoff },
-                                set: { viewModel.trackingConfig.oneEuroMinCutoff = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
-                            ),
+                            value: $viewModel.trackingConfig.oneEuroMinCutoff,
                             range: 0.2...3.0,
                             step: 0.05
                         )
@@ -1278,10 +1275,7 @@ public struct TrackingCalibrationCard: View {
                             title: "Độ nhạy lia máy (Beta)",
                             valueStr: String(format: "%.2f", viewModel.trackingConfig.oneEuroBeta),
                             desc: "Càng lớn mỏ neo bám càng tức thì theo quán tính lia máy",
-                            value: Binding(
-                                get: { viewModel.trackingConfig.oneEuroBeta },
-                                set: { viewModel.trackingConfig.oneEuroBeta = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
-                            ),
+                            value: $viewModel.trackingConfig.oneEuroBeta,
                             range: 0.1...3.0,
                             step: 0.05
                         )
@@ -1295,10 +1289,7 @@ public struct TrackingCalibrationCard: View {
                             title: "Giới hạn nhảy / frame (Max Jump)",
                             valueStr: String(format: "%.2f màn hình", viewModel.trackingConfig.maxObservationJump),
                             desc: "Ngăn mỏ neo bị dịch chuyển đột ngột / giật giật",
-                            value: Binding(
-                                get: { viewModel.trackingConfig.maxObservationJump },
-                                set: { viewModel.trackingConfig.maxObservationJump = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
-                            ),
+                            value: $viewModel.trackingConfig.maxObservationJump,
                             range: 0.05...0.30,
                             step: 0.01
                         )
@@ -1307,10 +1298,7 @@ public struct TrackingCalibrationCard: View {
                             title: "Ngưỡng nhận diện quang học",
                             valueStr: String(format: "%.2f", viewModel.trackingConfig.opticalAcceptThreshold),
                             desc: "Độ tin cậy tối thiểu của Vision để nhận diện đối tượng",
-                            value: Binding(
-                                get: { viewModel.trackingConfig.opticalAcceptThreshold },
-                                set: { viewModel.trackingConfig.opticalAcceptThreshold = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
-                            ),
+                            value: $viewModel.trackingConfig.opticalAcceptThreshold,
                             range: 0.10...0.50,
                             step: 0.02
                         )
@@ -1319,10 +1307,7 @@ public struct TrackingCalibrationCard: View {
                             title: "Ngưỡng khớp màu Histogram",
                             valueStr: String(format: "%.2f", viewModel.trackingConfig.histogramAcceptThreshold),
                             desc: "Chống trôi target sang đối tượng hoặc nền khác màu",
-                            value: Binding(
-                                get: { viewModel.trackingConfig.histogramAcceptThreshold },
-                                set: { viewModel.trackingConfig.histogramAcceptThreshold = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
-                            ),
+                            value: $viewModel.trackingConfig.histogramAcceptThreshold,
                             range: 0.50...0.95,
                             step: 0.02
                         )
@@ -1338,7 +1323,7 @@ public struct TrackingCalibrationCard: View {
                             desc: "Mỗi N frame chạy Saliency để kéo tâm về trọng tâm vật thể",
                             value: Binding(
                                 get: { Double(viewModel.trackingConfig.periodicCorrectionInterval) },
-                                set: { viewModel.trackingConfig.periodicCorrectionInterval = Int($0); viewModel.applyTrackingConfig(viewModel.trackingConfig) }
+                                set: { viewModel.trackingConfig.periodicCorrectionInterval = Int($0) }
                             ),
                             range: 2...10,
                             step: 1
@@ -1348,10 +1333,7 @@ public struct TrackingCalibrationCard: View {
                             title: "Lực kéo nắn tâm",
                             valueStr: String(format: "%.0f%%", viewModel.trackingConfig.periodicCorrectionStrength * 100),
                             desc: "Tỷ lệ kéo nắn mỗi chu kỳ",
-                            value: Binding(
-                                get: { viewModel.trackingConfig.periodicCorrectionStrength },
-                                set: { viewModel.trackingConfig.periodicCorrectionStrength = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
-                            ),
+                            value: $viewModel.trackingConfig.periodicCorrectionStrength,
                             range: 0.05...0.60,
                             step: 0.02
                         )
@@ -1365,10 +1347,7 @@ public struct TrackingCalibrationCard: View {
                             title: "Bù góc lia ngang (Scale X)",
                             valueStr: String(format: "%.2f", viewModel.trackingConfig.gyroScaleX),
                             desc: "Hệ số bù trừ góc lia máy sang trái / phải",
-                            value: Binding(
-                                get: { viewModel.trackingConfig.gyroScaleX },
-                                set: { viewModel.trackingConfig.gyroScaleX = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
-                            ),
+                            value: $viewModel.trackingConfig.gyroScaleX,
                             range: 0.50...1.30,
                             step: 0.02
                         )
@@ -1377,10 +1356,7 @@ public struct TrackingCalibrationCard: View {
                             title: "Bù góc ngửa / úp (Scale Y)",
                             valueStr: String(format: "%.2f", viewModel.trackingConfig.gyroScaleY),
                             desc: "Hệ số bù trừ góc ngửa hoặc gập máy lên / xuống",
-                            value: Binding(
-                                get: { viewModel.trackingConfig.gyroScaleY },
-                                set: { viewModel.trackingConfig.gyroScaleY = $0; viewModel.applyTrackingConfig(viewModel.trackingConfig) }
-                            ),
+                            value: $viewModel.trackingConfig.gyroScaleY,
                             range: 0.50...1.30,
                             step: 0.02
                         )

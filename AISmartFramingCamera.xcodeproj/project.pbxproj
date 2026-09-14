@@ -9,7 +9,7 @@
 /* Begin PBXBuildFile section */
 		B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* AISmartFramingCameraApp.swift */; };
 		B20000000000000000000002 /* FramingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* FramingModels.swift */; };
-		B20000000000000000000099 /* TrackingConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000099 /* TrackingConfiguration.swift */; };
+		B20000000000000000000099 /* TrackingConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000099 /* TrackingConfiguration.swift */; };
 		B20000000000000000000003 /* CameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* CameraService.swift */; };
 		B20000000000000000000004 /* VisionFramingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* VisionFramingEngine.swift */; };
 		B20000000000000000000005 /* CompositionCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* CompositionCalculator.swift */; };
