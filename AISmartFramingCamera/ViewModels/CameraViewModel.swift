@@ -876,20 +876,28 @@ public final class CameraViewModel: ObservableObject {
         // 2. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (Apple Vision VNTrackObjectRequest)
         // Khi vật thể là màu trắng/đơn sắc (isCurrentlyLowTexture): Mở rộng khung bám để bao quát đường viền cạnh tương phản với nền
         let isLow = isCurrentlyLowTexture
+        self.initialPhysicalSubjectCenter = target
+        let initialSize: CGSize
         if let sRect = subjectRect {
             // Dùng TỌA ĐỘ AI (target) làm TÂM khung bám; chỉ lấy KÍCH THƯỚC từ subjectRect
             // để box đủ lớn bao trọn chủ thể mà không làm lệch tâm target khỏi tọa độ AI.
-            self.initialPhysicalSubjectCenter = target
             let expandRatio: CGFloat = isLow ? 1.35 : 1.10
             let minBox: CGFloat = isLow ? 0.20 : 0.08
             let clampedW = min(0.60, max(minBox, sRect.width * expandRatio))
             let clampedH = min(0.60, max(minBox, sRect.height * expandRatio))
-            visionEngine.startTrackingObject(at: target, size: CGSize(width: clampedW, height: clampedH))
+            initialSize = CGSize(width: clampedW, height: clampedH)
         } else {
-            self.initialPhysicalSubjectCenter = target
             let targetSize: CGFloat = isLow ? 0.22 : 0.14
-            visionEngine.startTrackingObject(at: target, size: CGSize(width: targetSize, height: targetSize))
+            initialSize = CGSize(width: targetSize, height: targetSize)
         }
+
+        // Tự động tinh chỉnh mỏ neo bằng Saliency & Human Pose/Face detection từ buffer hiện tại
+        visionEngine.startTrackingObject(
+            at: target,
+            size: initialSize,
+            refiningBuffer: latestPixelBuffer,
+            orientation: .up
+        )
 
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
         let focusTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target

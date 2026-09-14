@@ -52,6 +52,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var identitySuspicionFrames: Int = 0
     private var histogramCheckCounter: Int = 0
     private var featurePrintCheckCounter: Int = 0
+    private var detectionCorrectionCounter: Int = 0
     private var stableLockFrames: Int = 0
     private var anchorBoxSize: CGSize = CGSize(width: 0.14, height: 0.14)
     private var lastReIdAttemptTime: CFTimeInterval = 0
@@ -93,20 +94,122 @@ public final class VisionFramingEngine: @unchecked Sendable {
     // MARK: - Visual Object Tracking Control
     private var currentTrackRequest: VNTrackObjectRequest? = nil
     
+    /// Tinh chỉnh Bounding Box mỏ neo ban đầu ôm khít chủ thể thật thay vì dùng box vuông cố định
+    /// Sử dụng Objectness Saliency và Human Body Pose / Face detection
+    public func refineAnchorBox(
+        around tapUIPoint: CGPoint,
+        in buffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation = .up
+    ) -> CGRect? {
+        let tapVision = CGPoint(x: tapUIPoint.x, y: 1.0 - tapUIPoint.y)
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+        
+        // 1. Ưu tiên kiểm tra Human Body Pose nếu điểm chạm thuộc về người
+        let poseReq = VNDetectHumanBodyPoseRequest()
+        poseReq.revision = VNDetectHumanBodyPoseRequestRevision1
+        if (try? handler.perform([poseReq])) != nil,
+           let observations = poseReq.results, !observations.isEmpty {
+            for obs in observations {
+                if let recognizedPoints = try? obs.recognizedPoints(.all) {
+                    let validPoints = recognizedPoints.values.filter { $0.confidence > 0.25 }.map { $0.location }
+                    guard !validPoints.isEmpty else { continue }
+                    
+                    let xs = validPoints.map { $0.x }
+                    let ys = validPoints.map { $0.y }
+                    guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { continue }
+                    
+                    let bodyBox = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+                    let paddedBody = bodyBox.insetBy(dx: -max(0.04, bodyBox.width * 0.08), dy: -max(0.04, bodyBox.height * 0.08))
+                    
+                    if paddedBody.insetBy(dx: -0.04, dy: -0.04).contains(tapVision) {
+                        let w = min(0.65, max(0.12, paddedBody.width))
+                        let h = min(0.75, max(0.15, paddedBody.height))
+                        return CGRect(
+                            x: min(1.0 - w, max(0.01, paddedBody.midX - w / 2.0)),
+                            y: min(1.0 - h, max(0.01, paddedBody.midY - h / 2.0)),
+                            width: w,
+                            height: h
+                        )
+                    }
+                }
+            }
+        }
+        
+        // 2. Kiểm tra Face Detection nếu chạm vào mặt hoặc đầu
+        let faceReq = VNDetectFaceRectanglesRequest()
+        faceReq.revision = VNDetectFaceRectanglesRequestRevision3
+        if (try? handler.perform([faceReq])) != nil,
+           let faceResults = faceReq.results, !faceResults.isEmpty {
+            for face in faceResults {
+                if face.boundingBox.insetBy(dx: -0.04, dy: -0.04).contains(tapVision) {
+                    let faceBox = face.boundingBox
+                    let w = min(0.60, max(0.14, faceBox.width * 1.8))
+                    let h = min(0.70, max(0.18, faceBox.height * 2.5))
+                    return CGRect(
+                        x: min(1.0 - w, max(0.01, faceBox.midX - w / 2.0)),
+                        y: min(1.0 - h, max(0.01, faceBox.midY - h * 0.4)),
+                        width: w,
+                        height: h
+                    )
+                }
+            }
+        }
+        
+        // 3. Objectness-based Saliency (Đồ vật, thú cưng, chi tiết nổi bật)
+        let salReq = VNGenerateObjectnessBasedSaliencyImageRequest()
+        salReq.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
+        if (try? handler.perform([salReq])) != nil,
+           let result = salReq.results?.first as? VNSaliencyImageObservation,
+           let objects = result.salientObjects, !objects.isEmpty {
+            let candidates = objects.filter { $0.boundingBox.insetBy(dx: -0.03, dy: -0.03).contains(tapVision) }
+            if let best = candidates.max(by: { $0.confidence < $1.confidence }) {
+                let w = min(0.65, max(0.10, best.boundingBox.width * 1.15))
+                let h = min(0.65, max(0.10, best.boundingBox.height * 1.15))
+                return CGRect(
+                    x: min(1.0 - w, max(0.01, best.boundingBox.midX - w / 2.0)),
+                    y: min(1.0 - h, max(0.01, best.boundingBox.midY - h / 2.0)),
+                    width: w,
+                    height: h
+                )
+            }
+        }
+        
+        return nil
+    }
+    
     /// Khởi động tracking bám dính vào vùng cảnh vật/vật thể/chữ tại toạ độ mục tiêu
-    public func startTrackingObject(at normalizedPoint: CGPoint, size: CGSize = CGSize(width: 0.12, height: 0.12)) {
+    public func startTrackingObject(
+        at normalizedPoint: CGPoint,
+        size: CGSize = CGSize(width: 0.12, height: 0.12),
+        refiningBuffer: CVPixelBuffer? = nil,
+        orientation: CGImagePropertyOrientation = .up
+    ) {
+        var targetPoint = normalizedPoint
+        var targetSize = size
+
+        if let buffer = refiningBuffer,
+           let refinedBox = refineAnchorBox(around: normalizedPoint, in: buffer, orientation: orientation) {
+            let boxCenterUI = CGPoint(x: refinedBox.midX, y: 1.0 - refinedBox.midY)
+            let dist = hypot(boxCenterUI.x - normalizedPoint.x, boxCenterUI.y - normalizedPoint.y)
+            if dist < 0.15 {
+                targetPoint = boxCenterUI
+            }
+            targetSize = CGSize(width: refinedBox.width, height: refinedBox.height)
+            CameraLogger.info("🎯 [Vision] Đã tinh chỉnh Anchor Box ôm khít chủ thể: tâm=(\(String(format: "%.3f", targetPoint.x)), \(String(format: "%.3f", targetPoint.y))), size: \(targetSize)", category: .tracking)
+        }
+        
         // Convert UI coordinate (top-left origin) to Vision coordinate (bottom-left origin)
         // Kẹp TÂM box trong frame (thay vì kẹp origin) để box lớn gần mép không bị thò ra ngoài
-        let halfW = size.width / 2.0
-        let halfH = size.height / 2.0
-        let centerX = min(1.0 - halfW - 0.005, max(0.005, normalizedPoint.x))
-        let centerYVision = min(1.0 - halfH - 0.005, max(0.005, 1.0 - normalizedPoint.y))
+        let halfW = targetSize.width / 2.0
+        let halfH = targetSize.height / 2.0
+        let centerX = min(1.0 - halfW - 0.005, max(halfW + 0.005, targetPoint.x))
+        let centerYVision = min(1.0 - halfH - 0.005, max(halfH + 0.005, 1.0 - targetPoint.y))
         
         let clampedRect = CGRect(
             x: centerX - halfW,
             y: centerYVision - halfH,
-            width: size.width,
-            height: size.height
+            width: targetSize.width,
+            height: targetSize.height
         )
         
         let initialObservation = VNDetectedObjectObservation(boundingBox: clampedRect)
@@ -125,15 +228,16 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
         // Reset toàn bộ trạng thái xác minh danh tính & re-acquisition
-        self.lastVerifiedUIPoint = normalizedPoint
+        self.lastVerifiedUIPoint = targetPoint
         self.identitySuspicionFrames = 0
         self.histogramCheckCounter = 0
         self.featurePrintCheckCounter = 0
+        self.detectionCorrectionCounter = 0
         self.stableLockFrames = 0
-        self.anchorBoxSize = size
+        self.anchorBoxSize = targetSize
         self.lastReIdAttemptTime = 0
         self.isTrackingTarget = true
-        CameraLogger.info("🎯 [Vision] Khởi tạo VNTrackObjectRequest duy nhất tại: (\(String(format: "%.3f", normalizedPoint.x)), \(String(format: "%.3f", normalizedPoint.y))), size: \(size)", category: .tracking)
+        CameraLogger.info("🎯 [Vision] Khởi tạo VNTrackObjectRequest duy nhất tại: (\(String(format: "%.3f", targetPoint.x)), \(String(format: "%.3f", targetPoint.y))), size: \(targetSize)", category: .tracking)
     }
     
     public func stopTrackingObject() {
@@ -151,6 +255,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.identitySuspicionFrames = 0
         self.histogramCheckCounter = 0
         self.featurePrintCheckCounter = 0
+        self.detectionCorrectionCounter = 0
         self.stableLockFrames = 0
         self.lastReIdAttemptTime = 0
         CameraLogger.info("🎯 [Vision] Đã dừng và giải phóng VNTrackObjectRequest", category: .tracking)
@@ -257,14 +362,25 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
         
+        // Trọng số tâm (Center-weighting): Ưu tiên các điểm đặc trưng nằm gần tâm box (chủ thể thật)
+        // và giảm mạnh điểm của các điểm gần mép biên (thường là viền tường, mép bàn, hoa văn nền)
+        let boxCenter = CGPoint(x: roi.midX, y: roi.midY)
+        let maxDist = max(0.02, max(roi.width, roi.height) / 2.0)
+        corners = corners.map { c in
+            let d = hypot(c.point.x - boxCenter.x, c.point.y - boxCenter.y)
+            let centerWeight = Float(max(0.15, 1.0 - (d / maxDist)))
+            return (point: c.point, score: c.score * centerWeight)
+        }
+        
         corners.sort { $0.score > $1.score }
         let top = corners.prefix(30).map { $0.point }
         if top.count < 8 {
             var grid: [CGPoint] = top
             for r in 0..<3 {
                 for c in 0..<3 {
-                    let gx = roi.origin.x + roi.size.width * (CGFloat(c) + 0.5) / 3.0
-                    let gy = roi.origin.y + roi.size.height * (CGFloat(r) + 0.5) / 3.0
+                    // Tập trung lưới điểm vào 60% vùng trung tâm ROI thay vì mép ngoài
+                    let gx = roi.origin.x + roi.size.width * (0.20 + 0.60 * (CGFloat(c) + 0.5) / 3.0)
+                    let gy = roi.origin.y + roi.size.height * (0.20 + 0.60 * (CGFloat(r) + 0.5) / 3.0)
                     grid.append(CGPoint(x: gx, y: gy))
                 }
             }
@@ -684,10 +800,26 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             var uiX = newObs.boundingBox.midX
                             var uiY = 1.0 - newObs.boundingBox.midY
                             
-                            // Xử lý cụm lá cây / mặt nước biến đổi liên tục (Deformable Nature)
-                            // CHỈ hút khi centroid saliency nằm TRONG box đang bám, giới hạn độ lệch <= 40% cạnh ngắn
-                            // của box — không cho phép bị kéo ra xa vật thể như trước
-                            if self.currentSceneType.isDeformableNature,
+                            // 3) Detection-based Periodic Correction (Nắn mỏ neo định kỳ mỗi 4 frame bằng Saliency Centroid)
+                            self.detectionCorrectionCounter += 1
+                            if self.detectionCorrectionCounter >= 4 {
+                                self.detectionCorrectionCounter = 0
+                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                    let centroidUIX = salientCentroid.x
+                                    let centroidUIY = 1.0 - salientCentroid.y
+                                    let box = newObs.boundingBox
+                                    let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
+                                    // Chỉ nắn khi centroid nằm trong hoặc rất sát box đang bám (tránh hút sang đối tượng ngoài)
+                                    if boxUI.insetBy(dx: -0.02, dy: -0.02).contains(CGPoint(x: centroidUIX, y: centroidUIY)) {
+                                        let drift = hypot(centroidUIX - uiX, centroidUIY - uiY)
+                                        let maxOffset = min(box.width, box.height) * 0.45
+                                        if drift > 0.012 && drift < maxOffset {
+                                            uiX += (centroidUIX - uiX) * 0.28
+                                            uiY += (centroidUIY - uiY) * 0.28
+                                        }
+                                    }
+                                }
+                            } else if self.currentSceneType.isDeformableNature,
                                let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
                                 let box = newObs.boundingBox
                                 let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
@@ -698,8 +830,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                     var dy = centroidUI.y - uiY
                                     dx = max(-maxOffset, min(maxOffset, dx))
                                     dy = max(-maxOffset, min(maxOffset, dy))
-                                    uiX += dx * 0.6
-                                    uiY += dy * 0.6
+                                    uiX += dx * 0.5
+                                    uiY += dy * 0.5
                                 }
                             }
                             

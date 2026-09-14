@@ -167,8 +167,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             
             self.stateLock.lock()
             self.deadReckoningFrameCount += 1
-            self.stateX = min(0.98, max(0.02, self.stateX + dx))
-            self.stateY = min(0.98, max(0.02, self.stateY + dy))
+            
+            // Bù trừ vận tốc quán tính của chính chủ thể trong 0.12s - 0.35s đầu khi quang học vừa mất dấu
+            var optDx: Double = 0.0
+            var optDy: Double = 0.0
+            if timeSinceOptical < 0.35 {
+                let decay = max(0.0, 1.0 - (timeSinceOptical - 0.12) / 0.23)
+                optDx = self.velocityX * dt * decay
+                optDy = self.velocityY * dt * decay
+            }
+            
+            self.stateX = min(0.98, max(0.02, self.stateX + dx + optDx))
+            self.stateY = min(0.98, max(0.02, self.stateY + dy + optDy))
             let count = self.deadReckoningFrameCount
             let lastConf = self.lastOpticalConfidence
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
@@ -313,6 +323,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         // - Khi di chuyển tâm trắng đến target: speed tăng -> cutoff tăng tức thì -> target bám dính mượt mà
         let speed = hypot(dxHat, dyHat)
         let adaptiveCutoff = effectiveMinCutoff + effectiveBeta * speed
+        
+        // Lưu lại vận tốc quang học tức thời (screen units / sec) phục vụ chuyển pha mượt
+        self.velocityX = dxHat
+        self.velocityY = dyHat
         
         // 3. Lọc mượt tọa độ
         let aPos = alpha(rate: rate, cutoff: adaptiveCutoff)
