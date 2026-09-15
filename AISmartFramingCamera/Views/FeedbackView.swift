@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import MessageUI
 import PhotosUI
 
@@ -19,6 +20,7 @@ public enum FeedbackCategory: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Feedback View (Pro-Camera Luxury Edition)
 public struct FeedbackView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedCategory: FeedbackCategory = .bug
@@ -32,9 +34,15 @@ public struct FeedbackView: View {
     private let maxCharLimit = 1000
     private let recipientEmail = "cskhgopyalignai@gmail.com"
 
+    // Design System Constants
+    private let canvasBackground = Color(red: 0.035, green: 0.035, blue: 0.045)
+    private let cardBackground = Color(red: 0.075, green: 0.075, blue: 0.090)
+    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let cardStroke = Color.white.opacity(0.08)
+
     private var appVersionString: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "133"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "171"
         return "\(short) (build \(build))"
     }
 
@@ -61,12 +69,12 @@ public struct FeedbackView: View {
                 // MARK: - 4. Submit Button
                 submitButton
 
-                // System Info Note
+                // MARK: - 5. System Info Note
                 systemNoteView
             }
             .padding(16)
         }
-        .background(Color(red: 0.05, green: 0.05, blue: 0.06).ignoresSafeArea())
+        .background(canvasBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .navigationTitle("Góp ý & Hỗ trợ")
         .navigationBarTitleDisplayMode(.inline)
@@ -76,8 +84,8 @@ public struct FeedbackView: View {
                 Button("Xong") {
                     isTextEditorFocused = false
                 }
-                .font(.system(size: 14, weight: .bold))
-                .foregroundColor(.yellow)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(amberGold)
             }
         }
         .sheet(isPresented: $showMailComposer) {
@@ -98,38 +106,51 @@ public struct FeedbackView: View {
         }
     }
 
-    // MARK: - Category Selector
+    // MARK: - Category Selector Chips
     private var categorySelectorView: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("LOẠI PHẢN HỒI")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundColor(.gray)
+            HStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(amberGold.opacity(0.16))
+                        .frame(width: 22, height: 22)
+                    Image(systemName: "tag.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(amberGold)
+                }
+
+                Text("CHUYÊN MỤC GÓP Ý")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.50))
+            }
 
             HStack(spacing: 8) {
                 ForEach(FeedbackCategory.allCases) { category in
                     let isSelected = selectedCategory == category
                     Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
                             selectedCategory = category
                         }
                     }) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Image(systemName: category.icon)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.system(size: 12, weight: .semibold))
                             Text(category.rawValue)
-                                .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                                .font(.system(size: 12.5, weight: isSelected ? .bold : .medium, design: .rounded))
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
                         .background(
                             Capsule()
-                                .fill(isSelected ? Color.yellow : Color.white.opacity(0.08))
+                                .fill(isSelected ? amberGold : Color(red: 0.08, green: 0.08, blue: 0.10))
                         )
                         .overlay(
                             Capsule()
-                                .stroke(isSelected ? Color.yellow : Color.white.opacity(0.12), lineWidth: 1)
+                                .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
                         )
-                        .foregroundColor(isSelected ? .black : .white)
+                        .foregroundColor(isSelected ? .black : Color.white.opacity(0.85))
+                        .shadow(color: isSelected ? amberGold.opacity(0.3) : Color.clear, radius: 6)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
@@ -141,23 +162,35 @@ public struct FeedbackView: View {
     // MARK: - Content Editor Card
     private var contentEditorCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(amberGold.opacity(0.16))
+                        .frame(width: 22, height: 22)
+                    Image(systemName: "text.bubble.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(amberGold)
+                }
+
                 Text("NỘI DUNG CHI TIẾT")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(.gray)
+                    .foregroundColor(Color.white.opacity(0.50))
+
                 Spacer()
+
                 Text("\(feedbackText.count)/\(maxCharLimit)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(feedbackText.count > maxCharLimit ? .red : .gray)
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(feedbackText.count >= maxCharLimit ? .red : (feedbackText.count > 900 ? amberGold : Color.white.opacity(0.40)))
             }
 
             ZStack(alignment: .topLeading) {
                 if feedbackText.isEmpty {
-                    Text("Mô tả chi tiết lỗi gặp phải hoặc tính năng bạn muốn có trong AlignAI Camera...")
+                    Text("Mô tả chi tiết lỗi bạn gặp phải hoặc đề xuất tính năng mới mà bạn muốn có trong AlignAI Camera...")
                         .font(.system(size: 14))
-                        .foregroundColor(.gray.opacity(0.6))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
+                        .foregroundColor(Color.white.opacity(0.35))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .lineSpacing(3)
                 }
 
                 TextEditor(text: $feedbackText)
@@ -165,8 +198,8 @@ public struct FeedbackView: View {
                     .scrollContentBackground(.hidden)
                     .font(.system(size: 14))
                     .foregroundColor(.white)
-                    .padding(8)
-                    .frame(minHeight: 140)
+                    .padding(10)
+                    .frame(minHeight: 150)
                     .onChange(of: feedbackText) { newValue in
                         if newValue.count > maxCharLimit {
                             feedbackText = String(newValue.prefix(maxCharLimit))
@@ -174,30 +207,41 @@ public struct FeedbackView: View {
                     }
             }
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(red: 0.08, green: 0.08, blue: 0.09))
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(cardBackground)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(cardStroke, lineWidth: 1)
                     )
             )
         }
     }
 
-    // MARK: - Photo Attachments Card
+    // MARK: - Photo Attachments Card (Max 3)
     private var photoAttachmentsCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("ẢNH ĐÍNH KÈM (TỐI ĐA 3 ẢNH)")
+            HStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(amberGold.opacity(0.16))
+                        .frame(width: 22, height: 22)
+                    Image(systemName: "photo.stack.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(amberGold)
+                }
+
+                Text("ẢNH MINH HỌA (TỐI ĐA 3 ẢNH)")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(.gray)
+                    .foregroundColor(Color.white.opacity(0.50))
+
                 Spacer()
+
                 Text("\(selectedImagesData.count)/3")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.yellow)
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(amberGold)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 if selectedImagesData.count < 3 {
                     addPhotoPickerButton
                 }
@@ -208,6 +252,7 @@ public struct FeedbackView: View {
 
                 Spacer()
             }
+            .padding(.vertical, 2)
         }
     }
 
@@ -219,19 +264,19 @@ public struct FeedbackView: View {
         ) {
             VStack(spacing: 6) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 22))
-                    .foregroundColor(.yellow)
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundColor(amberGold)
                 Text("Thêm ảnh")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.85))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.85))
             }
-            .frame(width: 80, height: 80)
+            .frame(width: 84, height: 84)
             .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(red: 0.08, green: 0.08, blue: 0.09))
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(cardBackground)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.white.opacity(0.14), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(amberGold.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
                     )
             )
         }
@@ -247,22 +292,23 @@ public struct FeedbackView: View {
                 Image(uiImage: uiImg)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 80, height: 80)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .frame(width: 84, height: 84)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
+                        RoundedRectangle(cornerRadius: 14)
                             .stroke(Color.white.opacity(0.18), lineWidth: 1)
                     )
 
                 Button(action: {
-                    withAnimation {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
                         if index < selectedImagesData.count {
                             selectedImagesData.remove(at: index)
                         }
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
+                        .font(.system(size: 20))
                         .foregroundColor(.red)
                         .background(Circle().fill(Color.black).padding(2))
                 }
@@ -292,6 +338,7 @@ public struct FeedbackView: View {
     private var submitButton: some View {
         Button(action: {
             isTextEditorFocused = false
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             if MFMailComposeViewController.canSendMail() {
                 showMailComposer = true
             } else {
@@ -306,14 +353,15 @@ public struct FeedbackView: View {
             }
             .foregroundColor(.black)
             .frame(maxWidth: .infinity)
-            .frame(height: 48)
+            .frame(height: 50)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(isSubmitDisabled ? Color.yellow.opacity(0.3) : Color.yellow)
+                    .fill(isSubmitDisabled ? amberGold.opacity(0.35) : amberGold)
             )
+            .shadow(color: isSubmitDisabled ? Color.clear : amberGold.opacity(0.35), radius: 10, x: 0, y: 3)
         }
         .disabled(isSubmitDisabled)
-        .padding(.top, 6)
+        .padding(.top, 4)
     }
 
     private var isSubmitDisabled: Bool {
@@ -323,13 +371,15 @@ public struct FeedbackView: View {
     // MARK: - System Note
     private var systemNoteView: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 12))
-                .foregroundColor(.gray)
-            Text("Thư góp ý sẽ tự động đính kèm thông tin thiết bị (model máy, phiên bản iOS, phiên bản app \(appVersionString)) và trích xuất nhật ký lỗi kỹ thuật gần nhất để hỗ trợ gỡ lỗi nhanh hơn.")
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 13))
+                .foregroundColor(amberGold)
+                .padding(.top, 1)
+
+            Text("Thư góp ý sẽ tự động đính kèm thông tin thiết bị (model máy, phiên bản iOS, phiên bản app \(appVersionString)) và trích xuất nhật ký lỗi kỹ thuật gần nhất từ CameraLogger để hỗ trợ xử lý nhanh nhất.")
                 .font(.system(size: 11))
-                .foregroundColor(.gray)
-                .lineSpacing(2)
+                .foregroundColor(Color.white.opacity(0.50))
+                .lineSpacing(2.5)
         }
         .padding(.horizontal, 4)
     }
