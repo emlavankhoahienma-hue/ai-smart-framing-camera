@@ -326,50 +326,64 @@ struct PhotoCaptureSettingsSection: View {
 
                     Divider().background(Color.white.opacity(0.08))
 
-                    Text("CHỌN MẪU FILM:")
+                    SettingsPickerRow(title: "Màu film đang chọn", icon: "camera.filters") {
+                        Picker("", selection: $viewModel.selectedFilmPreset) {
+                            ForEach(FilmPreset.allCases) { preset in
+                                Text(preset.displayName).tag(preset)
+                            }
+                        }
+                        .pickerStyle(MenuPickerStyle())
+                        .onChange(of: viewModel.selectedFilmPreset) { newPreset in
+                            viewModel.selectPreset(newPreset)
+                        }
+                    }
+
+                    Divider().background(Color.white.opacity(0.08))
+
+                    Text("DANH SÁCH MẪU FILM:")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(.gray)
 
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 8) {
                             ForEach(FilmPreset.allCases) { preset in
                                 let isSelected = viewModel.selectedFilmPreset == preset
-                                let thumb = PresetThumbnailProvider.shared.thumbnail(for: preset)
 
                                 Button(action: {
+                                    let generator = UISelectionFeedbackGenerator()
+                                    generator.prepare()
+                                    generator.selectionChanged()
                                     viewModel.selectPreset(preset)
                                 }) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        ZStack(alignment: .topTrailing) {
-                                            Image(uiImage: thumb)
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                                .frame(width: 80, height: 80)
-                                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                                                .overlay(
-                                                    RoundedRectangle(cornerRadius: 10)
-                                                        .stroke(isSelected ? Color.yellow : Color.white.opacity(0.12), lineWidth: isSelected ? 2 : 1)
-                                                )
-
-                                            if isSelected {
-                                                Image(systemName: "checkmark.circle.fill")
-                                                    .font(.system(size: 14, weight: .bold))
-                                                    .foregroundColor(.yellow)
-                                                    .background(Circle().fill(Color.black).padding(1))
-                                                    .padding(4)
-                                            }
+                                    HStack(spacing: 6) {
+                                        if preset.isAIFullAuto {
+                                            Image(systemName: "wand.and.stars")
+                                                .font(.system(size: 11, weight: .bold))
+                                        } else if isSelected {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 10, weight: .heavy))
                                         }
 
                                         Text(preset.displayName)
-                                            .font(.system(size: 10, weight: isSelected ? .bold : .medium))
-                                            .foregroundColor(isSelected ? .yellow : .white)
-                                            .lineLimit(1)
+                                            .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
                                     }
-                                    .frame(width: 80)
+                                    .foregroundColor(isSelected ? .black : .white.opacity(0.9))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        Capsule()
+                                            .fill(isSelected ? Color.yellow : Color.white.opacity(0.08))
+                                    )
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(isSelected ? Color.yellow : Color.white.opacity(0.12), lineWidth: 1)
+                                    )
                                 }
                                 .buttonStyle(PlainButtonStyle())
+                                .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isSelected)
                             }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
             }
