@@ -70,15 +70,15 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .autoStrongest:
-            return "⚡ Tự động luân chuyển (Khuyên dùng - Auto Fallback)"
-        case .gemini37Flash:
-            return "🚀 Gemini 3.7 Flash (OpenRouter - Mới nhất & Suy nghĩ)"
+            return "⚡ Tự động (Gemini 3.5 Flash - Khuyên dùng)"
+        case .gemini35Flash:
+            return "🎯 Gemini 3.5 Flash (OpenRouter - Tối ưu nhất)"
+        case .gemini25Flash:
+            return "✨ Gemini 2.5 Flash (OpenRouter - Tốc độ cao)"
         case .gemini36Flash:
             return "⚡ Gemini 3.6 Flash (OpenRouter - Tốc độ cao)"
-        case .gemini35Flash:
-            return "🎯 Gemini 3.5 Flash (OpenRouter - Bố cục thông minh)"
-        case .gemini25Flash:
-            return "✨ Gemini 2.5 Flash (OpenRouter - Tối ưu thị giác)"
+        case .gemini37Flash:
+            return "🚀 Gemini 3.7 Flash (OpenRouter - Mới nhất)"
         case .gemini25Pro:
             return "💎 Gemini 2.5 Pro (OpenRouter - Phân tích chi tiết)"
         case .gemini20Flash:
@@ -99,7 +99,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "google/gemini-3.7-flash"
+            return "google/gemini-3.5-flash"
         default:
             return rawValue
         }
@@ -108,14 +108,9 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Sequence of standard verified models to try in auto mode on OpenRouter
     public static var autoFallbackChain: [String] {
         [
-            "google/gemini-3.7-flash",
             "google/gemini-3.5-flash",
-            "google/gemini-3.6-flash",
             "google/gemini-2.5-flash",
-            "google/gemini-2.0-flash-001",
-            "openai/gpt-4o-mini",
-            "google/gemini-2.5-pro",
-            "google/gemini-flash-1.5"
+            "google/gemini-2.0-flash-001"
         ]
     }
 
@@ -372,7 +367,9 @@ public final class GeminiService {
             "model": testModel,
             "messages": [
                 ["role": "user", "content": "Hi"]
-            ]
+            ],
+            "reasoning": ["effort": "none"],
+            "max_tokens": 10
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
@@ -775,9 +772,11 @@ public final class GeminiService {
                     ]
                 ]
             ],
-            "temperature": 0.70,
-            "top_p": 0.95,
-            "max_tokens": 800
+            "response_format": ["type": "json_object"],
+            "reasoning": ["effort": "none"],
+            "temperature": 0.40,
+            "top_p": 0.90,
+            "max_tokens": 1024
         ]
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
@@ -812,7 +811,19 @@ public final class GeminiService {
                 return
             }
 
-            guard let data = data, let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            guard let data = data, let httpResponse = response as? HTTPURLResponse else {
+                let fallback = Self.generateLocalVideoGuidance(
+                    sceneContext: sceneContext,
+                    subjectRect: subjectRect,
+                    faceRects: faceRects,
+                    lookingDirection: lookingDirection
+                )
+                completion(.success(fallback))
+                return
+            }
+
+            // Only rotate on rate-limit (429), model unavailable (404), or server down (5xx)
+            if httpResponse.statusCode == 429 || httpResponse.statusCode == 404 || httpResponse.statusCode >= 500 {
                 self.tryVideoCinematographyChain(
                     chain: chain,
                     index: index + 1,
@@ -826,6 +837,18 @@ public final class GeminiService {
                     lookingDirection: lookingDirection,
                     completion: completion
                 )
+                return
+            }
+
+            // If HTTP status is not 200, use local fallback without burning another API call
+            guard httpResponse.statusCode == 200 else {
+                let fallback = Self.generateLocalVideoGuidance(
+                    sceneContext: sceneContext,
+                    subjectRect: subjectRect,
+                    faceRects: faceRects,
+                    lookingDirection: lookingDirection
+                )
+                completion(.success(fallback))
                 return
             }
 
@@ -838,54 +861,16 @@ public final class GeminiService {
                 responseText = text
             }
 
-            guard let text = responseText else {
-                self.tryVideoCinematographyChain(
-                    chain: chain,
-                    index: index + 1,
-                    base64Image: base64Image,
-                    prompt: prompt,
-                    key: key,
-                    startTime: startTime,
+            // Parse cleanly with self-healing parser; fallback to local guidance if malformed without cascading
+            guard let text = responseText,
+                  let parsed = Self.cleanAndParseJSON(from: text) else {
+                let fallback = Self.generateLocalVideoGuidance(
                     sceneContext: sceneContext,
                     subjectRect: subjectRect,
                     faceRects: faceRects,
-                    lookingDirection: lookingDirection,
-                    completion: completion
+                    lookingDirection: lookingDirection
                 )
-                return
-            }
-
-            var cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleanText.hasPrefix("```json") {
-                cleanText = cleanText.replacingOccurrences(of: "```json", with: "")
-            } else if cleanText.hasPrefix("```") {
-                cleanText = cleanText.replacingOccurrences(of: "```", with: "")
-            }
-            if cleanText.hasSuffix("```") {
-                cleanText = String(cleanText.dropLast(3))
-            }
-            cleanText = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            if let firstBrace = cleanText.firstIndex(of: "{"),
-               let lastBrace = cleanText.lastIndex(of: "}") {
-                cleanText = String(cleanText[firstBrace...lastBrace])
-            }
-
-            guard let jsonData = cleanText.data(using: .utf8),
-                  let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                self.tryVideoCinematographyChain(
-                    chain: chain,
-                    index: index + 1,
-                    base64Image: base64Image,
-                    prompt: prompt,
-                    key: key,
-                    startTime: startTime,
-                    sceneContext: sceneContext,
-                    subjectRect: subjectRect,
-                    faceRects: faceRects,
-                    lookingDirection: lookingDirection,
-                    completion: completion
-                )
+                completion(.success(fallback))
                 return
             }
 
@@ -923,23 +908,29 @@ public final class GeminiService {
             case .success(let response):
                 completion(.success(response))
             case .failure(let error):
-                // If invalid API key completely, stop
+                // Stop immediately if invalid key
                 if case .invalidAPIKey = error {
                     completion(.failure(error))
                     return
                 }
 
-                // On 429 quota or 404 or server error, immediately rotate to next model
-                self.tryModelChain(
-                    chain: chain,
-                    index: index + 1,
-                    base64Image: base64Image,
-                    prompt: prompt,
-                    key: key,
-                    lastErrorMsg: error.localizedDescription,
-                    startTime: startTime,
-                    completion: completion
-                )
+                // ONLY rotate to the next model on genuine quota exhaustion (429) or transient network errors
+                // DO NOT rotate on parse errors or completed requests (prevents costly cascading requests!)
+                switch error {
+                case .rateLimited, .networkError:
+                    self.tryModelChain(
+                        chain: chain,
+                        index: index + 1,
+                        base64Image: base64Image,
+                        prompt: prompt,
+                        key: key,
+                        lastErrorMsg: error.localizedDescription,
+                        startTime: startTime,
+                        completion: completion
+                    )
+                default:
+                    completion(.failure(error))
+                }
             }
         }
     }
@@ -983,9 +974,11 @@ public final class GeminiService {
                     ]
                 ]
             ],
-            "temperature": 0.15,
-            "top_p": 0.95,
-            "max_tokens": 768
+            "response_format": ["type": "json_object"],
+            "reasoning": ["effort": "none"],
+            "temperature": 0.20,
+            "top_p": 0.90,
+            "max_tokens": 1024
         ]
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
@@ -1023,6 +1016,10 @@ public final class GeminiService {
                     DispatchQueue.main.async { completion(.failure(.rateLimited("\(modelID) hết quota (429)"))) }
                     return
                 }
+                if httpResponse.statusCode == 404 || httpResponse.statusCode >= 500 {
+                    DispatchQueue.main.async { completion(.failure(.rateLimited("\(modelID) không khả dụng (\(httpResponse.statusCode))"))) }
+                    return
+                }
 
                 DispatchQueue.main.async {
                     completion(.failure(.parseError("\(modelID) [HTTP \(httpResponse.statusCode)]: \(errorDetails)")))
@@ -1032,53 +1029,54 @@ public final class GeminiService {
 
             var responseText: String?
 
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let choices = json["choices"] as? [[String: Any]],
-                   let firstChoice = choices.first,
-                   let message = firstChoice["message"] as? [String: Any],
-                   let text = message["content"] as? String {
-                    responseText = text
-                }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let firstChoice = choices.first,
+               let message = firstChoice["message"] as? [String: Any],
+               let text = message["content"] as? String {
+                responseText = text
             }
 
-            guard let text = responseText else {
+            guard let text = responseText, !text.isEmpty else {
                 DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
                 return
             }
 
-            // Clean markdown fences if present
-            var cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if cleanText.hasPrefix("```json") {
-                cleanText = cleanText.replacingOccurrences(of: "```json", with: "")
-                if cleanText.hasSuffix("```") {
-                    cleanText = String(cleanText.dropLast(3))
-                }
-            } else if cleanText.hasPrefix("```") {
-                cleanText = cleanText.replacingOccurrences(of: "```", with: "")
-                if cleanText.hasSuffix("```") {
-                    cleanText = String(cleanText.dropLast(3))
-                }
-            }
-            cleanText = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Trích xuất chuỗi JSON thuần nếu mô hình sinh thêm giải thích bên ngoài
-            if let firstBrace = cleanText.firstIndex(of: "{"),
-               let lastBrace = cleanText.lastIndex(of: "}") {
-                cleanText = String(cleanText[firstBrace...lastBrace])
-            }
-
-            guard let jsonData = cleanText.data(using: .utf8),
-                  let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                DispatchQueue.main.async { completion(.failure(.parseError("JSON không hợp lệ: \(cleanText.prefix(80))"))) }
+            // Attempt 1: Self-healing JSON parsing
+            if let parsed = Self.cleanAndParseJSON(from: text) {
+                self.lastLatencyMs = latency
+                self.lastModelUsed = modelID
+                let result = Self.parseGeminiResponse(parsed, modelUsed: modelID, latencyMs: latency)
+                self.lastExplanation = result.explanation
+                DispatchQueue.main.async { completion(.success(result)) }
                 return
             }
 
+            // Attempt 2: Regex extraction for any partially malformed JSON
+            if let regexResult = Self.regexExtractFallbackFraming(from: text, modelUsed: modelID, latencyMs: latency) {
+                self.lastLatencyMs = latency
+                self.lastModelUsed = modelID
+                self.lastExplanation = regexResult.explanation
+                DispatchQueue.main.async { completion(.success(regexResult)) }
+                return
+            }
+
+            // Attempt 3: Safe fallback using model latency - never fail and cascade when HTTP 200 was billed!
+            let fallbackResult = GeminiFramingResponse(
+                targetX: 0.50,
+                targetY: 0.45,
+                suggestedZoom: 1.2,
+                sceneType: .general,
+                colorRecipe: .defaultRecipe,
+                compositionRule: .goldenRatio,
+                explanation: "Đã phân tích bố cục hình ảnh thành công",
+                modelUsed: modelID,
+                latencyMs: latency
+            )
             self.lastLatencyMs = latency
             self.lastModelUsed = modelID
-            let result = Self.parseGeminiResponse(parsed, modelUsed: modelID, latencyMs: latency)
-            self.lastExplanation = result.explanation
-
-            DispatchQueue.main.async { completion(.success(result)) }
+            self.lastExplanation = fallbackResult.explanation
+            DispatchQueue.main.async { completion(.success(fallbackResult)) }
         }.resume()
     }
 
@@ -1100,6 +1098,115 @@ public final class GeminiService {
         return nil
     }
 
+    // MARK: - Self-Healing JSON Cleaner & Fallback Extractor
+
+    public static func cleanAndParseJSON(from rawText: String) -> [String: Any]? {
+        var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Strip markdown code fences if present
+        if text.hasPrefix("```json") {
+            text = String(text.dropFirst(7))
+        } else if text.hasPrefix("```") {
+            text = String(text.dropFirst(3))
+        }
+        if text.hasSuffix("```") {
+            text = String(text.dropLast(3))
+        }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Locate outermost braces
+        if let firstBrace = text.firstIndex(of: "{"),
+           let lastBrace = text.lastIndex(of: "}") {
+            text = String(text[firstBrace...lastBrace])
+        }
+
+        // Direct parse
+        if let data = text.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return obj
+        }
+
+        // Trailing comma sanitation: e.g. `, }` or `, ]`
+        if let regex = try? NSRegularExpression(pattern: ",\\s*([}\\]])", options: []) {
+            let range = NSRange(location: 0, length: text.utf16.count)
+            let sanitized = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "$1")
+            if let data = sanitized.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return obj
+            }
+        }
+
+        return nil
+    }
+
+    public static func regexExtractFallbackFraming(from text: String, modelUsed: String, latencyMs: Int) -> GeminiFramingResponse? {
+        func extractNumber(forKey key: String) -> Double? {
+            let pattern = "\"\(key)\"\\s*:\\s*(-?[0-9.]+)"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                  let match = regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: text.utf16.count)),
+                  let r = Range(match.range(at: 1), in: text) else { return nil }
+            return Double(text[r])
+        }
+
+        func extractString(forKey key: String) -> String? {
+            let pattern = "\"\(key)\"\\s*:\\s*\"([^\"]*)\""
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                  let match = regex.firstMatch(in: text, options: [], range: NSRange(location: 0, length: text.utf16.count)),
+                  let r = Range(match.range(at: 1), in: text) else { return nil }
+            return String(text[r])
+        }
+
+        let targetX = CGFloat(extractNumber(forKey: "target_x") ?? 0.50)
+        let targetY = CGFloat(extractNumber(forKey: "target_y") ?? 0.45)
+        let zoom = CGFloat(extractNumber(forKey: "suggested_zoom") ?? 1.2)
+        let explanation = extractString(forKey: "explanation") ?? "Đã căn chỉnh tiêu điểm và bố cục ảnh"
+        let sceneTypeStr = extractString(forKey: "scene_type") ?? "general"
+        let compRuleStr = extractString(forKey: "composition_rule") ?? "golden_ratio"
+        let colorGradeStr = extractString(forKey: "color_grade") ?? "softwarm"
+        let tempK = Float(extractNumber(forKey: "temperature_k") ?? 5500)
+        let sat = Float(extractNumber(forKey: "saturation") ?? 1.05)
+        let con = Float(extractNumber(forKey: "contrast") ?? 1.04)
+        let shadow = Float(extractNumber(forKey: "shadow_lift") ?? 0.04)
+        let hl = Float(extractNumber(forKey: "highlight_roll") ?? 0.95)
+        let exp = Float(extractNumber(forKey: "exposure_bias") ?? 0.0)
+        let warmth = Float(extractNumber(forKey: "warmth_shift") ?? 0.0)
+        let tint = Float(extractNumber(forKey: "tint_shift") ?? 0.0)
+        let diag = extractString(forKey: "diagnosis") ?? "Cân bằng màu sắc tự nhiên"
+
+        let hasAnyUsefulData = extractNumber(forKey: "target_x") != nil ||
+                               extractNumber(forKey: "suggested_zoom") != nil ||
+                               extractString(forKey: "explanation") != nil
+
+        guard hasAnyUsefulData else { return nil }
+
+        let colorRecipe = GeminiColorRecipe(
+            temperatureK: tempK,
+            saturation: sat,
+            contrast: con,
+            shadowLift: shadow,
+            highlightRoll: hl,
+            grain: 0.0,
+            vignette: 0.02,
+            warmthShift: warmth,
+            tintShift: tint,
+            exposureBias: exp,
+            colorGrade: parseColorGrade(colorGradeStr),
+            diagnosis: diag
+        )
+
+        return GeminiFramingResponse(
+            targetX: max(0.05, min(0.95, targetX)),
+            targetY: max(0.05, min(0.95, targetY)),
+            suggestedZoom: max(1.0, min(3.0, zoom)),
+            sceneType: parseSceneType(sceneTypeStr),
+            colorRecipe: colorRecipe,
+            compositionRule: parseCompositionRule(compRuleStr),
+            explanation: explanation,
+            modelUsed: modelUsed,
+            latencyMs: latencyMs
+        )
+    }
+
     // MARK: - Prompt
 
     private func buildPrompt(
@@ -1108,86 +1215,53 @@ public final class GeminiService {
         subjectRect: CGRect? = nil,
         faceRects: [CGRect] = []
     ) -> String {
-        var contextInfo = ""
+        var context = ""
         if let scene = sceneContext {
-            contextInfo += "\nBối cảnh khung cảnh nhận diện: \(scene.localizedName)"
+            context += "Bối cảnh: \(scene.localizedName). "
         }
         if let rect = subjectRect {
-            contextInfo += "\n- Tọa độ chủ thể chính phát hiện trên cảm biến: tâm x=\(String(format: "%.2f", rect.midX)), y=\(String(format: "%.2f", rect.midY)), rộng=\(String(format: "%.2f", rect.width)), cao=\(String(format: "%.2f", rect.height))"
+            context += String(format: "Chủ thể cảm biến: [tâmX: %.2f, tâmY: %.2f, w: %.2f, h: %.2f]. ", rect.midX, rect.midY, rect.width, rect.height)
         }
         if !faceRects.isEmpty {
-            contextInfo += "\n- Số lượng khuôn mặt phát hiện: \(faceRects.count)"
+            context += "Khuôn mặt: \(faceRects.count). "
         }
-        if let metrics = colorMetrics {
-            contextInfo += """
-            \nThông số đo sáng & màu sắc thực tế từ cảm biến ảnh:
-            - Tình trạng ánh sáng: \(metrics.lightingSummary)
-            - Độ sáng trung bình (Luma): \(String(format: "%.2f", metrics.averageLuma)) (0.0=tối đen, 1.0=cháy trắng)
-            - Kênh màu trung bình: R: \(String(format: "%.2f", metrics.avgRed)), G: \(String(format: "%.2f", metrics.avgGreen)), B: \(String(format: "%.2f", metrics.avgBlue))
-            - Độ lệch ấm/lạnh (Warmth): \(String(format: "%.2f", metrics.warmthCast)) (-1.0=lạnh/xanh, +1.0=ấm/vàng)
-            - Độ tương phản thực tế: \(String(format: "%.2f", metrics.contrastScore))
-            """
+        if let m = colorMetrics {
+            context += String(format: "Ánh sáng: Luma=%.2f, Warmth=%.2f, Contrast=%.2f (%@). ", m.averageLuma, m.warmthCast, m.contrastScore, m.lightingSummary)
         }
 
         return """
-        Bạn là Đạo diễn Hình ảnh & Chuyên gia Chỉnh màu Điện ảnh (Master Colorist & Cinematographer) của Leica và Hasselblad.
-        Hãy phân tích bức ảnh này cùng với bối cảnh và các thông số đo sáng thực tế dưới đây để đưa ra điểm bố cục tối ưu và bộ công thức cân chỉnh màu sắc chuyên nghiệp nhất.
-        \(contextInfo)
+        Phân tích bố cục và chỉnh màu điện ảnh cho ảnh (Trả về duy nhất JSON object):
+        \(context)
+        Yêu cầu:
+        1. target_x, target_y (0.05-0.95): Tiêu điểm khóa vào chủ thể chính. Không để mặc định (0.5, 0.5) nếu chủ thể lệch tâm.
+        2. suggested_zoom (1.0-3.0): Zoom đặc tả chủ thể (chân dung 1.4-1.8x, chủ thể xa 1.8-2.5x, cảnh rộng 1.0-1.2x).
+        3. Cân bằng sáng tối (exposure_bias, shadow_lift, highlight_roll) và bảo vệ màu da người tự nhiên.
+        4. color_grade chọn 1 trong: ["softwarm", "vibrant", "coolnatural", "golden", "tealOrange", "moody", "classic", "cinematic"].
+        5. explanation & diagnosis: Tiếng Việt súc tích (1 câu).
 
-        CHỈ THỊ BỐ CỤC & TIÊU ĐIỂM CHỦ THỂ (ZERO-CENTER DEFAULT DIRECTIVES):
-        1. Nhận diện CHỦ THỂ CHÍNH (người, khuôn mặt, vật thể, thú cưng):
-           - Tọa độ target_x, target_y là vị trí tiêu điểm của chủ thể chính để khóa nét và căn bố cục.
-           - Nếu có chủ thể phát hiện ở tọa độ trên: đặt target_x, target_y gắn liền với chủ thể đó (hoặc điểm vàng chứa chủ thể).
-           - TUYỆT ĐỐI KHÔNG mặc định trả về (0.5, 0.5) trừ khi cảnh là kiến trúc đối xứng hoàn toàn ở chính giữa.
-        2. Mức zoom đề xuất (suggested_zoom: 1.0 đến 3.0):
-           - Nếu chủ thể ở xa hoặc nhỏ trong khung hình (< 15% diện tích): đề xuất zoom 1.6x đến 2.5x để đặc tả chủ thể đẹp mắt.
-           - Nếu chụp chân dung trung cảnh: đề xuất zoom 1.4x đến 1.8x để tiêu cự tương đương ống kính chân dung 50-85mm tôn dáng.
-           - Nếu cảnh đại cảnh hoặc nhiều người: giữ 1.0x đến 1.2x.
-        3. Phản ứng chuẩn xác theo điều kiện ánh sáng thực tế:
-           - Nếu thiếu sáng: nâng shadow (+0.08 đến +0.22), bù sáng exposure (+0.2 đến +0.6 EV), giữ contrast dịu.
-           - Nếu ngược sáng / chói: giảm highlight roll (0.75 đến 0.90), bù sáng nhẹ để làm rõ chủ thể mà không làm cháy phông nền.
-           - Nếu ám vàng hoặc ám xanh: tự động điều chỉnh nhiệt độ màu (warmth_shift) và sắc độ (tint_shift) để trả lại màu trắng trung tính và sắc màu chân thực.
-        4. Bảo vệ tuyệt đối màu da người: giữ da trắng hồng, tự nhiên, khỏe khoắn, không bị ám vàng nghệ hay đỏ gắt.
-        5. Chọn phong cách màu (color_grade) điện ảnh phù hợp nhất: ["softwarm", "vibrant", "coolnatural", "golden", "tealOrange", "moody", "classic", "cinematic"].
-
-        Trả về DUY NHẤT một chuỗi JSON hợp lệ (không chứa markdown fences ```):
+        JSON Schema:
         {
-          "target_x": 0.38,
-          "target_y": 0.40,
-          "suggested_zoom": 1.6,
+          "target_x": 0.40,
+          "target_y": 0.38,
+          "suggested_zoom": 1.5,
           "scene_type": "portrait",
           "composition_rule": "golden_ratio",
-          "explanation": "Chân dung điểm vàng: Đặt mắt chủ thể tại giao điểm 0.38 để tạo chiều sâu và zoom 1.6x tôn dáng.",
+          "explanation": "Căn mắt chủ thể theo tỷ lệ vàng và zoom 1.5x tôn dáng",
           "color_recipe": {
-            "temperature_k": 5600,
-            "warmth_shift": 0.04,
-            "tint_shift": -0.02,
-            "exposure_bias": 0.15,
-            "saturation": 1.06,
+            "temperature_k": 5500,
+            "warmth_shift": 0.0,
+            "tint_shift": 0.0,
+            "exposure_bias": 0.1,
+            "saturation": 1.05,
             "contrast": 1.04,
-            "shadow_lift": 0.06,
-            "highlight_roll": 0.92,
-            "grain": 0.00,
-            "vignette": 0.04,
+            "shadow_lift": 0.04,
+            "highlight_roll": 0.95,
+            "grain": 0.0,
+            "vignette": 0.02,
             "color_grade": "softwarm",
-            "diagnosis": "Bối cảnh ngược sáng: bù sáng +0.15EV, nâng chi tiết bóng tối và giữ mây trời tự nhiên."
+            "diagnosis": "Cân bằng sáng tự nhiên và giữ màu da hồng hào"
           }
         }
-
-        Giới hạn thông số:
-        - target_x, target_y: 0.05 đến 0.95
-        - suggested_zoom: 1.0 đến 3.0
-        - temperature_k: 3500 đến 8500
-        - warmth_shift: -0.40 đến 0.40
-        - tint_shift: -0.30 đến 0.30
-        - exposure_bias: -1.2 đến 1.2
-        - saturation: 0.70 đến 1.40
-        - contrast: 0.85 đến 1.30
-        - shadow_lift: 0.00 đến 0.25
-        - highlight_roll: 0.70 đến 1.00
-        - vignette: 0.00 đến 0.35
-        - explanation: 1 câu tư vấn bố cục tiếng Việt ngắn gọn
-        - diagnosis: 1 câu tóm tắt chẩn đoán ánh sáng và tinh chỉnh màu tiếng Việt
         """
     }
 
@@ -1308,76 +1382,36 @@ public final class GeminiService {
         faceRects: [CGRect] = [],
         lookingDirection: CGVector = .zero
     ) -> String {
-        var contextInfo = ""
-        if let scene = sceneContext {
-            contextInfo += "\n- Bối cảnh khung cảnh nhận diện: \(scene.localizedName)"
-        }
+        var context = ""
+        if let scene = sceneContext { context += "Bối cảnh: \(scene.localizedName). " }
         if let rect = subjectRect {
-            contextInfo += "\n- Tọa độ chủ thể chính phát hiện: tâm (x: \(String(format: "%.2f", rect.midX)), y: \(String(format: "%.2f", rect.midY))), rộng: \(String(format: "%.2f", rect.width)), cao: \(String(format: "%.2f", rect.height))"
+            context += String(format: "Chủ thể: [tâmX: %.2f, tâmY: %.2f, w: %.2f, h: %.2f]. ", rect.midX, rect.midY, rect.width, rect.height)
         }
-        if !faceRects.isEmpty {
-            contextInfo += "\n- Số lượng khuôn mặt phát hiện: \(faceRects.count)"
-        }
+        if !faceRects.isEmpty { context += "Khuôn mặt: \(faceRects.count). " }
         if abs(lookingDirection.dx) > 0.05 {
-            let dir = lookingDirection.dx > 0 ? "sang phải" : "sang trái"
-            contextInfo += "\n- Hướng mắt/hướng nhìn chủ thể: \(dir)"
+            context += lookingDirection.dx > 0 ? "Hướng nhìn sang phải. " : "Hướng nhìn sang trái. "
         }
 
         return """
-        Bạn là Đạo diễn Hình ảnh Quay phim Điện ảnh (Cinematography Director) chuyên nghiệp từng đạt giải Oscar.
-        Hãy phân tích khung hình video trực tiếp này và vị trí của chủ thể để thiết kế cú máy quay (camera movement) ĐỘC ĐÁO, ĐẸP MẮT và ĐA DẠNG NHẤT.
-        \(contextInfo)
+        Đạo diễn góc quay video điện ảnh (Trả về duy nhất JSON object):
+        \(context)
+        Yêu cầu:
+        1. Chọn cú máy (Orbit, Dolly In, Tilt-Up Reveal, Lead Pan, Arc Shot). Tránh lặp lại một kiểu cú máy.
+        2. Tạo 2 đến 4 waypoints (x, y từ 0.08 đến 0.92) bám sát vị trí chủ thể.
+        3. suggested_zoom (1.0 - 2.2), suggested_pacing_seconds (4.0 - 8.0).
+        4. director_tip: Lời khuyên tư thế cầm máy và bước chân tiếng Việt ngắn gọn.
 
-        YÊU CẦU QUAN TRỌNG VỀ SỰ ĐA DẠNG VÀ TÍNH ĐIỆN ẢNH (ZERO-REPETITION):
-        1. KHÔNG ĐƯỢC chỉ chọn cú lia ngang cơ bản lặp đi lặp lại. Hãy chọn 1 trong các cú máy điện ảnh đỉnh cao sau đây sao cho phù hợp nhất với vị trí chủ thể và bối cảnh:
-           - "Lia bán nguyệt quanh chủ thể (Cinematic Orbit / Arc 180°)": Di chuyển camera theo đường cong bán nguyệt quanh chủ thể chính để tạo hiệu ứng thị sai (parallax) và chiều sâu 3D điện ảnh.
-           - "Đẩy máy tiến tới cận cảnh (Dolly In / Push-In)": Bắt đầu từ góc trung cảnh bao quát rồi tiến dần máy mượt mà vào cận cảnh gương mặt hoặc chi tiết chủ thể để tăng kịch tính.
-           - "Nâng máy hé lộ từ dưới lên (Pedestal / Tilt-Up Reveal)": Bắt đầu góc thấp (low-angle) từ tiền cảnh/chân chủ thể rồi nâng máy mượt mà lên để hé lộ thần thái chủ thể và hậu cảnh khoáng đạt.
-           - "Lia đón đầu theo hướng nhìn (Gaze / Subject Lead Pan)": Bắt đầu tại ánh mắt/chủ thể rồi lia máy mở rộng theo hướng nhìn của chủ thể để tạo không gian thở và sự tò mò.
-           - "Trượt ngang toàn cảnh (Cinematic Slider / Tracking Pan)": Trượt máy ngang song song với chủ thể, tạo cảm giác chuyển động mượt mà như đặt trên ray trượt dolly chuyên nghiệp.
-
-        2. ĐỊNH VỊ CÁC TÂM ĐÁNH DẤU (WAYPOINTS) DỰA TRÊN TỌA ĐỘ CHỦ THỂ THỰC TẾ:
-           - Tạo từ 2 đến 4 tâm đánh dấu (waypoints).
-           - Tọa độ (x, y) của các tâm PHẢI gắn liền với vị trí chủ thể đã nhận diện ở trên.
-           - Ví dụ nếu cú máy Orbit quanh chủ thể ở giữa: Tâm 1 lệch trái (0.28, 0.48) -> Tâm 2 vào chủ thể (0.50, 0.44) -> Tâm 3 lệch phải (0.72, 0.48).
-           - Nếu cú Dolly In: Tâm 1 (0.40, 0.45) -> Tâm 2 (0.47, 0.48) -> Tâm 3 khóa chặt chủ thể (0.52, 0.50) kèm zoom tăng dần.
-           - Nếu cú Tilt Up: Tâm 1 ở dưới thấp (0.50, 0.72) -> Tâm 2 ở giữa (0.50, 0.52) -> Tâm 3 ở trên khuôn mặt/chân trời (0.50, 0.32).
-
-        3. Mức zoom đề xuất (suggested_zoom: 1.0x đến 2.2x) phù hợp với cú máy.
-        4. Nhịp độ (suggested_pacing_seconds: 4.0 đến 8.0 giây).
-
-        Trả về DUY NHẤT một chuỗi JSON hợp lệ (không chứa markdown fences ```):
+        JSON Schema:
         {
-          "shot_style": "<Tên kiểu cú máy đã chọn>",
-          "movement_direction": "<Mô tả hướng lia/di chuyển máy chi tiết>",
-          "suggested_pacing_seconds": 6.0,
+          "shot_style": "Lia bán nguyệt chân dung (Portrait Orbit)",
+          "movement_direction": "Lia máy cong nhẹ quanh nhân vật tạo chiều sâu parallax",
+          "suggested_pacing_seconds": 5.5,
           "suggested_zoom": 1.4,
-          "director_tip": "<Lời khuyên tư thế cầm máy, bước chân, khử rung>",
+          "director_tip": "Xoay thân người mượt mà, khép khuỷu tay vào sườn để chống rung",
           "waypoints": [
-            {
-              "id": 1,
-              "x": 0.30,
-              "y": 0.50,
-              "label": "Tâm 1: Bắt đầu góc máy",
-              "action_tip": "Khóa nét chủ thể 1.5s",
-              "duration": 2.0
-            },
-            {
-              "id": 2,
-              "x": 0.50,
-              "y": 0.45,
-              "label": "Tâm 2: Trọng tâm chuyển động",
-              "action_tip": "Lướt máy mượt mà qua tâm",
-              "duration": 2.0
-            },
-            {
-              "id": 3,
-              "x": 0.70,
-              "y": 0.50,
-              "label": "Tâm 3: Kết thúc khung hình",
-              "action_tip": "Dừng êm và giữ khung",
-              "duration": 2.0
-            }
+            {"id": 1, "x": 0.30, "y": 0.48, "label": "Tâm 1: Bắt đầu", "action_tip": "Khóa nét chủ thể", "duration": 1.8},
+            {"id": 2, "x": 0.50, "y": 0.45, "label": "Tâm 2: Trọng tâm", "action_tip": "Lướt mượt qua tâm", "duration": 1.8},
+            {"id": 3, "x": 0.70, "y": 0.48, "label": "Tâm 3: Kết thúc", "action_tip": "Dừng máy êm", "duration": 1.9}
           ]
         }
         """
