@@ -368,7 +368,6 @@ public final class GeminiService {
             "messages": [
                 ["role": "user", "content": "Hi"]
             ],
-            "reasoning": ["effort": "none"],
             "max_tokens": 10
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -773,7 +772,7 @@ public final class GeminiService {
                 ]
             ],
             "response_format": ["type": "json_object"],
-            "reasoning": ["effort": "none"],
+            "reasoning": ["exclude": true],
             "temperature": 0.40,
             "top_p": 0.90,
             "max_tokens": 1024
@@ -975,7 +974,7 @@ public final class GeminiService {
                 ]
             ],
             "response_format": ["type": "json_object"],
-            "reasoning": ["effort": "none"],
+            "reasoning": ["exclude": true],
             "temperature": 0.20,
             "top_p": 0.90,
             "max_tokens": 1024

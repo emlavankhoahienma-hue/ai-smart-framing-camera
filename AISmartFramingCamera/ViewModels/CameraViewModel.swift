@@ -637,6 +637,28 @@ public final class CameraViewModel: ObservableObject {
 
         // Yêu cầu Vision Engine chụp 1 frame chất lượng cao gửi cho Gemini
         visionEngine.captureNextFrameForGemini = true
+
+        if useGeminiForAnalysis && geminiService.hasAPIKey {
+            // Lắng nghe trực tiếp khi VisionEngine kết xuất xong frame CGImage chất lượng cao
+            visionEngine.onFrameCapturedForAI = { [weak self] frame in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if self.aiSessionState == .analyzing && !self.isOneShotCaptured {
+                        self.isOneShotCaptured = true
+                        self.callGeminiAnalysis(frame: frame)
+                    }
+                }
+            }
+
+            // An toàn dự phòng: Nếu sau 3.5s cloud không phản hồi hoặc frame chụp bị nghẽn, tự động chuyển về Local
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+                guard let self = self else { return }
+                if self.aiSessionState == .analyzing && !self.isOneShotCaptured {
+                    self.isOneShotCaptured = true
+                    self.consolidateLocalAnalysisAndLockTarget()
+                }
+            }
+        }
     }
 
     public func cancelAISession() {
@@ -646,6 +668,7 @@ public final class CameraViewModel: ObservableObject {
         SpatialTrackingEngine.shared.stopTracking()
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
+        visionEngine.onFrameCapturedForAI = nil
         consecutiveLowConfidenceFrames = 0
         smoothedVelocity = .zero
         lastVisualUpdateTime = 0
@@ -702,18 +725,19 @@ public final class CameraViewModel: ObservableObject {
             self.detectedSubjectRects = [dominant]
         }
 
-        // Kiểm tra xem đã có frame chụp cho Gemini chưa
-        if let frame = visionEngine.capturedGeminiFrame {
-            visionEngine.capturedGeminiFrame = nil
-
-            if useGeminiForAnalysis && geminiService.hasAPIKey {
+        // 1. Nếu đang bật phân tích Cloud (OpenRouter) và có API Key:
+        if useGeminiForAnalysis && geminiService.hasAPIKey {
+            // Kiểm tra xem đã có frame chụp cho Gemini chưa
+            if let frame = visionEngine.capturedGeminiFrame {
+                visionEngine.capturedGeminiFrame = nil
                 isOneShotCaptured = true
                 callGeminiAnalysis(frame: frame)
-                return
             }
+            // ƯU TIÊN TUYỆT ĐỐI CHO CLOUD: Không kích hoạt consolidateLocalAnalysisAndLockTarget ở đây!
+            return
         }
 
-        // Thu thập đủ 5 frames ban đầu để ổn định nhận diện cục bộ (nếu không dùng Gemini)
+        // 2. Chế độ cục bộ (On-device Vision / CoreML): Thu thập đủ 5 frames để lọc nhiễu và khóa mục tiêu
         analysisFrames.append(detection)
         if analysisFrames.count >= analysisFramesNeeded {
             isOneShotCaptured = true

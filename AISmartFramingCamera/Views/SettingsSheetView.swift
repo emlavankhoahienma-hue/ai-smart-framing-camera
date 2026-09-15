@@ -167,7 +167,7 @@ public struct SettingsSheetView: View {
 
     // MARK: - Fluid Segmented Tab Selector Pills
     private var tabSelectorPills: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             ForEach(SettingsSheetTab.allCases) { tab in
                 let isSelected = selectedTab == tab
                 Button(action: {
@@ -177,28 +177,29 @@ public struct SettingsSheetView: View {
                         selectedTab = tab
                     }
                 }) {
-                    ZStack {
-                        if isSelected {
-                            Capsule()
-                                .fill(amberGold)
-                                .matchedGeometryEffect(id: "activeTabIndicatorPill", in: tabNamespace)
-                                .shadow(color: amberGold.opacity(0.35), radius: 8, x: 0, y: 3)
-                        } else {
-                            Capsule()
-                                .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
-                        }
-
-                        HStack(spacing: 6) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(tab.rawValue)
-                                .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
-                        }
-                        .foregroundColor(isSelected ? .black : Color.white.opacity(0.85))
-                        .padding(.vertical, 9)
-                        .padding(.horizontal, 10)
+                    HStack(spacing: 6) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(tab.rawValue)
+                            .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
+                            .lineLimit(1)
                     }
+                    .foregroundColor(isSelected ? .black : Color.white.opacity(0.85))
                     .frame(maxWidth: .infinity)
+                    .frame(height: 38)
+                    .background(
+                        ZStack {
+                            if isSelected {
+                                Capsule()
+                                    .fill(amberGold)
+                                    .matchedGeometryEffect(id: "activeTabIndicatorPill", in: tabNamespace)
+                                    .shadow(color: amberGold.opacity(0.35), radius: 6, x: 0, y: 2)
+                            } else {
+                                Capsule()
+                                    .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
+                            }
+                        }
+                    )
                     .overlay(
                         Capsule()
                             .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
@@ -207,6 +208,7 @@ public struct SettingsSheetView: View {
                 .buttonStyle(PlainButtonStyle())
             }
         }
+        .frame(height: 38)
     }
 
     // MARK: - Search Results Dynamic Filter View
@@ -1374,10 +1376,12 @@ public struct SettingsPickerRow<Content: View>: View {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.white)
+                .lineLimit(1)
 
             Spacer()
 
             picker
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 }
