@@ -307,7 +307,7 @@ private struct PeakingColorCircleButton: View {
                 if isPicked {
                     Image(systemName: "checkmark")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(color == .white || color == .yellow ? .black : .white)
+                        .foregroundColor(color == .yellow || color == .green ? Color.black : Color.white)
                 }
             }
             .overlay(
