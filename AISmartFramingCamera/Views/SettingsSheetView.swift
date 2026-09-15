@@ -331,17 +331,19 @@ private struct CompositionRuleCard: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Image(systemName: rule.iconName)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.65))
+                    .frame(width: 18)
 
                 Text(rule.displayNameVietnamese)
-                    .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
                     .foregroundColor(isSelected ? .white : Color.white.opacity(0.80))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
 
-                Spacer()
+                Spacer(minLength: 2)
 
                 if isSelected {
                     Circle()
@@ -351,6 +353,7 @@ private struct CompositionRuleCard: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(isSelected ? amberGold.opacity(0.14) : Color(red: 0.05, green: 0.05, blue: 0.06))
@@ -373,11 +376,11 @@ private struct SensitivityPill: View {
 
     var body: some View {
         Button(action: onSelect) {
-            Text(preset.rawValue)
-                .font(.system(size: 12, weight: isPicked ? .bold : .medium, design: .rounded))
+            Text(preset.shortName)
+                .font(.system(size: 13, weight: isPicked ? .bold : .medium, design: .rounded))
                 .foregroundColor(isPicked ? .black : Color.white.opacity(0.85))
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 7)
+                .frame(height: 36)
                 .background(
                     Capsule()
                         .fill(isPicked ? amberGold : Color.white.opacity(0.06))
@@ -732,13 +735,14 @@ struct AIFramingSettingsSection: View {
                         Label("Độ nhạy bám chủ thể", systemImage: "bolt.badge.clock.fill")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundColor(.white)
+                            .lineLimit(1)
                         Spacer()
-                        Text(viewModel.trackingSensitivity.rawValue)
+                        Text(viewModel.trackingSensitivity.shortName)
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                             .foregroundColor(amberGold)
                     }
 
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         ForEach(TrackingSensitivityPreset.allCases) { preset in
                             SensitivityPill(
                                 preset: preset,
@@ -752,6 +756,12 @@ struct AIFramingSettingsSection: View {
                             )
                         }
                     }
+                    .frame(maxWidth: .infinity)
+
+                    Text(viewModel.trackingSensitivity.rawValue)
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.white.opacity(0.50))
+                        .padding(.top, 2)
                 }
             }
         }

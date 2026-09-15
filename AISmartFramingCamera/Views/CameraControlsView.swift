@@ -3,7 +3,13 @@ import SwiftUI
 public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
 
-    let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0]
+    private var dynamicZoomOptions: [CGFloat] {
+        if viewModel.cameraService.minZoom <= 0.6 {
+            return [0.5, 1.0, 2.0, 3.0, 5.0]
+        } else {
+            return [1.0, 2.0, 3.0, 5.0]
+        }
+    }
 
     public var body: some View {
         VStack(spacing: 6) {
@@ -14,7 +20,7 @@ public struct CameraControlsView: View {
             }
 
             // Zoom Selector Pills
-            ZoomSelectorPills(viewModel: viewModel, options: zoomOptions)
+            ZoomSelectorPills(viewModel: viewModel, options: dynamicZoomOptions)
                 .padding(.bottom, 4)
 
             // Mode Switcher (Ảnh / Video / Pro) dạng Segmented Capsule trượt
@@ -515,34 +521,59 @@ struct ZoomSelectorPills: View {
     @ObservedObject var viewModel: CameraViewModel
     let options: [CGFloat]
 
+    @State private var targetedZoom: CGFloat = 1.0
+    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(options, id: \.self) { zoom in
-                let isSelected = abs(viewModel.currentZoom - zoom) < 0.15
-                Button(action: {
-                    viewModel.setZoomFromButton(zoom)
-                }) {
-                    Text(String(format: "%.0f×", zoom))
-                        .font(.system(size: 12, weight: isSelected ? .heavy : .medium, design: .rounded))
-                        .foregroundColor(isSelected ? .black : .white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            Capsule().fill(isSelected ? Color.yellow : Color.black.opacity(0.45))
-                        )
-                }
+        VStack(spacing: 4) {
+            // Floating zoom badge: chỉ xuất hiện nhẹ nhàng phía trên khi người dùng đang pinch thủ công trên kính ngắm
+            if viewModel.isPinchingZoom && !options.contains(where: { abs(viewModel.currentZoom - $0) < 0.08 }) {
+                Text(String(format: "%.1f×", viewModel.currentZoom))
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                    .foregroundColor(amberGold)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.92))
+                            .overlay(Capsule().stroke(amberGold.opacity(0.35), lineWidth: 1))
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
 
-            // Chỉ báo mức zoom thực tế khi người dùng pinch-to-zoom thủ công ở các khoảng giữa
-            let matchesStandardPill = options.contains { abs(viewModel.currentZoom - $0) < 0.15 }
-            if !matchesStandardPill {
-                Text(String(format: "%.1f×", viewModel.currentZoom))
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.yellow))
-                    .transition(.scale.combined(with: .opacity))
+            HStack(spacing: 8) {
+                ForEach(options, id: \.self) { zoom in
+                    let isSelected = abs(targetedZoom - zoom) < 0.05 || (!viewModel.isPinchingZoom && abs(viewModel.currentZoom - zoom) < 0.12)
+                    Button(action: {
+                        targetedZoom = zoom
+                        viewModel.setZoomFromButton(zoom)
+                    }) {
+                        Text(zoom < 1.0 ? String(format: "%.1f×", zoom) : String(format: "%.0f×", zoom))
+                            .font(.system(size: 12, weight: isSelected ? .heavy : .medium, design: .rounded))
+                            .foregroundColor(isSelected ? .black : .white)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 5.5)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? amberGold : Color.black.opacity(0.48))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(isSelected ? amberGold : Color.white.opacity(0.10), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+        }
+        .onAppear {
+            targetedZoom = viewModel.currentZoom
+        }
+        .onChange(of: viewModel.currentZoom) { newZoom in
+            if !viewModel.isPinchingZoom {
+                if let matched = options.first(where: { abs(newZoom - $0) < 0.12 }) {
+                    targetedZoom = matched
+                }
             }
         }
     }

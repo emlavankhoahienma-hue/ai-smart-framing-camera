@@ -175,6 +175,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto {
         didSet { UserDefaults.standard.set(activeFlashMode.rawValue, forKey: "activeFlashMode") }
     }
+    @Published public var isPinchingZoom: Bool = false
 
     private var pendingSuggestedZoom: CGFloat = 1.0
     private var hasExecutedAutoZoomForSession: Bool = false
@@ -191,14 +192,14 @@ public final class CameraViewModel: ObservableObject {
             lockOnProgress = 1.0
         }
 
-        // Bắt đầu zoom quang/kỹ thuật số mượt mà sau 0.22s
+        // Bắt đầu zoom quang/kỹ thuật số mượt mà sau 0.22s với tốc độ điện ảnh 0.85
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
             guard let self = self else { return }
             self.isZoomRampPhase = true
-            // Rate 1.6: Tốc độ zoom điện ảnh chuẩn xác, mượt mà, không giật
-            self.cameraService.smoothZoomFactor(to: targetZoom, rate: 1.6)
+            // Rate 0.85: Tốc độ zoom điện ảnh tự nhiên, lướt êm ái, không giật cục
+            self.cameraService.smoothZoomFactor(to: targetZoom, rate: 0.85)
 
-            let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 1.6 + 0.40
+            let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 0.85 + 0.40
             DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
                 guard let self = self else { return }
                 withAnimation(.easeOut(duration: 0.35)) {
@@ -1215,7 +1216,7 @@ public final class CameraViewModel: ObservableObject {
     public func setZoomFromButton(_ zoom: CGFloat) {
         haptics.triggerSelectionChange()
         currentZoom = zoom
-        cameraService.smoothZoomFactor(to: zoom, rate: 2.5)
+        cameraService.smoothZoomFactor(to: zoom, rate: 1.4)
         SpatialTrackingEngine.shared.updateZoomFactor(zoom)
     }
 

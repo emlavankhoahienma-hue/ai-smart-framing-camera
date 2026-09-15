@@ -216,6 +216,7 @@ public struct ARFramingOverlayView: View {
                         if !isPinching {
                             isPinching = true
                             pinchBaseZoom = viewModel.currentZoom
+                            viewModel.isPinchingZoom = true
                         }
                         let minZ = viewModel.cameraService.minZoom
                         let maxZ = viewModel.cameraService.maxZoom
@@ -228,6 +229,7 @@ public struct ARFramingOverlayView: View {
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
                         viewModel.finishZoomGesture(targetZoom)
                         isPinching = false
+                        viewModel.isPinchingZoom = false
                         pinchBaseZoom = targetZoom
                     }
             )
