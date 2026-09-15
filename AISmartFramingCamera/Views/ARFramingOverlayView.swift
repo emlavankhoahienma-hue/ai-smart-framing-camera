@@ -350,7 +350,7 @@ struct CompositionGridLines: View {
     }
 }
 
-// MARK: - Center Crosshair (100% CỐ ĐỊNH Ở CHÍNH GIỮA)
+// MARK: - Center Dot (Chấm Trắng Cố Định Ở Chính Giữa Màn Hình - Chuẩn Ảnh 1)
 
 struct CurrentCenterCrosshair: View {
     let isAligned: Bool
@@ -358,49 +358,44 @@ struct CurrentCenterCrosshair: View {
     let distance: CGFloat
 
     var body: some View {
-        let color: Color = isAligned ? .green : ringColor
-        let proximityScale: CGFloat = distance < 0.15 ? (1.0 + (0.15 - distance) * 1.2) : 1.0
+        let dotColor: Color = isAligned ? .green : .white
+        let proximityScale: CGFloat = distance < 0.15 ? (1.0 + (0.15 - distance) * 0.9) : 1.0
 
         ZStack {
+            // Chấm trắng đơn thuần, tinh tế đúng như Ảnh 1 (Solid White Dot)
             Circle()
-                .stroke(color, lineWidth: isAligned ? 2.5 : 1.8)
-                .frame(width: 38, height: 38)
+                .fill(dotColor)
+                .frame(width: isAligned ? 12 : 11, height: isAligned ? 12 : 11)
+                .shadow(color: Color.black.opacity(0.75), radius: 1.5, x: 0, y: 0.5)
+                .shadow(color: dotColor.opacity(isAligned ? 0.85 : 0.25), radius: isAligned ? 6 : 1)
 
-            ForEach([0, 90, 180, 270], id: \.self) { deg in
-                Rectangle()
-                    .fill(color.opacity(0.9))
-                    .frame(width: 10, height: 1.6)
-                    .offset(x: 25)
-                    .rotationEffect(.degrees(Double(deg)))
-            }
-
-            Circle()
-                .fill(color)
-                .frame(width: isAligned ? 6 : 4.5, height: isAligned ? 6 : 4.5)
-
+            // Vòng viền xanh lục nhẹ khi đã khớp hoàn hảo
             if isAligned {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .heavy))
-                    .foregroundColor(.green)
+                Circle()
+                    .stroke(Color.green.opacity(0.55), lineWidth: 1.5)
+                    .frame(width: 17, height: 17)
             }
         }
         .scaleEffect(proximityScale)
-        .shadow(color: color.opacity(isAligned ? 0.65 : 0.3), radius: isAligned ? 8 : 3)
         .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isAligned)
         .animation(.spring(response: 0.15, dampingFraction: 0.7), value: proximityScale)
     }
-
-    private var ringColor: Color {
-        switch sessionState {
-        case .idle: return Color.white.opacity(0.7)
-        case .analyzing: return Color.yellow.opacity(0.8)
-        case .targetPlaced: return Color.white
-        default: return Color.white
-        }
-    }
 }
 
-// MARK: - Target Vàng (Di chuyển theo Gyro + Optical Tracking để về tâm giữa)
+// MARK: - Target Vòng Tròn Bé Với Tâm Dấu Cộng (+) - Chuẩn Ảnh 2
+
+struct PlusCrosshairShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        // Thanh ngang dấu cộng
+        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        // Thanh dọc dấu cộng
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        return path
+    }
+}
 
 struct TargetCircleView: View {
     let isAligned: Bool
@@ -413,24 +408,40 @@ struct TargetCircleView: View {
     private var ringColor: Color {
         if isAligned { return .green }
         switch trackingQuality {
-        case .locked, .predicting: return .yellow
-        case .reacquiring: return .orange
-        case .lost: return .red
+        case .locked, .predicting: return Color.yellow
+        case .reacquiring: return Color.orange
+        case .lost: return Color.red
         }
     }
 
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
+                // Sóng radar mỏng khi đang căn chỉnh
+                if !isAligned {
+                    Circle()
+                        .stroke(ringColor.opacity(radarOpacity * 0.6), lineWidth: 1.2)
+                        .frame(width: 28 * radarPulse, height: 28 * radarPulse)
+                }
+
+                // Vòng tròn bé như Ảnh 2 (Thin Golden Circle)
                 Circle()
-                    .stroke(ringColor, lineWidth: isAligned ? 2.5 : 1.8)
-                    .frame(width: 30, height: 30)
-                    .shadow(color: ringColor.opacity(0.5), radius: isAligned ? 6 : 3)
+                    .stroke(ringColor, lineWidth: isAligned ? 2.2 : 1.6)
+                    .frame(width: 28, height: 28)
+                    .shadow(color: Color.black.opacity(0.5), radius: 2)
+                    .shadow(color: ringColor.opacity(isAligned ? 0.8 : 0.35), radius: isAligned ? 7 : 3)
+
+                // Dấu cộng (+) ở giữa tâm như Ảnh 2 (Plus Crosshair)
+                PlusCrosshairShape()
+                    .stroke(ringColor, lineWidth: isAligned ? 2.0 : 1.5)
+                    .frame(width: 9, height: 9)
+                    .shadow(color: Color.black.opacity(0.5), radius: 1)
 
                 if isAligned {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .heavy))
-                        .foregroundColor(.green)
+                    Circle()
+                        .stroke(Color.green.opacity(0.4), lineWidth: 3.5)
+                        .frame(width: 36, height: 36)
+                        .scaleEffect(1.05)
                 }
             }
             .scaleEffect(isAligned ? 1.15 : 1.0)
@@ -449,8 +460,8 @@ struct TargetCircleView: View {
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 10).padding(.vertical, 4)
-                .background(Capsule().fill(Color.red.opacity(0.85)))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(Color.red.opacity(0.8)))
             }
         }
     }

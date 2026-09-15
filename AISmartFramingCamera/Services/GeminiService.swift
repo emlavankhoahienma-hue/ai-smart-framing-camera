@@ -589,6 +589,8 @@ public final class GeminiService {
         image: CGImage,
         sceneContext: DetectedSceneType? = nil,
         colorMetrics: ImageColorMetrics? = nil,
+        subjectRect: CGRect? = nil,
+        faceRects: [CGRect] = [],
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
         let key = apiKey
@@ -605,7 +607,7 @@ public final class GeminiService {
         }
         let base64Image = jpegData.base64EncodedString()
         let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
-        let prompt = buildPrompt(sceneContext: sceneContext, colorMetrics: metrics)
+        let prompt = buildPrompt(sceneContext: sceneContext, colorMetrics: metrics, subjectRect: subjectRect, faceRects: faceRects)
 
         var chain = AIVisionModel.fallbackChain(for: key)
         if !customModelName.isEmpty {
@@ -651,23 +653,41 @@ public final class GeminiService {
     public func analyzeVideoCinematography(
         image: CGImage,
         sceneContext: DetectedSceneType? = nil,
+        subjectRect: CGRect? = nil,
+        faceRects: [CGRect] = [],
+        lookingDirection: CGVector = .zero,
         completion: @escaping (Result<AIVideoDirectorGuidance, GeminiError>) -> Void
     ) {
         let key = apiKey
         guard !key.isEmpty else {
-            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            let fallback = Self.generateLocalVideoGuidance(
+                sceneContext: sceneContext,
+                subjectRect: subjectRect,
+                faceRects: faceRects,
+                lookingDirection: lookingDirection
+            )
             completion(.success(fallback))
             return
         }
 
         guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1280) else {
-            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            let fallback = Self.generateLocalVideoGuidance(
+                sceneContext: sceneContext,
+                subjectRect: subjectRect,
+                faceRects: faceRects,
+                lookingDirection: lookingDirection
+            )
             completion(.success(fallback))
             return
         }
 
         let base64Image = jpegData.base64EncodedString()
-        let prompt = buildVideoCinematographyPrompt(sceneContext: sceneContext)
+        let prompt = buildVideoCinematographyPrompt(
+            sceneContext: sceneContext,
+            subjectRect: subjectRect,
+            faceRects: faceRects,
+            lookingDirection: lookingDirection
+        )
 
         var chain = AIVisionModel.fallbackChain(for: key)
         if !customModelName.isEmpty {
@@ -686,6 +706,9 @@ public final class GeminiService {
             key: key,
             startTime: startTime,
             sceneContext: sceneContext,
+            subjectRect: subjectRect,
+            faceRects: faceRects,
+            lookingDirection: lookingDirection,
             completion: completion
         )
     }
@@ -698,17 +721,30 @@ public final class GeminiService {
         key: String,
         startTime: Double,
         sceneContext: DetectedSceneType?,
+        subjectRect: CGRect?,
+        faceRects: [CGRect],
+        lookingDirection: CGVector,
         completion: @escaping (Result<AIVideoDirectorGuidance, GeminiError>) -> Void
     ) {
         guard index < chain.count else {
-            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            let fallback = Self.generateLocalVideoGuidance(
+                sceneContext: sceneContext,
+                subjectRect: subjectRect,
+                faceRects: faceRects,
+                lookingDirection: lookingDirection
+            )
             completion(.success(fallback))
             return
         }
 
         let currentModelID = chain[index]
         guard let url = buildURL(for: currentModelID, key: key) else {
-            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            let fallback = Self.generateLocalVideoGuidance(
+                sceneContext: sceneContext,
+                subjectRect: subjectRect,
+                faceRects: faceRects,
+                lookingDirection: lookingDirection
+            )
             completion(.success(fallback))
             return
         }
@@ -739,13 +775,18 @@ public final class GeminiService {
                     ]
                 ]
             ],
-            "temperature": 0.20,
+            "temperature": 0.70,
             "top_p": 0.95,
             "max_tokens": 800
         ]
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            let fallback = Self.generateLocalVideoGuidance(
+                sceneContext: sceneContext,
+                subjectRect: subjectRect,
+                faceRects: faceRects,
+                lookingDirection: lookingDirection
+            )
             completion(.success(fallback))
             return
         }
@@ -763,6 +804,9 @@ public final class GeminiService {
                     key: key,
                     startTime: startTime,
                     sceneContext: sceneContext,
+                    subjectRect: subjectRect,
+                    faceRects: faceRects,
+                    lookingDirection: lookingDirection,
                     completion: completion
                 )
                 return
@@ -777,6 +821,9 @@ public final class GeminiService {
                     key: key,
                     startTime: startTime,
                     sceneContext: sceneContext,
+                    subjectRect: subjectRect,
+                    faceRects: faceRects,
+                    lookingDirection: lookingDirection,
                     completion: completion
                 )
                 return
@@ -800,6 +847,9 @@ public final class GeminiService {
                     key: key,
                     startTime: startTime,
                     sceneContext: sceneContext,
+                    subjectRect: subjectRect,
+                    faceRects: faceRects,
+                    lookingDirection: lookingDirection,
                     completion: completion
                 )
                 return
@@ -831,6 +881,9 @@ public final class GeminiService {
                     key: key,
                     startTime: startTime,
                     sceneContext: sceneContext,
+                    subjectRect: subjectRect,
+                    faceRects: faceRects,
+                    lookingDirection: lookingDirection,
                     completion: completion
                 )
                 return
@@ -1049,10 +1102,21 @@ public final class GeminiService {
 
     // MARK: - Prompt
 
-    private func buildPrompt(sceneContext: DetectedSceneType? = nil, colorMetrics: ImageColorMetrics? = nil) -> String {
+    private func buildPrompt(
+        sceneContext: DetectedSceneType? = nil,
+        colorMetrics: ImageColorMetrics? = nil,
+        subjectRect: CGRect? = nil,
+        faceRects: [CGRect] = []
+    ) -> String {
         var contextInfo = ""
         if let scene = sceneContext {
             contextInfo += "\nBối cảnh khung cảnh nhận diện: \(scene.localizedName)"
+        }
+        if let rect = subjectRect {
+            contextInfo += "\n- Tọa độ chủ thể chính phát hiện trên cảm biến: tâm x=\(String(format: "%.2f", rect.midX)), y=\(String(format: "%.2f", rect.midY)), rộng=\(String(format: "%.2f", rect.width)), cao=\(String(format: "%.2f", rect.height))"
+        }
+        if !faceRects.isEmpty {
+            contextInfo += "\n- Số lượng khuôn mặt phát hiện: \(faceRects.count)"
         }
         if let metrics = colorMetrics {
             contextInfo += """
@@ -1070,22 +1134,30 @@ public final class GeminiService {
         Hãy phân tích bức ảnh này cùng với bối cảnh và các thông số đo sáng thực tế dưới đây để đưa ra điểm bố cục tối ưu và bộ công thức cân chỉnh màu sắc chuyên nghiệp nhất.
         \(contextInfo)
 
-        CHỈ THỊ CÂN CHỈNH MÀU SẮC (COLOR SCIENCE DIRECTIVES):
-        1. Phản ứng chuẩn xác theo điều kiện ánh sáng thực tế:
+        CHỈ THỊ BỐ CỤC & TIÊU ĐIỂM CHỦ THỂ (ZERO-CENTER DEFAULT DIRECTIVES):
+        1. Nhận diện CHỦ THỂ CHÍNH (người, khuôn mặt, vật thể, thú cưng):
+           - Tọa độ target_x, target_y là vị trí tiêu điểm của chủ thể chính để khóa nét và căn bố cục.
+           - Nếu có chủ thể phát hiện ở tọa độ trên: đặt target_x, target_y gắn liền với chủ thể đó (hoặc điểm vàng chứa chủ thể).
+           - TUYỆT ĐỐI KHÔNG mặc định trả về (0.5, 0.5) trừ khi cảnh là kiến trúc đối xứng hoàn toàn ở chính giữa.
+        2. Mức zoom đề xuất (suggested_zoom: 1.0 đến 3.0):
+           - Nếu chủ thể ở xa hoặc nhỏ trong khung hình (< 15% diện tích): đề xuất zoom 1.6x đến 2.5x để đặc tả chủ thể đẹp mắt.
+           - Nếu chụp chân dung trung cảnh: đề xuất zoom 1.4x đến 1.8x để tiêu cự tương đương ống kính chân dung 50-85mm tôn dáng.
+           - Nếu cảnh đại cảnh hoặc nhiều người: giữ 1.0x đến 1.2x.
+        3. Phản ứng chuẩn xác theo điều kiện ánh sáng thực tế:
            - Nếu thiếu sáng: nâng shadow (+0.08 đến +0.22), bù sáng exposure (+0.2 đến +0.6 EV), giữ contrast dịu.
            - Nếu ngược sáng / chói: giảm highlight roll (0.75 đến 0.90), bù sáng nhẹ để làm rõ chủ thể mà không làm cháy phông nền.
            - Nếu ám vàng hoặc ám xanh: tự động điều chỉnh nhiệt độ màu (warmth_shift) và sắc độ (tint_shift) để trả lại màu trắng trung tính và sắc màu chân thực.
-        2. Bảo vệ tuyệt đối màu da người: giữ da trắng hồng, tự nhiên, khỏe khoắn, không bị ám vàng nghệ hay đỏ gắt.
-        3. Chọn phong cách màu (color_grade) điện ảnh phù hợp nhất: ["softwarm", "vibrant", "coolnatural", "golden", "tealOrange", "moody", "classic", "cinematic"].
+        4. Bảo vệ tuyệt đối màu da người: giữ da trắng hồng, tự nhiên, khỏe khoắn, không bị ám vàng nghệ hay đỏ gắt.
+        5. Chọn phong cách màu (color_grade) điện ảnh phù hợp nhất: ["softwarm", "vibrant", "coolnatural", "golden", "tealOrange", "moody", "classic", "cinematic"].
 
         Trả về DUY NHẤT một chuỗi JSON hợp lệ (không chứa markdown fences ```):
         {
-          "target_x": 0.5,
-          "target_y": 0.5,
-          "suggested_zoom": 1.0,
+          "target_x": 0.38,
+          "target_y": 0.40,
+          "suggested_zoom": 1.6,
           "scene_type": "portrait",
           "composition_rule": "golden_ratio",
-          "explanation": "Chân dung tự nhiên: Khóa mắt vào giao điểm tỷ lệ vàng, tự động zoom nhẹ giảm méo viền.",
+          "explanation": "Chân dung điểm vàng: Đặt mắt chủ thể tại giao điểm 0.38 để tạo chiều sâu và zoom 1.6x tôn dáng.",
           "color_recipe": {
             "temperature_k": 5600,
             "warmth_shift": 0.04,
@@ -1230,59 +1302,80 @@ public final class GeminiService {
 
     // MARK: - Video Cinematography Director Helpers
 
-    private func buildVideoCinematographyPrompt(sceneContext: DetectedSceneType? = nil) -> String {
+    private func buildVideoCinematographyPrompt(
+        sceneContext: DetectedSceneType? = nil,
+        subjectRect: CGRect? = nil,
+        faceRects: [CGRect] = [],
+        lookingDirection: CGVector = .zero
+    ) -> String {
         var contextInfo = ""
         if let scene = sceneContext {
-            contextInfo = "Bối cảnh khung cảnh nhận diện: \(scene.localizedName)"
+            contextInfo += "\n- Bối cảnh khung cảnh nhận diện: \(scene.localizedName)"
+        }
+        if let rect = subjectRect {
+            contextInfo += "\n- Tọa độ chủ thể chính phát hiện: tâm (x: \(String(format: "%.2f", rect.midX)), y: \(String(format: "%.2f", rect.midY))), rộng: \(String(format: "%.2f", rect.width)), cao: \(String(format: "%.2f", rect.height))"
+        }
+        if !faceRects.isEmpty {
+            contextInfo += "\n- Số lượng khuôn mặt phát hiện: \(faceRects.count)"
+        }
+        if abs(lookingDirection.dx) > 0.05 {
+            let dir = lookingDirection.dx > 0 ? "sang phải" : "sang trái"
+            contextInfo += "\n- Hướng mắt/hướng nhìn chủ thể: \(dir)"
         }
 
         return """
         Bạn là Đạo diễn Hình ảnh Quay phim Điện ảnh (Cinematography Director) chuyên nghiệp từng đạt giải Oscar.
-        Hãy phân tích khung hình video trực tiếp này để gợi ý:
-        1. Kiểu cú máy điện ảnh (shot_style, ví dụ: Lia ngang Cinematic Pan, Quỹ đạo Orbit 180°, Đẩy máy Dolly Push-In, Nâng máy Tilt Up).
-        2. Hướng di chuyển máy chi tiết (movement_direction: hướng dẫn người dùng lia hoặc di chuyển máy qua các tâm đánh dấu).
-        3. Nhịp độ quay khuyến nghị (suggested_pacing_seconds: 4.0 đến 8.0 giây).
-        4. Mức zoom đề xuất (suggested_zoom: 1.0x đến 2.0x).
-        5. Lời khuyên của đạo diễn (director_tip: cách cầm máy, khử rung, giữ nhịp thở).
-        6. Danh sách 2 đến 4 tâm đánh dấu (waypoints) trên màn hình để người dùng lia máy theo thứ tự [1] -> [2] -> [3].
+        Hãy phân tích khung hình video trực tiếp này và vị trí của chủ thể để thiết kế cú máy quay (camera movement) ĐỘC ĐÁO, ĐẸP MẮT và ĐA DẠNG NHẤT.
         \(contextInfo)
 
-        Tọa độ x, y của mỗi waypoint nằm trong khoảng từ 0.10 đến 0.90 (tọa độ chuẩn hóa khung ngắm).
-        Ví dụ: nếu là cú lia ngang từ trái sang phải:
-        - Tâm 1: x: 0.22, y: 0.50 (bắt đầu)
-        - Tâm 2: x: 0.50, y: 0.45 (ở giữa)
-        - Tâm 3: x: 0.78, y: 0.50 (kết thúc)
+        YÊU CẦU QUAN TRỌNG VỀ SỰ ĐA DẠNG VÀ TÍNH ĐIỆN ẢNH (ZERO-REPETITION):
+        1. KHÔNG ĐƯỢC chỉ chọn cú lia ngang cơ bản lặp đi lặp lại. Hãy chọn 1 trong các cú máy điện ảnh đỉnh cao sau đây sao cho phù hợp nhất với vị trí chủ thể và bối cảnh:
+           - "Lia bán nguyệt quanh chủ thể (Cinematic Orbit / Arc 180°)": Di chuyển camera theo đường cong bán nguyệt quanh chủ thể chính để tạo hiệu ứng thị sai (parallax) và chiều sâu 3D điện ảnh.
+           - "Đẩy máy tiến tới cận cảnh (Dolly In / Push-In)": Bắt đầu từ góc trung cảnh bao quát rồi tiến dần máy mượt mà vào cận cảnh gương mặt hoặc chi tiết chủ thể để tăng kịch tính.
+           - "Nâng máy hé lộ từ dưới lên (Pedestal / Tilt-Up Reveal)": Bắt đầu góc thấp (low-angle) từ tiền cảnh/chân chủ thể rồi nâng máy mượt mà lên để hé lộ thần thái chủ thể và hậu cảnh khoáng đạt.
+           - "Lia đón đầu theo hướng nhìn (Gaze / Subject Lead Pan)": Bắt đầu tại ánh mắt/chủ thể rồi lia máy mở rộng theo hướng nhìn của chủ thể để tạo không gian thở và sự tò mò.
+           - "Trượt ngang toàn cảnh (Cinematic Slider / Tracking Pan)": Trượt máy ngang song song với chủ thể, tạo cảm giác chuyển động mượt mà như đặt trên ray trượt dolly chuyên nghiệp.
+
+        2. ĐỊNH VỊ CÁC TÂM ĐÁNH DẤU (WAYPOINTS) DỰA TRÊN TỌA ĐỘ CHỦ THỂ THỰC TẾ:
+           - Tạo từ 2 đến 4 tâm đánh dấu (waypoints).
+           - Tọa độ (x, y) của các tâm PHẢI gắn liền với vị trí chủ thể đã nhận diện ở trên.
+           - Ví dụ nếu cú máy Orbit quanh chủ thể ở giữa: Tâm 1 lệch trái (0.28, 0.48) -> Tâm 2 vào chủ thể (0.50, 0.44) -> Tâm 3 lệch phải (0.72, 0.48).
+           - Nếu cú Dolly In: Tâm 1 (0.40, 0.45) -> Tâm 2 (0.47, 0.48) -> Tâm 3 khóa chặt chủ thể (0.52, 0.50) kèm zoom tăng dần.
+           - Nếu cú Tilt Up: Tâm 1 ở dưới thấp (0.50, 0.72) -> Tâm 2 ở giữa (0.50, 0.52) -> Tâm 3 ở trên khuôn mặt/chân trời (0.50, 0.32).
+
+        3. Mức zoom đề xuất (suggested_zoom: 1.0x đến 2.2x) phù hợp với cú máy.
+        4. Nhịp độ (suggested_pacing_seconds: 4.0 đến 8.0 giây).
 
         Trả về DUY NHẤT một chuỗi JSON hợp lệ (không chứa markdown fences ```):
         {
-          "shot_style": "Lia máy ngang bao quát (Cinematic Pan)",
-          "movement_direction": "Lia máy đều tay từ trái sang phải, chuyển tiếp mượt mà qua 3 tâm đánh dấu",
+          "shot_style": "<Tên kiểu cú máy đã chọn>",
+          "movement_direction": "<Mô tả hướng lia/di chuyển máy chi tiết>",
           "suggested_pacing_seconds": 6.0,
-          "suggested_zoom": 1.2,
-          "director_tip": "Tựa khuỷu tay vào hông để chống rung, xoay thân người đều nhịp",
+          "suggested_zoom": 1.4,
+          "director_tip": "<Lời khuyên tư thế cầm máy, bước chân, khử rung>",
           "waypoints": [
             {
               "id": 1,
-              "x": 0.22,
-              "y": 0.52,
-              "label": "Tâm 1: Bắt đầu bối cảnh",
+              "x": 0.30,
+              "y": 0.50,
+              "label": "Tâm 1: Bắt đầu góc máy",
               "action_tip": "Khóa nét chủ thể 1.5s",
               "duration": 2.0
             },
             {
               "id": 2,
               "x": 0.50,
-              "y": 0.46,
-              "label": "Tâm 2: Trọng tâm khung hình",
-              "action_tip": "Lướt ngang qua tâm mượt mà",
+              "y": 0.45,
+              "label": "Tâm 2: Trọng tâm chuyển động",
+              "action_tip": "Lướt máy mượt mà qua tâm",
               "duration": 2.0
             },
             {
               "id": 3,
-              "x": 0.78,
+              "x": 0.70,
               "y": 0.50,
-              "label": "Tâm 3: Điểm kết thúc",
-              "action_tip": "Dừng máy êm và giữ khung hình",
+              "label": "Tâm 3: Kết thúc khung hình",
+              "action_tip": "Dừng êm và giữ khung",
               "duration": 2.0
             }
           ]
@@ -1339,48 +1432,103 @@ public final class GeminiService {
         )
     }
 
-    public static func generateLocalVideoGuidance(sceneContext: DetectedSceneType? = nil) -> AIVideoDirectorGuidance {
+    public static func generateLocalVideoGuidance(
+        sceneContext: DetectedSceneType? = nil,
+        subjectRect: CGRect? = nil,
+        faceRects: [CGRect] = [],
+        lookingDirection: CGVector = .zero
+    ) -> AIVideoDirectorGuidance {
         let scene = sceneContext ?? .general
-        switch scene {
-        case .portrait:
+        let subjectX = subjectRect?.midX ?? 0.50
+        let subjectY = subjectRect?.midY ?? 0.48
+
+        // Phân loại và tạo cú máy đa dạng dựa trên chủ thể và bối cảnh thực tế:
+        if !faceRects.isEmpty || scene == .portrait {
+            let hasLeadRoom = abs(lookingDirection.dx) > 0.08
+            if hasLeadRoom {
+                // Lia máy đón đầu hướng nhìn (Gaze Lead Pan)
+                let startX = max(0.20, min(0.80, subjectX))
+                let endX = lookingDirection.dx > 0 ? min(0.85, startX + 0.35) : max(0.15, startX - 0.35)
+                let midX = (startX + endX) / 2.0
+                return AIVideoDirectorGuidance(
+                    shotStyleTitle: "Lia theo hướng nhìn (Gaze Lead Pan)",
+                    movementDirectionDescription: "Khóa nét chân dung, sau đó lia máy mở rộng theo hướng nhìn để tạo chiều sâu",
+                    suggestedPacingSeconds: 5.5,
+                    waypoints: [
+                        CinematicWaypoint(id: 1, point: CGPoint(x: startX, y: subjectY), label: "Tâm 1: Ánh mắt chủ thể", actionTip: "Khóa nét chủ thể 1.5s", recommendedDuration: 1.8),
+                        CinematicWaypoint(id: 2, point: CGPoint(x: midX, y: subjectY - 0.03), label: "Tâm 2: Trọng tâm chuyển động", actionTip: "Lia máy đều tay", recommendedDuration: 1.8),
+                        CinematicWaypoint(id: 3, point: CGPoint(x: endX, y: subjectY), label: "Tâm 3: Không gian hướng nhìn", actionTip: "Giữ khung hình tĩnh", recommendedDuration: 1.9)
+                    ],
+                    suggestedZoom: 1.3,
+                    directorTip: "Xoay nhẹ phần eo, bước chân mềm kiểu Ninja để khung hình mượt mà không rung",
+                    modelUsed: "AI Neural Engine (Offline)"
+                )
+            } else {
+                // Cú máy Orbit bán nguyệt quanh chủ thể
+                let leftX = max(0.18, subjectX - 0.28)
+                let rightX = min(0.82, subjectX + 0.28)
+                return AIVideoDirectorGuidance(
+                    shotStyleTitle: "Lia bán nguyệt chân dung (Portrait Orbit)",
+                    movementDirectionDescription: "Lia máy cong nhẹ quanh nhân vật từ trái sang phải, tạo hiệu ứng thị sai điện ảnh",
+                    suggestedPacingSeconds: 5.5,
+                    waypoints: [
+                        CinematicWaypoint(id: 1, point: CGPoint(x: leftX, y: subjectY - 0.04), label: "Tâm 1: Mở đầu góc 45°", actionTip: "Khóa nét chủ thể 1.5s", recommendedDuration: 1.8),
+                        CinematicWaypoint(id: 2, point: CGPoint(x: subjectX, y: subjectY), label: "Tâm 2: Chính diện nhân vật", actionTip: "Xoay thân người mượt mà", recommendedDuration: 1.8),
+                        CinematicWaypoint(id: 3, point: CGPoint(x: rightX, y: subjectY + 0.04), label: "Tâm 3: Kết thúc góc nghiêng", actionTip: "Dừng máy êm ái", recommendedDuration: 1.9)
+                    ],
+                    suggestedZoom: 1.4,
+                    directorTip: "Khuỷu tay khép sát sườn, xoay toàn bộ thân trên để giữ chủ thể luôn ở trục xoay",
+                    modelUsed: "AI Neural Engine (Offline)"
+                )
+            }
+        } else if scene == .architecture || scene == .food || scene == .macro {
+            // Đẩy máy cận cảnh (Dolly In / Push-In)
+            let startY = min(0.75, subjectY + 0.20)
+            let endY = max(0.25, subjectY - 0.08)
             return AIVideoDirectorGuidance(
-                shotStyleTitle: "Lia bán nguyệt chân dung (Portrait Orbit)",
-                movementDirectionDescription: "Lia máy nhẹ nhàng quanh nhân vật từ trái sang phải, làm nổi bật thần thái",
-                suggestedPacingSeconds: 5.5,
+                shotStyleTitle: "Đẩy máy tiến tới cận cảnh (Dolly Push-In)",
+                movementDirectionDescription: "Tiến máy dần vào chủ thể từ góc bao quát sang đặc tả chi tiết",
+                suggestedPacingSeconds: 5.0,
                 waypoints: [
-                    CinematicWaypoint(id: 1, point: CGPoint(x: 0.32, y: 0.42), label: "Tâm 1: Bắt đầu ở ánh mắt", actionTip: "Khóa nét chân dung 1.5s", recommendedDuration: 1.8),
-                    CinematicWaypoint(id: 2, point: CGPoint(x: 0.50, y: 0.48), label: "Tâm 2: Trọng tâm chân dung", actionTip: "Xoay thân người mượt mà", recommendedDuration: 1.8),
-                    CinematicWaypoint(id: 3, point: CGPoint(x: 0.68, y: 0.52), label: "Tâm 3: Hướng nhìn mở", actionTip: "Dừng máy êm ái", recommendedDuration: 1.9)
+                    CinematicWaypoint(id: 1, point: CGPoint(x: subjectX, y: startY), label: "Tâm 1: Góc toàn cảnh", actionTip: "Khóa nét chủ thể 1.5s", recommendedDuration: 1.6),
+                    CinematicWaypoint(id: 2, point: CGPoint(x: subjectX, y: subjectY), label: "Tâm 2: Tiếp cận chi tiết", actionTip: "Tiến bước chân chậm rãi", recommendedDuration: 1.7),
+                    CinematicWaypoint(id: 3, point: CGPoint(x: subjectX, y: endY), label: "Tâm 3: Cận cảnh đặc tả", actionTip: "Dừng máy và giữ chắc", recommendedDuration: 1.7)
                 ],
-                suggestedZoom: 1.2,
-                directorTip: "Khuỷu tay khép sát sườn, bước chân nhẹ nhàng kiểu Ninja walk để không rung",
+                suggestedZoom: 1.6,
+                directorTip: "Hạ thấp trọng tâm, di chuyển chân chậm đều từng bước để chống rung tự nhiên",
                 modelUsed: "AI Neural Engine (Offline)"
             )
-        case .landscape, .foliage, .architecture, .sky, .sunset, .water:
+        } else if scene == .landscape || scene == .foliage || scene == .sky || scene == .sunset || scene == .water {
+            // Lia toàn cảnh điện ảnh
+            let startX = max(0.15, subjectX - 0.32)
+            let endX = min(0.85, subjectX + 0.32)
             return AIVideoDirectorGuidance(
                 shotStyleTitle: "Lia toàn cảnh điện ảnh (Cinematic Panorama Pan)",
-                movementDirectionDescription: "Lia máy ngang từ trái sang phải với tốc độ ổn định qua 3 tâm đánh dấu",
+                movementDirectionDescription: "Lia máy ngang bao quát từ góc tiền cảnh mở rộng ra đường chân trời",
                 suggestedPacingSeconds: 6.5,
                 waypoints: [
-                    CinematicWaypoint(id: 1, point: CGPoint(x: 0.20, y: 0.52), label: "Tâm 1: Tiền cảnh khoáng đạt", actionTip: "Bắt đầu bối cảnh 1.5s", recommendedDuration: 2.0),
-                    CinematicWaypoint(id: 2, point: CGPoint(x: 0.50, y: 0.44), label: "Tâm 2: Đường chân trời", actionTip: "Lia đều tay qua tâm", recommendedDuration: 2.2),
-                    CinematicWaypoint(id: 3, point: CGPoint(x: 0.80, y: 0.50), label: "Tâm 3: Hậu cảnh hùng vĩ", actionTip: "Ổn định máy 2.0s", recommendedDuration: 2.3)
+                    CinematicWaypoint(id: 1, point: CGPoint(x: startX, y: subjectY + 0.04), label: "Tâm 1: Tiền cảnh khoáng đạt", actionTip: "Bắt đầu bối cảnh 1.5s", recommendedDuration: 2.0),
+                    CinematicWaypoint(id: 2, point: CGPoint(x: subjectX, y: subjectY - 0.02), label: "Tâm 2: Đường chân trời", actionTip: "Lia đều tay qua tâm", recommendedDuration: 2.2),
+                    CinematicWaypoint(id: 3, point: CGPoint(x: endX, y: subjectY), label: "Tâm 3: Hậu cảnh hùng vĩ", actionTip: "Ổn định máy 2.0s", recommendedDuration: 2.3)
                 ],
                 suggestedZoom: 1.0,
                 directorTip: "Xoay toàn bộ phần hông thay vì chỉ xoay cổ tay để có cú lia mượt như dolly ray",
                 modelUsed: "AI Neural Engine (Offline)"
             )
-        default:
+        } else {
+            // Đa dạng hóa cho general: Dùng cú máy Arc / Orbit quanh chủ thể phát hiện
+            let leftX = max(0.20, subjectX - 0.25)
+            let rightX = min(0.80, subjectX + 0.25)
             return AIVideoDirectorGuidance(
-                shotStyleTitle: "Lia máy ngang bao quát (Cinematic Pan)",
-                movementDirectionDescription: "Lia máy mượt mà từ trái sang phải qua các tâm đánh dấu, bắt trọn không gian",
-                suggestedPacingSeconds: 6.0,
+                shotStyleTitle: "Lia máy quỹ đạo cung tròn (Arc Tracking Shot)",
+                movementDirectionDescription: "Lia máy mượt mà theo hình vòng cung quanh chủ thể để tạo độ sâu trường ảnh",
+                suggestedPacingSeconds: 5.8,
                 waypoints: [
-                    CinematicWaypoint(id: 1, point: CGPoint(x: 0.24, y: 0.52), label: "Tâm 1: Mở đầu góc quay", actionTip: "Khóa chủ thể 1.5s", recommendedDuration: 2.0),
-                    CinematicWaypoint(id: 2, point: CGPoint(x: 0.50, y: 0.46), label: "Tâm 2: Trọng tâm khung hình", actionTip: "Lướt ngang qua tâm mượt mà", recommendedDuration: 2.0),
-                    CinematicWaypoint(id: 3, point: CGPoint(x: 0.76, y: 0.50), label: "Tâm 3: Điểm kết thúc", actionTip: "Dừng máy êm và giữ khung", recommendedDuration: 2.0)
+                    CinematicWaypoint(id: 1, point: CGPoint(x: leftX, y: subjectY + 0.03), label: "Tâm 1: Mở đầu quỹ đạo", actionTip: "Khóa nét chủ thể 1.5s", recommendedDuration: 1.9),
+                    CinematicWaypoint(id: 2, point: CGPoint(x: subjectX, y: subjectY - 0.02), label: "Tâm 2: Trọng tâm khung hình", actionTip: "Lướt mượt mà qua tâm", recommendedDuration: 2.0),
+                    CinematicWaypoint(id: 3, point: CGPoint(x: rightX, y: subjectY + 0.02), label: "Tâm 3: Điểm kết thúc", actionTip: "Dừng máy êm và giữ khung", recommendedDuration: 1.9)
                 ],
-                suggestedZoom: 1.1,
+                suggestedZoom: 1.2,
                 directorTip: "Tựa khuỷu tay vào hông để chống rung, giữ nhịp thở đều khi lia máy",
                 modelUsed: "AI Neural Engine (Offline)"
             )

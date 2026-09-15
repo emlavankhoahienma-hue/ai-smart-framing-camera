@@ -133,66 +133,33 @@ public final class CompositionCalculator {
         
         let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
         
-        // 1. Chế độ chụp nhóm (Group Photo Framing)
-        if detection.faceRectangles.count > 1 {
-            let targetX: CGFloat = (subject.width > 0.42) ? 0.5 : (subjectCenter.x < 0.5 ? thirdsX[0] : thirdsX[1])
-            let targetY: CGFloat = thirdsY[0]
-            return (CGPoint(x: targetX, y: targetY), "Bố cục chụp nhóm: Giữ trọn các thành viên trong khung hình")
-        }
-        
-        // 2. Chế độ chụp đơn thể với Không gian thở hướng nhìn (Gaze Lead Room)
-        var targetX: CGFloat = subjectCenter.x < 0.5 ? thirdsX[0] : thirdsX[1]
-        if detection.lookingDirection.dx > 0.10 {
-            targetX = thirdsX[0] // Chủ thể nhìn sang phải -> Đặt chủ thể ở 1/3 bên trái để chừa khoảng thở bên phải
-        } else if detection.lookingDirection.dx < -0.10 {
-            targetX = thirdsX[1] // Chủ thể nhìn sang trái -> Đặt chủ thể ở 1/3 bên phải để chừa khoảng thở bên trái
-        }
-        
-        // Căn chỉnh đường mắt (Eye Level) trực tiếp lên đường 1/3 trên
-        let targetY: CGFloat = (detection.primaryEyePosition != nil || !detection.faceRectangles.isEmpty)
-            ? thirdsY[0]
-            : (subjectCenter.y < 0.5 ? thirdsY[0] : thirdsY[1])
-            
-        let advice = "Đặt mắt / chủ thể lên đường 1/3 phía trên"
-        return (CGPoint(x: targetX, y: targetY), advice)
+        // Khi phát hiện chủ thể thực tế: ĐẶT TARGET VÀO ĐÚNG CHỦ THỂ (mắt hoặc tâm chủ thể)!
+        let targetPoint = detection.primaryEyePosition ?? subjectCenter
+        let advice = (detection.primaryEyePosition != nil)
+            ? "Đưa tâm trắng vào chủ thể để khóa nét & zoom AI"
+            : "Đưa tâm trắng vào chủ thể để khóa nét & zoom AI"
+        return (targetPoint, advice)
     }
     
     // MARK: - Golden Ratio Calculation (1:1.618)
     private func computeGoldenRatioTarget(detection: SubjectDetectionResult) -> (CGPoint, String) {
-        let goldX: [CGFloat] = [phiInverseRatio, phiRatio]
-        let goldY: [CGFloat] = [phiInverseRatio, phiRatio]
-        
         guard let subject = detection.dominantSubjectRect else {
             return (CGPoint(x: phiRatio, y: phiInverseRatio), "Căn chỉnh theo tỷ lệ vàng 1.618")
         }
         
         let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
-        
-        if detection.faceRectangles.count > 1 {
-            let targetX: CGFloat = (subject.width > 0.42) ? 0.5 : (subjectCenter.x < 0.5 ? goldX[0] : goldX[1])
-            let targetY: CGFloat = goldY[0]
-            return (CGPoint(x: targetX, y: targetY), "Bố cục chụp nhóm tỷ lệ vàng")
-        }
-
-        var targetX = subjectCenter.x < 0.5 ? goldX[0] : goldX[1]
-        
-        if detection.lookingDirection.dx > 0.10 {
-            targetX = goldX[0]
-        } else if detection.lookingDirection.dx < -0.10 {
-            targetX = goldX[1]
-        }
-        
-        let targetY: CGFloat = (detection.primaryEyePosition != nil || !detection.faceRectangles.isEmpty)
-            ? goldY[0]
-            : (subjectCenter.y < 0.5 ? goldY[0] : goldY[1])
-            
-        let advice = "Căn chỉnh chủ thể vào giao điểm tỷ lệ vàng"
-        return (CGPoint(x: targetX, y: targetY), advice)
+        let targetPoint = detection.primaryEyePosition ?? subjectCenter
+        let advice = "Đưa tâm trắng vào chủ thể để căn bố cục tỷ lệ vàng"
+        return (targetPoint, advice)
     }
     
     // MARK: - Golden Spiral Calculation
     private func computeGoldenSpiralTarget(detection: SubjectDetectionResult) -> (CGPoint, String) {
-        // Core vertex focus point of Fibonacci logarithmic spiral
+        if let subject = detection.dominantSubjectRect {
+            let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
+            let targetPoint = detection.primaryEyePosition ?? subjectCenter
+            return (targetPoint, "Đưa tâm trắng vào chủ thể theo xoắn ốc Fibonacci")
+        }
         let spiralFocus = CGPoint(x: phiRatio, y: phiInverseRatio)
         return (spiralFocus, "Uốn lượn bố cục theo xoắn ốc Fibonacci")
     }
@@ -205,20 +172,21 @@ public final class CompositionCalculator {
         }
         let subjectArea = subjectRect.width * subjectRect.height
         
-        if subjectArea < 0.025 {
-            // Chủ thể ở xa: Zoom 2.5x nhẹ nhàng, tự nhiên
+        if subjectArea < 0.035 {
+            // Chủ thể ở xa / diện tích nhỏ: Zoom 2.5x đặc tả rõ nét
             return 2.5
-        } else if subjectArea < 0.08 {
-            // Cự ly trung bình: Zoom 2.0x chân dung chuẩn
+        } else if subjectArea < 0.09 {
+            // Cự ly trung bình xa: Zoom 2.0x chân dung chuẩn
             return 2.0
         } else if subjectArea < 0.18 {
-            // Cự ly cận cảnh vừa: Zoom 1.5x
-            return 1.5
-        } else if subjectArea > 0.45 {
-            // Chủ thể quá gần: Zoom 1.0x góc rộng
-            return 1.0
+            // Cự ly trung cảnh vừa: Zoom 1.6x tôn dáng
+            return 1.6
+        } else if subjectArea < 0.32 {
+            // Cận cảnh nhẹ: Zoom 1.3x
+            return 1.3
         } else {
-            return currentZoom
+            // Chủ thể đã chiếm trọn khung hình: giữ nguyên góc rộng 1.0x
+            return 1.0
         }
     }
 }

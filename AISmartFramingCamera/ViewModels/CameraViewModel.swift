@@ -152,17 +152,22 @@ public final class CameraViewModel: ObservableObject {
         }
         let targetSize = 1.0 / pendingTargetZoomForReveal
 
+        // Tiêu điểm của chủ thể / target (thay vì cố định 0.5, 0.5)
+        let focalPoint = currentTargetPoint ?? initialTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
+
         if !isZoomRampPhase {
-            // Giai đoạn 1: khung lướt nhẹ từ toàn cảnh (1.0) về vùng crop dự kiến
+            // Giai đoạn 1: khung lướt nhẹ từ toàn cảnh (1.0) về vùng crop dự kiến bao quanh chủ thể
             let p = max(0.0, min(1.0, lockOnProgress))
             let size = 1.0 - (1.0 - targetSize) * p
-            let origin = (1.0 - size) / 2.0
-            return CGRect(x: origin, y: origin, width: size, height: size)
+            let minX = max(0.0, min(1.0 - size, focalPoint.x - size / 2.0))
+            let minY = max(0.0, min(1.0 - size, focalPoint.y - size / 2.0))
+            return CGRect(x: minX, y: minY, width: size, height: size)
         } else {
             // Giai đoạn 2: khi camera phần cứng đang ramp zoom, khung đồng bộ mở rộng ra mép màn hình
             let ratio = min(1.0, liveZoomFactorForReveal / pendingTargetZoomForReveal)
-            let origin = (1.0 - ratio) / 2.0
-            return CGRect(x: origin, y: origin, width: ratio, height: ratio)
+            let minX = max(0.0, min(1.0 - ratio, focalPoint.x - ratio / 2.0))
+            let minY = max(0.0, min(1.0 - ratio, focalPoint.y - ratio / 2.0))
+            return CGRect(x: minX, y: minY, width: ratio, height: ratio)
         }
     }
 
@@ -211,6 +216,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var detectedScene: DetectedSceneType = .general
     @Published public var detectedSubjectRects: [CGRect] = []
     @Published public var detectedFaceRects: [CGRect] = []
+    private var latestSubjectDetectionResult: SubjectDetectionResult? = nil
 
     // MARK: - DOKA-STYLE TARGET TRACKING
     /// Initial target position determined ONCE by AI (normalized 0..1)
@@ -662,11 +668,15 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Vision & Gemini One-Shot Handling
 
     private func handleVisionDetection(_ detection: SubjectDetectionResult) {
+        self.latestSubjectDetectionResult = detection
         switch aiSessionState {
         case .idle, .done:
             // Khi ở chế độ idle: chỉ hiển thị face preview nhẹ nhàng, không tính toán target
             self.detectedScene = detection.detectedScene
             self.detectedFaceRects = detection.faceRectangles
+            if let dominant = detection.dominantSubjectRect {
+                self.detectedSubjectRects = [dominant]
+            }
             return
 
         case .capturing:
@@ -717,7 +727,15 @@ public final class CameraViewModel: ObservableObject {
         guard !isGeminiAnalyzing else { return }
         isGeminiAnalyzing = true
 
-        geminiService.analyzeForComposition(image: frame, sceneContext: self.detectedScene) { [weak self] result in
+        let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
+        let faceRects = detectedFaceRects
+
+        geminiService.analyzeForComposition(
+            image: frame,
+            sceneContext: self.detectedScene,
+            subjectRect: subjectRect,
+            faceRects: faceRects
+        ) { [weak self] result in
             guard let self = self else { return }
             self.isGeminiAnalyzing = false
 
@@ -748,8 +766,33 @@ public final class CameraViewModel: ObservableObject {
             currentAIColorParams = response.colorRecipe.asAIColorParameters
         }
 
-        let targetPoint = CGPoint(x: response.targetX, y: response.targetY)
+        var targetPoint = CGPoint(x: response.targetX, y: response.targetY)
         let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
+
+        // Nếu Gemini trả về tọa độ trung tâm (0.5, 0.5) nhưng ta có chủ thể thực tế rõ ràng phát hiện lệch tâm,
+        // ưu tiên gắn target vào chủ thể để người dùng căn trúng chủ thể & zoom đẹp mắt!
+        if let sRect = subjectRect, abs(targetPoint.x - 0.5) < 0.05 && abs(targetPoint.y - 0.5) < 0.05 {
+            let sCenter = CGPoint(x: sRect.midX, y: sRect.midY)
+            if abs(sCenter.x - 0.5) > 0.08 || abs(sCenter.y - 0.5) > 0.08 {
+                targetPoint = sCenter
+            }
+        }
+
+        // Tự động điều chỉnh zoom nếu Gemini trả về 1.0x nhưng chủ thể ở xa/nhỏ
+        if let sRect = subjectRect, self.pendingSuggestedZoom <= 1.05 {
+            let area = sRect.width * sRect.height
+            if area < 0.035 {
+                self.pendingSuggestedZoom = 2.5
+                self.aiSuggestedZoom = 2.5
+            } else if area < 0.09 {
+                self.pendingSuggestedZoom = 2.0
+                self.aiSuggestedZoom = 2.0
+            } else if area < 0.18 {
+                self.pendingSuggestedZoom = 1.6
+                self.aiSuggestedZoom = 1.6
+            }
+        }
+
         pinTargetAndStartMotion(at: targetPoint, subjectRect: subjectRect)
     }
 
@@ -1287,17 +1330,32 @@ public final class CameraViewModel: ObservableObject {
         hasCompletedAllWaypoints = false
         waypointElapsedSeconds = 0.0
 
+        let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
+        let faceRects = detectedFaceRects
+        let lookDir = latestSubjectDetectionResult?.lookingDirection ?? .zero
+
         visionEngine.captureImmediateFrame { [weak self] cgImg in
             guard let self = self else { return }
             guard let image = cgImg else {
-                let fallback = GeminiService.generateLocalVideoGuidance(sceneContext: self.detectedScene)
+                let fallback = GeminiService.generateLocalVideoGuidance(
+                    sceneContext: self.detectedScene,
+                    subjectRect: subjectRect,
+                    faceRects: faceRects,
+                    lookingDirection: lookDir
+                )
                 DispatchQueue.main.async {
                     self.applyVideoGuidance(fallback)
                 }
                 return
             }
 
-            self.geminiService.analyzeVideoCinematography(image: image, sceneContext: self.detectedScene) { [weak self] result in
+            self.geminiService.analyzeVideoCinematography(
+                image: image,
+                sceneContext: self.detectedScene,
+                subjectRect: subjectRect,
+                faceRects: faceRects,
+                lookingDirection: lookDir
+            ) { [weak self] result in
                 guard let self = self else { return }
                 DispatchQueue.main.async {
                     switch result {
@@ -1305,7 +1363,12 @@ public final class CameraViewModel: ObservableObject {
                         self.applyVideoGuidance(guidance)
                     case .failure(let err):
                         self.videoDirectorError = err.localizedDescription
-                        let fallback = GeminiService.generateLocalVideoGuidance(sceneContext: self.detectedScene)
+                        let fallback = GeminiService.generateLocalVideoGuidance(
+                            sceneContext: self.detectedScene,
+                            subjectRect: subjectRect,
+                            faceRects: faceRects,
+                            lookingDirection: lookDir
+                        )
                         self.applyVideoGuidance(fallback)
                     }
                 }
