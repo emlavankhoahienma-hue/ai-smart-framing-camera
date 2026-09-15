@@ -117,7 +117,7 @@ public struct SettingsSheetView: View {
             .searchable(text: $searchText, prompt: "Tìm kiếm thông số, cài đặt...")
             .preferredColorScheme(.dark)
             .confirmationDialog(
-                "Xác nhận xóa Gemini API Key?",
+                "Xác nhận xóa OpenRouter API Key?",
                 isPresented: $showDeleteKeyConfirmation,
                 titleVisibility: .visible
             ) {
@@ -204,7 +204,7 @@ public struct SettingsSheetView: View {
                     toastMessage: $toastMessage
                 )
             }
-            if "gemini api key model trực tuyến đám mây quota".contains(q) {
+            if "openrouter gemini api key model trực tuyến đám mây quota".contains(q) {
                 AIFramingSettingsSection(
                     viewModel: viewModel,
                     geminiKeyInput: $geminiKeyInput,
@@ -525,8 +525,8 @@ struct AIFramingSettingsSection: View {
             SettingsSectionCard(title: "AI CLOUD & BẢO MẬT API KEY", icon: "lock.shield.fill") {
                 VStack(alignment: .leading, spacing: 12) {
                     SettingsToggleRow(
-                        title: "Phân tích trực tuyến (Gemini Vision)",
-                        subtitle: "Gửi 1 khung hình chất lượng cao lên AI để nhận đánh giá chi tiết",
+                        title: "Phân tích trực tuyến (OpenRouter AI)",
+                        subtitle: "Gửi 1 khung hình chất lượng cao lên OpenRouter để AI phân tích bố cục & màu sắc",
                         icon: "network",
                         isOn: $viewModel.useGeminiForAnalysis
                     )
@@ -552,7 +552,7 @@ struct AIFramingSettingsSection: View {
                         }
                     }
 
-                    SettingsPickerRow(title: "Mô hình Gemini", icon: "cpu") {
+                    SettingsPickerRow(title: "Mô hình OpenRouter", icon: "cpu") {
                         Picker("", selection: $selectedModel) {
                             ForEach(AIVisionModel.allCases) { model in
                                 Text(model.displayName).tag(model)
@@ -570,7 +570,7 @@ struct AIFramingSettingsSection: View {
                     if viewModel.geminiService.hasAPIKey {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("API Key bảo mật")
+                                Text("OpenRouter API Key")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundColor(.white)
                                 Text("••••••••••••••••••••••••")
@@ -598,7 +598,7 @@ struct AIFramingSettingsSection: View {
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                SecureField("Dán Gemini API Key tại đây", text: $geminiKeyInput)
+                                SecureField("Dán OpenRouter API Key (sk-or-...) tại đây", text: $geminiKeyInput)
                                     .font(.system(size: 12, design: .monospaced))
                                     .padding(8)
                                     .background(Color.black.opacity(0.5))
@@ -642,7 +642,7 @@ struct AIFramingSettingsSection: View {
                             } else {
                                 Image(systemName: "antenna.radiowaves.left.and.right")
                             }
-                            Text(isTestingKey ? "Đang gửi ping kiểm tra..." : "Kiểm tra kết nối API Key")
+                            Text(isTestingKey ? "Đang gửi ping kiểm tra..." : "Kiểm tra kết nối OpenRouter")
                                 .font(.system(size: 12, weight: .bold))
                         }
                         .foregroundColor(.yellow)
@@ -658,7 +658,7 @@ struct AIFramingSettingsSection: View {
                             .cornerRadius(6)
                     }
 
-                    Text("🔒 Quyền riêng tư: API Key được mã hóa lưu trữ độc quyền trong Apple Keychain của máy. Chỉ gửi 1 frame xem trước duy nhất khi người dùng ấn nút AI Compose. Không lưu trữ ảnh người dùng.")
+                    Text("🔒 Quyền riêng tư: OpenRouter API Key được mã hóa lưu trữ độc quyền trong Apple Keychain của máy. Chỉ gửi 1 frame xem trước duy nhất khi người dùng ấn nút AI Compose. Không lưu trữ ảnh người dùng.")
                         .font(.system(size: 11))
                         .foregroundColor(.gray)
                         .lineSpacing(2)

@@ -193,7 +193,11 @@ public enum AIEngineSource: Equatable {
     public var title: String {
         switch self {
         case .geminiCloud(let model):
-            return "✨ Cloud AI: \(model)"
+            let clean = model.replacingOccurrences(of: "google/", with: "")
+                .replacingOccurrences(of: "openai/", with: "")
+                .replacingOccurrences(of: "anthropic/", with: "")
+                .replacingOccurrences(of: "meta-llama/", with: "")
+            return "✨ OpenRouter: \(clean)"
         case .localTrained114MB(let cat):
             return "🧠 AI Local 114MB (\(cat))"
         case .yoloNeural(let label):
@@ -206,8 +210,12 @@ public enum AIEngineSource: Equatable {
     public var badgeName: String {
         switch self {
         case .geminiCloud(let model):
-            let short = model.replacingOccurrences(of: "gemini-", with: "").uppercased()
-            return "CLOUD (\(short))"
+            let clean = model.replacingOccurrences(of: "google/", with: "")
+                .replacingOccurrences(of: "openai/", with: "")
+                .replacingOccurrences(of: "anthropic/", with: "")
+                .replacingOccurrences(of: "meta-llama/", with: "")
+                .uppercased()
+            return "OPENROUTER (\(clean))"
         case .localTrained114MB:
             return "AI 114MB"
         case .yoloNeural(let label):

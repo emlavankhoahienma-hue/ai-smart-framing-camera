@@ -646,9 +646,10 @@ struct ZoomRevealOverlay: View {
 
             if isVisible {
                 ZStack {
-                    // Lớp mờ (Blur) vùng ngoài khung ngắm điện ảnh
+                    // 1. Lớp làm mờ nhẹ điện ảnh vùng ngoài khung ngắm (Subtle Cinematic Focus Blur)
                     Rectangle()
                         .fill(.ultraThinMaterial)
+                        .opacity(0.42)
                         .mask(
                             Path { path in
                                 path.addRect(CGRect(origin: .zero, size: geo.size))
@@ -658,11 +659,18 @@ struct ZoomRevealOverlay: View {
                         )
                         .ignoresSafeArea()
 
-                    // Viền khung ngắm vàng mỏng nhẹ 1.8px (giữ màn hình sáng tự nhiên)
+                    // 2. Viền bóng mờ nhẹ chuyển tiếp mềm mại xung quanh viền cắt (Soft feathered edge)
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.black.opacity(0.18), lineWidth: 4)
+                        .blur(radius: 3)
+                        .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
+                        .position(x: pixelRect.midX, y: pixelRect.midY)
+
+                    // 3. Viền khung ngắm vàng mỏng nhẹ 1.8px (giữ màn hình sáng tự nhiên)
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(
                             LinearGradient(
-                                colors: [Color.yellow, Color.yellow.opacity(0.65), Color.yellow],
+                                colors: [Color.yellow, Color.yellow.opacity(0.7), Color.yellow],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
@@ -672,7 +680,7 @@ struct ZoomRevealOverlay: View {
                         .position(x: pixelRect.midX, y: pixelRect.midY)
                         .shadow(color: Color.yellow.opacity(0.35), radius: 8, x: 0, y: 0)
 
-                    // 4 góc ngắm bố cục điện ảnh (Cinematic Corner Ticks)
+                    // 4. Bốn góc ngắm bố cục điện ảnh (Cinematic Corner Ticks)
                     CinematicCornerTicks(rect: pixelRect)
 
                     // Huy hiệu AI ZOOM ở mép trên khung
