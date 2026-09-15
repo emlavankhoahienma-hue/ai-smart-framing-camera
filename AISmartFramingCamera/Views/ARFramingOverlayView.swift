@@ -272,6 +272,14 @@ public struct ARFramingOverlayView: View {
         )
     }
 
+    private func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
+        return Self.convertBufferPointToScreen(point, in: screenSize)
+    }
+
+    private func convertBufferRectToScreen(_ rect: CGRect, in screenSize: CGSize) -> CGRect {
+        return Self.convertBufferRectToScreen(rect, in: screenSize)
+    }
+
     private func convertScreenPointToBuffer(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
         let bufferAspect: CGFloat = 3.0 / 4.0
         let screenAspect = screenSize.width / max(1.0, screenSize.height)

@@ -1356,7 +1356,7 @@ public final class GeminiService {
                 directorTip: "Khuỷu tay khép sát sườn, bước chân nhẹ nhàng kiểu Ninja walk để không rung",
                 modelUsed: "AI Neural Engine (Offline)"
             )
-        case .landscape, .nature, .architecture, .sky, .sunset, .water:
+        case .landscape, .foliage, .architecture, .sky, .sunset, .water:
             return AIVideoDirectorGuidance(
                 shotStyleTitle: "Lia toàn cảnh điện ảnh (Cinematic Panorama Pan)",
                 movementDirectionDescription: "Lia máy ngang từ trái sang phải với tốc độ ổn định qua 3 tâm đánh dấu",
