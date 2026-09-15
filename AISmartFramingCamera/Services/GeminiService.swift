@@ -53,11 +53,16 @@ public struct KeychainHelper {
 
 public enum AIVisionModel: String, CaseIterable, Identifiable {
     case autoStrongest = "auto"
+    case gemini37Flash = "google/gemini-3.7-flash"
+    case gemini36Flash = "google/gemini-3.6-flash"
+    case gemini35Flash = "google/gemini-3.5-flash"
+    case gemini25Flash = "google/gemini-2.5-flash"
+    case gemini25Pro = "google/gemini-2.5-pro"
     case gemini20Flash = "google/gemini-2.0-flash-001"
     case geminiFlash15 = "google/gemini-flash-1.5"
+    case geminiPro15 = "google/gemini-pro-1.5"
     case gpt4oMini = "openai/gpt-4o-mini"
     case claude35Haiku = "anthropic/claude-3.5-haiku"
-    case geminiPro15 = "google/gemini-pro-1.5"
     case llamaVision = "meta-llama/llama-3.2-11b-vision-instruct"
 
     public var id: String { rawValue }
@@ -66,16 +71,26 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         switch self {
         case .autoStrongest:
             return "⚡ Tự động luân chuyển (Khuyên dùng - Auto Fallback)"
+        case .gemini37Flash:
+            return "🚀 Gemini 3.7 Flash (OpenRouter - Mới nhất & Suy nghĩ)"
+        case .gemini36Flash:
+            return "⚡ Gemini 3.6 Flash (OpenRouter - Tốc độ cao)"
+        case .gemini35Flash:
+            return "🎯 Gemini 3.5 Flash (OpenRouter - Bố cục thông minh)"
+        case .gemini25Flash:
+            return "✨ Gemini 2.5 Flash (OpenRouter - Tối ưu thị giác)"
+        case .gemini25Pro:
+            return "💎 Gemini 2.5 Pro (OpenRouter - Phân tích chi tiết)"
         case .gemini20Flash:
             return "🔥 Gemini 2.0 Flash (OpenRouter - Siêu tốc)"
         case .geminiFlash15:
-            return "✨ Gemini 1.5 Flash (OpenRouter - Ổn định)"
+            return "🌟 Gemini 1.5 Flash (OpenRouter - Ổn định)"
+        case .geminiPro15:
+            return "🔮 Gemini 1.5 Pro (OpenRouter - Deep Reasoning)"
         case .gpt4oMini:
             return "🟢 GPT-4o Mini (OpenRouter - OpenAI Vision)"
         case .claude35Haiku:
             return "🟣 Claude 3.5 Haiku (OpenRouter - Tinh tế)"
-        case .geminiPro15:
-            return "💎 Gemini 1.5 Pro (OpenRouter - Chi tiết cao)"
         case .llamaVision:
             return "🦙 Llama 3.2 Vision (OpenRouter - Open Source)"
         }
@@ -84,7 +99,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "google/gemini-2.0-flash-001"
+            return "google/gemini-3.7-flash"
         default:
             return rawValue
         }
@@ -93,10 +108,14 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Sequence of standard verified models to try in auto mode on OpenRouter
     public static var autoFallbackChain: [String] {
         [
+            "google/gemini-3.7-flash",
+            "google/gemini-3.5-flash",
+            "google/gemini-3.6-flash",
+            "google/gemini-2.5-flash",
             "google/gemini-2.0-flash-001",
-            "google/gemini-flash-1.5",
             "openai/gpt-4o-mini",
-            "google/gemini-pro-1.5"
+            "google/gemini-2.5-pro",
+            "google/gemini-flash-1.5"
         ]
     }
 
@@ -266,6 +285,11 @@ public final class GeminiService {
             if let model = AIVisionModel(rawValue: saved) {
                 return model
             }
+            if saved.contains("3.7") { return .gemini37Flash }
+            if saved.contains("3.6") { return .gemini36Flash }
+            if saved.contains("3.5") { return .gemini35Flash }
+            if saved.contains("2.5") && saved.contains("pro") { return .gemini25Pro }
+            if saved.contains("2.5") { return .gemini25Flash }
             if saved.contains("flash") { return .gemini20Flash }
             if saved.contains("pro") { return .geminiPro15 }
             return .autoStrongest

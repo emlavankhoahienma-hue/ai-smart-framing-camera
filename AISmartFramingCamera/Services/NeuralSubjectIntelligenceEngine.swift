@@ -42,6 +42,35 @@ public struct NeuralSubjectCandidate: Identifiable {
     }
 }
 
+/// Kết quả phân tích thị giác ANE nâng cao
+public struct NeuralAnalysisOutput {
+    public let primaryCandidate: NeuralSubjectCandidate?
+    public let allCandidates: [NeuralSubjectCandidate]
+    public let detectedScene: DetectedSceneType
+    public let allFaceRects: [CGRect]
+    public let groupBoundingBox: CGRect?
+    public let primaryEyePosition: CGPoint?
+    public let lookingDirection: CGVector
+
+    public init(
+        primaryCandidate: NeuralSubjectCandidate?,
+        allCandidates: [NeuralSubjectCandidate],
+        detectedScene: DetectedSceneType,
+        allFaceRects: [CGRect] = [],
+        groupBoundingBox: CGRect? = nil,
+        primaryEyePosition: CGPoint? = nil,
+        lookingDirection: CGVector = CGVector(dx: 0, dy: 0)
+    ) {
+        self.primaryCandidate = primaryCandidate
+        self.allCandidates = allCandidates
+        self.detectedScene = detectedScene
+        self.allFaceRects = allFaceRects
+        self.groupBoundingBox = groupBoundingBox
+        self.primaryEyePosition = primaryEyePosition
+        self.lookingDirection = lookingDirection
+    }
+}
+
 /// Bộ Não Phân Tích Chủ Thể Nơ-ron Đa Tầng (Neural Subject Intelligence Engine)
 /// Tận dụng tối đa chip xử lý trí tuệ nhân tạo Apple Neural Engine (ANE) của Apple
 public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
@@ -50,7 +79,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     // MARK: - Vision Deep Learning Requests
     private var animalRequest: VNRecognizeAnimalsRequest!
     private var humanBodyRequest: VNDetectHumanRectanglesRequest!
-    private var faceRequest: VNDetectFaceRectanglesRequest!
+    private var faceLandmarksRequest: VNDetectFaceLandmarksRequest!
     private var saliencyObjectRequest: VNGenerateObjectnessBasedSaliencyImageRequest!
     private var sceneClassifierRequest: VNClassifyImageRequest!
     
@@ -68,9 +97,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         humanBodyRequest.upperBodyOnly = false
         humanBodyRequest.revision = VNDetectHumanRectanglesRequestRevision2
         
-        // 3. Nhận diện Khuôn mặt Người
-        faceRequest = VNDetectFaceRectanglesRequest()
-        faceRequest.revision = VNDetectFaceRectanglesRequestRevision3
+        // 3. Nhận diện Khuôn mặt & Điểm mốc ngũ quan ANE (Mắt, Hướng nhìn Gaze)
+        faceLandmarksRequest = VNDetectFaceLandmarksRequest()
+        faceLandmarksRequest.revision = VNDetectFaceLandmarksRequestRevision3
         
         // 4. Nhận diện Vật thể tiền cảnh thực tế (Objectness Saliency)
         saliencyObjectRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
@@ -85,23 +114,26 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public func analyzeFrame(
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation = .up
-    ) -> (primaryCandidate: NeuralSubjectCandidate?, allCandidates: [NeuralSubjectCandidate], detectedScene: DetectedSceneType) {
+    ) -> NeuralAnalysisOutput {
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         
         do {
             try handler.perform([
                 self.humanBodyRequest,
-                self.faceRequest,
+                self.faceLandmarksRequest,
                 self.animalRequest,
                 self.saliencyObjectRequest,
                 self.sceneClassifierRequest
             ])
         } catch {
             CameraLogger.error("Lỗi thực thi Neural Vision Request", error: error, category: .ai)
-            return (nil, [], .general)
+            return NeuralAnalysisOutput(primaryCandidate: nil, allCandidates: [], detectedScene: .general)
         }
         
         var candidates: [NeuralSubjectCandidate] = []
+        var detectedFaces: [CGRect] = []
+        var primaryEye: CGPoint? = nil
+        var lookDir = CGVector(dx: 0, dy: 0)
         
         // 0. Nhận diện vật thể bằng YOLOv11 CoreML (nếu có model)
         if YOLODetectionEngine.shared.hasYOLOModel {
@@ -126,11 +158,12 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         
-        // 2. Trích xuất Khuôn mặt (Face)
-        if let faces = faceRequest.results {
-            for face in faces where face.confidence > 0.45 {
+        // 2. Trích xuất Khuôn mặt & Điểm mốc ANE (Face Landmarks & Gaze)
+        if let faces = faceLandmarksRequest.results {
+            for face in faces where face.confidence > 0.38 {
                 let rect = convertVisionRectToUIRect(face.boundingBox)
                 if isValidSubjectRect(rect) {
+                    detectedFaces.append(rect)
                     let score = calculateProminenceScore(rect: rect, confidence: face.confidence, category: .face)
                     candidates.append(NeuralSubjectCandidate(
                         boundingBox: rect,
@@ -139,6 +172,40 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                         label: "Khuôn mặt",
                         prominenceScore: score
                     ))
+
+                    // Trích xuất vị trí mắt chính (Eye Level) từ khuôn mặt đầu tiên
+                    if primaryEye == nil, let landmarks = face.landmarks {
+                        var eyeCenters: [CGPoint] = []
+                        if let leftEye = landmarks.leftEye, !leftEye.normalizedPoints.isEmpty {
+                            let pts = leftEye.normalizedPoints
+                            let avgX = pts.map { $0.x }.reduce(0, +) / CGFloat(pts.count)
+                            let avgY = pts.map { $0.y }.reduce(0, +) / CGFloat(pts.count)
+                            eyeCenters.append(CGPoint(x: avgX, y: avgY))
+                        }
+                        if let rightEye = landmarks.rightEye, !rightEye.normalizedPoints.isEmpty {
+                            let pts = rightEye.normalizedPoints
+                            let avgX = pts.map { $0.x }.reduce(0, +) / CGFloat(pts.count)
+                            let avgY = pts.map { $0.y }.reduce(0, +) / CGFloat(pts.count)
+                            eyeCenters.append(CGPoint(x: avgX, y: avgY))
+                        }
+                        if !eyeCenters.isEmpty {
+                            let avgEyeInFace = CGPoint(
+                                x: eyeCenters.map { $0.x }.reduce(0, +) / CGFloat(eyeCenters.count),
+                                y: eyeCenters.map { $0.y }.reduce(0, +) / CGFloat(eyeCenters.count)
+                            )
+                            let eyeVisionX = face.boundingBox.origin.x + avgEyeInFace.x * face.boundingBox.width
+                            let eyeVisionY = face.boundingBox.origin.y + avgEyeInFace.y * face.boundingBox.height
+                            primaryEye = CGPoint(x: eyeVisionX, y: 1.0 - eyeVisionY)
+                        }
+
+                        // Trích xuất hướng xoay đầu / nhìn (Head Yaw Gaze)
+                        if let yaw = face.yaw?.floatValue {
+                            let gazeDx = -sin(yaw)
+                            if abs(gazeDx) > 0.08 {
+                                lookDir = CGVector(dx: CGFloat(gazeDx), dy: 0)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -210,7 +277,24 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         
-        // 6. Xếp hạng và chọn ra VẬT THỂ CHÍNH NỔI BẬT NHẤT (True Primary Subject)
+        // 6. Tính toán Bounding Box cho ảnh nhóm (Group Framing)
+        var groupBox: CGRect? = nil
+        if detectedFaces.count > 1 {
+            let minX = detectedFaces.map { $0.minX }.min() ?? 0
+            let maxX = detectedFaces.map { $0.maxX }.max() ?? 1
+            let minY = detectedFaces.map { $0.minY }.min() ?? 0
+            let maxY = detectedFaces.map { $0.maxY }.max() ?? 1
+            let padX = (maxX - minX) * 0.12
+            let padY = (maxY - minY) * 0.12
+            groupBox = CGRect(
+                x: max(0.02, minX - padX),
+                y: max(0.02, minY - padY),
+                width: min(0.96, (maxX - minX) + padX * 2),
+                height: min(0.96, (maxY - minY) + padY * 2)
+            )
+        }
+        
+        // 7. Xếp hạng và chọn ra VẬT THỂ CHÍNH NỔI BẬT NHẤT (True Primary Subject)
         let sortedCandidates = candidates.sorted { $0.prominenceScore > $1.prominenceScore }
         let primary = sortedCandidates.first
         
@@ -218,7 +302,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             CameraLogger.info("Đã chọn Vật thể chính: \(p.category.rawValue) - \(p.label) (Điểm: \(String(format: "%.2f", p.prominenceScore)), Độ tin cậy: \(Int(p.confidence * 100))%)", category: .ai)
         }
         
-        return (primary, sortedCandidates, scene)
+        return NeuralAnalysisOutput(
+            primaryCandidate: primary,
+            allCandidates: sortedCandidates,
+            detectedScene: scene,
+            allFaceRects: detectedFaces,
+            groupBoundingBox: groupBox,
+            primaryEyePosition: primaryEye,
+            lookingDirection: lookDir
+        )
     }
     
     // MARK: - Thuật toán Tính Điểm Nổi Bật (Prominence Scoring Formula)

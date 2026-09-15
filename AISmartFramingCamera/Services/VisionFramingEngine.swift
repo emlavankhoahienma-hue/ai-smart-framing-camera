@@ -930,26 +930,34 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
             
             // 2. Chế độ phát hiện thông minh đa tầng bằng NeuralSubjectIntelligenceEngine (Apple Neural Engine ANE)
-            let (primaryCandidate, allCandidates, detectedScene) = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
+            let neuralOutput = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
                 pixelBuffer: pixelBuffer,
                 orientation: orientation
             )
             
             var result = SubjectDetectionResult()
-            result.detectedScene = detectedScene
+            result.detectedScene = neuralOutput.detectedScene
+            result.faceRectangles = neuralOutput.allFaceRects
+            result.primaryEyePosition = neuralOutput.primaryEyePosition
+            result.lookingDirection = neuralOutput.lookingDirection
             
-            if let primary = primaryCandidate {
-                result.dominantSubjectRect = primary.boundingBox
-                result.confidence = primary.confidence
-                if primary.category == .face {
-                    result.faceRectangles = [primary.boundingBox]
+            if let primary = neuralOutput.primaryCandidate {
+                // Nếu chụp nhóm có nhiều khuôn mặt, ưu tiên khung bao nhóm (groupBoundingBox) để không ai bị mất góc
+                if neuralOutput.allFaceRects.count > 1, let groupBox = neuralOutput.groupBoundingBox {
+                    result.dominantSubjectRect = groupBox
+                } else {
+                    result.dominantSubjectRect = primary.boundingBox
                 }
+                result.confidence = primary.confidence
             }
             
             // Smart Focus Point
             let smartFocusPoint: CGPoint
             let smartFocusType: SmartFocusType
-            if let primary = primaryCandidate {
+            if let eye = neuralOutput.primaryEyePosition {
+                smartFocusPoint = eye
+                smartFocusType = .face
+            } else if let primary = neuralOutput.primaryCandidate {
                 smartFocusPoint = primary.center
                 smartFocusType = (primary.category == .face) ? .face : .salientObject
             } else {

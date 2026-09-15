@@ -766,6 +766,12 @@ public final class CameraViewModel: ObservableObject {
             if let faceFrame = analysisFrames.first(where: { !$0.faceRectangles.isEmpty }) {
                 avgDetection.faceRectangles = faceFrame.faceRectangles
             }
+            if let eyeFrame = analysisFrames.first(where: { $0.primaryEyePosition != nil }) {
+                avgDetection.primaryEyePosition = eyeFrame.primaryEyePosition
+            }
+            if let gazeFrame = analysisFrames.first(where: { abs($0.lookingDirection.dx) > 0.05 }) {
+                avgDetection.lookingDirection = gazeFrame.lookingDirection
+            }
         }
 
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)

@@ -388,37 +388,38 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     }
     
     public func loadModelWeights() {
-        // 1. Kiểm tra file AlignAI_SubjectRanker_Weights.bin trong Documents directory (nếu người dùng copy vào qua iTunes/Files)
+        // 1. Ưu tiên nạp mô hình RobustTargetEmbedder.bin chuẩn (78 -> 256 -> 128, 53,120 floats) từ App Bundle
+        if let url = Bundle.main.url(forResource: "RobustTargetEmbedder", withExtension: "bin"),
+           let data = try? Data(contentsOf: url) {
+            CameraLogger.info("Đã nạp thành công mô hình RobustTargetEmbedder.bin từ Bundle (\(data.count / 1024) KB)", category: .tracking)
+            loadFromData(data)
+            return
+        }
+        
+        // 2. Kiểm tra file RobustTargetEmbedder.bin hoặc AlignAI_SubjectRanker_Weights.bin trong Documents directory
         if let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let docModelUrl = docsDir.appendingPathComponent("AlignAI_SubjectRanker_Weights.bin")
-            if let data = try? Data(contentsOf: docModelUrl), data.count > 1000 {
-                CameraLogger.info("Đã tìm thấy mô hình AlignAI_SubjectRanker_Weights.bin trong Documents directory, bắt đầu nạp trọng số", category: .tracking)
+            let docModelUrl = docsDir.appendingPathComponent("RobustTargetEmbedder.bin")
+            if let data = try? Data(contentsOf: docModelUrl), data.count >= 200_000 {
+                CameraLogger.info("Đã tìm thấy mô hình RobustTargetEmbedder.bin trong Documents directory, bắt đầu nạp trọng số", category: .tracking)
                 loadFromData(data)
                 return
             }
         }
         
-        // 2. Tìm file AlignAI_SubjectRanker_Weights.bin hoặc RobustTargetEmbedder.bin trong Bundle
-        if let url = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "bin"),
-           let data = try? Data(contentsOf: url) {
-            CameraLogger.info("Đã nạp thành công mô hình AlignAI_SubjectRanker_Weights.bin từ Bundle", category: .tracking)
-            loadFromData(data)
-        } else if let url1 = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "part1"),
-                  let url2 = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "part2"),
-                  let d1 = try? Data(contentsOf: url1),
-                  let d2 = try? Data(contentsOf: url2) {
+        // 3. Fallback part1 + part2 nếu có
+        if let url1 = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "part1"),
+           let url2 = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "part2"),
+           let d1 = try? Data(contentsOf: url1),
+           let d2 = try? Data(contentsOf: url2) {
             var combined = d1
             combined.append(d2)
-            CameraLogger.info("Đã nạp thành công mô hình AlignAI_SubjectRanker_Weights 114MB từ Part1+Part2", category: .tracking)
+            CameraLogger.info("Đã nạp mô hình AlignAI_SubjectRanker_Weights từ Part1+Part2", category: .tracking)
             loadFromData(combined)
-        } else if let url = Bundle.main.url(forResource: "RobustTargetEmbedder", withExtension: "bin"),
-                  let data = try? Data(contentsOf: url) {
-            CameraLogger.info("Đã nạp thành công mô hình RobustTargetEmbedder.bin từ Bundle", category: .tracking)
-            loadFromData(data)
-        } else {
-            // Fallback tạo trọng số chuẩn hóa Xavier
-            initFallbackWeights()
+            return
         }
+        
+        // 4. Fallback tạo trọng số chuẩn hóa Xavier
+        initFallbackWeights()
     }
     
     private func loadFromData(_ data: Data) {

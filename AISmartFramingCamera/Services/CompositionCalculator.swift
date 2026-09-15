@@ -67,10 +67,11 @@ public final class CompositionCalculator {
         }
         
         // Auto-Zoom evaluation based on subject bounding box scale
+        let isGroupPhoto = detection.faceRectangles.count > 1
         if let dominantRect = detection.dominantSubjectRect {
-            recommendedZoom = computeOptimalZoom(subjectRect: dominantRect, currentZoom: currentZoom)
+            recommendedZoom = computeOptimalZoom(subjectRect: dominantRect, currentZoom: currentZoom, isGroup: isGroupPhoto)
         } else if let faceRect = detection.faceRectangles.first {
-            recommendedZoom = computeOptimalZoom(subjectRect: faceRect, currentZoom: currentZoom)
+            recommendedZoom = computeOptimalZoom(subjectRect: faceRect, currentZoom: currentZoom, isGroup: isGroupPhoto)
         }
         
         // Calculate offset vector and metrics
@@ -127,21 +128,27 @@ public final class CompositionCalculator {
         let thirdsY: [CGFloat] = [1.0 / 3.0, 2.0 / 3.0]
         
         guard let subject = detection.dominantSubjectRect else {
-            // Default landscape rule of thirds horizon
             return (CGPoint(x: 2.0 / 3.0, y: 1.0 / 3.0), "Hướng góc chụp về điểm 1/3 góc trên")
         }
         
         let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
         
-        // Find nearest 1/3 vertical line with lead room
-        var targetX: CGFloat = subjectCenter.x < 0.5 ? thirdsX[0] : thirdsX[1]
-        if detection.lookingDirection.dx > 0.15 {
-            targetX = thirdsX[0] // Look to right -> place subject on left
-        } else if detection.lookingDirection.dx < -0.15 {
-            targetX = thirdsX[1] // Look to left -> place subject on right
+        // 1. Chế độ chụp nhóm (Group Photo Framing)
+        if detection.faceRectangles.count > 1 {
+            let targetX: CGFloat = (subject.width > 0.42) ? 0.5 : (subjectCenter.x < 0.5 ? thirdsX[0] : thirdsX[1])
+            let targetY: CGFloat = thirdsY[0]
+            return (CGPoint(x: targetX, y: targetY), "Bố cục chụp nhóm: Giữ trọn các thành viên trong khung hình")
         }
         
-        // For faces/people, eye line should be placed on the upper 1/3 line
+        // 2. Chế độ chụp đơn thể với Không gian thở hướng nhìn (Gaze Lead Room)
+        var targetX: CGFloat = subjectCenter.x < 0.5 ? thirdsX[0] : thirdsX[1]
+        if detection.lookingDirection.dx > 0.10 {
+            targetX = thirdsX[0] // Chủ thể nhìn sang phải -> Đặt chủ thể ở 1/3 bên trái để chừa khoảng thở bên phải
+        } else if detection.lookingDirection.dx < -0.10 {
+            targetX = thirdsX[1] // Chủ thể nhìn sang trái -> Đặt chủ thể ở 1/3 bên phải để chừa khoảng thở bên trái
+        }
+        
+        // Căn chỉnh đường mắt (Eye Level) trực tiếp lên đường 1/3 trên
         let targetY: CGFloat = (detection.primaryEyePosition != nil || !detection.faceRectangles.isEmpty)
             ? thirdsY[0]
             : (subjectCenter.y < 0.5 ? thirdsY[0] : thirdsY[1])
@@ -160,11 +167,18 @@ public final class CompositionCalculator {
         }
         
         let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
+        
+        if detection.faceRectangles.count > 1 {
+            let targetX: CGFloat = (subject.width > 0.42) ? 0.5 : (subjectCenter.x < 0.5 ? goldX[0] : goldX[1])
+            let targetY: CGFloat = goldY[0]
+            return (CGPoint(x: targetX, y: targetY), "Bố cục chụp nhóm tỷ lệ vàng")
+        }
+
         var targetX = subjectCenter.x < 0.5 ? goldX[0] : goldX[1]
         
-        if detection.lookingDirection.dx > 0.15 {
+        if detection.lookingDirection.dx > 0.10 {
             targetX = goldX[0]
-        } else if detection.lookingDirection.dx < -0.15 {
+        } else if detection.lookingDirection.dx < -0.10 {
             targetX = goldX[1]
         }
         
@@ -183,18 +197,25 @@ public final class CompositionCalculator {
         return (spiralFocus, "Uốn lượn bố cục theo xoắn ốc Fibonacci")
     }
     
-    // MARK: - Auto-Zoom Computation
-    private func computeOptimalZoom(subjectRect: CGRect, currentZoom: CGFloat) -> CGFloat {
+    // MARK: - Auto-Zoom Computation (Tối ưu độ phóng đại quang học mượt mà)
+    private func computeOptimalZoom(subjectRect: CGRect, currentZoom: CGFloat, isGroup: Bool = false) -> CGFloat {
+        if isGroup {
+            // Chụp nhóm: Giữ góc rộng 1.0x - 1.2x để không ai bị mất góc
+            return 1.0
+        }
         let subjectArea = subjectRect.width * subjectRect.height
         
-        if subjectArea < 0.04 {
-            // Subject is very far
-            return min(5.0, max(currentZoom, 3.0))
-        } else if subjectArea < 0.12 {
-            // Medium shot, recommend 2x or 2.3x
+        if subjectArea < 0.025 {
+            // Chủ thể ở xa: Zoom 2.5x nhẹ nhàng, tự nhiên
+            return 2.5
+        } else if subjectArea < 0.08 {
+            // Cự ly trung bình: Zoom 2.0x chân dung chuẩn
             return 2.0
-        } else if subjectArea > 0.50 {
-            // Subject too close, zoom out
+        } else if subjectArea < 0.18 {
+            // Cự ly cận cảnh vừa: Zoom 1.5x
+            return 1.5
+        } else if subjectArea > 0.45 {
+            // Chủ thể quá gần: Zoom 1.0x góc rộng
             return 1.0
         } else {
             return currentZoom
