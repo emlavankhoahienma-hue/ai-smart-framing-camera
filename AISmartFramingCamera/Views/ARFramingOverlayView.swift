@@ -646,6 +646,18 @@ struct ZoomRevealOverlay: View {
 
             if isVisible {
                 ZStack {
+                    // Lớp mờ (Blur) vùng ngoài khung ngắm điện ảnh
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .mask(
+                            Path { path in
+                                path.addRect(CGRect(origin: .zero, size: geo.size))
+                                path.addRoundedRect(in: pixelRect, cornerSize: CGSize(width: 16, height: 16))
+                            }
+                            .fill(style: FillStyle(eoFill: true))
+                        )
+                        .ignoresSafeArea()
+
                     // Viền khung ngắm vàng mỏng nhẹ 1.8px (giữ màn hình sáng tự nhiên)
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(
