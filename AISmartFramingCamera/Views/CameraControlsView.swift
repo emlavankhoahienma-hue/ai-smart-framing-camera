@@ -359,30 +359,154 @@ struct MainCaptureButton: View {
         }
     }
 
-    // MARK: - Video Record Button
+    // MARK: - Video Record Button (Touch to Record / Hold-Drag-Left to AI Video Director)
     private var videoRecordButton: some View {
-        Button(action: {
-            viewModel.toggleVideoRecording()
-        }) {
+        ZStack {
+            // 1. Rãnh trượt kết nối (Track Slot) - Chỉ hiện khi kéo sang trái
+            if isDraggingToAI {
+                Capsule()
+                    .fill(Color.black.opacity(0.55))
+                    .frame(width: 72, height: 44)
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.20), lineWidth: 1)
+                    )
+                    .offset(x: -28)
+                    .opacity(trackOpacity)
+                    .animation(.easeOut(duration: 0.15), value: dragOffset)
+            }
+
+            // 2. AI Video Director Left Dock Target (Chỉ hiện khi kéo sang trái)
+            aiVideoDirectorDockTarget
+
+            // 3. Nút quay trung tâm với viền cố định và lõi đỏ trượt mượt mà
+            centralVideoRecordView
+        }
+        .frame(width: 156, height: 74)
+    }
+
+    // MARK: - AI Video Director Left Dock Target (Tọa độ -56pt)
+    private var aiVideoDirectorDockTarget: some View {
+        HStack {
             ZStack {
                 Circle()
-                    .stroke(Color.white, lineWidth: 3.5)
-                    .frame(width: 76, height: 76)
+                    .fill(Color.black.opacity(0.75))
+                    .frame(width: 44, height: 44)
 
-                if viewModel.isRecordingVideo {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.red)
-                        .frame(width: 28, height: 28)
-                } else {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 62, height: 62)
-                }
+                Circle()
+                    .stroke(hasReachedDock ? Color.yellow : (viewModel.isAIVideoDirectorActive ? Color.yellow.opacity(0.85) : Color.white.opacity(0.35)), lineWidth: hasReachedDock ? 2.5 : 1.2)
+                    .frame(width: 44, height: 44)
+
+                Image(systemName: "sparkles.tv")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundColor(hasReachedDock ? Color.yellow : (viewModel.isAIVideoDirectorActive ? Color.yellow : Color.white.opacity(0.75)))
+                    .scaleEffect(hasReachedDock ? 1.22 : 1.0)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
             }
-            .contentShape(Circle())
+            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
+            .offset(x: -56)
+            .scaleEffect(dockScale)
+            .opacity(dockOpacity)
+            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
+
+            Spacer()
         }
-        .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel(viewModel.isRecordingVideo ? "Dừng quay video" : "Bắt đầu quay video")
+    }
+
+    // MARK: - Central Video Record View
+    private var centralVideoRecordView: some View {
+        ZStack {
+            // Viền ngoài cố định tại tâm
+            Circle()
+                .stroke(viewModel.isAIVideoDirectorActive ? Color.yellow : Color.white, lineWidth: 3.5)
+                .frame(width: 76, height: 76)
+
+            // Lõi nút quay (đỏ): thu nhỏ lại hình vuông bo góc khi quay, hoặc trượt sang trái khi kéo
+            if viewModel.isRecordingVideo {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.red)
+                    .frame(width: 28, height: 28)
+                    .offset(x: dragOffset)
+            } else {
+                Circle()
+                    .fill(Color.red)
+                    .frame(
+                        width: isTouchingShutter ? 54 : 62,
+                        height: isTouchingShutter ? 54 : 62
+                    )
+                    .offset(x: dragOffset)
+                    .scaleEffect(x: shutterStretchX, y: shutterStretchY)
+            }
+
+            if viewModel.isAIVideoDirectorAnalyzing {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    .offset(x: dragOffset)
+            }
+        }
+        .contentShape(Circle())
+        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isTouchingShutter)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let transX = value.translation.width
+                    isTouchingShutter = true
+
+                    if transX < -6 {
+                        isDraggingToAI = true
+                        if transX < -56 {
+                            dragOffset = -56 + (transX + 56) * 0.25
+                        } else {
+                            dragOffset = transX
+                        }
+
+                        let reached = dragOffset <= -42
+                        if reached && !hasReachedDock {
+                            hasReachedDock = true
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.prepare()
+                            generator.impactOccurred()
+                        } else if !reached && hasReachedDock {
+                            hasReachedDock = false
+                        }
+                    } else if transX > 0 {
+                        isDraggingToAI = false
+                        hasReachedDock = false
+                        dragOffset = min(15, transX * 0.2)
+                    } else {
+                        dragOffset = 0
+                        isDraggingToAI = false
+                        hasReachedDock = false
+                    }
+                }
+                .onEnded { value in
+                    let transX = value.translation.width
+                    let transY = value.translation.height
+                    let didReachDock = hasReachedDock || dragOffset <= -42
+
+                    if didReachDock {
+                        let generator = UIImpactFeedbackGenerator(style: .heavy)
+                        generator.prepare()
+                        generator.impactOccurred()
+
+                        if viewModel.isAIVideoDirectorActive {
+                            viewModel.dismissAIVideoDirector()
+                        } else {
+                            viewModel.requestAIVideoCinematographyGuidance()
+                        }
+                    } else if !isDraggingToAI && abs(transX) < 14 && abs(transY) < 14 {
+                        viewModel.toggleVideoRecording()
+                    }
+
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
+                        dragOffset = 0
+                        isDraggingToAI = false
+                        hasReachedDock = false
+                        isTouchingShutter = false
+                    }
+                }
+        )
+        .accessibilityLabel("Nút quay video: Chạm để quay, giữ kéo sang trái để AI Đạo diễn gợi ý cách quay")
     }
 }
 

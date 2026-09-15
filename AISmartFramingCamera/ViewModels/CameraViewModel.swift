@@ -235,8 +235,20 @@ public final class CameraViewModel: ObservableObject {
     @Published public var geminiLatencyMs: Int = 0
     @Published public var aiSuggestedZoom: CGFloat? = nil
 
+    // MARK: - AI Video Cinematography Director State (Cloud OpenRouter)
+    @Published public var isAIVideoDirectorActive: Bool = false
+    @Published public var isAIVideoDirectorAnalyzing: Bool = false
+    @Published public var activeVideoGuidance: AIVideoDirectorGuidance? = nil
+    @Published public var currentActiveWaypointIndex: Int = 0
+    @Published public var videoDirectorError: String? = nil
+    @Published public var hasCompletedAllWaypoints: Bool = false
+    @Published public var waypointElapsedSeconds: Double = 0.0
+
     // MARK: - Chỉ Báo Nháy Màu AI (Local: Đỏ, Cloud: Vàng)
     public var activeAIIndicatorType: ActiveAIIndicatorType {
+        if isAIVideoDirectorActive {
+            return .cloud
+        }
         guard aiSessionState != .idle else { return .none }
         if let source = activeEngineSource {
             return source.isCloud ? .cloud : .local
@@ -1246,9 +1258,112 @@ public final class CameraViewModel: ObservableObject {
                 let minutes = (totalSec % 3600) / 60
                 let seconds = totalSec % 60
                 self.videoRecordingTimeString = String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+
+                // Khi AI Video Director đang hoạt động và đang quay, tự động đếm nhịp và chuyển tâm mượt mà
+                if self.isAIVideoDirectorActive, let guidance = self.activeVideoGuidance, !self.hasCompletedAllWaypoints {
+                    self.waypointElapsedSeconds += 0.25
+                    if self.currentActiveWaypointIndex < guidance.waypoints.count {
+                        let activeWP = guidance.waypoints[self.currentActiveWaypointIndex]
+                        if self.waypointElapsedSeconds >= activeWP.recommendedDuration {
+                            self.advanceWaypoint()
+                        }
+                    }
+                }
             }
             cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
             isRecordingVideo = true
+        }
+    }
+
+    // MARK: - AI Video Cinematography Director Actions
+
+    public func requestAIVideoCinematographyGuidance() {
+        haptics.triggerSelectionChange()
+        isAIVideoDirectorActive = true
+        isAIVideoDirectorAnalyzing = true
+        activeVideoGuidance = nil
+        currentActiveWaypointIndex = 0
+        videoDirectorError = nil
+        hasCompletedAllWaypoints = false
+        waypointElapsedSeconds = 0.0
+
+        visionEngine.captureImmediateFrame { [weak self] cgImg in
+            guard let self = self else { return }
+            guard let image = cgImg else {
+                let fallback = GeminiService.generateLocalVideoGuidance(sceneContext: self.detectedScene)
+                DispatchQueue.main.async {
+                    self.applyVideoGuidance(fallback)
+                }
+                return
+            }
+
+            self.geminiService.analyzeVideoCinematography(image: image, sceneContext: self.detectedScene) { [weak self] result in
+                guard let self = self else { return }
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let guidance):
+                        self.applyVideoGuidance(guidance)
+                    case .failure(let err):
+                        self.videoDirectorError = err.localizedDescription
+                        let fallback = GeminiService.generateLocalVideoGuidance(sceneContext: self.detectedScene)
+                        self.applyVideoGuidance(fallback)
+                    }
+                }
+            }
+        }
+    }
+
+    private func applyVideoGuidance(_ guidance: AIVideoDirectorGuidance) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+            self.activeVideoGuidance = guidance
+            self.isAIVideoDirectorAnalyzing = false
+            self.currentActiveWaypointIndex = 0
+            self.hasCompletedAllWaypoints = false
+            self.waypointElapsedSeconds = 0.0
+        }
+        self.haptics.triggerMagneticSnap()
+
+        if self.isAutoZoomEnabled && guidance.suggestedZoom > 1.05 && abs(guidance.suggestedZoom - self.currentZoom) > 0.1 {
+            self.cameraService.smoothZoomFactor(to: guidance.suggestedZoom, rate: 1.5)
+        }
+    }
+
+    public func selectWaypoint(index: Int) {
+        guard let guidance = activeVideoGuidance, index >= 0, index < guidance.waypoints.count else { return }
+        haptics.triggerSelectionChange()
+        withAnimation(.easeInOut(duration: 0.25)) {
+            currentActiveWaypointIndex = index
+            waypointElapsedSeconds = 0.0
+        }
+    }
+
+    public func advanceWaypoint() {
+        guard let guidance = activeVideoGuidance else { return }
+        let nextIndex = currentActiveWaypointIndex + 1
+        if nextIndex < guidance.waypoints.count {
+            haptics.triggerMagneticSnap()
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                currentActiveWaypointIndex = nextIndex
+                waypointElapsedSeconds = 0.0
+            }
+        } else {
+            haptics.triggerShutterClick()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                hasCompletedAllWaypoints = true
+            }
+        }
+    }
+
+    public func dismissAIVideoDirector() {
+        haptics.triggerLight()
+        withAnimation(.easeInOut(duration: 0.25)) {
+            isAIVideoDirectorActive = false
+            isAIVideoDirectorAnalyzing = false
+            activeVideoGuidance = nil
+            currentActiveWaypointIndex = 0
+            hasCompletedAllWaypoints = false
+            videoDirectorError = nil
+            waypointElapsedSeconds = 0.0
         }
     }
 

@@ -32,6 +32,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     // Gemini Frame Capture
     public var captureNextFrameForGemini: Bool = false
     public var capturedGeminiFrame: CGImage? = nil
+    public var onFrameCapturedForAI: ((CGImage) -> Void)?
     
     // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID + Color Histogram + KLT Point Cluster)
     public private(set) var isTrackingTarget: Bool = false
@@ -714,6 +715,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
             if let cgImg = self.sharedCIContext.createCGImage(ciImg, from: ciImg.extent) {
                 DispatchQueue.main.async { [weak self] in
                     self?.capturedGeminiFrame = cgImg
+                    self?.onFrameCapturedForAI?(cgImg)
+                    self?.onFrameCapturedForAI = nil
                 }
             }
         }
@@ -1018,5 +1021,20 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let rBRatio = avgR > 0 ? avgB / avgR : 1.0
         let estimatedK = max(2700, min(9000, 3500 + rBRatio * 3000))
         return (luma, estimatedK)
+    }
+
+    /// Chụp tức thì khung hình hiện tại cho AI Cloud phân tích
+    public func captureImmediateFrame(completion: @escaping (CGImage?) -> Void) {
+        if let lastBuf = self.kltPreviousBuffer {
+            let ciImg = CIImage(cvPixelBuffer: lastBuf)
+            if let cgImg = self.sharedCIContext.createCGImage(ciImg, from: ciImg.extent) {
+                completion(cgImg)
+                return
+            }
+        }
+        self.onFrameCapturedForAI = { img in
+            completion(img)
+        }
+        self.captureNextFrameForGemini = true
     }
 }

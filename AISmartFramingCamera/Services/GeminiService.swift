@@ -646,6 +646,201 @@ public final class GeminiService {
         }
     }
 
+    // MARK: - AI Video Cinematography Director (OpenRouter Cloud)
+
+    public func analyzeVideoCinematography(
+        image: CGImage,
+        sceneContext: DetectedSceneType? = nil,
+        completion: @escaping (Result<AIVideoDirectorGuidance, GeminiError>) -> Void
+    ) {
+        let key = apiKey
+        guard !key.isEmpty else {
+            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            completion(.success(fallback))
+            return
+        }
+
+        guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1280) else {
+            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            completion(.success(fallback))
+            return
+        }
+
+        let base64Image = jpegData.base64EncodedString()
+        let prompt = buildVideoCinematographyPrompt(sceneContext: sceneContext)
+
+        var chain = AIVisionModel.fallbackChain(for: key)
+        if !customModelName.isEmpty {
+            chain.insert(customModelName, at: 0)
+        } else if selectedModel != .autoStrongest {
+            chain.removeAll(where: { $0 == selectedModel.technicalModelID })
+            chain.insert(selectedModel.technicalModelID, at: 0)
+        }
+
+        let startTime = CACurrentMediaTime()
+        tryVideoCinematographyChain(
+            chain: chain,
+            index: 0,
+            base64Image: base64Image,
+            prompt: prompt,
+            key: key,
+            startTime: startTime,
+            sceneContext: sceneContext,
+            completion: completion
+        )
+    }
+
+    private func tryVideoCinematographyChain(
+        chain: [String],
+        index: Int,
+        base64Image: String,
+        prompt: String,
+        key: String,
+        startTime: Double,
+        sceneContext: DetectedSceneType?,
+        completion: @escaping (Result<AIVideoDirectorGuidance, GeminiError>) -> Void
+    ) {
+        guard index < chain.count else {
+            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            completion(.success(fallback))
+            return
+        }
+
+        let currentModelID = chain[index]
+        guard let url = buildURL(for: currentModelID, key: key) else {
+            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            completion(.success(fallback))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
+        request.setValue("AlignAI Video Director", forHTTPHeaderField: "X-Title")
+
+        let requestBody: [String: Any] = [
+            "model": currentModelID,
+            "messages": [
+                [
+                    "role": "user",
+                    "content": [
+                        [
+                            "type": "image_url",
+                            "image_url": [
+                                "url": "data:image/jpeg;base64,\(base64Image)"
+                            ]
+                        ],
+                        [
+                            "type": "text",
+                            "text": prompt
+                        ]
+                    ]
+                ]
+            ],
+            "temperature": 0.20,
+            "top_p": 0.95,
+            "max_tokens": 800
+        ]
+
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            let fallback = Self.generateLocalVideoGuidance(sceneContext: sceneContext)
+            completion(.success(fallback))
+            return
+        }
+        request.httpBody = bodyData
+
+        urlSession.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+
+            if error != nil {
+                self.tryVideoCinematographyChain(
+                    chain: chain,
+                    index: index + 1,
+                    base64Image: base64Image,
+                    prompt: prompt,
+                    key: key,
+                    startTime: startTime,
+                    sceneContext: sceneContext,
+                    completion: completion
+                )
+                return
+            }
+
+            guard let data = data, let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                self.tryVideoCinematographyChain(
+                    chain: chain,
+                    index: index + 1,
+                    base64Image: base64Image,
+                    prompt: prompt,
+                    key: key,
+                    startTime: startTime,
+                    sceneContext: sceneContext,
+                    completion: completion
+                )
+                return
+            }
+
+            var responseText: String?
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let firstChoice = choices.first,
+               let message = firstChoice["message"] as? [String: Any],
+               let text = message["content"] as? String {
+                responseText = text
+            }
+
+            guard let text = responseText else {
+                self.tryVideoCinematographyChain(
+                    chain: chain,
+                    index: index + 1,
+                    base64Image: base64Image,
+                    prompt: prompt,
+                    key: key,
+                    startTime: startTime,
+                    sceneContext: sceneContext,
+                    completion: completion
+                )
+                return
+            }
+
+            var cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanText.hasPrefix("```json") {
+                cleanText = cleanText.replacingOccurrences(of: "```json", with: "")
+            } else if cleanText.hasPrefix("```") {
+                cleanText = cleanText.replacingOccurrences(of: "```", with: "")
+            }
+            if cleanText.hasSuffix("```") {
+                cleanText = String(cleanText.dropLast(3))
+            }
+            cleanText = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let firstBrace = cleanText.firstIndex(of: "{"),
+               let lastBrace = cleanText.lastIndex(of: "}") {
+                cleanText = String(cleanText[firstBrace...lastBrace])
+            }
+
+            guard let jsonData = cleanText.data(using: .utf8),
+                  let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                self.tryVideoCinematographyChain(
+                    chain: chain,
+                    index: index + 1,
+                    base64Image: base64Image,
+                    prompt: prompt,
+                    key: key,
+                    startTime: startTime,
+                    sceneContext: sceneContext,
+                    completion: completion
+                )
+                return
+            }
+
+            let guidance = Self.parseVideoDirectorResponse(parsed, modelUsed: currentModelID)
+            DispatchQueue.main.async { completion(.success(guidance)) }
+        }.resume()
+    }
+
     private func tryModelChain(
         chain: [String],
         index: Int,
@@ -1030,6 +1225,165 @@ public final class GeminiService {
         case "classic": return .classic
         case "cinematic", "cinematic_film": return .cinematic
         default: return .softwarm
+        }
+    }
+
+    // MARK: - Video Cinematography Director Helpers
+
+    private func buildVideoCinematographyPrompt(sceneContext: DetectedSceneType? = nil) -> String {
+        var contextInfo = ""
+        if let scene = sceneContext {
+            contextInfo = "Bối cảnh khung cảnh nhận diện: \(scene.localizedName)"
+        }
+
+        return """
+        Bạn là Đạo diễn Hình ảnh Quay phim Điện ảnh (Cinematography Director) chuyên nghiệp từng đạt giải Oscar.
+        Hãy phân tích khung hình video trực tiếp này để gợi ý:
+        1. Kiểu cú máy điện ảnh (shot_style, ví dụ: Lia ngang Cinematic Pan, Quỹ đạo Orbit 180°, Đẩy máy Dolly Push-In, Nâng máy Tilt Up).
+        2. Hướng di chuyển máy chi tiết (movement_direction: hướng dẫn người dùng lia hoặc di chuyển máy qua các tâm đánh dấu).
+        3. Nhịp độ quay khuyến nghị (suggested_pacing_seconds: 4.0 đến 8.0 giây).
+        4. Mức zoom đề xuất (suggested_zoom: 1.0x đến 2.0x).
+        5. Lời khuyên của đạo diễn (director_tip: cách cầm máy, khử rung, giữ nhịp thở).
+        6. Danh sách 2 đến 4 tâm đánh dấu (waypoints) trên màn hình để người dùng lia máy theo thứ tự [1] -> [2] -> [3].
+        \(contextInfo)
+
+        Tọa độ x, y của mỗi waypoint nằm trong khoảng từ 0.10 đến 0.90 (tọa độ chuẩn hóa khung ngắm).
+        Ví dụ: nếu là cú lia ngang từ trái sang phải:
+        - Tâm 1: x: 0.22, y: 0.50 (bắt đầu)
+        - Tâm 2: x: 0.50, y: 0.45 (ở giữa)
+        - Tâm 3: x: 0.78, y: 0.50 (kết thúc)
+
+        Trả về DUY NHẤT một chuỗi JSON hợp lệ (không chứa markdown fences ```):
+        {
+          "shot_style": "Lia máy ngang bao quát (Cinematic Pan)",
+          "movement_direction": "Lia máy đều tay từ trái sang phải, chuyển tiếp mượt mà qua 3 tâm đánh dấu",
+          "suggested_pacing_seconds": 6.0,
+          "suggested_zoom": 1.2,
+          "director_tip": "Tựa khuỷu tay vào hông để chống rung, xoay thân người đều nhịp",
+          "waypoints": [
+            {
+              "id": 1,
+              "x": 0.22,
+              "y": 0.52,
+              "label": "Tâm 1: Bắt đầu bối cảnh",
+              "action_tip": "Khóa nét chủ thể 1.5s",
+              "duration": 2.0
+            },
+            {
+              "id": 2,
+              "x": 0.50,
+              "y": 0.46,
+              "label": "Tâm 2: Trọng tâm khung hình",
+              "action_tip": "Lướt ngang qua tâm mượt mà",
+              "duration": 2.0
+            },
+            {
+              "id": 3,
+              "x": 0.78,
+              "y": 0.50,
+              "label": "Tâm 3: Điểm kết thúc",
+              "action_tip": "Dừng máy êm và giữ khung hình",
+              "duration": 2.0
+            }
+          ]
+        }
+        """
+    }
+
+    private static func parseVideoDirectorResponse(_ json: [String: Any], modelUsed: String) -> AIVideoDirectorGuidance {
+        let shotStyle = (json["shot_style"] as? String) ?? "Lia máy điện ảnh (Cinematic Move)"
+        let direction = (json["movement_direction"] as? String) ?? "Lia máy đều tay qua các tâm đánh dấu"
+        let pacing = parseCGFloat(json["suggested_pacing_seconds"], defaultVal: 5.0)
+        let zoom = parseCGFloat(json["suggested_zoom"], defaultVal: 1.0)
+        let tip = (json["director_tip"] as? String) ?? "Giữ thân máy ổn định, xoay đều eo"
+
+        var waypoints: [CinematicWaypoint] = []
+        if let rawWaypoints = json["waypoints"] as? [[String: Any]], !rawWaypoints.isEmpty {
+            for (idx, item) in rawWaypoints.enumerated() {
+                let id = (item["id"] as? Int) ?? (idx + 1)
+                let x = parseCGFloat(item["x"], defaultVal: 0.5)
+                let y = parseCGFloat(item["y"], defaultVal: 0.5)
+                let label = (item["label"] as? String) ?? "Tâm \(id)"
+                let actionTip = (item["action_tip"] as? String) ?? "Lia máy qua tâm"
+                let duration = Double(parseCGFloat(item["duration"], defaultVal: 2.0))
+                let clampedX = max(0.08, min(0.92, x))
+                let clampedY = max(0.08, min(0.92, y))
+                waypoints.append(
+                    CinematicWaypoint(
+                        id: id,
+                        point: CGPoint(x: clampedX, y: clampedY),
+                        label: label,
+                        actionTip: actionTip,
+                        recommendedDuration: duration
+                    )
+                )
+            }
+        }
+
+        if waypoints.isEmpty {
+            waypoints = [
+                CinematicWaypoint(id: 1, point: CGPoint(x: 0.25, y: 0.50), label: "Tâm 1: Bắt đầu", actionTip: "Khóa nét chủ thể"),
+                CinematicWaypoint(id: 2, point: CGPoint(x: 0.50, y: 0.45), label: "Tâm 2: Trọng tâm", actionTip: "Lướt đều tay"),
+                CinematicWaypoint(id: 3, point: CGPoint(x: 0.75, y: 0.50), label: "Tâm 3: Kết thúc", actionTip: "Dừng máy êm")
+            ]
+        }
+
+        return AIVideoDirectorGuidance(
+            shotStyleTitle: shotStyle,
+            movementDirectionDescription: direction,
+            suggestedPacingSeconds: Double(pacing),
+            waypoints: waypoints,
+            suggestedZoom: max(1.0, min(3.0, zoom)),
+            directorTip: tip,
+            modelUsed: modelUsed
+        )
+    }
+
+    public static func generateLocalVideoGuidance(sceneContext: DetectedSceneType? = nil) -> AIVideoDirectorGuidance {
+        let scene = sceneContext ?? .general
+        switch scene {
+        case .portrait:
+            return AIVideoDirectorGuidance(
+                shotStyleTitle: "Lia bán nguyệt chân dung (Portrait Orbit)",
+                movementDirectionDescription: "Lia máy nhẹ nhàng quanh nhân vật từ trái sang phải, làm nổi bật thần thái",
+                suggestedPacingSeconds: 5.5,
+                waypoints: [
+                    CinematicWaypoint(id: 1, point: CGPoint(x: 0.32, y: 0.42), label: "Tâm 1: Bắt đầu ở ánh mắt", actionTip: "Khóa nét chân dung 1.5s", recommendedDuration: 1.8),
+                    CinematicWaypoint(id: 2, point: CGPoint(x: 0.50, y: 0.48), label: "Tâm 2: Trọng tâm chân dung", actionTip: "Xoay thân người mượt mà", recommendedDuration: 1.8),
+                    CinematicWaypoint(id: 3, point: CGPoint(x: 0.68, y: 0.52), label: "Tâm 3: Hướng nhìn mở", actionTip: "Dừng máy êm ái", recommendedDuration: 1.9)
+                ],
+                suggestedZoom: 1.2,
+                directorTip: "Khuỷu tay khép sát sườn, bước chân nhẹ nhàng kiểu Ninja walk để không rung",
+                modelUsed: "AI Neural Engine (Offline)"
+            )
+        case .landscape, .nature, .architecture, .sky, .sunset, .water:
+            return AIVideoDirectorGuidance(
+                shotStyleTitle: "Lia toàn cảnh điện ảnh (Cinematic Panorama Pan)",
+                movementDirectionDescription: "Lia máy ngang từ trái sang phải với tốc độ ổn định qua 3 tâm đánh dấu",
+                suggestedPacingSeconds: 6.5,
+                waypoints: [
+                    CinematicWaypoint(id: 1, point: CGPoint(x: 0.20, y: 0.52), label: "Tâm 1: Tiền cảnh khoáng đạt", actionTip: "Bắt đầu bối cảnh 1.5s", recommendedDuration: 2.0),
+                    CinematicWaypoint(id: 2, point: CGPoint(x: 0.50, y: 0.44), label: "Tâm 2: Đường chân trời", actionTip: "Lia đều tay qua tâm", recommendedDuration: 2.2),
+                    CinematicWaypoint(id: 3, point: CGPoint(x: 0.80, y: 0.50), label: "Tâm 3: Hậu cảnh hùng vĩ", actionTip: "Ổn định máy 2.0s", recommendedDuration: 2.3)
+                ],
+                suggestedZoom: 1.0,
+                directorTip: "Xoay toàn bộ phần hông thay vì chỉ xoay cổ tay để có cú lia mượt như dolly ray",
+                modelUsed: "AI Neural Engine (Offline)"
+            )
+        default:
+            return AIVideoDirectorGuidance(
+                shotStyleTitle: "Lia máy ngang bao quát (Cinematic Pan)",
+                movementDirectionDescription: "Lia máy mượt mà từ trái sang phải qua các tâm đánh dấu, bắt trọn không gian",
+                suggestedPacingSeconds: 6.0,
+                waypoints: [
+                    CinematicWaypoint(id: 1, point: CGPoint(x: 0.24, y: 0.52), label: "Tâm 1: Mở đầu góc quay", actionTip: "Khóa chủ thể 1.5s", recommendedDuration: 2.0),
+                    CinematicWaypoint(id: 2, point: CGPoint(x: 0.50, y: 0.46), label: "Tâm 2: Trọng tâm khung hình", actionTip: "Lướt ngang qua tâm mượt mà", recommendedDuration: 2.0),
+                    CinematicWaypoint(id: 3, point: CGPoint(x: 0.76, y: 0.50), label: "Tâm 3: Điểm kết thúc", actionTip: "Dừng máy êm và giữ khung", recommendedDuration: 2.0)
+                ],
+                suggestedZoom: 1.1,
+                directorTip: "Tựa khuỷu tay vào hông để chống rung, giữ nhịp thở đều khi lia máy",
+                modelUsed: "AI Neural Engine (Offline)"
+            )
         }
     }
 }

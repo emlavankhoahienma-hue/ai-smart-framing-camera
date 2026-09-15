@@ -256,6 +256,51 @@ public enum ActiveAIIndicatorType: Equatable {
     case cloud
 }
 
+// MARK: - AI Video Cinematography Director Models
+public struct CinematicWaypoint: Identifiable, Equatable {
+    public let id: Int                   // 1, 2, 3...
+    public var point: CGPoint            // Normalized coordinates (0.05...0.95) in UI space
+    public var label: String             // e.g. "1. Bắt đầu: Khóa chủ thể"
+    public var actionTip: String         // e.g. "Giữ máy ổn định 1.5s"
+    public var recommendedDuration: Double // Thời gian lia khuyến nghị (giây)
+
+    public init(id: Int, point: CGPoint, label: String, actionTip: String, recommendedDuration: Double = 2.0) {
+        self.id = id
+        self.point = point
+        self.label = label
+        self.actionTip = actionTip
+        self.recommendedDuration = recommendedDuration
+    }
+}
+
+public struct AIVideoDirectorGuidance: Equatable {
+    public let shotStyleTitle: String               // e.g. "Lia ngang bắt trọn bối cảnh (Cinematic Pan)"
+    public let movementDirectionDescription: String // e.g. "Lia máy chậm từ trái sang phải, chuyển tiếp mượt mà qua các tâm"
+    public let suggestedPacingSeconds: Double       // e.g. 5.0s
+    public let waypoints: [CinematicWaypoint]        // Các tâm đánh dấu trên màn hình (2 - 4 điểm)
+    public let suggestedZoom: CGFloat               // 1.0x - 2.0x
+    public let directorTip: String                  // Lời khuyên của đạo diễn
+    public let modelUsed: String                    // Model AI OpenRouter đã phân tích
+
+    public init(
+        shotStyleTitle: String,
+        movementDirectionDescription: String,
+        suggestedPacingSeconds: Double,
+        waypoints: [CinematicWaypoint],
+        suggestedZoom: CGFloat = 1.0,
+        directorTip: String,
+        modelUsed: String = "OpenRouter AI"
+    ) {
+        self.shotStyleTitle = shotStyleTitle
+        self.movementDirectionDescription = movementDirectionDescription
+        self.suggestedPacingSeconds = suggestedPacingSeconds
+        self.waypoints = waypoints
+        self.suggestedZoom = suggestedZoom
+        self.directorTip = directorTip
+        self.modelUsed = modelUsed
+    }
+}
+
 
 // MARK: - Smart Autofocus Target Type
 public enum SmartFocusType: Equatable {
