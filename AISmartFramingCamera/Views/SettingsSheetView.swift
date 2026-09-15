@@ -254,6 +254,141 @@ public struct SettingsSheetView: View {
     }
 }
 
+// MARK: - Sub-component: Film Preset Pill
+private struct FilmPresetPill: View {
+    let preset: FilmPreset
+    let isSelected: Bool
+    let onSelect: () -> Void
+    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 6) {
+                if preset.isAIFullAuto {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 11, weight: .bold))
+                } else if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .heavy))
+                }
+
+                Text(preset.displayName)
+                    .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+            }
+            .foregroundColor(isSelected ? .black : Color.white.opacity(0.9))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(isSelected ? amberGold : Color.white.opacity(0.08))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isSelected ? amberGold : Color.white.opacity(0.12), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Sub-component: Focus Peaking Color Button
+private struct PeakingColorCircleButton: View {
+    let color: FocusPeakingColor
+    let isPicked: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            ZStack {
+                Circle()
+                    .fill(color.swiftUIColor)
+                    .frame(width: 28, height: 28)
+
+                if isPicked {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(color == .white || color == .yellow ? .black : .white)
+                }
+            }
+            .overlay(
+                Circle()
+                    .stroke(isPicked ? Color.white : Color.clear, lineWidth: 2)
+                    .padding(-2)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Sub-component: Composition Rule Card
+private struct CompositionRuleCard: View {
+    let rule: CompositionRule
+    let isSelected: Bool
+    let onSelect: () -> Void
+    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: rule.iconName)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.65))
+
+                Text(rule.displayNameVietnamese)
+                    .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.80))
+                    .lineLimit(1)
+
+                Spacer()
+
+                if isSelected {
+                    Circle()
+                        .fill(amberGold)
+                        .frame(width: 6, height: 6)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? amberGold.opacity(0.14) : Color(red: 0.05, green: 0.05, blue: 0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Sub-component: Sensitivity Pill
+private struct SensitivityPill: View {
+    let preset: TrackingSensitivityPreset
+    let isPicked: Bool
+    let onSelect: () -> Void
+    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+
+    var body: some View {
+        Button(action: onSelect) {
+            Text(preset.rawValue)
+                .font(.system(size: 12, weight: isPicked ? .bold : .medium, design: .rounded))
+                .foregroundColor(isPicked ? .black : Color.white.opacity(0.85))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule()
+                        .fill(isPicked ? amberGold : Color.white.opacity(0.06))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(isPicked ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
 // MARK: - 1. Photo Capture Settings Section (Pro Camera Luxury)
 struct PhotoCaptureSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
@@ -384,39 +519,14 @@ struct PhotoCaptureSettingsSection: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(FilmPreset.allCases) { preset in
-                            let isSelected = viewModel.selectedFilmPreset == preset
-                            Button(action: {
-                                let generator = UISelectionFeedbackGenerator()
-                                generator.prepare()
-                                generator.selectionChanged()
-                                viewModel.selectPreset(preset)
-                            }) {
-                                HStack(spacing: 6) {
-                                    if preset.isAIFullAuto {
-                                        Image(systemName: "wand.and.stars")
-                                            .font(.system(size: 11, weight: .bold))
-                                    } else if isSelected {
-                                        Image(systemName: "checkmark")
-                                            .font(.system(size: 10, weight: .heavy))
-                                    }
-
-                                    Text(preset.displayName)
-                                        .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                            FilmPresetPill(
+                                preset: preset,
+                                isSelected: viewModel.selectedFilmPreset == preset,
+                                onSelect: {
+                                    UISelectionFeedbackGenerator().selectionChanged()
+                                    viewModel.selectPreset(preset)
                                 }
-                                .foregroundColor(isSelected ? .black : Color.white.opacity(0.9))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(
-                                    Capsule()
-                                        .fill(isSelected ? amberGold : Color.white.opacity(0.08))
-                                )
-                                .overlay(
-                                    Capsule()
-                                        .stroke(isSelected ? amberGold : Color.white.opacity(0.12), lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isSelected)
+                            )
                         }
                     }
                     .padding(.vertical, 2)
@@ -497,30 +607,14 @@ struct PhotoCaptureSettingsSection: View {
 
             HStack(spacing: 14) {
                 ForEach(FocusPeakingColor.allCases) { color in
-                    let isPicked = viewModel.focusPeakingColor == color
-                    Button(action: {
-                        UISelectionFeedbackGenerator().selectionChanged()
-                        viewModel.focusPeakingColor = color
-                    }) {
-                        ZStack {
-                            Circle()
-                                .fill(color.swiftUIColor)
-                                .frame(width: 28, height: 28)
-                                .shadow(color: color.swiftUIColor.opacity(isPicked ? 0.6 : 0.0), radius: 6)
-
-                            if isPicked {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(color == .white || color == .yellow ? .black : .white)
-                            }
+                    PeakingColorCircleButton(
+                        color: color,
+                        isPicked: viewModel.focusPeakingColor == color,
+                        onSelect: {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            viewModel.focusPeakingColor = color
                         }
-                        .overlay(
-                            Circle()
-                                .stroke(isPicked ? Color.white : Color.clear, lineWidth: 2)
-                                .padding(-2)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                    )
                 }
             }
             .padding(.vertical, 4)
@@ -587,43 +681,16 @@ struct AIFramingSettingsSection: View {
 
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                         ForEach(CompositionRule.allCases) { rule in
-                            let isSelected = viewModel.activeCompositionRule == rule
-                            Button(action: {
-                                UISelectionFeedbackGenerator().selectionChanged()
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                                    viewModel.activeCompositionRule = rule
-                                }
-                            }) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: rule.iconName)
-                                        .font(.system(size: 14, weight: .bold))
-                                        .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.65))
-
-                                    Text(rule.displayNameVietnamese)
-                                        .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
-                                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.80))
-                                        .lineLimit(1)
-
-                                    Spacer()
-
-                                    if isSelected {
-                                        Circle()
-                                            .fill(amberGold)
-                                            .frame(width: 6, height: 6)
+                            CompositionRuleCard(
+                                rule: rule,
+                                isSelected: viewModel.activeCompositionRule == rule,
+                                onSelect: {
+                                    UISelectionFeedbackGenerator().selectionChanged()
+                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                                        viewModel.activeCompositionRule = rule
                                     }
                                 }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(isSelected ? amberGold.opacity(0.14) : Color(red: 0.05, green: 0.05, blue: 0.06))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(PlainButtonStyle())
+                            )
                         }
                     }
                 }
@@ -671,28 +738,16 @@ struct AIFramingSettingsSection: View {
 
                     HStack(spacing: 6) {
                         ForEach(TrackingSensitivityPreset.allCases) { preset in
-                            let isPicked = viewModel.trackingSensitivity == preset
-                            Button(action: {
-                                UISelectionFeedbackGenerator().selectionChanged()
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                                    viewModel.trackingSensitivity = preset
+                            SensitivityPill(
+                                preset: preset,
+                                isPicked: viewModel.trackingSensitivity == preset,
+                                onSelect: {
+                                    UISelectionFeedbackGenerator().selectionChanged()
+                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                                        viewModel.trackingSensitivity = preset
+                                    }
                                 }
-                            }) {
-                                Text(preset.rawValue)
-                                    .font(.system(size: 12, weight: isPicked ? .bold : .medium, design: .rounded))
-                                    .foregroundColor(isPicked ? .black : Color.white.opacity(0.85))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 7)
-                                    .background(
-                                        Capsule()
-                                            .fill(isPicked ? amberGold : Color.white.opacity(0.06))
-                                    )
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(isPicked ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
-                                    )
-                            }
-                            .buttonStyle(PlainButtonStyle())
+                            )
                         }
                     }
                 }
