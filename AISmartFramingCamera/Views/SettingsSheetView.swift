@@ -60,53 +60,60 @@ public struct SettingsSheetView: View {
                 canvasBackground
                     .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    // Sheet Top Grabber Handle
-                    Capsule()
-                        .fill(Color.white.opacity(0.24))
-                        .frame(width: 38, height: 4.5)
-                        .padding(.top, 8)
-                        .padding(.bottom, 6)
+                GeometryReader { geometry in
+                    VStack(spacing: 0) {
+                        // Sheet Top Grabber Handle
+                        Capsule()
+                            .fill(Color.white.opacity(0.24))
+                            .frame(width: 38, height: 4.5)
+                            .padding(.top, 8)
+                            .padding(.bottom, 6)
 
-                    // Fluid Segmented Tab Bar
-                    tabSelectorPills
-                        .padding(.horizontal, 16)
-                        .padding(.top, 6)
-                        .padding(.bottom, 12)
+                        // Fluid Segmented Tab Bar
+                        tabSelectorPills
+                            .padding(.horizontal, 16)
+                            .padding(.top, 6)
+                            .padding(.bottom, 12)
+                            .frame(width: geometry.size.width)
 
-                    // Scrollable Content Area
-                    ScrollView {
-                        VStack(spacing: 16) {
-                            if !searchText.isEmpty {
-                                searchResultsView
-                            } else {
-                                switch selectedTab {
-                                case .capture:
-                                    PhotoCaptureSettingsSection(viewModel: viewModel)
-                                case .ai:
-                                    AIFramingSettingsSection(
-                                        viewModel: viewModel,
-                                        geminiKeyInput: $geminiKeyInput,
-                                        isKeyVisible: $isKeyVisible,
-                                        selectedModel: $selectedModel,
-                                        isTestingKey: $isTestingKey,
-                                        testResult: $testResult,
-                                        showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
-                                        toastMessage: $toastMessage
-                                    )
-                                case .advanced:
-                                    AdvancedSettingsSection(
-                                        viewModel: viewModel,
-                                        showResetSessionConfirmation: $showResetSessionConfirmation,
-                                        showDevConsole: $showDevConsole,
-                                        toastMessage: $toastMessage
-                                    )
+                        // Scrollable Content Area
+                        ScrollView(.vertical, showsIndicators: true) {
+                            VStack(spacing: 16) {
+                                if !searchText.isEmpty {
+                                    searchResultsView
+                                } else {
+                                    switch selectedTab {
+                                    case .capture:
+                                        PhotoCaptureSettingsSection(viewModel: viewModel)
+                                    case .ai:
+                                        AIFramingSettingsSection(
+                                            viewModel: viewModel,
+                                            geminiKeyInput: $geminiKeyInput,
+                                            isKeyVisible: $isKeyVisible,
+                                            selectedModel: $selectedModel,
+                                            isTestingKey: $isTestingKey,
+                                            testResult: $testResult,
+                                            showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
+                                            toastMessage: $toastMessage
+                                        )
+                                    case .advanced:
+                                        AdvancedSettingsSection(
+                                            viewModel: viewModel,
+                                            showResetSessionConfirmation: $showResetSessionConfirmation,
+                                            showDevConsole: $showDevConsole,
+                                            toastMessage: $toastMessage
+                                        )
+                                    }
                                 }
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 36)
+                            .frame(width: geometry.size.width)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 36)
+                        .frame(width: geometry.size.width)
+                        .clipped()
                     }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
                 }
 
                 // Floating Toast Notification
@@ -177,12 +184,13 @@ public struct SettingsSheetView: View {
                         selectedTab = tab
                     }
                 }) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
                         Text(tab.rawValue)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
+                            .font(.system(size: 12.5, weight: isSelected ? .bold : .medium, design: .rounded))
                             .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
                     .foregroundColor(isSelected ? .black : Color.white.opacity(0.85))
                     .frame(maxWidth: .infinity)
@@ -331,35 +339,35 @@ private struct CompositionRuleCard: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Image(systemName: rule.iconName)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.65))
-                    .frame(width: 18)
+                    .frame(width: 16)
 
                 Text(rule.displayNameVietnamese)
-                    .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
                     .foregroundColor(isSelected ? .white : Color.white.opacity(0.80))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .minimumScaleFactor(0.75)
 
                 Spacer(minLength: 2)
 
                 if isSelected {
                     Circle()
                         .fill(amberGold)
-                        .frame(width: 6, height: 6)
+                        .frame(width: 5, height: 5)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 8.5)
             .frame(maxWidth: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 11)
                     .fill(isSelected ? amberGold.opacity(0.14) : Color(red: 0.05, green: 0.05, blue: 0.06))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 11)
                     .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
             )
         }
@@ -684,7 +692,7 @@ struct AIFramingSettingsSection: View {
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.50))
 
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                    LazyVGrid(columns: [GridItem(.flexible(minimum: 80, maximum: .infinity), spacing: 8), GridItem(.flexible(minimum: 80, maximum: .infinity), spacing: 8)], spacing: 8) {
                         ForEach(CompositionRule.allCases) { rule in
                             CompositionRuleCard(
                                 rule: rule,
@@ -807,7 +815,7 @@ struct AIFramingSettingsSection: View {
                     }
                 }
 
-                SettingsPickerRow(title: "Mô hình OpenRouter", icon: "cpu") {
+                SettingsPickerRow(title: "Mô hình AI", icon: "cpu") {
                     Picker("", selection: $selectedModel) {
                         ForEach(AIVisionModel.allCases) { model in
                             Text(model.displayName).tag(model)
@@ -872,10 +880,11 @@ struct AIFramingSettingsSection: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            SecureField("Dán OpenRouter API Key (sk-or-...) tại đây", text: $geminiKeyInput)
+                        HStack(spacing: 8) {
+                            SecureField("Dán API Key (sk-or-...)", text: $geminiKeyInput)
                                 .font(.system(size: 12, design: .monospaced))
                                 .padding(10)
+                                .frame(minWidth: 0, maxWidth: .infinity)
                                 .background(Color.black.opacity(0.45))
                                 .cornerRadius(8)
                                 .overlay(
@@ -1303,6 +1312,7 @@ public struct SettingsSectionCard<Content: View>: View {
                 Text(title)
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(Color.white.opacity(0.50))
+                    .lineLimit(1)
 
                 Spacer()
             }
@@ -1311,6 +1321,7 @@ public struct SettingsSectionCard<Content: View>: View {
             VStack(spacing: 0) {
                 content
             }
+            .frame(maxWidth: .infinity)
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 18)
@@ -1321,6 +1332,7 @@ public struct SettingsSectionCard<Content: View>: View {
                     )
             )
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -1344,21 +1356,24 @@ public struct SettingsToggleRow: View {
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.white)
+                    .lineLimit(1)
 
                 if let sub = subtitle {
                     Text(sub)
                         .font(.system(size: 10.5))
                         .foregroundColor(Color.white.opacity(0.55))
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Toggle("", isOn: $isOn)
                 .labelsHidden()
                 .tint(amberGold)
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -1377,22 +1392,25 @@ public struct SettingsPickerRow<Content: View>: View {
     }
 
     public var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(amberGold)
-                .frame(width: 24)
+                .frame(width: 22)
 
             Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.white)
                 .lineLimit(1)
+                .layoutPriority(1)
 
-            Spacer()
+            Spacer(minLength: 6)
 
             picker
-                .fixedSize(horizontal: true, vertical: false)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
+        .frame(maxWidth: .infinity)
     }
 }
 

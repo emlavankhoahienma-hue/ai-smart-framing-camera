@@ -70,29 +70,29 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .autoStrongest:
-            return "⚡ Tự động (Gemini 3.5 Flash - Khuyên dùng)"
+            return "⚡ Tự động (Gemini 3.5 Flash)"
         case .gemini35Flash:
-            return "🎯 Gemini 3.5 Flash (OpenRouter - Tối ưu nhất)"
+            return "🎯 Gemini 3.5 Flash (Khuyên dùng)"
         case .gemini25Flash:
-            return "✨ Gemini 2.5 Flash (OpenRouter - Tốc độ cao)"
+            return "✨ Gemini 2.5 Flash (Tốc độ cao)"
         case .gemini36Flash:
-            return "⚡ Gemini 3.6 Flash (OpenRouter - Tốc độ cao)"
+            return "⚡ Gemini 3.6 Flash (Tốc độ cao)"
         case .gemini37Flash:
-            return "🚀 Gemini 3.7 Flash (OpenRouter - Mới nhất)"
+            return "🚀 Gemini 3.7 Flash (Mới nhất)"
         case .gemini25Pro:
-            return "💎 Gemini 2.5 Pro (OpenRouter - Phân tích chi tiết)"
+            return "💎 Gemini 2.5 Pro (Chi tiết)"
         case .gemini20Flash:
-            return "🔥 Gemini 2.0 Flash (OpenRouter - Siêu tốc)"
+            return "🔥 Gemini 2.0 Flash (Siêu tốc)"
         case .geminiFlash15:
-            return "🌟 Gemini 1.5 Flash (OpenRouter - Ổn định)"
+            return "🌟 Gemini 1.5 Flash (Ổn định)"
         case .geminiPro15:
-            return "🔮 Gemini 1.5 Pro (OpenRouter - Deep Reasoning)"
+            return "🔮 Gemini 1.5 Pro (Deep Reasoning)"
         case .gpt4oMini:
-            return "🟢 GPT-4o Mini (OpenRouter - OpenAI Vision)"
+            return "🟢 GPT-4o Mini (OpenAI)"
         case .claude35Haiku:
-            return "🟣 Claude 3.5 Haiku (OpenRouter - Tinh tế)"
+            return "🟣 Claude 3.5 Haiku (Anthropic)"
         case .llamaVision:
-            return "🦙 Llama 3.2 Vision (OpenRouter - Open Source)"
+            return "🦙 Llama 3.2 Vision (Meta)"
         }
     }
 
