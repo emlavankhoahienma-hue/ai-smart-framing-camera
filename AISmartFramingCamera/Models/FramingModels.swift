@@ -355,15 +355,15 @@ public enum DetectedSceneType: String, CaseIterable {
     public var recommendedFilter: FilmPreset {
         switch self {
         case .portrait: return .fujiPro400H
-        case .pet: return .vintageWarm
-        case .landscape: return .kodakPortra400
+        case .pet: return .kodakPortra400
+        case .landscape: return .velvia50
         case .sunset: return .sunsetGlow
-        case .architecture: return .cinemaTealOrange
-        case .sky: return .kodakPortra400
+        case .architecture: return .classicChrome
+        case .sky: return .velvia50
         case .water: return .cinemaTealOrange
-        case .foliage: return .fujiPro400H
-        case .night: return .monochromeNoir
-        case .food: return .vintageWarm
+        case .foliage: return .tokyoAiry
+        case .night: return .cinestill800T
+        case .food: return .ektar100
         case .macro: return .fujiPro400H
         case .street: return .streetClassic
         case .general: return .fujiPro400H
@@ -506,15 +506,25 @@ public enum FramingAlignmentState: Equatable {
 }
 
 // MARK: - Film Simulation Presets
-public enum FilmPreset: String, CaseIterable, Identifiable {
+public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
     case standard = "Standard Clean"
     case fujiPro400H = "Fuji Pro 400H"
     case kodakPortra400 = "Kodak Portra 400"
+    case classicChrome = "Classic Chrome"
     case cinemaTealOrange = "Teal & Orange"
+    case velvia50 = "Fuji Velvia 50"
     case sunsetGlow = "Sunset Glow"
+    case tokyoAiry = "Tokyo Clean"
+    case hkCinema90s = "HK Cinema 90s"
+    case cinestill800T = "CineStill 800T"
+    case leicaMonochrom = "Leica Monochrom"
     case monochromeNoir = "Noir High Contrast"
+    case triX400 = "Kodak Tri-X 400"
     case vintageWarm = "Vintage Warm 70s"
     case streetClassic = "Street Classic"
+    case nordicCold = "Nordic Minimal"
+    case ektar100 = "Kodak Ektar 100"
+    case neonCyberpunk = "Cyberpunk Night"
     case aiFullAuto = "AI Full Auto Color"
 
     public var id: String { rawValue }
@@ -522,14 +532,24 @@ public enum FilmPreset: String, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .standard: return "Tự nhiên"
-        case .fujiPro400H: return "Pastel dịu"
-        case .kodakPortra400: return "Ấm áp"
-        case .cinemaTealOrange: return "Điện ảnh"
-        case .sunsetGlow: return "Hoàng hôn"
-        case .monochromeNoir: return "Đen trắng"
-        case .vintageWarm: return "Hoài niệm"
-        case .streetClassic: return "Đường phố"
-        case .aiFullAuto: return "Tự động theo cảnh"
+        case .fujiPro400H: return "Fuji Pastel"
+        case .kodakPortra400: return "Portra Ấm"
+        case .classicChrome: return "Classic Chrome"
+        case .cinemaTealOrange: return "Điện ảnh Teal"
+        case .velvia50: return "Velvia Rực rỡ"
+        case .sunsetGlow: return "Hoàng hôn Vàng"
+        case .tokyoAiry: return "Tokyo Mơ màng"
+        case .hkCinema90s: return "Hồng Kông 90s"
+        case .cinestill800T: return "CineStill Đêm"
+        case .leicaMonochrom: return "Leica Đen trắng"
+        case .monochromeNoir: return "Noir Tương phản"
+        case .triX400: return "Tri-X Phóng sự"
+        case .vintageWarm: return "Hoài niệm 70s"
+        case .streetClassic: return "Đường phố Pro"
+        case .nordicCold: return "Bắc Âu Lạnh"
+        case .ektar100: return "Ektar Sắc nét"
+        case .neonCyberpunk: return "Cyberpunk Đêm"
+        case .aiFullAuto: return "Tự động AI"
         }
     }
 
@@ -537,12 +557,22 @@ public enum FilmPreset: String, CaseIterable, Identifiable {
         switch self {
         case .standard: return "TỰ NHIÊN"
         case .fujiPro400H: return "PASTEL"
-        case .kodakPortra400: return "ẤM ÁP"
-        case .cinemaTealOrange: return "ĐIỆN ẢNH"
+        case .kodakPortra400: return "PORTRA"
+        case .classicChrome: return "CHROME"
+        case .cinemaTealOrange: return "TEAL"
+        case .velvia50: return "VELVIA"
         case .sunsetGlow: return "HOÀNG HÔN"
-        case .monochromeNoir: return "ĐEN TRẮNG"
+        case .tokyoAiry: return "TOKYO"
+        case .hkCinema90s: return "HK 90S"
+        case .cinestill800T: return "CINESTILL"
+        case .leicaMonochrom: return "LEICA BW"
+        case .monochromeNoir: return "NOIR"
+        case .triX400: return "TRI-X"
         case .vintageWarm: return "HOÀI NIỆM"
         case .streetClassic: return "ĐƯỜNG PHỐ"
+        case .nordicCold: return "BẮC ÂU"
+        case .ektar100: return "EKTAR"
+        case .neonCyberpunk: return "CYBER"
         case .aiFullAuto: return "TỰ ĐỘNG"
         }
     }
@@ -550,18 +580,102 @@ public enum FilmPreset: String, CaseIterable, Identifiable {
     public var description: String {
         switch self {
         case .standard: return "Màu thực tế trung thực, dải sáng tối đa"
-        case .fujiPro400H: return "Tone xanh pastel nhẹ, tôn da tươi sáng"
-        case .kodakPortra400: return "Sắc ấm vàng dịu, chuyển màu highlight mượt mà"
-        case .cinemaTealOrange: return "Tương phản điện ảnh Hollywood ấn tượng"
-        case .sunsetGlow: return "Ấm áp rực rỡ, nhấn mạnh sắc hoàng hôn"
-        case .monochromeNoir: return "Đen trắng tương phản cao nghệ thuật"
-        case .vintageWarm: return "Phong cách retro thập niên 70 hoài niệm"
-        case .streetClassic: return "Màu đường phố sắc nét, chiều sâu khối tốt"
-        case .aiFullAuto: return "Tự động cân chỉnh màu sắc và dải sáng theo ngữ cảnh"
+        case .fujiPro400H: return "Tone xanh pastel nhẹ, tôn da tươi sáng trong trẻo"
+        case .kodakPortra400: return "Sắc ấm vàng dịu, chuyển màu highlight và tone da mượt mà"
+        case .classicChrome: return "Màu phim phóng sự tài liệu, độ bão hòa dịu, shadow đằm thắm"
+        case .cinemaTealOrange: return "Tương phản điện ảnh Hollywood, shadow xanh teal đối lập da ấm"
+        case .velvia50: return "Sắc màu rực rỡ bùng nổ, xanh lá và biển sâu thẳm, tương phản cao"
+        case .sunsetGlow: return "Ấm áp rực rỡ, nhấn mạnh ánh sáng ven vàng ruộm khi hoàng hôn"
+        case .tokyoAiry: return "Phong cách Nhật Bản mơ màng, highlight trong trẻo, da mịn màng"
+        case .hkCinema90s: return "Shadow xanh ngọc lục bảo (Wong Kar-wai), ánh đèn vàng ấm hoài niệm"
+        case .cinestill800T: return "Phim điện ảnh đêm, tone lạnh dịu với quầng ấm quanh ánh đèn"
+        case .leicaMonochrom: return "Đen trắng thuần khiết Leica, dải chuyển xám bạc vô cực tinh tế"
+        case .monochromeNoir: return "Đen trắng tương phản cao nghệ thuật, bóng đen sâu kịch tính"
+        case .triX400: return "Đen trắng phóng sự báo chí, hạt phim rõ nét, giàu cảm xúc đời thường"
+        case .vintageWarm: return "Phong cách retro thập niên 70 hoài niệm, fade nhẹ vùng đen"
+        case .streetClassic: return "Màu đường phố sắc nét, micro-contrast cao, chiều sâu khối đanh thép"
+        case .nordicCold: return "Tone lạnh Bắc Âu tối giản, khử bão hòa màu nóng, thanh khiết"
+        case .ektar100: return "Hạt siêu mịn, sắc đỏ và xanh dương rực rỡ sắc sảo, độ nét cao"
+        case .neonCyberpunk: return "Shadow lam tím huyền bí, highlight hồng tím neon viễn tưởng"
+        case .aiFullAuto: return "Tự động phân tích và áp dụng preset tối ưu nhất theo thời gian thực"
+        }
+    }
+
+    public var idealScenario: String {
+        switch self {
+        case .standard: return "Mọi cảnh chụp cần độ chân thực tuyệt đối của cảm biến"
+        case .fujiPro400H: return "Chân dung ban ngày, ngoài trời, cafe, hoa cỏ, trang phục sáng màu"
+        case .kodakPortra400: return "Chân dung nắng chiều, khoảnh khắc gia đình, ấm cúng hoài niệm"
+        case .classicChrome: return "Ảnh tài liệu, phố cổ, kiến trúc cổ điển, đời sống sinh hoạt"
+        case .cinemaTealOrange: return "Du lịch, biển đảo, bầu trời xanh, đô thị hiện đại kịch tính"
+        case .velvia50: return "Phong cảnh núi non hùng vĩ, mây trời, biển xanh ngắt, thiên nhiên hoa lá"
+        case .sunsetGlow: return "Hoàng hôn, bình minh, chiều tà, ngược sáng ven tóc (rim light)"
+        case .tokyoAiry: return "Nàng thơ học đường, thời trang nhẹ nhàng, hoa anh đào, không gian tĩnh lặng"
+        case .hkCinema90s: return "Quán ăn đêm, phố hoa đèn màu, ngõ hẻm retro, chân dung tâm trạng"
+        case .cinestill800T: return "Đêm thành phố, trạm xăng, biển hiệu neon, ánh sáng đèn đường vàng"
+        case .leicaMonochrom: return "Chân dung nghệ thuật có chiều sâu, ảnh đặc tả cảm xúc, chi tiết kiến trúc"
+        case .monochromeNoir: return "Hình khối kiến trúc tương phản gắt, bóng đổ ấn tượng, tối giản"
+        case .triX400: return "Phóng sự đời thường, chuyển động đường phố, khoảnh khắc ngẫu nhiên"
+        case .vintageWarm: return "Đồ vật cổ xưa, kỷ niệm, không gian gỗ ấm cúng, ảnh kỷ yếu retro"
+        case .streetClassic: return "Nhiếp ảnh đường phố snap, con người lao động, nhịp sống đô thị sôi động"
+        case .nordicCold: return "Ngày âm u nhiều mây, mùa đông tuyết, sương mù, nội thất tối giản"
+        case .ektar100: return "Thời trang cao cấp, xe cộ, kiến trúc hiện đại sắc sảo, đồ ăn hấp dẫn"
+        case .neonCyberpunk: return "Đêm mưa ướt phản chiếu ánh đèn, cyberpunk, bar pub ngập ánh sáng neon"
+        case .aiFullAuto: return "Tự động nhận diện bối cảnh và kích hoạt preset tốt nhất"
         }
     }
 
     public var isAIFullAuto: Bool { self == .aiFullAuto }
+
+    /// Danh sách các preset có thể lựa chọn thủ công (loại trừ .aiFullAuto)
+    public static var selectablePresets: [FilmPreset] {
+        return allCases.filter { !$0.isAIFullAuto }
+    }
+
+    /// Chuỗi catalog mô tả đầy đủ để gửi vào Prompt cho AI
+    public static var aiCatalogDescription: String {
+        var catalog = "DANH MỤC 18 BỘ MÀU FILM CÓ SẴN (Hãy chọn chính xác 1 preset ID phù hợp nhất):\n"
+        for p in selectablePresets {
+            catalog += "- \"\(p.rawValue)\": \(p.displayName) — \(p.description). Tối ưu cho: \(p.idealScenario)\n"
+        }
+        return catalog
+    }
+
+    /// Khôi phục an toàn preset từ chuỗi trả về của AI
+    public static func match(from rawInput: String) -> FilmPreset? {
+        let clean = rawInput.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for p in selectablePresets {
+            if clean == p.rawValue.lowercased() || clean.contains(p.rawValue.lowercased()) {
+                return p
+            }
+            if clean == p.displayName.lowercased() || clean.contains(p.displayName.lowercased()) {
+                return p
+            }
+            if clean == p.shortTitle.lowercased() {
+                return p
+            }
+        }
+        // Match theo từ khóa ngữ nghĩa
+        if clean.contains("fuji") && clean.contains("pastel") { return .fujiPro400H }
+        if clean.contains("portra") || clean.contains("am ap") || clean.contains("ấm") { return .kodakPortra400 }
+        if clean.contains("chrome") || clean.contains("tai lieu") || clean.contains("tài liệu") { return .classicChrome }
+        if clean.contains("velvia") || clean.contains("ruc ro") || clean.contains("rực rỡ") { return .velvia50 }
+        if clean.contains("teal") || clean.contains("dien anh") || clean.contains("điện ảnh") { return .cinemaTealOrange }
+        if clean.contains("sunset") || clean.contains("hoang hon") || clean.contains("hoàng hôn") { return .sunsetGlow }
+        if clean.contains("tokyo") || clean.contains("airy") || clean.contains("mo mang") || clean.contains("mơ màng") { return .tokyoAiry }
+        if clean.contains("hk") || clean.contains("hong kong") || clean.contains("wong kar") || clean.contains("vuong gia ve") { return .hkCinema90s }
+        if clean.contains("cinestill") || clean.contains("800t") || clean.contains("tungsten") { return .cinestill800T }
+        if clean.contains("leica") || clean.contains("monochrom") { return .leicaMonochrom }
+        if clean.contains("noir") || clean.contains("tuong phan") || clean.contains("tương phản") { return .monochromeNoir }
+        if clean.contains("trix") || clean.contains("tri-x") || clean.contains("phong su") || clean.contains("phóng sự") { return .triX400 }
+        if clean.contains("vintage") || clean.contains("70s") || clean.contains("hoai niem") || clean.contains("hoài niệm") { return .vintageWarm }
+        if clean.contains("street") || clean.contains("duong pho") || clean.contains("đường phố") { return .streetClassic }
+        if clean.contains("nordic") || clean.contains("bac au") || clean.contains("bắc âu") || clean.contains("lanh") { return .nordicCold }
+        if clean.contains("ektar") || clean.contains("sac net") || clean.contains("sắc nét") { return .ektar100 }
+        if clean.contains("cyber") || clean.contains("neon") || clean.contains("tuong lai") || clean.contains("tương lai") { return .neonCyberpunk }
+        if clean.contains("standard") || clean.contains("tu nhien") || clean.contains("tự nhiên") { return .standard }
+        return nil
+    }
 }
 
 // MARK: - Captured Photo Item

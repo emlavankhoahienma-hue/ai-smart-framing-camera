@@ -15,6 +15,9 @@ public struct CapturedPhotoPreviewView: View {
     @State private var aiErrorMessage: String? = nil
     @State private var aiLatency: Int = 0
     @State private var hasSavedNewEnhancement: Bool = false
+    @State private var selectedPreviewPreset: FilmPreset
+    @State private var currentAIParams: AIColorParameters?
+    @State private var aiRecommendedPreset: FilmPreset? = nil
 
     private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
     private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
@@ -23,6 +26,8 @@ public struct CapturedPhotoPreviewView: View {
         self.item = item
         self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
+        _selectedPreviewPreset = State(initialValue: item.appliedPreset)
+        _currentAIParams = State(initialValue: item.aiColorParameters)
     }
 
     public var body: some View {
@@ -145,7 +150,7 @@ public struct CapturedPhotoPreviewView: View {
                                         .padding(.vertical, 3)
                                         .background(Capsule().fill(Color.yellow.opacity(0.18)))
                                     }
-                                    Text(item.appliedPreset.displayName)
+                                    Text(selectedPreviewPreset.displayName)
                                         .font(.system(size: 14, weight: .semibold))
                                         .foregroundColor(.white)
                                     Text("•").foregroundColor(.white.opacity(0.3))
@@ -175,9 +180,49 @@ public struct CapturedPhotoPreviewView: View {
                         .padding(.horizontal, 20)
                     }
 
-                    // 4. Action Buttons: [Chỉnh màu], [Lưu], [Chia sẻ]
+                    // 4. Horizontal Film Preset Selector (Thử trực quan 18 bộ màu điện ảnh)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(FilmPreset.selectablePresets) { preset in
+                                let isCurrent = selectedPreviewPreset == preset
+                                let isAIChosen = aiRecommendedPreset == preset
+
+                                Button(action: {
+                                    applyPresetToPreview(preset)
+                                }) {
+                                    HStack(spacing: 5) {
+                                        if isAIChosen {
+                                            Image(systemName: "wand.and.stars")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundColor(isCurrent ? .black : champagne)
+                                        } else if isCurrent {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 9, weight: .bold))
+                                        }
+                                        Text(preset.displayName)
+                                            .font(.system(size: 12, weight: isCurrent ? .bold : .medium, design: .rounded))
+                                    }
+                                    .foregroundColor(isCurrent ? .black : .white.opacity(0.85))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(
+                                        Capsule()
+                                            .fill(isCurrent ? champagne : (isAIChosen ? Color.yellow.opacity(0.18) : Color.white.opacity(0.08)))
+                                    )
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(isAIChosen ? champagne : (isCurrent ? champagne : Color.white.opacity(0.12)), lineWidth: isAIChosen ? 1.5 : 1)
+                                    )
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+
+                    // 5. Action Buttons: [Chỉnh màu], [Lưu], [Chia sẻ]
                     HStack(spacing: 12) {
-                        // Nút Chỉnh màu
+                        // Nút Chỉnh màu (AI Studio)
                         Button(action: optimizeWithAIStudio) {
                             HStack(spacing: 6) {
                                 if isOptimizingWithAI {
@@ -188,7 +233,7 @@ public struct CapturedPhotoPreviewView: View {
                                     Image(systemName: "wand.and.stars")
                                         .font(.system(size: 13, weight: .semibold))
                                 }
-                                Text(isOptimizingWithAI ? "Đang chỉnh…" : "Chỉnh màu")
+                                Text(isOptimizingWithAI ? "Đang chọn màu…" : "AI Chỉnh màu")
                                     .font(.system(size: 13, weight: .semibold))
                             }
                             .foregroundColor(.white)
@@ -248,7 +293,27 @@ public struct CapturedPhotoPreviewView: View {
         }
     }
 
-    // MARK: - Post-Capture AI Color Optimization
+    // MARK: - Preset Switcher Action
+    private func applyPresetToPreview(_ preset: FilmPreset) {
+        let generator = UISelectionFeedbackGenerator()
+        generator.prepare()
+        generator.selectionChanged()
+
+        selectedPreviewPreset = preset
+        let original = item.originalImage
+        let params = currentAIParams
+        DispatchQueue.global(qos: .userInitiated).async {
+            let rendered = FilmFilterEngine.shared.applyPresetAndAIParameters(to: original, preset: preset, params: params) ?? original
+            DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    self.currentProcessedImage = rendered
+                    self.splitOffset = 1.0
+                }
+            }
+        }
+    }
+
+    // MARK: - Post-Capture AI Color Optimization (AI Color Director)
 
     private func optimizeWithAIStudio() {
         guard !isOptimizingWithAI else { return }
@@ -258,58 +323,44 @@ public struct CapturedPhotoPreviewView: View {
 
         let metrics = GeminiService.extractColorMetrics(from: item.originalImage)
 
-        guard GeminiService.shared.hasAPIKey else {
-            // Chưa thiết lập API Key -> Tự động dùng AI Cục bộ cao cấp dựa trên cảm biến ảnh
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                self.isOptimizingWithAI = false
-                let localRecipe = GeminiService.generateLocalColorRecipe(from: metrics, sceneType: self.item.sceneType)
-                let localParams = localRecipe.asAIColorParameters
-                if let enhanced = FilmFilterEngine.shared.applyAIColorParameters(to: self.item.originalImage, params: localParams) {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        self.currentProcessedImage = enhanced
-                        self.splitOffset = 1.0
-                    }
-                    self.aiOptimizationSuccessNote = "\(localRecipe.diagnosis)"
-                    self.saveEnhancedImageToPhotos(enhanced, aiParams: localParams)
-                }
-            }
-            return
-        }
-
-        GeminiService.shared.analyzeForComposition(image: item.originalImage, sceneContext: item.sceneType, colorMetrics: metrics) { result in
+        GeminiService.shared.analyzeAndSelectBestFilmPreset(
+            image: item.originalImage,
+            sceneContext: item.sceneType,
+            colorMetrics: metrics
+        ) { result in
             DispatchQueue.main.async {
                 self.isOptimizingWithAI = false
                 switch result {
-                case .success(let response):
-                    let aiParams = response.colorRecipe.asAIColorParameters
-                    if let enhanced = FilmFilterEngine.shared.applyAIColorParameters(to: self.item.originalImage, params: aiParams) {
+                case .success(let data):
+                    let chosenPreset = data.preset
+                    let recipe = data.recipe
+                    let explanation = data.explanation
+                    let latency = data.latencyMs
+                    let aiParams = recipe.asAIColorParameters
+
+                    self.aiRecommendedPreset = chosenPreset
+                    self.selectedPreviewPreset = chosenPreset
+                    self.currentAIParams = aiParams
+
+                    if let enhanced = FilmFilterEngine.shared.applyPresetAndAIParameters(to: self.item.originalImage, preset: chosenPreset, params: aiParams) {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             self.currentProcessedImage = enhanced
                             self.splitOffset = 1.0
                         }
-                        self.aiOptimizationSuccessNote = "\(response.colorRecipe.diagnosis) (\(response.latencyMs)ms)"
-                        self.saveEnhancedImageToPhotos(enhanced, aiParams: aiParams)
+                        self.aiOptimizationSuccessNote = "✨ AI khuyên dùng \(chosenPreset.displayName): \(explanation) (\(latency)ms)"
+                        self.saveEnhancedImageToPhotos(enhanced, appliedPreset: chosenPreset, aiParams: aiParams)
                     }
                 case .failure(let error):
-                    // Khi mạng gián đoạn hoặc Gemini bận -> Tự động fallback sang AI Cục bộ ngay lập tức
-                    let fallbackRecipe = GeminiService.generateLocalColorRecipe(from: metrics, sceneType: self.item.sceneType)
-                    let fallbackParams = fallbackRecipe.asAIColorParameters
-                    if let enhanced = FilmFilterEngine.shared.applyAIColorParameters(to: self.item.originalImage, params: fallbackParams) {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            self.currentProcessedImage = enhanced
-                            self.splitOffset = 1.0
-                        }
-                        self.aiOptimizationSuccessNote = "\(fallbackRecipe.diagnosis)"
-                        self.saveEnhancedImageToPhotos(enhanced, aiParams: fallbackParams)
-                    } else {
-                        self.aiErrorMessage = "Lỗi: \(error.localizedDescription)"
-                    }
+                    self.aiErrorMessage = "Lỗi: \(error.localizedDescription)"
                 }
             }
         }
     }
 
-    private func saveEnhancedImageToPhotos(_ cgImage: CGImage, aiParams: AIColorParameters? = nil) {
+    private func saveEnhancedImageToPhotos(_ cgImage: CGImage, appliedPreset: FilmPreset? = nil, aiParams: AIColorParameters? = nil) {
+        let presetToSave = appliedPreset ?? selectedPreviewPreset
+        let paramsToSave = aiParams ?? currentAIParams ?? item.aiColorParameters
+
         if let vm = viewModel {
             // Giữ trọn vẹn Live Photo: ghép đôi với video pairedMovie gốc và nhúng Content Identifier
             let updatedItem = CapturedPhotoItem(
@@ -318,13 +369,13 @@ public struct CapturedPhotoPreviewView: View {
                 rawPhotoData: item.rawPhotoData,
                 livePhotoMovieURL: item.livePhotoMovieURL,
                 sceneType: item.sceneType,
-                appliedPreset: item.appliedPreset,
+                appliedPreset: presetToSave,
                 compositionRule: item.compositionRule,
                 alignmentScore: item.alignmentScore,
                 timestamp: Date(),
                 iso: item.iso,
                 shutterSpeed: item.shutterSpeed,
-                aiColorParameters: aiParams ?? item.aiColorParameters
+                aiColorParameters: paramsToSave
             )
             vm.savePhotoToLibrary(updatedItem)
             self.hasSavedNewEnhancement = true

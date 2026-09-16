@@ -187,6 +187,8 @@ public struct GeminiFramingResponse {
     public let explanation: String
     public let modelUsed: String
     public let latencyMs: Int
+    public let recommendedPreset: FilmPreset
+    public let presetExplanation: String
 }
 
 // MARK: - Errors
@@ -644,6 +646,41 @@ public final class GeminiService {
         }
     }
 
+    // MARK: - Post-Capture AI Color & Preset Matcher (AI Color Director)
+    public func analyzeAndSelectBestFilmPreset(
+        image: CGImage,
+        sceneContext: DetectedSceneType? = nil,
+        colorMetrics: ImageColorMetrics? = nil,
+        completion: @escaping (Result<(preset: FilmPreset, recipe: GeminiColorRecipe, explanation: String, latencyMs: Int), GeminiError>) -> Void
+    ) {
+        let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
+        let effectiveScene = sceneContext ?? .general
+
+        guard hasAPIKey else {
+            // Offline / No API Key: use local engine & scene intelligence
+            let localPreset = effectiveScene.recommendedFilter
+            let localRecipe = Self.generateLocalColorRecipe(from: metrics, sceneType: effectiveScene)
+            let explanation = "\(localPreset.displayName): Phù hợp bối cảnh \(effectiveScene.localizedName) (AI Cục bộ)"
+            completion(.success((preset: localPreset, recipe: localRecipe, explanation: explanation, latencyMs: 25)))
+            return
+        }
+
+        analyzeForComposition(image: image, sceneContext: effectiveScene, colorMetrics: metrics) { result in
+            switch result {
+            case .success(let framing):
+                let preset = framing.recommendedPreset
+                let explanation = framing.presetExplanation.isEmpty ? "\(preset.displayName): Phù hợp nhất với bối cảnh ánh sáng" : framing.presetExplanation
+                completion(.success((preset: preset, recipe: framing.colorRecipe, explanation: explanation, latencyMs: framing.latencyMs)))
+            case .failure:
+                // Fallback gracefully to local intelligence
+                let localPreset = effectiveScene.recommendedFilter
+                let localRecipe = Self.generateLocalColorRecipe(from: metrics, sceneType: effectiveScene)
+                let explanation = "\(localPreset.displayName): Phù hợp bối cảnh \(effectiveScene.localizedName) (AI Cục bộ)"
+                completion(.success((preset: localPreset, recipe: localRecipe, explanation: explanation, latencyMs: 30)))
+            }
+        }
+    }
+
     // MARK: - AI Video Cinematography Director (OpenRouter Cloud)
 
     public func analyzeVideoCinematography(
@@ -1070,7 +1107,9 @@ public final class GeminiService {
                 compositionRule: .goldenRatio,
                 explanation: "Đã phân tích bố cục hình ảnh thành công",
                 modelUsed: modelID,
-                latencyMs: latency
+                latencyMs: latency,
+                recommendedPreset: .classicChrome,
+                presetExplanation: "Classic Chrome — Màu phim phóng sự tài liệu trung thực"
             )
             self.lastLatencyMs = latency
             self.lastModelUsed = modelID
@@ -1193,16 +1232,23 @@ public final class GeminiService {
             diagnosis: diag
         )
 
+        let presetRaw = extractString(forKey: "recommended_film_preset") ?? extractString(forKey: "recommended_preset") ?? ""
+        let sceneType = parseSceneType(sceneTypeStr)
+        let recPreset = FilmPreset.match(from: presetRaw) ?? sceneType.recommendedFilter
+        let presetExpl = extractString(forKey: "preset_explanation") ?? "\(recPreset.displayName) — Tối ưu cho bối cảnh \(sceneType.localizedName)"
+
         return GeminiFramingResponse(
             targetX: max(0.05, min(0.95, targetX)),
             targetY: max(0.05, min(0.95, targetY)),
             suggestedZoom: max(1.0, min(3.0, zoom)),
-            sceneType: parseSceneType(sceneTypeStr),
+            sceneType: sceneType,
             colorRecipe: colorRecipe,
             compositionRule: parseCompositionRule(compRuleStr),
             explanation: explanation,
             modelUsed: modelUsed,
-            latencyMs: latencyMs
+            latencyMs: latencyMs,
+            recommendedPreset: recPreset,
+            presetExplanation: presetExpl
         )
     }
 
@@ -1229,14 +1275,19 @@ public final class GeminiService {
         }
 
         return """
-        Phân tích bố cục và chỉnh màu điện ảnh cho ảnh (Trả về duy nhất JSON object):
+        Phân tích bố cục và chỉ định bộ màu film điện ảnh tối ưu cho bức ảnh (Trả về duy nhất JSON object):
         \(context)
-        Yêu cầu:
+
+        \(FilmPreset.aiCatalogDescription)
+
+        Yêu cầu bắt buộc:
         1. target_x, target_y (0.05-0.95): Tiêu điểm khóa vào chủ thể chính. Không để mặc định (0.5, 0.5) nếu chủ thể lệch tâm.
         2. suggested_zoom (1.0-3.0): Zoom đặc tả chủ thể (chân dung 1.4-1.8x, chủ thể xa 1.8-2.5x, cảnh rộng 1.0-1.2x).
-        3. Cân bằng sáng tối (exposure_bias, shadow_lift, highlight_roll) và bảo vệ màu da người tự nhiên.
-        4. color_grade chọn 1 trong: ["softwarm", "vibrant", "coolnatural", "golden", "tealOrange", "moody", "classic", "cinematic"].
-        5. explanation & diagnosis: Tiếng Việt súc tích (1 câu).
+        3. recommended_film_preset: Chọn CHÍNH XÁC 1 preset từ danh mục 18 bộ màu trên phù hợp nhất với ánh sáng, chủ thể và cảm xúc bức ảnh.
+        4. preset_explanation: Giải thích ngắn gọn (1 câu tiếng Việt) lý do chọn preset này cho cảnh ảnh.
+        5. Cân bằng sáng tối (exposure_bias, shadow_lift, highlight_roll) và bảo vệ màu da người tự nhiên.
+        6. color_grade chọn 1 trong: ["softwarm", "vibrant", "coolnatural", "golden", "tealOrange", "moody", "classic", "cinematic"].
+        7. explanation & diagnosis: Tiếng Việt súc tích (1 câu).
 
         JSON Schema:
         {
@@ -1245,6 +1296,8 @@ public final class GeminiService {
           "suggested_zoom": 1.5,
           "scene_type": "portrait",
           "composition_rule": "golden_ratio",
+          "recommended_film_preset": "Fuji Pro 400H",
+          "preset_explanation": "Fuji Pro 400H tone xanh pastel trong trẻo tôn sáng làn da tự nhiên trong ánh sáng ngày",
           "explanation": "Căn mắt chủ thể theo tỷ lệ vàng và zoom 1.5x tôn dáng",
           "color_recipe": {
             "temperature_k": 5500,
@@ -1295,6 +1348,10 @@ public final class GeminiService {
             )
         }
 
+        let presetRaw = (json["recommended_film_preset"] as? String) ?? (json["recommended_preset"] as? String) ?? ""
+        let recPreset = FilmPreset.match(from: presetRaw) ?? sceneType.recommendedFilter
+        let presetExpl = (json["preset_explanation"] as? String) ?? "\(recPreset.displayName) — Tối ưu cho bối cảnh \(sceneType.localizedName)"
+
         return GeminiFramingResponse(
             targetX: max(0.05, min(0.95, targetX)),
             targetY: max(0.05, min(0.95, targetY)),
@@ -1304,7 +1361,9 @@ public final class GeminiService {
             compositionRule: compositionRule,
             explanation: explanation,
             modelUsed: modelUsed,
-            latencyMs: latencyMs
+            latencyMs: latencyMs,
+            recommendedPreset: recPreset,
+            presetExplanation: presetExpl
         )
     }
 

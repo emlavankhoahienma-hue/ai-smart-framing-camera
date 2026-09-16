@@ -683,6 +683,7 @@ struct FilmPresetDrawer: View {
                 HStack(spacing: 8) {
                     ForEach(FilmPreset.allCases) { preset in
                         let isSelected = viewModel.selectedFilmPreset == preset
+                        let isAIRecommended = viewModel.aiRecommendedPreset == preset
 
                         Button(action: {
                             let generator = UISelectionFeedbackGenerator()
@@ -697,6 +698,10 @@ struct FilmPresetDrawer: View {
                                 } else if isSelected {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 10, weight: .heavy))
+                                } else if isAIRecommended {
+                                    Image(systemName: "sparkles")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundColor(.yellow)
                                 }
 
                                 Text(preset.displayName)
@@ -707,11 +712,11 @@ struct FilmPresetDrawer: View {
                             .padding(.vertical, 8)
                             .background(
                                 Capsule()
-                                    .fill(isSelected ? Color.yellow : Color.white.opacity(0.08))
+                                    .fill(isSelected ? Color.yellow : (isAIRecommended ? Color.yellow.opacity(0.18) : Color.white.opacity(0.08)))
                             )
                             .overlay(
                                 Capsule()
-                                    .stroke(isSelected ? Color.yellow : Color.white.opacity(0.12), lineWidth: 1)
+                                    .stroke(isSelected ? Color.yellow : (isAIRecommended ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12)), lineWidth: 1)
                             )
                             .shadow(color: isSelected ? Color.yellow.opacity(0.35) : Color.clear, radius: 4)
                         }

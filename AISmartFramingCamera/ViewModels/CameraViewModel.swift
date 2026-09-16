@@ -44,6 +44,8 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isAIFullColorEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isAIFullColorEnabled, forKey: "isAIFullColorEnabled") }
     }
+    @Published public var aiRecommendedPreset: FilmPreset? = nil
+    @Published public var aiPresetMatchReason: String? = nil
     @Published public var isAutoZoomEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isAutoZoomEnabled, forKey: "isAutoZoomEnabled") }
     }
@@ -787,8 +789,15 @@ public final class CameraViewModel: ObservableObject {
         self.pendingSuggestedZoom = response.suggestedZoom
         self.hasExecutedAutoZoomForSession = false
 
+        self.aiRecommendedPreset = response.recommendedPreset
+        self.aiPresetMatchReason = response.presetExplanation
+
         if isAIFullColorEnabled {
             currentAIColorParams = response.colorRecipe.asAIColorParameters
+        }
+
+        if selectedFilmPreset.isAIFullAuto {
+            selectedFilmPreset = response.recommendedPreset
         }
 
         var targetPoint = CGPoint(x: response.targetX, y: response.targetY)
@@ -867,6 +876,13 @@ public final class CameraViewModel: ObservableObject {
             self.activeEngineSource = .yoloNeural(label: dominantScene.localizedName)
         } else {
             self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
+        }
+
+        let localPreset = dominantScene.recommendedFilter
+        self.aiRecommendedPreset = localPreset
+        self.aiPresetMatchReason = "\(localPreset.displayName) — Tối ưu cho bối cảnh \(dominantScene.localizedName)"
+        if selectedFilmPreset.isAIFullAuto {
+            selectedFilmPreset = localPreset
         }
 
         if isAIFullColorEnabled {
@@ -1893,7 +1909,11 @@ extension CameraViewModel: CameraServiceDelegate {
             finalColorParams = nil
         }
 
-        let activePreset = self.selectedFilmPreset
+        var activePreset = self.selectedFilmPreset
+        if activePreset.isAIFullAuto {
+            activePreset = self.aiRecommendedPreset ?? self.detectedScene.recommendedFilter
+        }
+        let effectivePreset = activePreset
         let activeScene = self.detectedScene
         let activeRule = self.activeCompositionRule
         let sessionState = self.aiSessionState
@@ -1906,9 +1926,9 @@ extension CameraViewModel: CameraServiceDelegate {
             var processedImageResult: CGImage = photo
             autoreleasepool {
                 if let params = finalColorParams {
-                    processedImageResult = FilmFilterEngine.shared.applyAIColorParameters(to: photo, params: params) ?? photo
+                    processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(to: photo, preset: effectivePreset, params: params) ?? photo
                 } else {
-                    processedImageResult = FilmFilterEngine.shared.applyPreset(to: photo, preset: activePreset) ?? photo
+                    processedImageResult = FilmFilterEngine.shared.applyPreset(to: photo, preset: effectivePreset) ?? photo
                 }
             }
 
@@ -1918,7 +1938,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 rawPhotoData: rawData,
                 livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
-                appliedPreset: activePreset,
+                appliedPreset: effectivePreset,
                 compositionRule: activeRule,
                 alignmentScore: score,
                 iso: iso,
