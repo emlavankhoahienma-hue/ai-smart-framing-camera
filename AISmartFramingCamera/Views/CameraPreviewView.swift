@@ -76,7 +76,10 @@ public struct CameraPreviewView: UIViewRepresentable {
         @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
             guard gesture.state == .began, let view = gesture.view as? PreviewContainerView else { return }
             let location = gesture.location(in: view)
-            let normalizedPoint = CGPoint(x: location.x / view.bounds.width, y: location.y / view.bounds.height)
+            let normalizedPoint = CGPoint(
+                x: location.x / max(1.0, view.bounds.width),
+                y: location.y / max(1.0, view.bounds.height)
+            )
             let devicePoint = view.previewLayer.captureDevicePointConverted(fromLayerPoint: location)
             parent.viewModel.lockAEAF(at: normalizedPoint, devicePoint: devicePoint)
             view.showFocusRing(at: location, persist: true)

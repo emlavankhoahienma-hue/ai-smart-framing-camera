@@ -67,6 +67,7 @@ public final class FocusPeakingEngine: @unchecked Sendable {
     
     private let processingQueue = DispatchQueue(label: "com.alignai.focusPeakingQueue", qos: .userInteractive)
     private let ciContext: CIContext
+    private let stateLock = NSLock()
     private var isProcessing = false
     
     public init() {
@@ -79,16 +80,18 @@ public final class FocusPeakingEngine: @unchecked Sendable {
     
     /// Xử lý khung hình CIImage và trả về ảnh viền nét mờ trong suốt (Không bao giờ ghi đè nil khi drop frame)
     public func processFrame(ciImage: CIImage, color: FocusPeakingColor, completion: @escaping @Sendable (CGImage?) -> Void) {
-        guard !isProcessing else {
-            // Đang xử lý khung hình trước: Bỏ qua khung hình này mà KHÔNG gọi completion(nil) để tránh chớp giật
-            return
-        }
-        
+        stateLock.lock()
+        guard !isProcessing else { stateLock.unlock(); return }
         isProcessing = true
+        stateLock.unlock()
         
         processingQueue.async { [weak self] in
             guard let self = self else { return }
-            defer { self.isProcessing = false }
+            defer {
+                self.stateLock.lock()
+                self.isProcessing = false
+                self.stateLock.unlock()
+            }
             
             // 1. Downscale tối ưu để tăng tốc độ xử lý GPU lên 60FPS
             let width = ciImage.extent.width

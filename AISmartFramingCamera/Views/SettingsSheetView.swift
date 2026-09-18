@@ -55,7 +55,7 @@ public struct SettingsSheetView: View {
     }
 
     public var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 canvasBackground
                     .ignoresSafeArea()
@@ -1374,6 +1374,7 @@ public struct SettingsToggleRow: View {
                 .tint(amberGold)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 

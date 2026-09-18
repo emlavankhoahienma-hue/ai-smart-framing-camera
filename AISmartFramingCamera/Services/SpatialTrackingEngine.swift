@@ -406,19 +406,7 @@ public final class NeuralTargetTracker: @unchecked Sendable {
             }
         }
         
-        // 3. Fallback part1 + part2 nếu có
-        if let url1 = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "part1"),
-           let url2 = Bundle.main.url(forResource: "AlignAI_SubjectRanker_Weights", withExtension: "part2"),
-           let d1 = try? Data(contentsOf: url1),
-           let d2 = try? Data(contentsOf: url2) {
-            var combined = d1
-            combined.append(d2)
-            CameraLogger.info("Đã nạp mô hình AlignAI_SubjectRanker_Weights từ Part1+Part2", category: .tracking)
-            loadFromData(combined)
-            return
-        }
-        
-        // 4. Fallback tạo trọng số chuẩn hóa Xavier
+        // 3. Fallback tạo trọng số chuẩn hóa Xavier
         initFallbackWeights()
     }
     

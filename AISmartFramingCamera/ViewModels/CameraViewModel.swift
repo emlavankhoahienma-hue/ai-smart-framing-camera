@@ -20,6 +20,7 @@ public final class CameraViewModel: ObservableObject {
     public let motionService = DeviceMotionService.shared
 
     // MARK: - AI Session State Machine
+    private var aiSessionGeneration: Int = 0
     @Published public var aiSessionState: AISessionState = .idle {
         didSet {
             switch aiSessionState {
@@ -612,6 +613,8 @@ public final class CameraViewModel: ObservableObject {
     public func startAISession() {
         guard aiSessionState == .idle || aiSessionState == .done else { return }
         haptics.triggerSelectionChange()
+        self.aiSessionGeneration += 1
+        let requestGeneration = self.aiSessionGeneration
 
         // Reset state
         SpatialTrackingEngine.shared.stopTracking()
@@ -646,7 +649,7 @@ public final class CameraViewModel: ObservableObject {
             visionEngine.onFrameCapturedForAI = { [weak self] frame in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
-                    if self.aiSessionState == .analyzing && !self.isOneShotCaptured {
+                    if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
                         self.isOneShotCaptured = true
                         self.callGeminiAnalysis(frame: frame)
                     }
@@ -656,7 +659,7 @@ public final class CameraViewModel: ObservableObject {
             // An toàn dự phòng: Nếu sau 3.5s cloud không phản hồi hoặc frame chụp bị nghẽn, tự động chuyển về Local
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
                 guard let self = self else { return }
-                if self.aiSessionState == .analyzing && !self.isOneShotCaptured {
+                if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
                     self.isOneShotCaptured = true
                     self.consolidateLocalAnalysisAndLockTarget()
                 }
@@ -665,6 +668,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func cancelAISession() {
+        self.aiSessionGeneration += 1
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         visionEngine.stopTrackingObject()
@@ -753,6 +757,7 @@ public final class CameraViewModel: ObservableObject {
     private func callGeminiAnalysis(frame: CGImage) {
         guard !isGeminiAnalyzing else { return }
         isGeminiAnalyzing = true
+        let requestGeneration = self.aiSessionGeneration
 
         let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
         let faceRects = detectedFaceRects
@@ -765,7 +770,10 @@ public final class CameraViewModel: ObservableObject {
         ) { [weak self] result in
             guard let self = self else { return }
             self.isGeminiAnalyzing = false
-
+            guard self.aiSessionGeneration == requestGeneration, self.aiSessionState == .analyzing else {
+                CameraLogger.info("Bỏ qua phản hồi Gemini trễ (phiên đã đổi/kết thúc)", category: .ai)
+                return
+            }
             switch result {
             case .success(let response):
                 self.handleGeminiResponse(response)
@@ -1956,6 +1964,15 @@ extension CameraViewModel: CameraServiceDelegate {
                 self.savePhotoToLibrary(item)
             }
         }
+    }
+
+    public func cameraService(_ service: CameraService, didFailCaptureWithError error: Error) {
+        haptics.triggerSelectionChange()
+        withAnimation {
+            aiSessionState = .targetPlaced(locked: true)
+            isShutterPressing = false
+        }
+        saveErrorMessage = "Chụp ảnh thất bại: \(error.localizedDescription). Vui lòng thử lại."
     }
 
     public func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {

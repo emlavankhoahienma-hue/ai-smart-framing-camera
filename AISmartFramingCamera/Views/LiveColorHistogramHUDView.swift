@@ -42,7 +42,7 @@ public struct LiveColorHistogramHUDView: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.black.opacity(0.72))
+                .fill(.ultraThinMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.white.opacity(0.14), lineWidth: 1)

@@ -18,6 +18,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
     
     private let processingLock = NSLock()
+    private var _captureNextFrameForGemini = false
+    public var captureNextFrameForGemini: Bool {
+        get { processingLock.lock(); defer { processingLock.unlock() }; return _captureNextFrameForGemini }
+        set { processingLock.lock(); _captureNextFrameForGemini = newValue; processingLock.unlock() }
+    }
+
+    private var _isLowTextureAnchor = false
+    public var isLowTextureAnchor: Bool {
+        get { processingLock.lock(); defer { processingLock.unlock() }; return _isLowTextureAnchor }
+        set { processingLock.lock(); _isLowTextureAnchor = newValue; processingLock.unlock() }
+    }
+
+    private var _currentSceneType: DetectedSceneType = .general
+    public var currentSceneType: DetectedSceneType {
+        get { processingLock.lock(); defer { processingLock.unlock() }; return _currentSceneType }
+        set { processingLock.lock(); _currentSceneType = newValue; processingLock.unlock() }
+    }
+
     private var isProcessingFrame = false
     private var lastProcessTime: TimeInterval = 0
     private let frameThrottleInterval: TimeInterval = 0.033 // ~30 FPS for ultra-smooth optical tracking
@@ -30,13 +48,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
     public var onSmartFocusPointCalculated: ((CGPoint, SmartFocusType) -> Void)?
     
     // Gemini Frame Capture
-    public var captureNextFrameForGemini: Bool = false
     public var capturedGeminiFrame: CGImage? = nil
     public var onFrameCapturedForAI: ((CGImage) -> Void)?
     
     // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID + Color Histogram + KLT Point Cluster)
     public private(set) var isTrackingTarget: Bool = false
-    public var currentSceneType: DetectedSceneType = .general
     private var sequenceHandler = VNSequenceRequestHandler()
     private var lastTargetObservation: VNDetectedObjectObservation? = nil
     private var referenceFeaturePrint: VNFeaturePrintObservation? = nil
@@ -58,40 +74,39 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var stableLockFrames: Int = 0
     private var anchorBoxSize: CGSize = CGSize(width: 0.14, height: 0.14)
     private var lastReIdAttemptTime: CFTimeInterval = 0
-    public var isLowTextureAnchor: Bool = false
     
     // Vision Detection Requests
-    private var faceDetectionRequest: VNDetectFaceRectanglesRequest!
-    private var faceLandmarksRequest: VNDetectFaceLandmarksRequest!
-    private var humanPoseRequest: VNDetectHumanBodyPoseRequest!
-    private var saliencyRequest: VNGenerateObjectnessBasedSaliencyImageRequest!
-    private var sceneClassificationRequest: VNClassifyImageRequest!
+    private lazy var faceDetectionRequest: VNDetectFaceRectanglesRequest = {
+        let req = VNDetectFaceRectanglesRequest()
+        req.revision = VNDetectFaceRectanglesRequestRevision3
+        return req
+    }()
     
-    public init() {
-        setupVisionRequests()
-    }
+    private lazy var faceLandmarksRequest: VNDetectFaceLandmarksRequest = {
+        let req = VNDetectFaceLandmarksRequest()
+        req.revision = VNDetectFaceLandmarksRequestRevision3
+        return req
+    }()
     
-    private func setupVisionRequests() {
-        // 1. Face Rectangle Detection
-        faceDetectionRequest = VNDetectFaceRectanglesRequest()
-        faceDetectionRequest.revision = VNDetectFaceRectanglesRequestRevision3
-        
-        // 2. Face Landmarks (Eyes, Nose, Chin)
-        faceLandmarksRequest = VNDetectFaceLandmarksRequest()
-        faceLandmarksRequest.revision = VNDetectFaceLandmarksRequestRevision3
-        
-        // 3. Human Body Pose Detection
-        humanPoseRequest = VNDetectHumanBodyPoseRequest()
-        humanPoseRequest.revision = VNDetectHumanBodyPoseRequestRevision1
-        
-        // 4. Objectness Saliency
-        saliencyRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
-        saliencyRequest.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
-        
-        // 5. Scene Classification
-        sceneClassificationRequest = VNClassifyImageRequest()
-        sceneClassificationRequest.revision = VNClassifyImageRequestRevision1
-    }
+    private lazy var humanPoseRequest: VNDetectHumanBodyPoseRequest = {
+        let req = VNDetectHumanBodyPoseRequest()
+        req.revision = VNDetectHumanBodyPoseRequestRevision1
+        return req
+    }()
+    
+    private lazy var saliencyRequest: VNGenerateObjectnessBasedSaliencyImageRequest = {
+        let req = VNGenerateObjectnessBasedSaliencyImageRequest()
+        req.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
+        return req
+    }()
+    
+    private lazy var sceneClassificationRequest: VNClassifyImageRequest = {
+        let req = VNClassifyImageRequest()
+        req.revision = VNClassifyImageRequestRevision1
+        return req
+    }()
+    
+    public init() {}
     
     // MARK: - Visual Object Tracking Control
     private var currentTrackRequest: VNTrackObjectRequest? = nil
@@ -476,13 +491,15 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
         
         guard !inliers.isEmpty else { return nil }
-        
+
+        let originalPointCount = self.kltTrackedPoints.count
+
         let avgX = inliers.map { $0.x }.reduce(0, +) / CGFloat(inliers.count)
         let avgY = inliers.map { $0.y }.reduce(0, +) / CGFloat(inliers.count)
         self.kltTrackedPoints = inliers
-        
+
         let uiPoint = CGPoint(x: avgX, y: 1.0 - avgY)
-        let inlierRatio = Double(inliers.count) / Double(max(1, kltTrackedPoints.count))
+        let inlierRatio = Double(inliers.count) / Double(max(1, originalPointCount))
         let confidence = max(0.70, min(0.95, 0.60 + inlierRatio * 0.35))
         return (uiPoint, confidence)
     }

@@ -126,42 +126,65 @@ public final class CompositionCalculator {
     private func computeRuleOfThirdsTarget(detection: SubjectDetectionResult) -> (CGPoint, String) {
         let thirdsX: [CGFloat] = [1.0 / 3.0, 2.0 / 3.0]
         let thirdsY: [CGFloat] = [1.0 / 3.0, 2.0 / 3.0]
-        
+
         guard let subject = detection.dominantSubjectRect else {
             return (CGPoint(x: 2.0 / 3.0, y: 1.0 / 3.0), "Hướng góc chụp về điểm 1/3 góc trên")
         }
-        
-        let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
-        
-        // Khi phát hiện chủ thể thực tế: ĐẶT TARGET VÀO ĐÚNG CHỦ THỂ (mắt hoặc tâm chủ thể)!
-        let targetPoint = detection.primaryEyePosition ?? subjectCenter
-        let advice = (detection.primaryEyePosition != nil)
-            ? "Đưa tâm trắng vào chủ thể để khóa nét & zoom AI"
-            : "Đưa tâm trắng vào chủ thể để khóa nét & zoom AI"
+        let subjectCenter = detection.primaryEyePosition ?? CGPoint(x: subject.midX, y: subject.midY)
+
+        let preferredX: CGFloat
+        if abs(detection.lookingDirection.dx) > 0.15 {
+            preferredX = detection.lookingDirection.dx > 0 ? thirdsX[1] : thirdsX[0]
+        } else {
+            preferredX = thirdsX.min(by: { abs($0 - subjectCenter.x) < abs($1 - subjectCenter.x) }) ?? thirdsX[0]
+        }
+        let preferredY = thirdsY.min(by: { abs($0 - subjectCenter.y) < abs($1 - subjectCenter.y) }) ?? thirdsY[0]
+
+        let targetPoint = CGPoint(x: preferredX, y: preferredY)
+        let advice = abs(detection.lookingDirection.dx) > 0.15
+            ? "Đưa tâm trắng để chừa khoảng trống phía chủ thể đang nhìn"
+            : "Đưa tâm trắng vào giao điểm 1/3 gần chủ thể nhất"
         return (targetPoint, advice)
     }
-    
+
     // MARK: - Golden Ratio Calculation (1:1.618)
     private func computeGoldenRatioTarget(detection: SubjectDetectionResult) -> (CGPoint, String) {
+        let goldenPointsX: [CGFloat] = [phiInverseRatio, phiRatio]
+        let goldenPointsY: [CGFloat] = [phiInverseRatio, phiRatio]
+
         guard let subject = detection.dominantSubjectRect else {
             return (CGPoint(x: phiRatio, y: phiInverseRatio), "Căn chỉnh theo tỷ lệ vàng 1.618")
         }
-        
-        let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
-        let targetPoint = detection.primaryEyePosition ?? subjectCenter
-        let advice = "Đưa tâm trắng vào chủ thể để căn bố cục tỷ lệ vàng"
-        return (targetPoint, advice)
+        let subjectCenter = detection.primaryEyePosition ?? CGPoint(x: subject.midX, y: subject.midY)
+
+        let preferredX: CGFloat
+        if abs(detection.lookingDirection.dx) > 0.15 {
+            preferredX = detection.lookingDirection.dx > 0 ? goldenPointsX[1] : goldenPointsX[0]
+        } else {
+            preferredX = goldenPointsX.min(by: { abs($0 - subjectCenter.x) < abs($1 - subjectCenter.x) }) ?? goldenPointsX[0]
+        }
+        let preferredY = goldenPointsY.min(by: { abs($0 - subjectCenter.y) < abs($1 - subjectCenter.y) }) ?? goldenPointsY[0]
+
+        return (CGPoint(x: preferredX, y: preferredY), "Đưa tâm trắng vào điểm vàng gần chủ thể nhất")
     }
-    
+
     // MARK: - Golden Spiral Calculation
     private func computeGoldenSpiralTarget(detection: SubjectDetectionResult) -> (CGPoint, String) {
-        if let subject = detection.dominantSubjectRect {
-            let subjectCenter = CGPoint(x: subject.midX, y: subject.midY)
-            let targetPoint = detection.primaryEyePosition ?? subjectCenter
-            return (targetPoint, "Đưa tâm trắng vào chủ thể theo xoắn ốc Fibonacci")
+        // 4 tâm xoắn ốc Fibonacci ứng với 4 hướng cuộn của đường xoắn (góc phần tư màn hình)
+        let spiralFoci: [CGPoint] = [
+            CGPoint(x: phiRatio, y: phiInverseRatio),
+            CGPoint(x: phiInverseRatio, y: phiInverseRatio),
+            CGPoint(x: phiRatio, y: phiRatio),
+            CGPoint(x: phiInverseRatio, y: phiRatio)
+        ]
+        guard let subject = detection.dominantSubjectRect else {
+            return (spiralFoci[0], "Uốn lượn bố cục theo xoắn ốc Fibonacci")
         }
-        let spiralFocus = CGPoint(x: phiRatio, y: phiInverseRatio)
-        return (spiralFocus, "Uốn lượn bố cục theo xoắn ốc Fibonacci")
+        let subjectCenter = detection.primaryEyePosition ?? CGPoint(x: subject.midX, y: subject.midY)
+        let nearest = spiralFoci.min(by: {
+            hypot($0.x - subjectCenter.x, $0.y - subjectCenter.y) < hypot($1.x - subjectCenter.x, $1.y - subjectCenter.y)
+        }) ?? spiralFoci[0]
+        return (nearest, "Đưa tâm trắng vào tiêu điểm xoắn ốc Fibonacci gần chủ thể nhất")
     }
     
     // MARK: - Auto-Zoom Computation (Tối ưu độ phóng đại quang học mượt mà)

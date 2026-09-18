@@ -39,7 +39,7 @@ public struct AIStatusHUDView: View {
             .padding(.vertical, 5)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.65))
+                    .fill(.ultraThinMaterial)
                     .overlay(
                         Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1)
                     )

@@ -77,38 +77,38 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public static let shared = NeuralSubjectIntelligenceEngine()
     
     // MARK: - Vision Deep Learning Requests
-    private var animalRequest: VNRecognizeAnimalsRequest!
-    private var humanBodyRequest: VNDetectHumanRectanglesRequest!
-    private var faceLandmarksRequest: VNDetectFaceLandmarksRequest!
-    private var saliencyObjectRequest: VNGenerateObjectnessBasedSaliencyImageRequest!
-    private var sceneClassifierRequest: VNClassifyImageRequest!
+    private lazy var animalRequest: VNRecognizeAnimalsRequest = {
+        let req = VNRecognizeAnimalsRequest()
+        req.revision = VNRecognizeAnimalsRequestRevision2
+        return req
+    }()
     
-    public init() {
-        setupNeuralRequests()
-    }
+    private lazy var humanBodyRequest: VNDetectHumanRectanglesRequest = {
+        let req = VNDetectHumanRectanglesRequest()
+        req.upperBodyOnly = false
+        req.revision = VNDetectHumanRectanglesRequestRevision2
+        return req
+    }()
     
-    private func setupNeuralRequests() {
-        // 1. Nhận diện Thú cưng / Động vật (Chó, Mèo)
-        animalRequest = VNRecognizeAnimalsRequest()
-        animalRequest.revision = VNRecognizeAnimalsRequestRevision2
-        
-        // 2. Nhận diện Cơ thể Người (Full Body & Upper Body)
-        humanBodyRequest = VNDetectHumanRectanglesRequest()
-        humanBodyRequest.upperBodyOnly = false
-        humanBodyRequest.revision = VNDetectHumanRectanglesRequestRevision2
-        
-        // 3. Nhận diện Khuôn mặt & Điểm mốc ngũ quan ANE (Mắt, Hướng nhìn Gaze)
-        faceLandmarksRequest = VNDetectFaceLandmarksRequest()
-        faceLandmarksRequest.revision = VNDetectFaceLandmarksRequestRevision3
-        
-        // 4. Nhận diện Vật thể tiền cảnh thực tế (Objectness Saliency)
-        saliencyObjectRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
-        saliencyObjectRequest.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
-        
-        // 5. Phân loại Cảnh quan tổng thể
-        sceneClassifierRequest = VNClassifyImageRequest()
-        sceneClassifierRequest.revision = VNClassifyImageRequestRevision1
-    }
+    private lazy var faceLandmarksRequest: VNDetectFaceLandmarksRequest = {
+        let req = VNDetectFaceLandmarksRequest()
+        req.revision = VNDetectFaceLandmarksRequestRevision3
+        return req
+    }()
+    
+    private lazy var saliencyObjectRequest: VNGenerateObjectnessBasedSaliencyImageRequest = {
+        let req = VNGenerateObjectnessBasedSaliencyImageRequest()
+        req.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
+        return req
+    }()
+    
+    private lazy var sceneClassifierRequest: VNClassifyImageRequest = {
+        let req = VNClassifyImageRequest()
+        req.revision = VNClassifyImageRequestRevision1
+        return req
+    }()
+    
+    public init() {}
     
     // MARK: - Phân tích Khung Hình Đa Tầng (Multi-Modal Neural Scan)
     public func analyzeFrame(

@@ -114,7 +114,7 @@ struct CameraModeSegmentedSwitcher: View {
         .padding(3)
         .background(
             Capsule()
-                .fill(Color.black.opacity(0.45))
+                .fill(.ultraThinMaterial)
                 .overlay(
                     Capsule()
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
@@ -734,7 +734,7 @@ struct FilmPresetDrawer: View {
         .frame(maxHeight: 88)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.black.opacity(0.82))
+                .fill(.ultraThinMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)

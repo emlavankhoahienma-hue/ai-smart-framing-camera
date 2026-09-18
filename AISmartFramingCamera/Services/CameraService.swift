@@ -8,11 +8,13 @@ import ImageIO
 public protocol CameraServiceDelegate: AnyObject {
     func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
     func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double)
+    func cameraService(_ service: CameraService, didFailCaptureWithError error: Error)
     func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL)
     func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat)
 }
 
 public extension CameraServiceDelegate {
+    func cameraService(_ service: CameraService, didFailCaptureWithError error: Error) {}
     func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {}
     func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {}
 }
@@ -465,10 +467,13 @@ public final class CameraService: NSObject {
         self.selectedVideoFormatOption = option
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
+            let formatStr: String
             if self.currentCaptureMode.isVideo {
                 self.configureVideoFormatInternal(option: option)
+                formatStr = self.getActiveVideoResolutionAndFPS()
+            } else {
+                formatStr = "\(option.rawValue) · Sẽ áp dụng khi quay video"
             }
-            let formatStr = self.getActiveVideoResolutionAndFPS()
             DispatchQueue.main.async {
                 self.onActiveVideoFormatChanged?(formatStr)
             }
@@ -724,6 +729,13 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         if let error = error {
             CameraLogger.error("Lỗi chụp ảnh từ phần cứng AVFoundation", error: error, category: .capture)
+            self.currentPhotoCaptured = nil
+            self.currentLivePhotoURL = nil
+            self.isCapturingLivePhotoRequest = false
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.delegate?.cameraService(self, didFailCaptureWithError: error)
+            }
             return
         }
 
@@ -800,19 +812,6 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
     }
 
     // MARK: - Helpers
-
-    private static func cropImageForZoom(_ image: UIImage, zoom: CGFloat) -> UIImage? {
-        guard let cg = image.cgImage else { return image }
-        let width = CGFloat(cg.width)
-        let height = CGFloat(cg.height)
-        let cropW = width / zoom
-        let cropH = height / zoom
-        let cropX = (width - cropW) / 2.0
-        let cropY = (height - cropH) / 2.0
-        let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
-        guard let croppedCG = cg.cropping(to: cropRect) else { return image }
-        return UIImage(cgImage: croppedCG, scale: image.scale, orientation: image.imageOrientation)
-    }
 
     private static func parseExif(_ metadata: [String: Any]) -> (iso: Float, shutter: Double) {
         var isoValue: Float = 100.0

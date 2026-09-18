@@ -216,7 +216,7 @@ struct CompositionRuleSheet: View {
     @Environment(\.presentationMode) var presentationMode
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {

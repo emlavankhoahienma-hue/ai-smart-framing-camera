@@ -15,25 +15,23 @@ public enum CameraLogger {
     }
     
     private static func appendToFile(_ line: String) {
-        logQueue.async {
-            guard let url = logFileURL else { return }
-            guard let data = (line + "\n").data(using: .utf8) else { return }
-            
-            if FileManager.default.fileExists(atPath: url.path) {
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-                   let size = attrs[.size] as? UInt64, size > maxLogFileSize,
-                   let existing = try? String(contentsOf: url, encoding: .utf8) {
-                    let half = String(existing.suffix(existing.count / 2))
-                    try? half.data(using: .utf8)?.write(to: url)
-                }
-                if let handle = try? FileHandle(forWritingTo: url) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                }
-            } else {
-                try? data.write(to: url)
+        guard let url = logFileURL else { return }
+        guard let data = (line + "\n").data(using: .utf8) else { return }
+        
+        if FileManager.default.fileExists(atPath: url.path) {
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let size = attrs[.size] as? UInt64, size > maxLogFileSize,
+               let existing = try? String(contentsOf: url, encoding: .utf8) {
+                let half = String(existing.suffix(existing.count / 2))
+                try? half.data(using: .utf8)?.write(to: url)
             }
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: url)
         }
     }
     
@@ -64,10 +62,9 @@ public enum CameraLogger {
     private static let dateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
     
     public static func info(_ message: String, category: Category = .general) {
-        let timestamp = dateFormatter.string(from: Date())
-        let formatted = "[\(timestamp)] [\(category.rawValue)] ℹ️ \(message)"
-        print(formatted)
-        appendToFile(formatted)
+        #if DEBUG
+        print("[\(category.rawValue)] ℹ️ \(message)")
+        #endif
         
         switch category {
         case .capture: os_log("%{public}@", log: captureLog, type: .info, message)
@@ -76,30 +73,51 @@ public enum CameraLogger {
         case .ai: os_log("%{public}@", log: aiLog, type: .info, message)
         case .general: os_log("%{public}@", log: .default, type: .info, message)
         }
+        
+        logQueue.async {
+            let timestamp = dateFormatter.string(from: Date())
+            let formatted = "[\(timestamp)] [\(category.rawValue)] ℹ️ \(message)"
+            appendToFile(formatted)
+        }
     }
     
     public static func success(_ message: String, category: Category = .general) {
-        let timestamp = dateFormatter.string(from: Date())
-        let formatted = "[\(timestamp)] [\(category.rawValue)] ✅ \(message)"
-        print(formatted)
-        appendToFile(formatted)
+        #if DEBUG
+        print("[\(category.rawValue)] ✅ \(message)")
+        #endif
         os_log("%{public}@", log: .default, type: .default, message)
+        
+        logQueue.async {
+            let timestamp = dateFormatter.string(from: Date())
+            let formatted = "[\(timestamp)] [\(category.rawValue)] ✅ \(message)"
+            appendToFile(formatted)
+        }
     }
     
     public static func warning(_ message: String, category: Category = .general) {
-        let timestamp = dateFormatter.string(from: Date())
-        let formatted = "[\(timestamp)] [\(category.rawValue)] ⚠️ CẢNH BÁO: \(message)"
-        print(formatted)
-        appendToFile(formatted)
+        #if DEBUG
+        print("[\(category.rawValue)] ⚠️ CẢNH BÁO: \(message)")
+        #endif
         os_log("%{public}@", log: .default, type: .error, message)
+        
+        logQueue.async {
+            let timestamp = dateFormatter.string(from: Date())
+            let formatted = "[\(timestamp)] [\(category.rawValue)] ⚠️ CẢNH BÁO: \(message)"
+            appendToFile(formatted)
+        }
     }
     
     public static func error(_ message: String, error: Error? = nil, category: Category = .general) {
-        let timestamp = dateFormatter.string(from: Date())
         let errDetail = error != nil ? " | Chi tiết: \(error!.localizedDescription)" : ""
-        let formatted = "[\(timestamp)] [\(category.rawValue)] ❌ LỖI: \(message)\(errDetail)"
-        print(formatted)
-        appendToFile(formatted)
-        os_log("%{public}@", log: .default, type: .fault, formatted)
+        #if DEBUG
+        print("[\(category.rawValue)] ❌ LỖI: \(message)\(errDetail)")
+        #endif
+        os_log("%{public}@", log: .default, type: .fault, "\(message)\(errDetail)")
+        
+        logQueue.async {
+            let timestamp = dateFormatter.string(from: Date())
+            let formatted = "[\(timestamp)] [\(category.rawValue)] ❌ LỖI: \(message)\(errDetail)"
+            appendToFile(formatted)
+        }
     }
 }
