@@ -224,11 +224,10 @@ public final class CameraService: NSObject {
                     self.photoOutput.isHighResolutionCaptureEnabled = true
                     self.photoOutput.maxPhotoQualityPrioritization = .quality
 
-                    if self.photoOutput.isZeroShutterLagSupported {
-                        self.photoOutput.isZeroShutterLagEnabled = true
-                    }
-
                     if #available(iOS 17.0, *) {
+                        if self.photoOutput.isZeroShutterLagSupported {
+                            self.photoOutput.isZeroShutterLagEnabled = true
+                        }
                         if self.photoOutput.isResponsiveCaptureSupported {
                             self.photoOutput.isResponsiveCaptureEnabled = true
                         }
