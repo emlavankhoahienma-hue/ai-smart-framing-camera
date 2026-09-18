@@ -19,6 +19,25 @@ public struct CapturedPhotoPreviewView: View {
     @State private var currentAIParams: AIColorParameters?
     @State private var aiRecommendedPreset: FilmPreset? = nil
 
+    // MARK: - Zoom & Pan Inspection States (Modern iPhone Style)
+    @State private var zoomScale: CGFloat = 1.0
+    @State private var gestureScale: CGFloat = 1.0
+    @State private var panOffset: CGSize = .zero
+    @State private var gesturePanOffset: CGSize = .zero
+    @State private var isPinching: Bool = false
+    @State private var isPanning: Bool = false
+
+    private var effectiveScale: CGFloat {
+        max(0.88, min(7.0, zoomScale * gestureScale))
+    }
+
+    private var effectiveOffset: CGSize {
+        CGSize(
+            width: panOffset.width + gesturePanOffset.width,
+            height: panOffset.height + gesturePanOffset.height
+        )
+    }
+
     private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
     private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
 
@@ -31,78 +50,101 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     public var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 darkBg.edgesIgnoringSafeArea(.all)
 
                 VStack(spacing: 14) {
-                    // 1. Photo Viewport with Interactive Comparison
+                    // 1. Photo Viewport with Interactive Smooth Zoom & Comparison
                     GeometryReader { proxy in
                         let size = proxy.size
-                        ZStack {
-                            // Original Image (Base)
-                            Image(decorative: item.originalImage, scale: 1.0, orientation: .up)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: size.width, height: size.height)
+                        ZStack(alignment: .topLeading) {
+                            // 1.1 Zoomable & Pannable Base Layers
+                            ZStack {
+                                // Original Image (Base)
+                                Image(decorative: item.originalImage, scale: 1.0, orientation: .up)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: size.width, height: size.height)
 
-                            // Processed Image (Overlaid with Clipping Mask)
-                            Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: size.width, height: size.height)
-                                .mask(
-                                    Rectangle()
-                                        .size(
-                                            width: isShowingOriginalOnly ? 0 : size.width * splitOffset,
-                                            height: size.height
-                                        )
-                                )
-
-                            // Split Divider Line
-                            if !isShowingOriginalOnly {
-                                Rectangle()
-                                    .fill(Color.white.opacity(0.8))
-                                    .frame(width: 1.5, height: size.height)
-                                    .position(x: size.width * splitOffset, y: size.height / 2)
-                                    .shadow(color: .black.opacity(0.6), radius: 3)
-
-                                // Drag Handle
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 28, height: 28)
-                                    .overlay(
-                                        Image(systemName: "arrow.left.and.right")
-                                            .font(.system(size: 11, weight: .bold))
-                                            .foregroundColor(.black)
-                                    )
-                                    .position(x: size.width * splitOffset, y: size.height / 2)
-                                    .gesture(
-                                        DragGesture()
-                                            .onChanged { value in
-                                                let newSplit = value.location.x / size.width
-                                                splitOffset = max(0.05, min(0.95, newSplit))
-                                            }
+                                // Processed Image (Overlaid with Clipping Mask)
+                                Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: size.width, height: size.height)
+                                    .mask(
+                                        Rectangle()
+                                            .size(
+                                                width: isShowingOriginalOnly ? 0 : size.width * splitOffset,
+                                                height: size.height
+                                            )
                                     )
                             }
-
-                            // AI Processing Loading Overlay
-                            if isOptimizingWithAI {
-                                ZStack {
-                                    Color.black.opacity(0.6)
-                                    VStack(spacing: 10) {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: champagne))
-                                            .scaleEffect(1.2)
-                                        Text("Đang tối ưu màu…")
-                                            .font(.system(size: 13, weight: .medium))
-                                            .foregroundColor(.white)
+                            .scaleEffect(effectiveScale)
+                            .offset(effectiveOffset)
+                            .contentShape(Rectangle())
+                            .gesture(zoomPanGesture(in: size))
+                            .onTapGesture(count: 2) {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                    if effectiveScale > 1.15 {
+                                        zoomScale = 1.0
+                                        gestureScale = 1.0
+                                        panOffset = .zero
+                                        gesturePanOffset = .zero
+                                    } else {
+                                        zoomScale = 2.8
+                                        gestureScale = 1.0
+                                        panOffset = .zero
+                                        gesturePanOffset = .zero
                                     }
-                                    .padding(18)
-                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(white: 0.12)))
                                 }
                             }
+
+                            // 1.2 Split Comparison Divider & Handle (Chỉ hiện khi ở mức 1.0x để không cản trở lúc zoom)
+                            if !isShowingOriginalOnly && effectiveScale <= 1.05 {
+                                splitComparisonControls(size: size)
+                            }
+
+                            // 1.3 Mini-Map hiển thị vùng đang zoom theo phong cách iPhone đời mới
+                            zoomRegionMiniMap(viewportSize: size)
+                                .padding(10)
+
+                            // 1.4 Nút Chuyển nhanh Ảnh Gốc / Đã chỉnh khi đang zoom chi tiết
+                            if effectiveScale > 1.05 {
+                                VStack {
+                                    Spacer()
+                                    HStack {
+                                        Spacer()
+                                        Button(action: {
+                                            withAnimation(.easeInOut(duration: 0.18)) {
+                                                isShowingOriginalOnly.toggle()
+                                            }
+                                        }) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: isShowingOriginalOnly ? "photo.fill" : "wand.and.stars")
+                                                    .font(.system(size: 10, weight: .semibold))
+                                                Text(isShowingOriginalOnly ? "Ảnh gốc" : "Đã chỉnh")
+                                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                            }
+                                            .foregroundColor(isShowingOriginalOnly ? .yellow : champagne)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 5)
+                                            .background(Capsule().fill(Color.black.opacity(0.74)))
+                                            .overlay(Capsule().stroke(champagne.opacity(0.4), lineWidth: 1))
+                                            .shadow(color: Color.black.opacity(0.5), radius: 4)
+                                        }
+                                        .padding(10)
+                                    }
+                                }
+                            }
+
+                            // 1.5 AI Processing Loading Overlay
+                            if isOptimizingWithAI {
+                                aiLoadingOverlay
+                            }
                         }
+                        .frame(width: size.width, height: size.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                     .frame(maxHeight: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -283,13 +325,243 @@ public struct CapturedPhotoPreviewView: View {
                     .padding(.bottom, 14)
                 }
             }
-            .navigationBarTitle("Chi tiết ảnh", displayMode: .inline)
-            .navigationBarItems(
-                trailing: Button("Đóng") {
-                    presentationMode.wrappedValue.dismiss()
+            .navigationTitle("Chi tiết ảnh")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Đóng") {
+                        presentationMode.wrappedValue.dismiss()
+                    }
+                    .foregroundColor(champagne)
                 }
-                .foregroundColor(champagne)
+            }
+        }
+    }
+
+    // MARK: - Zoom & Pan Gesture Builder
+    private func zoomPanGesture(in size: CGSize) -> some Gesture {
+        SimultaneousGesture(
+            MagnificationGesture()
+                .onChanged { val in
+                    isPinching = true
+                    gestureScale = val
+                }
+                .onEnded { val in
+                    isPinching = false
+                    let targetScale = zoomScale * val
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        if targetScale < 1.05 {
+                            zoomScale = 1.0
+                            gestureScale = 1.0
+                            panOffset = .zero
+                            gesturePanOffset = .zero
+                        } else {
+                            zoomScale = min(6.0, max(1.0, targetScale))
+                            gestureScale = 1.0
+                            panOffset = clampOffset(panOffset, scale: zoomScale, viewportSize: size)
+                            gesturePanOffset = .zero
+                        }
+                    }
+                },
+            DragGesture(minimumDistance: 4)
+                .onChanged { val in
+                    if effectiveScale > 1.05 {
+                        isPanning = true
+                        gesturePanOffset = val.translation
+                    }
+                }
+                .onEnded { val in
+                    if effectiveScale > 1.05 {
+                        isPanning = false
+                        let combined = CGSize(
+                            width: panOffset.width + val.translation.width,
+                            height: panOffset.height + val.translation.height
+                        )
+                        let clamped = clampOffset(combined, scale: effectiveScale, viewportSize: size)
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                            panOffset = clamped
+                            gesturePanOffset = .zero
+                        }
+                    }
+                }
+        )
+    }
+
+    // MARK: - Pan & Bounds Clamping Helper
+    private func clampOffset(_ offset: CGSize, scale: CGFloat, viewportSize: CGSize) -> CGSize {
+        guard scale > 1.0 else { return .zero }
+        let imgW = CGFloat(item.originalImage.width)
+        let imgH = CGFloat(max(1, item.originalImage.height))
+        let imgAspect = imgW / imgH
+        let vpAspect = viewportSize.width / max(1, viewportSize.height)
+
+        let baseW: CGFloat = (vpAspect > imgAspect) ? (viewportSize.height * imgAspect) : viewportSize.width
+        let baseH: CGFloat = (vpAspect > imgAspect) ? viewportSize.height : (viewportSize.width / imgAspect)
+
+        let renderedW = baseW * scale
+        let renderedH = baseH * scale
+
+        let maxPanX = max(0, (renderedW - viewportSize.width) / 2)
+        let maxPanY = max(0, (renderedH - viewportSize.height) / 2)
+
+        let clampedX = min(maxPanX, max(-maxPanX, offset.width))
+        let clampedY = min(maxPanY, max(-maxPanY, offset.height))
+
+        return CGSize(width: clampedX, height: clampedY)
+    }
+
+    // MARK: - Split Comparison Controls (Active only at 1.0x)
+    @ViewBuilder
+    private func splitComparisonControls(size: CGSize) -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.8))
+            .frame(width: 1.5, height: size.height)
+            .position(x: size.width * splitOffset, y: size.height / 2)
+            .shadow(color: .black.opacity(0.6), radius: 3)
+
+        Circle()
+            .fill(Color.white)
+            .frame(width: 28, height: 28)
+            .overlay(
+                Image(systemName: "arrow.left.and.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.black)
             )
+            .position(x: size.width * splitOffset, y: size.height / 2)
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        let newSplit = value.location.x / size.width
+                        splitOffset = max(0.05, min(0.95, newSplit))
+                    }
+            )
+    }
+
+    // MARK: - Modern iPhone Style Mini-Map (Vùng đang zoom)
+    @ViewBuilder
+    private func zoomRegionMiniMap(viewportSize: CGSize) -> some View {
+        if effectiveScale > 1.05 {
+            let imgW = CGFloat(item.originalImage.width)
+            let imgH = CGFloat(max(1, item.originalImage.height))
+            let imgAspect = imgW / imgH
+            let vpAspect = viewportSize.width / max(1, viewportSize.height)
+
+            let baseW: CGFloat = (vpAspect > imgAspect) ? (viewportSize.height * imgAspect) : viewportSize.width
+            let baseH: CGFloat = (vpAspect > imgAspect) ? viewportSize.height : (viewportSize.width / imgAspect)
+            let renderedW = baseW * effectiveScale
+            let renderedH = baseH * effectiveScale
+            let maxPanX = max(1.0, (renderedW - viewportSize.width) / 2)
+            let maxPanY = max(1.0, (renderedH - viewportSize.height) / 2)
+
+            let miniWidth: CGFloat = imgAspect >= 1.0 ? 74 : 56
+            let miniHeight: CGFloat = max(40, min(86, miniWidth / imgAspect))
+
+            // Viewport indicator dimensions in mini-map
+            let indicatorW = max(10.0, miniWidth / effectiveScale)
+            let indicatorH = max(10.0, miniHeight / effectiveScale)
+
+            let maxIndicatorShiftX = max(0, (miniWidth - indicatorW) / 2)
+            let maxIndicatorShiftY = max(0, (miniHeight - indicatorH) / 2)
+
+            let currOffset = effectiveOffset
+            let normX = max(-1.0, min(1.0, currOffset.width / maxPanX))
+            let normY = max(-1.0, min(1.0, currOffset.height / maxPanY))
+
+            let indicatorOffsetX = -normX * maxIndicatorShiftX
+            let indicatorOffsetY = -normY * maxIndicatorShiftY
+
+            VStack(alignment: .leading, spacing: 5) {
+                // Header: Zoom Level Badge & 1.0x Reset Button
+                HStack(spacing: 4) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(String(format: "%.1f×", effectiveScale))
+                            .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                    }
+                    .foregroundColor(champagne)
+
+                    Spacer(minLength: 2)
+
+                    Button(action: {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                            zoomScale = 1.0
+                            gestureScale = 1.0
+                            panOffset = .zero
+                            gesturePanOffset = .zero
+                        }
+                    }) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white.opacity(0.85))
+                            .padding(3)
+                            .background(Circle().fill(Color.white.opacity(0.18)))
+                    }
+                }
+                .frame(width: miniWidth)
+
+                // Thumbnail with Live Viewport Box
+                ZStack {
+                    Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: miniWidth, height: miniHeight)
+                        .cornerRadius(5)
+
+                    // Darkened backdrop so illuminated box stands out
+                    Color.black.opacity(0.35)
+                        .frame(width: miniWidth, height: miniHeight)
+                        .cornerRadius(5)
+
+                    // Illuminated viewport rectangle
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(Color.white.opacity(0.15))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2.5)
+                                .stroke(champagne, lineWidth: 1.5)
+                        )
+                        .frame(width: indicatorW, height: indicatorH)
+                        .offset(x: indicatorOffsetX, y: indicatorOffsetY)
+                        .shadow(color: Color.black.opacity(0.6), radius: 2)
+                }
+                .frame(width: miniWidth, height: miniHeight)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.white.opacity(0.24), lineWidth: 0.8)
+                )
+            }
+            .padding(6)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color.black.opacity(0.75))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.55), radius: 6, x: 0, y: 3)
+            )
+            .transition(.asymmetric(
+                insertion: .scale(scale: 0.88).combined(with: .opacity),
+                removal: .scale(scale: 0.92).combined(with: .opacity)
+            ))
+            .animation(.spring(response: 0.28, dampingFraction: 0.8), value: effectiveScale)
+        }
+    }
+
+    // MARK: - AI Loading Overlay
+    private var aiLoadingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.6)
+            VStack(spacing: 10) {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: champagne))
+                    .scaleEffect(1.2)
+                Text("Đang tối ưu màu…")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white)
+            }
+            .padding(18)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Color(white: 0.12)))
         }
     }
 
