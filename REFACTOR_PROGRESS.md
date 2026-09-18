@@ -33,12 +33,17 @@ Fix viewfinder collapse when opening Pro controls or changing capture modes; sta
 - [x] Add regression checks for aspect ratios, coordinate transforms, jitter, occlusions, outliers, and invalid numbers.
   - Added a Swift package test target covering iPhone SE/standard/Pro Max geometry, RMS jitter, linear tracking lag, one-frame outliers, short occlusions/reacquisition, and AF mapping/policy.
   - CI runs the data-only suite before the warning-as-error iOS build.
-- [ ] Run checks, push changes, self-heal any Xcode diagnostics, and verify release artifacts at the final HEAD.
+- [x] Run checks, push changes, self-heal Xcode diagnostics, and verify release artifacts.
+  - First CI pass exposed ambiguous non-finite constants in the new Swift 6 test build; fixtures were qualified as `CGFloat` and rerun.
+  - GitHub Actions run `35371679163` passed at implementation HEAD `258e9c3eddc2d204e5c5e14bf462010a7a4651d7`.
+  - Data-only geometry/tracking tests, CoreML export, warning-as-error iOS Release build, IPA packaging, artifact upload, and release publication all passed.
+  - Release `v1.0.0-build.194` contains `AISmartFramingCamera.ipa` (14,260,340 bytes, SHA-256 `c880110b1c3689318841ec7a26766bd578f14b139efac6804c335f21dfa152dd`) and the source archive.
 
 ## Local validation
 
 - `git diff --check`: pass.
 - `xcodebuild`: unavailable on this Windows host by design; the macOS CI build remains the authoritative Apple SDK gate.
+- macOS GitHub Actions `xcodebuild` with `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` and `GCC_TREAT_WARNINGS_AS_ERRORS=YES`: pass, with the workflow's explicit zero-warning log gate.
 
 ## Validation limits
 
