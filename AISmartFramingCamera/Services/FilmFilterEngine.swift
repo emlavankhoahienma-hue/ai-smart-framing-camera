@@ -556,4 +556,33 @@ public final class FilmFilterEngine {
         }
         return out
     }
+
+    // MARK: - Subtle AI Sharpness (Bảo toàn 100% màu sắc & chất ảnh qua Luminosity Isolation)
+    /// Tăng cường vi tương phản chi tiết cạnh (Micro-Contrast & Edge Sharpness)
+    /// Sử dụng kỹ thuật Luminosity Blend Mode để giữ nguyên 100% sắc thái, nhiệt độ màu và hạt phim gốc
+    public func applySubtleAISharpness(to image: CGImage, intensity: Float = 0.50) -> CGImage? {
+        let ciImage = CIImage(cgImage: image)
+        guard let sharpenedCI = applySubtleAISharpness(to: ciImage, intensity: intensity) else { return image }
+        return context.createCGImage(sharpenedCI, from: ciImage.extent)
+    }
+
+    public func applySubtleAISharpness(to input: CIImage, intensity: Float = 0.50) -> CIImage? {
+        // 1. Unsharp Masking với bán kính vi mô (1.3pt) để tập trung vào chi tiết vi mô (tóc, mắt, vân vải, gai lá)
+        guard let unsharp = CIFilter(name: "CIUnsharpMask") else { return input }
+        unsharp.setValue(input, forKey: kCIInputImageKey)
+        unsharp.setValue(1.3, forKey: kCIInputRadiusKey)
+        unsharp.setValue(intensity, forKey: kCIInputIntensityKey)
+
+        guard let sharpened = unsharp.outputImage else { return input }
+
+        // 2. Luminosity Blend: Chỉ trích xuất độ tương phản sáng tối (Luma) áp lên ảnh gốc
+        // Tuyệt đối không thay đổi sắc độ (Chroma), không làm lệch màu hay sinh quầng giả
+        if let lumaBlend = CIFilter(name: "CILuminosityBlendMode") {
+            lumaBlend.setValue(sharpened, forKey: kCIInputImageKey)
+            lumaBlend.setValue(input, forKey: kCIInputBackgroundImageKey)
+            return lumaBlend.outputImage ?? sharpened
+        }
+
+        return sharpened
+    }
 }

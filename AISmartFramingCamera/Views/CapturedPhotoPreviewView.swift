@@ -8,6 +8,9 @@ public struct CapturedPhotoPreviewView: View {
     @Environment(\.presentationMode) var presentationMode
 
     @State private var currentProcessedImage: CGImage
+    @State private var baseProcessedImage: CGImage
+    @State private var isAISharpnessEnabled: Bool = false
+    @State private var isSharpeningProcessing: Bool = false
     @State private var splitOffset: CGFloat = 0.5
     @State private var isShowingOriginalOnly: Bool = false
     @State private var isOptimizingWithAI: Bool = false
@@ -45,6 +48,7 @@ public struct CapturedPhotoPreviewView: View {
         self.item = item
         self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
+        _baseProcessedImage = State(initialValue: item.processedImage)
         _selectedPreviewPreset = State(initialValue: item.appliedPreset)
         _currentAIParams = State(initialValue: item.aiColorParameters)
     }
@@ -84,21 +88,33 @@ public struct CapturedPhotoPreviewView: View {
                             .offset(effectiveOffset)
                             .contentShape(Rectangle())
                             .gesture(zoomPanGesture(in: size))
-                            .onTapGesture(count: 2) {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                    if effectiveScale > 1.15 {
-                                        zoomScale = 1.0
-                                        gestureScale = 1.0
-                                        panOffset = .zero
-                                        gesturePanOffset = .zero
-                                    } else {
-                                        zoomScale = 2.8
-                                        gestureScale = 1.0
-                                        panOffset = .zero
-                                        gesturePanOffset = .zero
+                            .simultaneousGesture(
+                                SpatialTapGesture(count: 2)
+                                    .onEnded { event in
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                            if effectiveScale > 1.15 {
+                                                // Đang zoom: thu về 1.0x ở chính giữa
+                                                zoomScale = 1.0
+                                                gestureScale = 1.0
+                                                panOffset = .zero
+                                                gesturePanOffset = .zero
+                                            } else {
+                                                // Zoom 2.8x hướng thẳng vào toạ độ vừa chạm (góc, cạnh, chủ thể)
+                                                let targetScale: CGFloat = 2.8
+                                                let dx = event.location.x - size.width / 2.0
+                                                let dy = event.location.y - size.height / 2.0
+                                                let targetOffset = CGSize(
+                                                    width: -dx * (targetScale - 1.0),
+                                                    height: -dy * (targetScale - 1.0)
+                                                )
+                                                zoomScale = targetScale
+                                                gestureScale = 1.0
+                                                panOffset = clampOffset(targetOffset, scale: targetScale, viewportSize: size)
+                                                gesturePanOffset = .zero
+                                            }
+                                        }
                                     }
-                                }
-                            }
+                            )
 
                             // 1.2 Split Comparison Divider & Handle (Chỉ hiện khi ở mức 1.0x để không cản trở lúc zoom)
                             if !isShowingOriginalOnly && effectiveScale <= 1.05 {
@@ -262,67 +278,102 @@ public struct CapturedPhotoPreviewView: View {
                         .padding(.horizontal, 16)
                     }
 
-                    // 5. Action Buttons: [Chỉnh màu], [Lưu], [Chia sẻ]
-                    HStack(spacing: 12) {
-                        // Nút Chỉnh màu (AI Studio)
-                        Button(action: optimizeWithAIStudio) {
-                            HStack(spacing: 6) {
-                                if isOptimizingWithAI {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .scaleEffect(0.8)
-                                } else {
-                                    Image(systemName: "wand.and.stars")
+                    // 5. Tool & Action Buttons
+                    VStack(spacing: 10) {
+                        // 5.1 AI Enhancement Row: [AI Chỉnh màu] & [Làm nét]
+                        HStack(spacing: 10) {
+                            // Nút AI Chỉnh màu
+                            Button(action: optimizeWithAIStudio) {
+                                HStack(spacing: 6) {
+                                    if isOptimizingWithAI {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                            .scaleEffect(0.8)
+                                    } else {
+                                        Image(systemName: "wand.and.stars")
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    Text(isOptimizingWithAI ? "Đang chọn màu…" : "AI Chỉnh màu")
                                         .font(.system(size: 13, weight: .semibold))
                                 }
-                                Text(isOptimizingWithAI ? "Đang chọn màu…" : "AI Chỉnh màu")
-                                    .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 11)
+                                .background(Color.white.opacity(0.12))
+                                .cornerRadius(10)
                             }
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
-                        }
-                        .disabled(isOptimizingWithAI)
+                            .disabled(isOptimizingWithAI)
 
-                        // Nút Lưu
-                        Button(action: {
-                            saveEnhancedImageToPhotos(currentProcessedImage)
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: hasSavedNewEnhancement ? "checkmark" : "arrow.down")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text(hasSavedNewEnhancement ? "Đã lưu" : "Lưu")
-                                    .font(.system(size: 13, weight: .semibold))
+                            // Nút Làm nét AI (Bật / Tắt - Bảo toàn 100% màu & chất ảnh)
+                            Button(action: toggleAISharpness) {
+                                HStack(spacing: 6) {
+                                    if isSharpeningProcessing {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: isAISharpnessEnabled ? .black : .white))
+                                            .scaleEffect(0.8)
+                                    } else {
+                                        Image(systemName: isAISharpnessEnabled ? "sparkle.magnifyingglass" : "sparkles")
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    Text(isAISharpnessEnabled ? "Đang làm nét" : "Làm nét")
+                                        .font(.system(size: 13, weight: .semibold))
+                                    if isAISharpnessEnabled && !isSharpeningProcessing {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 10, weight: .bold))
+                                    }
+                                }
+                                .foregroundColor(isAISharpnessEnabled ? .black : .white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 11)
+                                .background(isAISharpnessEnabled ? champagne : Color.white.opacity(0.12))
+                                .cornerRadius(10)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(isAISharpnessEnabled ? champagne : Color.white.opacity(0.15), lineWidth: 1)
+                                )
                             }
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(champagne)
-                            .cornerRadius(10)
                         }
 
-                        // Nút Chia sẻ
-                        ShareLink(
-                            item: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up),
-                            preview: SharePreview("AlignAI Photo", image: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up))
-                        ) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text("Chia sẻ")
-                                    .font(.system(size: 13, weight: .semibold))
+                        // 5.2 Action Row: [Lưu ảnh] & [Chia sẻ]
+                        HStack(spacing: 10) {
+                            // Nút Lưu ảnh
+                            Button(action: {
+                                saveEnhancedImageToPhotos(currentProcessedImage)
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: hasSavedNewEnhancement ? "checkmark" : "arrow.down")
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text(hasSavedNewEnhancement ? "Đã lưu" : "Lưu ảnh")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                .foregroundColor(.black)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 11)
+                                .background(champagne)
+                                .cornerRadius(10)
                             }
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
+
+                            // Nút Chia sẻ
+                            ShareLink(
+                                item: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up),
+                                preview: SharePreview("AlignAI Photo", image: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up))
+                            ) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text("Chia sẻ")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 11)
+                                .background(Color.white.opacity(0.12))
+                                .cornerRadius(10)
+                            }
                         }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 14)
+                    .padding(.bottom, 12)
                 }
             }
             .navigationTitle("Chi tiết ảnh")
@@ -341,14 +392,22 @@ public struct CapturedPhotoPreviewView: View {
     // MARK: - Zoom & Pan Gesture Builder
     private func zoomPanGesture(in size: CGSize) -> some Gesture {
         SimultaneousGesture(
-            MagnificationGesture()
+            MagnifyGesture()
                 .onChanged { val in
                     isPinching = true
-                    gestureScale = val
+                    gestureScale = val.magnification
+                    if zoomScale <= 1.05 {
+                        // Tiêu điểm zoom bám theo vị trí ngón tay chạm ban đầu (góc, cạnh)
+                        let dx = val.startLocation.x - size.width / 2.0
+                        let dy = val.startLocation.y - size.height / 2.0
+                        let focalX = -dx * (val.magnification - 1.0)
+                        let focalY = -dy * (val.magnification - 1.0)
+                        gesturePanOffset = CGSize(width: focalX, height: focalY)
+                    }
                 }
                 .onEnded { val in
                     isPinching = false
-                    let targetScale = zoomScale * val
+                    let targetScale = zoomScale * val.magnification
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                         if targetScale < 1.05 {
                             zoomScale = 1.0
@@ -356,9 +415,14 @@ public struct CapturedPhotoPreviewView: View {
                             panOffset = .zero
                             gesturePanOffset = .zero
                         } else {
-                            zoomScale = min(6.0, max(1.0, targetScale))
+                            let newScale = min(6.0, max(1.0, targetScale))
+                            zoomScale = newScale
                             gestureScale = 1.0
-                            panOffset = clampOffset(panOffset, scale: zoomScale, viewportSize: size)
+                            let combined = CGSize(
+                                width: panOffset.width + gesturePanOffset.width,
+                                height: panOffset.height + gesturePanOffset.height
+                            )
+                            panOffset = clampOffset(combined, scale: newScale, viewportSize: size)
                             gesturePanOffset = .zero
                         }
                     }
@@ -565,6 +629,35 @@ public struct CapturedPhotoPreviewView: View {
         }
     }
 
+    // MARK: - Subtle AI Sharpness Action (Làm nét nhẹ AI - Giữ 100% màu sắc & chất ảnh)
+    private func toggleAISharpness() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.prepare()
+        generator.impactOccurred()
+
+        if isAISharpnessEnabled {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isAISharpnessEnabled = false
+                currentProcessedImage = baseProcessedImage
+                aiOptimizationSuccessNote = "Đã tắt làm nét AI"
+            }
+        } else {
+            isSharpeningProcessing = true
+            let input = baseProcessedImage
+            DispatchQueue.global(qos: .userInitiated).async {
+                let sharpened = FilmFilterEngine.shared.applySubtleAISharpness(to: input, intensity: 0.50) ?? input
+                DispatchQueue.main.async {
+                    self.isSharpeningProcessing = false
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        self.isAISharpnessEnabled = true
+                        self.currentProcessedImage = sharpened
+                        self.aiOptimizationSuccessNote = "✨ Đã bật làm nét nhẹ AI (bảo toàn 100% màu sắc)"
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Preset Switcher Action
     private func applyPresetToPreview(_ preset: FilmPreset) {
         let generator = UISelectionFeedbackGenerator()
@@ -576,9 +669,16 @@ public struct CapturedPhotoPreviewView: View {
         let params = currentAIParams
         DispatchQueue.global(qos: .userInitiated).async {
             let rendered = FilmFilterEngine.shared.applyPresetAndAIParameters(to: original, preset: preset, params: params) ?? original
+            let finalImage: CGImage
+            if self.isAISharpnessEnabled {
+                finalImage = FilmFilterEngine.shared.applySubtleAISharpness(to: rendered, intensity: 0.50) ?? rendered
+            } else {
+                finalImage = rendered
+            }
             DispatchQueue.main.async {
+                self.baseProcessedImage = rendered
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    self.currentProcessedImage = rendered
+                    self.currentProcessedImage = finalImage
                     self.splitOffset = 1.0
                 }
             }
@@ -615,12 +715,19 @@ public struct CapturedPhotoPreviewView: View {
                     self.currentAIParams = aiParams
 
                     if let enhanced = FilmFilterEngine.shared.applyPresetAndAIParameters(to: self.item.originalImage, preset: chosenPreset, params: aiParams) {
+                        self.baseProcessedImage = enhanced
+                        let finalImage: CGImage
+                        if self.isAISharpnessEnabled {
+                            finalImage = FilmFilterEngine.shared.applySubtleAISharpness(to: enhanced, intensity: 0.50) ?? enhanced
+                        } else {
+                            finalImage = enhanced
+                        }
                         withAnimation(.easeInOut(duration: 0.3)) {
-                            self.currentProcessedImage = enhanced
+                            self.currentProcessedImage = finalImage
                             self.splitOffset = 1.0
                         }
                         self.aiOptimizationSuccessNote = "✨ AI khuyên dùng \(chosenPreset.displayName): \(explanation) (\(latency)ms)"
-                        self.saveEnhancedImageToPhotos(enhanced, appliedPreset: chosenPreset, aiParams: aiParams)
+                        self.saveEnhancedImageToPhotos(finalImage, appliedPreset: chosenPreset, aiParams: aiParams)
                     }
                 case .failure(let error):
                     self.aiErrorMessage = "Lỗi: \(error.localizedDescription)"
