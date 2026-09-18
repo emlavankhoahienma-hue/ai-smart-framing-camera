@@ -4,7 +4,7 @@ import CoreVideo
 import SwiftUI
 import Metal
 
-public enum FocusPeakingColor: String, CaseIterable, Identifiable {
+public enum FocusPeakingColor: String, CaseIterable, Identifiable, Sendable {
     case green = "Xanh Lá Neon"
     case yellow = "Vàng Kim"
     case red = "Đỏ Rực"

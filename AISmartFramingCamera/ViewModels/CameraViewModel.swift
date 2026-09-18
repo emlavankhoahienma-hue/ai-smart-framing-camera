@@ -8,6 +8,77 @@ import CoreMotion
 import ImageIO
 import UniformTypeIdentifiers
 
+private struct CameraFrameProcessingConfiguration: Sendable {
+    var isSettingsVisible = false
+    var isFocusPeakingEnabled = false
+    var focusPeakingColor: FocusPeakingColor = .green
+}
+
+/// Owns frame-rate work on AVFoundation's serial sample-buffer queue. UI state is
+/// published only after hopping to the main queue, while configuration snapshots
+/// and the most recent pixel buffer are protected for cross-queue access.
+private final class CameraFrameProcessor: @unchecked Sendable {
+    private let stateLock = NSLock()
+    private weak var owner: CameraViewModel?
+    private var configuration = CameraFrameProcessingConfiguration()
+    private var latestPixelBuffer: CVPixelBuffer?
+    private var lastHistogramComputeTime: CFTimeInterval = 0
+    private var lastFocusPeakingComputeTime: CFTimeInterval = 0
+
+    @MainActor
+    func attach(to owner: CameraViewModel) {
+        self.owner = owner
+    }
+
+    func updateConfiguration(_ configuration: CameraFrameProcessingConfiguration) {
+        stateLock.lock()
+        self.configuration = configuration
+        stateLock.unlock()
+    }
+
+    func latestPixelBufferSnapshot() -> CVPixelBuffer? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return latestPixelBuffer
+    }
+
+    func process(_ sampleBuffer: CMSampleBuffer) {
+        // CameraService invokes this method on its serial videoDataQueue. Processing
+        // in place avoids an extra frame copy and never sends CMSampleBuffer across
+        // another concurrency boundary.
+        VisionFramingEngine.shared.processVideoSampleBuffer(sampleBuffer, orientation: .up)
+
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        stateLock.lock()
+        latestPixelBuffer = pixelBuffer
+        let snapshot = configuration
+        stateLock.unlock()
+
+        guard !snapshot.isSettingsVisible else { return }
+
+        let now = CACurrentMediaTime()
+        if now - lastHistogramComputeTime >= 0.05 {
+            lastHistogramComputeTime = now
+            let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
+            DispatchQueue.main.async { [weak self] in
+                self?.owner?.histogramBars = bars
+            }
+        }
+
+        guard snapshot.isFocusPeakingEnabled,
+              now - lastFocusPeakingComputeTime >= 0.04 else { return }
+
+        lastFocusPeakingComputeTime = now
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: snapshot.focusPeakingColor) { [weak self] cgImage in
+            DispatchQueue.main.async {
+                self?.owner?.focusPeakingCGImage = cgImage
+            }
+        }
+    }
+}
+
 @MainActor
 public final class CameraViewModel: ObservableObject {
     // MARK: - Services
@@ -18,6 +89,7 @@ public final class CameraViewModel: ObservableObject {
     public let haptics = HapticFeedbackService.shared
     public let geminiService = GeminiService.shared
     public let motionService = DeviceMotionService.shared
+    private nonisolated let frameProcessor = CameraFrameProcessor()
 
     // MARK: - AI Session State Machine
     private var aiSessionGeneration: Int = 0
@@ -85,8 +157,6 @@ public final class CameraViewModel: ObservableObject {
         let col = t < 0.28 ? Color(red: 0.15, green: 0.45, blue: 0.95) : (t < 0.72 ? Color(red: 0.40, green: 0.90, blue: 0.60) : Color(red: 0.95, green: 0.45, blue: 0.20))
         return HistogramBarData(id: $0, height: 0.10, color: col)
     }
-    private var lastHistogramComputeTime: CFTimeInterval = 0
-
     @Published public var isRecordingVideo: Bool = false
     @Published public var recordedVideoURL: URL? = nil
     @Published public var isShowingVideoPreview: Bool = false
@@ -108,8 +178,6 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    // Dedicated background queue for CV / Vision / Frame processing (keeps UI 100% fluid)
-    private let videoProcessingQueue = DispatchQueue(label: "com.aismartframing.video.processing", qos: .userInitiated)
     private var videoRecordingTimer: Timer? = nil
     private var videoRecordingStartTime: Date? = nil
 
@@ -145,13 +213,19 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - Focus Peaking (Viền Báo Nét Điện Ảnh)
     @Published public var isFocusPeakingEnabled: Bool = false {
-        didSet { UserDefaults.standard.set(isFocusPeakingEnabled, forKey: "isFocusPeakingEnabled") }
+        didSet {
+            UserDefaults.standard.set(isFocusPeakingEnabled, forKey: "isFocusPeakingEnabled")
+            if !isFocusPeakingEnabled { focusPeakingCGImage = nil }
+            updateFrameProcessingConfiguration()
+        }
     }
     @Published public var focusPeakingColor: FocusPeakingColor = .green {
-        didSet { UserDefaults.standard.set(focusPeakingColor.rawValue, forKey: "focusPeakingColor") }
+        didSet {
+            UserDefaults.standard.set(focusPeakingColor.rawValue, forKey: "focusPeakingColor")
+            updateFrameProcessingConfiguration()
+        }
     }
     @Published public var focusPeakingCGImage: CGImage? = nil
-    private var lastFocusPeakingComputeTime: CFTimeInterval = 0
 
     public var zoomRevealRect: CGRect {
         guard isRevealingZoomTarget, pendingTargetZoomForReveal > 1.05 else {
@@ -277,7 +351,12 @@ public final class CameraViewModel: ObservableObject {
     // Capture & Review
     @Published public var latestCapturedPhoto: CapturedPhotoItem?
     @Published public var isShowingPhotoDetail: Bool = false
-    @Published public var isShowingSettings: Bool = false
+    @Published public var isShowingSettings: Bool = false {
+        didSet {
+            if isShowingSettings { focusPeakingCGImage = nil }
+            updateFrameProcessingConfiguration()
+        }
+    }
     @Published public var isShowingFilmDrawer: Bool = false
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
@@ -469,10 +548,22 @@ public final class CameraViewModel: ObservableObject {
 
         // didSet không fire khi gán trong init -> gọi trực tiếp để engine nhận đúng ngưỡng
         applyTrackingSensitivityToEngines()
+        frameProcessor.attach(to: self)
+        updateFrameProcessingConfiguration()
 
         setupCallbacks()
         setupMotionCallbacks()
         startHorizonLeveler()
+    }
+
+    private func updateFrameProcessingConfiguration() {
+        frameProcessor.updateConfiguration(
+            CameraFrameProcessingConfiguration(
+                isSettingsVisible: isShowingSettings,
+                isFocusPeakingEnabled: isFocusPeakingEnabled,
+                focusPeakingColor: focusPeakingColor
+            )
+        )
     }
 
     // MARK: - Initialization & Permissions
@@ -903,7 +994,6 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - State for Hybrid Optical + Spatial Tracking
     private var initialPhysicalSubjectCenter: CGPoint? = nil
-    private var latestPixelBuffer: CVPixelBuffer? = nil
     private var shouldCheckTextureOnNextFrame: Bool = false
 
     // MARK: - Low Texture Analysis (Bầu trời, Tường phẳng)
@@ -985,7 +1075,7 @@ public final class CameraViewModel: ObservableObject {
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = target
-        if let buffer = latestPixelBuffer {
+        if let buffer = frameProcessor.latestPixelBufferSnapshot() {
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: buffer, normalizedRect: region)
             applyTextureVarianceHysteresis(variance: variance)
@@ -1016,7 +1106,7 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.startTrackingObject(
             at: target,
             size: initialSize,
-            refiningBuffer: latestPixelBuffer,
+            refiningBuffer: frameProcessor.latestPixelBufferSnapshot(),
             orientation: .up
         )
 
@@ -1308,28 +1398,34 @@ public final class CameraViewModel: ObservableObject {
             videoRecordingTimeString = "00:00:00"
             videoRecordingTimer?.invalidate()
             videoRecordingTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-                guard let self = self, let start = self.videoRecordingStartTime, self.isRecordingVideo else { return }
-                let elapsed = Date().timeIntervalSince(start)
-                self.videoRecordedDurationSeconds = elapsed
-                let totalSec = Int(elapsed)
-                let hours = totalSec / 3600
-                let minutes = (totalSec % 3600) / 60
-                let seconds = totalSec % 60
-                self.videoRecordingTimeString = String(format: "%02d:%02d:%02d", hours, minutes, seconds)
-
-                // Khi AI Video Director đang hoạt động và đang quay, tự động đếm nhịp và chuyển tâm mượt mà
-                if self.isAIVideoDirectorActive, let guidance = self.activeVideoGuidance, !self.hasCompletedAllWaypoints {
-                    self.waypointElapsedSeconds += 0.25
-                    if self.currentActiveWaypointIndex < guidance.waypoints.count {
-                        let activeWP = guidance.waypoints[self.currentActiveWaypointIndex]
-                        if self.waypointElapsedSeconds >= activeWP.recommendedDuration {
-                            self.advanceWaypoint()
-                        }
-                    }
+                Task { @MainActor [weak self] in
+                    self?.updateVideoRecordingClock()
                 }
             }
             cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
             isRecordingVideo = true
+        }
+    }
+
+    private func updateVideoRecordingClock() {
+        guard let start = videoRecordingStartTime, isRecordingVideo else { return }
+        let elapsed = Date().timeIntervalSince(start)
+        videoRecordedDurationSeconds = elapsed
+        let totalSec = Int(elapsed)
+        let hours = totalSec / 3600
+        let minutes = (totalSec % 3600) / 60
+        let seconds = totalSec % 60
+        videoRecordingTimeString = String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+
+        // Khi AI Video Director đang hoạt động và đang quay, tự động đếm nhịp và chuyển tâm mượt mà
+        if isAIVideoDirectorActive, let guidance = activeVideoGuidance, !hasCompletedAllWaypoints {
+            waypointElapsedSeconds += 0.25
+            if currentActiveWaypointIndex < guidance.waypoints.count {
+                let activeWaypoint = guidance.waypoints[currentActiveWaypointIndex]
+                if waypointElapsedSeconds >= activeWaypoint.recommendedDuration {
+                    advanceWaypoint()
+                }
+            }
         }
     }
 
@@ -1613,7 +1709,11 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // MARK: - Live Photo Metadata Injection (Preserves Film Filter & Apple Content Identifier)
-    private func makeLivePhotoColorGradedData(from processedCGImage: CGImage, rawData: Data?) -> Data? {
+    private nonisolated static func makeLivePhotoColorGradedData(
+        from processedCGImage: CGImage,
+        rawData: Data?,
+        format: PhotoSaveFormat
+    ) -> Data? {
         guard let rawData = rawData,
               let source = CGImageSourceCreateWithData(rawData as CFData, nil),
               let metadata = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] else {
@@ -1657,7 +1757,7 @@ public final class CameraViewModel: ObservableObject {
         }
 
         let outputData = NSMutableData()
-        let uti: CFString = (selectedPhotoFormat == .heic) ? (UTType.heic.identifier as CFString) : (UTType.jpeg.identifier as CFString)
+        let uti: CFString = (format == .heic) ? (UTType.heic.identifier as CFString) : (UTType.jpeg.identifier as CFString)
         guard let destination = CGImageDestinationCreateWithData(outputData as CFMutableData, uti, 1, nil) else {
             CameraLogger.error("Không thể tạo CGImageDestination cho Live Photo", category: .photoKit)
             return nil
@@ -1675,6 +1775,8 @@ public final class CameraViewModel: ObservableObject {
 
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {
         CameraLogger.info("Bắt đầu lưu ảnh vào Cuộn Camera (Photo Library)... (Live Photo: \(item.isLivePhoto ? "CÓ" : "KHÔNG"))", category: .photoKit)
+        let photoFormat = selectedPhotoFormat
+        let shouldSaveOriginal = isSaveOriginalPhotoEnabled
 
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
             guard let self = self else { return }
@@ -1695,7 +1797,11 @@ public final class CameraViewModel: ObservableObject {
 
                     // Thêm tài nguyên ảnh (ảnh đã lọc màu kèm Live Photo Content Identifier khớp với paired video)
                     let photoOptions = PHAssetResourceCreationOptions()
-                    if let gradedData = self.makeLivePhotoColorGradedData(from: item.processedImage, rawData: item.rawPhotoData) {
+                    if let gradedData = Self.makeLivePhotoColorGradedData(
+                        from: item.processedImage,
+                        rawData: item.rawPhotoData,
+                        format: photoFormat
+                    ) {
                         creationRequest.addResource(with: .photo, data: gradedData, options: photoOptions)
                     } else if let rawData = item.rawPhotoData {
                         CameraLogger.warning("Fallback dùng rawPhotoData gốc (giữ Live Photo, không màu film)", category: .photoKit)
@@ -1725,7 +1831,7 @@ public final class CameraViewModel: ObservableObject {
                 }
             } else {
                 // LƯU ẢNH TĨNH THƯỜNG (RAW DNG / HEIC / JPEG)
-                if self.selectedPhotoFormat == .dng, let rawData = item.rawPhotoData {
+                if photoFormat == .dng, let rawData = item.rawPhotoData {
                     PHPhotoLibrary.shared().performChanges({
                         let creationRequest = PHAssetCreationRequest.forAsset()
                         let options = PHAssetResourceCreationOptions()
@@ -1745,7 +1851,7 @@ public final class CameraViewModel: ObservableObject {
                     return
                 }
 
-                if self.selectedPhotoFormat == .heic {
+                if photoFormat == .heic {
                     let ciImage = CIImage(cgImage: item.processedImage)
                     let context = CIContext()
                     let colorSpace = ciImage.colorSpace
@@ -1772,7 +1878,7 @@ public final class CameraViewModel: ObservableObject {
                 }
 
                 let image = UIImage(cgImage: item.processedImage)
-                let origImage = self.isSaveOriginalPhotoEnabled ? UIImage(cgImage: item.originalImage) : nil
+                let origImage = shouldSaveOriginal ? UIImage(cgImage: item.originalImage) : nil
                 PHPhotoLibrary.shared().performChanges({
                     PHAssetChangeRequest.creationRequestForAsset(from: image)
                     if let orig = origImage {
@@ -1836,45 +1942,8 @@ public final class CameraViewModel: ObservableObject {
 
 // MARK: - CameraServiceDelegate
 extension CameraViewModel: CameraServiceDelegate {
-    public func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
-        videoProcessingQueue.async { [weak self] in
-            guard let self = self else { return }
-
-            // Video connection is already set to .portrait in CameraService, so pixelBuffer is upright (.up)
-            self.visionEngine.processVideoSampleBuffer(sampleBuffer, orientation: .up)
-
-            if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
-                self.latestPixelBuffer = pixelBuffer
-
-                let now = CACurrentMediaTime()
-                // Khi mở Cài đặt: ngừng đẩy Histogram & Focus Peaking lên main để không ép
-                // Form cài đặt re-render liên tục (nguyên nhân lag khi lướt).
-                if now - self.lastHistogramComputeTime >= 0.05 {
-                    self.lastHistogramComputeTime = now
-                    if !self.isShowingSettings {
-                        let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
-                        DispatchQueue.main.async {
-                            self.histogramBars = bars
-                        }
-                    }
-                }
-
-                // Focus Peaking: Chỉ chạy khi người dùng bật trong Cài đặt (Zero overhead khi tắt)
-                if self.isFocusPeakingEnabled && !self.isShowingSettings && now - self.lastFocusPeakingComputeTime >= 0.04 {
-                    self.lastFocusPeakingComputeTime = now
-                    let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-                    FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: self.focusPeakingColor) { [weak self] cgImage in
-                        DispatchQueue.main.async {
-                            self?.focusPeakingCGImage = cgImage
-                        }
-                    }
-                } else if !self.isFocusPeakingEnabled && self.focusPeakingCGImage != nil {
-                    DispatchQueue.main.async {
-                        self.focusPeakingCGImage = nil
-                    }
-                }
-            }
-        }
+    public nonisolated func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
+        frameProcessor.process(sampleBuffer)
     }
 
     public func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {

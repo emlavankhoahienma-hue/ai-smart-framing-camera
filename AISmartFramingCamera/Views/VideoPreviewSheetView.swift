@@ -125,6 +125,7 @@ public struct VideoPreviewSheetView: View {
         isGradingWithAI = true
         let asset = AVAsset(url: videoURL)
         let filterPreset = viewModel.selectedFilmPreset
+        let aiColorParameters = viewModel.currentAIColorParams
 
         let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
             let source = request.sourceImage.clampedToExtent()
@@ -134,7 +135,7 @@ public struct VideoPreviewSheetView: View {
                 output = filtered
             }
 
-            if let aiParams = viewModel.currentAIColorParams,
+            if let aiParams = aiColorParameters,
                let aiFiltered = FilmFilterEngine.shared.applyAIColorParameters(to: output, params: aiParams) {
                 output = aiFiltered
             }

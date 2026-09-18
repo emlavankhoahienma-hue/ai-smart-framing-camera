@@ -7,15 +7,22 @@ import ImageIO
 
 public protocol CameraServiceDelegate: AnyObject {
     func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
+    @MainActor
     func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double)
+    @MainActor
     func cameraService(_ service: CameraService, didFailCaptureWithError error: Error)
+    @MainActor
     func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL)
+    @MainActor
     func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat)
 }
 
 public extension CameraServiceDelegate {
+    @MainActor
     func cameraService(_ service: CameraService, didFailCaptureWithError error: Error) {}
+    @MainActor
     func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {}
+    @MainActor
     func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {}
 }
 
@@ -264,7 +271,7 @@ public final class CameraService: NSObject {
                 // Photo Output
                 if self.captureSession.canAddOutput(self.photoOutput) {
                     self.captureSession.addOutput(self.photoOutput)
-                    self.photoOutput.isHighResolutionCaptureEnabled = true
+                    self.updateMaxPhotoDimensions(for: camera)
                     self.photoOutput.maxPhotoQualityPrioritization = .quality
 
                     if #available(iOS 17.0, *) {
@@ -679,7 +686,6 @@ public final class CameraService: NSObject {
         if bestFormat == nil {
             for format in camera.formats {
                 let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                let maxDim = max(dims.width, dims.height)
                 let minDim = min(dims.width, dims.height)
                 if (option.width == 1920 && minDim >= 1080) || (option.width == 3840 && minDim >= 2160) {
                     for range in format.videoSupportedFrameRateRanges {
@@ -703,6 +709,7 @@ public final class CameraService: NSObject {
             self.captureSession.beginConfiguration()
             self.captureSession.sessionPreset = .inputPriority
             camera.activeFormat = selectedFormat
+            self.updateMaxPhotoDimensions(for: camera)
 
             let frameDuration = CMTime(value: 1, timescale: CMTimeScale(option.fps))
             camera.activeVideoMinFrameDuration = frameDuration
@@ -715,6 +722,13 @@ public final class CameraService: NSObject {
         } catch {
             CameraLogger.error("CameraService: Lỗi cấu hình video format \(option.rawValue)", error: error, category: .capture)
         }
+    }
+
+    private func updateMaxPhotoDimensions(for camera: AVCaptureDevice) {
+        guard let maximumPhotoDimensions = camera.activeFormat.supportedMaxPhotoDimensions.max(by: {
+            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+        }) else { return }
+        photoOutput.maxPhotoDimensions = maximumPhotoDimensions
     }
 
     // MARK: - Capture Mode & Live Photo Dynamic Control
@@ -758,6 +772,9 @@ public final class CameraService: NSObject {
                     }
                 }
                 self.captureSession.commitConfiguration()
+                if let camera = self.activeCamera {
+                    self.updateMaxPhotoDimensions(for: camera)
+                }
             }
             let formatStr = self.getActiveVideoResolutionAndFPS()
             DispatchQueue.main.async {
@@ -844,8 +861,9 @@ public final class CameraService: NSObject {
                 photoSettings.flashMode = self.flashMode
             }
             photoSettings.photoQualityPrioritization = .quality
-            if self.photoOutput.isHighResolutionCaptureEnabled {
-                photoSettings.isHighResolutionPhotoEnabled = true
+            let maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
+            if maxPhotoDimensions.width > 0, maxPhotoDimensions.height > 0 {
+                photoSettings.maxPhotoDimensions = maxPhotoDimensions
             }
 
             if !isDNG && self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {

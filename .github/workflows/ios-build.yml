@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Select latest Xcode
         run: |
@@ -31,7 +31,7 @@ jobs:
           xcodebuild -version
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -63,11 +63,18 @@ jobs:
             ENABLE_ON_DEMAND_RESOURCES=NO \
             ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS=NO \
             ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
             BUILD_DIR=${{ github.workspace }}/build 2>&1 | tee build.log
+
+          if grep -nE ' warning: |::warning::' build.log; then
+            echo "Build emitted warnings; release artifacts will not be published."
+            exit 1
+          fi
 
       - name: Upload build log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: build-log-${{ github.run_id }}
           path: build.log
@@ -122,7 +129,7 @@ jobs:
           echo "IPA size: $(du -h AISmartFramingCamera.ipa | cut -f1)"
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: AISmartFramingCamera-IPA
           path: AISmartFramingCamera.ipa

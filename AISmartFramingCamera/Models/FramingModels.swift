@@ -313,7 +313,7 @@ public enum SmartFocusType: Equatable {
 }
 
 // MARK: - Scene Classification Types
-public enum DetectedSceneType: String, CaseIterable {
+public enum DetectedSceneType: String, CaseIterable, Sendable {
     case portrait = "Portrait"
     case pet = "Pet / Animal"
     case landscape = "Landscape"
@@ -424,7 +424,7 @@ public enum DetectedSceneType: String, CaseIterable {
 }
 
 // MARK: - AI Full Color Parameters (Neural Engine driven)
-public enum AIColorGrade: String {
+public enum AIColorGrade: String, Sendable {
     case softwarm = "Soft Warm"
     case coolnatural = "Cool Natural"
     case golden = "Golden Hour"
@@ -435,7 +435,7 @@ public enum AIColorGrade: String {
     case cinematic = "Cinematic Film"
 }
 
-public struct AIColorParameters {
+public struct AIColorParameters: Sendable {
     /// -1.0 (cool) to +1.0 (warm)
     public let warmthShift: CGFloat
     /// 0.5 (muted) to 1.6 (vibrant)
@@ -681,7 +681,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
 }
 
 // MARK: - Captured Photo Item
-public struct CapturedPhotoItem: Identifiable {
+public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
     public let id: UUID = UUID()
     public let originalImage: CGImage
     public let processedImage: CGImage
@@ -749,7 +749,7 @@ public struct SubjectDetectionResult {
 }
 
 // MARK: - Photo Save Format
-public enum PhotoSaveFormat: String, CaseIterable, Identifiable {
+public enum PhotoSaveFormat: String, CaseIterable, Identifiable, Sendable {
     case jpeg = "JPEG"
     case heic = "HEIC"
     case dng = "DNG"
@@ -759,7 +759,7 @@ public enum PhotoSaveFormat: String, CaseIterable, Identifiable {
 }
 
 // MARK: - Realtime Histogram Data
-public struct HistogramBarData: Identifiable {
+public struct HistogramBarData: Identifiable, @unchecked Sendable {
     public let id: Int
     public var height: CGFloat // 0.05 to 1.0
     public var color: Color
