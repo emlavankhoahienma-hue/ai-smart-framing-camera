@@ -184,14 +184,10 @@ public final class CameraViewModel: ObservableObject {
     // Pro Video Manual Controls Service & State
     public let proVideoService = ProVideoManualControlsService.shared
     @Published public var selectedProTab: ProVideoParameterTab = .iso
-    @Published public var isShowingProControlsDrawer: Bool = true
 
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var displayZoom: CGFloat = 1.0
-    public var availableDisplayZoomOptions: [CGFloat] {
-        return cameraService.availableDisplayZoomOptions
-    }
     @Published public var isRevealingZoomTarget: Bool = false
     @Published public var lockOnProgress: CGFloat = 0
     @Published public var liveZoomFactorForReveal: CGFloat = 1.0
@@ -299,7 +295,11 @@ public final class CameraViewModel: ObservableObject {
     @Published public var detectedScene: DetectedSceneType = .general
     @Published public var detectedSubjectRects: [CGRect] = []
     @Published public var detectedFaceRects: [CGRect] = []
+    @Published public var currentTrackedTargetRect: CGRect? = nil
     private var latestSubjectDetectionResult: SubjectDetectionResult? = nil
+    private var faceRectStabilizer = DetectionRectStabilizer(maximumMissedFrames: 5)
+    private var subjectRectStabilizer = DetectionRectStabilizer(maximumMissedFrames: 8)
+    private var trackedTargetSize = CGSize(width: 0.14, height: 0.14)
 
     // MARK: - DOKA-STYLE TARGET TRACKING
     /// Initial target position determined ONCE by AI (normalized 0..1)
@@ -443,6 +443,7 @@ public final class CameraViewModel: ObservableObject {
     private let analysisFramesNeeded = 5 // Collect 5 quick frames (~0.25s) for rock-solid stabilization
     private var isOneShotCaptured = false
     private var lastFocusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    private var lastHardwareAFUpdateTime: CFTimeInterval = 0
     private var lastForcedResetTime: TimeInterval = 0
     private var lastSmartFocusExposureTime: TimeInterval = 0
     private var pendingSmartFocusPoint: CGPoint?
@@ -611,9 +612,9 @@ public final class CameraViewModel: ObservableObject {
             self.handleVisionDetection(detection)
         }
 
-        visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence, pixelBuffer in
+        visionEngine.onTargetTracked = { [weak self] observation, pixelBuffer in
             guard let self = self, !self.isShowingSettings else { return }
-            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence, pixelBuffer: pixelBuffer)
+            self.handleVisualTargetTracked(observation: observation, pixelBuffer: pixelBuffer)
         }
 
         // Smart Autofocus (Face Priority > Saliency > Center)
@@ -691,6 +692,7 @@ public final class CameraViewModel: ObservableObject {
             // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
             self.currentTargetPoint = point
             self.trackingQuality = quality
+            self.currentTrackedTargetRect = self.normalizedRect(centeredAt: point, size: self.trackedTargetSize)
             // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
             if case .targetPlaced = self.aiSessionState {
                 self.evaluateAlignment(at: point)
@@ -718,8 +720,11 @@ public final class CameraViewModel: ObservableObject {
         SpatialTrackingEngine.shared.stopTracking()
         visionEngine.stopTrackingObject()
         analysisFrames = []
+        faceRectStabilizer.reset()
+        subjectRectStabilizer.reset()
         initialTargetPoint = nil
         currentTargetPoint = nil
+        currentTrackedTargetRect = nil
         trackingQuality = .locked
         isOneShotCaptured = false
         isPerfectAlignment = false
@@ -775,6 +780,7 @@ public final class CameraViewModel: ObservableObject {
             aiSessionState = .idle
             initialTargetPoint = nil
             currentTargetPoint = nil
+            currentTrackedTargetRect = nil
             isOneShotCaptured = false
             isPerfectAlignment = false
             alignmentDistance = 1.0
@@ -793,10 +799,10 @@ public final class CameraViewModel: ObservableObject {
         case .idle, .done:
             // Khi ở chế độ idle: chỉ hiển thị face preview nhẹ nhàng, không tính toán target
             self.detectedScene = detection.detectedScene
-            self.detectedFaceRects = detection.faceRectangles
-            if let dominant = detection.dominantSubjectRect {
-                self.detectedSubjectRects = [dominant]
-            }
+            self.detectedFaceRects = faceRectStabilizer.update(with: detection.faceRectangles)
+            self.detectedSubjectRects = subjectRectStabilizer.update(
+                with: detection.dominantSubjectRect.map { [$0] } ?? []
+            )
             return
 
         case .capturing:
@@ -817,10 +823,10 @@ public final class CameraViewModel: ObservableObject {
         guard !isOneShotCaptured else { return }
 
         self.detectedScene = detection.detectedScene
-        self.detectedFaceRects = detection.faceRectangles
-        if let dominant = detection.dominantSubjectRect {
-            self.detectedSubjectRects = [dominant]
-        }
+        self.detectedFaceRects = faceRectStabilizer.update(with: detection.faceRectangles)
+        self.detectedSubjectRects = subjectRectStabilizer.update(
+            with: detection.dominantSubjectRect.map { [$0] } ?? []
+        )
 
         // 1. Nếu đang bật phân tích Cloud (OpenRouter) và có API Key:
         if useGeminiForAnalysis && geminiService.hasAPIKey {
@@ -1054,7 +1060,7 @@ public final class CameraViewModel: ObservableObject {
         // Ảnh gửi cho AI (cloud & local) là FULL ẢNH nên AI trả về tọa độ CHUẨN THEO ẢNH.
         // Target giờ PIN ĐÚNG TẠI TỌA ĐỘ AI TRẢ VỀ (target). subjectRect chỉ được dùng để
         // lấy KÍCH THƯỚC khung bám & điểm lấy nét phần cứng, KHÔNG thay thế tọa độ target.
-        let pinPoint = target
+        guard let pinPoint = CameraPreviewGeometry.sanitizedNormalizedPoint(target) else { return }
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
@@ -1070,11 +1076,10 @@ public final class CameraViewModel: ObservableObject {
         // Thông báo cho Vision engine: anchor low-texture (vật trắng/đơn sắc) -> siết ngưỡng re-ID
         visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
         SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
-        SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
         SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
-        let anchorTarget = target
+        let anchorTarget = pinPoint
         if let buffer = frameProcessor.latestPixelBufferSnapshot() {
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: buffer, normalizedRect: region)
@@ -1087,9 +1092,9 @@ public final class CameraViewModel: ObservableObject {
         // 2. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (Apple Vision VNTrackObjectRequest)
         // Khi vật thể là màu trắng/đơn sắc (isCurrentlyLowTexture): Mở rộng khung bám để bao quát đường viền cạnh tương phản với nền
         let isLow = isCurrentlyLowTexture
-        self.initialPhysicalSubjectCenter = target
+        self.initialPhysicalSubjectCenter = pinPoint
         let initialSize: CGSize
-        if let sRect = subjectRect {
+        if let sRect = subjectRect.flatMap({ CameraPreviewGeometry.sanitizedNormalizedRect($0) }) {
             // Dùng TỌA ĐỘ AI (target) làm TÂM khung bám; chỉ lấy KÍCH THƯỚC từ subjectRect
             // để box đủ lớn bao trọn chủ thể mà không làm lệch tâm target khỏi tọa độ AI.
             let expandRatio: CGFloat = isLow ? 1.35 : 1.10
@@ -1101,19 +1106,25 @@ public final class CameraViewModel: ObservableObject {
             let targetSize: CGFloat = isLow ? 0.22 : 0.14
             initialSize = CGSize(width: targetSize, height: targetSize)
         }
+        trackedTargetSize = initialSize
+        currentTrackedTargetRect = normalizedRect(centeredAt: pinPoint, size: initialSize)
 
         // Tự động tinh chỉnh mỏ neo bằng Saliency & Human Pose/Face detection từ buffer hiện tại
         visionEngine.startTrackingObject(
-            at: target,
+            at: pinPoint,
             size: initialSize,
             refiningBuffer: frameProcessor.latestPixelBufferSnapshot(),
             orientation: .up
         )
 
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
-        let focusTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
-        let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
-        cameraService.setSmartFocusAndExposure(at: devPoint)
+        if !isAEAFLocked && (captureMode != .proVideo || proVideoService.isAutoFocus) {
+            let focusTarget = subjectRect
+                .flatMap { CameraPreviewGeometry.sanitizedNormalizedRect($0) }
+                .map { CGPoint(x: $0.midX, y: $0.midY) } ?? pinPoint
+            let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
+            cameraService.setSmartFocusAndExposure(at: devPoint)
+        }
 
         haptics.triggerSelectionChange()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) {
@@ -1127,7 +1138,7 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
 
-    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer) {
+    private func handleVisualTargetTracked(observation: TrackedTargetObservation?, pixelBuffer: CVPixelBuffer) {
         // Tiếp nhận cập nhật cả trong alignmentPerfect (zoom reveal) để vòng vàng bám vật thể
         // xuyên suốt quá trình zoom — tránh nhảy vị trí khi zoom hoàn tất
         switch aiSessionState {
@@ -1143,8 +1154,32 @@ public final class CameraViewModel: ObservableObject {
             applyTextureVarianceHysteresis(variance: variance)
         }
 
-        // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào Động cơ Tracking Không Gian
-        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
+        if let observation {
+            let sizeAlpha: CGFloat = observation.isPredicted ? 0.08 : 0.22
+            trackedTargetSize = CGSize(
+                width: trackedTargetSize.width + (observation.boundingBox.width - trackedTargetSize.width) * sizeAlpha,
+                height: trackedTargetSize.height + (observation.boundingBox.height - trackedTargetSize.height) * sizeAlpha
+            )
+            currentTrackedTargetRect = normalizedRect(centeredAt: observation.center, size: trackedTargetSize)
+        }
+
+        // Chỉ gửi observation hợp lệ đã xác minh danh tính sang bộ lọc không gian.
+        SpatialTrackingEngine.shared.updateWithOpticalDetection(
+            point: observation?.center,
+            confidence: Double(observation?.confidence ?? 0),
+            pixelBuffer: pixelBuffer
+        )
+    }
+
+    private func normalizedRect(centeredAt center: CGPoint, size: CGSize) -> CGRect? {
+        CameraPreviewGeometry.sanitizedNormalizedRect(
+            CGRect(
+                x: center.x - size.width / 2,
+                y: center.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+        )
     }
 
     private func evaluateAlignment(at point: CGPoint) {
@@ -1617,6 +1652,21 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // MARK: - Chạm Lấy Nét & Khóa AE/AF (iPhone Camera Standard)
+    public func handleViewfinderTap(at normalizedPoint: CGPoint, devicePoint: CGPoint) {
+        guard normalizedPoint.x.isFinite,
+              normalizedPoint.y.isFinite,
+              devicePoint.x.isFinite,
+              devicePoint.y.isFinite else { return }
+
+        if isAEAFLocked {
+            unlockAEAF()
+        } else if case .targetPlaced = aiSessionState {
+            pinTargetAndStartMotion(at: normalizedPoint)
+        } else {
+            userDidTapToFocus(at: normalizedPoint, devicePoint: devicePoint)
+        }
+    }
+
     public func userDidTapToFocus(at normalizedPoint: CGPoint, devicePoint: CGPoint? = nil) {
         if isAEAFLocked {
             unlockAEAF()
@@ -1669,20 +1719,24 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    public func applyFocusAndExposure(to point: CGPoint, source: SmartFocusType, force: Bool = false) {
-        guard captureMode != .proVideo || proVideoService.isAutoFocus else { return }
-        guard point.x.isFinite, point.y.isFinite else { return }
-        let dx = point.x - lastFocusPoint.x
-        let dy = point.y - lastFocusPoint.y
-        let dist = sqrt(dx * dx + dy * dy)
-
-        // Chỉ trigger refocus & animation khi điểm focus thay đổi đáng kể (> 0.08) hoặc khi cảnh thay đổi (force)
-        if dist > 0.08 || force {
-            lastFocusPoint = point
-            let devicePoint = CameraService.convertUIPointToDevicePoint(point)
-            cameraService.setSmartFocusAndExposure(at: devicePoint)
-            triggerFocusSquareAnimation(at: point)
-        }
+    public func applyFocusAndExposure(to point: CGPoint, source _: SmartFocusType, force: Bool = false) {
+        let now = CACurrentMediaTime()
+        let isManualFocus = now < manualFocusLockUntil || (captureMode == .proVideo && !proVideoService.isAutoFocus)
+        guard AutofocusUpdatePolicy.shouldIssueUpdate(
+            point: point,
+            previousPoint: lastFocusPoint,
+            now: now,
+            previousUpdateTime: lastHardwareAFUpdateTime,
+            isAEAFLocked: isAEAFLocked,
+            isManualFocus: isManualFocus,
+            force: force
+        ) else { return }
+        let safePoint = CGPoint(x: min(max(point.x, 0.01), 0.99), y: min(max(point.y, 0.01), 0.99))
+        lastHardwareAFUpdateTime = now
+        lastFocusPoint = safePoint
+        let devicePoint = CameraService.convertUIPointToDevicePoint(safePoint)
+        cameraService.setSmartFocusAndExposure(at: devicePoint)
+        triggerFocusSquareAnimation(at: safePoint)
     }
 
 

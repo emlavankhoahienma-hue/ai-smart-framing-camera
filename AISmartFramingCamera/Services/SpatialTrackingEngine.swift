@@ -13,13 +13,12 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private let motionManager = CMMotionManager()
     private let motionQueue = OperationQueue()
     
-    // Mốc tọa độ quán tính khi khóa target
-    private var referenceAttitude: CMAttitude? = nil
-    private var anchorInitialPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     private var isLowTextureAnchor: Bool = false
     
     public func setLowTextureFlag(_ isLowTexture: Bool) {
+        stateLock.lock()
         self.isLowTextureAnchor = isLowTexture
+        stateLock.unlock()
     }
     
     // Tọa độ mục tiêu hiện tại trên màn hình UI (0.0 đến 1.0)
@@ -29,8 +28,12 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var velocityY: Double = 0.0
     
     // Trạng thái hoạt động
-    public private(set) var isTrackingActive: Bool = false
-    public var activeSceneType: DetectedSceneType = .general
+    private var _isTrackingActive: Bool = false
+    public var isTrackingActive: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _isTrackingActive
+    }
     private var currentZoom: Double = 1.0
     private var lastOpticalConfidence: Double = 1.0
     private var lastUpdateTime: CFTimeInterval = 0
@@ -41,8 +44,16 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var outlierStreak: Int = 0
     
     // Giản luật chống nhảy đột biến
-    public var maxObservationJump: CGFloat = 0.15
-    public var opticalAcceptThreshold: Double = 0.20
+    private var _maxObservationJump: CGFloat = 0.15
+    public var maxObservationJump: CGFloat {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return _maxObservationJump }
+        set { stateLock.lock(); _maxObservationJump = newValue; stateLock.unlock() }
+    }
+    private var _opticalAcceptThreshold: Double = 0.20
+    public var opticalAcceptThreshold: Double {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return _opticalAcceptThreshold }
+        set { stateLock.lock(); _opticalAcceptThreshold = newValue; stateLock.unlock() }
+    }
     
     // MARK: - Bộ Lọc 1-Euro Thích Nghi (Adaptive 1-Euro Filter)
     // Tinh chỉnh thực tế hoàn hảo:
@@ -55,14 +66,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var filterLastTime: CFTimeInterval = 0.0
     private var filterInitialized: Bool = false
     
-    public var isStreetMode: Bool = false
+    private var _isStreetMode: Bool = false
+    public var isStreetMode: Bool {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return _isStreetMode }
+        set { stateLock.lock(); _isStreetMode = newValue; stateLock.unlock() }
+    }
     
     private var effectiveMinCutoff: Double {
-        return isStreetMode ? 2.00 : 1.50
+        return _isStreetMode ? 2.00 : 1.50
     }
     
     private var effectiveBeta: Double {
-        return isStreetMode ? 2.40 : 1.80
+        return _isStreetMode ? 2.40 : 1.80
     }
     
     private let oneEuroDCutoff: Double = 1.20
@@ -87,8 +102,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     
     // MARK: - Khởi tạo Mỏ Neo Không Gian (Pin Spatial Anchor)
     public func lockAnchor(at screenPoint: CGPoint, zoom: CGFloat = 1.0) {
+        guard screenPoint.x.isFinite, screenPoint.y.isFinite, zoom.isFinite else { return }
+        stateLock.lock()
         self.currentZoom = Double(max(1.0, zoom))
-        self.anchorInitialPoint = screenPoint
         self.stateX = Double(screenPoint.x)
         self.stateY = Double(screenPoint.y)
         self.velocityX = 0.0
@@ -106,8 +122,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         self.lastOpticalAcceptTime = CACurrentMediaTime()
         self.outlierStreak = 0
         self.lastUpdateTime = CACurrentMediaTime()
-        self.referenceAttitude = nil
-        self.isTrackingActive = true
+        self._isTrackingActive = true
+        stateLock.unlock()
         
         CameraLogger.info("Khóa mỏ neo không gian thích nghi tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
         
@@ -115,7 +131,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     }
     
     public func updateZoomFactor(_ zoom: CGFloat) {
+        guard zoom.isFinite else { return }
+        stateLock.lock()
         self.currentZoom = Double(max(1.0, zoom))
+        stateLock.unlock()
     }
     
     private var lastMotionTime: TimeInterval = 0
@@ -133,7 +152,12 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         motionManager.deviceMotionUpdateInterval = 1.0 / 60.0 // 60 FPS
         
         motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
-            guard let self = self, let motion = motion, self.isTrackingActive else { return }
+            guard let self = self, let motion = motion else { return }
+            self.stateLock.lock()
+            let isActive = self._isTrackingActive
+            let zoomScale = self.currentZoom
+            self.stateLock.unlock()
+            guard isActive else { return }
             
             let now = CACurrentMediaTime()
             let dt = self.lastMotionTime > 0 ? min(0.05, max(0.001, now - self.lastMotionTime)) : (1.0 / 60.0)
@@ -144,7 +168,6 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // - Panning sang TRÁI -> rotationRate.y < 0 -> Khung cảnh dịch sang PHẢI -> dx > 0
             // - Tilting ngửa LÊN (hướng về mục tiêu phía trên) -> rotationRate.x < 0 -> Khung cảnh dịch xuống DƯỚI -> dy > 0 (hội tụ về tâm 0.5)
             // - Tilting cúi XUỐNG -> rotationRate.x > 0 -> Khung cảnh dịch lên TRÊN -> dy < 0
-            let zoomScale = self.currentZoom
             let scaleX = 0.90 * zoomScale
             let scaleY = 0.90 * zoomScale
             
@@ -211,11 +234,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     
     // MARK: - Dung hợp Dữ liệu Quang Học (Vision Optical Observation Update)
     public func updateWithOpticalDetection(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer? = nil) {
-        guard isTrackingActive else { return }
-        
         let now = CACurrentMediaTime()
+        stateLock.lock()
+        guard _isTrackingActive else {
+            stateLock.unlock()
+            return
+        }
         let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
         lastUpdateTime = now
+        let acceptThreshold = _opticalAcceptThreshold
+        let lowTextureAnchor = isLowTextureAnchor
+        let observationJumpLimit = _maxObservationJump
+        stateLock.unlock()
         
         var effectiveConfidence = confidence
         var activePoint = point
@@ -230,7 +260,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         }
         
         // Ngưỡng nhận = max(threshold theo sensitivity, 0.60 nếu anchor low-texture)
-        let effectiveThreshold = max(self.opticalAcceptThreshold, self.isLowTextureAnchor ? 0.60 : 0.0)
+        let effectiveThreshold = max(acceptThreshold, lowTextureAnchor ? 0.60 : 0.0)
         if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
             self.stateLock.lock()
             self.lastOpticalConfidence = effectiveConfidence
@@ -243,7 +273,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             var rawObsX = Double(visualPoint.x)
             var rawObsY = Double(visualPoint.y)
             let jump = hypot(rawObsX - self.stateX, rawObsY - self.stateY)
-            if jump > Double(self.maxObservationJump) {
+            if jump > Double(observationJumpLimit) {
                 self.outlierStreak += 1
                 if self.outlierStreak >= 6 {
                     self.outlierStreak = 0
@@ -253,7 +283,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                     self.filterDxPrev = 0.0
                     self.filterDyPrev = 0.0
                 } else {
-                    let k = Double(self.maxObservationJump) / jump
+                    let k = Double(observationJumpLimit) / jump
                     rawObsX = self.stateX + (rawObsX - self.stateX) * k
                     rawObsY = self.stateY + (rawObsY - self.stateY) * k
                 }
@@ -281,7 +311,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             self.stateLock.unlock()
             
             // Khi quang học tạm thời mất nét:
-            if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
+            if !lowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
                 let voX = Double(voPoint.x)
                 let voY = Double(voPoint.y)
                 self.stateLock.lock()
@@ -354,12 +384,13 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     
     // MARK: - Dừng Tracking
     public func stopTracking() {
-        isTrackingActive = false
-        referenceAttitude = nil
+        stateLock.lock()
+        _isTrackingActive = false
+        filterInitialized = false
+        stateLock.unlock()
         motionManager.stopDeviceMotionUpdates()
         VisualOdometryEngine.shared.clearReference()
         NeuralTargetTracker.shared.clearAnchor()
-        filterInitialized = false
         CameraLogger.info("Đã dừng động cơ tracking không gian", category: .tracking)
     }
 }

@@ -61,14 +61,20 @@ public struct LiveColorHistogramHUDView: View {
     @ViewBuilder
     private var formatSelectorView: some View {
         if viewModel.captureMode.isVideo {
-            VStack(alignment: .leading, spacing: 1.5) {
-                Text("HEVC")
-                    .font(.system(size: 8, weight: viewModel.selectedVideoCodec == .hevc ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedVideoCodec == .hevc ? .cyan : .white.opacity(0.3))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(viewModel.activeVideoResolutionString)
+                    .font(.system(size: 8, weight: .heavy, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.86))
+                    .lineLimit(1)
 
-                Text("H.264")
-                    .font(.system(size: 8, weight: viewModel.selectedVideoCodec == .h264 ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedVideoCodec == .h264 ? .white : .white.opacity(0.3))
+                HStack(spacing: 5) {
+                    Text("HEVC")
+                        .foregroundColor(viewModel.selectedVideoCodec == .hevc ? .cyan : .white.opacity(0.3))
+
+                    Text("H.264")
+                        .foregroundColor(viewModel.selectedVideoCodec == .h264 ? .white : .white.opacity(0.3))
+                }
+                .font(.system(size: 8, weight: .heavy, design: .rounded))
             }
             .contentShape(Rectangle())
             .onTapGesture {

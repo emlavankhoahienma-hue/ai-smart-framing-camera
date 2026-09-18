@@ -3,10 +3,6 @@ import SwiftUI
 public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
 
-    private var dynamicZoomOptions: [CGFloat] {
-        return viewModel.availableDisplayZoomOptions
-    }
-
     public var body: some View {
         VStack(spacing: 6) {
             // Film Preset Drawer (Expandable)
@@ -14,14 +10,6 @@ public struct CameraControlsView: View {
                 FilmPresetDrawer(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-
-            // Zoom Selector Pills
-            ZoomSelectorPills(viewModel: viewModel, options: dynamicZoomOptions)
-                .padding(.bottom, 4)
-
-            // Mode Switcher (Ảnh / Video / Pro) dạng Segmented Capsule trượt
-            CameraModeSegmentedSwitcher(viewModel: viewModel)
-                .padding(.bottom, 10)
 
             // Main Bottom Control Deck
             HStack(alignment: .center) {
@@ -41,7 +29,10 @@ public struct CameraControlsView: View {
                     .frame(width: 52, height: 52)
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+
+            // Capture mode stays directly below the shutter, independent of the preview layout.
+            CameraModeSegmentedSwitcher(viewModel: viewModel)
+                .padding(.bottom, 12)
         }
         .background(
             LinearGradient(
@@ -512,18 +503,16 @@ struct MainCaptureButton: View {
     }
 }
 
-// MARK: - Zoom Selector Pills
-struct ZoomSelectorPills: View {
+// MARK: - Viewfinder Zoom Switcher
+struct ViewfinderZoomSwitcher: View {
     @ObservedObject var viewModel: CameraViewModel
-    let options: [CGFloat]
-
-    @State private var targetedZoom: CGFloat = 1.0
+    @Namespace private var selectionNamespace
     private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let options: [CGFloat] = [1, 2]
 
     var body: some View {
         VStack(spacing: 4) {
-            // Floating zoom badge: chỉ xuất hiện nhẹ nhàng phía trên khi người dùng đang pinch thủ công trên kính ngắm
-            if viewModel.isPinchingZoom && !options.contains(where: { abs(viewModel.displayZoom - $0) < 0.08 }) {
+            if viewModel.isPinchingZoom && !isNearAnchor(viewModel.displayZoom) {
                 Text(String(format: "%.1f×", viewModel.displayZoom))
                     .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(amberGold)
@@ -537,40 +526,51 @@ struct ZoomSelectorPills: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 ForEach(options, id: \.self) { zoom in
-                    let isSelected = abs(targetedZoom - zoom) < 0.05 || (!viewModel.isPinchingZoom && abs(viewModel.displayZoom - zoom) < 0.12)
+                    let isSelected = selectedAnchor == zoom
                     Button(action: {
-                        targetedZoom = zoom
                         viewModel.setZoomFromButton(zoom)
                     }) {
-                        Text(zoom < 1.0 ? String(format: "%.1f×", zoom) : String(format: "%.0f×", zoom))
-                            .font(.system(size: 12, weight: isSelected ? .heavy : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? .black : .white)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 5.5)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? amberGold : Color.black.opacity(0.48))
-                            )
-                            .overlay(
-                                Capsule()
-                                    .stroke(isSelected ? amberGold : Color.white.opacity(0.10), lineWidth: 1)
-                            )
+                        Text(String(format: "%.0f×", zoom))
+                            .font(.system(size: 13, weight: isSelected ? .heavy : .semibold, design: .rounded))
+                            .foregroundColor(isSelected ? amberGold : .white.opacity(0.82))
+                            .frame(width: 40, height: 40)
+                            .background(selectionBackground(isSelected: isSelected))
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel("Zoom " + String(Int(zoom)) + " lần")
                 }
             }
+            .padding(4)
+            .background(
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+            )
         }
-        .onAppear {
-            targetedZoom = viewModel.displayZoom
-        }
-        .onChange(of: viewModel.displayZoom) { newZoom in
-            if !viewModel.isPinchingZoom {
-                if let matched = options.first(where: { abs(newZoom - $0) < 0.12 }) {
-                    targetedZoom = matched
-                }
-            }
+        .animation(.spring(response: 0.32, dampingFraction: 0.76), value: selectedAnchor)
+    }
+
+    private var selectedAnchor: CGFloat {
+        abs(viewModel.displayZoom - 1) <= abs(viewModel.displayZoom - 2) ? 1 : 2
+    }
+
+    private func isNearAnchor(_ zoom: CGFloat) -> Bool {
+        options.contains { abs(zoom - $0) < 0.08 }
+    }
+
+    @ViewBuilder
+    private func selectionBackground(isSelected: Bool) -> some View {
+        if isSelected {
+            Circle()
+                .fill(Color.black.opacity(0.72))
+                .overlay(Circle().stroke(amberGold.opacity(0.75), lineWidth: 1.5))
+                .shadow(color: amberGold.opacity(0.30), radius: 7)
+                .matchedGeometryEffect(id: "zoom-selection", in: selectionNamespace)
+        } else {
+            Circle()
+                .fill(Color.clear)
         }
     }
 }

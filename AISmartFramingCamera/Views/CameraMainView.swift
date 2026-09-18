@@ -10,46 +10,7 @@ public struct CameraMainView: View {
             Color.black.edgesIgnoringSafeArea(.all)
 
             if viewModel.hasCameraPermission {
-                // Giao diện máy ảnh chuẩn Apple Camera App: Kính ngắm 4:3 WYSIWYG sắc nét, không crop, không méo góc
-                VStack(spacing: 0) {
-                    // Top Bar Controls
-                    TopCameraBar(viewModel: viewModel)
-                        .padding(.top, 4)
-
-                    // Floating AI Dynamic HUD Pill
-                    AIStatusHUDView(viewModel: viewModel)
-                        .padding(.top, 4)
-
-                    Spacer(minLength: 0)
-
-                    // Kính ngắm 4:3 chuẩn cảm biến iPhone (hoặc 16:9 khi quay Video)
-                    ZStack {
-                        CameraPreviewView(viewModel: viewModel)
-                        ARFramingOverlayView(viewModel: viewModel)
-                    }
-                    .aspectRatio(viewModel.captureMode.isVideo ? 9.0/16.0 : 3.0/4.0, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: viewModel.captureMode.isVideo ? 0 : 8))
-                    .frame(maxWidth: .infinity)
-
-                    Spacer(minLength: 0)
-
-                    // Realtime Pro Color Histogram HUD (Chỉ hiển thị trong Pro Video hoặc khi bật trong Cài đặt)
-                    if viewModel.captureMode == .proVideo || viewModel.showHistogramInViewfinder {
-                        LiveColorHistogramHUDView(viewModel: viewModel)
-                            .padding(.bottom, 4)
-                            .transition(.opacity)
-                    }
-
-                    // Pro Video Manual Controls View (Only in VIDEO PRO mode)
-                    if viewModel.captureMode == .proVideo {
-                        ProVideoManualControlsView(viewModel: viewModel)
-                            .padding(.bottom, 4)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-
-                    // Bottom Control Deck (Zoom, Mode, Shutter, Presets)
-                    CameraControlsView(viewModel: viewModel)
-                }
+                cameraInterface
             } else {
                 // Permission Request Screen
                 CameraPermissionPlaceholderView(viewModel: viewModel)
@@ -73,6 +34,72 @@ public struct CameraMainView: View {
         }
         .onAppear {
             viewModel.requestPermissionsAndStart()
+        }
+    }
+
+    private var cameraInterface: some View {
+        GeometryReader { proxy in
+            let previewGeometry = CameraPreviewGeometry(captureMode: viewModel.captureMode)
+            let previewSize = previewGeometry.fittedSize(in: proxy.size)
+
+            ZStack {
+                viewfinder
+                    .frame(width: previewSize.width, height: previewSize.height)
+                    .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+
+                topOverlay
+
+                bottomOverlay
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .animation(.easeInOut(duration: 0.28), value: viewModel.captureMode)
+        }
+    }
+
+    private var viewfinder: some View {
+        ZStack {
+            CameraPreviewView(viewModel: viewModel)
+            ARFramingOverlayView(viewModel: viewModel)
+        }
+        .background(Color.black)
+        .clipShape(RoundedRectangle(cornerRadius: viewModel.captureMode.isVideo ? 0 : 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: viewModel.captureMode.isVideo ? 0 : 10)
+                .stroke(Color.white.opacity(viewModel.captureMode.isVideo ? 0 : 0.10), lineWidth: 1)
+        )
+    }
+
+    private var topOverlay: some View {
+        VStack(spacing: 4) {
+            TopCameraBar(viewModel: viewModel)
+
+            AIStatusHUDView(viewModel: viewModel)
+
+            if viewModel.captureMode == .proVideo || viewModel.showHistogramInViewfinder {
+                LiveColorHistogramHUDView(viewModel: viewModel)
+                    .padding(.horizontal, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 4)
+    }
+
+    private var bottomOverlay: some View {
+        VStack(spacing: 6) {
+            Spacer(minLength: 0)
+
+            ViewfinderZoomSwitcher(viewModel: viewModel)
+                .padding(.bottom, 2)
+
+            if viewModel.captureMode == .proVideo {
+                ProVideoManualControlsView(viewModel: viewModel)
+                    .frame(maxHeight: 238)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            CameraControlsView(viewModel: viewModel)
         }
     }
 }

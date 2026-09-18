@@ -107,21 +107,24 @@ public struct ProVideoManualControlsView: View {
 
             // MARK: - Expandable Adjustment Drawer Panel
             if !isCollapsed {
-                VStack(spacing: 10) {
-                    switch viewModel.selectedProTab {
-                    case .iso:
-                        isoControlPanel
-                    case .shutter:
-                        shutterControlPanel
-                    case .aperture:
-                        apertureEVControlPanel
-                    case .wb:
-                        whiteBalanceControlPanel
-                    case .focus:
-                        manualFocusControlPanel
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 10) {
+                        switch viewModel.selectedProTab {
+                        case .iso:
+                            isoControlPanel
+                        case .shutter:
+                            shutterControlPanel
+                        case .aperture:
+                            apertureEVControlPanel
+                        case .wb:
+                            whiteBalanceControlPanel
+                        case .focus:
+                            manualFocusControlPanel
+                        }
                     }
+                    .padding(12)
                 }
-                .padding(12)
+                .frame(maxHeight: 148)
                 .background(
                     RoundedRectangle(cornerRadius: 18)
                         .fill(Color.black.opacity(0.82))

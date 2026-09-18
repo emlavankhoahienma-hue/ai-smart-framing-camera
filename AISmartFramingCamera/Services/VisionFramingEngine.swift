@@ -14,6 +14,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         attributes: [],
         autoreleaseFrequency: .workItem
     )
+    private let visionQueueKey = DispatchSpecificKey<UInt8>()
     
     private let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
     
@@ -44,7 +45,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     
     // Callbacks
     public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)?
-    public var onTargetTracked: ((CGPoint?, Double, CVPixelBuffer) -> Void)?
+    public var onTargetTracked: ((TrackedTargetObservation?, CVPixelBuffer) -> Void)?
     public var onSmartFocusPointCalculated: ((CGPoint, SmartFocusType) -> Void)?
     
     // Gemini Frame Capture
@@ -106,14 +107,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
         return req
     }()
     
-    public init() {}
+    public init() {
+        visionQueue.setSpecific(key: visionQueueKey, value: 1)
+    }
+
+    private func performOnVisionQueueSync(_ work: () -> Void) {
+        if DispatchQueue.getSpecific(key: visionQueueKey) == 1 {
+            work()
+        } else {
+            visionQueue.sync(execute: work)
+        }
+    }
     
     // MARK: - Visual Object Tracking Control
     private var currentTrackRequest: VNTrackObjectRequest? = nil
     
     /// Tinh chỉnh Bounding Box mỏ neo ban đầu ôm khít chủ thể thật thay vì dùng box vuông cố định
     /// Sử dụng Objectness Saliency và Human Body Pose / Face detection
-    public func refineAnchorBox(
+    private func refineAnchorBox(
         around tapUIPoint: CGPoint,
         in buffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation = .up
@@ -201,6 +212,22 @@ public final class VisionFramingEngine: @unchecked Sendable {
         refiningBuffer: CVPixelBuffer? = nil,
         orientation: CGImagePropertyOrientation = .up
     ) {
+        performOnVisionQueueSync {
+            startTrackingObjectOnQueue(
+                at: normalizedPoint,
+                size: size,
+                refiningBuffer: refiningBuffer,
+                orientation: orientation
+            )
+        }
+    }
+
+    private func startTrackingObjectOnQueue(
+        at normalizedPoint: CGPoint,
+        size: CGSize,
+        refiningBuffer: CVPixelBuffer?,
+        orientation: CGImagePropertyOrientation
+    ) {
         var targetPoint = normalizedPoint
         var targetSize = size
 
@@ -259,6 +286,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
     
     public func stopTrackingObject() {
+        performOnVisionQueueSync {
+            stopTrackingObjectOnQueue()
+        }
+    }
+
+    private func stopTrackingObjectOnQueue() {
         self.isTrackingTarget = false
         self.currentTrackRequest?.isLastFrame = true
         self.currentTrackRequest = nil
@@ -698,6 +731,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 }
                 
                 var trackedPoint: CGPoint? = nil
+                var trackedBoundingBox: CGRect? = nil
                 var trackedConfidence: Double = 0.0
                 var trackerIdentityLost = false
                 
@@ -809,6 +843,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             }
                             
                             trackedPoint = CGPoint(x: uiX, y: uiY)
+                            trackedBoundingBox = CGRect(
+                                x: newObs.boundingBox.minX,
+                                y: 1.0 - newObs.boundingBox.maxY,
+                                width: newObs.boundingBox.width,
+                                height: newObs.boundingBox.height
+                            )
                             trackedConfidence = Double(newObs.confidence)
                         } else {
                             // ── NGHI TRICKER TRÔI: KHÔNG nối tiếp inputObservation (đông băng mỏ neo tại box cuối hợp lệ),
@@ -829,6 +869,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 if trackedPoint == nil, self.consecutiveLostFrames <= 10,
                    let (kltPoint, kltConfidence) = self.kltBridgePoint(in: pixelBuffer) {
                     trackedPoint = kltPoint
+                    trackedBoundingBox = self.uiRect(centeredAt: kltPoint, size: self.anchorBoxSize)
                     // KLT là observation trung: đủ để engine tin (>= ngưỡng nhận) nhưng không reset VO reference
                     trackedConfidence = min(0.55, kltConfidence)
                     self.consecutiveLostFrames = min(self.consecutiveLostFrames, 4)
@@ -861,6 +902,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     // Chỉ nạp lại mỏ neo khi Neural Re-ID xác nhận rõ ràng là vật thể ban đầu
                     if let (reIdPoint, reIdConfidence, reIdBox) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, searchCenter: searchCenter, anchorSize: self.anchorBoxSize) {
                         trackedPoint = reIdPoint
+                        trackedBoundingBox = CGRect(
+                            x: reIdBox.minX,
+                            y: 1.0 - reIdBox.maxY,
+                            width: reIdBox.width,
+                            height: reIdBox.height
+                        )
                         trackedConfidence = reIdConfidence
                         self.consecutiveLostFrames = 0
                         self.identitySuspicionFrames = 0
@@ -886,8 +933,20 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 // Giữ nóng buffer trước cho KLT (retain 1 frame; pool không ghi đè buffer đang giữ)
                 self.kltPreviousBuffer = pixelBuffer
                 
+                let observation: TrackedTargetObservation?
+                if let trackedPoint, let trackedBoundingBox {
+                    observation = TrackedTargetObservation(
+                        center: trackedPoint,
+                        boundingBox: trackedBoundingBox,
+                        confidence: Float(trackedConfidence),
+                        isPredicted: self.consecutiveLostFrames > 0
+                    )
+                } else {
+                    observation = nil
+                }
+
                 DispatchQueue.main.async {
-                    self.onTargetTracked?(trackedPoint, trackedConfidence, pixelBuffer)
+                    self.onTargetTracked?(observation, pixelBuffer)
                 }
                 return
             }
@@ -981,6 +1040,15 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let rBRatio = avgR > 0 ? avgB / avgR : 1.0
         let estimatedK = max(2700, min(9000, 3500 + rBRatio * 3000))
         return (luma, estimatedK)
+    }
+
+    private func uiRect(centeredAt center: CGPoint, size: CGSize) -> CGRect {
+        CGRect(
+            x: center.x - size.width / 2,
+            y: center.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
     }
 
     /// Chụp tức thì khung hình hiện tại cho AI Cloud phân tích

@@ -6,13 +6,12 @@ public struct ARFramingOverlayView: View {
     @State private var radarPulse: CGFloat = 1.0
     @State private var radarOpacity: Double = 0.8
     @State private var dashOffset: CGFloat = 0
-    @State private var pinchBaseZoom: CGFloat = 1.0
-    @State private var isPinching: Bool = false
 
     public var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
             let screenCenter = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+            let previewGeometry = CameraPreviewGeometry(captureMode: viewModel.captureMode)
 
             ZStack {
                 // 0. Focus Peaking Neon Edges (Báo nét điện ảnh)
@@ -37,21 +36,25 @@ public struct ARFramingOverlayView: View {
                 if viewModel.showDetectionBoxes {
                     ForEach(0..<viewModel.detectedFaceRects.count, id: \.self) { i in
                         let rect = viewModel.detectedFaceRects[i]
-                        FaceDetectionBox(rect: convertBufferRectToScreen(rect, in: size))
+                        FaceDetectionBox(rect: previewGeometry.screenRect(fromNormalized: rect, in: size) ?? .zero)
                     }
 
                     if viewModel.isAISessionActive {
                         ForEach(0..<viewModel.detectedSubjectRects.count, id: \.self) { i in
                             let rect = viewModel.detectedSubjectRects[i]
-                            SubjectHighlightBox(rect: convertBufferRectToScreen(rect, in: size))
+                            SubjectHighlightBox(rect: previewGeometry.screenRect(fromNormalized: rect, in: size) ?? .zero)
                         }
+                    }
+
+                    if let trackedRect = viewModel.currentTrackedTargetRect {
+                        SubjectHighlightBox(rect: previewGeometry.screenRect(fromNormalized: trackedRect, in: size) ?? .zero)
                     }
                 }
 
                 // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
                 // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
                 if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
-                    let targetScreen = convertBufferPointToScreen(targetPoint, in: size)
+                    let targetScreen = previewGeometry.screenPoint(fromNormalized: targetPoint, in: size) ?? screenCenter
 
                     // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
                     if viewModel.showGuidanceRay {
@@ -158,6 +161,7 @@ public struct ARFramingOverlayView: View {
 
                 // 9. Smart Autofocus Yellow Square Indicator with Sun Exposure Slider (Apple Camera Style)
                 if let focusPoint = viewModel.activeFocusSquarePoint {
+                    let focusScreenPoint = previewGeometry.screenPoint(fromNormalized: focusPoint, in: size) ?? screenCenter
                     FocusSquareWithSunSlider(
                         isLocked: viewModel.isAEAFLocked,
                         showSun: viewModel.isShowingSunSlider,
@@ -166,7 +170,7 @@ public struct ARFramingOverlayView: View {
                             viewModel.adjustSunExposureBias(delta: delta)
                         }
                     )
-                    .position(x: focusPoint.x * size.width, y: focusPoint.y * size.height)
+                    .position(focusScreenPoint)
                     .transition(.scale.combined(with: .opacity))
                 }
 
@@ -184,132 +188,10 @@ public struct ARFramingOverlayView: View {
                     targetZoom: viewModel.aiSuggestedZoom ?? 2.0
                 )
             }
-            .contentShape(Rectangle())
-            .onTapGesture { location in
-                let norm = convertScreenPointToBuffer(location, in: size)
-                if viewModel.isAEAFLocked {
-                    viewModel.unlockAEAF()
-                } else if case .targetPlaced = viewModel.aiSessionState {
-                    viewModel.pinTargetAndStartMotion(at: norm)
-                } else {
-                    viewModel.userDidTapToFocus(at: norm)
-                }
-            }
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.45)
-                    .sequenced(before: DragGesture(minimumDistance: 0))
-                    .onEnded { value in
-                        switch value {
-                        case .second(true, let drag):
-                            if let loc = drag?.location {
-                                let norm = convertScreenPointToBuffer(loc, in: size)
-                                viewModel.userDidLongPressToLockAEAF(at: norm)
-                            }
-                        default:
-                            break
-                        }
-                    }
-            )
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .onChanged { scale in
-                        if !isPinching {
-                            isPinching = true
-                            pinchBaseZoom = viewModel.currentZoom
-                            viewModel.isPinchingZoom = true
-                        }
-                        let minZ = viewModel.cameraService.minZoom
-                        let maxZ = viewModel.cameraService.maxZoom
-                        let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
-                        viewModel.setZoomContinuous(targetZoom)
-                    }
-                    .onEnded { scale in
-                        let minZ = viewModel.cameraService.minZoom
-                        let maxZ = viewModel.cameraService.maxZoom
-                        let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
-                        viewModel.finishZoomGesture(targetZoom)
-                        isPinching = false
-                        viewModel.isPinchingZoom = false
-                        pinchBaseZoom = targetZoom
-                    }
-            )
+            .allowsHitTesting(false)
             .clipped()
             .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
             .onAppear { startAnimations() }
-        }
-    }
-
-    // MARK: - AspectFill Coordinate Conversion Helpers
-    // Chuyển đổi toạ độ chuẩn hóa từ Camera Buffer (4:3) sang màn hình Preview
-    public static func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
-        // Tỉ lệ cảm biến camera iOS ở chế độ portrait: 3:4 (width / height = 0.75)
-        let bufferAspect: CGFloat = 3.0 / 4.0
-        let screenAspect = screenSize.width / max(1.0, screenSize.height)
-
-        if abs(screenAspect - bufferAspect) < 0.03 {
-            // Khung ngắm chuẩn 4:3 (WYSIWYG 100% khớp cảm biến camera Apple): Ánh xạ 1:1 chính xác tuyệt đối
-            return CGPoint(x: point.x * screenSize.width, y: point.y * screenSize.height)
-        }
-
-        if screenAspect < bufferAspect {
-            // Màn hình hẹp hơn khung camera -> Bị crop 2 bên trái/phải
-            let displayedWidth = screenSize.height * bufferAspect
-            let horizontalCropOffset = (displayedWidth - screenSize.width) / 2.0
-            let screenX = point.x * displayedWidth - horizontalCropOffset
-            let screenY = point.y * screenSize.height
-            return CGPoint(x: screenX, y: screenY)
-        } else {
-            // Màn hình rộng hơn khung camera -> Bị crop trên/dưới
-            let displayedHeight = screenSize.width / bufferAspect
-            let verticalCropOffset = (displayedHeight - screenSize.height) / 2.0
-            let screenX = point.x * screenSize.width
-            let screenY = point.y * displayedHeight - verticalCropOffset
-            return CGPoint(x: screenX, y: screenY)
-        }
-    }
-
-    public static func convertBufferRectToScreen(_ rect: CGRect, in screenSize: CGSize) -> CGRect {
-        let topLeft = convertBufferPointToScreen(rect.origin, in: screenSize)
-        let bottomRight = convertBufferPointToScreen(CGPoint(x: rect.maxX, y: rect.maxY), in: screenSize)
-        return CGRect(
-            x: topLeft.x,
-            y: topLeft.y,
-            width: max(0, bottomRight.x - topLeft.x),
-            height: max(0, bottomRight.y - topLeft.y)
-        )
-    }
-
-    private func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
-        return Self.convertBufferPointToScreen(point, in: screenSize)
-    }
-
-    private func convertBufferRectToScreen(_ rect: CGRect, in screenSize: CGSize) -> CGRect {
-        return Self.convertBufferRectToScreen(rect, in: screenSize)
-    }
-
-    private func convertScreenPointToBuffer(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
-        let bufferAspect: CGFloat = 3.0 / 4.0
-        let screenAspect = screenSize.width / max(1.0, screenSize.height)
-
-        if abs(screenAspect - bufferAspect) < 0.03 {
-            return CGPoint(
-                x: max(0.02, min(0.98, point.x / screenSize.width)),
-                y: max(0.02, min(0.98, point.y / screenSize.height))
-            )
-        }
-
-        if screenAspect < bufferAspect {
-            let displayedWidth = screenSize.height * bufferAspect
-            let horizontalCropOffset = (displayedWidth - screenSize.width) / 2.0
-            let bufferX = (point.x + horizontalCropOffset) / displayedWidth
-            let bufferY = point.y / screenSize.height
-            return CGPoint(x: max(0.02, min(0.98, bufferX)), y: max(0.02, min(0.98, bufferY)))
-        } else {
-            let displayedHeight = screenSize.width / bufferAspect
-            let verticalCropOffset = (displayedHeight - screenSize.height) / 2.0
-            let bufferX = point.x / screenSize.width
-            let bufferY = (point.y + verticalCropOffset) / displayedHeight
-            return CGPoint(x: max(0.02, min(0.98, bufferX)), y: max(0.02, min(0.98, bufferY)))
         }
     }
 
@@ -830,8 +712,9 @@ public struct AIVideoDirectorOverlayView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             } else if let guidance = viewModel.activeVideoGuidance {
                 // 2. Trajectory motion path nối các tâm đánh dấu
-                let screenPoints = guidance.waypoints.map { wp in
-                    ARFramingOverlayView.convertBufferPointToScreen(wp.point, in: screenSize)
+                let geometry = CameraPreviewGeometry(captureMode: viewModel.captureMode)
+                let screenPoints = guidance.waypoints.map { waypoint in
+                    geometry.screenPoint(fromNormalized: waypoint.point, in: screenSize) ?? .zero
                 }
 
                 TrajectoryPathView(

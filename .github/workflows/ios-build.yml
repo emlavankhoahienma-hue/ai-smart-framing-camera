@@ -35,6 +35,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Run geometry and tracking unit tests
+        run: swift test --parallel -Xswiftc -warnings-as-errors
+
       - name: Export & Compile YOLO CoreML Model
         env:
           # Ultralytics/CoreMLTools currently emit upstream torch tracing and

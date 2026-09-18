@@ -81,10 +81,8 @@ public final class CameraService: NSObject {
     public private(set) var maxZoom: CGFloat = 10.0
     public private(set) var isRecordingVideo = false
 
-    // Virtual Multi-Camera Mapping (Apple Camera App style: 0.5x, 1x, 2x, 3x/5x)
+    // Virtual multi-camera mapping. UI intentionally exposes only 1x and 2x.
     public private(set) var displayMultiplier: CGFloat = 1.0
-    public private(set) var hasUltraWideLens: Bool = false
-    public private(set) var availableDisplayZoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0]
     public private(set) var defaultDisplayZoom: CGFloat = 1.0
 
     public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
@@ -186,34 +184,11 @@ public final class CameraService: NSObject {
                let firstSwitch = switchFactors.first {
                 let wideBase = CGFloat(firstSwitch.doubleValue)
                 self.displayMultiplier = wideBase
-                self.hasUltraWideLens = true
                 self.defaultDisplayZoom = 1.0
-
-                var options: [CGFloat] = [0.5, 1.0, 2.0]
-                if switchFactors.count >= 2 {
-                    let teleDeviceZoom = CGFloat(switchFactors[1].doubleValue)
-                    let teleDisplay = round((teleDeviceZoom / wideBase) * 10) / 10
-                    if teleDisplay > 2.0 {
-                        options.append(teleDisplay)
-                    } else {
-                        options.append(3.0)
-                    }
-                } else if self.maxZoom >= wideBase * 3.0 {
-                    options.append(3.0)
-                }
-                if self.maxZoom >= wideBase * 5.0 {
-                    options.append(5.0)
-                }
-                self.availableDisplayZoomOptions = options
-                CameraLogger.info("CameraService: Khởi tạo Multi-Camera Apple (Wide Base: \(wideBase), Options: \(options))", category: .capture)
+                CameraLogger.info("CameraService: Khởi tạo Multi-Camera Apple (Wide Base: \(wideBase))", category: .capture)
             } else {
                 self.displayMultiplier = 1.0
-                self.hasUltraWideLens = false
                 self.defaultDisplayZoom = 1.0
-                var options: [CGFloat] = [1.0, 2.0]
-                if self.maxZoom >= 3.0 { options.append(3.0) }
-                if self.maxZoom >= 5.0 { options.append(5.0) }
-                self.availableDisplayZoomOptions = options
             }
 
             // Đặt mức zoom khởi động mặc định là 1.0x (Cảm biến chính Wide sắc nét chuẩn xác)
@@ -450,12 +425,13 @@ public final class CameraService: NSObject {
 
     /// Chuyển đổi tọa độ chuẩn hóa UI (Top-Left 0,0) sang tọa độ AVCaptureDevice sensor (Portrait 0,0)
     public static func convertUIPointToDevicePoint(_ uiPoint: CGPoint) -> CGPoint {
-        // Trên iOS Portrait: AVCaptureDevice point x = UI y, point y = 1.0 - UI x
-        let safeX = uiPoint.x.isFinite ? uiPoint.x : 0.5
-        let safeY = uiPoint.y.isFinite ? uiPoint.y : 0.5
-        let devX = max(0.01, min(0.99, safeY))
-        let devY = max(0.01, min(0.99, 1.0 - safeX))
-        return CGPoint(x: devX, y: devY)
+        CameraCoordinateMapper.uiToDevice(uiPoint)
+    }
+
+    /// Inverse of `convertUIPointToDevicePoint`, used so UIKit gestures and SwiftUI overlays
+    /// share one normalized top-left coordinate system.
+    public static func convertDevicePointToUIPoint(_ devicePoint: CGPoint) -> CGPoint {
+        CameraCoordinateMapper.deviceToUI(devicePoint)
     }
 
     // MARK: - Manual Lens Focus
@@ -499,8 +475,13 @@ public final class CameraService: NSObject {
     public func setSmartFocusAndExposure(at devicePoint: CGPoint) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
+            guard devicePoint.x.isFinite, devicePoint.y.isFinite else {
+                CameraLogger.warning("CameraService: Bỏ qua điểm AF/AE không hữu hạn", category: .capture)
+                return
+            }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 let clampedPoint = CGPoint(
                     x: max(0.01, min(0.99, devicePoint.x)),
                     y: max(0.01, min(0.99, devicePoint.y))
@@ -521,7 +502,6 @@ public final class CameraService: NSObject {
                         camera.exposureMode = .autoExpose
                     }
                 }
-                camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error configuring smart focus & exposure", error: error, category: .capture)
             }
@@ -532,8 +512,10 @@ public final class CameraService: NSObject {
     public func focusAndExpose(at devicePoint: CGPoint) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
+            guard devicePoint.x.isFinite, devicePoint.y.isFinite else { return }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 let clampedPoint = CGPoint(
                     x: max(0.01, min(0.99, devicePoint.x)),
                     y: max(0.01, min(0.99, devicePoint.y))
@@ -546,7 +528,6 @@ public final class CameraService: NSObject {
                     camera.exposurePointOfInterest = clampedPoint
                     camera.exposureMode = .autoExpose
                 }
-                camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error setting focus and exposure", error: error, category: .capture)
             }
@@ -556,8 +537,10 @@ public final class CameraService: NSObject {
     public func lockFocusAndExposure(at devicePoint: CGPoint) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
+            guard devicePoint.x.isFinite, devicePoint.y.isFinite else { return }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 let clampedPoint = CGPoint(
                     x: max(0.01, min(0.99, devicePoint.x)),
                     y: max(0.01, min(0.99, devicePoint.y))
@@ -574,7 +557,6 @@ public final class CameraService: NSObject {
                 if camera.isExposureModeSupported(.locked) {
                     camera.exposureMode = .locked
                 }
-                camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error locking AE/AF", error: error, category: .capture)
             }
@@ -586,13 +568,13 @@ public final class CameraService: NSObject {
             guard let self = self, let camera = self.activeCamera else { return }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 if camera.isFocusModeSupported(.continuousAutoFocus) {
                     camera.focusMode = .continuousAutoFocus
                 }
                 if camera.isExposureModeSupported(.continuousAutoExposure) {
                     camera.exposureMode = .continuousAutoExposure
                 }
-                camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error unlocking AE/AF", error: error, category: .capture)
             }

@@ -45,21 +45,16 @@ public struct CameraPreviewView: UIViewRepresentable {
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard let view = gesture.view as? PreviewContainerView else { return }
             let location = gesture.location(in: view)
-
-            if parent.viewModel.isAEAFLocked {
-                parent.viewModel.unlockAEAF()
-                return
-            }
-
-            let normalizedPoint = CGPoint(x: location.x / max(1.0, view.bounds.width), y: location.y / max(1.0, view.bounds.height))
-            let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location)
-            parent.viewModel.userDidTapToFocus(at: normalizedPoint, devicePoint: devicePoint)
+            guard let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location) else { return }
+            let normalizedPoint = CameraService.convertDevicePointToUIPoint(devicePoint)
+            parent.viewModel.handleViewfinderTap(at: normalizedPoint, devicePoint: devicePoint)
             view.showFocusRing(at: location)
         }
 
         @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
             if gesture.state == .began {
                 initialZoom = parent.viewModel.displayZoom
+                parent.viewModel.isPinchingZoom = true
             }
             let minDisplay = parent.viewModel.cameraService.convertDeviceZoomToDisplayZoom(parent.viewModel.cameraService.minZoom)
             let maxDisplay = parent.viewModel.cameraService.convertDeviceZoomToDisplayZoom(parent.viewModel.cameraService.maxZoom)
@@ -67,6 +62,7 @@ public struct CameraPreviewView: UIViewRepresentable {
 
             if gesture.state == .ended || gesture.state == .cancelled {
                 parent.viewModel.finishZoomGesture(newDisplayZoom)
+                parent.viewModel.isPinchingZoom = false
             } else {
                 parent.viewModel.setZoomContinuous(newDisplayZoom)
             }
@@ -75,11 +71,8 @@ public struct CameraPreviewView: UIViewRepresentable {
         @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
             guard gesture.state == .began, let view = gesture.view as? PreviewContainerView else { return }
             let location = gesture.location(in: view)
-            let normalizedPoint = CGPoint(
-                x: location.x / max(1.0, view.bounds.width),
-                y: location.y / max(1.0, view.bounds.height)
-            )
             guard let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location) else { return }
+            let normalizedPoint = CameraService.convertDevicePointToUIPoint(devicePoint)
             parent.viewModel.lockAEAF(at: normalizedPoint, devicePoint: devicePoint)
             view.showFocusRing(at: location, persist: true)
         }
