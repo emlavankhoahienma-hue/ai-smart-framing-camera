@@ -108,7 +108,7 @@ public enum CameraLogger {
     }
     
     public static func error(_ message: String, error: Error? = nil, category: Category = .general) {
-        let errDetail = error != nil ? " | Chi tiết: \(error!.localizedDescription)" : ""
+        let errDetail = error.map { " | Chi tiết: \($0.localizedDescription)" } ?? ""
         #if DEBUG
         print("[\(category.rawValue)] ❌ LỖI: \(message)\(errDetail)")
         #endif

@@ -280,63 +280,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         CameraLogger.info("🎯 [Vision] Đã dừng và giải phóng VNTrackObjectRequest", category: .tracking)
     }
     
-    // MARK: - Cân Bằng Sáng Cục Bộ Thích Nghi (Adaptive ROI Dynamic Range & Local CLAHE)
-    private func enhanceROIContrast(in buffer: CVPixelBuffer, roi: CGRect) {
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        
-        let width = CVPixelBufferGetWidth(buffer)
-        let height = CVPixelBufferGetHeight(buffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return }
-        
-        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
-        
-        let minX = max(0, min(width - 1, Int(roi.origin.x * CGFloat(width))))
-        let minY = max(0, min(height - 1, Int((1.0 - roi.origin.y - roi.size.height) * CGFloat(height))))
-        let maxX = max(minX + 1, min(width, Int((roi.origin.x + roi.size.width) * CGFloat(width))))
-        let maxY = max(minY + 1, min(height, Int((1.0 - roi.origin.y) * CGFloat(height))))
-        
-        var minLum: Float = 255.0
-        var maxLum: Float = 0.0
-        let step = max(1, (maxX - minX) / 24)
-        
-        for y in stride(from: minY, to: maxY, by: max(1, step)) {
-            for x in stride(from: minX, to: maxX, by: max(1, step)) {
-                let offset = y * bytesPerRow + x * 4
-                let b = Float(data[offset])
-                let g = Float(data[offset + 1])
-                let r = Float(data[offset + 2])
-                let lum = r * 0.299 + g * 0.587 + b * 0.114
-                if lum < minLum { minLum = lum }
-                if lum > maxLum { maxLum = lum }
-            }
-        }
-        
-        let range = maxLum - minLum
-        guard range > 12.0 && range < 185.0 else { return }
-        
-        let scale = 220.0 / range
-        let stretchStep = max(1, (maxX - minX) / 80)
-        
-        for y in stride(from: minY, to: maxY, by: max(1, stretchStep)) {
-            for x in stride(from: minX, to: maxX, by: max(1, stretchStep)) {
-                let offset = y * bytesPerRow + x * 4
-                let b = Float(data[offset])
-                let g = Float(data[offset + 1])
-                let r = Float(data[offset + 2])
-                
-                let newB = max(0, min(255, (b - minLum) * scale + 15))
-                let newG = max(0, min(255, (g - minLum) * scale + 15))
-                let newR = max(0, min(255, (r - minLum) * scale + 15))
-                
-                data[offset] = UInt8(b * 0.40 + newB * 0.60)
-                data[offset + 1] = UInt8(g * 0.40 + newG * 0.60)
-                data[offset + 2] = UInt8(r * 0.40 + newR * 0.60)
-            }
-        }
-    }
-    
     // MARK: - Bám Chùm Điểm Hình Học KLT (Lucas-Kanade Feature Point Cluster + RANSAC)
     private func extractKLTFeaturePoints(in roi: CGRect, buffer: CVPixelBuffer) -> [CGPoint] {
         CVPixelBufferLockBaseAddress(buffer, .readOnly)

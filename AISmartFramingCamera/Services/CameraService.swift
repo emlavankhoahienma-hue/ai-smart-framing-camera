@@ -23,11 +23,27 @@ public struct LiveCameraStats {
     public var iso: Float
     public var shutterSpeedString: String
     public var exposureDurationSeconds: Double
+    public var lensPosition: Float
 
-    public init(iso: Float, shutterSpeedString: String, exposureDurationSeconds: Double) {
+    public init(iso: Float, shutterSpeedString: String, exposureDurationSeconds: Double, lensPosition: Float) {
         self.iso = iso
         self.shutterSpeedString = shutterSpeedString
         self.exposureDurationSeconds = exposureDurationSeconds
+        self.lensPosition = lensPosition
+    }
+}
+
+public enum CameraServiceError: LocalizedError {
+    case captureAlreadyInProgress
+    case photoProcessingFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .captureAlreadyInProgress:
+            return "A photo capture is already in progress."
+        case .photoProcessingFailed:
+            return "The camera returned photo data that could not be decoded."
+        }
     }
 }
 
@@ -43,8 +59,6 @@ public final class CameraService: NSObject {
     private let videoDataQueue = DispatchQueue(label: "com.alignai.camera.videoDataQueue", qos: .userInteractive)
 
     private var activeCamera: AVCaptureDevice?
-    public var currentActiveCamera: AVCaptureDevice? { return activeCamera }
-    public var currentSessionQueue: DispatchQueue { return sessionQueue }
     private var zoomObservation: NSKeyValueObservation?
     public var onLiveZoomFactorChanged: ((CGFloat) -> Void)?
     private var videoDeviceInput: AVCaptureDeviceInput?
@@ -67,12 +81,18 @@ public final class CameraService: NSObject {
     public private(set) var defaultDisplayZoom: CGFloat = 1.0
 
     public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
+        guard displayZoom.isFinite, displayMultiplier.isFinite, displayMultiplier > 0 else {
+            return max(minZoom, min(defaultDisplayZoom, maxZoom))
+        }
         let devZoom = displayZoom * displayMultiplier
+        guard devZoom.isFinite else { return max(minZoom, min(defaultDisplayZoom, maxZoom)) }
         return max(minZoom, min(devZoom, maxZoom))
     }
 
     public func convertDeviceZoomToDisplayZoom(_ deviceZoom: CGFloat) -> CGFloat {
-        guard displayMultiplier > 0 else { return deviceZoom }
+        guard deviceZoom.isFinite, displayMultiplier.isFinite, displayMultiplier > 0 else {
+            return defaultDisplayZoom
+        }
         return deviceZoom / displayMultiplier
     }
 
@@ -90,9 +110,32 @@ public final class CameraService: NSObject {
     private var currentPhotoCaptured: (cgImage: CGImage, rawData: Data?, iso: Float, shutter: Double)?
     private var currentLivePhotoURL: URL?
     private var lastStatsUpdateTime: TimeInterval = 0
+    private var isPhotoCaptureInFlight = false
+    private var notificationObservers: [NSObjectProtocol] = []
 
     private override init() {
         super.init()
+    }
+
+    deinit {
+        notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        zoomObservation?.invalidate()
+    }
+
+    /// Runs all direct `AVCaptureDevice` access on the camera session queue.
+    /// UI-facing services use this boundary instead of reading mutable hardware state cross-thread.
+    @discardableResult
+    public func scheduleDeviceConfiguration(
+        after delay: TimeInterval = 0,
+        operation: @escaping (AVCaptureDevice) -> Void
+    ) -> DispatchWorkItem {
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let camera = self?.activeCamera else { return }
+            operation(camera)
+        }
+        let safeDelay = delay.isFinite ? max(0, delay) : 0
+        sessionQueue.asyncAfter(deadline: .now() + safeDelay, execute: workItem)
+        return workItem
     }
 
     // MARK: - Session Setup
@@ -185,7 +228,7 @@ public final class CameraService: NSObject {
                 }
                 camera.unlockForConfiguration()
             } catch {
-                print("Không thể bật HDR/LowLightBoost/P3/Zoom: \(error)")
+                CameraLogger.error("Không thể bật HDR/LowLightBoost/P3/Zoom", error: error, category: .capture)
             }
 
             do {
@@ -269,9 +312,12 @@ public final class CameraService: NSObject {
                 camera.isSubjectAreaChangeMonitoringEnabled = true
                 camera.unlockForConfiguration()
 
-                // Subject Area Did Change Notification Observer (Apple Camera App style)
-                NotificationCenter.default.removeObserver(self, name: AVCaptureDevice.subjectAreaDidChangeNotification, object: nil)
-                NotificationCenter.default.addObserver(
+                // Block-based observers must be retained and removed by token. Removing `self`
+                // does not unregister block observers and leaked one set on every reconfiguration.
+                self.notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
+                self.notificationObservers.removeAll(keepingCapacity: true)
+
+                let subjectAreaObserver = NotificationCenter.default.addObserver(
                     forName: AVCaptureDevice.subjectAreaDidChangeNotification,
                     object: camera,
                     queue: .main
@@ -280,27 +326,26 @@ public final class CameraService: NSObject {
                 }
 
                 // Session Interruption Observers (Tự động phục hồi camera preview khi hết gián đoạn)
-                NotificationCenter.default.removeObserver(self, name: AVCaptureSession.wasInterruptedNotification, object: self.captureSession)
-                NotificationCenter.default.addObserver(
+                let interruptedObserver = NotificationCenter.default.addObserver(
                     forName: AVCaptureSession.wasInterruptedNotification,
                     object: self.captureSession,
                     queue: .main
                 ) { [weak self] _ in
                     guard let self = self else { return }
                     self.isSessionRunning = false
-                    print("CameraService: AVCaptureSession was interrupted")
+                    CameraLogger.warning("CameraService: AVCaptureSession was interrupted", category: .capture)
                 }
 
-                NotificationCenter.default.removeObserver(self, name: AVCaptureSession.interruptionEndedNotification, object: self.captureSession)
-                NotificationCenter.default.addObserver(
+                let interruptionEndedObserver = NotificationCenter.default.addObserver(
                     forName: AVCaptureSession.interruptionEndedNotification,
                     object: self.captureSession,
                     queue: .main
                 ) { [weak self] _ in
                     guard let self = self else { return }
-                    print("CameraService: AVCaptureSession interruption ended, resuming...")
+                    CameraLogger.info("CameraService: AVCaptureSession interruption ended, resuming", category: .capture)
                     self.start()
                 }
+                self.notificationObservers = [subjectAreaObserver, interruptedObserver, interruptionEndedObserver]
 
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(true) }
@@ -332,17 +377,21 @@ public final class CameraService: NSObject {
     public func setZoomFactor(_ factor: CGFloat) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
+            guard factor.isFinite else {
+                CameraLogger.warning("CameraService: Bỏ qua zoom không hữu hạn", category: .capture)
+                return
+            }
             let clampedZoom = max(self.minZoom, min(factor, self.maxZoom))
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 camera.videoZoomFactor = clampedZoom
-                camera.unlockForConfiguration()
                 self.currentZoom = clampedZoom
                 DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didChangeZoomFactor: clampedZoom)
                 }
             } catch {
-                print("CameraService: Error setting zoom \(error)")
+                CameraLogger.error("CameraService: Error setting zoom", error: error, category: .capture)
             }
         }
     }
@@ -350,17 +399,21 @@ public final class CameraService: NSObject {
     public func smoothZoomFactor(to factor: CGFloat, rate: Float = 2.2) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
+            guard factor.isFinite, rate.isFinite, rate > 0 else {
+                CameraLogger.warning("CameraService: Bỏ qua zoom/rate không hợp lệ", category: .capture)
+                return
+            }
             let clampedZoom = max(self.minZoom, min(factor, self.maxZoom))
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 camera.ramp(toVideoZoomFactor: clampedZoom, withRate: rate)
-                camera.unlockForConfiguration()
                 self.currentZoom = clampedZoom
                 DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didChangeZoomFactor: clampedZoom)
                 }
             } catch {
-                print("CameraService: Error smooth zoom \(error)")
+                CameraLogger.error("CameraService: Error smooth zoom", error: error, category: .capture)
             }
         }
     }
@@ -369,28 +422,70 @@ public final class CameraService: NSObject {
     public func setExposureBias(_ bias: Float) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
+            guard bias.isFinite else {
+                CameraLogger.warning("CameraService: Bỏ qua EV không hữu hạn", category: .capture)
+                return
+            }
             let clamped = max(camera.minExposureTargetBias, min(bias, camera.maxExposureTargetBias))
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 camera.setExposureTargetBias(clamped, completionHandler: nil)
-                camera.unlockForConfiguration()
             } catch {
-                print("CameraService: Error setting exposure bias \(error)")
+                CameraLogger.error("CameraService: Error setting exposure bias", error: error, category: .capture)
             }
         }
     }
 
     public var onSubjectAreaDidChange: (() -> Void)?
-    private var subjectAreaObserver: NSObjectProtocol?
 
     // MARK: - Smart Focus & Exposure (Apple Camera App Style)
 
     /// Chuyển đổi tọa độ chuẩn hóa UI (Top-Left 0,0) sang tọa độ AVCaptureDevice sensor (Portrait 0,0)
     public static func convertUIPointToDevicePoint(_ uiPoint: CGPoint) -> CGPoint {
         // Trên iOS Portrait: AVCaptureDevice point x = UI y, point y = 1.0 - UI x
-        let devX = max(0.01, min(0.99, uiPoint.y))
-        let devY = max(0.01, min(0.99, 1.0 - uiPoint.x))
+        let safeX = uiPoint.x.isFinite ? uiPoint.x : 0.5
+        let safeY = uiPoint.y.isFinite ? uiPoint.y : 0.5
+        let devX = max(0.01, min(0.99, safeY))
+        let devY = max(0.01, min(0.99, 1.0 - safeX))
         return CGPoint(x: devX, y: devY)
+    }
+
+    // MARK: - Manual Lens Focus
+
+    public func setManualFocus(lensPosition: Float) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let camera = self.activeCamera else { return }
+            guard lensPosition.isFinite else {
+                CameraLogger.warning("CameraService: Bỏ qua lens position không hữu hạn", category: .capture)
+                return
+            }
+            guard camera.isLockingFocusWithCustomLensPositionSupported else { return }
+            do {
+                try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                camera.setFocusModeLocked(lensPosition: max(0, min(1, lensPosition)), completionHandler: nil)
+            } catch {
+                CameraLogger.error("CameraService: Lỗi khóa vị trí lens", error: error, category: .capture)
+            }
+        }
+    }
+
+    public func restoreContinuousAutoFocus() {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let camera = self.activeCamera else { return }
+            do {
+                try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                if camera.isFocusModeSupported(.continuousAutoFocus) {
+                    camera.focusMode = .continuousAutoFocus
+                } else if camera.isFocusModeSupported(.autoFocus) {
+                    camera.focusMode = .autoFocus
+                }
+            } catch {
+                CameraLogger.error("CameraService: Lỗi khôi phục continuous autofocus", error: error, category: .capture)
+            }
+        }
     }
 
     /// Thiết lập lấy nét & đo sáng thông minh tự động (Smart Continuous AF/AE)
@@ -421,7 +516,7 @@ public final class CameraService: NSObject {
                 }
                 camera.unlockForConfiguration()
             } catch {
-                print("CameraService: Error configuring smart focus & exposure: \(error)")
+                CameraLogger.error("CameraService: Error configuring smart focus & exposure", error: error, category: .capture)
             }
         }
     }
@@ -446,7 +541,7 @@ public final class CameraService: NSObject {
                 }
                 camera.unlockForConfiguration()
             } catch {
-                print("CameraService: Error setting focus and exposure \(error)")
+                CameraLogger.error("CameraService: Error setting focus and exposure", error: error, category: .capture)
             }
         }
     }
@@ -474,7 +569,7 @@ public final class CameraService: NSObject {
                 }
                 camera.unlockForConfiguration()
             } catch {
-                print("CameraService: Error locking AE/AF \(error)")
+                CameraLogger.error("CameraService: Error locking AE/AF", error: error, category: .capture)
             }
         }
     }
@@ -492,7 +587,7 @@ public final class CameraService: NSObject {
                 }
                 camera.unlockForConfiguration()
             } catch {
-                print("CameraService: Error unlocking AE/AF \(error)")
+                CameraLogger.error("CameraService: Error unlocking AE/AF", error: error, category: .capture)
             }
         }
     }
@@ -654,11 +749,13 @@ public final class CameraService: NSObject {
                 if let camera = self.activeCamera {
                     do {
                         try camera.lockForConfiguration()
+                        defer { camera.unlockForConfiguration() }
                         if camera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
                             camera.activeColorSpace = .P3_D65
                         }
-                        camera.unlockForConfiguration()
-                    } catch {}
+                    } catch {
+                        CameraLogger.error("CameraService: Không thể khôi phục P3 color space", error: error, category: .capture)
+                    }
                 }
                 self.captureSession.commitConfiguration()
             }
@@ -723,6 +820,14 @@ public final class CameraService: NSObject {
     public func capturePhoto(isDNG: Bool = false) {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
+            guard !self.isPhotoCaptureInFlight else {
+                CameraLogger.warning("CameraService: Bỏ qua thao tác chụp lặp khi capture trước chưa hoàn tất", category: .capture)
+                DispatchQueue.main.async {
+                    self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.captureAlreadyInProgress)
+                }
+                return
+            }
+            self.isPhotoCaptureInFlight = true
             self.currentPhotoCaptured = nil
             self.currentLivePhotoURL = nil
             self.isCapturingLivePhotoRequest = false
@@ -776,7 +881,8 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
             if let camera = self.activeCamera {
                 let iso = camera.iso
                 let duration = camera.exposureDuration
-                let seconds = CMTimeGetSeconds(duration)
+                let rawSeconds = CMTimeGetSeconds(duration)
+                let seconds = rawSeconds.isFinite && rawSeconds > 0 ? rawSeconds : 0
                 let shutterString: String
                 if seconds > 0 {
                     if seconds >= 1.0 {
@@ -788,7 +894,12 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
                 } else {
                     shutterString = "1/125 s"
                 }
-                let stats = LiveCameraStats(iso: iso, shutterSpeedString: shutterString, exposureDurationSeconds: seconds)
+                let stats = LiveCameraStats(
+                    iso: iso.isFinite ? iso : 100,
+                    shutterSpeedString: shutterString,
+                    exposureDurationSeconds: seconds,
+                    lensPosition: camera.lensPosition.isFinite ? camera.lensPosition : 0.5
+                )
                 DispatchQueue.main.async { [weak self] in
                     self?.onLiveCameraStatsUpdated?(stats)
                 }
@@ -816,7 +927,6 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         }
 
         CameraLogger.info("Đã nhận buffer ảnh từ cảm biến camera", category: .capture)
-        let zoomAtCapture = self.currentZoom
         let metadata = photo.metadata
         let (iso, shutter) = Self.parseExif(metadata)
         let rawData = photo.fileDataRepresentation()
@@ -843,6 +953,10 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
 
             guard let cgImage = finalCGImage else {
                 CameraLogger.error("Không thể tạo CGImage từ AVCapturePhoto", category: .capture)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.photoProcessingFailed)
+                }
                 return
             }
 
@@ -872,6 +986,20 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
     }
 
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        sessionQueue.async { [weak self] in
+            self?.isPhotoCaptureInFlight = false
+        }
+        if let error = error {
+            CameraLogger.error("Phiên chụp kết thúc với lỗi", error: error, category: .capture)
+            currentPhotoCaptured = nil
+            currentLivePhotoURL = nil
+            isCapturingLivePhotoRequest = false
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.delegate?.cameraService(self, didFailCaptureWithError: error)
+            }
+            return
+        }
         if self.isCapturingLivePhotoRequest {
             guard let captured = self.currentPhotoCaptured else { return }
             let movieURL = self.currentLivePhotoURL
@@ -894,10 +1022,16 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         var shutterSpeed: Double = 0.016
         if let exif = metadata["{Exif}"] as? [String: Any] {
             if let isos = exif["ISOSpeedRatings"] as? [NSNumber], let first = isos.first {
-                isoValue = first.floatValue
+                let parsedISO = first.floatValue
+                if parsedISO.isFinite && parsedISO > 0 {
+                    isoValue = parsedISO
+                }
             }
             if let speed = exif["ExposureTime"] as? NSNumber {
-                shutterSpeed = speed.doubleValue
+                let parsedShutter = speed.doubleValue
+                if parsedShutter.isFinite && parsedShutter > 0 {
+                    shutterSpeed = parsedShutter
+                }
             }
         }
         return (isoValue, shutterSpeed)

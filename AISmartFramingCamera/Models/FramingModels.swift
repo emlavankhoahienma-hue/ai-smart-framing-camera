@@ -62,6 +62,7 @@ public enum ProVideoParameterTab: String, CaseIterable, Identifiable {
     case shutter = "SHUTTER"
     case aperture = "KHẨU/EV"
     case wb = "WB"
+    case focus = "FOCUS"
 
     public var id: String { rawValue }
 
@@ -71,6 +72,7 @@ public enum ProVideoParameterTab: String, CaseIterable, Identifiable {
         case .shutter: return "timer"
         case .aperture: return "camera.aperture"
         case .wb: return "sun.max.fill"
+        case .focus: return "scope"
         }
     }
 }

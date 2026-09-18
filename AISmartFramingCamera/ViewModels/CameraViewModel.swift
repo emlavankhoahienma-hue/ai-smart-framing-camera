@@ -188,6 +188,7 @@ public final class CameraViewModel: ObservableObject {
     private var hasExecutedAutoZoomForSession: Bool = false
 
     public func triggerZoomRevealAnimation(targetZoom: CGFloat) {
+        guard targetZoom.isFinite, currentZoom.isFinite else { return }
         guard targetZoom > 1.05, abs(targetZoom - currentZoom) > 0.05 else { return }
         pendingTargetZoomForReveal = targetZoom
         liveZoomFactorForReveal = currentZoom
@@ -355,11 +356,6 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    private var consecutiveLowConfidenceFrames: Int = 0
-    private var smoothedVelocity: CGVector = .zero
-    private var lastVisualUpdateTime: CFTimeInterval = 0
-    private let predictionGraceFrames: Int = 24   // ~0.8s ở 30fps: còn được phép ngoại suy vận tốc
-    private let reacquireGraceFrames: Int = 90    // ~3.0s: sau mốc này coi như mất hẳn
     private var lastProximityHapticTime: TimeInterval = 0
 
     // Internal State
@@ -557,7 +553,11 @@ public final class CameraViewModel: ObservableObject {
             let isoInt = Int(round(stats.iso))
             self.liveISO = "ISO \(isoInt)"
             self.liveShutterSpeed = stats.shutterSpeedString
-            self.proVideoService.updateLiveMeasurements(iso: stats.iso, shutterDuration: stats.exposureDurationSeconds)
+            self.proVideoService.updateLiveMeasurements(
+                iso: stats.iso,
+                shutterDuration: stats.exposureDurationSeconds,
+                lensPosition: stats.lensPosition
+            )
         }
     }
 
@@ -595,9 +595,8 @@ public final class CameraViewModel: ObservableObject {
 
     private func setupMotionCallbacks() {
         // Động cơ Tracking Không Gian Chuẩn Xác: Thống nhất một callback duy nhất
-        SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
+        SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, _, quality in
             guard let self = self, !self.isShowingSettings else { return }
-            self.lastVisualConfidence = confidence
             // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
             self.currentTargetPoint = point
             self.trackingQuality = quality
@@ -630,11 +629,6 @@ public final class CameraViewModel: ObservableObject {
         analysisFrames = []
         initialTargetPoint = nil
         currentTargetPoint = nil
-        lastTrackedVisualPoint = nil
-        lastVisualConfidence = 0
-        consecutiveLowConfidenceFrames = 0
-        smoothedVelocity = .zero
-        lastVisualUpdateTime = 0
         trackingQuality = .locked
         isOneShotCaptured = false
         isPerfectAlignment = false
@@ -684,9 +678,6 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
         visionEngine.onFrameCapturedForAI = nil
-        consecutiveLowConfidenceFrames = 0
-        smoothedVelocity = .zero
-        lastVisualUpdateTime = 0
         trackingQuality = .locked
 
         withAnimation(.easeInOut(duration: 0.3)) {
@@ -910,10 +901,7 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
     }
 
-    // MARK: - State for Hybrid Optical Visual + Gyro Tracking
-    @Published public var lastVisualConfidence: Double = 0
-    private var lastTrackedVisualPoint: CGPoint? = nil
-    private var gyroAnchorPoint: CGPoint? = nil
+    // MARK: - State for Hybrid Optical + Spatial Tracking
     private var initialPhysicalSubjectCenter: CGPoint? = nil
     private var latestPixelBuffer: CVPixelBuffer? = nil
     private var shouldCheckTextureOnNextFrame: Bool = false
@@ -980,12 +968,6 @@ public final class CameraViewModel: ObservableObject {
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
-        lastTrackedVisualPoint = pinPoint
-        gyroAnchorPoint = pinPoint
-        lastVisualConfidence = 1.0
-        lastVisualUpdateTime = CACurrentMediaTime()
-        consecutiveLowConfidenceFrames = 0
-        smoothedVelocity = .zero
         trackingQuality = .locked
         hasExecutedAutoZoomForSession = false
 
@@ -1064,8 +1046,6 @@ public final class CameraViewModel: ObservableObject {
         default:
             return
         }
-        self.lastVisualConfidence = confidence
-
         if shouldCheckTextureOnNextFrame, let target = currentTargetPoint ?? initialTargetPoint {
             shouldCheckTextureOnNextFrame = false
             let region = CGRect(x: max(0, target.x - 0.08), y: max(0, target.y - 0.08), width: 0.16, height: 0.16)
@@ -1075,42 +1055,6 @@ public final class CameraViewModel: ObservableObject {
 
         // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào Động cơ Tracking Không Gian
         SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
-    }
-
-    // Xử lý khi 1 frame không có điểm hợp lệ (confidence thấp / bị che / lia máy nhanh)
-    private func handleTrackingDegraded() {
-        consecutiveLowConfidenceFrames += 1
-
-        let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
-        let fallback = self.currentTargetPoint ?? lastTrackedVisualPoint ?? spatialPoint
-        let target = (spatialPoint.x >= 0.02 && spatialPoint.x <= 0.98) ? spatialPoint : fallback
-
-        self.currentTargetPoint = target
-        self.trackingQuality = .predicting
-        evaluateAlignment(at: target)
-    }
-
-    // MARK: - 3. 60Hz Gyro Motion Handler (Inertial Odometry khi lia máy nhanh hoặc mất dấu quang học)
-
-    private func handleGyroMotion(deltaX: CGFloat, deltaY: CGFloat) {
-        guard case .targetPlaced = aiSessionState, let anchor = gyroAnchorPoint ?? initialTargetPoint else { return }
-
-        // Khi lia máy nhanh hoặc quang học tạm thời mờ/khuất (confidence thấp), Gyroscope giữ vị trí không gian từ mỏ neo gần nhất
-        if lastVisualConfidence <= 0.35 {
-            let zoomCompensation = max(1.0, currentZoom)
-            let newX = anchor.x - deltaX * zoomCompensation
-            let newY = anchor.y - deltaY * zoomCompensation
-            let gyroPoint = CGPoint(x: min(0.98, max(0.02, newX)), y: min(0.98, max(0.02, newY)))
-
-            let current = self.currentTargetPoint ?? gyroPoint
-            let alpha: CGFloat = 0.45
-            let smoothedX = current.x * (1.0 - alpha) + gyroPoint.x * alpha
-            let smoothedY = current.y * (1.0 - alpha) + gyroPoint.y * alpha
-            let smoothedPoint = CGPoint(x: smoothedX, y: smoothedY)
-
-            self.currentTargetPoint = smoothedPoint
-            evaluateAlignment(at: smoothedPoint)
-        }
     }
 
     private func evaluateAlignment(at point: CGPoint) {
@@ -1218,6 +1162,7 @@ public final class CameraViewModel: ObservableObject {
     private var lastContinuousAppliedZoom: CGFloat = 1.0
 
     public func setZoom(_ displayZoomVal: CGFloat) {
+        guard displayZoomVal.isFinite else { return }
         displayZoom = displayZoomVal
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         currentZoom = deviceZoom
@@ -1228,6 +1173,7 @@ public final class CameraViewModel: ObservableObject {
     /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
     /// Tự động throttle AVFoundation calls (25ms) để chống nghẽn hàng đợi camera phần cứng
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
+        guard displayZoomVal.isFinite else { return }
         displayZoom = displayZoomVal
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         currentZoom = deviceZoom
@@ -1242,6 +1188,7 @@ public final class CameraViewModel: ObservableObject {
 
     /// Chốt zoom cuối cùng khi người dùng nhấc ngón tay kết thúc pinch
     public func finishZoomGesture(_ finalDisplayZoom: CGFloat) {
+        guard finalDisplayZoom.isFinite else { return }
         displayZoom = finalDisplayZoom
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(finalDisplayZoom)
         currentZoom = deviceZoom
@@ -1252,6 +1199,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func setZoomFromButton(_ displayZoomVal: CGFloat) {
+        guard displayZoomVal.isFinite else { return }
         haptics.triggerSelectionChange()
         displayZoom = displayZoomVal
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
@@ -1261,8 +1209,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func setExposure(_ bias: Float) {
-        exposureBias = bias
-        cameraService.setExposureBias(bias)
+        guard bias.isFinite else { return }
+        let clamped = max(-2, min(2, bias))
+        exposureBias = clamped
+        cameraService.setExposureBias(clamped)
     }
 
     public func lockAEAF(at normalizedPoint: CGPoint, devicePoint: CGPoint) {
@@ -1500,6 +1450,7 @@ public final class CameraViewModel: ObservableObject {
 
     private func handleSubjectAreaChanged() {
         let now = CACurrentMediaTime()
+        guard captureMode != .proVideo || proVideoService.isAutoFocus else { return }
         guard now >= manualFocusLockUntil, !isAEAFLocked else { return }
         guard now - lastForcedResetTime >= 1.5 else {
             CameraLogger.info("Bỏ qua subject area change - vừa reset gần đây, tránh vòng lặp phơi sáng", category: .general)
@@ -1517,6 +1468,7 @@ public final class CameraViewModel: ObservableObject {
 
     private func handleSmartFocusCalculated(point: CGPoint, type: SmartFocusType) {
         let now = CACurrentMediaTime()
+        guard captureMode != .proVideo || proVideoService.isAutoFocus else { return }
         guard now >= manualFocusLockUntil, !isAEAFLocked else { return }
 
         // 1. Ưu tiên số 1: Nếu AI đã khóa mục tiêu target (vòng tròn vàng), luôn lấy nét vào target
@@ -1576,6 +1528,9 @@ public final class CameraViewModel: ObservableObject {
         }
 
         haptics.triggerSelectionChange()
+        if captureMode == .proVideo && !proVideoService.isAutoFocus {
+            proVideoService.setAutoFocus(true)
+        }
         manualFocusLockUntil = CACurrentMediaTime() + manualFocusCooldown
         lastFocusPoint = normalizedPoint
         activeFocusSquarePoint = normalizedPoint
@@ -1619,6 +1574,8 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func applyFocusAndExposure(to point: CGPoint, source: SmartFocusType, force: Bool = false) {
+        guard captureMode != .proVideo || proVideoService.isAutoFocus else { return }
+        guard point.x.isFinite, point.y.isFinite else { return }
         let dx = point.x - lastFocusPoint.x
         let dy = point.y - lastFocusPoint.y
         let dist = sqrt(dx * dx + dy * dy)
@@ -1639,6 +1596,7 @@ public final class CameraViewModel: ObservableObject {
             toggleVideoRecording()
             return
         }
+        guard !isShutterPressing else { return }
 
         // Cho phép chụp thủ công bất kỳ lúc nào (ngay cả khi chưa bật AI hoặc AI đã hoàn tất)
         haptics.triggerShutterClick()
@@ -1790,7 +1748,9 @@ public final class CameraViewModel: ObservableObject {
                 if self.selectedPhotoFormat == .heic {
                     let ciImage = CIImage(cgImage: item.processedImage)
                     let context = CIContext()
-                    let colorSpace = ciImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+                    let colorSpace = ciImage.colorSpace
+                        ?? CGColorSpace(name: CGColorSpace.sRGB)
+                        ?? CGColorSpaceCreateDeviceRGB()
                     if let heicData = context.heifRepresentation(of: ciImage, format: .RGBA8, colorSpace: colorSpace, options: [:]) {
                         PHPhotoLibrary.shared().performChanges({
                             let creationRequest = PHAssetCreationRequest.forAsset()

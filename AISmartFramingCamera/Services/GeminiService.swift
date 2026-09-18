@@ -390,8 +390,9 @@ public final class GeminiService {
             }
 
             if http.statusCode == 200 {
-                self.lastModelUsed = testModel
                 DispatchQueue.main.async {
+                    self.lastModelUsed = testModel
+                    self.lastLatencyMs = latency
                     completion(true, "✅ Kết nối thành công! [OpenRouter] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
                 }
             } else if http.statusCode == 404 || http.statusCode == 429 || http.statusCode == 503 || http.statusCode == 502 {
@@ -1080,20 +1081,24 @@ public final class GeminiService {
 
             // Attempt 1: Self-healing JSON parsing
             if let parsed = Self.cleanAndParseJSON(from: text) {
-                self.lastLatencyMs = latency
-                self.lastModelUsed = modelID
                 let result = Self.parseGeminiResponse(parsed, modelUsed: modelID, latencyMs: latency)
-                self.lastExplanation = result.explanation
-                DispatchQueue.main.async { completion(.success(result)) }
+                DispatchQueue.main.async {
+                    self.lastLatencyMs = latency
+                    self.lastModelUsed = modelID
+                    self.lastExplanation = result.explanation
+                    completion(.success(result))
+                }
                 return
             }
 
             // Attempt 2: Regex extraction for any partially malformed JSON
             if let regexResult = Self.regexExtractFallbackFraming(from: text, modelUsed: modelID, latencyMs: latency) {
-                self.lastLatencyMs = latency
-                self.lastModelUsed = modelID
-                self.lastExplanation = regexResult.explanation
-                DispatchQueue.main.async { completion(.success(regexResult)) }
+                DispatchQueue.main.async {
+                    self.lastLatencyMs = latency
+                    self.lastModelUsed = modelID
+                    self.lastExplanation = regexResult.explanation
+                    completion(.success(regexResult))
+                }
                 return
             }
 
@@ -1111,10 +1116,12 @@ public final class GeminiService {
                 recommendedPreset: .classicChrome,
                 presetExplanation: "Classic Chrome — Màu phim phóng sự tài liệu trung thực"
             )
-            self.lastLatencyMs = latency
-            self.lastModelUsed = modelID
-            self.lastExplanation = fallbackResult.explanation
-            DispatchQueue.main.async { completion(.success(fallbackResult)) }
+            DispatchQueue.main.async {
+                self.lastLatencyMs = latency
+                self.lastModelUsed = modelID
+                self.lastExplanation = fallbackResult.explanation
+                completion(.success(fallbackResult))
+            }
         }.resume()
     }
 
@@ -1370,19 +1377,37 @@ public final class GeminiService {
     // MARK: - Parse Helpers
 
     private static func parseFloat(_ val: Any?, defaultVal: Float) -> Float {
-        if let num = val as? NSNumber { return num.floatValue }
-        if let d = val as? Double { return Float(d) }
-        if let f = val as? Float { return f }
-        if let s = val as? String, let f = Float(s) { return f }
-        return defaultVal
+        let parsed: Float?
+        if let num = val as? NSNumber {
+            parsed = num.floatValue
+        } else if let d = val as? Double {
+            parsed = Float(d)
+        } else if let f = val as? Float {
+            parsed = f
+        } else if let s = val as? String {
+            parsed = Float(s)
+        } else {
+            parsed = nil
+        }
+        guard let parsed = parsed, parsed.isFinite else { return defaultVal }
+        return parsed
     }
 
     private static func parseCGFloat(_ val: Any?, defaultVal: CGFloat) -> CGFloat {
-        if let num = val as? NSNumber { return CGFloat(num.doubleValue) }
-        if let d = val as? Double { return CGFloat(d) }
-        if let f = val as? Float { return CGFloat(f) }
-        if let s = val as? String, let d = Double(s) { return CGFloat(d) }
-        return defaultVal
+        let parsed: Double?
+        if let num = val as? NSNumber {
+            parsed = num.doubleValue
+        } else if let d = val as? Double {
+            parsed = d
+        } else if let f = val as? Float {
+            parsed = Double(f)
+        } else if let s = val as? String {
+            parsed = Double(s)
+        } else {
+            parsed = nil
+        }
+        guard let parsed = parsed, parsed.isFinite else { return defaultVal }
+        return CGFloat(parsed)
     }
 
     private static func clampF(_ val: Any?, _ minV: Float, _ maxV: Float, _ defV: Float) -> Float {

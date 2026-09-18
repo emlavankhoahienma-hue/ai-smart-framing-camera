@@ -37,7 +37,6 @@ public struct CameraPreviewView: UIViewRepresentable {
     public class Coordinator: NSObject, UIGestureRecognizerDelegate {
         let parent: CameraPreviewView
         private var initialZoom: CGFloat = 1.0
-        private var lastZoomPublishTime: CFTimeInterval = 0
 
         init(_ parent: CameraPreviewView) {
             self.parent = parent
@@ -53,7 +52,7 @@ public struct CameraPreviewView: UIViewRepresentable {
             }
 
             let normalizedPoint = CGPoint(x: location.x / max(1.0, view.bounds.width), y: location.y / max(1.0, view.bounds.height))
-            let devicePoint = view.previewLayer.captureDevicePointConverted(fromLayerPoint: location)
+            let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location)
             parent.viewModel.userDidTapToFocus(at: normalizedPoint, devicePoint: devicePoint)
             view.showFocusRing(at: location)
         }
@@ -80,7 +79,7 @@ public struct CameraPreviewView: UIViewRepresentable {
                 x: location.x / max(1.0, view.bounds.width),
                 y: location.y / max(1.0, view.bounds.height)
             )
-            let devicePoint = view.previewLayer.captureDevicePointConverted(fromLayerPoint: location)
+            guard let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location) else { return }
             parent.viewModel.lockAEAF(at: normalizedPoint, devicePoint: devicePoint)
             view.showFocusRing(at: location, persist: true)
         }
@@ -97,20 +96,29 @@ public class PreviewContainerView: UIView {
         return AVCaptureVideoPreviewLayer.self
     }
 
-    public var previewLayer: AVCaptureVideoPreviewLayer {
-        return layer as! AVCaptureVideoPreviewLayer
+    public var previewLayer: AVCaptureVideoPreviewLayer? {
+        return layer as? AVCaptureVideoPreviewLayer
     }
 
     private let focusRingView = UIView(frame: CGRect(x: 0, y: 0, width: 70, height: 70))
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        configureView()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureView()
+    }
+
+    private func configureView() {
         backgroundColor = .black
         contentScaleFactor = UIScreen.main.scale
 
-        previewLayer.contentsScale = UIScreen.main.scale
-        previewLayer.rasterizationScale = UIScreen.main.scale
-        previewLayer.videoGravity = .resizeAspectFill
+        previewLayer?.contentsScale = UIScreen.main.scale
+        previewLayer?.rasterizationScale = UIScreen.main.scale
+        previewLayer?.videoGravity = .resizeAspectFill
 
         focusRingView.layer.borderColor = UIColor.systemYellow.cgColor
         focusRingView.layer.borderWidth = 1.5
@@ -119,25 +127,21 @@ public class PreviewContainerView: UIView {
         addSubview(focusRingView)
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
     public func setupLayer(session: AVCaptureSession) {
-        previewLayer.session = session
-        previewLayer.contentsScale = UIScreen.main.scale
-        previewLayer.rasterizationScale = UIScreen.main.scale
+        previewLayer?.session = session
+        previewLayer?.contentsScale = UIScreen.main.scale
+        previewLayer?.rasterizationScale = UIScreen.main.scale
     }
 
     override public func layoutSubviews() {
         super.layoutSubviews()
-        previewLayer.contentsScale = UIScreen.main.scale
-        previewLayer.rasterizationScale = UIScreen.main.scale
+        previewLayer?.contentsScale = UIScreen.main.scale
+        previewLayer?.rasterizationScale = UIScreen.main.scale
         updateOrientation()
     }
 
     public func updateOrientation() {
-        if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+        if let connection = previewLayer?.connection, connection.isVideoOrientationSupported {
             connection.videoOrientation = .portrait
         }
     }

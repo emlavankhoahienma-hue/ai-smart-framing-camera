@@ -15,6 +15,8 @@ public struct ProVideoManualControlsView: View {
         VStack(spacing: 8) {
             // MARK: - Floating Pro Top Tabs
             HStack(spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
                 // ISO Tab
                 proTabButton(
                     tab: .iso,
@@ -47,6 +49,16 @@ public struct ProVideoManualControlsView: View {
                     isAuto: proService.isAutoWB
                 )
 
+                // Hardware Lens Focus Tab
+                proTabButton(
+                    tab: .focus,
+                    title: "FOCUS",
+                    valueString: proService.isAutoFocus
+                        ? "AF \(Int(proService.measuredLiveLensPosition * 100))"
+                        : "MF \(Int(proService.currentLensPosition * 100))",
+                    isAuto: proService.isAutoFocus
+                )
+
                 // Focus Peaking Toggle Quick Button
                 Button(action: {
                     viewModel.isFocusPeakingEnabled.toggle()
@@ -66,6 +78,8 @@ public struct ProVideoManualControlsView: View {
                     .clipShape(Capsule())
                 }
                 .accessibilityLabel("Bật tắt Focus Peaking báo nét")
+                    }
+                }
 
                 // Collapse / Expand Toggle Button
                 Button(action: {
@@ -103,6 +117,8 @@ public struct ProVideoManualControlsView: View {
                         apertureEVControlPanel
                     case .wb:
                         whiteBalanceControlPanel
+                    case .focus:
+                        manualFocusControlPanel
                     }
                 }
                 .padding(12)
@@ -513,6 +529,107 @@ public struct ProVideoManualControlsView: View {
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundColor(.purple)
             }
+        }
+    }
+
+    // MARK: - 5. Manual Lens Focus Panel
+    private var manualFocusControlPanel: some View {
+        VStack(spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("LẤY NÉT ỐNG KÍNH")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(.gray)
+                    Text(proService.isManualFocusSupported
+                         ? "Vị trí lens \(Int(proService.currentLensPosition * 100))%"
+                         : "Thiết bị không hỗ trợ khóa lens tùy chỉnh")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(proService.isManualFocusSupported ? .white.opacity(0.8) : .orange)
+                }
+
+                Spacer()
+
+                Button(action: {
+                    let enableAuto = !proService.isAutoFocus
+                    proService.setAutoFocus(enableAuto)
+                    if !enableAuto {
+                        viewModel.isFocusPeakingEnabled = true
+                    }
+                    haptic.selectionChanged()
+                }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(proService.isAutoFocus ? Color.green : Color.yellow)
+                            .frame(width: 6, height: 6)
+                        Text(proService.isAutoFocus ? "AF-C" : "MF")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background((proService.isAutoFocus ? Color.green : Color.yellow).opacity(0.2))
+                    .cornerRadius(8)
+                    .foregroundColor(proService.isAutoFocus ? .green : .yellow)
+                }
+                .disabled(!proService.isManualFocusSupported)
+                .opacity(proService.isManualFocusSupported ? 1 : 0.45)
+            }
+
+            let focusPresets: [(name: String, position: Float)] = [
+                ("MACRO", 0.02),
+                ("GẦN", 0.20),
+                ("TRUNG", 0.50),
+                ("XA", 0.78),
+                ("∞", 1.00)
+            ]
+            HStack(spacing: 7) {
+                ForEach(focusPresets, id: \.position) { preset in
+                    let isCurrent = !proService.isAutoFocus
+                        && abs(proService.currentLensPosition - preset.position) < 0.04
+                    Button(action: {
+                        proService.setManualFocus(preset.position)
+                        viewModel.isFocusPeakingEnabled = true
+                        haptic.selectionChanged()
+                    }) {
+                        Text(preset.name)
+                            .font(.system(size: 10.5, weight: isCurrent ? .heavy : .medium, design: .monospaced))
+                            .foregroundColor(isCurrent ? .black : .white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                            .background(isCurrent ? Color.yellow : Color.white.opacity(0.12))
+                            .cornerRadius(6)
+                    }
+                    .disabled(!proService.isManualFocusSupported)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Label("GẦN", systemImage: "camera.macro")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.yellow)
+
+                Slider(
+                    value: Binding(
+                        get: { Double(proService.currentLensPosition) },
+                        set: {
+                            proService.setManualFocus(Float($0))
+                            viewModel.isFocusPeakingEnabled = true
+                        }
+                    ),
+                    in: 0...1,
+                    step: 0.01
+                )
+                .accentColor(.yellow)
+                .disabled(!proService.isManualFocusSupported)
+
+                Text("XA ∞")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundColor(.cyan)
+            }
+
+            Text("Chạm lên khung ngắm để trở lại autofocus. Focus Peaking tự bật khi chỉnh tay.")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundColor(.white.opacity(0.55))
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

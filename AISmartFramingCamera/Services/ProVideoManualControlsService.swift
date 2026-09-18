@@ -1,308 +1,364 @@
 import Foundation
 import AVFoundation
-import UIKit
 import Combine
 
+/// UI-facing state for professional camera controls.
+///
+/// All `AVCaptureDevice` reads and writes cross the serialized boundary provided by
+/// `CameraService.scheduleDeviceConfiguration`. Published state is only committed on the
+/// main queue, while slider bursts are coalesced before touching hardware.
 public final class ProVideoManualControlsService: ObservableObject {
     public static let shared = ProVideoManualControlsService()
-    
-    // MARK: - 1. ISO Controls
-    @Published public var isAutoISO: Bool = true
-    @Published public var currentISO: Float = 100.0
-    @Published public var minISO: Float = 32.0
-    @Published public var maxISO: Float = 3200.0
-    
-    // MARK: - 2. Shutter Speed Controls (Mau so giay: 60 = 1/60s)
-    @Published public var isAutoShutter: Bool = true
-    @Published public var currentShutterSpeed: Double = 60.0
-    @Published public var minShutterSpeed: Double = 24.0
-    @Published public var maxShutterSpeed: Double = 8000.0
-    
-    // MARK: - 3. Aperture & EV Bias Controls
-    @Published public var isAutoEV: Bool = true
-    @Published public var currentEVBias: Float = 0.0
-    @Published public var minEVBias: Float = -2.0
-    @Published public var maxEVBias: Float = 2.0
+
+    // MARK: - Exposure
+
+    @Published public var isAutoISO = true
+    @Published public var currentISO: Float = 100
+    @Published public var minISO: Float = 32
+    @Published public var maxISO: Float = 3200
+
+    /// Reciprocal seconds: 60 represents 1/60 s.
+    @Published public var isAutoShutter = true
+    @Published public var currentShutterSpeed: Double = 60
+    @Published public var minShutterSpeed: Double = 24
+    @Published public var maxShutterSpeed: Double = 8000
+
+    @Published public var isAutoEV = true
+    @Published public var currentEVBias: Float = 0
+    @Published public var minEVBias: Float = -2
+    @Published public var maxEVBias: Float = 2
     @Published public var hardwareLensAperture: Float = 1.8
-    
-    // MARK: - 4. White Balance Controls (Kelvin & Tint)
-    @Published public var isAutoWB: Bool = true
-    @Published public var currentKelvin: Float = 5600.0
-    @Published public var currentTint: Float = 0.0
-    
-    // MARK: - Live Sensor Readouts (Hien thi real-time khi dang Auto)
-    @Published public var measuredLiveISO: Float = 100.0
-    @Published public var measuredLiveShutterSpeed: Double = 60.0
-    @Published public var measuredLiveKelvin: Float = 5600.0
-    @Published public var measuredLiveTint: Float = 0.0
-    
-    // Throttle control
+
+    // MARK: - White balance
+
+    @Published public var isAutoWB = true
+    @Published public var currentKelvin: Float = 5600
+    @Published public var currentTint: Float = 0
+
+    // MARK: - Lens focus
+
+    @Published public var isAutoFocus = true
+    @Published public var currentLensPosition: Float = 0.5
+    @Published public var isManualFocusSupported = false
+
+    // MARK: - Live sensor readouts
+
+    @Published public var measuredLiveISO: Float = 100
+    @Published public var measuredLiveShutterSpeed: Double = 60
+    @Published public var measuredLiveKelvin: Float = 5600
+    @Published public var measuredLiveTint: Float = 0
+    @Published public var measuredLiveLensPosition: Float = 0.5
+
     private var pendingExposureWorkItem: DispatchWorkItem?
     private var pendingWBWorkItem: DispatchWorkItem?
-    
+    private var pendingFocusWorkItem: DispatchWorkItem?
+
     private init() {}
-    
-    // MARK: - Sync Hardware Range & Aperture
+
+    // MARK: - Hardware capabilities
+
     public func syncHardwareCapabilities() {
-        guard let camera = CameraService.shared.currentActiveCamera else { return }
-        let format = camera.activeFormat
-        
-        DispatchQueue.main.async {
-            self.minISO = max(25.0, format.minISO)
-            self.maxISO = min(6400.0, format.maxISO)
-            
-            let minDurSeconds = CMTimeGetSeconds(format.minExposureDuration)
-            let maxDurSeconds = CMTimeGetSeconds(format.maxExposureDuration)
-            
-            if minDurSeconds > 0 {
-                self.maxShutterSpeed = min(8000.0, round(1.0 / minDurSeconds))
+        CameraService.shared.scheduleDeviceConfiguration { [weak self] camera in
+            let format = camera.activeFormat
+            let hardwareMinISO = Self.finite(format.minISO, fallback: 32)
+            let hardwareMaxISO = Self.finite(format.maxISO, fallback: 3200)
+            let minISO = max(25, min(hardwareMinISO, hardwareMaxISO))
+            let maxISO = max(minISO, min(6400, hardwareMaxISO))
+
+            let minDuration = CMTimeGetSeconds(format.minExposureDuration)
+            let maxDuration = CMTimeGetSeconds(format.maxExposureDuration)
+            let maxShutter = minDuration.isFinite && minDuration > 0
+                ? min(8000, max(1, (1 / minDuration).rounded()))
+                : 8000
+            let minShutter = maxDuration.isFinite && maxDuration > 0
+                ? max(1, min(maxShutter, (1 / maxDuration).rounded()))
+                : 24
+
+            let deviceMinEV = Self.finite(camera.minExposureTargetBias, fallback: -2)
+            let deviceMaxEV = Self.finite(camera.maxExposureTargetBias, fallback: 2)
+            let minEV = max(-2, min(deviceMinEV, deviceMaxEV))
+            let maxEV = max(minEV, min(2, deviceMaxEV))
+            let aperture = camera.lensAperture.isFinite && camera.lensAperture > 0 ? camera.lensAperture : 1.8
+            let supportsManualFocus = camera.isLockingFocusWithCustomLensPositionSupported
+            let lensPosition = Self.clamp(camera.lensPosition, lower: 0, upper: 1, fallback: 0.5)
+
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.minISO = minISO
+                self.maxISO = maxISO
+                self.minShutterSpeed = minShutter
+                self.maxShutterSpeed = maxShutter
+                self.minEVBias = minEV
+                self.maxEVBias = maxEV
+                self.hardwareLensAperture = aperture
+                self.isManualFocusSupported = supportsManualFocus
+                self.measuredLiveLensPosition = lensPosition
+                if self.isAutoFocus {
+                    self.currentLensPosition = lensPosition
+                }
+                CameraLogger.info(
+                    "ProVideo hardware: ISO \(Int(minISO))-\(Int(maxISO)) | Shutter 1/\(Int(maxShutter))-1/\(Int(minShutter)) | f/\(String(format: \"%.1f\", aperture)) | MF \(supportsManualFocus)",
+                    category: .capture
+                )
             }
-            if maxDurSeconds > 0 {
-                self.minShutterSpeed = max(15.0, round(1.0 / maxDurSeconds))
-            }
-            
-            self.minEVBias = max(-2.0, camera.minExposureTargetBias)
-            self.maxEVBias = min(2.0, camera.maxExposureTargetBias)
-            
-            self.hardwareLensAperture = camera.lensAperture > 0 ? camera.lensAperture : 1.8
-            
-            CameraLogger.info("ProVideo: Sync phan cung -> ISO: \(self.minISO)-\(self.maxISO) | Shutter: 1/\(Int(self.maxShutterSpeed))-1/\(Int(self.minShutterSpeed)) | Khau do: f/\(self.hardwareLensAperture)", category: .capture)
         }
     }
-    
-    // MARK: - Live Measurements Update
-    public func updateLiveMeasurements(iso: Float, shutterDuration: Double) {
-        let speed = shutterDuration > 0 ? (1.0 / shutterDuration) : 60.0
-        DispatchQueue.main.async {
-            self.measuredLiveISO = iso
-            self.measuredLiveShutterSpeed = speed
+
+    public func updateLiveMeasurements(iso: Float, shutterDuration: Double, lensPosition: Float) {
+        let safeISO = Self.finite(iso, fallback: measuredLiveISO)
+        let speed = shutterDuration.isFinite && shutterDuration > 0
+            ? 1 / shutterDuration
+            : measuredLiveShutterSpeed
+        measuredLiveISO = safeISO
+        measuredLiveShutterSpeed = Self.finite(speed, fallback: 60)
+        measuredLiveLensPosition = Self.clamp(lensPosition, lower: 0, upper: 1, fallback: measuredLiveLensPosition)
+        if isAutoFocus {
+            currentLensPosition = measuredLiveLensPosition
         }
     }
-    
-    // MARK: - ISO Adjustments
+
+    // MARK: - ISO and shutter
+
     public func setAutoISO(_ isAuto: Bool) {
-        self.isAutoISO = isAuto
-        if isAuto {
-            if isAutoShutter {
-                restoreContinuousAutoExposure()
-            } else {
-                applyExposureSettings()
-            }
+        isAutoISO = isAuto
+        if isAuto && isAutoShutter {
+            restoreContinuousAutoExposure()
         } else {
             applyExposureSettings()
         }
     }
-    
+
     public func setManualISO(_ iso: Float) {
-        let clamped = max(minISO, min(iso, maxISO))
-        self.currentISO = clamped
-        self.isAutoISO = false
+        currentISO = Self.clamp(iso, lower: minISO, upper: maxISO, fallback: currentISO)
+        isAutoISO = false
         applyExposureSettings()
     }
-    
-    // MARK: - Shutter Speed Adjustments
+
     public func setAutoShutter(_ isAuto: Bool) {
-        self.isAutoShutter = isAuto
-        if isAuto {
-            if isAutoISO {
-                restoreContinuousAutoExposure()
-            } else {
-                applyExposureSettings()
-            }
+        isAutoShutter = isAuto
+        if isAuto && isAutoISO {
+            restoreContinuousAutoExposure()
         } else {
             applyExposureSettings()
         }
     }
-    
+
     public func setManualShutterSpeed(_ speed: Double) {
-        let clamped = max(minShutterSpeed, min(speed, maxShutterSpeed))
-        self.currentShutterSpeed = clamped
-        self.isAutoShutter = false
+        currentShutterSpeed = Self.clamp(
+            speed,
+            lower: minShutterSpeed,
+            upper: maxShutterSpeed,
+            fallback: currentShutterSpeed
+        )
+        isAutoShutter = false
         applyExposureSettings()
     }
-    
-    // MARK: - Aperture & EV Bias Adjustments
-    public func setAutoEV(_ isAuto: Bool) {
-        self.isAutoEV = isAuto
-        if isAuto {
-            setManualEVBias(0.0)
-            self.isAutoEV = true
-        }
-    }
-    
-    public func setManualEVBias(_ bias: Float) {
-        let clamped = max(minEVBias, min(bias, maxEVBias))
-        self.currentEVBias = clamped
-        self.isAutoEV = (clamped == 0.0)
-        
-        let sessionQueue = CameraService.shared.currentSessionQueue
-        sessionQueue.async {
-            guard let camera = CameraService.shared.currentActiveCamera else { return }
+
+    private func applyExposureSettings() {
+        pendingExposureWorkItem?.cancel()
+        let autoISO = isAutoISO
+        let autoShutter = isAutoShutter
+        let requestedISO = currentISO
+        let requestedShutter = currentShutterSpeed
+
+        pendingExposureWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.02) { camera in
             do {
                 try camera.lockForConfiguration()
-                camera.setExposureTargetBias(clamped, completionHandler: nil)
-                camera.unlockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+
+                if autoISO && autoShutter {
+                    if camera.isExposureModeSupported(.continuousAutoExposure) {
+                        camera.exposureMode = .continuousAutoExposure
+                    }
+                    return
+                }
+                guard camera.isExposureModeSupported(.custom) else { return }
+
+                let targetISO = autoISO
+                    ? Self.clamp(camera.iso, lower: camera.activeFormat.minISO, upper: camera.activeFormat.maxISO, fallback: camera.activeFormat.minISO)
+                    : Self.clamp(requestedISO, lower: camera.activeFormat.minISO, upper: camera.activeFormat.maxISO, fallback: camera.activeFormat.minISO)
+
+                let targetDuration: CMTime
+                if autoShutter {
+                    targetDuration = camera.exposureDuration
+                } else {
+                    let reciprocal = Self.clamp(requestedShutter, lower: 1, upper: 1_000_000, fallback: 60)
+                    let requestedDuration = CMTime(seconds: 1 / reciprocal, preferredTimescale: 1_000_000)
+                    targetDuration = max(camera.activeFormat.minExposureDuration, min(requestedDuration, camera.activeFormat.maxExposureDuration))
+                }
+                camera.setExposureModeCustom(duration: targetDuration, iso: targetISO, completionHandler: nil)
             } catch {
-                CameraLogger.error("ProVideo: Loi chinh EV", error: error, category: .capture)
+                CameraLogger.error("ProVideo: Lỗi áp dụng custom exposure", error: error, category: .capture)
             }
         }
     }
-    
-    // MARK: - White Balance Adjustments
+
+    private func restoreContinuousAutoExposure() {
+        pendingExposureWorkItem?.cancel()
+        CameraService.shared.scheduleDeviceConfiguration { camera in
+            do {
+                try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                if camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposureMode = .continuousAutoExposure
+                }
+            } catch {
+                CameraLogger.error("ProVideo: Lỗi khôi phục auto exposure", error: error, category: .capture)
+            }
+        }
+    }
+
+    // MARK: - Exposure compensation
+
+    public func setAutoEV(_ isAuto: Bool) {
+        isAutoEV = isAuto
+        if isAuto {
+            setManualEVBias(0)
+            isAutoEV = true
+        }
+    }
+
+    public func setManualEVBias(_ bias: Float) {
+        let clamped = Self.clamp(bias, lower: minEVBias, upper: maxEVBias, fallback: currentEVBias)
+        currentEVBias = clamped
+        isAutoEV = abs(clamped) < 0.001
+        CameraService.shared.setExposureBias(clamped)
+    }
+
+    // MARK: - White balance
+
     public func setAutoWB(_ isAuto: Bool) {
-        self.isAutoWB = isAuto
+        isAutoWB = isAuto
         if isAuto {
             restoreContinuousAutoWhiteBalance()
         } else {
             applyWhiteBalanceSettings()
         }
     }
-    
-    public func setManualWhiteBalance(kelvin: Float, tint: Float = 0.0) {
-        self.currentKelvin = max(2500.0, min(kelvin, 9000.0))
-        self.currentTint = max(-50.0, min(tint, 50.0))
-        self.isAutoWB = false
+
+    public func setManualWhiteBalance(kelvin: Float, tint: Float = 0) {
+        currentKelvin = Self.clamp(kelvin, lower: 2500, upper: 9000, fallback: currentKelvin)
+        currentTint = Self.clamp(tint, lower: -50, upper: 50, fallback: currentTint)
+        isAutoWB = false
         applyWhiteBalanceSettings()
     }
-    
-    // MARK: - Hardware Exposure Application
-    private func applyExposureSettings() {
-        pendingExposureWorkItem?.cancel()
-        
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            guard let camera = CameraService.shared.currentActiveCamera else { return }
-            
-            // Neu ca 2 deu Auto -> Tra ve ContinuousAutoExposure
-            if self.isAutoISO && self.isAutoShutter {
-                self.restoreContinuousAutoExposure()
-                return
-            }
-            
-            do {
-                try camera.lockForConfiguration()
-                if camera.isExposureModeSupported(.custom) {
-                    let targetISO: Float
-                    if self.isAutoISO {
-                        targetISO = camera.iso
-                    } else {
-                        targetISO = max(camera.activeFormat.minISO, min(self.currentISO, camera.activeFormat.maxISO))
-                    }
-                    
-                    let targetDuration: CMTime
-                    if self.isAutoShutter {
-                        targetDuration = camera.exposureDuration
-                    } else {
-                        let sec = 1.0 / self.currentShutterSpeed
-                        let cmSec = CMTime(seconds: sec, preferredTimescale: 1000000)
-                        targetDuration = max(camera.activeFormat.minExposureDuration, min(cmSec, camera.activeFormat.maxExposureDuration))
-                    }
-                    
-                    camera.setExposureModeCustom(duration: targetDuration, iso: targetISO, completionHandler: nil)
-                }
-                camera.unlockForConfiguration()
-            } catch {
-                CameraLogger.error("ProVideo: Loi ap dung Exposure Custom", error: error, category: .capture)
-            }
-        }
-        
-        self.pendingExposureWorkItem = workItem
-        CameraService.shared.currentSessionQueue.asyncAfter(deadline: .now() + 0.02, execute: workItem)
-    }
-    
-    private func restoreContinuousAutoExposure() {
-        let sessionQueue = CameraService.shared.currentSessionQueue
-        sessionQueue.async {
-            guard let camera = CameraService.shared.currentActiveCamera else { return }
-            do {
-                try camera.lockForConfiguration()
-                if camera.isExposureModeSupported(.continuousAutoExposure) {
-                    camera.exposureMode = .continuousAutoExposure
-                }
-                camera.unlockForConfiguration()
-            } catch {
-                CameraLogger.error("ProVideo: Loi khoi phuc Auto Exposure", error: error, category: .capture)
-            }
-        }
-    }
-    
-    // MARK: - Hardware White Balance Application
+
     private func applyWhiteBalanceSettings() {
         pendingWBWorkItem?.cancel()
-        
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            guard let camera = CameraService.shared.currentActiveCamera else { return }
-            
-            if self.isAutoWB {
-                self.restoreContinuousAutoWhiteBalance()
-                return
-            }
-            
-            let tempAndTint = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(
-                temperature: self.currentKelvin,
-                tint: self.currentTint
-            )
-            
-            var gains = camera.deviceWhiteBalanceGains(for: tempAndTint)
-            let maxGain = camera.maxWhiteBalanceGain
-            gains.redGain = max(1.0, min(gains.redGain, maxGain))
-            gains.greenGain = max(1.0, min(gains.greenGain, maxGain))
-            gains.blueGain = max(1.0, min(gains.blueGain, maxGain))
-            
+        guard !isAutoWB else {
+            restoreContinuousAutoWhiteBalance()
+            return
+        }
+        let kelvin = currentKelvin
+        let tint = currentTint
+
+        pendingWBWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.02) { camera in
+            let values = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: kelvin, tint: tint)
+            var gains = camera.deviceWhiteBalanceGains(for: values)
+            let maxGain = max(1, Self.finite(camera.maxWhiteBalanceGain, fallback: 1))
+            gains.redGain = Self.clamp(gains.redGain, lower: 1, upper: maxGain, fallback: 1)
+            gains.greenGain = Self.clamp(gains.greenGain, lower: 1, upper: maxGain, fallback: 1)
+            gains.blueGain = Self.clamp(gains.blueGain, lower: 1, upper: maxGain, fallback: 1)
+
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 if camera.isWhiteBalanceModeSupported(.locked) {
                     camera.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
                 }
-                camera.unlockForConfiguration()
             } catch {
-                CameraLogger.error("ProVideo: Loi khoa White Balance", error: error, category: .capture)
+                CameraLogger.error("ProVideo: Lỗi khóa white balance", error: error, category: .capture)
             }
         }
-        
-        self.pendingWBWorkItem = workItem
-        CameraService.shared.currentSessionQueue.asyncAfter(deadline: .now() + 0.02, execute: workItem)
     }
-    
+
     private func restoreContinuousAutoWhiteBalance() {
-        let sessionQueue = CameraService.shared.currentSessionQueue
-        sessionQueue.async {
-            guard let camera = CameraService.shared.currentActiveCamera else { return }
+        pendingWBWorkItem?.cancel()
+        CameraService.shared.scheduleDeviceConfiguration { camera in
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 if camera.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                     camera.whiteBalanceMode = .continuousAutoWhiteBalance
                 }
-                camera.unlockForConfiguration()
             } catch {
-                CameraLogger.error("ProVideo: Loi khoi phuc Auto White Balance", error: error, category: .capture)
+                CameraLogger.error("ProVideo: Lỗi khôi phục auto white balance", error: error, category: .capture)
             }
         }
     }
-    
-    // MARK: - Full Reset to Auto (Goi khi chuyen khoi VIDEO PRO)
-    public func resetToFullAuto() {
-        DispatchQueue.main.async {
-            self.isAutoISO = true
-            self.isAutoShutter = true
-            self.isAutoEV = true
-            self.currentEVBias = 0.0
-            self.isAutoWB = true
+
+    // MARK: - Manual lens focus
+
+    public func setAutoFocus(_ isAuto: Bool) {
+        isAutoFocus = isAuto
+        pendingFocusWorkItem?.cancel()
+        if isAuto {
+            CameraService.shared.restoreContinuousAutoFocus()
+        } else {
+            setManualFocus(currentLensPosition)
         }
-        
-        restoreContinuousAutoExposure()
-        restoreContinuousAutoWhiteBalance()
-        
-        let sessionQueue = CameraService.shared.currentSessionQueue
-        sessionQueue.async {
-            guard let camera = CameraService.shared.currentActiveCamera else { return }
+    }
+
+    public func setManualFocus(_ lensPosition: Float) {
+        guard isManualFocusSupported else { return }
+        let clamped = Self.clamp(lensPosition, lower: 0, upper: 1, fallback: currentLensPosition)
+        currentLensPosition = clamped
+        isAutoFocus = false
+        pendingFocusWorkItem?.cancel()
+
+        pendingFocusWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.015) { camera in
+            guard camera.isLockingFocusWithCustomLensPositionSupported else { return }
             do {
                 try camera.lockForConfiguration()
-                camera.setExposureTargetBias(0.0, completionHandler: nil)
-                camera.unlockForConfiguration()
-            } catch {}
+                defer { camera.unlockForConfiguration() }
+                camera.setFocusModeLocked(lensPosition: clamped, completionHandler: nil)
+            } catch {
+                CameraLogger.error("ProVideo: Lỗi điều khiển manual focus", error: error, category: .capture)
+            }
         }
-        CameraLogger.info("ProVideo: Da khoi phuc toan bo thong so ve Auto hoan toan", category: .capture)
+    }
+
+    // MARK: - Reset
+
+    public func resetToFullAuto() {
+        pendingExposureWorkItem?.cancel()
+        pendingWBWorkItem?.cancel()
+        pendingFocusWorkItem?.cancel()
+        isAutoISO = true
+        isAutoShutter = true
+        isAutoEV = true
+        currentEVBias = 0
+        isAutoWB = true
+        isAutoFocus = true
+
+        restoreContinuousAutoExposure()
+        restoreContinuousAutoWhiteBalance()
+        CameraService.shared.restoreContinuousAutoFocus()
+        CameraService.shared.setExposureBias(0)
+        CameraLogger.info("ProVideo: Đã khôi phục exposure, WB và focus về Auto", category: .capture)
+    }
+
+    // MARK: - Numeric safety
+
+    private static func finite(_ value: Float, fallback: Float) -> Float {
+        value.isFinite ? value : fallback
+    }
+
+    private static func finite(_ value: Double, fallback: Double) -> Double {
+        value.isFinite ? value : fallback
+    }
+
+    private static func clamp(_ value: Float, lower: Float, upper: Float, fallback: Float) -> Float {
+        let safeLower = lower.isFinite ? lower : fallback
+        let safeUpper = upper.isFinite ? max(safeLower, upper) : max(safeLower, fallback)
+        let safeValue = value.isFinite ? value : fallback
+        return max(safeLower, min(safeValue, safeUpper))
+    }
+
+    private static func clamp(_ value: Double, lower: Double, upper: Double, fallback: Double) -> Double {
+        let safeLower = lower.isFinite ? lower : fallback
+        let safeUpper = upper.isFinite ? max(safeLower, upper) : max(safeLower, fallback)
+        let safeValue = value.isFinite ? value : fallback
+        return max(safeLower, min(safeValue, safeUpper))
     }
 }
