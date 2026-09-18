@@ -392,22 +392,14 @@ public struct CapturedPhotoPreviewView: View {
     // MARK: - Zoom & Pan Gesture Builder
     private func zoomPanGesture(in size: CGSize) -> some Gesture {
         SimultaneousGesture(
-            MagnifyGesture()
+            MagnificationGesture()
                 .onChanged { val in
                     isPinching = true
-                    gestureScale = val.magnification
-                    if zoomScale <= 1.05 {
-                        // Tiêu điểm zoom bám theo vị trí ngón tay chạm ban đầu (góc, cạnh)
-                        let dx = val.startLocation.x - size.width / 2.0
-                        let dy = val.startLocation.y - size.height / 2.0
-                        let focalX = -dx * (val.magnification - 1.0)
-                        let focalY = -dy * (val.magnification - 1.0)
-                        gesturePanOffset = CGSize(width: focalX, height: focalY)
-                    }
+                    gestureScale = val
                 }
                 .onEnded { val in
                     isPinching = false
-                    let targetScale = zoomScale * val.magnification
+                    let targetScale = zoomScale * val
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
                         if targetScale < 1.05 {
                             zoomScale = 1.0

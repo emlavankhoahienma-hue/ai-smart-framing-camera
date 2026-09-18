@@ -1859,7 +1859,7 @@ public final class CameraViewModel: ObservableObject {
 }
 
 // MARK: - CameraServiceDelegate
-extension CameraViewModel: CameraServiceDelegate {
+@preconcurrency extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer) {
         videoProcessingQueue.async { [weak self] in
             guard let self = self else { return }
