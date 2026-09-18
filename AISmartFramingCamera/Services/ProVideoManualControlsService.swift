@@ -96,8 +96,9 @@ public final class ProVideoManualControlsService: ObservableObject {
                 if self.isAutoFocus {
                     self.currentLensPosition = lensPosition
                 }
+                let apertureText = String(format: "%.1f", aperture)
                 CameraLogger.info(
-                    "ProVideo hardware: ISO \(Int(minISO))-\(Int(maxISO)) | Shutter 1/\(Int(maxShutter))-1/\(Int(minShutter)) | f/\(String(format: \"%.1f\", aperture)) | MF \(supportsManualFocus)",
+                    "ProVideo hardware: ISO \(Int(minISO))-\(Int(maxISO)) | Shutter 1/\(Int(maxShutter))-1/\(Int(minShutter)) | f/\(apertureText) | MF \(supportsManualFocus)",
                     category: .capture
                 )
             }
