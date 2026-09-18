@@ -35,9 +35,9 @@ final class CameraGeometryAndTrackingTests: XCTestCase {
 
     func testGeometryRejectsNonFiniteInput() {
         let geometry = CameraPreviewGeometry(sourceAspectRatio: 3.0 / 4.0)
-        XCTAssertNil(geometry.screenPoint(fromNormalized: CGPoint(x: .nan, y: 0.5), in: CGSize(width: 390, height: 520)))
-        XCTAssertNil(geometry.normalizedPoint(fromScreen: CGPoint(x: .infinity, y: 10), in: CGSize(width: 390, height: 520)))
-        XCTAssertEqual(geometry.fittedSize(in: CGSize(width: .nan, height: 100)), .zero)
+        XCTAssertNil(geometry.screenPoint(fromNormalized: CGPoint(x: CGFloat.nan, y: 0.5), in: CGSize(width: 390, height: 520)))
+        XCTAssertNil(geometry.normalizedPoint(fromScreen: CGPoint(x: CGFloat.infinity, y: 10), in: CGSize(width: 390, height: 520)))
+        XCTAssertEqual(geometry.fittedSize(in: CGSize(width: CGFloat.nan, height: 100)), .zero)
     }
 
     func testStabilizerReducesRMSJitter() throws {
@@ -86,7 +86,7 @@ final class CameraGeometryAndTrackingTests: XCTestCase {
     }
 
     func testAFMappingIsFiniteBoundedAndHonorsLocks() {
-        let inputs = [CGPoint(x: -2, y: 4), CGPoint(x: .nan, y: .infinity), CGPoint(x: 0.22, y: 0.83)]
+        let inputs = [CGPoint(x: -2, y: 4), CGPoint(x: CGFloat.nan, y: CGFloat.infinity), CGPoint(x: 0.22, y: 0.83)]
         for input in inputs {
             let device = CameraCoordinateMapper.uiToDevice(input)
             XCTAssertTrue(device.x.isFinite && device.y.isFinite)

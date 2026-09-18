@@ -94,11 +94,15 @@ jobs:
           {
             echo "# Build errors - run ${{ github.run_id }} - ${{ github.sha }}"
             echo
-            echo "=== Swift/clang error lines ==="
-            grep -nE " error: |fatal error: " build.log | head -80
-            echo
-            echo "=== Last 60 lines of xcodebuild output ==="
-            tail -60 build.log
+            if [ -f build.log ]; then
+              echo "=== Swift/clang error lines ==="
+              grep -nE " error: |fatal error: " build.log | head -80 || true
+              echo
+              echo "=== Last 60 lines of xcodebuild output ==="
+              tail -60 build.log
+            else
+              echo "Failure occurred before xcodebuild; inspect the failed workflow step."
+            fi
           } > BUILD_ERROR.txt
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
