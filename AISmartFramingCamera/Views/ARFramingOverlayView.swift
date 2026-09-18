@@ -240,14 +240,19 @@ public struct ARFramingOverlayView: View {
     }
 
     // MARK: - AspectFill Coordinate Conversion Helpers
-    // Chuyển đổi toạ độ chuẩn hóa từ Camera Buffer (4:3) sang màn hình Preview (AspectFill tràn viền)
+    // Chuyển đổi toạ độ chuẩn hóa từ Camera Buffer (4:3) sang màn hình Preview
     public static func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
         // Tỉ lệ cảm biến camera iOS ở chế độ portrait: 3:4 (width / height = 0.75)
         let bufferAspect: CGFloat = 3.0 / 4.0
         let screenAspect = screenSize.width / max(1.0, screenSize.height)
 
+        if abs(screenAspect - bufferAspect) < 0.03 {
+            // Khung ngắm chuẩn 4:3 (WYSIWYG 100% khớp cảm biến camera Apple): Ánh xạ 1:1 chính xác tuyệt đối
+            return CGPoint(x: point.x * screenSize.width, y: point.y * screenSize.height)
+        }
+
         if screenAspect < bufferAspect {
-            // Màn hình hẹp hơn khung camera (VD: iPhone 19.5:9 so với 4:3) -> Bị crop 2 bên trái/phải
+            // Màn hình hẹp hơn khung camera -> Bị crop 2 bên trái/phải
             let displayedWidth = screenSize.height * bufferAspect
             let horizontalCropOffset = (displayedWidth - screenSize.width) / 2.0
             let screenX = point.x * displayedWidth - horizontalCropOffset
@@ -285,6 +290,13 @@ public struct ARFramingOverlayView: View {
     private func convertScreenPointToBuffer(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
         let bufferAspect: CGFloat = 3.0 / 4.0
         let screenAspect = screenSize.width / max(1.0, screenSize.height)
+
+        if abs(screenAspect - bufferAspect) < 0.03 {
+            return CGPoint(
+                x: max(0.02, min(0.98, point.x / screenSize.width)),
+                y: max(0.02, min(0.98, point.y / screenSize.height))
+            )
+        }
 
         if screenAspect < bufferAspect {
             let displayedWidth = screenSize.height * bufferAspect

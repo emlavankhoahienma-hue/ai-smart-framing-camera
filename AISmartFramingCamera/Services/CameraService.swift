@@ -60,6 +60,22 @@ public final class CameraService: NSObject {
     public private(set) var maxZoom: CGFloat = 10.0
     public private(set) var isRecordingVideo = false
 
+    // Virtual Multi-Camera Mapping (Apple Camera App style: 0.5x, 1x, 2x, 3x/5x)
+    public private(set) var displayMultiplier: CGFloat = 1.0
+    public private(set) var hasUltraWideLens: Bool = false
+    public private(set) var availableDisplayZoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0]
+    public private(set) var defaultDisplayZoom: CGFloat = 1.0
+
+    public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
+        let devZoom = displayZoom * displayMultiplier
+        return max(minZoom, min(devZoom, maxZoom))
+    }
+
+    public func convertDeviceZoomToDisplayZoom(_ deviceZoom: CGFloat) -> CGFloat {
+        guard displayMultiplier > 0 else { return deviceZoom }
+        return deviceZoom / displayMultiplier
+    }
+
     public var flashMode: AVCaptureDevice.FlashMode = .auto
     public var isLivePhotoMode = false
     public var selectedVideoFormatOption: VideoFormatOption = .hd60
@@ -114,8 +130,49 @@ public final class CameraService: NSObject {
             self.minZoom = camera.minAvailableVideoZoomFactor
             self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
 
+            // Cấu hình tỷ lệ zoom chuẩn phong cách Apple Camera App
+            let switchFactors = camera.virtualDeviceSwitchOverVideoZoomFactors
+            if (camera.deviceType == .builtInTripleCamera || camera.deviceType == .builtInDualWideCamera),
+               let firstSwitch = switchFactors.first {
+                let wideBase = CGFloat(firstSwitch.doubleValue)
+                self.displayMultiplier = wideBase
+                self.hasUltraWideLens = true
+                self.defaultDisplayZoom = 1.0
+
+                var options: [CGFloat] = [0.5, 1.0, 2.0]
+                if switchFactors.count >= 2 {
+                    let teleDeviceZoom = CGFloat(switchFactors[1].doubleValue)
+                    let teleDisplay = round((teleDeviceZoom / wideBase) * 10) / 10
+                    if teleDisplay > 2.0 {
+                        options.append(teleDisplay)
+                    } else {
+                        options.append(3.0)
+                    }
+                } else if self.maxZoom >= wideBase * 3.0 {
+                    options.append(3.0)
+                }
+                if self.maxZoom >= wideBase * 5.0 {
+                    options.append(5.0)
+                }
+                self.availableDisplayZoomOptions = options
+                CameraLogger.info("CameraService: Khởi tạo Multi-Camera Apple (Wide Base: \(wideBase), Options: \(options))", category: .capture)
+            } else {
+                self.displayMultiplier = 1.0
+                self.hasUltraWideLens = false
+                self.defaultDisplayZoom = 1.0
+                var options: [CGFloat] = [1.0, 2.0]
+                if self.maxZoom >= 3.0 { options.append(3.0) }
+                if self.maxZoom >= 5.0 { options.append(5.0) }
+                self.availableDisplayZoomOptions = options
+            }
+
+            // Đặt mức zoom khởi động mặc định là 1.0x (Cảm biến chính Wide sắc nét chuẩn xác)
+            let initialDeviceZoom = self.convertDisplayZoomToDeviceZoom(1.0)
+            self.currentZoom = initialDeviceZoom
+
             do {
                 try camera.lockForConfiguration()
+                camera.videoZoomFactor = initialDeviceZoom
                 if camera.activeFormat.isVideoHDRSupported {
                     camera.automaticallyAdjustsVideoHDREnabled = true
                 }
@@ -128,7 +185,7 @@ public final class CameraService: NSObject {
                 }
                 camera.unlockForConfiguration()
             } catch {
-                print("Không thể bật HDR/LowLightBoost/P3: \(error)")
+                print("Không thể bật HDR/LowLightBoost/P3/Zoom: \(error)")
             }
 
             do {
@@ -166,6 +223,23 @@ public final class CameraService: NSObject {
                     self.captureSession.addOutput(self.photoOutput)
                     self.photoOutput.isHighResolutionCaptureEnabled = true
                     self.photoOutput.maxPhotoQualityPrioritization = .quality
+
+                    if self.photoOutput.isZeroShutterLagSupported {
+                        self.photoOutput.isZeroShutterLagEnabled = true
+                    }
+
+                    if #available(iOS 17.0, *) {
+                        if self.photoOutput.isResponsiveCaptureSupported {
+                            self.photoOutput.isResponsiveCaptureEnabled = true
+                        }
+                        if self.photoOutput.isFastCapturePrioritizationSupported {
+                            self.photoOutput.isFastCapturePrioritizationEnabled = true
+                        }
+                        if self.photoOutput.isAutoDeferredPhotoDeliverySupported {
+                            self.photoOutput.isAutoDeferredPhotoDeliveryEnabled = true
+                        }
+                    }
+
                     if self.photoOutput.isLivePhotoCaptureSupported {
                         self.photoOutput.isLivePhotoCaptureEnabled = true
                         CameraLogger.info("CameraService: Thiết bị hỗ trợ Live Photo -> isLivePhotoCaptureEnabled = true", category: .capture)
@@ -666,6 +740,9 @@ public final class CameraService: NSObject {
                 photoSettings.flashMode = self.flashMode
             }
             photoSettings.photoQualityPrioritization = .quality
+            if self.photoOutput.isHighResolutionCaptureEnabled {
+                photoSettings.isHighResolutionPhotoEnabled = true
+            }
 
             if !isDNG && self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {
                 if !self.photoOutput.isLivePhotoCaptureEnabled {

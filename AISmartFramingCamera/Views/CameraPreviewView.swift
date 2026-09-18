@@ -60,16 +60,16 @@ public struct CameraPreviewView: UIViewRepresentable {
 
         @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
             if gesture.state == .began {
-                initialZoom = parent.viewModel.currentZoom
+                initialZoom = parent.viewModel.displayZoom
             }
-            let minZ = parent.viewModel.cameraService.minZoom
-            let maxZ = parent.viewModel.cameraService.maxZoom
-            let newZoom = max(minZ, min(initialZoom * gesture.scale, maxZ))
+            let minDisplay = parent.viewModel.cameraService.convertDeviceZoomToDisplayZoom(parent.viewModel.cameraService.minZoom)
+            let maxDisplay = parent.viewModel.cameraService.convertDeviceZoomToDisplayZoom(parent.viewModel.cameraService.maxZoom)
+            let newDisplayZoom = max(minDisplay, min(initialZoom * gesture.scale, maxDisplay))
 
             if gesture.state == .ended || gesture.state == .cancelled {
-                parent.viewModel.finishZoomGesture(newZoom)
+                parent.viewModel.finishZoomGesture(newDisplayZoom)
             } else {
-                parent.viewModel.setZoomContinuous(newZoom)
+                parent.viewModel.setZoomContinuous(newDisplayZoom)
             }
         }
 
@@ -108,6 +108,8 @@ public class PreviewContainerView: UIView {
         backgroundColor = .black
         contentScaleFactor = UIScreen.main.scale
 
+        previewLayer.contentsScale = UIScreen.main.scale
+        previewLayer.rasterizationScale = UIScreen.main.scale
         previewLayer.videoGravity = .resizeAspectFill
 
         focusRingView.layer.borderColor = UIColor.systemYellow.cgColor
@@ -123,10 +125,14 @@ public class PreviewContainerView: UIView {
 
     public func setupLayer(session: AVCaptureSession) {
         previewLayer.session = session
+        previewLayer.contentsScale = UIScreen.main.scale
+        previewLayer.rasterizationScale = UIScreen.main.scale
     }
 
     override public func layoutSubviews() {
         super.layoutSubviews()
+        previewLayer.contentsScale = UIScreen.main.scale
+        previewLayer.rasterizationScale = UIScreen.main.scale
         updateOrientation()
     }
 

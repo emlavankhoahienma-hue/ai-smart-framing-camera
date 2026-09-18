@@ -557,32 +557,34 @@ public final class FilmFilterEngine {
         return out
     }
 
-    // MARK: - Subtle AI Sharpness (Bảo toàn 100% màu sắc & chất ảnh qua Luminosity Isolation)
-    /// Tăng cường vi tương phản chi tiết cạnh (Micro-Contrast & Edge Sharpness)
-    /// Sử dụng kỹ thuật Luminosity Blend Mode để giữ nguyên 100% sắc thái, nhiệt độ màu và hạt phim gốc
-    public func applySubtleAISharpness(to image: CGImage, intensity: Float = 0.50) -> CGImage? {
+    // MARK: - Subtle AI Sharpness (Bảo toàn 100% màu sắc & chất ảnh qua Apple CISharpenLuminance)
+    /// Tăng cường vi tương phản chi tiết cạnh (Micro-Contrast & Edge Sharpness) trên kênh Luma
+    /// Sử dụng bộ lọc CISharpenLuminance chuẩn mực của Apple Core Image:
+    /// - Không gây lỗi chia 0 / NaN làm đen mép viền (zero black edge artifact) trên nền trời trắng cháy sáng
+    /// - Giữ nguyên 100% sắc thái, nhiệt độ màu và hạt phim gốc (chrominance hoàn toàn bất biến)
+    public func applySubtleAISharpness(to image: CGImage, intensity: Float = 0.45) -> CGImage? {
         let ciImage = CIImage(cgImage: image)
         guard let sharpenedCI = applySubtleAISharpness(to: ciImage, intensity: intensity) else { return image }
         return context.createCGImage(sharpenedCI, from: ciImage.extent)
     }
 
-    public func applySubtleAISharpness(to input: CIImage, intensity: Float = 0.50) -> CIImage? {
-        // 1. Unsharp Masking với bán kính vi mô (1.3pt) để tập trung vào chi tiết vi mô (tóc, mắt, vân vải, gai lá)
-        guard let unsharp = CIFilter(name: "CIUnsharpMask") else { return input }
-        unsharp.setValue(input, forKey: kCIInputImageKey)
-        unsharp.setValue(1.3, forKey: kCIInputRadiusKey)
-        unsharp.setValue(intensity, forKey: kCIInputIntensityKey)
+    public func applySubtleAISharpness(to input: CIImage, intensity: Float = 0.45) -> CIImage? {
+        // Sử dụng Apple CISharpenLuminance: tăng vi tương phản cạnh thuần túy trên kênh Luminance, Chroma không bị suy giảm
+        guard let sharpenFilter = CIFilter(name: "CISharpenLuminance") else { return input }
+        sharpenFilter.setValue(input, forKey: kCIInputImageKey)
+        sharpenFilter.setValue(intensity, forKey: kCIInputSharpnessKey)
+        sharpenFilter.setValue(1.69, forKey: kCIInputRadiusKey)
 
-        guard let sharpened = unsharp.outputImage else { return input }
+        guard let output = sharpenFilter.outputImage else { return input }
 
-        // 2. Luminosity Blend: Chỉ trích xuất độ tương phản sáng tối (Luma) áp lên ảnh gốc
-        // Tuyệt đối không thay đổi sắc độ (Chroma), không làm lệch màu hay sinh quầng giả
-        if let lumaBlend = CIFilter(name: "CILuminosityBlendMode") {
-            lumaBlend.setValue(sharpened, forKey: kCIInputImageKey)
-            lumaBlend.setValue(input, forKey: kCIInputBackgroundImageKey)
-            return lumaBlend.outputImage ?? sharpened
+        // Kẹp dải màu an toàn [0.0, 1.0] triệt tiêu hoàn toàn hiện tượng out-of-gamut hoặc đen mép
+        if let clampFilter = CIFilter(name: "CIColorClamp") {
+            clampFilter.setValue(output, forKey: kCIInputImageKey)
+            clampFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputMinComponents")
+            clampFilter.setValue(CIVector(x: 1, y: 1, z: 1, w: 1), forKey: "inputMaxComponents")
+            return clampFilter.outputImage?.cropped(to: input.extent) ?? output
         }
 
-        return sharpened
+        return output
     }
 }

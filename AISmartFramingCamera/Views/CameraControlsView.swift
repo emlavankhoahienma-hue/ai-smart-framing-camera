@@ -4,11 +4,7 @@ public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
 
     private var dynamicZoomOptions: [CGFloat] {
-        if viewModel.cameraService.minZoom <= 0.6 {
-            return [0.5, 1.0, 2.0, 3.0, 5.0]
-        } else {
-            return [1.0, 2.0, 3.0, 5.0]
-        }
+        return viewModel.availableDisplayZoomOptions
     }
 
     public var body: some View {
@@ -527,8 +523,8 @@ struct ZoomSelectorPills: View {
     var body: some View {
         VStack(spacing: 4) {
             // Floating zoom badge: chỉ xuất hiện nhẹ nhàng phía trên khi người dùng đang pinch thủ công trên kính ngắm
-            if viewModel.isPinchingZoom && !options.contains(where: { abs(viewModel.currentZoom - $0) < 0.08 }) {
-                Text(String(format: "%.1f×", viewModel.currentZoom))
+            if viewModel.isPinchingZoom && !options.contains(where: { abs(viewModel.displayZoom - $0) < 0.08 }) {
+                Text(String(format: "%.1f×", viewModel.displayZoom))
                     .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(amberGold)
                     .padding(.horizontal, 9)
@@ -543,7 +539,7 @@ struct ZoomSelectorPills: View {
 
             HStack(spacing: 8) {
                 ForEach(options, id: \.self) { zoom in
-                    let isSelected = abs(targetedZoom - zoom) < 0.05 || (!viewModel.isPinchingZoom && abs(viewModel.currentZoom - zoom) < 0.12)
+                    let isSelected = abs(targetedZoom - zoom) < 0.05 || (!viewModel.isPinchingZoom && abs(viewModel.displayZoom - zoom) < 0.12)
                     Button(action: {
                         targetedZoom = zoom
                         viewModel.setZoomFromButton(zoom)
@@ -567,9 +563,9 @@ struct ZoomSelectorPills: View {
             }
         }
         .onAppear {
-            targetedZoom = viewModel.currentZoom
+            targetedZoom = viewModel.displayZoom
         }
-        .onChange(of: viewModel.currentZoom) { newZoom in
+        .onChange(of: viewModel.displayZoom) { newZoom in
             if !viewModel.isPinchingZoom {
                 if let matched = options.first(where: { abs(newZoom - $0) < 0.12 }) {
                     targetedZoom = matched

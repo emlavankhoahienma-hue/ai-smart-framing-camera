@@ -120,6 +120,10 @@ public final class CameraViewModel: ObservableObject {
 
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
+    @Published public var displayZoom: CGFloat = 1.0
+    public var availableDisplayZoomOptions: [CGFloat] {
+        return cameraService.availableDisplayZoomOptions
+    }
     @Published public var isRevealingZoomTarget: Bool = false
     @Published public var lockOnProgress: CGFloat = 0
     @Published public var liveZoomFactorForReveal: CGFloat = 1.0
@@ -500,6 +504,9 @@ public final class CameraViewModel: ObservableObject {
             self.cameraService.updateCaptureMode(self.captureMode)
             self.cameraService.setLivePhotoCaptureEnabled(self.isLivePhotoEnabled)
             self.activeVideoResolutionString = self.cameraService.getActiveVideoResolutionAndFPS()
+            self.displayZoom = self.cameraService.defaultDisplayZoom
+            self.currentZoom = self.cameraService.currentZoom
+            SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
             self.cameraService.start()
             self.isCameraReady = true
         }
@@ -538,7 +545,8 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self else { return }
             self.liveZoomFactorForReveal = zoom
             self.currentZoom = zoom
-            SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+            self.displayZoom = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
+            SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
         }
 
         // Realtime Exposure Stats Listener (ISO & Shutter Speed)
@@ -1209,39 +1217,47 @@ public final class CameraViewModel: ObservableObject {
     private var lastContinuousZoomTime: CFTimeInterval = 0
     private var lastContinuousAppliedZoom: CGFloat = 1.0
 
-    public func setZoom(_ zoom: CGFloat) {
-        currentZoom = zoom
-        cameraService.setZoomFactor(zoom)
-        SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+    public func setZoom(_ displayZoomVal: CGFloat) {
+        displayZoom = displayZoomVal
+        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        currentZoom = deviceZoom
+        cameraService.setZoomFactor(deviceZoom)
+        SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
     }
 
     /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
     /// Tự động throttle AVFoundation calls (25ms) để chống nghẽn hàng đợi camera phần cứng
-    public func setZoomContinuous(_ zoom: CGFloat) {
-        currentZoom = zoom
+    public func setZoomContinuous(_ displayZoomVal: CGFloat) {
+        displayZoom = displayZoomVal
+        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        currentZoom = deviceZoom
         let now = CACurrentMediaTime()
-        if now - lastContinuousZoomTime >= 0.025 || abs(zoom - lastContinuousAppliedZoom) > 0.08 {
+        if now - lastContinuousZoomTime >= 0.025 || abs(deviceZoom - lastContinuousAppliedZoom) > 0.08 {
             lastContinuousZoomTime = now
-            lastContinuousAppliedZoom = zoom
-            cameraService.setZoomFactor(zoom)
-            SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+            lastContinuousAppliedZoom = deviceZoom
+            cameraService.setZoomFactor(deviceZoom)
+            SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
         }
     }
 
     /// Chốt zoom cuối cùng khi người dùng nhấc ngón tay kết thúc pinch
-    public func finishZoomGesture(_ finalZoom: CGFloat) {
-        currentZoom = finalZoom
-        lastContinuousAppliedZoom = finalZoom
-        cameraService.setZoomFactor(finalZoom)
-        SpatialTrackingEngine.shared.updateZoomFactor(finalZoom)
+    public func finishZoomGesture(_ finalDisplayZoom: CGFloat) {
+        displayZoom = finalDisplayZoom
+        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(finalDisplayZoom)
+        currentZoom = deviceZoom
+        lastContinuousAppliedZoom = deviceZoom
+        cameraService.setZoomFactor(deviceZoom)
+        SpatialTrackingEngine.shared.updateZoomFactor(finalDisplayZoom)
         haptics.triggerSelectionChange()
     }
 
-    public func setZoomFromButton(_ zoom: CGFloat) {
+    public func setZoomFromButton(_ displayZoomVal: CGFloat) {
         haptics.triggerSelectionChange()
-        currentZoom = zoom
-        cameraService.smoothZoomFactor(to: zoom, rate: 1.4)
-        SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+        displayZoom = displayZoomVal
+        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        currentZoom = deviceZoom
+        cameraService.smoothZoomFactor(to: deviceZoom, rate: 1.8)
+        SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
     }
 
     public func setExposure(_ bias: Float) {
@@ -1977,6 +1993,7 @@ extension CameraViewModel: CameraServiceDelegate {
 
     public func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {
         self.currentZoom = zoom
-        SpatialTrackingEngine.shared.updateZoomFactor(zoom)
+        self.displayZoom = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
+        SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
     }
 }

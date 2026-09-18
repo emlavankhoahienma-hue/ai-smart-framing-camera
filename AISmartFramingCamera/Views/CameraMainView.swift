@@ -10,37 +10,40 @@ public struct CameraMainView: View {
             Color.black.edgesIgnoringSafeArea(.all)
 
             if viewModel.hasCameraPermission {
-                // 1. Live Camera Feed Layer
-                CameraPreviewView(viewModel: viewModel)
-                    .edgesIgnoringSafeArea(.all)
-
-                // 2. AI Framing Overlay (Grids, Target Circle, Guidance Ray)
-                ARFramingOverlayView(viewModel: viewModel)
-                    .edgesIgnoringSafeArea(.all)
-
-                // 3. UI Chrome (Top Bar, HUD, Bottom Controls)
+                // Giao diện máy ảnh chuẩn Apple Camera App: Kính ngắm 4:3 WYSIWYG sắc nét, không crop, không méo góc
                 VStack(spacing: 0) {
                     // Top Bar Controls
                     TopCameraBar(viewModel: viewModel)
-                        .padding(.top, 8)
+                        .padding(.top, 4)
 
                     // Floating AI Dynamic HUD Pill
                     AIStatusHUDView(viewModel: viewModel)
-                        .padding(.top, 6)
+                        .padding(.top, 4)
 
-                    Spacer()
+                    Spacer(minLength: 0)
+
+                    // Kính ngắm 4:3 chuẩn cảm biến iPhone (hoặc 16:9 khi quay Video)
+                    ZStack {
+                        CameraPreviewView(viewModel: viewModel)
+                        ARFramingOverlayView(viewModel: viewModel)
+                    }
+                    .aspectRatio(viewModel.captureMode.isVideo ? 9.0/16.0 : 3.0/4.0, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: viewModel.captureMode.isVideo ? 0 : 8))
+                    .frame(maxWidth: .infinity)
+
+                    Spacer(minLength: 0)
 
                     // Realtime Pro Color Histogram HUD (Chỉ hiển thị trong Pro Video hoặc khi bật trong Cài đặt)
                     if viewModel.captureMode == .proVideo || viewModel.showHistogramInViewfinder {
                         LiveColorHistogramHUDView(viewModel: viewModel)
-                            .padding(.bottom, 6)
+                            .padding(.bottom, 4)
                             .transition(.opacity)
                     }
 
                     // Pro Video Manual Controls View (Only in VIDEO PRO mode)
                     if viewModel.captureMode == .proVideo {
                         ProVideoManualControlsView(viewModel: viewModel)
-                            .padding(.bottom, 6)
+                            .padding(.bottom, 4)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
