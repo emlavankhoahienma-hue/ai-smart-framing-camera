@@ -48,43 +48,83 @@ public struct ARFramingOverlayView: View {
                     }
                 }
 
-                // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
-                // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
-                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
-                    let targetScreen = convertBufferPointToScreen(targetPoint, in: size)
+                // 4. MỤC TIÊU & CHỈ DẪN KHÔNG GIAN 3D (DOKA-STYLE SPATIAL TRACKING)
+                if viewModel.showTargetCircle {
+                    if viewModel.isTargetOffScreen {
+                        // Khi mục tiêu nằm ngoài khung hình (Off-Screen):
+                        let dockScreen = convertBufferPointToScreen(viewModel.offScreenDockPoint, in: size)
 
-                    // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
-                    if viewModel.showGuidanceRay {
-                        GuidanceRayLine(
-                            from: screenCenter,
-                            to: targetScreen,
-                            dashOffset: dashOffset,
-                            distance: viewModel.alignmentDistance
+                        // Tia chỉ dẫn nét đứt hướng từ Tâm Giữa (0.5, 0.5) -> Điểm neo mép màn hình
+                        if viewModel.showGuidanceRay {
+                            GuidanceRayLine(
+                                from: screenCenter,
+                                to: dockScreen,
+                                dashOffset: dashOffset,
+                                isOffScreen: true
+                            )
+                        }
+
+                        // Điểm neo mép màn hình (Off-Screen Perimeter Indicator)
+                        OffScreenPerimeterIndicator(
+                            radarPulse: radarPulse
                         )
+                        .position(dockScreen)
+
+                        // Nút "Bố cục lại" (Recompose) nổi ở đáy khung ngắm
+                        VStack {
+                            Spacer()
+                            Button(action: {
+                                viewModel.recomposeTarget()
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.system(size: 12, weight: .bold))
+                                    Text("Bố cục lại")
+                                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.black.opacity(0.75))
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 1))
+                                )
+                                .shadow(color: Color.black.opacity(0.4), radius: 6, y: 3)
+                            }
+                            .padding(.bottom, 16)
+                            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                        }
+                    } else if let targetPoint = viewModel.currentTargetPoint {
+                        // Khi mục tiêu ở trong khung hình (On-Screen):
+                        let targetScreen = convertBufferPointToScreen(targetPoint, in: size)
+
+                        // Tia chỉ dẫn nét đứt từ Tâm Giữa (0.5, 0.5) -> Chấm Target
+                        if viewModel.showGuidanceRay {
+                            GuidanceRayLine(
+                                from: screenCenter,
+                                to: targetScreen,
+                                dashOffset: dashOffset,
+                                isOffScreen: false
+                            )
+                        }
+
+                        // Chấm Target tròn đặc bám chắc vào chủ thể thực tế
+                        TargetDotView(
+                            isAligned: viewModel.isPerfectAlignment,
+                            alignmentDistance: viewModel.alignmentDistance,
+                            trackingQuality: viewModel.trackingQuality
+                        )
+                        .position(targetScreen)
                     }
 
-                    // Target Vàng
-                    TargetCircleView(
+                    // 5. VÒNG TRÒN TÂM TRẮNG GIỮA MÀN HÌNH (Center Viewfinder Ring)
+                    CenterRingView(
                         isAligned: viewModel.isPerfectAlignment,
-                        alignmentDistance: viewModel.alignmentDistance,
-                        radarPulse: radarPulse,
-                        radarOpacity: radarOpacity,
-                        countdown: viewModel.autoCaptureCountdown,
-                        trackingQuality: viewModel.trackingQuality
-                    )
-                    .position(targetScreen)
-                }
-
-                // 5. TÂM TRẮNG GIỮA MÀN HÌNH — CHỈ HIỆN KHI AI ĐÃ XÁC ĐỊNH ĐƯỢC TARGET
-                // Trước đó (idle/đang phân tích) tâm này ẨN, không hiện gì cả.
-                if viewModel.showTargetCircle {
-                    CurrentCenterCrosshair(
-                        isAligned: viewModel.isPerfectAlignment,
-                        sessionState: viewModel.aiSessionState,
                         distance: viewModel.alignmentDistance
                     )
                     .position(screenCenter)
-                    .transition(.opacity.combined(with: .scale(scale: 0.7)))
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
                 }
 
                 // 6. Countdown Overlay khi 2 tâm đã trùng khớp
@@ -364,30 +404,29 @@ struct CompositionGridLines: View {
     }
 }
 
-// MARK: - Center Dot (Chấm Trắng Cố Định Ở Chính Giữa Màn Hình - Chuẩn Ảnh 1)
+// MARK: - Center Ring View (Vòng Tròn Mảnh Tại Chính Giữa Màn Hình — Chuẩn DOKA)
 
-struct CurrentCenterCrosshair: View {
+struct CenterRingView: View {
     let isAligned: Bool
-    let sessionState: AISessionState
     let distance: CGFloat
 
     var body: some View {
-        let dotColor: Color = isAligned ? .green : .white
-        let proximityScale: CGFloat = distance < 0.15 ? (1.0 + (0.15 - distance) * 0.9) : 1.0
+        let ringColor: Color = isAligned ? .green : .white
+        let proximityScale: CGFloat = distance < 0.15 ? (1.0 + (0.15 - distance) * 0.45) : 1.0
 
         ZStack {
-            // Chấm trắng đơn thuần, tinh tế đúng như Ảnh 1 (Solid White Dot)
+            // Vòng tròn trung tâm thanh mảnh, tinh tế
             Circle()
-                .fill(dotColor)
-                .frame(width: isAligned ? 12 : 11, height: isAligned ? 12 : 11)
-                .shadow(color: Color.black.opacity(0.75), radius: 1.5, x: 0, y: 0.5)
-                .shadow(color: dotColor.opacity(isAligned ? 0.85 : 0.25), radius: isAligned ? 6 : 1)
+                .stroke(ringColor, lineWidth: isAligned ? 2.2 : 1.6)
+                .frame(width: 26, height: 26)
+                .shadow(color: Color.black.opacity(0.6), radius: 2)
+                .shadow(color: ringColor.opacity(isAligned ? 0.8 : 0.3), radius: isAligned ? 8 : 2)
 
             // Vòng viền xanh lục nhẹ khi đã khớp hoàn hảo
             if isAligned {
                 Circle()
-                    .stroke(Color.green.opacity(0.55), lineWidth: 1.5)
-                    .frame(width: 17, height: 17)
+                    .stroke(Color.green.opacity(0.45), lineWidth: 3.0)
+                    .frame(width: 34, height: 34)
             }
         }
         .scaleEffect(proximityScale)
@@ -396,98 +435,76 @@ struct CurrentCenterCrosshair: View {
     }
 }
 
-// MARK: - Target Vòng Tròn Bé Với Tâm Dấu Cộng (+) - Chuẩn Ảnh 2
+// MARK: - Target Dot View (Chấm Tròn Đặc Bám Chủ Thể Thực Tế — Chuẩn DOKA)
 
-struct PlusCrosshairShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        // Thanh ngang dấu cộng
-        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        // Thanh dọc dấu cộng
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        return path
-    }
-}
-
-struct TargetCircleView: View {
+struct TargetDotView: View {
     let isAligned: Bool
     let alignmentDistance: CGFloat
-    let radarPulse: CGFloat
-    let radarOpacity: Double
-    let countdown: Int
     let trackingQuality: TrackingQuality
 
-    private var ringColor: Color {
+    private var dotColor: Color {
         if isAligned { return .green }
         switch trackingQuality {
-        case .locked, .predicting: return Color.yellow
-        case .reacquiring: return Color.orange
-        case .lost: return Color.red
+        case .locked, .predicting: return .white
+        case .reacquiring: return .orange
+        case .lost: return .red
         }
     }
 
     var body: some View {
-        VStack(spacing: 6) {
-            ZStack {
-                // Sóng radar mỏng khi đang căn chỉnh
-                if !isAligned {
-                    Circle()
-                        .stroke(ringColor.opacity(radarOpacity * 0.6), lineWidth: 1.2)
-                        .frame(width: 28 * radarPulse, height: 28 * radarPulse)
-                }
+        ZStack {
+            // Vầng hào quang mỏng xung quanh chấm khi đang bám
+            Circle()
+                .stroke(dotColor.opacity(0.35), lineWidth: 1.2)
+                .frame(width: 22, height: 22)
 
-                // Vòng tròn bé như Ảnh 2 (Thin Golden Circle)
-                Circle()
-                    .stroke(ringColor, lineWidth: isAligned ? 2.2 : 1.6)
-                    .frame(width: 28, height: 28)
-                    .shadow(color: Color.black.opacity(0.5), radius: 2)
-                    .shadow(color: ringColor.opacity(isAligned ? 0.8 : 0.35), radius: isAligned ? 7 : 3)
+            // Chấm tròn đặc bám vật thể
+            Circle()
+                .fill(dotColor)
+                .frame(width: isAligned ? 14 : 12, height: isAligned ? 14 : 12)
+                .shadow(color: Color.black.opacity(0.7), radius: 2, x: 0, y: 1)
+                .shadow(color: dotColor.opacity(isAligned ? 0.9 : 0.4), radius: isAligned ? 6 : 2)
+        }
+        .scaleEffect(isAligned ? 1.15 : 1.0)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
+    }
+}
 
-                // Dấu cộng (+) ở giữa tâm như Ảnh 2 (Plus Crosshair)
-                PlusCrosshairShape()
-                    .stroke(ringColor, lineWidth: isAligned ? 2.0 : 1.5)
-                    .frame(width: 9, height: 9)
-                    .shadow(color: Color.black.opacity(0.5), radius: 1)
+// MARK: - Off-Screen Perimeter Indicator (Điểm Neo Mép Màn Hình Khi Ngoài Khung — Chuẩn DOKA)
 
-                if isAligned {
-                    Circle()
-                        .stroke(Color.green.opacity(0.4), lineWidth: 3.5)
-                        .frame(width: 36, height: 36)
-                        .scaleEffect(1.05)
-                }
-            }
-            .scaleEffect(isAligned ? 1.15 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
+struct OffScreenPerimeterIndicator: View {
+    let radarPulse: CGFloat
 
-            if trackingQuality == .reacquiring {
-                Text("Đang tìm lại mục tiêu…")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.75)))
-            } else if trackingQuality == .lost {
-                HStack(spacing: 4) {
-                    Image(systemName: "hand.tap.fill").font(.system(size: 9))
-                    Text("Chạm để đặt lại mục tiêu")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Capsule().fill(Color.red.opacity(0.8)))
-            }
+    var body: some View {
+        ZStack {
+            // Sóng radar mỏng báo hướng ngoài màn hình
+            Circle()
+                .stroke(Color.white.opacity(0.25), lineWidth: 1.2)
+                .frame(width: 26 * radarPulse, height: 26 * radarPulse)
+
+            // Vòng tròn mờ bán trong suốt neo tại mép
+            Circle()
+                .stroke(Color.white.opacity(0.60), lineWidth: 1.6)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Color.black.opacity(0.50)))
+                .shadow(color: Color.black.opacity(0.6), radius: 3)
+
+            // Chấm trắng ở giữa
+            Circle()
+                .fill(Color.white)
+                .frame(width: 8, height: 8)
+                .shadow(color: Color.white.opacity(0.7), radius: 3)
         }
     }
 }
 
-// MARK: - Guidance Ray
+// MARK: - Guidance Ray (Đường Chỉ Dẫn Nét Đứt Nối Từ Tâm -> Target Hoặc Mép)
 
 struct GuidanceRayLine: View {
     let from: CGPoint
     let to: CGPoint
     let dashOffset: CGFloat
-    let distance: CGFloat
+    var isOffScreen: Bool = false
 
     var body: some View {
         Path { path in
@@ -495,8 +512,8 @@ struct GuidanceRayLine: View {
             path.addLine(to: to)
         }
         .stroke(
-            Color.yellow.opacity(0.65 * Double(min(1.0, distance / 0.1 + 0.4))),
-            style: StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [5, 5], dashPhase: dashOffset)
+            Color.white.opacity(isOffScreen ? 0.55 : 0.75),
+            style: StrokeStyle(lineWidth: 1.6, lineCap: .round, dash: [4, 4], dashPhase: dashOffset)
         )
     }
 }
