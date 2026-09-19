@@ -225,7 +225,7 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: "viewfinder")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(viewModel.activeCompositionRule != .none ? amberGold : Color.white.opacity(0.72))
+                        .foregroundColor(viewModel.isCompositionRuleSheetPresented ? amberGold : Color.white.opacity(0.72))
                         .frame(width: 42, height: 42)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -385,69 +385,91 @@ struct ViewfinderZoomSelectorPill: View {
         return options.isEmpty ? [1.0, 2.0] : options
     }
 
+    private var isPinchZoomOutsideOptions: Bool {
+        guard viewModel.isPinchingZoom else { return false }
+        for option in displayedZoomOptions {
+            if abs(viewModel.displayZoom - option) < 0.08 {
+                return false
+            }
+        }
+        return true
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
-            // Decimal Pinch Zoom Float Indicator
-            if viewModel.isPinchingZoom && !displayedZoomOptions.contains(where: { abs(viewModel.displayZoom - $0) < 0.08 }) {
-                Text(String(format: "%.1fx", viewModel.displayZoom).replacingOccurrences(of: ".", with: ","))
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(amberGold)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(Color.black.opacity(0.85))
-                            .overlay(Capsule().stroke(amberGold.opacity(0.40), lineWidth: 1.0))
-                    )
-                    .offset(y: -30)
-                    .transition(.opacity.combined(with: .scale(scale: 0.90)))
+            if isPinchZoomOutsideOptions {
+                pinchZoomFloatingBadge
             }
 
-            // Pill of Options
-            HStack(spacing: 2) {
-                ForEach(displayedZoomOptions, id: \.self) { zoom in
-                    let isSelected = abs(viewModel.displayZoom - zoom) < 0.14
-                    Button(action: {
-                        let generator = UISelectionFeedbackGenerator()
-                        generator.prepare()
-                        generator.selectionChanged()
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.80)) {
-                            viewModel.setZoomFromButton(zoom)
-                        }
-                    }) {
-                        Text(zoomFormattedText(zoom))
-                            .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
-                            .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.85))
-                            .frame(minWidth: 36, height: 32)
-                            .padding(.horizontal, 4)
-                            .background(
-                                ZStack {
-                                    if isSelected {
-                                        Circle()
-                                            .fill(Color(red: 0.12, green: 0.13, blue: 0.16))
-                                            .matchedGeometryEffect(id: "active_viewfinder_zoom", in: zoomPillNamespace)
-                                            .overlay(
-                                                Circle()
-                                                    .stroke(amberGold.opacity(0.35), lineWidth: 1.0)
-                                            )
-                                    }
-                                }
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-            .padding(3)
+            optionsPillBar
+        }
+    }
+
+    private var pinchZoomFloatingBadge: some View {
+        let zoomStr = String(format: "%.1fx", viewModel.displayZoom).replacingOccurrences(of: ".", with: ",")
+        return Text(zoomStr)
+            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .foregroundColor(amberGold)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.48))
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
-                    )
-                    .shadow(color: Color.black.opacity(0.35), radius: 6, y: 2)
+                    .fill(Color.black.opacity(0.85))
+                    .overlay(Capsule().stroke(amberGold.opacity(0.40), lineWidth: 1.0))
             )
+            .offset(y: -30)
+            .transition(.opacity.combined(with: .scale(scale: 0.90)))
+    }
+
+    private var optionsPillBar: some View {
+        HStack(spacing: 2) {
+            ForEach(displayedZoomOptions, id: \.self) { zoom in
+                zoomButton(for: zoom)
+            }
         }
+        .padding(3)
+        .background(
+            Capsule()
+                .fill(Color.black.opacity(0.48))
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
+                )
+                .shadow(color: Color.black.opacity(0.35), radius: 6, y: 2)
+        )
+    }
+
+    @ViewBuilder
+    private func zoomButton(for zoom: CGFloat) -> some View {
+        let isSelected = abs(viewModel.displayZoom - zoom) < 0.14
+        Button(action: {
+            let generator = UISelectionFeedbackGenerator()
+            generator.prepare()
+            generator.selectionChanged()
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.80)) {
+                viewModel.setZoomFromButton(zoom)
+            }
+        }) {
+            Text(zoomFormattedText(zoom))
+                .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
+                .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.85))
+                .frame(minWidth: 36, height: 32)
+                .padding(.horizontal, 4)
+                .background(
+                    Group {
+                        if isSelected {
+                            Circle()
+                                .fill(Color(red: 0.12, green: 0.13, blue: 0.16))
+                                .matchedGeometryEffect(id: "active_viewfinder_zoom", in: zoomPillNamespace)
+                                .overlay(
+                                    Circle()
+                                        .stroke(amberGold.opacity(0.35), lineWidth: 1.0)
+                                )
+                        }
+                    }
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 
     private func zoomFormattedText(_ val: CGFloat) -> String {
