@@ -183,7 +183,6 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             guard let self = self, let motion = motion, self.isTrackingActive else { return }
             
             let now = CACurrentMediaTime()
-            let dt = self.lastMotionTime > 0 ? min(0.05, max(0.001, now - self.lastMotionTime)) : (1.0 / 60.0)
             self.lastMotionTime = now
             
             self.stateLock.lock()
