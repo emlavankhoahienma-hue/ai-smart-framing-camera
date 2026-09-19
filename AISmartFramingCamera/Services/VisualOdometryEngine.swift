@@ -1,3 +1,4 @@
+import Foundation
 import Vision
 import CoreVideo
 import CoreGraphics
@@ -8,7 +9,8 @@ import simd
 /// tại — không cần ARKit, không cần IMU đo vị trí.
 public final class VisualOdometryEngine: @unchecked Sendable {
     public static let shared = VisualOdometryEngine()
-    
+
+    private let stateLock = NSLock()
     private var referenceBuffer: CVPixelBuffer?
     private var referencePointVisionSpace: CGPoint?
     
@@ -16,25 +18,37 @@ public final class VisualOdometryEngine: @unchecked Sendable {
     
     /// Lưu lại khung hình mốc mới + điểm target tương ứng (hệ tọa độ UI: gốc trên-trái)
     public func setReferenceFrame(_ buffer: CVPixelBuffer, atUIPoint uiPoint: CGPoint) {
-        self.referenceBuffer = buffer
+        stateLock.lock()
+        referenceBuffer = buffer
         // Vision dùng hệ gốc dưới-trái, cần lật trục Y để khớp chuẩn Vision
-        self.referencePointVisionSpace = CGPoint(x: uiPoint.x, y: 1.0 - uiPoint.y)
+        referencePointVisionSpace = CGPoint(x: uiPoint.x, y: 1.0 - uiPoint.y)
+        stateLock.unlock()
     }
     
     public func hasReference() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         return referenceBuffer != nil
     }
     
     public func clearReference() {
+        stateLock.lock()
         referenceBuffer = nil
         referencePointVisionSpace = nil
+        stateLock.unlock()
     }
     
     /// Ước lượng vị trí hiện tại của target dựa trên biến đổi hình ảnh thật 
     /// giữa khung hình mốc và khung hình hiện tại. Trả về nil nếu không tính 
     /// được (chưa có khung mốc, hoặc ảnh quá khác biệt để so khớp).
     public func estimateCurrentUIPoint(currentBuffer: CVPixelBuffer) -> CGPoint? {
-        guard let refBuffer = referenceBuffer, let refPoint = referencePointVisionSpace else {
+        // Chụp snapshot dưới lock rồi nhả ngay; Vision registration có thể tốn vài
+        // ms và không được phép chặn start/stop/reset của tracking session.
+        stateLock.lock()
+        let refBuffer = referenceBuffer
+        let refPoint = referencePointVisionSpace
+        stateLock.unlock()
+        guard let refBuffer, let refPoint else {
             return nil
         }
         
