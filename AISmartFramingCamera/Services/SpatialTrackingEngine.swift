@@ -190,6 +190,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let focalX = 0.88 * z
             let focalY = 0.66 * z
             let R = motion.attitude.rotationMatrix
+            let omega = hypot(motion.rotationRate.x, hypot(motion.rotationRate.y, motion.rotationRate.z))
 
             // Khởi tạo anchor3DRay tại frame motion đầu tiên nếu chưa có
             if self.anchor3DRay == nil {
@@ -243,10 +244,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 var dx = inFront ? (rawProjX - 0.5) : vDev.x
                 var dy = inFront ? (rawProjY - 0.5) : -vDev.y
                 let len = hypot(dx, dy)
-                if len < 1e-5 {
-                    dx = 0; dy = 1.0
-                } else {
+                if len > 1e-5 {
                     dx /= len; dy /= len
+                } else {
+                    dx = 0; dy = 1.0
                 }
                 let halfW = 0.5 - margin
                 let halfH = 0.5 - margin
@@ -259,11 +260,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             }
             self.offScreenDockPointState = dockPoint
 
-            let timeSinceOptical = self.lastOpticalAcceptTime > 0 ? (now - self.lastOpticalAcceptTime) : 1.0
-
-            // Nếu quang học chưa cập nhật (> 0.10s) hoặc mục tiêu đang ngoài màn hình:
-            // Lấy trực tiếp tọa độ chiếu 3D tuyệt đối từ CoreMotion, không tích phân vận tốc góc tích lũy drift
-            if timeSinceOptical > 0.10 || isOff {
+            // ── EKF MOTION UPDATE 60Hz THÍCH NGHI VẬN TỐC QUAY CAMERA ──
+            // Khi mục tiêu ngoài màn hình hoặc camera đang quay (omega > 0.02 rad/s):
+            // Bám trực tiếp theo dự phóng IMU để target KHÔNG BAO GIỜ bị kéo theo tâm trắng!
+            if isOff {
                 self.deadReckoningFrameCount += 1
                 self.stateX = rawProjX
                 self.stateY = rawProjY
@@ -271,6 +271,16 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 self.filterYPrev = rawProjY
                 self.filterDxPrev = 0.0
                 self.filterDyPrev = 0.0
+            } else if omega > 0.02 {
+                self.deadReckoningFrameCount = 0
+                self.stateX = rawProjX
+                self.stateY = rawProjY
+                self.filterXPrev = rawProjX
+                self.filterYPrev = rawProjY
+            } else {
+                // Khi máy đứng yên: giảm chấn nhẹ nhàng về vị trí chiếu 3D
+                self.stateX = self.stateX * 0.85 + rawProjX * 0.15
+                self.stateY = self.stateY * 0.85 + rawProjY * 0.15
             }
 
             let currentPoint = CGPoint(x: self.stateX, y: self.stateY)
@@ -279,9 +289,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let edgeDock = self.offScreenDockPointState
             self.stateLock.unlock()
 
-            // Khi ngoài màn hình, target được giữ trong 3D memory (.predicting) và KHÔNG bao giờ bị lost
             let decayedConf = offScreen ? 0.80 : max(0.40, lastConf)
-            let quality: TrackingQuality = .predicting
+            let quality: TrackingQuality = offScreen ? .predicting : .locked
 
             DispatchQueue.main.async {
                 self.onSpatialTargetUpdated?(currentPoint, offScreen, edgeDock, decayedConf, quality)
@@ -338,22 +347,32 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 self.outlierStreak = 0
             }
             
-            // ── ĐỆM ĐÀN HỒI TỰ NHIÊN & VÙNG CHỐNG RUNG TÂM (Centroid Deadband & Elastic Cushion) ──
-            // Triệt tiêu 100% hiện tượng "đi xung quanh" / giật tâm khi đứng yên:
-            // - d < 0.005 (~2 subpixel): Giữ đứng yên tuyệt đối
-            // - 0.005 <= d < 0.035: Đệm đàn hồi tự nhiên bằng hàm cubic smoothstep
-            // - d >= 0.035: Chuyển động thật, bám dính tức thì
+            // Kiểm tra vận tốc góc quay camera để điều tiết deadband
+            var isStationary = true
+            if let motion = motionManager.deviceMotion {
+                let omega = hypot(motion.rotationRate.x, hypot(motion.rotationRate.y, motion.rotationRate.z))
+                isStationary = omega < 0.02
+            }
+
+            // ── DEADBAND THÍCH NGHI VẬN TỐC QUAY (Motion-Adaptive Centroid Deadband) ──
+            // - Khi ĐỨNG YÊN (isStationary): Kích hoạt deadband d < 0.005 triệt 100% rung tâm vi mô
+            // - Khi LIA MÁY (omega >= 0.02): TẮT DEADBAND để target bám dính tức thì, KHÔNG dính tâm trắng
             let deltaObs = hypot(rawObsX - self.stateX, rawObsY - self.stateY)
             let targetObsX: Double
             let targetObsY: Double
-            if deltaObs < 0.005 {
-                targetObsX = self.stateX
-                targetObsY = self.stateY
-            } else if deltaObs < 0.035 {
-                let k = (deltaObs - 0.005) / 0.030
-                let s = k * k * (3.0 - 2.0 * k)
-                targetObsX = self.stateX + (rawObsX - self.stateX) * s
-                targetObsY = self.stateY + (rawObsY - self.stateY) * s
+            if isStationary {
+                if deltaObs < 0.005 {
+                    targetObsX = self.stateX
+                    targetObsY = self.stateY
+                } else if deltaObs < 0.035 {
+                    let k = (deltaObs - 0.005) / 0.030
+                    let s = k * k * (3.0 - 2.0 * k)
+                    targetObsX = self.stateX + (rawObsX - self.stateX) * s
+                    targetObsY = self.stateY + (rawObsY - self.stateY) * s
+                } else {
+                    targetObsX = rawObsX
+                    targetObsY = rawObsY
+                }
             } else {
                 targetObsX = rawObsX
                 targetObsY = rawObsY
@@ -368,8 +387,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             self.offScreenDockPointState = CGPoint(x: self.stateX, y: self.stateY)
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
 
-            // Hiệu chỉnh liên tuyến 3D World-Ray khi Vision quan sát với độ tin cậy cao
-            if effectiveConfidence >= 0.60, let motion = motionManager.deviceMotion {
+            // Hiệu chỉnh liên tuyến 3D World-Ray khi Vision quan sát với độ tin cậy cao (Triệt tiêu Parallax & Drift)
+            if effectiveConfidence >= 0.50, let motion = motionManager.deviceMotion {
                 let R = motion.attitude.rotationMatrix
                 let z = self.currentZoom
                 let focalX = 0.88 * z
