@@ -453,7 +453,7 @@ struct ViewfinderZoomSelectorPill: View {
             Text(zoomFormattedText(zoom))
                 .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
                 .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.85))
-                .frame(minWidth: 36, height: 32)
+                .frame(width: 36, height: 32)
                 .padding(.horizontal, 4)
                 .background(
                     Group {
