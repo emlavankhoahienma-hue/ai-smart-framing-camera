@@ -56,9 +56,6 @@ public struct AIStatusHUDView: View {
         case .analyzing:
             return "sparkle"
         case .targetPlaced:
-            if viewModel.isTargetOffScreen {
-                return "exclamationmark.triangle.fill"
-            }
             if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {
                 return "arrow.triangle.2.circlepath"
             }
@@ -77,9 +74,6 @@ public struct AIStatusHUDView: View {
         case .idle: return .white.opacity(0.8)
         case .analyzing: return .yellow
         case .targetPlaced:
-            if viewModel.isTargetOffScreen {
-                return .orange
-            }
             if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {
                 return .orange
             }
@@ -97,13 +91,10 @@ public struct AIStatusHUDView: View {
         case .analyzing:
             return "Đang tìm chủ thể…"
         case .targetPlaced:
-            if viewModel.isTargetOffScreen {
-                return "Mục tiêu ngoài khung hình · Bố cục lại"
-            }
             if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {
                 return "Đang tìm lại chủ thể…"
             }
-            return "Di chuyển điện thoại để khớp điểm bố cục"
+            return "Đã khóa chủ thể · Di chuyển máy đến vòng tròn"
         case .alignmentPerfect:
             return "Đã khớp · Giữ máy ổn định"
         case .capturing:

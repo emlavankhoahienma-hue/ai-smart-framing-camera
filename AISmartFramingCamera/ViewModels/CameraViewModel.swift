@@ -352,12 +352,6 @@ public final class CameraViewModel: ObservableObject {
     /// Real-time target position on screen (moves with phone gyroscope towards center (0.5, 0.5))
     @Published public var currentTargetPoint: CGPoint? = nil
 
-    /// Trạng thái mục tiêu nằm ngoài khung hình (3D Off-Screen)
-    @Published public var isTargetOffScreen: Bool = false
-
-    /// Tọa độ mỏ neo neo ở mép màn hình khi mục tiêu nằm ngoài (Perimeter Dock Point)
-    @Published public var offScreenDockPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
-
     /// Distance from current target point to center (0.5, 0.5)
     @Published public var alignmentDistance: CGFloat = 1.0
     @Published public var isPerfectAlignment: Bool = false
@@ -793,36 +787,16 @@ public final class CameraViewModel: ObservableObject {
 
     private func setupMotionCallbacks() {
         // Động cơ Tracking Không Gian Chuẩn Xác: Thống nhất một callback duy nhất
-        SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, isOffScreen, dockPoint, _, quality in
+        SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, _, quality in
             guard let self = self, !self.isShowingSettings else { return }
+            // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
             self.currentTargetPoint = point
-            self.isTargetOffScreen = isOffScreen
-            self.offScreenDockPoint = dockPoint
             self.trackingQuality = quality
-            // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced và mục tiêu ở trong khung hình
+            // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
             if case .targetPlaced = self.aiSessionState {
-                if !isOffScreen {
-                    self.evaluateAlignment(at: point)
-                } else {
-                    self.isPerfectAlignment = false
-                    self.alignmentDistance = 1.0
-                }
+                self.evaluateAlignment(at: point)
             }
         }
-    }
-
-    /// Tái bố cục lại mục tiêu khi mục tiêu nằm ngoài khung hình (DOKA Recompose)
-    public func recomposeTarget() {
-        haptics.triggerSelectionChange()
-        SpatialTrackingEngine.shared.stopTracking()
-        visionEngine.stopTrackingObject()
-        currentTargetPoint = nil
-        initialTargetPoint = nil
-        isTargetOffScreen = false
-        withAnimation {
-            aiSessionState = .idle
-        }
-        startAISession()
     }
 
     // Nạp thông số chống nhảy đột biến & ngưỡng nhận confidence của ViewModel (theo trackingSensitivity)
@@ -847,8 +821,6 @@ public final class CameraViewModel: ObservableObject {
         analysisFrames = []
         initialTargetPoint = nil
         currentTargetPoint = nil
-        isTargetOffScreen = false
-        offScreenDockPoint = CGPoint(x: 0.5, y: 0.5)
         trackingQuality = .locked
         isOneShotCaptured = false
         isPerfectAlignment = false
@@ -1188,8 +1160,6 @@ public final class CameraViewModel: ObservableObject {
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
-        isTargetOffScreen = false
-        offScreenDockPoint = pinPoint
         trackingQuality = .locked
         hasExecutedAutoZoomForSession = false
 
