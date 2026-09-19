@@ -189,6 +189,7 @@ public final class CameraViewModel: ObservableObject {
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var displayZoom: CGFloat = 1.0
+    @Published public var selectedZoomPreset: CGFloat = 1.0
     public var availableDisplayZoomOptions: [CGFloat] {
         return [1.0, 2.0, 3.0]
     }
@@ -283,6 +284,9 @@ public final class CameraViewModel: ObservableObject {
         hasExecutedAutoZoomForSession = true
 
         CameraLogger.info("Thực thi AI Auto-Zoom: \(displayZoom)x -> \(targetZoom)x", category: .ai)
+
+        let preset = targetZoom < 1.5 ? 1.0 : (targetZoom < 2.5 ? 2.0 : 3.0)
+        selectedZoomPreset = preset
 
         if targetZoom > displayZoom {
             // Zoom In: Kích hoạt hiệu ứng reveal điện ảnh và ramp camera
@@ -391,6 +395,8 @@ public final class CameraViewModel: ObservableObject {
     // Capture & Review
     @Published public var latestCapturedPhoto: CapturedPhotoItem?
     @Published public var isShowingPhotoDetail: Bool = false
+    @Published public var isShowingGallerySheet: Bool = false
+    @Published public var latestAlbumThumbnail: UIImage? = nil
     @Published public var isShowingSettings: Bool = false {
         didSet {
             if isShowingSettings { focusPeakingCGImage = nil }
@@ -608,6 +614,7 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - Initialization & Permissions
     public func requestPermissionsAndStart() {
+        // 1. Camera Permission (.video)
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             self.hasCameraPermission = true
@@ -622,7 +629,52 @@ public final class CameraViewModel: ObservableObject {
         default:
             self.hasCameraPermission = false
         }
+
+        // 2. Microphone Permission (.audio) cho quay video
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        }
+
+        // 3. Photo Library Full Permission (.readWrite) để tải ảnh mới nhất và quản lý album
+        let photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        if photoStatus == .authorized || photoStatus == .limited {
+            self.loadLatestPhotoFromAlbum()
+        } else if photoStatus == .notDetermined {
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
+                if status == .authorized || status == .limited {
+                    DispatchQueue.main.async {
+                        self?.loadLatestPhotoFromAlbum()
+                    }
+                }
+            }
+        }
     }
+
+    /// Tải ảnh chụp gần đây nhất từ thư viện ảnh máy để hiển thị trên nút Album ở góc trái
+    public func loadLatestPhotoFromAlbum() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fetchOptions = PHFetchOptions()
+            fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            fetchOptions.fetchLimit = 1
+            let result = PHAsset.fetchAssets(with: .image, options: fetchOptions)
+            guard let latestAsset = result.firstObject else { return }
+
+            let imageManager = PHImageManager.default()
+            let requestOptions = PHImageRequestOptions()
+            requestOptions.isSynchronous = false
+            requestOptions.deliveryMode = .opportunistic
+            requestOptions.isNetworkAccessAllowed = true
+
+            let targetSize = CGSize(width: 160, height: 160)
+            imageManager.requestImage(for: latestAsset, targetSize: targetSize, contentMode: .aspectFill, options: requestOptions) { image, _ in
+                guard let img = image else { return }
+                DispatchQueue.main.async {
+                    self?.latestAlbumThumbnail = img
+                }
+            }
+        }
+    }
+
 
     private func startCamera() {
         cameraService.delegate = self
@@ -672,8 +724,12 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self else { return }
             self.liveZoomFactorForReveal = zoom
             self.currentZoom = zoom
-            self.displayZoom = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
-            SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
+            let disp = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
+            self.displayZoom = disp
+            if self.isPinchingZoom {
+                self.selectedZoomPreset = disp < 1.5 ? 1.0 : (disp < 2.5 ? 2.0 : 3.0)
+            }
+            SpatialTrackingEngine.shared.updateZoomFactor(disp)
         }
 
         // Realtime Exposure Stats Listener (ISO & Shutter Speed)
@@ -1313,6 +1369,7 @@ public final class CameraViewModel: ObservableObject {
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite else { return }
         displayZoom = displayZoomVal
+        selectedZoomPreset = displayZoomVal < 1.5 ? 1.0 : (displayZoomVal < 2.5 ? 2.0 : 3.0)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         currentZoom = deviceZoom
         let now = CACurrentMediaTime()
@@ -1328,6 +1385,7 @@ public final class CameraViewModel: ObservableObject {
     public func finishZoomGesture(_ finalDisplayZoom: CGFloat) {
         guard finalDisplayZoom.isFinite else { return }
         displayZoom = finalDisplayZoom
+        selectedZoomPreset = finalDisplayZoom < 1.5 ? 1.0 : (finalDisplayZoom < 2.5 ? 2.0 : 3.0)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(finalDisplayZoom)
         currentZoom = deviceZoom
         lastContinuousAppliedZoom = deviceZoom
@@ -1339,10 +1397,11 @@ public final class CameraViewModel: ObservableObject {
     public func setZoomFromButton(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite else { return }
         haptics.triggerSelectionChange()
+        selectedZoomPreset = displayZoomVal
         displayZoom = displayZoomVal
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         currentZoom = deviceZoom
-        cameraService.smoothZoomFactor(to: deviceZoom, rate: 1.8)
+        cameraService.setZoomFactor(deviceZoom)
         SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
     }
 
@@ -1826,7 +1885,7 @@ public final class CameraViewModel: ObservableObject {
         let photoFormat = selectedPhotoFormat
         let shouldSaveOriginal = isSaveOriginalPhotoEnabled
 
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+        PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
             guard let self = self else { return }
             guard status == .authorized || status == .limited else {
                 CameraLogger.warning("Chưa được cấp quyền truy cập Photo Library", category: .photoKit)
@@ -1871,6 +1930,7 @@ public final class CameraViewModel: ObservableObject {
                             CameraLogger.success("✅ Đã lưu LIVE PHOTO vào Cuộn Camera thành công!", category: .photoKit)
                             self.haptics.triggerSuccess()
                             self.saveErrorMessage = nil
+                            self.loadLatestPhotoFromAlbum()
                         } else {
                             CameraLogger.error("Lưu Live Photo thất bại, chuyển sang lưu ảnh tĩnh dự phòng", error: error, category: .photoKit)
                             self.saveFallbackStaticPhoto(item)
@@ -1890,6 +1950,7 @@ public final class CameraViewModel: ObservableObject {
                                 CameraLogger.success("✅ Đã lưu ảnh RAW DNG gốc vào Cuộn Camera thành công!", category: .photoKit)
                                 self.haptics.triggerSuccess()
                                 self.saveErrorMessage = nil
+                                self.loadLatestPhotoFromAlbum()
                             } else {
                                 CameraLogger.error("Lưu ảnh RAW DNG thất bại, thử lưu JPEG dự phòng", error: error, category: .photoKit)
                                 self.saveFallbackStaticPhoto(item)
@@ -1915,6 +1976,7 @@ public final class CameraViewModel: ObservableObject {
                                     CameraLogger.success("✅ Đã lưu ảnh HEIC vào Cuộn Camera thành công!", category: .photoKit)
                                     self.haptics.triggerSuccess()
                                     self.saveErrorMessage = nil
+                                    self.loadLatestPhotoFromAlbum()
                                 } else {
                                     CameraLogger.error("Lưu ảnh HEIC thất bại, thử lưu JPEG dự phòng", error: error, category: .photoKit)
                                     self.saveFallbackStaticPhoto(item)
@@ -1938,6 +2000,7 @@ public final class CameraViewModel: ObservableObject {
                             CameraLogger.success("✅ Đã lưu ảnh vào Cuộn Camera thành công!", category: .photoKit)
                             self.haptics.triggerSuccess()
                             self.saveErrorMessage = nil
+                            self.loadLatestPhotoFromAlbum()
                         } else {
                             CameraLogger.error("Lưu ảnh thất bại", error: error, category: .photoKit)
                             self.saveErrorMessage = "Lưu ảnh thất bại: \(error?.localizedDescription ?? "không rõ lỗi")"
@@ -1962,6 +2025,7 @@ public final class CameraViewModel: ObservableObject {
                     CameraLogger.success("Đã lưu ảnh tĩnh dự phòng thành công!", category: .photoKit)
                     self.haptics.triggerSuccess()
                     self.saveErrorMessage = nil
+                    self.loadLatestPhotoFromAlbum()
                 } else {
                     self.saveErrorMessage = "Lưu ảnh thất bại: \(error?.localizedDescription ?? "không rõ lỗi")"
                 }

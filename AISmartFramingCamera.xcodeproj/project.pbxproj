@@ -38,12 +38,14 @@
 		B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000027 /* FocusPeakingEngine.swift */; };
 		B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000028 /* ProVideoManualControlsService.swift */; };
 		B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000029 /* ProVideoManualControlsView.swift */; };
+		B20000000000000000000027 /* PhotoGallerySheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000037 /* PhotoGallerySheetView.swift */; };
 		B20000000000000000000030 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000011 /* Assets.xcassets */; };
 		B20000000000000000000031 /* RobustTargetEmbedder.bin in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000031 /* RobustTargetEmbedder.bin */; };
 		B20000000000000000000032 /* iconbuttonAI.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000032 /* iconbuttonAI.png */; };
 		B20000000000000000000033 /* iconchonmau.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000033 /* iconchonmau.png */; };
 		B20000000000000000000034 /* iconnutxemanhganday.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000034 /* iconnutxemanhganday.png */; };
 		B20000000000000000000035 /* nutAI.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000035 /* nutAI.png */; };
+		B20000000000000000000036 /* nuticonbocucAI.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000036 /* nuticonbocucAI.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -86,6 +88,8 @@
 		B100000000000000000000033 /* iconchonmau.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = iconchonmau.png; sourceTree = "<group>"; };
 		B100000000000000000000034 /* iconnutxemanhganday.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = iconnutxemanhganday.png; sourceTree = "<group>"; };
 		B100000000000000000000035 /* nutAI.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = nutAI.png; sourceTree = "<group>"; };
+		B100000000000000000000036 /* nuticonbocucAI.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = nuticonbocucAI.png; sourceTree = "<group>"; };
+		B100000000000000000000037 /* PhotoGallerySheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGallerySheetView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -170,6 +174,7 @@
 				B100000000000000000000033 /* iconchonmau.png */,
 				B100000000000000000000034 /* iconnutxemanhganday.png */,
 				B100000000000000000000035 /* nutAI.png */,
+				B100000000000000000000036 /* nuticonbocucAI.png */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -196,6 +201,7 @@
 				B100000000000000000000022 /* FeedbackView.swift */,
 				B100000000000000000000024 /* LiveColorHistogramHUDView.swift */,
 				B100000000000000000000029 /* ProVideoManualControlsView.swift */,
+				B100000000000000000000037 /* PhotoGallerySheetView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -272,6 +278,7 @@
 				B20000000000000000000033 /* iconchonmau.png in Resources */,
 				B20000000000000000000034 /* iconnutxemanhganday.png in Resources */,
 				B20000000000000000000035 /* nutAI.png in Resources */,
+				B20000000000000000000036 /* nuticonbocucAI.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -313,6 +320,7 @@
 				B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */,
 				B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */,
 				B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */,
+				B20000000000000000000027 /* PhotoGallerySheetView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

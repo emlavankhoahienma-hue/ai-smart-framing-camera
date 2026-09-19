@@ -26,8 +26,17 @@
 	<string>AlignAI Studio cần quyền truy cập Camera để phân tích bố cục thị giác Neural Engine và quay video chất lượng cao.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AlignAI Studio cần quyền truy cập Micro để ghi âm thanh khi quay video.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>AlignAI Studio cần quyền truy cập Thư viện ảnh để hiển thị ảnh gần nhất trong album và quản lý ảnh/video đã chụp.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>AlignAI Studio cần quyền lưu ảnh và video màu sắc AI vào Thư viện của bạn.</string>
+	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

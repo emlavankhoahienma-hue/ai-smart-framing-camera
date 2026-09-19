@@ -63,11 +63,8 @@ public struct CameraMainView: View {
 
                             Spacer(minLength: 8)
 
-                            // Right: Pro Exposure & Framing Tool Stack
-                            VStack(spacing: 8) {
-                                ViewfinderSunExposureButton(viewModel: viewModel)
-                                ViewfinderFramingButton(viewModel: viewModel)
-                            }
+                            // Right: Framing Tool (nuticonbocucAI)
+                            ViewfinderFramingButton(viewModel: viewModel)
                         }
                         .padding(.horizontal, 14)
                         .padding(.bottom, 12)
@@ -88,6 +85,9 @@ public struct CameraMainView: View {
         }
         .sheet(isPresented: $viewModel.isCompositionRuleSheetPresented) {
             CompositionRuleSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $viewModel.isShowingGallerySheet) {
+            PhotoGallerySheetView(viewModel: viewModel)
         }
         .sheet(isPresented: $viewModel.isShowingPhotoDetail) {
             if let latest = viewModel.latestCapturedPhoto {
@@ -246,7 +246,7 @@ struct TopCameraBar: View {
 
 // MARK: - In-Viewfinder Controls (Bottom Deck)
 
-// 1. AI Compose Button (nutAI.png)
+// 1. AI Compose Button (nutAI.png - Pure White, No Circle Border)
 struct AIViewfinderButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
@@ -265,13 +265,17 @@ struct AIViewfinderButton: View {
             ZStack {
                 if let uiImage = UIImage(named: "nutAI") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nutAI", ofType: "png") ?? "") {
                     Image(uiImage: uiImage)
+                        .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
+                        .foregroundColor(.white)
                         .frame(width: 38, height: 38)
                 } else {
                     Image("nutAI")
+                        .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
+                        .foregroundColor(.white)
                         .frame(width: 38, height: 38)
                 }
             }
@@ -301,16 +305,6 @@ struct ViewfinderZoomSelectorPill: View {
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     private let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0]
-
-    private var activeSnappedZoom: CGFloat {
-        if viewModel.displayZoom < 1.5 {
-            return 1.0
-        } else if viewModel.displayZoom < 2.5 {
-            return 2.0
-        } else {
-            return 3.0
-        }
-    }
 
     private var isPinchZoomOutsideOptions: Bool {
         guard viewModel.isPinchingZoom else { return false }
@@ -358,7 +352,7 @@ struct ViewfinderZoomSelectorPill: View {
 
     @ViewBuilder
     private func zoomButton(for zoom: CGFloat) -> some View {
-        let isSelected = activeSnappedZoom == zoom
+        let isSelected = viewModel.selectedZoomPreset == zoom
         Button(action: {
             let generator = UISelectionFeedbackGenerator()
             generator.prepare()
@@ -387,41 +381,7 @@ struct ViewfinderZoomSelectorPill: View {
     }
 }
 
-// 3. Sun Exposure & Metering Button
-struct ViewfinderSunExposureButton: View {
-    @ObservedObject var viewModel: CameraViewModel
-    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
-
-    var body: some View {
-        Button(action: {
-            let generator = UISelectionFeedbackGenerator()
-            generator.prepare()
-            generator.selectionChanged()
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
-                viewModel.isShowingSunSlider.toggle()
-            }
-        }) {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.45))
-                    .frame(width: 42, height: 42)
-                    .overlay(
-                        Circle()
-                            .stroke(viewModel.isShowingSunSlider ? amberGold : Color.white.opacity(0.24), lineWidth: 1.0)
-                    )
-
-                Image(systemName: "thermometer.sun.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(viewModel.isShowingSunSlider ? amberGold : Color.white.opacity(0.85))
-            }
-            .frame(width: 44, height: 44)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Điều chỉnh phơi sáng & nhiệt độ")
-    }
-}
-
-// 4. Viewfinder Framing / Composition Button (Square Dashed Icon ⛶)
+// 3. Viewfinder Framing / Composition Button (nuticonbocucAI.png - Pure White, No Circle Border)
 struct ViewfinderFramingButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
@@ -433,19 +393,24 @@ struct ViewfinderFramingButton: View {
             viewModel.isCompositionRuleSheetPresented = true
         }) {
             ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.45))
-                    .frame(width: 44, height: 44)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white.opacity(0.35), lineWidth: 1.0)
-                    )
-
-                Image(systemName: "square.dashed")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.90))
+                if let uiImage = UIImage(named: "nuticonbocucAI") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nuticonbocucAI", ofType: "png") ?? "") {
+                    Image(uiImage: uiImage)
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundColor(.white)
+                        .frame(width: 38, height: 38)
+                } else {
+                    Image("nuticonbocucAI")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .foregroundColor(.white)
+                        .frame(width: 38, height: 38)
+                }
             }
             .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .accessibilityLabel("Chọn quy tắc bố cục thông minh")

@@ -551,9 +551,10 @@ struct GalleryThumbnailButton: View {
 
     var body: some View {
         Button(action: {
-            if viewModel.latestCapturedPhoto != nil {
-                viewModel.isShowingPhotoDetail = true
-            }
+            let haptic = UISelectionFeedbackGenerator()
+            haptic.prepare()
+            haptic.selectionChanged()
+            viewModel.isShowingGallerySheet = true
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -571,6 +572,12 @@ struct GalleryThumbnailButton: View {
                         .aspectRatio(contentMode: .fill)
                         .frame(width: 48, height: 48)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                } else if let thumb = viewModel.latestAlbumThumbnail {
+                    Image(uiImage: thumb)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 } else {
                     CustomAppIconView(
                         name: "iconnutxemanhganday",
@@ -583,7 +590,7 @@ struct GalleryThumbnailButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Xem ảnh vừa chụp")
+        .accessibilityLabel("Mở thư viện ảnh")
     }
 }
 
