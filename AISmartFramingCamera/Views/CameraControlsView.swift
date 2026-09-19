@@ -90,8 +90,7 @@ struct CameraModeSegmentedSwitcher: View {
 
     private let modes: [ModeItem] = [
         ModeItem(mode: .photo, title: "Ảnh"),
-        ModeItem(mode: .video, title: "Video"),
-        ModeItem(mode: .proVideo, title: "Pro")
+        ModeItem(mode: .video, title: "Video")
     ]
 
     var body: some View {

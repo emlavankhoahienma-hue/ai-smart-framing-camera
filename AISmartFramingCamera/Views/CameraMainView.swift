@@ -12,50 +12,32 @@ public struct CameraMainView: View {
             if viewModel.hasCameraPermission {
                 // Giao diện máy ảnh chuẩn Apple Camera App: Kính ngắm 4:3 WYSIWYG sắc nét, không crop, không méo góc
                 VStack(spacing: 0) {
-                    // Top Bar Controls
+                    // Top Bar Controls (Chứa Flash, Histogram & Info ở giữa, Cài đặt)
                     TopCameraBar(viewModel: viewModel)
                         .padding(.top, 4)
 
-                    // Realtime Pro Color Histogram HUD & Photo Info (Chuyển lên dải trên theo yêu cầu)
-                    if viewModel.captureMode == .proVideo || viewModel.showHistogramInViewfinder {
-                        LiveColorHistogramHUDView(viewModel: viewModel)
-                            .padding(.top, 4)
-                            .padding(.bottom, 2)
-                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                    }
-
-                    // Floating AI Dynamic HUD Pill
+                    // Floating AI Dynamic HUD Pill (Chỉ xuất hiện khi AI đang phân tích)
                     AIStatusHUDView(viewModel: viewModel)
                         .padding(.top, 2)
 
                     Spacer(minLength: 0)
 
-                    // Kính ngắm Live View cố định trong khung trung tâm (Không bị co giật khi đổi mode hoặc zoom)
-                    ZStack {
-                        ZStack(alignment: .bottom) {
-                            CameraPreviewView(viewModel: viewModel)
-                            ARFramingOverlayView(viewModel: viewModel)
+                    // Kính ngắm Live View đồng bộ 4:3 cho cả Ảnh và Video (To, đẹp, không méo, không teo nhỏ)
+                    ZStack(alignment: .bottom) {
+                        CameraPreviewView(viewModel: viewModel)
+                        ARFramingOverlayView(viewModel: viewModel)
 
-                            // Nút Zoom Apple 1x / 2x trực tiếp trên Live View với panel tròn di chuyển (Yêu cầu 1)
-                            LiveViewZoomSwitch(viewModel: viewModel)
-                                .padding(.bottom, 12)
-                        }
-                        .aspectRatio(viewModel.captureMode.isVideo ? 9.0/16.0 : 3.0/4.0, contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: viewModel.captureMode.isVideo ? 0 : 8))
+                        // Nút Zoom Apple 1x / 2x trực tiếp trên Live View với panel tròn di chuyển
+                        LiveViewZoomSwitch(viewModel: viewModel)
+                            .padding(.bottom, 12)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
+                    .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .frame(maxWidth: .infinity)
 
                     Spacer(minLength: 0)
 
-                    // Pro Video Manual Controls View (Only in VIDEO PRO mode)
-                    if viewModel.captureMode == .proVideo {
-                        ProVideoManualControlsView(viewModel: viewModel)
-                            .padding(.bottom, 4)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-
-                    // Bottom Control Deck: Cụm Shutter ở trên, Mode Switcher (Ảnh / Video / Pro) ở dưới (Yêu cầu 3)
+                    // Bottom Control Deck: Cụm Shutter ở trên, Mode Switcher (Ảnh / Video) ở dưới
                     CameraControlsView(viewModel: viewModel)
                 }
             } else {
@@ -191,7 +173,7 @@ struct TopCameraBar: View {
                     Image(systemName: flashIconName)
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(viewModel.activeFlashMode == .off ? .white.opacity(0.85) : .yellow)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 40)
                         .background(Circle().fill(Color.black.opacity(0.45)))
                 }
                 .accessibilityLabel("Bật tắt đèn flash")
@@ -237,52 +219,32 @@ struct TopCameraBar: View {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.white.opacity(0.9))
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 40)
                         .background(Circle().fill(Color.black.opacity(0.45)))
                 }
                 .accessibilityLabel("Cài đặt")
             }
             .padding(.horizontal, 16)
-        } else {
-            // PHOTO MODE TOP BAR: [Flash] — [Bố cục thông minh · Tự động] — [Cài đặt ⚙️]
-            HStack(spacing: 12) {
+            // PHOTO MODE TOP BAR: [Flash] — [Mini Histogram & Info HUD] — [Cài đặt ⚙️]
+            HStack(spacing: 8) {
                 Button(action: {
                     viewModel.toggleFlash()
                 }) {
                     Image(systemName: flashIconName)
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(viewModel.activeFlashMode == .off ? .white.opacity(0.85) : .yellow)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 40)
                         .background(Circle().fill(Color.black.opacity(0.45)))
                 }
                 .accessibilityLabel("Chế độ đèn flash")
 
                 Spacer()
 
-                // Smart Framing Center Pill: Chạm để mở Sheet Bố cục thông minh
-                Button(action: {
-                    viewModel.isCompositionRuleSheetPresented = true
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: viewModel.activeCompositionRule.iconName)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(viewModel.aiSessionState.isSessionActive ? .green : .yellow)
-
-                        Text(viewModel.activeCompositionRule.displayNameVietnamese)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white.opacity(0.95))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Color.black.opacity(0.55))
-                    .clipShape(Capsule())
-                    .overlay(
-                        Capsule().stroke(viewModel.aiSessionState.isSessionActive ? Color.green.opacity(0.5) : Color.white.opacity(0.15), lineWidth: 1)
-                    )
+                // Compact Pro Histogram & Photo Info HUD (Nằm chính giữa, không dính Flash/Settings)
+                if viewModel.showHistogramInViewfinder {
+                    LiveColorHistogramHUDView(viewModel: viewModel)
+                        .transition(.opacity)
                 }
-                .accessibilityLabel("Bố cục thông minh, chọn quy tắc bố cục")
 
                 Spacer()
 
@@ -292,7 +254,7 @@ struct TopCameraBar: View {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.white.opacity(0.9))
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 40)
                         .background(Circle().fill(Color.black.opacity(0.45)))
                 }
                 .accessibilityLabel("Cài đặt")
