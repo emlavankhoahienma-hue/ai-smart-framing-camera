@@ -27,7 +27,7 @@ public struct LiveColorHistogramHUDView: View {
         .onAppear {
             initializeHeights()
         }
-        .onChange(of: viewModel.histogramBars) { newBars in
+        .onChange(of: viewModel.histogramBars) { _, newBars in
             handleHistogramUpdate(newBars)
         }
         .accessibilityElement(children: .contain)

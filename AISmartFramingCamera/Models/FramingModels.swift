@@ -759,7 +759,7 @@ public enum PhotoSaveFormat: String, CaseIterable, Identifiable, Sendable {
 }
 
 // MARK: - Realtime Histogram Data
-public struct HistogramBarData: Identifiable, @unchecked Sendable {
+public struct HistogramBarData: Identifiable, Equatable, @unchecked Sendable {
     public let id: Int
     public var height: CGFloat // 0.05 to 1.0
     public var color: Color
@@ -768,5 +768,9 @@ public struct HistogramBarData: Identifiable, @unchecked Sendable {
         self.id = id
         self.height = height
         self.color = color
+    }
+
+    public static func == (lhs: HistogramBarData, rhs: HistogramBarData) -> Bool {
+        return lhs.id == rhs.id && abs(lhs.height - rhs.height) < 0.001
     }
 }
