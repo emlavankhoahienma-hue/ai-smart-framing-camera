@@ -16,29 +16,37 @@ public struct CameraMainView: View {
                     TopCameraBar(viewModel: viewModel)
                         .padding(.top, 4)
 
-                    // Floating AI Dynamic HUD Pill
-                    AIStatusHUDView(viewModel: viewModel)
-                        .padding(.top, 4)
-
-                    Spacer(minLength: 0)
-
-                    // Kính ngắm 4:3 chuẩn cảm biến iPhone (hoặc 16:9 khi quay Video)
-                    ZStack {
-                        CameraPreviewView(viewModel: viewModel)
-                        ARFramingOverlayView(viewModel: viewModel)
-                    }
-                    .aspectRatio(viewModel.captureMode.isVideo ? 9.0/16.0 : 3.0/4.0, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: viewModel.captureMode.isVideo ? 0 : 8))
-                    .frame(maxWidth: .infinity)
-
-                    Spacer(minLength: 0)
-
-                    // Realtime Pro Color Histogram HUD (Chỉ hiển thị trong Pro Video hoặc khi bật trong Cài đặt)
+                    // Realtime Pro Color Histogram HUD & Photo Info (Chuyển lên dải trên theo yêu cầu)
                     if viewModel.captureMode == .proVideo || viewModel.showHistogramInViewfinder {
                         LiveColorHistogramHUDView(viewModel: viewModel)
-                            .padding(.bottom, 4)
-                            .transition(.opacity)
+                            .padding(.top, 4)
+                            .padding(.bottom, 2)
+                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
                     }
+
+                    // Floating AI Dynamic HUD Pill
+                    AIStatusHUDView(viewModel: viewModel)
+                        .padding(.top, 2)
+
+                    Spacer(minLength: 0)
+
+                    // Kính ngắm Live View cố định trong khung trung tâm (Không bị co giật khi đổi mode hoặc zoom)
+                    ZStack {
+                        ZStack(alignment: .bottom) {
+                            CameraPreviewView(viewModel: viewModel)
+                            ARFramingOverlayView(viewModel: viewModel)
+
+                            // Nút Zoom Apple 1x / 2x trực tiếp trên Live View với panel tròn di chuyển (Yêu cầu 1)
+                            LiveViewZoomSwitch(viewModel: viewModel)
+                                .padding(.bottom, 12)
+                        }
+                        .aspectRatio(viewModel.captureMode.isVideo ? 9.0/16.0 : 3.0/4.0, contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: viewModel.captureMode.isVideo ? 0 : 8))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+
+                    Spacer(minLength: 0)
 
                     // Pro Video Manual Controls View (Only in VIDEO PRO mode)
                     if viewModel.captureMode == .proVideo {
@@ -47,7 +55,7 @@ public struct CameraMainView: View {
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
-                    // Bottom Control Deck (Zoom, Mode, Shutter, Presets)
+                    // Bottom Control Deck: Cụm Shutter ở trên, Mode Switcher (Ảnh / Video / Pro) ở dưới (Yêu cầu 3)
                     CameraControlsView(viewModel: viewModel)
                 }
             } else {
@@ -74,6 +82,97 @@ public struct CameraMainView: View {
         .onAppear {
             viewModel.requestPermissionsAndStart()
         }
+    }
+}
+
+// MARK: - Apple-Style Live View Zoom Switch (1x · 2x với Panel Tròn Di Chuyển Mượt Mà Theo Ảnh Mẫu)
+
+public struct LiveViewZoomSwitch: View {
+    @ObservedObject var viewModel: CameraViewModel
+    @Namespace private var zoomNamespace
+
+    private var is2xActive: Bool {
+        return viewModel.displayZoom >= 1.5
+    }
+
+    public init(viewModel: CameraViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        HStack(spacing: 2) {
+            // Nút 1x
+            Button(action: {
+                guard is2xActive else { return }
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.prepare()
+                generator.impactOccurred()
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+                    viewModel.setZoomFromButton(1.0)
+                }
+            }) {
+                ZStack {
+                    if !is2xActive {
+                        Circle()
+                            .fill(Color.white.opacity(0.26))
+                            .matchedGeometryEffect(id: "zoom_active_circle_panel", in: zoomNamespace)
+                            .frame(width: 32, height: 32)
+                    } else {
+                        Color.clear
+                            .frame(width: 32, height: 32)
+                    }
+
+                    Text(!is2xActive ? "1x" : "1")
+                        .font(.system(size: 13, weight: !is2xActive ? .bold : .medium, design: .rounded))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 34, height: 34)
+                .contentShape(Circle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel("Chế độ phóng đại 1x")
+
+            // Nút 2x
+            Button(action: {
+                guard !is2xActive else { return }
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.prepare()
+                generator.impactOccurred()
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+                    viewModel.setZoomFromButton(2.0)
+                }
+            }) {
+                ZStack {
+                    if is2xActive {
+                        Circle()
+                            .fill(Color.white.opacity(0.26))
+                            .matchedGeometryEffect(id: "zoom_active_circle_panel", in: zoomNamespace)
+                            .frame(width: 32, height: 32)
+                    } else {
+                        Color.clear
+                            .frame(width: 32, height: 32)
+                    }
+
+                    Text(is2xActive ? "2x" : "2")
+                        .font(.system(size: 13, weight: is2xActive ? .bold : .medium, design: .rounded))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 34, height: 34)
+                .contentShape(Circle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel("Chế độ phóng đại 2x")
+        }
+        .padding(3)
+        .background(
+            Capsule()
+                .fill(Color.black.opacity(0.48))
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.15), lineWidth: 0.8)
+                )
+        )
+        .shadow(color: Color.black.opacity(0.4), radius: 6, x: 0, y: 2)
     }
 }
 

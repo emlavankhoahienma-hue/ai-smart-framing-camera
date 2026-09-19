@@ -39,12 +39,12 @@ public struct LiveColorHistogramHUDView: View {
             settingsButton
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            Capsule()
                 .fill(.ultraThinMaterial)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12)
+                    Capsule()
                         .stroke(Color.white.opacity(0.14), lineWidth: 1)
                 )
                 .shadow(color: Color.black.opacity(0.4), radius: 6, x: 0, y: 3)

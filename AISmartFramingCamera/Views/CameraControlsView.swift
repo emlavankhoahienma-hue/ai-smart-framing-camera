@@ -3,27 +3,15 @@ import SwiftUI
 public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
 
-    private var dynamicZoomOptions: [CGFloat] {
-        return viewModel.availableDisplayZoomOptions
-    }
-
     public var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             // Film Preset Drawer (Expandable)
             if viewModel.isShowingFilmDrawer {
                 FilmPresetDrawer(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // Zoom Selector Pills
-            ZoomSelectorPills(viewModel: viewModel, options: dynamicZoomOptions)
-                .padding(.bottom, 4)
-
-            // Mode Switcher (Ảnh / Video / Pro) dạng Segmented Capsule trượt
-            CameraModeSegmentedSwitcher(viewModel: viewModel)
-                .padding(.bottom, 10)
-
-            // Main Bottom Control Deck
+            // Main Bottom Control Deck: Album (Left) - Shutter (Center) - Filter (Right)
             HStack(alignment: .center) {
                 // Left: Gallery Thumbnail
                 GalleryThumbnailButton(viewModel: viewModel)
@@ -41,7 +29,12 @@ public struct CameraControlsView: View {
                     .frame(width: 52, height: 52)
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+            .padding(.top, 4)
+
+            // Mode Switcher (Ảnh / Video / Pro) đặt NGAY DƯỚI nút chụp
+            CameraModeSegmentedSwitcher(viewModel: viewModel)
+                .padding(.top, 2)
+                .padding(.bottom, 16)
         }
         .background(
             LinearGradient(
