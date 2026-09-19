@@ -1110,7 +1110,6 @@ public final class CameraViewModel: ObservableObject {
         }
         // Nếu nằm giữa 20.0 và 30.0: giữ nguyên trạng thái trước đó
         SpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
-        visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
         CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
     }
 
@@ -1174,10 +1173,7 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
         SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
         SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
-        // Spatial engine dùng hệ zoom hiển thị 1x/2x/3x. `currentZoom` là
-        // AVCaptureDevice.videoZoomFactor và có thể bắt đầu ở 0.5 trên camera
-        // ultra-wide; trộn hai hệ làm gyro compensation sai ngay sau khi lock.
-        SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: displayZoom)
+        SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = target
