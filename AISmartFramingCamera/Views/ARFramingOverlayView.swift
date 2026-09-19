@@ -25,13 +25,6 @@ public struct ARFramingOverlayView: View {
                         .opacity(1.0)
                 }
 
-                // 1. Composition Grid Lines (hiện khi AI session active)
-                if viewModel.isAISessionActive {
-                    CompositionGridLines(rule: viewModel.activeCompositionRule, size: size)
-                        .opacity(0.28)
-                        .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive)
-                }
-
                 // 2. Detected Faces & Subject preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm)
                 if viewModel.showDetectionBoxes {
                     ForEach(0..<viewModel.detectedFaceRects.count, id: \.self) { i in
@@ -202,47 +195,6 @@ public struct ARFramingOverlayView: View {
         withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
             dashOffset = -20
         }
-    }
-}
-
-// MARK: - Composition Grid
-
-struct CompositionGridLines: View {
-    let rule: CompositionRule
-    let size: CGSize
-
-    var body: some View {
-        Path { path in
-            switch rule {
-            case .ruleOfThirds, .dynamicAI:
-                for frac in [CGFloat(1)/3, CGFloat(2)/3] {
-                    path.move(to: CGPoint(x: size.width * frac, y: 0))
-                    path.addLine(to: CGPoint(x: size.width * frac, y: size.height))
-                    path.move(to: CGPoint(x: 0, y: size.height * frac))
-                    path.addLine(to: CGPoint(x: size.width, y: size.height * frac))
-                }
-            case .goldenRatio:
-                for frac in [CGFloat(0.381966), CGFloat(0.618034)] {
-                    path.move(to: CGPoint(x: size.width * frac, y: 0))
-                    path.addLine(to: CGPoint(x: size.width * frac, y: size.height))
-                    path.move(to: CGPoint(x: 0, y: size.height * frac))
-                    path.addLine(to: CGPoint(x: size.width, y: size.height * frac))
-                }
-            case .goldenSpiral:
-                let phi2: CGFloat = 0.618034
-                let phi1: CGFloat = 0.381966
-                path.move(to: CGPoint(x: size.width * phi2, y: 0))
-                path.addLine(to: CGPoint(x: size.width * phi2, y: size.height))
-                path.move(to: CGPoint(x: 0, y: size.height * phi1))
-                path.addLine(to: CGPoint(x: size.width, y: size.height * phi1))
-            case .centerSymmetry:
-                path.move(to: CGPoint(x: size.width * 0.5, y: 0))
-                path.addLine(to: CGPoint(x: size.width * 0.5, y: size.height))
-                path.move(to: CGPoint(x: 0, y: size.height * 0.5))
-                path.addLine(to: CGPoint(x: size.width, y: size.height * 0.5))
-            }
-        }
-        .stroke(Color.white, style: StrokeStyle(lineWidth: 0.7, dash: [5, 4]))
     }
 }
 

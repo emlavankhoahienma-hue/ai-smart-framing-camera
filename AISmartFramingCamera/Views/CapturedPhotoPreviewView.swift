@@ -216,7 +216,7 @@ public struct CapturedPhotoPreviewView: View {
                                         .font(.system(size: 13))
                                         .foregroundColor(.white.opacity(0.7))
                                 }
-                                Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
+                                Text("Điểm căn AI: \(Int(item.alignmentScore * 100))%")
                                     .font(.system(size: 11))
                                     .foregroundColor(.white.opacity(0.5))
                             }

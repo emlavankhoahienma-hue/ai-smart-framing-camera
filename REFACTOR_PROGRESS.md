@@ -48,3 +48,26 @@ Fix viewfinder collapse when opening Pro controls or changing capture modes; sta
 ## Validation limits
 
 Physical camera behavior, thermal performance, and gesture ergonomics require an iPhone. CI validation will be reported separately from hardware verification.
+
+## Camera UI redesign and Build 142 tracking restoration
+
+- [x] Replace the layered translucent form with stable near-black top and bottom camera chrome.
+  - Live View uses a centered frame derived only from the screen size and capture aspect ratio.
+  - Telemetry is hidden at launch and opens from a single Info button without changing Live View bounds.
+  - Zoom, capture controls, and `Ảnh · Video · Pro` use solid surfaces with restrained animation.
+  - Pro controls, telemetry, and film presets share one mutually exclusive panel state.
+- [x] Remove composition-rule UI without removing the internal composition engine.
+  - Removed the top Golden Ratio control, composition sheet, settings picker, preview grids, and rule label from captured-photo details.
+  - Internal AI analysis continues to use `CompositionRule`, defaulting to `dynamicAI`.
+- [x] Restore the yellow-target tracking behavior from `v1.0.0-build.142` (`6f5165c`).
+  - Vision again publishes the direct tracked point and confidence instead of a stabilized target wrapper.
+  - Removed anchor refinement and periodic saliency correction from the yellow-reticle path.
+  - Restored Build 142 filter constants, outlier handling, KLT behavior, and separate Street tracker.
+  - `currentTargetPoint` is now written only when pinning a target or receiving a spatial tracker callback; the white reticle remains fixed at `(0.5, 0.5)`.
+- [x] Add regression coverage for centered Live View geometry and independent yellow/white reticles.
+- [ ] Pass macOS warning-as-error build, archive IPA, publish release, and verify the workflow at the pushed HEAD.
+
+### Current local validation
+
+- `git diff --check`: pass; only Git line-ending notices are emitted on Windows.
+- Swift/Xcode toolchains are not installed on this Windows host. Package tests and the iOS warning-as-error build will run on the repository's macOS GitHub Actions runner.

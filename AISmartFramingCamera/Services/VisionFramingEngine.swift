@@ -45,7 +45,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     
     // Callbacks
     public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)?
-    public var onTargetTracked: ((TrackedTargetObservation?, CVPixelBuffer) -> Void)?
+    public var onTargetTracked: ((CGPoint?, Double, CVPixelBuffer) -> Void)?
     public var onSmartFocusPointCalculated: ((CGPoint, SmartFocusType) -> Void)?
     
     // Gemini Frame Capture
@@ -212,48 +212,30 @@ public final class VisionFramingEngine: @unchecked Sendable {
         refiningBuffer: CVPixelBuffer? = nil,
         orientation: CGImagePropertyOrientation = .up
     ) {
+        guard normalizedPoint.x.isFinite, normalizedPoint.y.isFinite,
+              size.width.isFinite, size.height.isFinite else { return }
+        _ = refiningBuffer
+        _ = orientation
         performOnVisionQueueSync {
-            startTrackingObjectOnQueue(
-                at: normalizedPoint,
-                size: size,
-                refiningBuffer: refiningBuffer,
-                orientation: orientation
-            )
+            startTrackingObjectOnQueue(at: normalizedPoint, size: size)
         }
     }
 
     private func startTrackingObjectOnQueue(
         at normalizedPoint: CGPoint,
-        size: CGSize,
-        refiningBuffer: CVPixelBuffer?,
-        orientation: CGImagePropertyOrientation
+        size: CGSize
     ) {
-        var targetPoint = normalizedPoint
-        var targetSize = size
-
-        if let buffer = refiningBuffer,
-           let refinedBox = refineAnchorBox(around: normalizedPoint, in: buffer, orientation: orientation) {
-            let boxCenterUI = CGPoint(x: refinedBox.midX, y: 1.0 - refinedBox.midY)
-            let dist = hypot(boxCenterUI.x - normalizedPoint.x, boxCenterUI.y - normalizedPoint.y)
-            if dist < 0.15 {
-                targetPoint = boxCenterUI
-            }
-            targetSize = CGSize(width: refinedBox.width, height: refinedBox.height)
-            CameraLogger.info("🎯 [Vision] Đã tinh chỉnh Anchor Box ôm khít chủ thể: tâm=(\(String(format: "%.3f", targetPoint.x)), \(String(format: "%.3f", targetPoint.y))), size: \(targetSize)", category: .tracking)
-        }
-        
         // Convert UI coordinate (top-left origin) to Vision coordinate (bottom-left origin)
-        // Kẹp TÂM box trong frame (thay vì kẹp origin) để box lớn gần mép không bị thò ra ngoài
-        let halfW = targetSize.width / 2.0
-        let halfH = targetSize.height / 2.0
-        let centerX = min(1.0 - halfW - 0.005, max(halfW + 0.005, targetPoint.x))
-        let centerYVision = min(1.0 - halfH - 0.005, max(halfH + 0.005, 1.0 - targetPoint.y))
+        let halfW = size.width / 2.0
+        let halfH = size.height / 2.0
+        let centerX = min(1.0 - halfW - 0.005, max(0.005, normalizedPoint.x))
+        let centerYVision = min(1.0 - halfH - 0.005, max(0.005, 1.0 - normalizedPoint.y))
         
         let clampedRect = CGRect(
             x: centerX - halfW,
             y: centerYVision - halfH,
-            width: targetSize.width,
-            height: targetSize.height
+            width: size.width,
+            height: size.height
         )
         
         let initialObservation = VNDetectedObjectObservation(boundingBox: clampedRect)
@@ -272,17 +254,17 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.consecutiveLostFrames = 0
         self.sequenceHandler = VNSequenceRequestHandler()
         // Reset toàn bộ trạng thái xác minh danh tính & re-acquisition
-        self.lastVerifiedUIPoint = targetPoint
+        self.lastVerifiedUIPoint = normalizedPoint
         self.identitySuspicionFrames = 0
         self.histogramCheckCounter = 0
         self.histogramMismatchStreak = 0
         self.featurePrintCheckCounter = 0
         self.detectionCorrectionCounter = 0
         self.stableLockFrames = 0
-        self.anchorBoxSize = targetSize
+        self.anchorBoxSize = size
         self.lastReIdAttemptTime = 0
         self.isTrackingTarget = true
-        CameraLogger.info("🎯 [Vision] Khởi tạo VNTrackObjectRequest duy nhất tại: (\(String(format: "%.3f", targetPoint.x)), \(String(format: "%.3f", targetPoint.y))), size: \(targetSize)", category: .tracking)
+        CameraLogger.info("🎯 [Vision] Khởi tạo VNTrackObjectRequest tại: (\(String(format: "%.3f", normalizedPoint.x)), \(String(format: "%.3f", normalizedPoint.y))), size: \(size)", category: .tracking)
     }
     
     public func stopTrackingObject() {
@@ -357,25 +339,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
         
-        // Trọng số tâm (Center-weighting): Ưu tiên các điểm đặc trưng nằm gần tâm box (chủ thể thật)
-        // và giảm mạnh điểm của các điểm gần mép biên (thường là viền tường, mép bàn, hoa văn nền)
-        let boxCenter = CGPoint(x: roi.midX, y: roi.midY)
-        let maxDist = max(0.02, max(roi.width, roi.height) / 2.0)
-        corners = corners.map { c in
-            let d = hypot(c.point.x - boxCenter.x, c.point.y - boxCenter.y)
-            let centerWeight = Float(max(0.20, 1.0 - (d / maxDist)))
-            return (point: c.point, score: c.score * centerWeight)
-        }
-        
         corners.sort { $0.score > $1.score }
         let top = corners.prefix(30).map { $0.point }
         if top.count < 8 {
             var grid: [CGPoint] = top
             for r in 0..<3 {
                 for c in 0..<3 {
-                    // Tập trung lưới điểm vào 60% vùng trung tâm ROI thay vì mép ngoài
-                    let gx = roi.origin.x + roi.size.width * (0.20 + 0.60 * (CGFloat(c) + 0.5) / 3.0)
-                    let gy = roi.origin.y + roi.size.height * (0.20 + 0.60 * (CGFloat(r) + 0.5) / 3.0)
+                    let gx = roi.origin.x + roi.size.width * (CGFloat(c) + 0.5) / 3.0
+                    let gy = roi.origin.y + roi.size.height * (CGFloat(r) + 0.5) / 3.0
                     grid.append(CGPoint(x: gx, y: gy))
                 }
             }
@@ -468,14 +439,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         guard !inliers.isEmpty else { return nil }
 
-        let originalPointCount = self.kltTrackedPoints.count
-
         let avgX = inliers.map { $0.x }.reduce(0, +) / CGFloat(inliers.count)
         let avgY = inliers.map { $0.y }.reduce(0, +) / CGFloat(inliers.count)
         self.kltTrackedPoints = inliers
 
         let uiPoint = CGPoint(x: avgX, y: 1.0 - avgY)
-        let inlierRatio = Double(inliers.count) / Double(max(1, originalPointCount))
+        let inlierRatio = Double(inliers.count) / Double(max(1, kltTrackedPoints.count))
         let confidence = max(0.70, min(0.95, 0.60 + inlierRatio * 0.35))
         return (uiPoint, confidence)
     }
@@ -731,7 +700,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 }
                 
                 var trackedPoint: CGPoint? = nil
-                var trackedBoundingBox: CGRect? = nil
                 var trackedConfidence: Double = 0.0
                 var trackerIdentityLost = false
                 
@@ -745,20 +713,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         var identityOK = true
                         
                         // 1) Histogram màu 24-bin (rẻ): kiểm tra mỗi 3 frame
-                        // Ngưỡng 0.68 kết hợp streak 3 lần liên tiếp: chống trôi sang nền/vật khác nhưng chịu được AE/AWB camera thực tế
                         self.histogramCheckCounter += 1
                         if self.histogramCheckCounter >= 3, let refHist = self.referenceColorHistogram {
                             self.histogramCheckCounter = 0
                             let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
-                            let colorSim = self.compareColorHistograms(refHist, curHist)
-                            if colorSim < 0.68 {
-                                self.histogramMismatchStreak += 1
-                                if self.histogramMismatchStreak >= 3 {
-                                    identityOK = false
-                                    CameraLogger.info("🎯 [Vision] Mất khớp histogram liên tiếp (\(String(format: "%.2f", colorSim))) — giữ mỏ neo", category: .tracking)
-                                }
-                            } else {
-                                self.histogramMismatchStreak = 0
+                            if self.compareColorHistograms(refHist, curHist) < 0.78 {
+                                identityOK = false
+                                CameraLogger.info("🎯 [Vision] Mất khớp histogram — nghi tracker trôi, giữ mỏ neo cuối", category: .tracking)
                             }
                         }
                         
@@ -771,7 +732,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                     var dist: Float = 0
                                     do {
                                         try refPrint.computeDistance(&dist, to: curPrint)
-                                        if dist > 0.58 {
+                                        if dist > 0.50 {
                                             identityOK = false
                                             CameraLogger.info("🎯 [Vision] Mất khớp feature print (dist: \(String(format: "%.2f", dist))) — nghi tracker trôi", category: .tracking)
                                         }
@@ -807,26 +768,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             var uiX = newObs.boundingBox.midX
                             var uiY = 1.0 - newObs.boundingBox.midY
                             
-                            // 3) Detection-based Periodic Correction (Nắn mỏ neo nhẹ nhàng mỗi 15 frame bằng Saliency Centroid với lực 0.08, chống rung giật)
-                            self.detectionCorrectionCounter += 1
-                            if self.detectionCorrectionCounter >= 15 {
-                                self.detectionCorrectionCounter = 0
-                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
-                                    let centroidUIX = salientCentroid.x
-                                    let centroidUIY = 1.0 - salientCentroid.y
-                                    let box = newObs.boundingBox
-                                    let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
-                                    // Chỉ nắn khi centroid nằm trong hoặc rất sát box đang bám (tránh hút sang đối tượng ngoài)
-                                    if boxUI.insetBy(dx: -0.02, dy: -0.02).contains(CGPoint(x: centroidUIX, y: centroidUIY)) {
-                                        let drift = hypot(centroidUIX - uiX, centroidUIY - uiY)
-                                        let maxOffset = min(box.width, box.height) * 0.45
-                                        if drift > 0.02 && drift < maxOffset {
-                                            uiX += (centroidUIX - uiX) * 0.08
-                                            uiY += (centroidUIY - uiY) * 0.08
-                                        }
-                                    }
-                                }
-                            } else if self.currentSceneType.isDeformableNature,
+                            // Build 142 behavior: saliency can adjust only deformable natural subjects.
+                            if self.currentSceneType.isDeformableNature,
                                let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
                                 let box = newObs.boundingBox
                                 let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
@@ -837,18 +780,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                     var dy = centroidUI.y - uiY
                                     dx = max(-maxOffset, min(maxOffset, dx))
                                     dy = max(-maxOffset, min(maxOffset, dy))
-                                    uiX += dx * 0.5
-                                    uiY += dy * 0.5
+                                    uiX += dx * 0.6
+                                    uiY += dy * 0.6
                                 }
                             }
                             
                             trackedPoint = CGPoint(x: uiX, y: uiY)
-                            trackedBoundingBox = CGRect(
-                                x: newObs.boundingBox.minX,
-                                y: 1.0 - newObs.boundingBox.maxY,
-                                width: newObs.boundingBox.width,
-                                height: newObs.boundingBox.height
-                            )
                             trackedConfidence = Double(newObs.confidence)
                         } else {
                             // ── NGHI TRICKER TRÔI: KHÔNG nối tiếp inputObservation (đông băng mỏ neo tại box cuối hợp lệ),
@@ -869,7 +806,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 if trackedPoint == nil, self.consecutiveLostFrames <= 10,
                    let (kltPoint, kltConfidence) = self.kltBridgePoint(in: pixelBuffer) {
                     trackedPoint = kltPoint
-                    trackedBoundingBox = self.uiRect(centeredAt: kltPoint, size: self.anchorBoxSize)
                     // KLT là observation trung: đủ để engine tin (>= ngưỡng nhận) nhưng không reset VO reference
                     trackedConfidence = min(0.55, kltConfidence)
                     self.consecutiveLostFrames = min(self.consecutiveLostFrames, 4)
@@ -890,7 +826,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                    CACurrentMediaTime() - self.lastReIdAttemptTime >= 0.4 {
                     self.lastReIdAttemptTime = CACurrentMediaTime()
                     
-                    let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+                    let spatialPoint = StreetSpatialTrackingEngine.shared.isTrackingActive
+                        ? StreetSpatialTrackingEngine.shared.currentEstimatedScreenPoint
+                        : SpatialTrackingEngine.shared.currentEstimatedScreenPoint
                     
                     // Tâm tìm kiếm = trung điểm giữa vị trí quang học CUỐI CÙNG ĐÃ XÁC NHẬN và ước lượng không gian (gyro)
                     let verified = self.lastVerifiedUIPoint
@@ -902,12 +840,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     // Chỉ nạp lại mỏ neo khi Neural Re-ID xác nhận rõ ràng là vật thể ban đầu
                     if let (reIdPoint, reIdConfidence, reIdBox) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, searchCenter: searchCenter, anchorSize: self.anchorBoxSize) {
                         trackedPoint = reIdPoint
-                        trackedBoundingBox = CGRect(
-                            x: reIdBox.minX,
-                            y: 1.0 - reIdBox.maxY,
-                            width: reIdBox.width,
-                            height: reIdBox.height
-                        )
                         trackedConfidence = reIdConfidence
                         self.consecutiveLostFrames = 0
                         self.identitySuspicionFrames = 0
@@ -933,20 +865,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 // Giữ nóng buffer trước cho KLT (retain 1 frame; pool không ghi đè buffer đang giữ)
                 self.kltPreviousBuffer = pixelBuffer
                 
-                let observation: TrackedTargetObservation?
-                if let trackedPoint, let trackedBoundingBox {
-                    observation = TrackedTargetObservation(
-                        center: trackedPoint,
-                        boundingBox: trackedBoundingBox,
-                        confidence: Float(trackedConfidence),
-                        isPredicted: self.consecutiveLostFrames > 0
-                    )
-                } else {
-                    observation = nil
-                }
-
                 DispatchQueue.main.async {
-                    self.onTargetTracked?(observation, pixelBuffer)
+                    self.onTargetTracked?(trackedPoint, trackedConfidence, pixelBuffer)
                 }
                 return
             }

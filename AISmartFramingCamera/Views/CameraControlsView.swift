@@ -6,7 +6,7 @@ public struct CameraControlsView: View {
     public var body: some View {
         VStack(spacing: 6) {
             // Film Preset Drawer (Expandable)
-            if viewModel.isShowingFilmDrawer {
+            if viewModel.activeCameraPanel == .filmPresets {
                 FilmPresetDrawer(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -34,14 +34,7 @@ public struct CameraControlsView: View {
             CameraModeSegmentedSwitcher(viewModel: viewModel)
                 .padding(.bottom, 12)
         }
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: [Color.clear, Color.black.opacity(0.88), Color.black]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .edgesIgnoringSafeArea(.bottom)
-        )
+        .background(Color(red: 0.035, green: 0.035, blue: 0.04))
     }
 }
 
@@ -101,7 +94,7 @@ struct CameraModeSegmentedSwitcher: View {
         .padding(3)
         .background(
             Capsule()
-                .fill(.ultraThinMaterial)
+                .fill(Color(red: 0.10, green: 0.10, blue: 0.11))
                 .overlay(
                     Capsule()
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
@@ -114,6 +107,7 @@ struct CameraModeSegmentedSwitcher: View {
         let isSelected = viewModel.captureMode == item.mode
         Button(action: {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                viewModel.dismissCameraPanels()
                 viewModel.captureMode = item.mode
             }
         }) {
@@ -134,7 +128,6 @@ struct CameraModeSegmentedSwitcher: View {
             Capsule()
                 .fill(Color.yellow)
                 .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
-                .shadow(color: Color.yellow.opacity(0.35), radius: 4)
         } else {
             Color.clear
         }
@@ -230,7 +223,6 @@ struct MainCaptureButton: View {
                     .scaleEffect(hasReachedDock ? 1.22 : 1.0)
                     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
             }
-            .shadow(color: hasReachedDock ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
             .offset(x: -56)
             .scaleEffect(dockScale)
             .opacity(dockOpacity)
@@ -396,7 +388,6 @@ struct MainCaptureButton: View {
                     .scaleEffect(hasReachedDock ? 1.22 : 1.0)
                     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
             }
-            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
             .offset(x: -56)
             .scaleEffect(dockScale)
             .opacity(dockOpacity)
@@ -545,7 +536,7 @@ struct ViewfinderZoomSwitcher: View {
             .padding(4)
             .background(
                 Capsule()
-                    .fill(.ultraThinMaterial)
+                    .fill(Color(red: 0.10, green: 0.10, blue: 0.11))
                     .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
             )
         }
@@ -564,9 +555,8 @@ struct ViewfinderZoomSwitcher: View {
     private func selectionBackground(isSelected: Bool) -> some View {
         if isSelected {
             Circle()
-                .fill(Color.black.opacity(0.72))
+                .fill(Color(red: 0.04, green: 0.04, blue: 0.045))
                 .overlay(Circle().stroke(amberGold.opacity(0.75), lineWidth: 1.5))
-                .shadow(color: amberGold.opacity(0.30), radius: 7)
                 .matchedGeometryEffect(id: "zoom-selection", in: selectionNamespace)
         } else {
             Circle()
@@ -616,8 +606,8 @@ struct FilterToggleButton: View {
 
     var body: some View {
         Button(action: {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                viewModel.isShowingFilmDrawer.toggle()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                viewModel.toggleCameraPanel(.filmPresets)
             }
         }) {
             ZStack {
@@ -626,14 +616,14 @@ struct FilterToggleButton: View {
                     .frame(width: 50, height: 50)
 
                 Circle()
-                    .stroke(viewModel.isAIFullColorEnabled ? Color.cyan : Color.white.opacity(0.35), lineWidth: 1.5)
+                    .stroke(viewModel.activeCameraPanel == .filmPresets ? Color.yellow : Color.white.opacity(0.35), lineWidth: 1.5)
                     .frame(width: 50, height: 50)
 
                 CustomAppIconView(
                     name: "iconchonmau",
                     fallbackSF: "camera.filters",
                     size: 28,
-                    color: viewModel.isAIFullColorEnabled ? .cyan : .white
+                    color: viewModel.activeCameraPanel == .filmPresets ? .yellow : .white
                 )
             }
             .contentShape(Circle())
@@ -662,7 +652,7 @@ struct FilmPresetDrawer: View {
 
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        viewModel.isShowingFilmDrawer = false
+                        viewModel.dismissCameraPanels()
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
@@ -714,7 +704,6 @@ struct FilmPresetDrawer: View {
                                 Capsule()
                                     .stroke(isSelected ? Color.yellow : (isAIRecommended ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12)), lineWidth: 1)
                             )
-                            .shadow(color: isSelected ? Color.yellow.opacity(0.35) : Color.clear, radius: 4)
                         }
                         .buttonStyle(PlainButtonStyle())
                         .scaleEffect(isSelected ? 1.04 : 1.0)
@@ -730,7 +719,7 @@ struct FilmPresetDrawer: View {
         .frame(maxHeight: 88)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
+                .fill(Color(red: 0.075, green: 0.075, blue: 0.085))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
@@ -741,7 +730,7 @@ struct FilmPresetDrawer: View {
                 .onEnded { value in
                     if value.translation.height > 25 {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                            viewModel.isShowingFilmDrawer = false
+                            viewModel.dismissCameraPanels()
                         }
                     }
                 }

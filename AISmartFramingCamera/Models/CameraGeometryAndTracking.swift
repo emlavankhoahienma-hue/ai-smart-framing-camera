@@ -33,6 +33,17 @@ struct CameraPreviewGeometry: Sendable {
         return CGSize(width: container.width, height: container.width / sourceAspectRatio)
     }
 
+    func centeredFrame(in container: CGSize) -> CGRect {
+        let size = fittedSize(in: container)
+        guard size != .zero else { return .zero }
+        return CGRect(
+            x: (container.width - size.width) / 2,
+            y: (container.height - size.height) / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
     func screenPoint(fromNormalized point: CGPoint, in size: CGSize) -> CGPoint? {
         guard let normalized = Self.sanitizedNormalizedPoint(point),
               let transform = aspectFillTransform(in: size) else {
@@ -136,22 +147,16 @@ struct CameraPreviewGeometry: Sendable {
     }
 }
 
-public struct TrackedTargetObservation: Sendable {
-    public let center: CGPoint
-    public let boundingBox: CGRect
-    public let confidence: Float
-    public let isPredicted: Bool
+enum TargetReticleGeometry {
+    static let opticalCenter = CGPoint(x: 0.5, y: 0.5)
 
-    init?(center: CGPoint, boundingBox: CGRect, confidence: Float, isPredicted: Bool = false) {
-        guard let safeCenter = CameraPreviewGeometry.sanitizedNormalizedPoint(center),
-              let safeBox = CameraPreviewGeometry.sanitizedNormalizedRect(boundingBox),
-              confidence.isFinite else {
-            return nil
-        }
-        self.center = safeCenter
-        self.boundingBox = safeBox
-        self.confidence = min(max(confidence, 0), 1)
-        self.isPredicted = isPredicted
+    static func trackedPoint(_ point: CGPoint) -> CGPoint? {
+        CameraPreviewGeometry.sanitizedNormalizedPoint(point)
+    }
+
+    static func alignmentDistance(to trackedPoint: CGPoint) -> CGFloat {
+        guard let target = self.trackedPoint(trackedPoint) else { return 1 }
+        return hypot(target.x - opticalCenter.x, target.y - opticalCenter.y)
     }
 }
 

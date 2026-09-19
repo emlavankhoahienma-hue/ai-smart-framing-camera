@@ -108,9 +108,8 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isCameraReady: Bool = false
     @Published public var hasCameraPermission: Bool = false
 
-    @Published public var activeCompositionRule: CompositionRule = .goldenRatio {
-        didSet { UserDefaults.standard.set(activeCompositionRule.rawValue, forKey: "activeCompositionRule") }
-    }
+    /// Composition remains an engine concern. The capture UI no longer exposes visual grids or rule pickers.
+    @Published public var activeCompositionRule: CompositionRule = .dynamicAI
     @Published public var selectedFilmPreset: FilmPreset = .fujiPro400H {
         didSet { UserDefaults.standard.set(selectedFilmPreset.rawValue, forKey: "selectedFilmPreset") }
     }
@@ -127,6 +126,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var captureMode: CameraCaptureMode = .photo {
         didSet {
             UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode")
+            activeCameraPanel = .none
             cameraService.updateCaptureMode(captureMode)
             if oldValue == .proVideo && captureMode != .proVideo {
                 proVideoService.resetToFullAuto()
@@ -145,10 +145,7 @@ public final class CameraViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(selectedPhotoFormat.rawValue, forKey: "selectedPhotoFormat") }
     }
     @Published public var isStreetTrackingModeEnabled: Bool = false {
-        didSet {
-            UserDefaults.standard.set(isStreetTrackingModeEnabled, forKey: "isStreetTrackingModeEnabled")
-            SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
-        }
+        didSet { UserDefaults.standard.set(isStreetTrackingModeEnabled, forKey: "isStreetTrackingModeEnabled") }
     }
     @Published public var liveISO: String = "ISO 32"
     @Published public var liveShutterSpeed: String = "1/400 s"
@@ -184,6 +181,7 @@ public final class CameraViewModel: ObservableObject {
     // Pro Video Manual Controls Service & State
     public let proVideoService = ProVideoManualControlsService.shared
     @Published public var selectedProTab: ProVideoParameterTab = .iso
+    @Published public var activeCameraPanel: CameraOverlayPanel = .none
 
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
@@ -357,7 +355,6 @@ public final class CameraViewModel: ObservableObject {
             updateFrameProcessingConfiguration()
         }
     }
-    @Published public var isShowingFilmDrawer: Bool = false
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
     @Published public var activeFlashMode2: Bool = false
@@ -370,12 +367,6 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var showDetectionBoxes: Bool = false {
         didSet { UserDefaults.standard.set(showDetectionBoxes, forKey: "showDetectionBoxes") }
-    }
-    @Published public var showHistogramInViewfinder: Bool = true {
-        didSet { UserDefaults.standard.set(showHistogramInViewfinder, forKey: "showHistogramInViewfinder") }
-    }
-    @Published public var isHistogramBarExpanded: Bool = true {
-        didSet { UserDefaults.standard.set(isHistogramBarExpanded, forKey: "isHistogramBarExpanded") }
     }
     @Published public var isSaveOriginalPhotoEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isSaveOriginalPhotoEnabled, forKey: "isSaveOriginalPhotoEnabled") }
@@ -392,7 +383,6 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isGuidanceRayEnabled: Bool = UserDefaults.standard.object(forKey: "isGuidanceRayEnabled") as? Bool ?? true {
         didSet { UserDefaults.standard.set(isGuidanceRayEnabled, forKey: "isGuidanceRayEnabled") }
     }
-    @Published public var isCompositionRuleSheetPresented: Bool = false
 
     // Engine Source Indicator
     @Published public var activeEngineSource: AIEngineSource? = nil
@@ -455,9 +445,6 @@ public final class CameraViewModel: ObservableObject {
     public init() {
         // Load saved settings
         let defaults = UserDefaults.standard
-        if let ruleRaw = defaults.string(forKey: "activeCompositionRule"), let rule = CompositionRule(rawValue: ruleRaw) {
-            self.activeCompositionRule = rule
-        }
         if let presetRaw = defaults.string(forKey: "selectedFilmPreset"), let preset = FilmPreset(rawValue: presetRaw) {
             self.selectedFilmPreset = preset
         }
@@ -484,7 +471,6 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "isStreetTrackingModeEnabled") != nil {
             self.isStreetTrackingModeEnabled = defaults.bool(forKey: "isStreetTrackingModeEnabled")
-            SpatialTrackingEngine.shared.isStreetMode = self.isStreetTrackingModeEnabled
         }
         if defaults.object(forKey: "isHorizonLevelerEnabled") != nil {
             self.isHorizonLevelerEnabled = defaults.bool(forKey: "isHorizonLevelerEnabled")
@@ -513,24 +499,6 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "showDetectionBoxes") != nil {
             self.showDetectionBoxes = defaults.bool(forKey: "showDetectionBoxes")
-        }
-        if defaults.object(forKey: "hasMigratedHistogramBuild133") == nil {
-            self.showHistogramInViewfinder = true
-            self.isHistogramBarExpanded = true
-            defaults.set(true, forKey: "hasMigratedHistogramBuild133")
-            defaults.set(true, forKey: "showHistogramInViewfinder")
-            defaults.set(true, forKey: "isHistogramBarExpanded")
-        } else {
-            if defaults.object(forKey: "showHistogramInViewfinder") != nil {
-                self.showHistogramInViewfinder = defaults.bool(forKey: "showHistogramInViewfinder")
-            } else {
-                self.showHistogramInViewfinder = true
-            }
-            if defaults.object(forKey: "isHistogramBarExpanded") != nil {
-                self.isHistogramBarExpanded = defaults.bool(forKey: "isHistogramBarExpanded")
-            } else {
-                self.isHistogramBarExpanded = true
-            }
         }
         if defaults.object(forKey: "isSaveOriginalPhotoEnabled") != nil {
             self.isSaveOriginalPhotoEnabled = defaults.bool(forKey: "isSaveOriginalPhotoEnabled")
@@ -595,6 +563,7 @@ public final class CameraViewModel: ObservableObject {
             self.displayZoom = self.cameraService.defaultDisplayZoom
             self.currentZoom = self.cameraService.currentZoom
             SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
+            StreetSpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
             self.cameraService.start()
             self.isCameraReady = true
         }
@@ -612,9 +581,9 @@ public final class CameraViewModel: ObservableObject {
             self.handleVisionDetection(detection)
         }
 
-        visionEngine.onTargetTracked = { [weak self] observation, pixelBuffer in
+        visionEngine.onTargetTracked = { [weak self] point, confidence, pixelBuffer in
             guard let self = self, !self.isShowingSettings else { return }
-            self.handleVisualTargetTracked(observation: observation, pixelBuffer: pixelBuffer)
+            self.handleVisualTargetTracked(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
         }
 
         // Smart Autofocus (Face Priority > Saliency > Center)
@@ -635,6 +604,7 @@ public final class CameraViewModel: ObservableObject {
             self.currentZoom = zoom
             self.displayZoom = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
             SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
+            StreetSpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
         }
 
         // Realtime Exposure Stats Listener (ISO & Shutter Speed)
@@ -686,14 +656,25 @@ public final class CameraViewModel: ObservableObject {
 
 
     private func setupMotionCallbacks() {
-        // Động cơ Tracking Không Gian Chuẩn Xác: Thống nhất một callback duy nhất
-        SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, _, quality in
-            guard let self = self, !self.isShowingSettings else { return }
+        SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
+            guard let self = self, !self.isStreetTrackingModeEnabled, !self.isShowingSettings else { return }
+            self.lastVisualConfidence = confidence
             // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
             self.currentTargetPoint = point
             self.trackingQuality = quality
             self.currentTrackedTargetRect = self.normalizedRect(centeredAt: point, size: self.trackedTargetSize)
             // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
+            if case .targetPlaced = self.aiSessionState {
+                self.evaluateAlignment(at: point)
+            }
+        }
+
+        StreetSpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, confidence, quality in
+            guard let self = self, self.isStreetTrackingModeEnabled, !self.isShowingSettings else { return }
+            self.lastVisualConfidence = confidence
+            self.currentTargetPoint = point
+            self.trackingQuality = quality
+            self.currentTrackedTargetRect = self.normalizedRect(centeredAt: point, size: self.trackedTargetSize)
             if case .targetPlaced = self.aiSessionState {
                 self.evaluateAlignment(at: point)
             }
@@ -705,6 +686,8 @@ public final class CameraViewModel: ObservableObject {
     private func applyTrackingSensitivityToEngines() {
         SpatialTrackingEngine.shared.maxObservationJump = maxJumpPerFrame
         SpatialTrackingEngine.shared.opticalAcceptThreshold = confidenceAcceptThreshold
+        StreetSpatialTrackingEngine.shared.maxObservationJump = maxJumpPerFrame
+        StreetSpatialTrackingEngine.shared.opticalAcceptThreshold = confidenceAcceptThreshold
     }
 
     // MARK: - AI Session Control (One-Shot Trigger)
@@ -718,6 +701,7 @@ public final class CameraViewModel: ObservableObject {
 
         // Reset state
         SpatialTrackingEngine.shared.stopTracking()
+        StreetSpatialTrackingEngine.shared.stopTracking()
         visionEngine.stopTrackingObject()
         analysisFrames = []
         faceRectStabilizer.reset()
@@ -771,6 +755,7 @@ public final class CameraViewModel: ObservableObject {
         autoCaptureTask = nil
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
+        StreetSpatialTrackingEngine.shared.stopTracking()
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
         visionEngine.onFrameCapturedForAI = nil
@@ -1014,6 +999,7 @@ public final class CameraViewModel: ObservableObject {
         }
         // Nếu nằm giữa 20.0 và 30.0: giữ nguyên trạng thái trước đó
         SpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
+        StreetSpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
         CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
     }
 
@@ -1067,16 +1053,19 @@ public final class CameraViewModel: ObservableObject {
         trackingQuality = .locked
         hasExecutedAutoZoomForSession = false
 
-        let dx = pinPoint.x - 0.5
-        let dy = pinPoint.y - 0.5
-        alignmentDistance = sqrt(dx * dx + dy * dy)
+        alignmentDistance = TargetReticleGeometry.alignmentDistance(to: pinPoint)
 
         // Đồng bộ phân loại cảnh quan cho Dynamic EKF & Deformable Nature Tracking
         visionEngine.currentSceneType = self.detectedScene
         // Thông báo cho Vision engine: anchor low-texture (vật trắng/đơn sắc) -> siết ngưỡng re-ID
         visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
-        SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
-        SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
+        if isStreetTrackingModeEnabled {
+            SpatialTrackingEngine.shared.stopTracking()
+            StreetSpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
+        } else {
+            StreetSpatialTrackingEngine.shared.stopTracking()
+            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
+        }
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = pinPoint
@@ -1109,13 +1098,7 @@ public final class CameraViewModel: ObservableObject {
         trackedTargetSize = initialSize
         currentTrackedTargetRect = normalizedRect(centeredAt: pinPoint, size: initialSize)
 
-        // Tự động tinh chỉnh mỏ neo bằng Saliency & Human Pose/Face detection từ buffer hiện tại
-        visionEngine.startTrackingObject(
-            at: pinPoint,
-            size: initialSize,
-            refiningBuffer: frameProcessor.latestPixelBufferSnapshot(),
-            orientation: .up
-        )
+        visionEngine.startTrackingObject(at: pinPoint, size: initialSize)
 
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
         if !isAEAFLocked && (captureMode != .proVideo || proVideoService.isAutoFocus) {
@@ -1138,7 +1121,7 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
 
-    private func handleVisualTargetTracked(observation: TrackedTargetObservation?, pixelBuffer: CVPixelBuffer) {
+    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer) {
         // Tiếp nhận cập nhật cả trong alignmentPerfect (zoom reveal) để vòng vàng bám vật thể
         // xuyên suốt quá trình zoom — tránh nhảy vị trí khi zoom hoàn tất
         switch aiSessionState {
@@ -1147,6 +1130,7 @@ public final class CameraViewModel: ObservableObject {
         default:
             return
         }
+        lastVisualConfidence = confidence
         if shouldCheckTextureOnNextFrame, let target = currentTargetPoint ?? initialTargetPoint {
             shouldCheckTextureOnNextFrame = false
             let region = CGRect(x: max(0, target.x - 0.08), y: max(0, target.y - 0.08), width: 0.16, height: 0.16)
@@ -1154,21 +1138,27 @@ public final class CameraViewModel: ObservableObject {
             applyTextureVarianceHysteresis(variance: variance)
         }
 
-        if let observation {
-            let sizeAlpha: CGFloat = observation.isPredicted ? 0.08 : 0.22
-            trackedTargetSize = CGSize(
-                width: trackedTargetSize.width + (observation.boundingBox.width - trackedTargetSize.width) * sizeAlpha,
-                height: trackedTargetSize.height + (observation.boundingBox.height - trackedTargetSize.height) * sizeAlpha
+        if isStreetTrackingModeEnabled {
+            StreetSpatialTrackingEngine.shared.updateWithOpticalDetection(
+                point: point,
+                confidence: confidence,
+                pixelBuffer: pixelBuffer
             )
-            currentTrackedTargetRect = normalizedRect(centeredAt: observation.center, size: trackedTargetSize)
+        } else {
+            SpatialTrackingEngine.shared.updateWithOpticalDetection(
+                point: point,
+                confidence: confidence,
+                pixelBuffer: pixelBuffer
+            )
         }
+    }
 
-        // Chỉ gửi observation hợp lệ đã xác minh danh tính sang bộ lọc không gian.
-        SpatialTrackingEngine.shared.updateWithOpticalDetection(
-            point: observation?.center,
-            confidence: Double(observation?.confidence ?? 0),
-            pixelBuffer: pixelBuffer
-        )
+    public func toggleCameraPanel(_ panel: CameraOverlayPanel) {
+        activeCameraPanel = activeCameraPanel == panel ? .none : panel
+    }
+
+    public func dismissCameraPanels() {
+        activeCameraPanel = .none
     }
 
     private func normalizedRect(centeredAt center: CGPoint, size: CGSize) -> CGRect? {
@@ -1183,9 +1173,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func evaluateAlignment(at point: CGPoint) {
-        let dx = point.x - 0.5
-        let dy = point.y - 0.5
-        let dist = sqrt(dx * dx + dy * dy)
+        let dist = TargetReticleGeometry.alignmentDistance(to: point)
         self.alignmentDistance = dist
 
         // Haptic rung khi tiến gần tâm — nếu người dùng bật
@@ -1268,6 +1256,7 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.stopTrackingObject()
         // Dừng hẳn engine spatial — trước đây 60Hz gyro vẫn chạy nền sau khi chụp
         SpatialTrackingEngine.shared.stopTracking()
+        StreetSpatialTrackingEngine.shared.stopTracking()
         haptics.triggerShutterClick()
 
         withAnimation(.easeInOut(duration: 0.05)) { activeFlashMode2 = true }
@@ -1293,6 +1282,7 @@ public final class CameraViewModel: ObservableObject {
         currentZoom = deviceZoom
         cameraService.setZoomFactor(deviceZoom)
         SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
+        StreetSpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
     }
 
     /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
@@ -1308,6 +1298,7 @@ public final class CameraViewModel: ObservableObject {
             lastContinuousAppliedZoom = deviceZoom
             cameraService.setZoomFactor(deviceZoom)
             SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
+            StreetSpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
         }
     }
 
@@ -1320,6 +1311,7 @@ public final class CameraViewModel: ObservableObject {
         lastContinuousAppliedZoom = deviceZoom
         cameraService.setZoomFactor(deviceZoom)
         SpatialTrackingEngine.shared.updateZoomFactor(finalDisplayZoom)
+        StreetSpatialTrackingEngine.shared.updateZoomFactor(finalDisplayZoom)
         haptics.triggerSelectionChange()
     }
 
@@ -1331,6 +1323,7 @@ public final class CameraViewModel: ObservableObject {
         currentZoom = deviceZoom
         cameraService.smoothZoomFactor(to: deviceZoom, rate: 1.8)
         SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
+        StreetSpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
     }
 
     public func setExposure(_ bias: Float) {
@@ -1374,11 +1367,6 @@ public final class CameraViewModel: ObservableObject {
         @unknown default: activeFlashMode = .auto
         }
         cameraService.flashMode = activeFlashMode
-    }
-
-    public func selectRule(_ rule: CompositionRule) {
-        haptics.triggerSelectionChange()
-        withAnimation(.spring()) { activeCompositionRule = rule }
     }
 
     public func selectPreset(_ preset: FilmPreset) {
@@ -2078,5 +2066,6 @@ extension CameraViewModel: CameraServiceDelegate {
         self.currentZoom = zoom
         self.displayZoom = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
         SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
+        StreetSpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
     }
 }

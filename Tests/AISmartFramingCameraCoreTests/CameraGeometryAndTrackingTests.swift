@@ -40,6 +40,43 @@ final class CameraGeometryAndTrackingTests: XCTestCase {
         XCTAssertEqual(geometry.fittedSize(in: CGSize(width: CGFloat.nan, height: 100)), .zero)
     }
 
+    func testViewfinderFrameAlwaysRemainsCentered() {
+        let phoneSizes = [
+            CGSize(width: 320, height: 568),
+            CGSize(width: 390, height: 844),
+            CGSize(width: 430, height: 932)
+        ]
+
+        for ratio in [CGFloat(3.0 / 4.0), CGFloat(9.0 / 16.0)] {
+            let geometry = CameraPreviewGeometry(sourceAspectRatio: ratio)
+            for phoneSize in phoneSizes {
+                let baseline = geometry.centeredFrame(in: phoneSize)
+                XCTAssertEqual(baseline.midX, phoneSize.width / 2, accuracy: 0.000_01)
+                XCTAssertEqual(baseline.midY, phoneSize.height / 2, accuracy: 0.000_01)
+
+                // Overlay panels are intentionally absent from the geometry input.
+                for _ in 0..<4 {
+                    XCTAssertEqual(geometry.centeredFrame(in: phoneSize), baseline)
+                }
+            }
+        }
+    }
+
+    func testYellowTargetDoesNotCollapseIntoWhiteOpticalCenter() throws {
+        let tracked = CGPoint(x: 0.78, y: 0.31)
+        let output = try XCTUnwrap(TargetReticleGeometry.trackedPoint(tracked))
+
+        XCTAssertEqual(TargetReticleGeometry.opticalCenter, CGPoint(x: 0.5, y: 0.5))
+        XCTAssertEqual(output.x, tracked.x, accuracy: 0.000_01)
+        XCTAssertEqual(output.y, tracked.y, accuracy: 0.000_01)
+        XCTAssertEqual(
+            TargetReticleGeometry.alignmentDistance(to: tracked),
+            hypot(tracked.x - 0.5, tracked.y - 0.5),
+            accuracy: 0.000_01
+        )
+        XCTAssertGreaterThan(TargetReticleGeometry.alignmentDistance(to: tracked), 0.1)
+    }
+
     func testStabilizerReducesRMSJitter() throws {
         var stabilizer = DetectionRectStabilizer()
         let noise: [CGFloat] = [-0.010, 0.008, -0.006, 0.011, -0.009, 0.005, -0.004, 0.007, -0.008, 0.004]

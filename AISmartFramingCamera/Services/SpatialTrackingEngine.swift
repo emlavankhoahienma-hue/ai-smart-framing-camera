@@ -44,7 +44,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var outlierStreak: Int = 0
     
     // Giản luật chống nhảy đột biến
-    private var _maxObservationJump: CGFloat = 0.15
+    private var _maxObservationJump: CGFloat = 0.12
     public var maxObservationJump: CGFloat {
         get { stateLock.lock(); defer { stateLock.unlock() }; return _maxObservationJump }
         set { stateLock.lock(); _maxObservationJump = newValue; stateLock.unlock() }
@@ -56,9 +56,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     }
     
     // MARK: - Bộ Lọc 1-Euro Thích Nghi (Adaptive 1-Euro Filter)
-    // Tinh chỉnh thực tế hoàn hảo:
-    // - Khi đứng yên: MinCutoff 1.50Hz triệt tiêu 100% rung tay sinh học, mỏ neo đầm chắc
-    // - Khi lia máy: Beta 1.80 tăng tần số cắt mượt mà, bám dính tức thì mà không bị vọt lố hay giật nhảy
+    // Build 142 adaptive filter constants.
     private var filterXPrev: Double = 0.5
     private var filterYPrev: Double = 0.5
     private var filterDxPrev: Double = 0.0
@@ -66,21 +64,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var filterLastTime: CFTimeInterval = 0.0
     private var filterInitialized: Bool = false
     
-    private var _isStreetMode: Bool = false
-    public var isStreetMode: Bool {
-        get { stateLock.lock(); defer { stateLock.unlock() }; return _isStreetMode }
-        set { stateLock.lock(); _isStreetMode = newValue; stateLock.unlock() }
-    }
-    
-    private var effectiveMinCutoff: Double {
-        return _isStreetMode ? 2.00 : 1.50
-    }
-    
-    private var effectiveBeta: Double {
-        return _isStreetMode ? 2.40 : 1.80
-    }
-    
-    private let oneEuroDCutoff: Double = 1.20
+    private let oneEuroMinCutoff: Double = 1.2
+    private let oneEuroBeta: Double = 1.0
+    private let oneEuroDCutoff: Double = 1.0
     
     // Hệ số FOV camera chuẩn hóa (~65 độ FOV trên ống kính Wide iPhone)
     private let sensitivityFactor: Double = 0.88
@@ -168,8 +154,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // - Panning sang TRÁI -> rotationRate.y < 0 -> Khung cảnh dịch sang PHẢI -> dx > 0
             // - Tilting ngửa LÊN (hướng về mục tiêu phía trên) -> rotationRate.x < 0 -> Khung cảnh dịch xuống DƯỚI -> dy > 0 (hội tụ về tâm 0.5)
             // - Tilting cúi XUỐNG -> rotationRate.x > 0 -> Khung cảnh dịch lên TRÊN -> dy < 0
-            let scaleX = 0.90 * zoomScale
-            let scaleY = 0.90 * zoomScale
+            let scaleX = 0.85 * zoomScale
+            let scaleY = 0.95 * zoomScale
             
             let rateY = motion.rotationRate.y
             let rateX = motion.rotationRate.x
@@ -192,17 +178,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             self.stateLock.lock()
             self.deadReckoningFrameCount += 1
             
-            // Bù trừ vận tốc quán tính của chính chủ thể trong 0.12s - 0.45s đầu khi quang học vừa mất dấu
-            var optDx: Double = 0.0
-            var optDy: Double = 0.0
-            if timeSinceOptical < 0.45 {
-                let decay = max(0.0, 1.0 - (timeSinceOptical - 0.12) / 0.33)
-                optDx = self.velocityX * dt * decay
-                optDy = self.velocityY * dt * decay
-            }
-            
-            self.stateX = min(0.98, max(0.02, self.stateX + dx + optDx))
-            self.stateY = min(0.98, max(0.02, self.stateY + dy + optDy))
+            self.stateX = min(0.98, max(0.02, self.stateX + dx))
+            self.stateY = min(0.98, max(0.02, self.stateY + dy))
             let count = self.deadReckoningFrameCount
             let lastConf = self.lastOpticalConfidence
             let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
@@ -214,16 +191,16 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // - Sau > 4.0s (240 ticks) mất dấu hoàn toàn: Mới chuyển sang .lost ("Chạm để đặt lại mục tiêu")
             let decayedConf: Double
             let quality: TrackingQuality
-            if count > 240 {
+            if count > 90 {
                 decayedConf = 0.15
                 quality = .lost
-            } else if count > 90 {
-                let decayFactor = pow(0.97, Double(count - 90))
-                decayedConf = max(0.25, 0.45 * decayFactor)
-                quality = .reacquiring
-            } else {
-                decayedConf = max(0.40, lastConf)
+            } else if count > 30 {
+                let decayFactor = pow(0.96, Double(count - 30))
+                decayedConf = max(0.20, 0.40 * decayFactor)
                 quality = .predicting
+            } else {
+                decayedConf = max(0.35, lastConf)
+                quality = .reacquiring
             }
             
             DispatchQueue.main.async {
@@ -268,8 +245,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             self.deadReckoningFrameCount = 0
             
             // CHỐNG OBSERVATION ĐỘT BIẾN (tracker trôi / re-ID sai / homography lỗi):
-            // kẹp trong bán kính maxObservationJump; nếu lệch liên tục 6 frame ->
-            // hòa trộn mượt mà sang vị trí mới, TUYỆT ĐỐI KHÔNG reset filterInitialized (gây giật nhảy màn hình).
+            // Build 142: six consecutive large observations indicate a real reacquisition.
             var rawObsX = Double(visualPoint.x)
             var rawObsY = Double(visualPoint.y)
             let jump = hypot(rawObsX - self.stateX, rawObsY - self.stateY)
@@ -277,11 +253,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 self.outlierStreak += 1
                 if self.outlierStreak >= 6 {
                     self.outlierStreak = 0
-                    // Hòa trộn mềm 40% để target lướt êm ái sang điểm mới mà không bị giật nảy
-                    self.filterXPrev = self.filterXPrev * 0.6 + rawObsX * 0.4
-                    self.filterYPrev = self.filterYPrev * 0.6 + rawObsY * 0.4
-                    self.filterDxPrev = 0.0
-                    self.filterDyPrev = 0.0
+                    self.filterInitialized = false
                 } else {
                     let k = Double(observationJumpLimit) / jump
                     rawObsX = self.stateX + (rawObsX - self.stateX) * k
@@ -359,11 +331,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         // - Khi đứng yên: speed nhỏ -> cutoff gần minCutoff (1.2Hz) -> triệt rung tay
         // - Khi di chuyển tâm trắng đến target: speed tăng -> cutoff tăng tức thì -> target bám dính mượt mà
         let speed = hypot(dxHat, dyHat)
-        let adaptiveCutoff = effectiveMinCutoff + effectiveBeta * speed
-        
-        // Lưu lại vận tốc quang học tức thời (screen units / sec) phục vụ chuyển pha mượt
-        self.velocityX = dxHat
-        self.velocityY = dyHat
+        let adaptiveCutoff = oneEuroMinCutoff + oneEuroBeta * speed
         
         // 3. Lọc mượt tọa độ
         let aPos = alpha(rate: rate, cutoff: adaptiveCutoff)

@@ -4,8 +4,11 @@ public struct ProVideoManualControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var proService = ProVideoManualControlsService.shared
 
-    @State private var isCollapsed: Bool = true
     private let haptic = UISelectionFeedbackGenerator()
+
+    private var isCollapsed: Bool {
+        viewModel.activeCameraPanel != .proControls
+    }
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -59,32 +62,13 @@ public struct ProVideoManualControlsView: View {
                     isAuto: proService.isAutoFocus
                 )
 
-                // Focus Peaking Toggle Quick Button
-                Button(action: {
-                    viewModel.isFocusPeakingEnabled.toggle()
-                    haptic.selectionChanged()
-                }) {
-                    HStack(spacing: 3) {
-                        Circle()
-                            .fill(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor : Color.gray.opacity(0.6))
-                            .frame(width: 6, height: 6)
-                        Text("PEAK")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor : .white.opacity(0.8))
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
-                    .background(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor.opacity(0.22) : Color.white.opacity(0.08))
-                    .clipShape(Capsule())
-                }
-                .accessibilityLabel("Bật tắt Focus Peaking báo nét")
                     }
                 }
 
                 // Collapse / Expand Toggle Button
                 Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isCollapsed.toggle()
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        viewModel.toggleCameraPanel(.proControls)
                     }
                     haptic.selectionChanged()
                 }) {
@@ -98,7 +82,7 @@ public struct ProVideoManualControlsView: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.black.opacity(0.75))
+                    .fill(Color(red: 0.075, green: 0.075, blue: 0.085))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
                             .stroke(Color.white.opacity(0.15), lineWidth: 1)
@@ -127,7 +111,7 @@ public struct ProVideoManualControlsView: View {
                 .frame(maxHeight: 148)
                 .background(
                     RoundedRectangle(cornerRadius: 18)
-                        .fill(Color.black.opacity(0.82))
+                        .fill(Color(red: 0.075, green: 0.075, blue: 0.085))
                         .overlay(
                             RoundedRectangle(cornerRadius: 18)
                                 .stroke(Color.yellow.opacity(0.35), lineWidth: 1)
@@ -148,7 +132,7 @@ public struct ProVideoManualControlsView: View {
         return Button(action: {
             withAnimation(.easeInOut(duration: 0.2)) {
                 viewModel.selectedProTab = tab
-                if isCollapsed { isCollapsed = false }
+                viewModel.activeCameraPanel = .proControls
             }
             haptic.selectionChanged()
         }) {

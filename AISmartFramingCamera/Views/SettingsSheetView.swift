@@ -330,51 +330,6 @@ private struct PeakingColorCircleButton: View {
     }
 }
 
-// MARK: - Sub-component: Composition Rule Card
-private struct CompositionRuleCard: View {
-    let rule: CompositionRule
-    let isSelected: Bool
-    let onSelect: () -> Void
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 5) {
-                Image(systemName: rule.iconName)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.65))
-                    .frame(width: 16)
-
-                Text(rule.displayNameVietnamese)
-                    .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
-                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.80))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-
-                Spacer(minLength: 2)
-
-                if isSelected {
-                    Circle()
-                        .fill(amberGold)
-                        .frame(width: 5, height: 5)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8.5)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 11)
-                    .fill(isSelected ? amberGold.opacity(0.14) : Color(red: 0.05, green: 0.05, blue: 0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 11)
-                    .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
 // MARK: - Sub-component: Sensitivity Pill
 private struct SensitivityPill: View {
     let preset: TrackingSensitivityPreset
@@ -582,25 +537,6 @@ struct PhotoCaptureSettingsSection: View {
                     isOn: $viewModel.showDetectionBoxes
                 )
 
-                Divider().background(Color.white.opacity(0.07))
-
-                SettingsToggleRow(
-                    title: "Thanh thông số & Biểu đồ HUD",
-                    subtitle: "Hiển thị Shutter, ISO, Định dạng và Histogram trên màn hình chính",
-                    icon: "chart.bar.fill",
-                    isOn: $viewModel.showHistogramInViewfinder
-                )
-
-                if viewModel.showHistogramInViewfinder {
-                    Divider().background(Color.white.opacity(0.07))
-
-                    SettingsToggleRow(
-                        title: "Mở rộng 32 cột màu báo cháy sáng",
-                        subtitle: "Hiển thị dải quang phổ RGB và cảnh báo clipping ở vùng sáng",
-                        icon: "waveform.path.ecg",
-                        isOn: $viewModel.isHistogramBarExpanded
-                    )
-                }
             }
         }
     }
@@ -677,39 +613,15 @@ struct AIFramingSettingsSection: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            compositionRulesCard
+            aiTrackingCard
             aiCloudCard
         }
     }
 
     @ViewBuilder
-    private var compositionRulesCard: some View {
-        SettingsSectionCard(title: "QUY TẮC BỐ CỤC THÔNG MINH", icon: "wand.and.stars") {
+    private var aiTrackingCard: some View {
+        SettingsSectionCard(title: "AI TRACKING", icon: "scope") {
             VStack(spacing: 12) {
-                // Visual Composition Cards Grid
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("QUY TẮC BỐ CỤC MẶC ĐỊNH:")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.50))
-
-                    LazyVGrid(columns: [GridItem(.flexible(minimum: 80, maximum: .infinity), spacing: 8), GridItem(.flexible(minimum: 80, maximum: .infinity), spacing: 8)], spacing: 8) {
-                        ForEach(CompositionRule.allCases) { rule in
-                            CompositionRuleCard(
-                                rule: rule,
-                                isSelected: viewModel.activeCompositionRule == rule,
-                                onSelect: {
-                                    UISelectionFeedbackGenerator().selectionChanged()
-                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                                        viewModel.activeCompositionRule = rule
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-
-                Divider().background(Color.white.opacity(0.07))
-
                 SettingsToggleRow(
                     title: "Tự động zoom theo chủ thể",
                     subtitle: "Tự điều chỉnh độ phóng đại camera để đạt tỷ lệ bố cục chuẩn nhất",
