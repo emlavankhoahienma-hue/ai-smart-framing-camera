@@ -27,7 +27,7 @@ public struct LiveColorHistogramHUDView: View {
         .onAppear {
             initializeHeights()
         }
-        .onChange(of: viewModel.histogramBars) { _, newBars in
+        .onChange(of: viewModel.histogramBars) { newBars in
             handleHistogramUpdate(newBars)
         }
         .accessibilityElement(children: .contain)
@@ -208,14 +208,14 @@ public struct LiveColorHistogramHUDView: View {
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentTransition(.numericText())
-                .animation(.smooth(duration: 0.22), value: viewModel.liveISO)
+                .animation(.easeInOut(duration: 0.22), value: viewModel.liveISO)
 
             Text(formattedExposure)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .contentTransition(.numericText())
-                .animation(.smooth(duration: 0.22), value: viewModel.exposureBias)
+                .animation(.easeInOut(duration: 0.22), value: viewModel.exposureBias)
 
             Button(action: toggleActiveFormat) {
                 Text(activeFormatTitle)
