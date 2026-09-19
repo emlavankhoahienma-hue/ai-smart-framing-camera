@@ -198,20 +198,7 @@ struct TopCameraBar: View {
                 )
                 .accessibilityLabel("Mở bộ màu film điện ảnh")
 
-                // 3. Composition Rule Quick Viewfinder Sheet
-                Button(action: {
-                    viewModel.isCompositionRuleSheetPresented = true
-                }) {
-                    Image(systemName: "viewfinder")
-                        .font(.system(size: 15, weight: .medium))
-                        .frame(width: 40, height: 40)
-                }
-                .luxuryGoldInteractive(
-                    baseColor: viewModel.isCompositionRuleSheetPresented ? amberGold : Color.white.opacity(0.72)
-                )
-                .accessibilityLabel("Quy tắc bố cục camera")
-
-                // 4. Settings Sheet Button (9-Dot Grid Icon matching Reference)
+                // 3. Settings Sheet Button (9-Dot Grid Icon matching Reference)
                 Button(action: {
                     viewModel.isShowingSettings = true
                 }) {
