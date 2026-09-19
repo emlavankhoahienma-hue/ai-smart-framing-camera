@@ -709,6 +709,7 @@ public final class CameraViewModel: ObservableObject {
         initialTargetPoint = nil
         currentTargetPoint = nil
         currentTrackedTargetRect = nil
+        lastVisualConfidence = 0
         trackingQuality = .locked
         isOneShotCaptured = false
         isPerfectAlignment = false
@@ -766,6 +767,7 @@ public final class CameraViewModel: ObservableObject {
             initialTargetPoint = nil
             currentTargetPoint = nil
             currentTrackedTargetRect = nil
+            lastVisualConfidence = 0
             isOneShotCaptured = false
             isPerfectAlignment = false
             alignmentDistance = 1.0
@@ -984,6 +986,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // MARK: - State for Hybrid Optical + Spatial Tracking
+    @Published public var lastVisualConfidence: Double = 0
     private var initialPhysicalSubjectCenter: CGPoint? = nil
     private var shouldCheckTextureOnNextFrame: Bool = false
 
@@ -1050,6 +1053,7 @@ public final class CameraViewModel: ObservableObject {
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
+        lastVisualConfidence = 1.0
         trackingQuality = .locked
         hasExecutedAutoZoomForSession = false
 
@@ -1173,6 +1177,8 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func evaluateAlignment(at point: CGPoint) {
+        let dx = point.x - TargetReticleGeometry.opticalCenter.x
+        let dy = point.y - TargetReticleGeometry.opticalCenter.y
         let dist = TargetReticleGeometry.alignmentDistance(to: point)
         self.alignmentDistance = dist
 
