@@ -1110,12 +1110,10 @@ public final class CameraViewModel: ObservableObject {
         }
         // Nếu nằm giữa 20.0 và 30.0: giữ nguyên trạng thái trước đó
         SpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
-        visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
-        CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (mở rộng vùng Vision): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
+        CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
     }
 
     private func computeTextureVariance(pixelBuffer: CVPixelBuffer, normalizedRect: CGRect) -> Double {
-        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA else { return 1000 }
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 1000 }
@@ -1169,13 +1167,13 @@ public final class CameraViewModel: ObservableObject {
         let dy = pinPoint.y - 0.5
         alignmentDistance = sqrt(dx * dx + dy * dy)
 
-        // Đồng bộ phân loại cảnh quan cho Vision-first tracker & Deformable Nature Tracking
+        // Đồng bộ phân loại cảnh quan cho Dynamic EKF & Deformable Nature Tracking
         visionEngine.currentSceneType = self.detectedScene
         // Thông báo cho Vision engine: anchor low-texture (vật trắng/đơn sắc) -> siết ngưỡng re-ID
         visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
         SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
         SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
-        SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: displayZoom)
+        SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = target

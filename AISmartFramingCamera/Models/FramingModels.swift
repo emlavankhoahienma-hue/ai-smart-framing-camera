@@ -161,7 +161,7 @@ public enum AISessionState: Equatable {
 }
 
 // MARK: - Tracking Quality State Machine (Hybrid Optical + Gyro State)
-public enum TrackingQuality: Equatable, Sendable {
+public enum TrackingQuality: Equatable {
     case locked        // đang bám tốt bằng optical tracking
     case predicting     // vừa mất optical, đang ngoại suy bằng vận tốc + gyro
     case reacquiring     // mất lâu hơn, đang cố tìm lại / giữ vị trí cuối
@@ -305,7 +305,7 @@ public struct AIVideoDirectorGuidance: Equatable {
 
 
 // MARK: - Smart Autofocus Target Type
-public enum SmartFocusType: Equatable, Sendable {
+public enum SmartFocusType: Equatable {
     case face
     case salientObject
     case center
@@ -730,7 +730,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
 }
 
 // MARK: - Subject AI Data Model
-public struct SubjectDetectionResult: Sendable {
+public struct SubjectDetectionResult {
     public var faceRectangles: [CGRect] = []
     public var humanBodyPoses: [CGPoint] = []
     public var saliencyPoints: [CGPoint] = []

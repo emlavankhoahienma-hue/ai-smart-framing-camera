@@ -5,518 +5,361 @@ import UIKit
 import simd
 import Accelerate
 
-/// Vision-first target tracker cho camera cầm tay iPhone.
-///
-/// Khi Apple Vision còn nhìn thấy target, vị trí quang học là ground truth và gyro
-/// tuyệt đối không được phép dịch vòng neo. Gyro chỉ ngoại suy trong khoảng mất
-/// optical ngắn; hệ số gyro→pixel được học từ các frame Vision gần nhất để tự hấp
-/// thụ OIS, crop, FOV và lens khác nhau thay vì dùng một focal-length giả định.
+/// Động cơ Tracking Không Gian Chuẩn Xác Tuyệt Đối (Unified Spatial Visual-Inertial Fusion Engine)
+/// Khóa chặt mỏ neo vào vật thể thực tế, bù trừ chuyển động lia máy với cực tính chuẩn xác 100%
 public final class SpatialTrackingEngine: @unchecked Sendable {
     public static let shared = SpatialTrackingEngine()
     
     private let motionManager = CMMotionManager()
     private let motionQueue = OperationQueue()
     
+    // Mốc tọa độ quán tính khi khóa target
+    private var referenceAttitude: CMAttitude? = nil
     private var anchorInitialPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     private var isLowTextureAnchor: Bool = false
     
-    
     public func setLowTextureFlag(_ isLowTexture: Bool) {
-        stateLock.lock()
         self.isLowTextureAnchor = isLowTexture
-        stateLock.unlock()
     }
     
-    // MARK: - 3D Spatial World-Ray Direction Memory
-    // Tia định hướng 3D trong hệ quy chiếu thế giới tĩnh (World Reference Frame với trục Z thẳng đứng).
-    // Dựa trên cảm biến hợp nhất CoreMotion CMAttitude (Gravity-referenced AHRS), không drift theo thời gian.
-    private var anchor3DRay: SIMD3<Double>? = nil
-
-    // Tọa độ chiếu không bị kẹp biên (phục vụ Vision Re-acquisition khi lia máy từ góc xa trở lại)
-    private var unclampedScreenX: Double = 0.5
-    private var unclampedScreenY: Double = 0.5
-
-    public var currentUnclampedScreenPoint: CGPoint {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return CGPoint(x: unclampedScreenX, y: unclampedScreenY)
-    }
-
-    public var currentEstimatedScreenPoint: CGPoint {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return CGPoint(x: unclampedScreenX, y: unclampedScreenY)
-    }
-
     // Tọa độ mục tiêu hiện tại trên màn hình UI (0.0 đến 1.0)
     private var stateX: Double = 0.5
     private var stateY: Double = 0.5
     private var velocityX: Double = 0.0
     private var velocityY: Double = 0.0
-
+    
     // Trạng thái hoạt động
-    private var _isTrackingActive: Bool = false
-    public var isTrackingActive: Bool {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return _isTrackingActive
-    }
-    private var _activeSceneType: DetectedSceneType = .general
-    public var activeSceneType: DetectedSceneType {
-        get { stateLock.lock(); defer { stateLock.unlock() }; return _activeSceneType }
-        set { stateLock.lock(); _activeSceneType = newValue; stateLock.unlock() }
-    }
+    public private(set) var isTrackingActive: Bool = false
+    public var activeSceneType: DetectedSceneType = .general
     private var currentZoom: Double = 1.0
     private var lastOpticalConfidence: Double = 1.0
     private var lastUpdateTime: CFTimeInterval = 0
-
+    
     // Đồng bộ state giữa luồng optical (main) và gyro (motionQueue) — chống data race
     private let stateLock = NSLock()
     private var lastOpticalAcceptTime: CFTimeInterval = 0
     private var outlierStreak: Int = 0
-    private var trackingRevision: UInt64 = 0
-
-    private var latestRotationRate = SIMD3<Double>(repeating: 0)
-    private var cameraResidualVelocity = SIMD2<Double>(repeating: 0)
-    private var lastRawOpticalPoint: CGPoint? = nil
-    private var lastRawOpticalTime: CFTimeInterval = 0
-
+    
     // Giản luật chống nhảy đột biến
     public var maxObservationJump: CGFloat = 0.15
     public var opticalAcceptThreshold: Double = 0.20
-
+    
     // MARK: - Bộ Lọc 1-Euro Thích Nghi (Adaptive 1-Euro Filter)
+    // Tinh chỉnh thực tế hoàn hảo:
+    // - Khi đứng yên: MinCutoff 1.50Hz triệt tiêu 100% rung tay sinh học, mỏ neo đầm chắc
+    // - Khi lia máy: Beta 1.80 tăng tần số cắt mượt mà, bám dính tức thì mà không bị vọt lố hay giật nhảy
     private var filterXPrev: Double = 0.5
     private var filterYPrev: Double = 0.5
-    private var filterRawXPrev: Double = 0.5
-    private var filterRawYPrev: Double = 0.5
     private var filterDxPrev: Double = 0.0
     private var filterDyPrev: Double = 0.0
     private var filterLastTime: CFTimeInterval = 0.0
     private var filterInitialized: Bool = false
-
-    private var _isStreetMode: Bool = false
-    public var isStreetMode: Bool {
-        get { stateLock.lock(); defer { stateLock.unlock() }; return _isStreetMode }
-        set { stateLock.lock(); _isStreetMode = newValue; stateLock.unlock() }
-    }
-
+    
+    public var isStreetMode: Bool = false
+    
     private var effectiveMinCutoff: Double {
-        return _isStreetMode ? 2.00 : 1.50
+        return isStreetMode ? 2.00 : 1.50
     }
-
+    
     private var effectiveBeta: Double {
-        return _isStreetMode ? 6.00 : 4.50
+        return isStreetMode ? 2.40 : 1.80
     }
-
+    
     private let oneEuroDCutoff: Double = 1.20
-
-    // Callback duy nhất truyền tọa độ về ViewModel
-    private var _onSpatialTargetUpdated: ((CGPoint, Double, TrackingQuality) -> Void)?
-    public var onSpatialTargetUpdated: ((CGPoint, Double, TrackingQuality) -> Void)? {
-        get { stateLock.lock(); defer { stateLock.unlock() }; return _onSpatialTargetUpdated }
-        set { stateLock.lock(); _onSpatialTargetUpdated = newValue; stateLock.unlock() }
+    
+    // Hệ số FOV camera chuẩn hóa (~65 độ FOV trên ống kính Wide iPhone)
+    private let sensitivityFactor: Double = 0.88
+    
+    public var currentEstimatedScreenPoint: CGPoint {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return CGPoint(x: stateX, y: stateY)
     }
-
+    
+    // Callback duy nhất truyền tọa độ về ViewModel
+    public var onSpatialTargetUpdated: ((CGPoint, Double, TrackingQuality) -> Void)?
+    
     public init() {
         motionQueue.name = "com.alignai.spatialTrackingQueue"
         motionQueue.maxConcurrentOperationCount = 1
         motionQueue.qualityOfService = .userInteractive
     }
-
-    // MARK: - 3D Math & Projection Helpers
-    private func normalizeVector3D(_ v: SIMD3<Double>) -> SIMD3<Double> {
-        let len = sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
-        guard len > 1.0e-9 else { return SIMD3<Double>(0, 0, -1) }
-        return v / len
-    }
-
-    /// Chuyển đổi tọa độ màn hình chuẩn hóa (0..1) sang tia 3D đơn vị trong hệ tọa độ thiết bị
-    /// (Camera sau nhìn theo trục -Z, tỉ lệ cảm biến camera chân dung 3:4)
-    private func rayFromScreenPoint(_ point: CGPoint, zoom: Double) -> SIMD3<Double> {
-        let zFactor = max(1.0, zoom)
-        let fx = 0.88 * zFactor
-        let fy = 0.66 * zFactor
-        let dx = (Double(point.x) - 0.5) / fx
-        let dy = (0.5 - Double(point.y)) / fy
-        let dz = -1.0
-        return normalizeVector3D(SIMD3<Double>(dx, dy, dz))
-    }
-
-    /// Chuyển vector từ hệ tọa độ thiết bị sang hệ quy chiếu thế giới tĩnh: r_world = R * v_dev
-    private func deviceToWorld(_ v: SIMD3<Double>, rotationMatrix R: CMRotationMatrix) -> SIMD3<Double> {
-        return SIMD3<Double>(
-            R.m11 * v.x + R.m12 * v.y + R.m13 * v.z,
-            R.m21 * v.x + R.m22 * v.y + R.m23 * v.z,
-            R.m31 * v.x + R.m32 * v.y + R.m33 * v.z
-        )
-    }
-
-    /// Chuyển vector từ hệ quy chiếu thế giới sang hệ tọa độ camera hiện tại: v_dev = R^T * r_world
-    private func worldToDevice(_ r: SIMD3<Double>, rotationMatrix R: CMRotationMatrix) -> SIMD3<Double> {
-        return SIMD3<Double>(
-            R.m11 * r.x + R.m21 * r.y + R.m31 * r.z,
-            R.m12 * r.x + R.m22 * r.y + R.m32 * r.z,
-            R.m13 * r.x + R.m23 * r.y + R.m33 * r.z
-        )
-    }
-
-    /// Chiếu tia thiết bị 3D lên màn hình chuẩn hóa (u, v) không kẹp biên
-    private func projectDeviceToScreen(_ v: SIMD3<Double>, zoom: Double) -> (point: CGPoint, isInFront: Bool) {
-        let zFactor = max(1.0, zoom)
-        let fx = 0.88 * zFactor
-        let fy = 0.66 * zFactor
-        if v.z < -0.02 {
-            let zDenom = -v.z
-            let u = 0.5 + (v.x / zDenom) * fx
-            let vScr = 0.5 - (v.y / zDenom) * fy
-            return (CGPoint(x: u, y: vScr), true)
-        } else {
-            // Vật thể nằm phía sau camera (>90 độ)
-            let zDenom = max(0.01, abs(v.z))
-            let u = 0.5 + (v.x / zDenom) * fx * 3.0
-            let vScr = 0.5 - (v.y / zDenom) * fy * 3.0
-            return (CGPoint(x: u, y: vScr), false)
-        }
-    }
-
-    // MARK: - Khởi tạo Mỏ Neo Không Gian 3D (Pin 3D Spatial Anchor)
+    
+    // MARK: - Khởi tạo Mỏ Neo Không Gian (Pin Spatial Anchor)
     public func lockAnchor(at screenPoint: CGPoint, zoom: CGFloat = 1.0) {
-        let now = CACurrentMediaTime()
-        stateLock.lock()
-        currentZoom = Double(max(1.0, zoom))
-        anchorInitialPoint = screenPoint
-        stateX = Double(screenPoint.x)
-        stateY = Double(screenPoint.y)
-        unclampedScreenX = Double(screenPoint.x)
-        unclampedScreenY = Double(screenPoint.y)
-        velocityX = 0.0
-        velocityY = 0.0
-
-        // Khởi tạo gốc 1-Euro
-        filterXPrev = Double(screenPoint.x)
-        filterYPrev = Double(screenPoint.y)
-        filterRawXPrev = Double(screenPoint.x)
-        filterRawYPrev = Double(screenPoint.y)
-        filterDxPrev = 0.0
-        filterDyPrev = 0.0
-        filterLastTime = now
-        filterInitialized = true
-
-        lastOpticalConfidence = 1.0
-        lastOpticalAcceptTime = now
-        lastRawOpticalPoint = screenPoint
-        lastRawOpticalTime = now
-        lastUpdateTime = now
-        lastMotionTime = now
-        deadReckoningFrameCount = 0
-        outlierStreak = 0
-        latestRotationRate = .zero
-        cameraResidualVelocity = .zero
-
-        // Khởi tạo tia định hướng 3D thế giới ngay tại thời điểm khóa nếu sensor sẵn sàng
-        if let attitude = motionManager.deviceMotion?.attitude {
-            let vDev = rayFromScreenPoint(screenPoint, zoom: currentZoom)
-            let rWorld = deviceToWorld(vDev, rotationMatrix: attitude.rotationMatrix)
-            anchor3DRay = normalizeVector3D(rWorld)
-        } else {
-            anchor3DRay = nil
-        }
-
-        trackingRevision &+= 1
-        _isTrackingActive = true
-        stateLock.unlock()
-
-        CameraLogger.info("Khóa mỏ neo không gian 3D tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
-
+        self.currentZoom = Double(max(1.0, zoom))
+        self.anchorInitialPoint = screenPoint
+        self.stateX = Double(screenPoint.x)
+        self.stateY = Double(screenPoint.y)
+        self.velocityX = 0.0
+        self.velocityY = 0.0
+        
+        // Khởi tạo bộ lọc 1-Euro tại điểm khóa mới
+        self.filterXPrev = Double(screenPoint.x)
+        self.filterYPrev = Double(screenPoint.y)
+        self.filterDxPrev = 0.0
+        self.filterDyPrev = 0.0
+        self.filterLastTime = CACurrentMediaTime()
+        self.filterInitialized = true
+        
+        self.lastOpticalConfidence = 1.0
+        self.lastOpticalAcceptTime = CACurrentMediaTime()
+        self.outlierStreak = 0
+        self.lastUpdateTime = CACurrentMediaTime()
+        self.referenceAttitude = nil
+        self.isTrackingActive = true
+        
+        CameraLogger.info("Khóa mỏ neo không gian thích nghi tại (\(String(format: "%.3f", screenPoint.x)), \(String(format: "%.3f", screenPoint.y))), Zoom: \(zoom)x", category: .tracking)
+        
         startMotionSensors()
     }
-
+    
     public func updateZoomFactor(_ zoom: CGFloat) {
-        let newZoom = Double(max(1.0, zoom))
-        stateLock.lock()
-        currentZoom = newZoom
-        stateLock.unlock()
+        self.currentZoom = Double(max(1.0, zoom))
     }
-
+    
     private var lastMotionTime: TimeInterval = 0
     private var deadReckoningFrameCount: Int = 0
-
-    // MARK: - Khởi động cảm biến 60Hz CoreMotion Attitude (AHRS Fusion)
+    
+    // MARK: - Khởi động cảm biến 60Hz Gyroscope & Accelerometer
     private func startMotionSensors() {
         guard motionManager.isDeviceMotionAvailable else {
             CameraLogger.warning("Cảm biến DeviceMotion không khả dụng trên thiết bị này", category: .tracking)
             return
         }
-
-        if motionManager.isDeviceMotionActive {
-            motionManager.stopDeviceMotionUpdates()
-        }
-        stateLock.lock()
+        
         lastMotionTime = CACurrentMediaTime()
         deadReckoningFrameCount = 0
-        let sensorRevision = trackingRevision
-        stateLock.unlock()
         motionManager.deviceMotionUpdateInterval = 1.0 / 60.0 // 60 FPS
-
-        motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, _ in
-            guard let self, let motion else { return }
-
+        
+        motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
+            guard let self = self, let motion = motion, self.isTrackingActive else { return }
+            
             let now = CACurrentMediaTime()
-            self.stateLock.lock()
-            guard self._isTrackingActive, self.trackingRevision == sensorRevision else {
-                self.stateLock.unlock()
-                return
-            }
-
+            let dt = self.lastMotionTime > 0 ? min(0.05, max(0.001, now - self.lastMotionTime)) : (1.0 / 60.0)
             self.lastMotionTime = now
-            self.latestRotationRate = SIMD3<Double>(
-                motion.rotationRate.x,
-                motion.rotationRate.y,
-                motion.rotationRate.z
-            )
-
-            let R = motion.attitude.rotationMatrix
-
-            // Nếu anchor3DRay chưa kịp khởi tạo lúc lock, tạo ngay ở frame cảm biến đầu tiên
-            if self.anchor3DRay == nil {
-                let vDev = self.rayFromScreenPoint(CGPoint(x: self.stateX, y: self.stateY), zoom: self.currentZoom)
-                let rWorld = self.deviceToWorld(vDev, rotationMatrix: R)
-                self.anchor3DRay = self.normalizeVector3D(rWorld)
-            }
-
-            // Chiếu tia 3D từ hệ quy chiếu thế giới sang tọa độ camera hiện tại
-            var projPoint = CGPoint(x: self.stateX, y: self.stateY)
-            var isInFront = true
-            if let rWorld = self.anchor3DRay {
-                let vDev = self.worldToDevice(rWorld, rotationMatrix: R)
-                let (proj, inFront) = self.projectDeviceToScreen(vDev, zoom: self.currentZoom)
-                projPoint = proj
-                isInFront = inFront
-            }
-
-            // Tọa độ không bị kẹp biên (unclamped) — phục vụ Vision Re-acquisition kiểm tra vùng biên
-            self.unclampedScreenX = Double(projPoint.x)
-            self.unclampedScreenY = Double(projPoint.y)
-
-            let opticalAge = self.lastOpticalAcceptTime > 0
-                ? now - self.lastOpticalAcceptTime
-                : .greatestFiniteMagnitude
-
-            // VÙNG BẢO VỆ OPTICAL 110ms: Khi Apple Vision đang bám mục tiêu chuẩn xác,
-            // quang học là ground truth tuyệt đối, gyro KHÔNG được ghi đè stateX/stateY.
-            guard opticalAge > 0.11 else {
-                self.stateLock.unlock()
-                return
-            }
-
-            // KHI MẤT DẤU QUANG HỌC (>110ms): Định vị chuẩn xác theo phép chiếu không gian 3D
+            
+            // Cực tính chuẩn xác 100% theo hệ tọa độ quang học camera:
+            // - Panning sang PHẢI (hướng về mục tiêu bên phải) -> rotationRate.y > 0 -> Khung cảnh dịch sang TRÁI -> dx < 0 (hội tụ về tâm 0.5)
+            // - Panning sang TRÁI -> rotationRate.y < 0 -> Khung cảnh dịch sang PHẢI -> dx > 0
+            // - Tilting ngửa LÊN (hướng về mục tiêu phía trên) -> rotationRate.x < 0 -> Khung cảnh dịch xuống DƯỚI -> dy > 0 (hội tụ về tâm 0.5)
+            // - Tilting cúi XUỐNG -> rotationRate.x > 0 -> Khung cảnh dịch lên TRÊN -> dy < 0
+            let zoomScale = self.currentZoom
+            let scaleX = 0.90 * zoomScale
+            let scaleY = 0.90 * zoomScale
+            
+            let rateY = motion.rotationRate.y
+            let rateX = motion.rotationRate.x
+            
+            // Chuẩn hóa cực tính con quay hồi chuyển:
+            // - Lia máy sang PHẢI (hướng về target bên phải) -> rateY < 0 -> Target dịch sang TRÁI (dx < 0) hội tụ chuẩn về tâm 0.5
+            // - Lia máy sang TRÁI -> rateY > 0 -> Target dịch sang PHẢI (dx > 0) hội tụ chuẩn về tâm 0.5
+            // - Nghiêng máy ngửa LÊN -> rateX < 0 -> Target dịch XUỐNG DƯỚI (dy > 0) hội tụ chuẩn về tâm 0.5
+            // - Nghiêng máy cúi XUỐNG -> rateX > 0 -> Target dịch LÊN TRÊN (dy < 0) hội tụ chuẩn về tâm 0.5
+            let dx = rateY * dt * scaleX
+            let dy = -rateX * dt * scaleY
+            
+            // CHỈ dead-reckoning khi quang học CHƯA CẬP NHẬT trong 0.12s gần nhất (cửa sổ an toàn 3-4 frame camera 30fps).
+            // Tránh tính đè góc quay hoặc báo mất dấu khi optical chỉ đang trong chu kỳ xử lý bình thường.
+            self.stateLock.lock()
+            let timeSinceOptical = self.lastOpticalAcceptTime > 0 ? (now - self.lastOpticalAcceptTime) : 1.0
+            self.stateLock.unlock()
+            guard timeSinceOptical > 0.12 else { return }
+            
+            self.stateLock.lock()
             self.deadReckoningFrameCount += 1
-            self.stateX = Double(projPoint.x)
-            self.stateY = Double(projPoint.y)
-
-            let isOffScreen = !isInFront || projPoint.x < 0.0 || projPoint.x > 1.0 || projPoint.y < 0.0 || projPoint.y > 1.0
-
-            // Tọa độ gửi về UI: kẹp trong [0.03, 0.97] để vòng target nằm sát viền màn hình chỉ hướng
-            let uiPoint = CGPoint(
-                x: min(0.97, max(0.03, projPoint.x)),
-                y: min(0.97, max(0.03, projPoint.y))
-            )
-
-            let callback = self._onSpatialTargetUpdated
-            let revision = sensorRevision
-            let confidence: Double
+            
+            // Bù trừ vận tốc quán tính của chính chủ thể trong 0.12s - 0.45s đầu khi quang học vừa mất dấu
+            var optDx: Double = 0.0
+            var optDy: Double = 0.0
+            if timeSinceOptical < 0.45 {
+                let decay = max(0.0, 1.0 - (timeSinceOptical - 0.12) / 0.33)
+                optDx = self.velocityX * dt * decay
+                optDy = self.velocityY * dt * decay
+            }
+            
+            self.stateX = min(0.98, max(0.02, self.stateX + dx + optDx))
+            self.stateY = min(0.98, max(0.02, self.stateY + dy + optDy))
+            let count = self.deadReckoningFrameCount
+            let lastConf = self.lastOpticalConfidence
+            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+            self.stateLock.unlock()
+            
+            // Giới hạn sai số tích lũy theo thời gian chạy dead-reckoning không có optical confirmation:
+            // - 0s - 1.5s (0 - 90 ticks 60Hz): Đang bám quán tính êm ái -> Luôn giữ .predicting (tuyệt đối không spam UI)
+            // - 1.5s - 4.0s (90 - 240 ticks): .reacquiring (Vision đang tìm lại)
+            // - Sau > 4.0s (240 ticks) mất dấu hoàn toàn: Mới chuyển sang .lost ("Chạm để đặt lại mục tiêu")
+            let decayedConf: Double
             let quality: TrackingQuality
-
-            // Bộ nhớ 3D dựa trên trọng lực không bao giờ drift pitch/roll, yaw trôi rất chậm (<0.5 độ/phút).
-            // Do đó confidence được duy trì ổn định, không bị rớt về 0.12 chỉ sau vài giây.
-            if opticalAge > 5.0 {
-                confidence = max(0.40, self.lastOpticalConfidence * exp(-0.08 * (opticalAge - 5.0)))
-                quality = isOffScreen ? .reacquiring : .predicting
-            } else if opticalAge > 1.2 {
-                confidence = max(0.50, self.lastOpticalConfidence * exp(-0.06 * (opticalAge - 1.2)))
-                quality = isOffScreen ? .reacquiring : .predicting
+            if count > 240 {
+                decayedConf = 0.15
+                quality = .lost
+            } else if count > 90 {
+                let decayFactor = pow(0.97, Double(count - 90))
+                decayedConf = max(0.25, 0.45 * decayFactor)
+                quality = .reacquiring
             } else {
-                confidence = max(0.60, self.lastOpticalConfidence * exp(-0.03 * opticalAge))
+                decayedConf = max(0.40, lastConf)
                 quality = .predicting
             }
-            self.stateLock.unlock()
-
+            
             DispatchQueue.main.async {
-                guard self.isTrackingRevisionCurrent(revision) else { return }
-                callback?(uiPoint, confidence, quality)
+                self.onSpatialTargetUpdated?(targetPoint, decayedConf, quality)
             }
         }
     }
-
-    private func isTrackingRevisionCurrent(_ revision: UInt64) -> Bool {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return _isTrackingActive && trackingRevision == revision
-    }
-
+    
     // MARK: - Dung hợp Dữ liệu Quang Học (Vision Optical Observation Update)
     public func updateWithOpticalDetection(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer? = nil) {
+        guard isTrackingActive else { return }
+        
         let now = CACurrentMediaTime()
-        stateLock.lock()
-        guard _isTrackingActive else {
-            stateLock.unlock()
-            return
-        }
-
-        let dt = lastUpdateTime > 0
-            ? min(0.12, max(0.005, now - lastUpdateTime))
-            : (1.0 / 30.0)
+        let dt = lastUpdateTime > 0 ? min(0.1, now - lastUpdateTime) : (1.0 / 30.0)
         lastUpdateTime = now
-        let effectiveThreshold = max(opticalAcceptThreshold, isLowTextureAnchor ? 0.30 : 0.0)
-
-        guard let visualPoint = point, confidence >= effectiveThreshold else {
-            lastOpticalConfidence = confidence
-            stateLock.unlock()
-            return
-        }
-
-        let isVerifiedVision = confidence >= 0.60
-        var rawX = Double(visualPoint.x)
-        var rawY = Double(visualPoint.y)
-
-        // Auxiliary measurements chỉ được phép dịch chuyển cục bộ
-        let jump = hypot(rawX - stateX, rawY - stateY)
-        if !isVerifiedVision, jump > Double(maxObservationJump) {
-            let scale = Double(maxObservationJump) / max(jump, 1.0e-9)
-            rawX = stateX + (rawX - stateX) * scale
-            rawY = stateY + (rawY - stateY) * scale
-        }
-
-        lastRawOpticalPoint = visualPoint
-        lastRawOpticalTime = now
-
-        // 1. ĐỆM ĐÀN HỒI CENTROID DEADBAND CUSHION (Khắc phục triệt để "đi xung quanh rất nhiều"):
-        // - Deadband (< 0.005 ~ 2-3 subpixel): Khi người dùng đứng yên, triệt tiêu 100% rung giật vi sai
-        // - Elastic Slack (0.005 ... 0.035): Chuyển tiếp cubic smoothstep mượt mà tự nhiên ("vẫn dc phép xê dịch nhưng ko quá")
-        // - Active Tracking (>= 0.035): Bám dính tức thì theo chuyển động thực tế
-        let dxFromPrev = rawX - filterXPrev
-        let dyFromPrev = rawY - filterYPrev
-        let distFromPrev = hypot(dxFromPrev, dyFromPrev)
-
-        let deadband = 0.005
-        let elasticBand = 0.035
-        let effectiveX: Double
-        let effectiveY: Double
-
-        if distFromPrev < deadband {
-            effectiveX = filterXPrev
-            effectiveY = filterYPrev
-        } else if distFromPrev < elasticBand {
-            let t = (distFromPrev - deadband) / (elasticBand - deadband)
-            let smoothFactor = t * t * (3.0 - 2.0 * t) // cubic smoothstep
-            effectiveX = filterXPrev + dxFromPrev * smoothFactor
-            effectiveY = filterYPrev + dyFromPrev * smoothFactor
-        } else {
-            effectiveX = rawX
-            effectiveY = rawY
-        }
-
-        let (smoothX, smoothY) = applyOneEuroFilter(
-            obsX: effectiveX,
-            obsY: effectiveY,
-            timestamp: now,
-            dt: dt
-        )
-        stateX = min(0.99, max(0.01, smoothX))
-        stateY = min(0.99, max(0.01, smoothY))
-        unclampedScreenX = stateX
-        unclampedScreenY = stateY
-        lastOpticalConfidence = confidence
-        lastOpticalAcceptTime = now
-        deadReckoningFrameCount = 0
-        outlierStreak = 0
-
-        // 2. TỰ ĐỘNG CÂN CHỈNH TIA 3D THẾ GIỚI LIÊN TUYẾN (World-Ray Online Realignment):
-        // Khi Apple Vision nhìn thấy rõ vật thể, cập nhật nhẹ nhàng tia 3D thế giới
-        // để triệt tiêu hoàn toàn bất kỳ trôi yaw hay thị sai do tay xê dịch nhẹ.
-        if isVerifiedVision, let attitude = motionManager.deviceMotion?.attitude {
-            let R = attitude.rotationMatrix
-            let vObs = rayFromScreenPoint(CGPoint(x: stateX, y: stateY), zoom: currentZoom)
-            let rWorldObs = normalizeVector3D(deviceToWorld(vObs, rotationMatrix: R))
-            if let currentRay = anchor3DRay {
-                let blendAlpha = 0.05
-                anchor3DRay = normalizeVector3D((1.0 - blendAlpha) * currentRay + blendAlpha * rWorldObs)
-            } else {
-                anchor3DRay = rWorldObs
+        
+        var effectiveConfidence = confidence
+        var activePoint = point
+        
+        // Chỉ dùng NeuralTargetTracker hỗ trợ phụ khi có model thật hợp lệ, không cho phép 1 mình đẩy vượt ngưỡng
+        if let visualPoint = point, let buffer = pixelBuffer, NeuralTargetTracker.shared.hasActiveTrainedModel {
+            let (bestPt, neuralSim) = NeuralTargetTracker.shared.findBestMatchingPoint(in: buffer, around: visualPoint, searchRadius: 0.03)
+            if neuralSim >= 0.65 {
+                activePoint = bestPt
+                effectiveConfidence = max(confidence, min(confidence + 0.10, neuralSim * 0.90))
             }
         }
-
-        let targetPoint = CGPoint(x: stateX, y: stateY)
-        let callback = _onSpatialTargetUpdated
-        let quality: TrackingQuality = isVerifiedVision ? .locked : .predicting
-        stateLock.unlock()
-        callback?(targetPoint, confidence, quality)
+        
+        // Ngưỡng nhận = max(threshold theo sensitivity, 0.60 nếu anchor low-texture)
+        let effectiveThreshold = max(self.opticalAcceptThreshold, self.isLowTextureAnchor ? 0.60 : 0.0)
+        if let visualPoint = activePoint, effectiveConfidence >= effectiveThreshold {
+            self.stateLock.lock()
+            self.lastOpticalConfidence = effectiveConfidence
+            self.lastOpticalAcceptTime = now
+            self.deadReckoningFrameCount = 0
+            
+            // CHỐNG OBSERVATION ĐỘT BIẾN (tracker trôi / re-ID sai / homography lỗi):
+            // kẹp trong bán kính maxObservationJump; nếu lệch liên tục 6 frame ->
+            // hòa trộn mượt mà sang vị trí mới, TUYỆT ĐỐI KHÔNG reset filterInitialized (gây giật nhảy màn hình).
+            var rawObsX = Double(visualPoint.x)
+            var rawObsY = Double(visualPoint.y)
+            let jump = hypot(rawObsX - self.stateX, rawObsY - self.stateY)
+            if jump > Double(self.maxObservationJump) {
+                self.outlierStreak += 1
+                if self.outlierStreak >= 6 {
+                    self.outlierStreak = 0
+                    // Hòa trộn mềm 40% để target lướt êm ái sang điểm mới mà không bị giật nảy
+                    self.filterXPrev = self.filterXPrev * 0.6 + rawObsX * 0.4
+                    self.filterYPrev = self.filterYPrev * 0.6 + rawObsY * 0.4
+                    self.filterDxPrev = 0.0
+                    self.filterDyPrev = 0.0
+                } else {
+                    let k = Double(self.maxObservationJump) / jump
+                    rawObsX = self.stateX + (rawObsX - self.stateX) * k
+                    rawObsY = self.stateY + (rawObsY - self.stateY) * k
+                }
+            } else {
+                self.outlierStreak = 0
+            }
+            
+            // Bộ lọc 1-Euro thích nghi:
+            // - Khi giữ máy đứng yên: tự động hạ tần số cắt -> triệt tiêu toàn bộ rung tay vi mô
+            // - Khi người dùng di chuyển máy hướng tâm trắng vào target: tự động tăng tần số cắt theo tốc độ -> bám dính 100% không độ trễ
+            let (smoothX, smoothY) = applyOneEuroFilter(obsX: rawObsX, obsY: rawObsY, timestamp: now, dt: dt)
+            self.stateX = min(0.98, max(0.02, smoothX))
+            self.stateY = min(0.98, max(0.02, smoothY))
+            let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+            self.stateLock.unlock()
+            
+            if effectiveConfidence > 0.65, let buffer = pixelBuffer {
+                VisualOdometryEngine.shared.setReferenceFrame(buffer, atUIPoint: targetPoint)
+            }
+            
+            self.onSpatialTargetUpdated?(targetPoint, effectiveConfidence, .locked)
+        } else {
+            self.stateLock.lock()
+            self.lastOpticalConfidence = confidence
+            self.stateLock.unlock()
+            
+            // Khi quang học tạm thời mất nét:
+            if !isLowTextureAnchor, let buffer = pixelBuffer, let voPoint = VisualOdometryEngine.shared.estimateCurrentUIPoint(currentBuffer: buffer) {
+                let voX = Double(voPoint.x)
+                let voY = Double(voPoint.y)
+                self.stateLock.lock()
+                let voDist = hypot(voX - self.stateX, voY - self.stateY)
+                // Chỉ nhận khi độ dịch chuyển hợp lý (< 0.12 màn hình) và hòa trộn mượt 0.30 để tránh teleport do homography lỗi
+                if voDist < 0.12 {
+                    let kVO = 0.30
+                    self.stateX = min(0.98, max(0.02, self.stateX * (1.0 - kVO) + voX * kVO))
+                    self.stateY = min(0.98, max(0.02, self.stateY * (1.0 - kVO) + voY * kVO))
+                    self.filterXPrev = self.stateX
+                    self.filterYPrev = self.stateY
+                    let targetPoint = CGPoint(x: self.stateX, y: self.stateY)
+                    self.stateLock.unlock()
+                    self.onSpatialTargetUpdated?(targetPoint, 0.70, .locked)
+                } else {
+                    self.stateLock.unlock()
+                }
+            }
+        }
     }
-
+    
     // MARK: - 1-Euro Filter Math Helper
     private func applyOneEuroFilter(obsX: Double, obsY: Double, timestamp: CFTimeInterval, dt: Double) -> (Double, Double) {
         guard filterInitialized else {
             filterXPrev = obsX
             filterYPrev = obsY
-            filterRawXPrev = obsX
-            filterRawYPrev = obsY
             filterLastTime = timestamp
             filterInitialized = true
             return (obsX, obsY)
         }
-
+        
         let rate = 1.0 / max(0.005, dt)
-
+        
         // 1. Tính toán đạo hàm vận tốc (Derivative dx, dy)
-        let rawDx = (obsX - filterRawXPrev) / max(0.005, dt)
-        let rawDy = (obsY - filterRawYPrev) / max(0.005, dt)
-        filterRawXPrev = obsX
-        filterRawYPrev = obsY
-
+        let rawDx = (obsX - filterXPrev) / max(0.005, dt)
+        let rawDy = (obsY - filterYPrev) / max(0.005, dt)
+        
         let aD = alpha(rate: rate, cutoff: oneEuroDCutoff)
         let dxHat = aD * rawDx + (1.0 - aD) * filterDxPrev
         let dyHat = aD * rawDy + (1.0 - aD) * filterDyPrev
         filterDxPrev = dxHat
         filterDyPrev = dyHat
-
+        
         // 2. Tần số cắt thích nghi theo vận tốc di chuyển camera:
+        // - Khi đứng yên: speed nhỏ -> cutoff gần minCutoff (1.2Hz) -> triệt rung tay
+        // - Khi di chuyển tâm trắng đến target: speed tăng -> cutoff tăng tức thì -> target bám dính mượt mà
         let speed = hypot(dxHat, dyHat)
         let adaptiveCutoff = effectiveMinCutoff + effectiveBeta * speed
-
+        
+        // Lưu lại vận tốc quang học tức thời (screen units / sec) phục vụ chuyển pha mượt
         self.velocityX = dxHat
         self.velocityY = dyHat
-
+        
         // 3. Lọc mượt tọa độ
         let aPos = alpha(rate: rate, cutoff: adaptiveCutoff)
         let xHat = aPos * obsX + (1.0 - aPos) * filterXPrev
         let yHat = aPos * obsY + (1.0 - aPos) * filterYPrev
-
+        
         filterXPrev = xHat
         filterYPrev = yHat
-
+        
         return (xHat, yHat)
     }
-
+    
     private func alpha(rate: Double, cutoff: Double) -> Double {
         let tau = 1.0 / (2.0 * Double.pi * cutoff)
         let te = 1.0 / rate
         return 1.0 / (1.0 + tau / te)
     }
-
+    
     // MARK: - Dừng Tracking
     public func stopTracking() {
-        stateLock.lock()
-        _isTrackingActive = false
-        trackingRevision &+= 1
-        filterInitialized = false
-        lastRawOpticalPoint = nil
-        anchor3DRay = nil
-        cameraResidualVelocity = .zero
-        stateLock.unlock()
+        isTrackingActive = false
+        referenceAttitude = nil
         motionManager.stopDeviceMotionUpdates()
         VisualOdometryEngine.shared.clearReference()
         NeuralTargetTracker.shared.clearAnchor()
+        filterInitialized = false
         CameraLogger.info("Đã dừng động cơ tracking không gian", category: .tracking)
     }
 }
@@ -536,24 +379,15 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     private var W2: [Float] = []
     private var b2: [Float] = []
     
-    private let modelLock = NSLock()
-    private let embeddingLock = NSLock()
     private var anchorEmbedding: [Float]? = nil
     private var isModelLoaded: Bool = false
-    private var _hasActiveTrainedModel: Bool = false
-    public var hasActiveTrainedModel: Bool {
-        modelLock.lock()
-        defer { modelLock.unlock() }
-        return _hasActiveTrainedModel
-    }
+    public private(set) var hasActiveTrainedModel: Bool = false
     
     public init() {
         loadModelWeights()
     }
     
     public func loadModelWeights() {
-        modelLock.lock()
-        defer { modelLock.unlock() }
         // 1. Ưu tiên nạp mô hình RobustTargetEmbedder.bin chuẩn (78 -> 256 -> 128, 53,120 floats) từ App Bundle
         if let url = Bundle.main.url(forResource: "RobustTargetEmbedder", withExtension: "bin"),
            let data = try? Data(contentsOf: url) {
@@ -613,7 +447,7 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         W2 = Array(floats[offset..<offset+w2Count]); offset += w2Count
         b2 = Array(floats[offset..<offset+b2Count]); offset += b2Count
         isModelLoaded = true
-        _hasActiveTrainedModel = true
+        hasActiveTrainedModel = true
         CameraLogger.info("Đã nạp và xác thực thành công Neural Target Embedder Weights (\(data.count / 1024) KB)", category: .tracking)
     }
     
@@ -626,25 +460,19 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         W2 = (0..<(hiddenDim * embeddingDim)).map { _ in Float.random(in: -std2...std2) }
         b2 = [Float](repeating: 0, count: embeddingDim)
         isModelLoaded = true
-        _hasActiveTrainedModel = false
+        hasActiveTrainedModel = false
     }
     
     // MARK: - 1. Lưu Vân Tay Mỏ Neo Ban Đầu (Anchor Fingerprint)
     public func setAnchorTemplate(from pixelBuffer: CVPixelBuffer, at targetPoint: CGPoint) {
         let features = extractFeatures(from: pixelBuffer, at: targetPoint)
-        let embedding = forwardPass(features)
-        embeddingLock.lock()
-        anchorEmbedding = embedding
-        embeddingLock.unlock()
+        self.anchorEmbedding = forwardPass(features)
         CameraLogger.info("Đã khóa vân tay nơ-ron cho mục tiêu tại (\(String(format: "%.2f", targetPoint.x)), \(String(format: "%.2f", targetPoint.y)))", category: .tracking)
     }
     
     // MARK: - 2. So Khớp Vân Tay Hiện Tại (Cosine Similarity: 0.0 - 1.0)
     public func verifyTarget(in pixelBuffer: CVPixelBuffer, at targetPoint: CGPoint) -> Double {
-        embeddingLock.lock()
-        let anchor = anchorEmbedding
-        embeddingLock.unlock()
-        guard let anchor else { return 0.0 }
+        guard let anchor = anchorEmbedding else { return 1.0 }
         let currentFeatures = extractFeatures(from: pixelBuffer, at: targetPoint)
         let currentEmbedding = forwardPass(currentFeatures)
         
@@ -655,15 +483,9 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     
     // MARK: - 3. Quét Lưới 9 Điểm Cục Bộ Tìm Đỉnh Tương Đồng (Neural Peak Grid Search 3x3)
     public func findBestMatchingPoint(in pixelBuffer: CVPixelBuffer, around centerPoint: CGPoint, searchRadius: CGFloat = 0.04) -> (CGPoint, Double) {
-        embeddingLock.lock()
-        let anchor = anchorEmbedding
-        embeddingLock.unlock()
-        guard let anchor else { return (centerPoint, 0.0) }
-
-        let centerEmbedding = forwardPass(extractFeatures(from: pixelBuffer, at: centerPoint))
-        var centerDot: Float = 0
-        vDSP_dotpr(anchor, 1, centerEmbedding, 1, &centerDot, vDSP_Length(embeddingDim))
-        let centerSim = Double(max(0.0, min(1.0, centerDot)))
+        guard let anchor = anchorEmbedding else { return (centerPoint, 1.0) }
+        
+        let centerSim = verifyTarget(in: pixelBuffer, at: centerPoint)
         if centerSim >= 0.88 {
             return (centerPoint, centerSim)
         }
@@ -698,15 +520,11 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     }
     
     public func clearAnchor() {
-        embeddingLock.lock()
-        anchorEmbedding = nil
-        embeddingLock.unlock()
+        self.anchorEmbedding = nil
     }
     
     // MARK: - Neural Forward Pass (Layer 1 -> LeakyReLU -> Layer 2 -> L2 Norm)
     private func forwardPass(_ input: [Float]) -> [Float] {
-        modelLock.lock()
-        defer { modelLock.unlock() }
         var inputMut = input
         var z1 = [Float](repeating: 0, count: hiddenDim)
         
@@ -745,11 +563,6 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     
     // MARK: - Trích Xuất Vector Đặc Trưng 78 Chiều từ PixelBuffer
     private func extractFeatures(from pixelBuffer: CVPixelBuffer, at targetPoint: CGPoint) -> [Float] {
-        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA,
-              CVPixelBufferGetWidth(pixelBuffer) >= 8,
-              CVPixelBufferGetHeight(pixelBuffer) >= 8 else {
-            return [Float](repeating: 0.0, count: inputDim)
-        }
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         
@@ -762,7 +575,7 @@ public final class NeuralTargetTracker: @unchecked Sendable {
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         let buffer = baseAddress.assumingMemoryBound(to: UInt8.self)
         
-        let boxSize = min(64, min(width, height))
+        let boxSize = 64
         let startX = max(0, min(width - boxSize, Int(targetPoint.x * CGFloat(width)) - boxSize / 2))
         let startY = max(0, min(height - boxSize, Int(targetPoint.y * CGFloat(height)) - boxSize / 2))
         

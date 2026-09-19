@@ -18,9 +18,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
     
     private let processingLock = NSLock()
-    /// Bảo vệ toàn bộ stateful Vision sequence. start/stop chạy từ MainActor còn
-    /// process frame chạy trên visionQueue; khóa này ngăn reset request giữa perform.
-    private let trackingStateLock = NSLock()
     private var _captureNextFrameForGemini = false
     public var captureNextFrameForGemini: Bool {
         get { processingLock.lock(); defer { processingLock.unlock() }; return _captureNextFrameForGemini }
@@ -42,11 +39,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var isProcessingFrame = false
     private var lastProcessTime: TimeInterval = 0
     private let frameThrottleInterval: TimeInterval = 0.033 // ~30 FPS for ultra-smooth optical tracking
-    private var _isIdlePreviewMode: Bool = false
-    public var isIdlePreviewMode: Bool {
-        get { processingLock.lock(); defer { processingLock.unlock() }; return _isIdlePreviewMode }
-        set { processingLock.lock(); _isIdlePreviewMode = newValue; processingLock.unlock() }
-    }
+    public var isIdlePreviewMode: Bool = false
     private let idleThrottleInterval: TimeInterval = 0.2 // ~5 FPS lúc rảnh, vẫn đủ mượt cho preview mặt/scene
     
     // Callbacks
@@ -59,12 +52,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     public var onFrameCapturedForAI: ((CGImage) -> Void)?
     
     // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID + Color Histogram + KLT Point Cluster)
-    private var _isTrackingTarget: Bool = false
-    public var isTrackingTarget: Bool {
-        trackingStateLock.lock()
-        defer { trackingStateLock.unlock() }
-        return _isTrackingTarget
-    }
+    public private(set) var isTrackingTarget: Bool = false
     private var sequenceHandler = VNSequenceRequestHandler()
     private var lastTargetObservation: VNDetectedObjectObservation? = nil
     private var referenceFeaturePrint: VNFeaturePrintObservation? = nil
@@ -86,9 +74,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var stableLockFrames: Int = 0
     private var anchorBoxSize: CGSize = CGSize(width: 0.14, height: 0.14)
     private var lastReIdAttemptTime: CFTimeInterval = 0
-    /// Loại kết quả frame của session cũ nếu người dùng stop/re-lock trong lúc
-    /// Vision request đang xử lý. Không dùng biến này để reject measurement.
-    private var trackingGeneration: UInt64 = 0
     
     // Vision Detection Requests
     private lazy var faceDetectionRequest: VNDetectFaceRectanglesRequest = {
@@ -216,8 +201,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         refiningBuffer: CVPixelBuffer? = nil,
         orientation: CGImagePropertyOrientation = .up
     ) {
-        trackingStateLock.lock()
-        defer { trackingStateLock.unlock() }
         var targetPoint = normalizedPoint
         var targetSize = size
 
@@ -271,16 +254,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
         self.stableLockFrames = 0
         self.anchorBoxSize = targetSize
         self.lastReIdAttemptTime = 0
-        self.trackingGeneration &+= 1
-        self._isTrackingTarget = true
+        self.isTrackingTarget = true
         CameraLogger.info("🎯 [Vision] Khởi tạo VNTrackObjectRequest duy nhất tại: (\(String(format: "%.3f", targetPoint.x)), \(String(format: "%.3f", targetPoint.y))), size: \(targetSize)", category: .tracking)
     }
     
     public func stopTrackingObject() {
-        trackingStateLock.lock()
-        defer { trackingStateLock.unlock() }
-        self.trackingGeneration &+= 1
-        self._isTrackingTarget = false
+        self.isTrackingTarget = false
         self.currentTrackRequest?.isLastFrame = true
         self.currentTrackRequest = nil
         self.lastTargetObservation = nil
@@ -308,7 +287,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         let width = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
-        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return [] }
         let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
         guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return [] }
         
@@ -390,12 +368,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             CVPixelBufferUnlockBaseAddress(currentBuffer, .readOnly)
         }
         
-        guard CVPixelBufferGetPixelFormatType(prevBuffer) == kCVPixelFormatType_32BGRA,
-              CVPixelBufferGetPixelFormatType(currentBuffer) == kCVPixelFormatType_32BGRA else {
-            return nil
-        }
-        let previousBytesPerRow = CVPixelBufferGetBytesPerRow(prevBuffer)
-        let currentBytesPerRow = CVPixelBufferGetBytesPerRow(currentBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(currentBuffer)
         guard let prevData = CVPixelBufferGetBaseAddress(prevBuffer)?.assumingMemoryBound(to: UInt8.self),
               let currData = CVPixelBufferGetBaseAddress(currentBuffer)?.assumingMemoryBound(to: UInt8.self) else {
             return nil
@@ -416,67 +389,29 @@ public final class VisionFramingEngine: @unchecked Sendable {
             var bestDx = 0
             var bestDy = 0
             var minSAD = Float.greatestFiniteMagnitude
-            var secondSAD = Float.greatestFiniteMagnitude
             
             for dy in -searchR...searchR {
                 for dx in -searchR...searchR {
                     var sad: Float = 0
                     for wy in -winR...winR {
                         for wx in -winR...winR {
-                            let pOff = (py + wy) * previousBytesPerRow + (px + wx) * 4
-                            let cOff = (py + dy + wy) * currentBytesPerRow + (px + dx + wx) * 4
+                            let pOff = (py + wy) * bytesPerRow + (px + wx) * 4
+                            let cOff = (py + dy + wy) * bytesPerRow + (px + dx + wx) * 4
                             let pLum = Float(prevData[pOff]) * 0.114 + Float(prevData[pOff+1]) * 0.587 + Float(prevData[pOff+2]) * 0.299
                             let cLum = Float(currData[cOff]) * 0.114 + Float(currData[cOff+1]) * 0.587 + Float(currData[cOff+2]) * 0.299
                             sad += abs(pLum - cLum)
                         }
                     }
                     if sad < minSAD {
-                        secondSAD = minSAD
                         minSAD = sad
                         bestDx = dx
                         bestDy = dy
-                    } else if sad < secondSAD {
-                        secondSAD = sad
-                    }
-                }
-            }
-
-            // Forward-backward consistency: từ điểm tốt nhất ở frame hiện tại dò
-            // ngược về frame trước. Một feature thật phải quay về gần vị trí gốc;
-            // điểm trên motion blur/occluder thường không thỏa điều kiện này.
-            var backDx = 0
-            var backDy = 0
-            var minBackwardSAD = Float.greatestFiniteMagnitude
-            let currentX = px + bestDx
-            let currentY = py + bestDy
-            for dy in -searchR...searchR {
-                for dx in -searchR...searchR {
-                    let candidateX = currentX + dx
-                    let candidateY = currentY + dy
-                    guard candidateX >= winR, candidateX < Int(width) - winR,
-                          candidateY >= winR, candidateY < Int(height) - winR else { continue }
-                    var sad: Float = 0
-                    for wy in -winR...winR {
-                        for wx in -winR...winR {
-                            let cOff = (currentY + wy) * currentBytesPerRow + (currentX + wx) * 4
-                            let pOff = (candidateY + wy) * previousBytesPerRow + (candidateX + wx) * 4
-                            let cLum = Float(currData[cOff]) * 0.114 + Float(currData[cOff+1]) * 0.587 + Float(currData[cOff+2]) * 0.299
-                            let pLum = Float(prevData[pOff]) * 0.114 + Float(prevData[pOff+1]) * 0.587 + Float(prevData[pOff+2]) * 0.299
-                            sad += abs(cLum - pLum)
-                        }
-                    }
-                    if sad < minBackwardSAD {
-                        minBackwardSAD = sad
-                        backDx = dx
-                        backDy = dy
                     }
                 }
             }
             
             let avgErr = minSAD / Float((winR * 2 + 1) * (winR * 2 + 1))
-            let forwardBackwardError = hypot(Double(bestDx + backDx), Double(bestDy + backDy))
-            let matchIsDistinct = !secondSAD.isFinite || minSAD <= secondSAD * 0.985
-            if avgErr < 32.0, forwardBackwardError <= 1.5, matchIsDistinct {
+            if avgErr < 32.0 {
                 let normDx = CGFloat(bestDx) / width
                 let normDy = -CGFloat(bestDy) / height
                 displacedPoints.append(CGPoint(x: pt.x + normDx, y: pt.y + normDy))
@@ -508,8 +443,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
         let uiPoint = CGPoint(x: avgX, y: 1.0 - avgY)
         let inlierRatio = Double(inliers.count) / Double(max(1, originalPointCount))
-        // KLT là measurement phụ, không được mang confidence ngang Vision sovereign.
-        let confidence = max(0.25, min(0.48, 0.18 + inlierRatio * 0.30))
+        let confidence = max(0.70, min(0.95, 0.60 + inlierRatio * 0.35))
         return (uiPoint, confidence)
     }
     
@@ -537,9 +471,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         let width = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
-        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else {
-            return Array(repeating: 0, count: 24)
-        }
         let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
         guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return Array(repeating: 0, count: 24) }
         
@@ -626,16 +557,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         let boxW = max(0.10, min(0.45, anchorSize.width))
         let boxH = max(0.10, min(0.45, anchorSize.height))
-        // Histogram chỉ là điều kiện phụ vì AE/AWB có thể đổi màu rất mạnh. Với
-        // low-texture, màu còn kém phân biệt hơn nên hạ ngưỡng màu nhưng giữ kiểm tra
-        // FeaturePrint và margin giữa hai ứng viên.
-        let minColorSim: Double = self.isLowTextureAnchor ? 0.28 : 0.36
-        let maxDist: Float = self.isLowTextureAnchor ? 0.40 : 0.45
+        // Vật thể low-texture (trắng/đơn sắc): feature print kém phân biệt hơn -> siết ngưỡng chặt hơn
+        let minColorSim: Double = self.isLowTextureAnchor ? 0.80 : 0.70
+        let maxDist: Float = self.isLowTextureAnchor ? 0.25 : 0.28
         
         var candidates: [(box: CGRect, dist: Float, colorSim: Double)] = []
         
-        // Lưới tìm kiếm thích ứng quanh tâm dự phóng 3D (bán kính lên tới 0.07)
-        let offsets: [CGFloat] = [-0.07, -0.035, 0.0, 0.035, 0.07]
+        // CHỈ tìm kiếm trong phạm vi hẹp cục bộ quanh tâm tìm kiếm (bán kính <= 0.05), TUYỆT ĐỐI KHÔNG quét toàn màn hình
+        let offsets: [CGFloat] = [-0.05, 0.0, 0.05]
         
         for dy in offsets {
             for dx in offsets {
@@ -644,18 +573,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 let vx = max(0.01, min(1.0 - boxW - 0.01, testUix - boxW / 2))
                 let vy = max(0.01, min(1.0 - boxH - 0.01, (1.0 - testUiy) - boxH / 2))
                 let clampedBox = CGRect(x: vx, y: vy, width: boxW, height: boxH)
-
-                // Cheap gate trước: loại candidate sai màu rõ ràng rồi mới chạy
-                // FeaturePrint. Thứ tự này giảm mạnh ANE/GPU load khi scene đông.
-                let colorSim: Double
-                if let refHist = self.referenceColorHistogram {
-                    let candHist = self.extractColorHistogram(from: buffer, region: clampedBox)
-                    colorSim = Double(self.compareColorHistograms(refHist, candHist))
-                } else {
-                    colorSim = 1.0
-                }
-                guard colorSim >= minColorSim else { continue }
-
+                
                 let req = VNGenerateImageFeaturePrintRequest()
                 req.imageCropAndScaleOption = .scaleFit
                 req.regionOfInterest = clampedBox
@@ -665,8 +583,16 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     guard let candidatePrint = req.results?.first as? VNFeaturePrintObservation else { continue }
                     var dist: Float = 0
                     try refPrint.computeDistance(&dist, to: candidatePrint)
-
-                    if dist < maxDist {
+                    
+                    let colorSim: Double
+                    if let refHist = self.referenceColorHistogram {
+                        let candHist = self.extractColorHistogram(from: buffer, region: clampedBox)
+                        colorSim = Double(self.compareColorHistograms(refHist, candHist))
+                    } else {
+                        colorSim = 1.0
+                    }
+                    
+                    if dist < maxDist && colorSim >= minColorSim {
                         candidates.append((clampedBox, dist, colorSim))
                     }
                 } catch {
@@ -681,7 +607,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let best = sorted[0]
         
         // Loại kết quả MƠ HỒI: ứng viên thứ 2 gần ngang ứng viên tốt nhất -> không dám chắc là vật thể thật
-        if sorted.count > 1, sorted[1].dist - best.dist < 0.03 {
+        if sorted.count > 1, sorted[1].dist - best.dist < 0.04 {
             CameraLogger.info("🎯 [Vision] Re-ID bỏ qua — kết quả mơ hồ (best: \(String(format: "%.3f", best.dist)), runner-up: \(String(format: "%.3f", sorted[1].dist)))", category: .tracking)
             return nil
         }
@@ -757,17 +683,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
         
         visionQueue.async { [weak self] in
             guard let self = self else { return }
-            self.trackingStateLock.lock()
             defer {
-                self.trackingStateLock.unlock()
                 self.processingLock.lock()
                 self.isProcessingFrame = false
                 self.processingLock.unlock()
             }
             
             // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
-            if self._isTrackingTarget, let trackRequest = self.currentTrackRequest {
-                let callbackGeneration = self.trackingGeneration
+            if self.isTrackingTarget, let trackRequest = self.currentTrackRequest {
                 // Khởi tạo vân tay tham chiếu đúng 1 lần tại khung đầu
                 if self.referenceFeaturePrint == nil, let obs = self.lastTargetObservation {
                     self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: obs.boundingBox)
@@ -787,45 +710,36 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         // ── XÁC MINH DANH TÍNH VẬT THỂ LIÊN TUYẾN (chống tracker trôi sang vật thể khác) ──
                         var identityOK = true
                         
-                        // 1) Histogram màu chỉ là tín hiệu NGHI NGỜ, không phải phán
-                        // quyết. AE/AWB/exposure có thể làm histogram đổi dù target
-                        // hoàn toàn đúng. Cross-check FeaturePrint cho phép kiểm tra
-                        // histogram tương đối sớm mà không biến đổi sáng thành mất ID.
+                        // 1) Histogram màu 24-bin (rẻ): kiểm tra mỗi 3 frame
+                        // Ngưỡng 0.68 kết hợp streak 3 lần liên tiếp: chống trôi sang nền/vật khác nhưng chịu được AE/AWB camera thực tế
                         self.histogramCheckCounter += 1
                         if self.histogramCheckCounter >= 3, let refHist = self.referenceColorHistogram {
                             self.histogramCheckCounter = 0
                             let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
                             let colorSim = self.compareColorHistograms(refHist, curHist)
-                            if colorSim < 0.40 {
+                            if colorSim < 0.68 {
                                 self.histogramMismatchStreak += 1
-                            } else if colorSim >= 0.52 {
-                                // Hysteresis: vùng 0.40...0.52 giữ nguyên trạng thái,
-                                // tránh lật qua lại khi exposure đang hội tụ.
-                                self.histogramMismatchStreak = max(0, self.histogramMismatchStreak - 2)
+                                if self.histogramMismatchStreak >= 3 {
+                                    identityOK = false
+                                    CameraLogger.info("🎯 [Vision] Mất khớp histogram liên tiếp (\(String(format: "%.2f", colorSim))) — giữ mỏ neo", category: .tracking)
+                                }
                             } else {
-                                self.histogramMismatchStreak = max(0, self.histogramMismatchStreak - 1)
+                                self.histogramMismatchStreak = 0
                             }
                         }
-
-                        // 2) FeaturePrint xác nhận chéo. Bình thường chạy mỗi 30 frame;
-                        // khi histogram xấu >=2 lần liên tiếp thì chạy ngay. Chỉ tổ hợp
-                        // cả hai tín hiệu xấu mới được tuyên bố identity mismatch.
-                        let histogramIsSuspicious = self.histogramMismatchStreak >= 2
-                        if let refPrint = self.referenceFeaturePrint {
+                        
+                        // 2) Deep Feature Print (đắt): kiểm tra mỗi 20 frame
+                        if identityOK, let refPrint = self.referenceFeaturePrint {
                             self.featurePrintCheckCounter += 1
-                            if self.featurePrintCheckCounter >= 30 || histogramIsSuspicious {
+                            if self.featurePrintCheckCounter >= 20 {
                                 self.featurePrintCheckCounter = 0
                                 if let curPrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: newObs.boundingBox) {
                                     var dist: Float = 0
                                     do {
                                         try refPrint.computeDistance(&dist, to: curPrint)
-                                        if histogramIsSuspicious, dist > 0.72 {
+                                        if dist > 0.58 {
                                             identityOK = false
-                                            CameraLogger.info("🎯 [Vision] Histogram + FeaturePrint cùng xác nhận sai danh tính (dist: \(String(format: "%.2f", dist)))", category: .tracking)
-                                        } else if dist < 0.58 {
-                                            // Deep appearance còn đúng: coi biến thiên màu là
-                                            // AE/AWB và xóa dần nghi ngờ histogram.
-                                            self.histogramMismatchStreak = max(0, self.histogramMismatchStreak - 2)
+                                            CameraLogger.info("🎯 [Vision] Mất khớp feature print (dist: \(String(format: "%.2f", dist))) — nghi tracker trôi", category: .tracking)
                                         }
                                     } catch {
                                         // Lỗi tính distance: bỏ qua lần kiểm tra này
@@ -841,17 +755,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             self.stableLockFrames += 1
                             trackRequest.inputObservation = newObs
                             self.lastTargetObservation = newObs
-                            // EMA Damping cho kích thước bounding box để chống co giãn phập phồng (box breathing)
-                            let targetBoxW = max(0.08, min(0.5, newObs.boundingBox.width))
-                            let targetBoxH = max(0.08, min(0.5, newObs.boundingBox.height))
-                            self.anchorBoxSize = CGSize(
-                                width: self.anchorBoxSize.width * 0.85 + targetBoxW * 0.15,
-                                height: self.anchorBoxSize.height * 0.85 + targetBoxH * 0.15
-                            )
-                            
-                            let uiX = newObs.boundingBox.midX
-                            let uiY = 1.0 - newObs.boundingBox.midY
-                            self.lastVerifiedUIPoint = CGPoint(x: uiX, y: uiY)
+                            self.anchorBoxSize = CGSize(width: max(0.08, min(0.5, newObs.boundingBox.width)),
+                                                        height: max(0.08, min(0.5, newObs.boundingBox.height)))
+                            self.lastVerifiedUIPoint = CGPoint(x: newObs.boundingBox.midX, y: 1.0 - newObs.boundingBox.midY)
                             
                             // Thích nghi chậm reference theo thay đổi phơi sáng (mỗi ~2s lock ổn định)
                             if self.stableLockFrames >= 60 {
@@ -864,10 +770,46 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                 }
                             }
                             
-                            // Ground truth thuần túy từ VNTrackObjectRequest: Tuyệt đối KHÔNG nắn lệch tâm
-                            // bằng Saliency Centroid để triệt tiêu 100% hiện tượng vòng target đi xung quanh.
+                            var uiX = newObs.boundingBox.midX
+                            var uiY = 1.0 - newObs.boundingBox.midY
+                            
+                            // 3) Detection-based Periodic Correction (Nắn mỏ neo nhẹ nhàng mỗi 15 frame bằng Saliency Centroid với lực 0.08, chống rung giật)
+                            self.detectionCorrectionCounter += 1
+                            if self.detectionCorrectionCounter >= 15 {
+                                self.detectionCorrectionCounter = 0
+                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                    let centroidUIX = salientCentroid.x
+                                    let centroidUIY = 1.0 - salientCentroid.y
+                                    let box = newObs.boundingBox
+                                    let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
+                                    // Chỉ nắn khi centroid nằm trong hoặc rất sát box đang bám (tránh hút sang đối tượng ngoài)
+                                    if boxUI.insetBy(dx: -0.02, dy: -0.02).contains(CGPoint(x: centroidUIX, y: centroidUIY)) {
+                                        let drift = hypot(centroidUIX - uiX, centroidUIY - uiY)
+                                        let maxOffset = min(box.width, box.height) * 0.45
+                                        if drift > 0.02 && drift < maxOffset {
+                                            uiX += (centroidUIX - uiX) * 0.08
+                                            uiY += (centroidUIY - uiY) * 0.08
+                                        }
+                                    }
+                                }
+                            } else if self.currentSceneType.isDeformableNature,
+                               let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                let box = newObs.boundingBox
+                                let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
+                                let centroidUI = CGPoint(x: salientCentroid.x, y: 1.0 - salientCentroid.y)
+                                if boxUI.contains(centroidUI) {
+                                    let maxOffset = min(box.width, box.height) * 0.40
+                                    var dx = centroidUI.x - uiX
+                                    var dy = centroidUI.y - uiY
+                                    dx = max(-maxOffset, min(maxOffset, dx))
+                                    dy = max(-maxOffset, min(maxOffset, dy))
+                                    uiX += dx * 0.5
+                                    uiY += dy * 0.5
+                                }
+                            }
+                            
                             trackedPoint = CGPoint(x: uiX, y: uiY)
-                            trackedConfidence = max(0.65, Double(newObs.confidence))
+                            trackedConfidence = Double(newObs.confidence)
                         } else {
                             // ── NGHI TRICKER TRÔI: KHÔNG nối tiếp inputObservation (đông băng mỏ neo tại box cuối hợp lệ),
                             //    đếm frame mất để kích hoạt re-acquisition khi cần ──
@@ -884,33 +826,36 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 }
                 
                 // 1A. Cầu nối KLT cho mất dấu NGẮN (1-10 frame: lia máy nhanh / nhòe chuyển động)
-                if trackedPoint == nil, !trackerIdentityLost,
-                   self.consecutiveLostFrames <= 10,
+                if trackedPoint == nil, self.consecutiveLostFrames <= 10,
                    let (kltPoint, kltConfidence) = self.kltBridgePoint(in: pixelBuffer) {
                     trackedPoint = kltPoint
-                    // KLT đã qua forward-backward check nhưng vẫn chỉ là observation
-                    // phụ; không reset bộ đếm loss để re-ID vẫn có thể kích hoạt.
-                    trackedConfidence = min(0.48, kltConfidence)
+                    // KLT là observation trung: đủ để engine tin (>= ngưỡng nhận) nhưng không reset VO reference
+                    trackedConfidence = min(0.55, kltConfidence)
+                    self.consecutiveLostFrames = min(self.consecutiveLostFrames, 4)
                 }
                 
-                // 1B. Re-acquisition: Tái bắt mục tiêu tức thì khi camera lia về hướng cũ
-                let spatialPoint = SpatialTrackingEngine.shared.currentUnclampedScreenPoint
-                let isNearScreen = (spatialPoint.x >= -0.15 && spatialPoint.x <= 1.15 &&
-                                    spatialPoint.y >= -0.15 && spatialPoint.y <= 1.15)
-                let forceReacquire = trackerIdentityLost && self.identitySuspicionFrames >= 4
-                let timeSinceLastReId = CACurrentMediaTime() - self.lastReIdAttemptTime
+                // 1B. Re-acquisition: chỉ khi mất dấu đủ lâu (>= 20 frame), HOẶC tracker bị nghi trôi
+                // xa vị trí đã xác nhận; rate-limit 0.4s/lần để không nghẽn vision queue
+                let forceReacquire: Bool = {
+                    guard trackerIdentityLost, self.identitySuspicionFrames >= 5,
+                          let verified = self.lastVerifiedUIPoint, let lastObs = self.lastTargetObservation else { return false }
+                    let drifted = hypot(lastObs.boundingBox.midX - verified.x, (1.0 - lastObs.boundingBox.midY) - verified.y)
+                    return drifted > 0.06
+                }()
                 
                 if trackedPoint == nil,
-                   (self.consecutiveLostFrames >= 2 || forceReacquire),
-                   isNearScreen,
-                   timeSinceLastReId >= 0.15 {
+                   (self.consecutiveLostFrames >= 20 || forceReacquire),
+                   self.consecutiveLostFrames <= 150,
+                   CACurrentMediaTime() - self.lastReIdAttemptTime >= 0.4 {
                     self.lastReIdAttemptTime = CACurrentMediaTime()
                     
-                    // Tâm tìm kiếm được định vị trực tiếp từ ước lượng không gian 3D của thiết bị (spatialPoint),
-                    // đảm bảo khi lia máy từ trần nhà/sàn nhà trở lại, tâm tìm kiếm đón đúng vị trí trong phòng
+                    let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+                    
+                    // Tâm tìm kiếm = trung điểm giữa vị trí quang học CUỐI CÙNG ĐÃ XÁC NHẬN và ước lượng không gian (gyro)
+                    let verified = self.lastVerifiedUIPoint
                     let searchCenter = CGPoint(
-                        x: min(0.92, max(0.08, spatialPoint.x)),
-                        y: min(0.92, max(0.08, spatialPoint.y))
+                        x: min(0.94, max(0.06, ((verified?.x ?? spatialPoint.x) + spatialPoint.x) / 2.0)),
+                        y: min(0.94, max(0.06, ((verified?.y ?? spatialPoint.y) + spatialPoint.y) / 2.0))
                     )
                     
                     // Chỉ nạp lại mỏ neo khi Neural Re-ID xác nhận rõ ràng là vật thể ban đầu
@@ -932,7 +877,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         self.currentTrackRequest = newReq
                         self.sequenceHandler = VNSequenceRequestHandler()
                         
-                        // Cập nhật lại vân tay tham chiếu từ box mới
+                        // QUAN TRỌNG: cập nhật lại vân tay tham chiếu từ box mới (reference cũ đã lạc hậu)
                         self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: reIdBox)
                         self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: reIdBox)
                     }
@@ -941,9 +886,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 // Giữ nóng buffer trước cho KLT (retain 1 frame; pool không ghi đè buffer đang giữ)
                 self.kltPreviousBuffer = pixelBuffer
                 
-                DispatchQueue.main.async { [weak self] in
-                    guard let self,
-                          self.isTrackingGenerationCurrent(callbackGeneration) else { return }
+                DispatchQueue.main.async {
                     self.onTargetTracked?(trackedPoint, trackedConfidence, pixelBuffer)
                 }
                 return
@@ -995,12 +938,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
     }
-
-    private func isTrackingGenerationCurrent(_ generation: UInt64) -> Bool {
-        trackingStateLock.lock()
-        defer { trackingStateLock.unlock() }
-        return _isTrackingTarget && trackingGeneration == generation
-    }
     
     private static func estimateLuminance(from buffer: CVPixelBuffer) -> (luminance: Float, colorTemp: Float) {
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
@@ -1048,10 +985,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     /// Chụp tức thì khung hình hiện tại cho AI Cloud phân tích
     public func captureImmediateFrame(completion: @escaping (CGImage?) -> Void) {
-        trackingStateLock.lock()
-        let lastBuf = kltPreviousBuffer
-        trackingStateLock.unlock()
-        if let lastBuf {
+        if let lastBuf = self.kltPreviousBuffer {
             let ciImg = CIImage(cvPixelBuffer: lastBuf)
             if let cgImg = self.sharedCIContext.createCGImage(ciImg, from: ciImg.extent) {
                 completion(cgImg)
