@@ -1,41 +1,61 @@
 import SwiftUI
+import UIKit
 
+// MARK: - Camera Controls View (Dark Luxury Pro Cinema Edition)
 public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
 
+    public init(viewModel: CameraViewModel) {
+        self.viewModel = viewModel
+    }
+
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
+            // Film Preset Drawer (Floating Overlay above Controls)
             if viewModel.isShowingFilmDrawer {
                 FilmPresetDrawer(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            HStack(alignment: .center) {
-                GalleryThumbnailButton(viewModel: viewModel)
-                    .frame(width: 52, height: 52)
+            // Row 1: Balanced 3-Column Shutter Control Deck
+            HStack(alignment: .center, spacing: 0) {
+                // Left Column: Recent Photo Thumbnail (Equal Width)
+                HStack {
+                    GalleryThumbnailButton(viewModel: viewModel)
+                        .frame(width: 52, height: 52)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
 
-                Spacer()
-
+                // Center Column: Mechanical Shutter Button (Strictly Centered on Screen Axis)
                 MainCaptureButton(viewModel: viewModel)
+                    .frame(width: 80, height: 80)
 
-                Spacer()
-
-                CameraFlipButton(viewModel: viewModel)
-                    .frame(width: 52, height: 52)
+                // Right Column: Camera Flip Button (Equal Width)
+                HStack {
+                    Spacer()
+                    CameraFlipButton(viewModel: viewModel)
+                        .frame(width: 52, height: 52)
+                }
+                .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, 24)
 
+            // Row 2: Camera Mode Switcher (ẢNH / VIDEO) directly under Shutter
             CameraModeSegmentedSwitcher(viewModel: viewModel)
-                .padding(.bottom, 10)
+                .padding(.bottom, 6)
         }
-        .padding(.top, 10)
+        .padding(.top, 4)
         .padding(.bottom, 8)
-        .background(.ultraThinMaterial)
-        .background(Color.black.opacity(0.76))
+        .frame(maxWidth: .infinity)
+        .background(
+            Color(red: 0.031, green: 0.035, blue: 0.043) // Match Canvas Background
+                .ignoresSafeArea(edges: .bottom)
+        )
     }
 }
 
-// MARK: - Reliable Custom App Icon Component (Assets Catalog + Bundle Fallback + SF Symbols)
+// MARK: - Reliable Custom App Icon Component
 public struct CustomAppIconView: View {
     let name: String
     let fallbackSF: String
@@ -65,7 +85,7 @@ public struct CustomAppIconView: View {
     }
 }
 
-// MARK: - Sliding Segmented Mode Switcher (Ảnh / Video)
+// MARK: - Sliding Segmented Mode Switcher (ẢNH / VIDEO)
 struct CameraModeSegmentedSwitcher: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var modeAnimationNamespace
@@ -73,68 +93,70 @@ struct CameraModeSegmentedSwitcher: View {
     private struct ModeItem: Identifiable {
         let mode: CameraCaptureMode
         let title: String
+        let icon: String
         var id: String { title }
     }
 
     private let modes: [ModeItem] = [
-        ModeItem(mode: .photo, title: "ẢNH"),
-        ModeItem(mode: .video, title: "VIDEO")
+        ModeItem(mode: .photo, title: "ẢNH", icon: "camera.fill"),
+        ModeItem(mode: .video, title: "VIDEO", icon: "video.fill")
     ]
 
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
+
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(modes) { item in
-                modeButton(for: item)
+                let isSelected = (viewModel.captureMode == item.mode) || (item.mode == .video && viewModel.captureMode == .proVideo)
+                Button(action: {
+                    guard viewModel.captureMode != item.mode else { return }
+                    let generator = UISelectionFeedbackGenerator()
+                    generator.prepare()
+                    generator.selectionChanged()
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
+                        viewModel.captureMode = item.mode
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: item.icon)
+                            .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                        Text(item.title)
+                            .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                    }
+                    .foregroundColor(isSelected ? amberGold : .white.opacity(0.55))
+                    .frame(width: 82, height: 32)
+                    .background(
+                        ZStack {
+                            if isSelected {
+                                Capsule()
+                                    .fill(Color(red: 0.16, green: 0.17, blue: 0.22))
+                                    .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(amberGold.opacity(0.38), lineWidth: 1.0)
+                                    )
+                            }
+                        }
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityLabel("Chế độ \(item.title)")
             }
         }
         .padding(3)
         .background(
             Capsule()
-                .fill(.ultraThinMaterial)
+                .fill(Color(red: 0.08, green: 0.09, blue: 0.11))
                 .overlay(
                     Capsule()
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.09), lineWidth: 1.0)
                 )
+                .shadow(color: Color.black.opacity(0.4), radius: 6, y: 2)
         )
     }
-
-    @ViewBuilder
-    private func modeButton(for item: ModeItem) -> some View {
-        let isSelected = viewModel.captureMode == item.mode
-        Button(action: {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                viewModel.captureMode = item.mode
-            }
-        }) {
-            Text(item.title)
-                .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? amberGold : .white.opacity(0.62))
-                .frame(width: 76, height: 30)
-                .background(modePillBackground(isSelected: isSelected))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Chế độ \(item.title)")
-    }
-
-    @ViewBuilder
-    private func modePillBackground(isSelected: Bool) -> some View {
-        if isSelected {
-            Capsule()
-                .fill(Color.white.opacity(0.10))
-                .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
-                .overlay {
-                    Capsule()
-                        .stroke(amberGold.opacity(0.34), lineWidth: 1)
-                }
-        } else {
-            Color.clear
-        }
-    }
-
-    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 }
 
-// MARK: - Main Capture Button (Photo: Apple-style Shutter with Drag-Left to AI Compose / Video: Record)
+// MARK: - Mechanical Capture Button (Pro Cinema Dial with Drag-Left to AI Dock)
 struct MainCaptureButton: View {
     @ObservedObject var viewModel: CameraViewModel
     @State private var dragOffset: CGFloat = 0
@@ -142,436 +164,388 @@ struct MainCaptureButton: View {
     @State private var hasReachedDock: Bool = false
     @State private var isTouchingShutter: Bool = false
 
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
+
     var body: some View {
         if viewModel.captureMode.isVideo {
-            videoRecordButton
+            videoRecordControl
         } else {
-            photoCaptureControls
+            photoCaptureControl
         }
     }
 
-    // MARK: - Photo Capture Controls (Central Shutter + Drag-Left to AI Compose Dock)
-    private var photoCaptureControls: some View {
+    // MARK: - Photo Capture Control
+    private var photoCaptureControl: some View {
         ZStack {
-            // 1. Rãnh trượt kết nối (Track Slot) - Chỉ hiện khi kéo sang trái
+            // 1. Sliding Track Slot (Active when dragging to left AI Compose dock)
             if isDraggingToAI {
                 Capsule()
-                    .fill(Color.black.opacity(0.55))
-                    .frame(width: 72, height: 44)
+                    .fill(Color.black.opacity(0.65))
+                    .frame(width: 76, height: 46)
                     .overlay(
                         Capsule()
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.20), lineWidth: 1.0)
                     )
-                    .offset(x: -28)
+                    .offset(x: -30)
                     .opacity(trackOpacity)
                     .animation(.easeOut(duration: 0.15), value: dragOffset)
             }
 
-            // 2. AI Compose Left Dock Target (Chỉ hiện khi kéo sang trái)
+            // 2. AI Compose Left Dock Target (Coordinate -56pt)
             aiComposeDockTarget
 
-            // 3. Nút Chụp Trung Tâm với viền cố định và lõi trượt mượt mà
-            centralShutterView
+            // 3. Central Mechanical Shutter Dial
+            mechanicalShutterDial
         }
-        .frame(width: 156, height: 74)
+        .frame(width: 160, height: 78)
     }
 
-    private var trackOpacity: Double {
-        let offsetVal: Double = abs(Double(dragOffset))
-        let progress: Double = (offsetVal - 6.0) / 30.0
-        return min(1.0, max(0.0, progress))
-    }
-
-    private var dockOpacity: Double {
-        guard isDraggingToAI else { return 0.0 }
-        let offsetVal: Double = abs(Double(dragOffset))
-        let progress: Double = (offsetVal - 6.0) / 25.0
-        return min(1.0, max(0.0, progress))
-    }
-
-    private var dockScale: CGFloat {
-        guard isDraggingToAI else { return 0.8 }
-        let progress = min(CGFloat(1.0), abs(dragOffset) / CGFloat(56.0))
-        return CGFloat(0.85) + progress * CGFloat(0.3)
-    }
-
-    private var shutterStretchX: CGFloat {
-        let stretch = min(CGFloat(0.10), abs(dragOffset) / CGFloat(200.0))
-        return CGFloat(1.0) + stretch
-    }
-
-    private var shutterStretchY: CGFloat {
-        let squish = min(CGFloat(0.05), abs(dragOffset) / CGFloat(400.0))
-        return CGFloat(1.0) - squish
-    }
-
-    // MARK: - AI Compose Left Dock Target (Tọa độ -56pt)
-    private var aiComposeDockTarget: some View {
-        HStack {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.75))
-                    .frame(width: 44, height: 44)
-
-                Circle()
-                    .stroke(hasReachedDock ? Color.yellow : Color.white.opacity(0.35), lineWidth: hasReachedDock ? 2.5 : 1.2)
-                    .frame(width: 44, height: 44)
-
-                Image(systemName: "wand.and.stars")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundColor(hasReachedDock ? Color.yellow : Color.white.opacity(0.75))
-                    .scaleEffect(hasReachedDock ? 1.22 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
-            }
-            .shadow(color: hasReachedDock ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
-            .offset(x: -56)
-            .scaleEffect(dockScale)
-            .opacity(dockOpacity)
-            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
-
-            Spacer()
-        }
-    }
-
-    // MARK: - Central Shutter View (68×68)
-    private var centralShutterView: some View {
+    // MARK: - Video Record Control
+    private var videoRecordControl: some View {
         ZStack {
-            // Viền ngoài cố định tại tâm: Trắng chuẩn, đổi sang vàng hoặc xanh lá khi AI session bám nét
-            Circle()
-                .stroke(shutterRingColor, lineWidth: 3.2)
-                .frame(width: 68, height: 68)
+            // 1. Sliding Track Slot
+            if isDraggingToAI {
+                Capsule()
+                    .fill(Color.black.opacity(0.65))
+                    .frame(width: 76, height: 46)
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.20), lineWidth: 1.0)
+                    )
+                    .offset(x: -30)
+                    .opacity(trackOpacity)
+                    .animation(.easeOut(duration: 0.15), value: dragOffset)
+            }
 
-            // Lõi trong: Màu trắng, trượt sang trái theo ngón tay khi kéo
+            // 2. AI Video Director Left Dock Target
+            aiVideoDirectorDockTarget
+
+            // 3. Central Mechanical Video Dial
+            mechanicalVideoDial
+        }
+        .frame(width: 160, height: 78)
+    }
+
+    // MARK: - Mechanical Shutter Dial (Multi-ring Graphite + Radial Gradient Core)
+    private var mechanicalShutterDial: some View {
+        ZStack {
+            // Layer 1: Beveled Graphite Outer Ring
             Circle()
-                .fill(Color.white)
-                .frame(
-                    width: (isTouchingShutter || viewModel.isShutterPressing) ? 50 : 58,
-                    height: (isTouchingShutter || viewModel.isShutterPressing) ? 50 : 58
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.18, green: 0.19, blue: 0.23),
+                            Color(red: 0.09, green: 0.10, blue: 0.12)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
-                .offset(x: dragOffset)
-                .scaleEffect(x: shutterStretchX, y: shutterStretchY)
+                .frame(width: 74, height: 74)
+                .overlay(
+                    Circle()
+                        .stroke(shutterRingBorderColor, lineWidth: 1.8)
+                )
+                .shadow(color: Color.black.opacity(0.55), radius: 6, y: 3)
 
+            // Layer 2: Dark Metallic Groove
+            Circle()
+                .fill(Color(red: 0.05, green: 0.05, blue: 0.07))
+                .frame(width: 66, height: 66)
+                .overlay(
+                    Circle()
+                        .stroke(Color.black.opacity(0.85), lineWidth: 1.2)
+                )
+
+            // Layer 3: Concentric Mechanical Core with Specular Highlight
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color(red: 0.38, green: 0.40, blue: 0.45),
+                            Color(red: 0.20, green: 0.21, blue: 0.25),
+                            Color(red: 0.11, green: 0.12, blue: 0.14)
+                        ],
+                        center: .center,
+                        startRadius: 2,
+                        endRadius: 28
+                    )
+                )
+                .frame(width: 56, height: 56)
+                .overlay(
+                    // Specular Highlight Arc
+                    Circle()
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.38), Color.clear],
+                                startPoint: .top,
+                                endPoint: .center
+                            ),
+                            lineWidth: 1.0
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.65), radius: 3, x: 0, y: 2)
+                .offset(x: dragOffset)
+                .scaleEffect((isTouchingShutter || viewModel.isShutterPressing) ? 0.94 : 1.0)
+
+            // Progress Indicator when Capturing
             if case .capturing = viewModel.aiSessionState {
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                    .progressViewStyle(CircularProgressViewStyle(tint: amberGold))
+                    .scaleEffect(0.90)
                     .offset(x: dragOffset)
             }
         }
         .contentShape(Circle())
-        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isTouchingShutter)
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    let transX = value.translation.width
-
-                    isTouchingShutter = true
-
-                    // Khi người dùng kéo trượt sang trái (transX < 0)
-                    if transX < -6 {
-                        isDraggingToAI = true
-                        // Đàn hồi nhẹ nếu kéo vượt quá dock (-56pt)
-                        if transX < -56 {
-                            dragOffset = -56 + (transX + 56) * 0.25
-                        } else {
-                            dragOffset = transX
-                        }
-
-                        // Vượt ngưỡng -42pt: Chạm dock, kích hoạt haptic snap
-                        let reached = dragOffset <= -42
-                        if reached && !hasReachedDock {
-                            hasReachedDock = true
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.prepare()
-                            generator.impactOccurred()
-                        } else if !reached && hasReachedDock {
-                            hasReachedDock = false
-                        }
-                    } else if transX > 0 {
-                        // Kháng cự đàn hồi nếu kéo sang phải (không kích hoạt AI)
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                        dragOffset = min(15, transX * 0.2)
-                    } else {
-                        dragOffset = 0
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                    }
-                }
-                .onEnded { value in
-                    let transX = value.translation.width
-                    let transY = value.translation.height
-                    let didReachDock = hasReachedDock || dragOffset <= -42
-
-                    if didReachDock {
-                        // Đã kéo vào dock AI Compose: Rung mạnh & Bật/Tắt AI Compose
-                        let generator = UIImpactFeedbackGenerator(style: .heavy)
-                        generator.prepare()
-                        generator.impactOccurred()
-
-                        if viewModel.aiSessionState.isSessionActive {
-                            viewModel.cancelAISession()
-                        } else {
-                            viewModel.startAISession()
-                        }
-                    } else if !isDraggingToAI && abs(transX) < 14 && abs(transY) < 14 {
-                        // Nhấp chạm thông thường (không kéo): Chụp ảnh bình thường
-                        if viewModel.aiSessionState != .capturing {
-                            viewModel.takePhotoManual()
-                        }
-                    }
-
-                    // Hồi phục vị trí lõi nút chụp với animation nảy spring chuẩn Apple physics
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
-                        dragOffset = 0
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                        isTouchingShutter = false
-                    }
-                }
-        )
-        .accessibilityLabel("Nút chụp ảnh: Chạm để chụp, giữ kéo sang trái để AI Compose")
+        .animation(.spring(response: 0.22, dampingFraction: 0.65), value: isTouchingShutter)
+        .gesture(dragAndTapGesture(isForVideo: false))
+        .accessibilityLabel("Nút chụp ảnh: Chạm để chụp, giữ kéo sang trái để bật AI Compose")
     }
 
-    private var shutterRingColor: Color {
-        switch viewModel.aiSessionState {
-        case .idle, .done:
-            return .white
-        case .analyzing, .targetPlaced:
-            return .yellow
-        case .alignmentPerfect:
-            return .green
-        case .capturing:
-            return .white
-        }
-    }
-
-    // MARK: - Video Record Button (Touch to Record / Hold-Drag-Left to AI Video Director)
-    private var videoRecordButton: some View {
+    // MARK: - Mechanical Video Record Dial
+    private var mechanicalVideoDial: some View {
         ZStack {
-            // 1. Rãnh trượt kết nối (Track Slot) - Chỉ hiện khi kéo sang trái
-            if isDraggingToAI {
-                Capsule()
-                    .fill(Color.black.opacity(0.55))
-                    .frame(width: 72, height: 44)
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1)
-                    )
-                    .offset(x: -28)
-                    .opacity(trackOpacity)
-                    .animation(.easeOut(duration: 0.15), value: dragOffset)
-            }
-
-            // 2. AI Video Director Left Dock Target (Chỉ hiện khi kéo sang trái)
-            aiVideoDirectorDockTarget
-
-            // 3. Nút quay trung tâm với viền cố định và lõi đỏ trượt mượt mà
-            centralVideoRecordView
-        }
-        .frame(width: 156, height: 74)
-    }
-
-    // MARK: - AI Video Director Left Dock Target (Tọa độ -56pt)
-    private var aiVideoDirectorDockTarget: some View {
-        HStack {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.75))
-                    .frame(width: 44, height: 44)
-
-                Circle()
-                    .stroke(hasReachedDock ? Color.yellow : (viewModel.isAIVideoDirectorActive ? Color.yellow.opacity(0.85) : Color.white.opacity(0.35)), lineWidth: hasReachedDock ? 2.5 : 1.2)
-                    .frame(width: 44, height: 44)
-
-                Image(systemName: "sparkles.tv")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundColor(hasReachedDock ? Color.yellow : (viewModel.isAIVideoDirectorActive ? Color.yellow : Color.white.opacity(0.75)))
-                    .scaleEffect(hasReachedDock ? 1.22 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
-            }
-            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
-            .offset(x: -56)
-            .scaleEffect(dockScale)
-            .opacity(dockOpacity)
-            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
-
-            Spacer()
-        }
-    }
-
-    // MARK: - Central Video Record View
-    private var centralVideoRecordView: some View {
-        ZStack {
-            // Viền ngoài cố định tại tâm
+            // Layer 1: Beveled Graphite Outer Ring
             Circle()
-                .stroke(viewModel.isAIVideoDirectorActive ? Color.yellow : Color.white, lineWidth: 3.5)
-                .frame(width: 76, height: 76)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.18, green: 0.19, blue: 0.23),
+                            Color(red: 0.09, green: 0.10, blue: 0.12)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: 74, height: 74)
+                .overlay(
+                    Circle()
+                        .stroke(viewModel.isAIVideoDirectorActive ? amberGold : Color.white.opacity(0.24), lineWidth: 1.8)
+                )
+                .shadow(color: Color.black.opacity(0.55), radius: 6, y: 3)
 
-            // Lõi nút quay (đỏ): thu nhỏ lại hình vuông bo góc khi quay, hoặc trượt sang trái khi kéo
+            // Layer 2: Dark Groove
+            Circle()
+                .fill(Color(red: 0.05, green: 0.05, blue: 0.07))
+                .frame(width: 66, height: 66)
+
+            // Layer 3: Red Recording Core
             if viewModel.isRecordingVideo {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.red)
-                    .frame(width: 28, height: 28)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(red: 0.95, green: 0.15, blue: 0.20))
+                    .frame(width: 26, height: 26)
                     .offset(x: dragOffset)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: viewModel.isRecordingVideo)
             } else {
                 Circle()
-                    .fill(Color.red)
-                    .frame(
-                        width: isTouchingShutter ? 54 : 62,
-                        height: isTouchingShutter ? 54 : 62
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color(red: 1.0, green: 0.35, blue: 0.38),
+                                Color(red: 0.85, green: 0.12, blue: 0.18),
+                                Color(red: 0.55, green: 0.05, blue: 0.09)
+                            ],
+                            center: .center,
+                            startRadius: 2,
+                            endRadius: 28
+                        )
+                    )
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        Circle()
+                            .stroke(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.40), Color.clear],
+                                    startPoint: .top,
+                                    endPoint: .center
+                                ),
+                                lineWidth: 1.0
+                            )
                     )
                     .offset(x: dragOffset)
-                    .scaleEffect(x: shutterStretchX, y: shutterStretchY)
+                    .scaleEffect(isTouchingShutter ? 0.94 : 1.0)
             }
 
             if viewModel.isAIVideoDirectorAnalyzing {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    .scaleEffect(0.90)
                     .offset(x: dragOffset)
             }
         }
         .contentShape(Circle())
-        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isTouchingShutter)
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    let transX = value.translation.width
-                    isTouchingShutter = true
+        .animation(.spring(response: 0.22, dampingFraction: 0.65), value: isTouchingShutter)
+        .gesture(dragAndTapGesture(isForVideo: true))
+        .accessibilityLabel("Nút quay video: Chạm để quay/dừng, giữ kéo sang trái để AI Đạo diễn")
+    }
 
-                    if transX < -6 {
-                        isDraggingToAI = true
-                        if transX < -56 {
-                            dragOffset = -56 + (transX + 56) * 0.25
-                        } else {
-                            dragOffset = transX
-                        }
+    // MARK: - Gesture Handler (Tap & Drag to AI Dock)
+    private func dragAndTapGesture(isForVideo: Bool) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let transX = value.translation.width
+                isTouchingShutter = true
 
-                        let reached = dragOffset <= -42
-                        if reached && !hasReachedDock {
-                            hasReachedDock = true
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.prepare()
-                            generator.impactOccurred()
-                        } else if !reached && hasReachedDock {
-                            hasReachedDock = false
-                        }
-                    } else if transX > 0 {
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                        dragOffset = min(15, transX * 0.2)
+                if transX < -6 {
+                    isDraggingToAI = true
+                    if transX < -56 {
+                        dragOffset = -56 + (transX + 56) * 0.25
                     } else {
-                        dragOffset = 0
-                        isDraggingToAI = false
-                        hasReachedDock = false
+                        dragOffset = transX
                     }
-                }
-                .onEnded { value in
-                    let transX = value.translation.width
-                    let transY = value.translation.height
-                    let didReachDock = hasReachedDock || dragOffset <= -42
 
-                    if didReachDock {
-                        let generator = UIImpactFeedbackGenerator(style: .heavy)
+                    let reached = dragOffset <= -42
+                    if reached && !hasReachedDock {
+                        hasReachedDock = true
+                        let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.prepare()
                         generator.impactOccurred()
+                    } else if !reached && hasReachedDock {
+                        hasReachedDock = false
+                    }
+                } else if transX > 0 {
+                    isDraggingToAI = false
+                    hasReachedDock = false
+                    dragOffset = min(14, transX * 0.20)
+                } else {
+                    dragOffset = 0
+                    isDraggingToAI = false
+                    hasReachedDock = false
+                }
+            }
+            .onEnded { value in
+                let transX = value.translation.width
+                let transY = value.translation.height
+                let didReachDock = hasReachedDock || dragOffset <= -42
 
+                if didReachDock {
+                    let generator = UIImpactFeedbackGenerator(style: .heavy)
+                    generator.prepare()
+                    generator.impactOccurred()
+
+                    if isForVideo {
                         if viewModel.isAIVideoDirectorActive {
                             viewModel.dismissAIVideoDirector()
                         } else {
                             viewModel.requestAIVideoCinematographyGuidance()
                         }
-                    } else if !isDraggingToAI && abs(transX) < 14 && abs(transY) < 14 {
-                        viewModel.toggleVideoRecording()
-                    }
-
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
-                        dragOffset = 0
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                        isTouchingShutter = false
-                    }
-                }
-        )
-        .accessibilityLabel("Nút quay video: Chạm để quay, giữ kéo sang trái để AI Đạo diễn gợi ý cách quay")
-    }
-}
-
-// MARK: - Zoom Selector Pills
-struct ZoomSelectorPills: View {
-    @ObservedObject var viewModel: CameraViewModel
-    let options: [CGFloat]
-
-    @State private var targetedZoom: CGFloat = 1.0
-    @Namespace private var zoomAnimationNamespace
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
-
-    private var displayedOptions: [CGFloat] {
-        [1.0, 2.0]
-    }
-
-    var body: some View {
-        VStack(spacing: 4) {
-            if viewModel.isPinchingZoom && !displayedOptions.contains(where: { abs(viewModel.displayZoom - $0) < 0.08 }) {
-                Text(String(format: "%.1fx", viewModel.displayZoom))
-                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                    .foregroundColor(amberGold)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.92))
-                            .overlay(Capsule().stroke(amberGold.opacity(0.35), lineWidth: 1))
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            }
-
-            HStack(spacing: 2) {
-                ForEach(displayedOptions, id: \.self) { zoom in
-                    let isSelected = abs(targetedZoom - zoom) < 0.05 || (!viewModel.isPinchingZoom && abs(viewModel.displayZoom - zoom) < 0.12)
-                    Button(action: {
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.76)) {
-                            targetedZoom = zoom
-                            viewModel.setZoomFromButton(zoom)
+                    } else {
+                        if viewModel.aiSessionState.isSessionActive {
+                            viewModel.cancelAISession()
+                        } else {
+                            viewModel.startAISession()
                         }
-                    }) {
-                        Text(String(format: "%.0fx", zoom))
-                            .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
-                            .foregroundColor(isSelected ? .black : .white.opacity(0.86))
-                            .frame(width: 38, height: 38)
-                            .background {
-                                if isSelected {
-                                    Circle()
-                                        .fill(amberGold)
-                                        .matchedGeometryEffect(id: "active_zoom_circle", in: zoomAnimationNamespace)
-                                        .shadow(color: amberGold.opacity(0.34), radius: 8)
-                                }
-                            }
                     }
-                    .buttonStyle(.plain)
+                } else if !isDraggingToAI && abs(transX) < 14 && abs(transY) < 14 {
+                    // Regular Tap
+                    if isForVideo {
+                        viewModel.toggleVideoRecording()
+                    } else {
+                        if viewModel.aiSessionState != .capturing {
+                            viewModel.takePhotoManual()
+                        }
+                    }
+                }
+
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.74)) {
+                    dragOffset = 0
+                    isDraggingToAI = false
+                    hasReachedDock = false
+                    isTouchingShutter = false
                 }
             }
-            .padding(4)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
-            }
-            .shadow(color: Color.black.opacity(0.35), radius: 8, y: 4)
+    }
+
+    private var shutterRingBorderColor: Color {
+        switch viewModel.aiSessionState {
+        case .idle, .done:
+            return Color.white.opacity(0.24)
+        case .analyzing, .targetPlaced:
+            return amberGold
+        case .alignmentPerfect:
+            return Color.green
+        case .capturing:
+            return amberGold
         }
-        .onAppear {
-            targetedZoom = abs(viewModel.displayZoom - 2.0) < abs(viewModel.displayZoom - 1.0) ? 2.0 : 1.0
-        }
-        .onChange(of: viewModel.displayZoom) { newZoom in
-            if !viewModel.isPinchingZoom {
-                if let matched = displayedOptions.first(where: { abs(newZoom - $0) < 0.12 }) {
-                    targetedZoom = matched
-                }
+    }
+
+    private var trackOpacity: Double {
+        let offsetVal = abs(Double(dragOffset))
+        let progress = (offsetVal - 6.0) / 30.0
+        return min(1.0, max(0.0, progress))
+    }
+
+    private var dockOpacity: Double {
+        guard isDraggingToAI else { return 0.0 }
+        let offsetVal = abs(Double(dragOffset))
+        let progress = (offsetVal - 6.0) / 25.0
+        return min(1.0, max(0.0, progress))
+    }
+
+    private var dockScale: CGFloat {
+        guard isDraggingToAI else { return 0.82 }
+        let progress = min(CGFloat(1.0), abs(dragOffset) / CGFloat(56.0))
+        return CGFloat(0.85) + progress * CGFloat(0.25)
+    }
+
+    // MARK: - AI Compose Left Dock Target
+    private var aiComposeDockTarget: some View {
+        HStack {
+            ZStack {
+                Circle()
+                    .fill(Color.black.opacity(0.80))
+                    .frame(width: 44, height: 44)
+
+                Circle()
+                    .stroke(hasReachedDock ? amberGold : Color.white.opacity(0.35), lineWidth: hasReachedDock ? 2.2 : 1.0)
+                    .frame(width: 44, height: 44)
+
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(hasReachedDock ? amberGold : Color.white.opacity(0.75))
+                    .scaleEffect(hasReachedDock ? 1.20 : 1.0)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
             }
+            .shadow(color: hasReachedDock ? amberGold.opacity(0.60) : Color.clear, radius: 8)
+            .offset(x: -56)
+            .scaleEffect(dockScale)
+            .opacity(dockOpacity)
+            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
+
+            Spacer()
+        }
+    }
+
+    // MARK: - AI Video Director Left Dock Target
+    private var aiVideoDirectorDockTarget: some View {
+        HStack {
+            ZStack {
+                Circle()
+                    .fill(Color.black.opacity(0.80))
+                    .frame(width: 44, height: 44)
+
+                Circle()
+                    .stroke(hasReachedDock ? amberGold : (viewModel.isAIVideoDirectorActive ? amberGold.opacity(0.85) : Color.white.opacity(0.35)), lineWidth: hasReachedDock ? 2.2 : 1.0)
+                    .frame(width: 44, height: 44)
+
+                Image(systemName: "sparkles.tv")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(hasReachedDock ? amberGold : (viewModel.isAIVideoDirectorActive ? amberGold : Color.white.opacity(0.75)))
+                    .scaleEffect(hasReachedDock ? 1.20 : 1.0)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
+            }
+            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? amberGold.opacity(0.60) : Color.clear, radius: 8)
+            .offset(x: -56)
+            .scaleEffect(dockScale)
+            .opacity(dockOpacity)
+            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
+
+            Spacer()
         }
     }
 }
 
-// MARK: - Gallery Thumbnail Button
+// MARK: - Gallery Thumbnail Button (Balanced Left Deck Item)
 struct GalleryThumbnailButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
@@ -582,102 +556,89 @@ struct GalleryThumbnailButton: View {
             }
         }) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(red: 0.10, green: 0.11, blue: 0.14))
                     .frame(width: 50, height: 50)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.28), lineWidth: 1.2)
+                    )
+                    .shadow(color: Color.black.opacity(0.4), radius: 4, y: 2)
 
                 if let photo = viewModel.latestCapturedPhoto {
                     Image(decorative: photo.processedImage, scale: 1.0, orientation: .up)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: 48, height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 11))
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 } else {
                     CustomAppIconView(
                         name: "iconnutxemanhganday",
                         fallbackSF: "photo.on.rectangle.angled",
-                        size: 28,
-                        color: .white.opacity(0.88)
+                        size: 24,
+                        color: .white.opacity(0.82)
                     )
                 }
             }
             .contentShape(Rectangle())
         }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("Xem ảnh vừa chụp")
     }
 }
 
-// MARK: - Camera Flip Button
+// MARK: - Camera Flip Button (Balanced Right Deck Item with 180° Spin)
 struct CameraFlipButton: View {
     @ObservedObject var viewModel: CameraViewModel
+    @State private var flipDegrees: Double = 0
 
     var body: some View {
         Button(action: {
-            viewModel.cameraService.switchCamera()
+            let haptic = UISelectionFeedbackGenerator()
+            haptic.prepare()
+            haptic.selectionChanged()
+
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                flipDegrees += 180
+            }
+            viewModel.switchCamera()
         }) {
             ZStack {
                 Circle()
-                    .fill(.ultraThinMaterial)
+                    .fill(Color(red: 0.12, green: 0.13, blue: 0.16))
                     .frame(width: 50, height: 50)
-
-                Circle()
-                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                    .frame(width: 50, height: 50)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1.2)
+                    )
+                    .shadow(color: Color.black.opacity(0.4), radius: 4, y: 2)
 
                 Image(systemName: "camera.rotate.fill")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(.white.opacity(0.92))
+                    .rotationEffect(.degrees(flipDegrees))
             }
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PlainButtonStyle())
         .accessibilityLabel("Đổi camera trước và sau")
     }
 }
 
-// MARK: - Filter Toggle Button
-struct FilterToggleButton: View {
-    @ObservedObject var viewModel: CameraViewModel
-
-    var body: some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                viewModel.isShowingFilmDrawer.toggle()
-            }
-        }) {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.55))
-                    .frame(width: 50, height: 50)
-
-                Circle()
-                    .stroke(viewModel.isAIFullColorEnabled ? Color.cyan : Color.white.opacity(0.35), lineWidth: 1.5)
-                    .frame(width: 50, height: 50)
-
-                CustomAppIconView(
-                    name: "iconchonmau",
-                    fallbackSF: "camera.filters",
-                    size: 28,
-                    color: viewModel.isAIFullColorEnabled ? .cyan : .white
-                )
-            }
-            .contentShape(Circle())
-        }
-    }
-}
-
-// MARK: - Film Preset Drawer (Danh Sách Tên Màu Film Tối Giản Typography Chuẩn Pro)
+// MARK: - Film Preset Drawer (Floating Overlay with Capsule Pills)
 struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         VStack(spacing: 8) {
-            // Header: Tiêu đề & Nút đóng
+            // Header
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "camera.filters")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.yellow)
-                    Text("Bộ lọc màu film")
+                        .foregroundColor(amberGold)
+                    Text("Bộ lọc màu film điện ảnh")
                         .font(.system(size: 12.5, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                 }
@@ -685,20 +646,20 @@ struct FilmPresetDrawer: View {
                 Spacer()
 
                 Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
                         viewModel.isShowingFilmDrawer = false
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(.white.opacity(0.60))
                 }
-                .accessibilityLabel("Đóng bảng màu")
+                .accessibilityLabel("Đóng bảng màu film")
             }
             .padding(.horizontal, 16)
             .padding(.top, 4)
 
-            // Danh sách tên preset dạng Capsule/Pill tối giản chuẩn Pro Camera
+            // Horizontal Scroll of Film Presets
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(FilmPreset.allCases) { preset in
@@ -721,24 +682,24 @@ struct FilmPresetDrawer: View {
                                 } else if isAIRecommended {
                                     Image(systemName: "sparkles")
                                         .font(.system(size: 10, weight: .bold))
-                                        .foregroundColor(.yellow)
+                                        .foregroundColor(amberGold)
                                 }
 
                                 Text(preset.displayName)
-                                    .font(.system(size: 12.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                                    .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
                             }
-                            .foregroundColor(isSelected ? .black : .white.opacity(0.9))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
+                            .foregroundColor(isSelected ? .black : .white.opacity(0.90))
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 7)
                             .background(
                                 Capsule()
-                                    .fill(isSelected ? Color.yellow : (isAIRecommended ? Color.yellow.opacity(0.18) : Color.white.opacity(0.08)))
+                                    .fill(isSelected ? amberGold : (isAIRecommended ? amberGold.opacity(0.18) : Color.white.opacity(0.08)))
                             )
                             .overlay(
                                 Capsule()
-                                    .stroke(isSelected ? Color.yellow : (isAIRecommended ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12)), lineWidth: 1)
+                                    .stroke(isSelected ? amberGold : (isAIRecommended ? amberGold.opacity(0.60) : Color.white.opacity(0.12)), lineWidth: 1.0)
                             )
-                            .shadow(color: isSelected ? Color.yellow.opacity(0.35) : Color.clear, radius: 4)
+                            .shadow(color: isSelected ? amberGold.opacity(0.35) : Color.clear, radius: 4)
                         }
                         .buttonStyle(PlainButtonStyle())
                         .scaleEffect(isSelected ? 1.04 : 1.0)
@@ -753,24 +714,25 @@ struct FilmPresetDrawer: View {
         .padding(.vertical, 6)
         .frame(maxHeight: 88)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(red: 0.08, green: 0.09, blue: 0.12).opacity(0.96))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
                 )
+                .shadow(color: Color.black.opacity(0.5), radius: 10, y: 4)
         )
         .gesture(
             DragGesture(minimumDistance: 15)
                 .onEnded { value in
                     if value.translation.height > 25 {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
                             viewModel.isShowingFilmDrawer = false
                         }
                     }
                 }
         )
         .padding(.horizontal, 12)
-        .padding(.bottom, 4)
+        .padding(.bottom, 2)
     }
 }
