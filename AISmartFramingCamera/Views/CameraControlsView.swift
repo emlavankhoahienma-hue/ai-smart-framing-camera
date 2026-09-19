@@ -3,54 +3,35 @@ import SwiftUI
 public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
 
-    private var dynamicZoomOptions: [CGFloat] {
-        return viewModel.availableDisplayZoomOptions
-    }
-
     public var body: some View {
-        VStack(spacing: 6) {
-            // Film Preset Drawer (Expandable)
+        VStack(spacing: 10) {
             if viewModel.isShowingFilmDrawer {
                 FilmPresetDrawer(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // Zoom Selector Pills
-            ZoomSelectorPills(viewModel: viewModel, options: dynamicZoomOptions)
-                .padding(.bottom, 4)
-
-            // Mode Switcher (Ảnh / Video / Pro) dạng Segmented Capsule trượt
-            CameraModeSegmentedSwitcher(viewModel: viewModel)
-                .padding(.bottom, 10)
-
-            // Main Bottom Control Deck
             HStack(alignment: .center) {
-                // Left: Gallery Thumbnail
                 GalleryThumbnailButton(viewModel: viewModel)
                     .frame(width: 52, height: 52)
 
                 Spacer()
 
-                // Center: Single Central Capture Controls (Photo: AI Pill + Central Shutter / Video: Record)
                 MainCaptureButton(viewModel: viewModel)
 
                 Spacer()
 
-                // Right: Color Drawer Toggle
-                FilterToggleButton(viewModel: viewModel)
+                CameraFlipButton(viewModel: viewModel)
                     .frame(width: 52, height: 52)
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+
+            CameraModeSegmentedSwitcher(viewModel: viewModel)
+                .padding(.bottom, 10)
         }
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: [Color.clear, Color.black.opacity(0.88), Color.black]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .edgesIgnoringSafeArea(.bottom)
-        )
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.ultraThinMaterial)
+        .background(Color.black.opacity(0.76))
     }
 }
 
@@ -84,7 +65,7 @@ public struct CustomAppIconView: View {
     }
 }
 
-// MARK: - Sliding Segmented Mode Switcher (Ảnh / Video / Pro)
+// MARK: - Sliding Segmented Mode Switcher (Ảnh / Video)
 struct CameraModeSegmentedSwitcher: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var modeAnimationNamespace
@@ -96,9 +77,8 @@ struct CameraModeSegmentedSwitcher: View {
     }
 
     private let modes: [ModeItem] = [
-        ModeItem(mode: .photo, title: "Ảnh"),
-        ModeItem(mode: .video, title: "Video"),
-        ModeItem(mode: .proVideo, title: "Pro")
+        ModeItem(mode: .photo, title: "ẢNH"),
+        ModeItem(mode: .video, title: "VIDEO")
     ]
 
     var body: some View {
@@ -128,9 +108,8 @@ struct CameraModeSegmentedSwitcher: View {
         }) {
             Text(item.title)
                 .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? .black : .white.opacity(0.85))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
+                .foregroundColor(isSelected ? amberGold : .white.opacity(0.62))
+                .frame(width: 76, height: 30)
                 .background(modePillBackground(isSelected: isSelected))
         }
         .buttonStyle(PlainButtonStyle())
@@ -141,13 +120,18 @@ struct CameraModeSegmentedSwitcher: View {
     private func modePillBackground(isSelected: Bool) -> some View {
         if isSelected {
             Capsule()
-                .fill(Color.yellow)
+                .fill(Color.white.opacity(0.10))
                 .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
-                .shadow(color: Color.yellow.opacity(0.35), radius: 4)
+                .overlay {
+                    Capsule()
+                        .stroke(amberGold.opacity(0.34), lineWidth: 1)
+                }
         } else {
             Color.clear
         }
     }
+
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 }
 
 // MARK: - Main Capture Button (Photo: Apple-style Shutter with Drag-Left to AI Compose / Video: Record)
@@ -518,13 +502,17 @@ struct ZoomSelectorPills: View {
     let options: [CGFloat]
 
     @State private var targetedZoom: CGFloat = 1.0
+    @Namespace private var zoomAnimationNamespace
     private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+
+    private var displayedOptions: [CGFloat] {
+        [1.0, 2.0]
+    }
 
     var body: some View {
         VStack(spacing: 4) {
-            // Floating zoom badge: chỉ xuất hiện nhẹ nhàng phía trên khi người dùng đang pinch thủ công trên kính ngắm
-            if viewModel.isPinchingZoom && !options.contains(where: { abs(viewModel.displayZoom - $0) < 0.08 }) {
-                Text(String(format: "%.1f×", viewModel.displayZoom))
+            if viewModel.isPinchingZoom && !displayedOptions.contains(where: { abs(viewModel.displayZoom - $0) < 0.08 }) {
+                Text(String(format: "%.1fx", viewModel.displayZoom))
                     .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(amberGold)
                     .padding(.horizontal, 9)
@@ -537,37 +525,45 @@ struct ZoomSelectorPills: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
 
-            HStack(spacing: 8) {
-                ForEach(options, id: \.self) { zoom in
+            HStack(spacing: 2) {
+                ForEach(displayedOptions, id: \.self) { zoom in
                     let isSelected = abs(targetedZoom - zoom) < 0.05 || (!viewModel.isPinchingZoom && abs(viewModel.displayZoom - zoom) < 0.12)
                     Button(action: {
-                        targetedZoom = zoom
-                        viewModel.setZoomFromButton(zoom)
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.76)) {
+                            targetedZoom = zoom
+                            viewModel.setZoomFromButton(zoom)
+                        }
                     }) {
-                        Text(zoom < 1.0 ? String(format: "%.1f×", zoom) : String(format: "%.0f×", zoom))
-                            .font(.system(size: 12, weight: isSelected ? .heavy : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? .black : .white)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 5.5)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? amberGold : Color.black.opacity(0.48))
-                            )
-                            .overlay(
-                                Capsule()
-                                    .stroke(isSelected ? amberGold : Color.white.opacity(0.10), lineWidth: 1)
-                            )
+                        Text(String(format: "%.0fx", zoom))
+                            .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
+                            .foregroundColor(isSelected ? .black : .white.opacity(0.86))
+                            .frame(width: 38, height: 38)
+                            .background {
+                                if isSelected {
+                                    Circle()
+                                        .fill(amberGold)
+                                        .matchedGeometryEffect(id: "active_zoom_circle", in: zoomAnimationNamespace)
+                                        .shadow(color: amberGold.opacity(0.34), radius: 8)
+                                }
+                            }
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .buttonStyle(.plain)
                 }
             }
+            .padding(4)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+            }
+            .shadow(color: Color.black.opacity(0.35), radius: 8, y: 4)
         }
         .onAppear {
-            targetedZoom = viewModel.displayZoom
+            targetedZoom = abs(viewModel.displayZoom - 2.0) < abs(viewModel.displayZoom - 1.0) ? 2.0 : 1.0
         }
         .onChange(of: viewModel.displayZoom) { newZoom in
             if !viewModel.isPinchingZoom {
-                if let matched = options.first(where: { abs(newZoom - $0) < 0.12 }) {
+                if let matched = displayedOptions.first(where: { abs(newZoom - $0) < 0.12 }) {
                     targetedZoom = matched
                 }
             }
@@ -607,6 +603,34 @@ struct GalleryThumbnailButton: View {
             }
             .contentShape(Rectangle())
         }
+    }
+}
+
+// MARK: - Camera Flip Button
+struct CameraFlipButton: View {
+    @ObservedObject var viewModel: CameraViewModel
+
+    var body: some View {
+        Button(action: {
+            viewModel.cameraService.switchCamera()
+        }) {
+            ZStack {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: 50, height: 50)
+
+                Circle()
+                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                    .frame(width: 50, height: 50)
+
+                Image(systemName: "camera.rotate.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+            }
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Đổi camera trước và sau")
     }
 }
 

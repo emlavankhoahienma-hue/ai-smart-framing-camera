@@ -80,6 +80,7 @@ public final class CameraService: NSObject {
     public private(set) var minZoom: CGFloat = 1.0
     public private(set) var maxZoom: CGFloat = 10.0
     public private(set) var isRecordingVideo = false
+    public private(set) var currentCameraPosition: AVCaptureDevice.Position = .back
 
     // Virtual Multi-Camera Mapping (Apple Camera App style: 0.5x, 1x, 2x, 3x/5x)
     public private(set) var displayMultiplier: CGFloat = 1.0
@@ -170,6 +171,7 @@ public final class CameraService: NSObject {
             }
 
             self.activeCamera = camera
+            self.currentCameraPosition = .back
             self.zoomObservation?.invalidate()
             self.zoomObservation = camera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
                 guard let newValue = change.newValue else { return }
@@ -377,6 +379,75 @@ public final class CameraService: NSObject {
             guard let self = self, self.captureSession.isRunning else { return }
             self.captureSession.stopRunning()
             self.isSessionRunning = false
+        }
+    }
+
+    // MARK: - Camera Position (Switch Front / Back)
+    public func switchCamera() {
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            let targetPosition: AVCaptureDevice.Position = (self.currentCameraPosition == .back) ? .front : .back
+            let discovery = AVCaptureDevice.DiscoverySession(
+                deviceTypes: targetPosition == .front ? [.builtInWideAngleCamera] : [.builtInTripleCamera, .builtInDualWideCamera, .builtInWideAngleCamera],
+                mediaType: .video,
+                position: targetPosition
+            )
+            guard let newCamera = discovery.devices.first else {
+                CameraLogger.warning("CameraService: Không tìm thấy thiết bị camera cho vị trí \(targetPosition == .front ? "Trước" : "Sau")", category: .capture)
+                return
+            }
+
+            self.captureSession.beginConfiguration()
+            if let currentInput = self.videoDeviceInput {
+                self.captureSession.removeInput(currentInput)
+            }
+            do {
+                let newInput = try AVCaptureDeviceInput(device: newCamera)
+                if self.captureSession.canAddInput(newInput) {
+                    self.captureSession.addInput(newInput)
+                    self.videoDeviceInput = newInput
+                    self.activeCamera = newCamera
+                    self.currentCameraPosition = targetPosition
+                    self.minZoom = newCamera.minAvailableVideoZoomFactor
+                    self.maxZoom = min(newCamera.maxAvailableVideoZoomFactor, 5.0)
+                    self.displayMultiplier = 1.0
+                    self.hasUltraWideLens = false
+                    self.availableDisplayZoomOptions = [1.0, 2.0]
+                    self.defaultDisplayZoom = 1.0
+
+                    self.zoomObservation?.invalidate()
+                    self.zoomObservation = newCamera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
+                        guard let newValue = change.newValue else { return }
+                        DispatchQueue.main.async {
+                            self?.onLiveZoomFactorChanged?(newValue)
+                        }
+                    }
+
+                    if let connection = self.videoDataOutput.connection(with: .video) {
+                        if connection.isVideoOrientationSupported {
+                            connection.videoOrientation = .portrait
+                        }
+                        if connection.isVideoMirroringSupported {
+                            connection.isVideoMirrored = (targetPosition == .front)
+                        }
+                    }
+                    self.updateMaxPhotoDimensions(for: newCamera)
+                    let initialZoom = newCamera.videoZoomFactor
+                    self.currentZoom = initialZoom
+                    DispatchQueue.main.async {
+                        self.delegate?.cameraService(self, didChangeZoomFactor: initialZoom)
+                    }
+                    CameraLogger.info("CameraService: Đã chuyển sang camera \(targetPosition == .front ? "Trước" : "Sau")", category: .capture)
+                } else if let currentInput = self.videoDeviceInput {
+                    self.captureSession.addInput(currentInput)
+                }
+            } catch {
+                CameraLogger.error("Không thể đổi camera sang \(targetPosition == .front ? "Trước" : "Sau")", error: error, category: .capture)
+                if let currentInput = self.videoDeviceInput {
+                    self.captureSession.addInput(currentInput)
+                }
+            }
+            self.captureSession.commitConfiguration()
         }
     }
 

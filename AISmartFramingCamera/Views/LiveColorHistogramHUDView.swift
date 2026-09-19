@@ -1,146 +1,61 @@
 import SwiftUI
+import Foundation
 
 public struct LiveColorHistogramHUDView: View {
     @ObservedObject var viewModel: CameraViewModel
-    private let haptic = UISelectionFeedbackGenerator()
 
-    @State private var isAIPulsePhase: Bool = false
+    private let haptic = UISelectionFeedbackGenerator()
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
     }
 
     public var body: some View {
-        HStack(spacing: 10) {
-            // 1. Format / Codec Selector (Video: HEVC / H.264, Photo: JPEG / HEIC / DNG)
-            formatSelectorView
+        VStack(spacing: 5) {
+            histogramView
 
-            // 2. Realtime 32-Bar RGB Spectrum Histogram (Biểu đồ Histogram màu quang phổ Realtime báo cháy sáng)
-            if viewModel.isHistogramBarExpanded {
-                histogramBarsView
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.9).combined(with: .opacity),
-                        removal: .opacity
-                    ))
+            HStack(spacing: 7) {
+                Text(viewModel.liveISO)
+                    .lineLimit(1)
+
+                separatorDot
+
+                Text(String(format: "EV %+.1f", viewModel.exposureBias))
+                    .lineLimit(1)
+
+                separatorDot
+
+                formatButton
             }
-
-            // 3. Nút Toggle On/Off Thanh Màu (như kiểu video pro bên cạnh)
-            histogramToggleButton
-
-            // 4. Thin Vertical Separator
-            Rectangle()
-                .fill(Color.white.opacity(0.18))
-                .frame(width: 1, height: 22)
-
-            // 5. Realtime Exposure Info (Tốc độ màn trập & ISO luôn hiển thị như cũ)
-            exposureInfoView
-
-            // 6. Menu / Settings Dot ⋮
-            settingsButton
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .foregroundColor(.white.opacity(0.88))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
-                )
-                .shadow(color: Color.black.opacity(0.4), radius: 6, x: 0, y: 3)
-        )
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.13), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.28), radius: 7, y: 3)
         .animation(.spring(response: 0.32, dampingFraction: 0.78), value: viewModel.isHistogramBarExpanded)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true)) {
-                isAIPulsePhase = true
-            }
-        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Histogram, \(viewModel.liveISO), độ phơi sáng \(formattedExposure), định dạng \(activeFormatTitle)")
     }
 
-    // MARK: - 1. Format / Codec Selector
-    @ViewBuilder
-    private var formatSelectorView: some View {
-        if viewModel.captureMode.isVideo {
-            VStack(alignment: .leading, spacing: 1.5) {
-                Text("HEVC")
-                    .font(.system(size: 8, weight: viewModel.selectedVideoCodec == .hevc ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedVideoCodec == .hevc ? .cyan : .white.opacity(0.3))
-
-                Text("H.264")
-                    .font(.system(size: 8, weight: viewModel.selectedVideoCodec == .h264 ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedVideoCodec == .h264 ? .white : .white.opacity(0.3))
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                viewModel.toggleVideoCodec()
-            }
-            .padding(.trailing, 2)
-        } else {
-            VStack(alignment: .leading, spacing: 0.5) {
-                // Nháy đỏ (AI Local) hoặc nháy vàng (AI Cloud) tại chữ JPEG
-                Text("JPEG")
-                    .font(.system(size: 8, weight: (viewModel.activeAIIndicatorType != .none || viewModel.selectedPhotoFormat == .jpeg) ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(jpegTextColor)
-                    .opacity(jpegTextOpacity)
-                    .shadow(color: jpegGlowColor, radius: 4, x: 0, y: 0)
-
-                Text("HEIC")
-                    .font(.system(size: 8, weight: viewModel.selectedPhotoFormat == .heic ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedPhotoFormat == .heic ? .cyan : .white.opacity(0.3))
-
-                Text("DNG")
-                    .font(.system(size: 8, weight: viewModel.selectedPhotoFormat == .dng ? .heavy : .medium, design: .rounded))
-                    .foregroundColor(viewModel.selectedPhotoFormat == .dng ? .yellow : .white.opacity(0.3))
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                viewModel.togglePhotoFormat()
-            }
-            .padding(.trailing, 2)
-        }
-    }
-
-    private var jpegTextColor: Color {
-        switch viewModel.activeAIIndicatorType {
-        case .local:
-            return .red
-        case .cloud:
-            return .yellow
-        case .none:
-            return viewModel.selectedPhotoFormat == .jpeg ? .white : .white.opacity(0.3)
-        }
-    }
-
-    private var jpegTextOpacity: Double {
-        switch viewModel.activeAIIndicatorType {
-        case .local, .cloud:
-            return isAIPulsePhase ? 1.0 : 0.35
-        case .none:
-            return 1.0
-        }
-    }
-
-    private var jpegGlowColor: Color {
-        switch viewModel.activeAIIndicatorType {
-        case .local:
-            return Color.red.opacity(isAIPulsePhase ? 0.9 : 0.2)
-        case .cloud:
-            return Color.yellow.opacity(isAIPulsePhase ? 0.9 : 0.2)
-        case .none:
-            return .clear
-        }
-    }
-
-    // MARK: - 2. Realtime 32-Bar RGB Spectrum Histogram
-    private var histogramBarsView: some View {
-        HStack(alignment: .bottom, spacing: 2) {
+    private var histogramView: some View {
+        HStack(alignment: .bottom, spacing: 1) {
             ForEach(viewModel.histogramBars) { bar in
-                RoundedRectangle(cornerRadius: 1)
+                Capsule(style: .continuous)
                     .fill(bar.color)
-                    .frame(width: 3.2, height: max(2.5, bar.height * 24.0))
+                    .frame(
+                        width: 2.2,
+                        height: max(2.0, bar.height * (viewModel.isHistogramBarExpanded ? 23.0 : 15.0))
+                    )
             }
         }
-        .frame(height: 26, alignment: .bottom)
+        .frame(height: viewModel.isHistogramBarExpanded ? 24 : 16, alignment: .bottom)
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
@@ -148,67 +63,52 @@ public struct LiveColorHistogramHUDView: View {
             }
             haptic.selectionChanged()
         }
+        .accessibilityLabel(viewModel.isHistogramBarExpanded ? "Thu gọn histogram" : "Mở rộng histogram")
     }
 
-    // MARK: - 3. Nút Toggle On/Off Thanh Màu Báo Cháy Sáng
-    private var histogramToggleButton: some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                viewModel.isHistogramBarExpanded.toggle()
-            }
-            haptic.selectionChanged()
-        }) {
-            if viewModel.isHistogramBarExpanded {
-                Image(systemName: "chevron.right.circle.fill")
-                    .font(.system(size: 15))
-                    .foregroundColor(.white.opacity(0.72))
-                    .padding(.horizontal, 2)
-            } else {
-                HStack(spacing: 3) {
-                    Image(systemName: "chart.bar.fill")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("HISTO")
-                        .font(.system(size: 9, weight: .heavy, design: .rounded))
-                }
-                .foregroundColor(.yellow)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3.5)
-                .background(
-                    Capsule()
-                        .fill(Color.yellow.opacity(0.18))
-                        .overlay(
-                            Capsule().stroke(Color.yellow.opacity(0.4), lineWidth: 0.8)
-                        )
-                )
-            }
-        }
-        .accessibilityLabel(viewModel.isHistogramBarExpanded ? "Thu gọn thanh màu báo cháy sáng" : "Mở rộng thanh màu báo cháy sáng")
+    private var separatorDot: some View {
+        Circle()
+            .fill(Color.white.opacity(0.28))
+            .frame(width: 2.5, height: 2.5)
     }
 
-    // MARK: - 4. Realtime Exposure Info (Thông số hiển thị như cũ)
-    private var exposureInfoView: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            Text(viewModel.liveShutterSpeed)
-                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                .foregroundColor(.white)
-
-            Text(viewModel.liveISO)
-                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.90))
+    private var formatButton: some View {
+        Button(action: toggleActiveFormat) {
+            Text(activeFormatTitle)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(amberGold)
+                .lineLimit(1)
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Đổi định dạng \(activeFormatTitle)")
     }
 
-    // MARK: - 5. Menu / Settings Dot
-    private var settingsButton: some View {
-        Button(action: {
-            viewModel.isShowingSettings = true
-        }) {
-            Image(systemName: "ellipsis")
-                .rotationEffect(.degrees(90))
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(.white.opacity(0.65))
-                .frame(width: 14, height: 26)
+    private var activeFormatTitle: String {
+        if viewModel.captureMode.isVideo {
+            return viewModel.selectedVideoCodec == .hevc ? "HEVC" : "H.264"
         }
-        .accessibilityLabel("Cài đặt")
+
+        if viewModel.selectedPhotoFormat == .jpeg {
+            return "JPEG"
+        }
+
+        if viewModel.selectedPhotoFormat == .heic {
+            return "HEIC"
+        }
+
+        return "DNG"
+    }
+
+    private var formattedExposure: String {
+        String(format: "%+.1f EV", viewModel.exposureBias)
+    }
+
+    private func toggleActiveFormat() {
+        if viewModel.captureMode.isVideo {
+            viewModel.toggleVideoCodec()
+        } else {
+            viewModel.togglePhotoFormat()
+        }
+        haptic.selectionChanged()
     }
 }

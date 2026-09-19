@@ -664,6 +664,11 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    public func switchCamera() {
+        haptics.triggerSelectionChange()
+        cameraService.switchCamera()
+    }
+
     public func toggleVideoCodec() {
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut(duration: 0.2)) {
