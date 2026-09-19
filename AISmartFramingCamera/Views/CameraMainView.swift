@@ -48,17 +48,21 @@ public struct CameraMainView: View {
                     .position(x: proxy.size.width / 2, y: layout.topBarHeight + 46)
 
                     // The drawer's upper edge cannot enter the HUD's reserved area.
-                    if viewModel.isShowingFilmDrawer || (viewModel.captureMode == .proVideo && viewModel.isShowingProControlsDrawer) {
-                        Group {
-                            if viewModel.isShowingFilmDrawer { FilmPresetDrawer(viewModel: viewModel) }
-                            else { ProVideoManualControlsView(viewModel: viewModel) }
+                    ZStack(alignment: .bottom) {
+                        if viewModel.isShowingFilmDrawer || (viewModel.captureMode == .proVideo && viewModel.isShowingProControlsDrawer) {
+                            Group {
+                                if viewModel.isShowingFilmDrawer { FilmPresetDrawer(viewModel: viewModel) }
+                                else { ProVideoManualControlsView(viewModel: viewModel) }
+                            }
+                            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                         }
-                        .frame(width: min(proxy.size.width - 24, 520), height: layout.drawerHeight)
-                        .clipped()
-                        .position(x: proxy.size.width / 2,
-                                  y: layout.topBarHeight + layout.stageHeight - layout.drawerHeight / 2 - 4)
-                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                     }
+                    .frame(width: min(proxy.size.width - 24, 520), height: layout.drawerHeight)
+                    // Clip the animated child in its stationary slot, including insertion/removal.
+                    .clipped()
+                    .allowsHitTesting(viewModel.isShowingFilmDrawer || (viewModel.captureMode == .proVideo && viewModel.isShowingProControlsDrawer))
+                    .position(x: proxy.size.width / 2,
+                              y: layout.topBarHeight + layout.stageHeight - layout.drawerHeight / 2 - 4)
                     CameraControlsView(viewModel: viewModel)
                         .frame(height: layout.deckHeight)
                         .position(x: proxy.size.width / 2, y: proxy.size.height - layout.deckHeight / 2 - 4)
