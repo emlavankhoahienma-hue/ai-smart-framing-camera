@@ -173,10 +173,11 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: flashIconName)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.72) : amberGold)
                         .frame(width: 40, height: 40)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .luxuryGoldInteractive(
+                    baseColor: viewModel.activeFlashMode == .off ? Color.white.opacity(0.72) : amberGold
+                )
                 .accessibilityLabel("Chế độ đèn flash")
 
                 // 2. Film Filter Drawer Button (Moved from standalone diamond button)
@@ -190,10 +191,11 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: "camera.filters")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(viewModel.isShowingFilmDrawer ? amberGold : Color.white.opacity(0.72))
                         .frame(width: 40, height: 40)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .luxuryGoldInteractive(
+                    baseColor: viewModel.isShowingFilmDrawer ? amberGold : Color.white.opacity(0.72)
+                )
                 .accessibilityLabel("Mở bộ màu film điện ảnh")
 
                 // 3. Composition Rule Quick Viewfinder Sheet
@@ -202,10 +204,11 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: "viewfinder")
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(viewModel.isCompositionRuleSheetPresented ? amberGold : Color.white.opacity(0.72))
                         .frame(width: 40, height: 40)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .luxuryGoldInteractive(
+                    baseColor: viewModel.isCompositionRuleSheetPresented ? amberGold : Color.white.opacity(0.72)
+                )
                 .accessibilityLabel("Quy tắc bố cục camera")
 
                 // 4. Settings Sheet Button (9-Dot Grid Icon matching Reference)
@@ -214,10 +217,11 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: "circle.grid.3x3.fill")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.75))
                         .frame(width: 40, height: 40)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .luxuryGoldInteractive(
+                    baseColor: Color.white.opacity(0.75)
+                )
                 .accessibilityLabel("Cài đặt hệ thống")
             }
             .padding(.horizontal, 4)
@@ -268,14 +272,12 @@ struct AIViewfinderButton: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .foregroundColor(.white)
                         .frame(width: 38, height: 38)
                 } else {
                     Image("nutAI")
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .foregroundColor(.white)
                         .frame(width: 38, height: 38)
                 }
             }
@@ -284,7 +286,7 @@ struct AIViewfinderButton: View {
             .animation(.spring(response: 0.35, dampingFraction: 0.65), value: isPulsing)
             .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .luxuryGoldInteractive()
         .accessibilityLabel("Nút AI Bố cục")
     }
 
@@ -381,7 +383,7 @@ struct ViewfinderZoomSelectorPill: View {
     }
 }
 
-// 3. Viewfinder Framing / Composition Button (nuticonbocucAI.png - Pure White, No Circle Border)
+// 3. Viewfinder Framing / Composition Button (nuticonbocuc.png - Pure White, No Circle Border)
 struct ViewfinderFramingButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
@@ -393,26 +395,24 @@ struct ViewfinderFramingButton: View {
             viewModel.isCompositionRuleSheetPresented = true
         }) {
             ZStack {
-                if let uiImage = UIImage(named: "nuticonbocucAI") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nuticonbocucAI", ofType: "png") ?? "") {
+                if let uiImage = UIImage(named: "nuticonbocuc") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nuticonbocuc", ofType: "png") ?? "") {
                     Image(uiImage: uiImage)
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .foregroundColor(.white)
                         .frame(width: 38, height: 38)
                 } else {
-                    Image("nuticonbocucAI")
+                    Image("nuticonbocuc")
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .foregroundColor(.white)
                         .frame(width: 38, height: 38)
                 }
             }
             .frame(width: 44, height: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .luxuryGoldInteractive()
         .accessibilityLabel("Chọn quy tắc bố cục thông minh")
     }
 }

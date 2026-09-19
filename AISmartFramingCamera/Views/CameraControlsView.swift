@@ -622,12 +622,11 @@ struct CameraFlipButton: View {
 
                 Image(systemName: "camera.rotate.fill")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.92))
                     .rotationEffect(.degrees(flipDegrees))
             }
             .contentShape(Circle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .luxuryGoldInteractive(baseColor: .white.opacity(0.92))
         .accessibilityLabel("Đổi camera trước và sau")
     }
 }
