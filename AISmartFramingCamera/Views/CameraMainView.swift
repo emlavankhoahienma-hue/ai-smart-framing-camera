@@ -259,13 +259,13 @@ struct AIViewfinderButton: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 38, height: 38)
+                        .frame(width: 36, height: 36)
                 } else {
                     Image("nutAI")
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 38, height: 38)
+                        .frame(width: 36, height: 36)
                 }
             }
             .frame(width: 44, height: 44)
@@ -387,13 +387,13 @@ struct ViewfinderFramingButton: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 38, height: 38)
+                        .frame(width: 36, height: 36)
                 } else {
                     Image("nuticonbocuc")
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 38, height: 38)
+                        .frame(width: 36, height: 36)
                 }
             }
             .frame(width: 44, height: 44)
