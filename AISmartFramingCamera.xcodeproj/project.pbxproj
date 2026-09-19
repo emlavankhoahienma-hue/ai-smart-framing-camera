@@ -43,6 +43,7 @@
 		B20000000000000000000032 /* iconbuttonAI.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000032 /* iconbuttonAI.png */; };
 		B20000000000000000000033 /* iconchonmau.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000033 /* iconchonmau.png */; };
 		B20000000000000000000034 /* iconnutxemanhganday.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000034 /* iconnutxemanhganday.png */; };
+		B20000000000000000000035 /* nutAI.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000035 /* nutAI.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -84,6 +85,7 @@
 		B100000000000000000000032 /* iconbuttonAI.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = iconbuttonAI.png; sourceTree = "<group>"; };
 		B100000000000000000000033 /* iconchonmau.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = iconchonmau.png; sourceTree = "<group>"; };
 		B100000000000000000000034 /* iconnutxemanhganday.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = iconnutxemanhganday.png; sourceTree = "<group>"; };
+		B100000000000000000000035 /* nutAI.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = nutAI.png; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -167,6 +169,7 @@
 				B100000000000000000000032 /* iconbuttonAI.png */,
 				B100000000000000000000033 /* iconchonmau.png */,
 				B100000000000000000000034 /* iconnutxemanhganday.png */,
+				B100000000000000000000035 /* nutAI.png */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -268,6 +271,7 @@
 				B20000000000000000000032 /* iconbuttonAI.png in Resources */,
 				B20000000000000000000033 /* iconchonmau.png in Resources */,
 				B20000000000000000000034 /* iconnutxemanhganday.png in Resources */,
+				B20000000000000000000035 /* nutAI.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

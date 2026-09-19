@@ -276,8 +276,9 @@ public struct LiveColorHistogramHUDView: View {
         for i in 0..<count {
             let prev = smoothedHeights.indices.contains(i) ? smoothedHeights[i] : 0.08
             let targetVal = target[i]
-            // Exponential Moving Average (EMA) for zero-jitter continuous flow
-            let val = prev * 0.45 + targetVal * 0.55
+            // Exponential Moving Average (EMA) bất đối xứng: tăng bắt sáng (0.35), giảm giữ hình (0.22)
+            let alpha: CGFloat = targetVal > prev ? 0.35 : 0.22
+            let val = prev * (1.0 - alpha) + targetVal * alpha
             nextSmoothed.append(val)
         }
 

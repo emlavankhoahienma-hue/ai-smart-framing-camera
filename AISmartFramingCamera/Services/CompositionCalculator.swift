@@ -66,12 +66,14 @@ public final class CompositionCalculator {
             advice = text
         }
         
-        // Auto-Zoom evaluation based on subject bounding box scale
+        // Auto-Zoom evaluation based on subject bounding box scale & scene context (2-Tier Analysis)
         let isGroupPhoto = detection.faceRectangles.count > 1
         if let dominantRect = detection.dominantSubjectRect {
-            recommendedZoom = computeOptimalZoom(subjectRect: dominantRect, currentZoom: currentZoom, isGroup: isGroupPhoto)
+            recommendedZoom = computeOptimalZoom(subjectRect: dominantRect, currentZoom: currentZoom, isGroup: isGroupPhoto, scene: detection.detectedScene)
         } else if let faceRect = detection.faceRectangles.first {
-            recommendedZoom = computeOptimalZoom(subjectRect: faceRect, currentZoom: currentZoom, isGroup: isGroupPhoto)
+            recommendedZoom = computeOptimalZoom(subjectRect: faceRect, currentZoom: currentZoom, isGroup: isGroupPhoto, scene: detection.detectedScene)
+        } else if detection.detectedScene == .landscape || isGroupPhoto {
+            recommendedZoom = 1.0
         }
         
         // Calculate offset vector and metrics
@@ -187,29 +189,45 @@ public final class CompositionCalculator {
         return (nearest, "Đưa tâm trắng vào tiêu điểm xoắn ốc Fibonacci gần chủ thể nhất")
     }
     
-    // MARK: - Auto-Zoom Computation (Tối ưu độ phóng đại quang học mượt mà)
-    private func computeOptimalZoom(subjectRect: CGRect, currentZoom: CGFloat, isGroup: Bool = false) -> CGFloat {
-        if isGroup {
-            // Chụp nhóm: Giữ góc rộng 1.0x - 1.2x để không ai bị mất góc
+    // MARK: - Auto-Zoom Computation (2-Tier Context Understanding: 1x, 2x, 3x)
+    public func computeOptimalZoom(
+        subjectRect: CGRect,
+        currentZoom: CGFloat,
+        isGroup: Bool = false,
+        scene: DetectedSceneType = .general
+    ) -> CGFloat {
+        // Tier 2: Bối cảnh cảnh quan & Nhóm đông người
+        // Nhóm đông người hoặc phong cảnh rộng: giữ 1x (hoặc zoom out về 1x nếu đang zoom)
+        if isGroup || scene == .landscape || scene == .sky || scene == .water {
             return 1.0
         }
+
+        // Kiểm tra khoảng cách mép khung hình:
+        // Nếu chủ thể sát mép khung hình: không tự zoom vào để tránh cắt cụt chủ thể
+        let margin: CGFloat = 0.08
+        let isNearEdge = subjectRect.minX < margin ||
+                         subjectRect.maxX > (1.0 - margin) ||
+                         subjectRect.minY < margin ||
+                         subjectRect.maxY > (1.0 - margin)
+        if isNearEdge {
+            return 1.0
+        }
+
+        // Tier 2: Phân tích tỉ lệ diện tích & vị trí đối xứng so với tâm
         let subjectArea = subjectRect.width * subjectRect.height
-        
-        if subjectArea < 0.035 {
-            // Chủ thể ở xa / diện tích nhỏ: Zoom 2.5x đặc tả rõ nét
-            return 2.5
-        } else if subjectArea < 0.09 {
-            // Cự ly trung bình xa: Zoom 2.0x chân dung chuẩn
-            return 2.0
-        } else if subjectArea < 0.18 {
-            // Cự ly trung cảnh vừa: Zoom 1.6x tôn dáng
-            return 1.6
-        } else if subjectArea < 0.32 {
-            // Cận cảnh nhẹ: Zoom 1.3x
-            return 1.3
-        } else {
-            // Chủ thể đã chiếm trọn khung hình: giữ nguyên góc rộng 1.0x
-            return 1.0
+        let isNearCenter = abs(subjectRect.midX - 0.5) < 0.28 && abs(subjectRect.midY - 0.5) < 0.28
+
+        // 1. Chủ thể ở xa hoặc chi tiết nhỏ (chiếm < 8% khung hình và nằm gần trung tâm): gợi ý / zoom lên 3x
+        if subjectArea < 0.08 && isNearCenter {
+            return 3.0
         }
+
+        // 2. Chân dung bán thân (1 người, chiếm 10-25% khung hình, nới lỏng 8%-28%): gợi ý / zoom lên 2x để tỉ lệ đẹp
+        if subjectArea >= 0.08 && subjectArea <= 0.28 {
+            return 2.0
+        }
+
+        // 3. Chủ thể đã chiếm diện tích lớn (> 28% khung hình) hoặc bối cảnh toàn cảnh: giữ 1.0x
+        return 1.0
     }
 }

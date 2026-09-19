@@ -1,4 +1,4 @@
-﻿import CoreVideo
+import CoreVideo
 import CoreGraphics
 import SwiftUI
 
@@ -76,8 +76,10 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
         var result: [HistogramBarData] = []
         for i in 0..<32 {
             let rawNormalized = CGFloat(bins[i] / maxBin)
-            // Khử rung và làm mượt chuyển động (Exponential Moving Average)
-            let smoothed = smoothedHeights[i] * 0.40 + rawNormalized * 0.60
+            let current = smoothedHeights[i]
+            // Khử rung và làm mượt chuyển động bất đối xứng: tăng nhanh bắt sáng (0.45), giảm chậm giữ hình (0.22)
+            let alpha: CGFloat = rawNormalized > current ? 0.45 : 0.22
+            let smoothed = current * (1.0 - alpha) + rawNormalized * alpha
             smoothedHeights[i] = smoothed
             
             result.append(HistogramBarData(

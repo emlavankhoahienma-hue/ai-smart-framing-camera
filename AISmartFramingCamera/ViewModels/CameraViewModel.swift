@@ -190,7 +190,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var displayZoom: CGFloat = 1.0
     public var availableDisplayZoomOptions: [CGFloat] {
-        return cameraService.availableDisplayZoomOptions
+        return [1.0, 2.0, 3.0]
     }
     @Published public var isRevealingZoomTarget: Bool = false
     @Published public var lockOnProgress: CGFloat = 0
@@ -260,12 +260,50 @@ public final class CameraViewModel: ObservableObject {
 
     private var pendingSuggestedZoom: CGFloat = 1.0
     private var hasExecutedAutoZoomForSession: Bool = false
+    private var lastAutoZoomExecutionTime: Date = .distantPast
+
+    // MARK: - Auto-Zoom Execution (1x, 2x, 3x Zoom-In & Zoom-Out with Cooldown & Hysteresis)
+    public func applyAISuggestedZoom(_ targetZoom: CGFloat, force: Bool = false) {
+        guard isAutoZoomEnabled else { return }
+        guard targetZoom.isFinite, currentZoom.isFinite else { return }
+
+        // Cooldown: Tối thiểu 2.5s giữa các lần tự động zoom
+        let now = Date()
+        let timeSinceLast = now.timeIntervalSince(lastAutoZoomExecutionTime)
+        if !force && timeSinceLast < 2.5 {
+            CameraLogger.info("Bỏ qua auto zoom do đang trong thời gian cooldown (\(String(format: "%.1f", timeSinceLast))s < 2.5s)", category: .ai)
+            return
+        }
+
+        // Hysteresis: Nếu mức zoom hiện tại đã rất gần mục tiêu (sai số < 0.15), không zoom lại
+        let diff = targetZoom - displayZoom
+        guard abs(diff) > 0.15 else { return }
+
+        lastAutoZoomExecutionTime = now
+        hasExecutedAutoZoomForSession = true
+
+        CameraLogger.info("Thực thi AI Auto-Zoom: \(displayZoom)x -> \(targetZoom)x", category: .ai)
+
+        if targetZoom > displayZoom {
+            // Zoom In: Kích hoạt hiệu ứng reveal điện ảnh và ramp camera
+            triggerZoomRevealAnimation(targetZoom: targetZoom)
+        } else {
+            // Zoom Out: Ramp trực tiếp ống kính mượt mà về mức góc rộng hơn (ví dụ 3x/2x về 1x)
+            let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetZoom)
+            displayZoom = targetZoom
+            currentZoom = deviceZoom
+            cameraService.smoothZoomFactor(to: deviceZoom, rate: 1.5)
+            SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
+            haptics.triggerSelectionChange()
+        }
+    }
 
     public func triggerZoomRevealAnimation(targetZoom: CGFloat) {
         guard targetZoom.isFinite, currentZoom.isFinite else { return }
-        guard targetZoom > 1.05, abs(targetZoom - currentZoom) > 0.05 else { return }
+        let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetZoom)
+        guard abs(targetDeviceZoom - currentZoom) > 0.05 else { return }
         pendingTargetZoomForReveal = targetZoom
-        liveZoomFactorForReveal = currentZoom
+        liveZoomFactorForReveal = displayZoom
         isZoomRampPhase = false
         lockOnProgress = 0
         isRevealingZoomTarget = true
@@ -274,17 +312,19 @@ public final class CameraViewModel: ObservableObject {
             lockOnProgress = 1.0
         }
 
-        // Bắt đầu zoom quang/kỹ thuật số mượt mà sau 0.22s với tốc độ điện ảnh 0.85
+        // Bắt đầu zoom quang/kỹ thuật số mượt mà sau 0.22s với tốc độ điện ảnh 1.2
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
             guard let self = self else { return }
             self.isZoomRampPhase = true
-            // Rate 0.85: Tốc độ zoom điện ảnh tự nhiên, lướt êm ái, không giật cục
-            self.cameraService.smoothZoomFactor(to: targetZoom, rate: 0.85)
+            self.displayZoom = targetZoom
+            self.currentZoom = targetDeviceZoom
+            self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: 1.2)
+            SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
 
-            let estimatedRampDuration = Double(abs(targetZoom - self.liveZoomFactorForReveal)) / 0.85 + 0.40
+            let estimatedRampDuration = Double(abs(targetDeviceZoom - self.liveZoomFactorForReveal)) / 1.2 + 0.35
             DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
                 guard let self = self else { return }
-                withAnimation(.easeOut(duration: 0.35)) {
+                withAnimation(.easeOut(duration: 0.30)) {
                     self.isRevealingZoomTarget = false
                 }
                 self.isZoomRampPhase = false
@@ -440,7 +480,7 @@ public final class CameraViewModel: ObservableObject {
     // Internal State
     private var autoCaptureTask: Task<Void, Never>? = nil
     private var analysisFrames: [SubjectDetectionResult] = []
-    private let analysisFramesNeeded = 5 // Collect 5 quick frames (~0.25s) for rock-solid stabilization
+    private let analysisFramesNeeded = 6 // Collect 6 stable frames (~0.30s, 5-8 frames window) for rock-solid stabilization
     private var isOneShotCaptured = false
     private var lastFocusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     private var lastForcedResetTime: TimeInterval = 0
@@ -915,18 +955,19 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        // Tự động điều chỉnh zoom nếu Gemini trả về 1.0x nhưng chủ thể ở xa/nhỏ
+        // Tự động điều chỉnh zoom nếu Gemini trả về 1.0x nhưng chủ thể ở xa/nhỏ (Tier 2 rules)
         if let sRect = subjectRect, self.pendingSuggestedZoom <= 1.05 {
             let area = sRect.width * sRect.height
-            if area < 0.035 {
-                self.pendingSuggestedZoom = 2.5
-                self.aiSuggestedZoom = 2.5
-            } else if area < 0.09 {
+            let isNearCenter = abs(sRect.midX - 0.5) < 0.28 && abs(sRect.midY - 0.5) < 0.28
+            if area < 0.08 && isNearCenter {
+                self.pendingSuggestedZoom = 3.0
+                self.aiSuggestedZoom = 3.0
+            } else if area >= 0.08 && area <= 0.28 {
                 self.pendingSuggestedZoom = 2.0
                 self.aiSuggestedZoom = 2.0
-            } else if area < 0.18 {
-                self.pendingSuggestedZoom = 1.6
-                self.aiSuggestedZoom = 1.6
+            } else {
+                self.pendingSuggestedZoom = 1.0
+                self.aiSuggestedZoom = 1.0
             }
         }
 
@@ -1127,6 +1168,9 @@ public final class CameraViewModel: ObservableObject {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.haptics.triggerSuccess()
+            if self.isAutoZoomEnabled && abs(self.pendingSuggestedZoom - self.displayZoom) > 0.15 {
+                self.applyAISuggestedZoom(self.pendingSuggestedZoom, force: true)
+            }
         }
     }
 
@@ -1179,11 +1223,10 @@ public final class CameraViewModel: ObservableObject {
                 showAlignmentSuccessFlash = true
             }
 
-            // KÍCH HOẠT ZOOM REVEAL ĐÚNG KHI TÂM TRẮNG KHỚP VÀO TÂM VÀNG!
-            let willZoom = isAutoZoomEnabled && pendingSuggestedZoom > 1.05 && !hasExecutedAutoZoomForSession
+            // KÍCH HOẠT ZOOM ĐÚNG KHI TÂM TRẮNG KHỚP VÀO TÂM VÀNG (nếu chưa zoom)
+            let willZoom = isAutoZoomEnabled && !hasExecutedAutoZoomForSession && abs(pendingSuggestedZoom - displayZoom) > 0.15
             if willZoom {
-                hasExecutedAutoZoomForSession = true
-                triggerZoomRevealAnimation(targetZoom: pendingSuggestedZoom)
+                applyAISuggestedZoom(pendingSuggestedZoom)
             }
 
             if isAutoCaptureOnAlignEnabled {

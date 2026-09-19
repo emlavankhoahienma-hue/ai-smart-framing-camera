@@ -38,17 +38,12 @@ public struct CameraMainView: View {
                             .stroke(Color(red: 0.18, green: 0.19, blue: 0.23), lineWidth: 1.5)
                     }
                     .shadow(color: Color.black.opacity(0.60), radius: 12, y: 4)
-                    // Top Viewfinder Overlays (Video Timer / Histogram HUD / AI Status)
+                    // Top Viewfinder Overlays (Video Timer / AI Status)
                     .overlay(alignment: .top) {
                         VStack(spacing: 6) {
                             if viewModel.isRecordingVideo {
                                 videoRecordingHUD
                                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                            }
-
-                            if viewModel.showHistogramInViewfinder {
-                                LiveColorHistogramHUDView(viewModel: viewModel)
-                                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
                             }
 
                             AIStatusHUDView(viewModel: viewModel)
@@ -146,44 +141,31 @@ public struct CameraMainView: View {
     }
 }
 
-// MARK: - Top Camera Bar (Amber Diamond Film Preset + Top Tools Capsule)
+// MARK: - Top Camera Bar (Live Color Histogram HUD + Pro Tools Capsule)
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
-        HStack(alignment: .center) {
-            // Left: Amber Diamond Film Preset Button
-            Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.prepare()
-                generator.impactOccurred()
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
-                    viewModel.isShowingFilmDrawer.toggle()
+        HStack(alignment: .center, spacing: 12) {
+            // Left: Live Color Histogram HUD (Histogram, ISO, EV, Format)
+            if viewModel.showHistogramInViewfinder {
+                LiveColorHistogramHUDView(viewModel: viewModel)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            } else {
+                HStack(spacing: 8) {
+                    Text(viewModel.liveISO)
+                    Text(String(format: "EV %+.1f", viewModel.exposureBias))
                 }
-            }) {
-                ZStack {
-                    Circle()
-                        .fill(Color(red: 0.12, green: 0.13, blue: 0.16))
-                        .frame(width: 44, height: 44)
-                        .overlay(
-                            Circle()
-                                .stroke(amberGold.opacity(viewModel.isShowingFilmDrawer ? 0.90 : 0.40), lineWidth: 1.2)
-                        )
-                        .shadow(color: viewModel.isShowingFilmDrawer ? amberGold.opacity(0.35) : Color.clear, radius: 6)
-
-                    Image(systemName: "diamond.fill")
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundColor(amberGold)
-                }
-                .frame(width: 44, height: 44)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(.white.opacity(0.65))
+                .padding(.horizontal, 10)
+                .frame(height: 38)
             }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Mở bộ màu film điện ảnh")
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            // Right: Pro Tools Capsule (Flash, Format Badge, Composition, Settings)
+            // Right: Pro Tools Capsule (Flash, Film Filters, Composition, Settings)
             HStack(spacing: 2) {
                 // 1. Flash Toggle Button
                 Button(action: {
@@ -192,41 +174,36 @@ struct TopCameraBar: View {
                     Image(systemName: flashIconName)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.72) : amberGold)
-                        .frame(width: 42, height: 42)
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .accessibilityLabel("Chế độ đèn flash")
 
-                // 2. Format / Resolution Badge Button (12 MP / 4K)
+                // 2. Film Filter Drawer Button (Moved from standalone diamond button)
                 Button(action: {
-                    if viewModel.captureMode.isVideo {
-                        viewModel.toggleVideoFormat()
-                    } else {
-                        viewModel.togglePhotoFormat()
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.prepare()
+                    generator.impactOccurred()
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
+                        viewModel.isShowingFilmDrawer.toggle()
                     }
                 }) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.white.opacity(0.40), lineWidth: 1.0)
-                            .frame(width: 40, height: 22)
-
-                        Text(formatBadgeTitle)
-                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                            .foregroundColor(Color.white.opacity(0.92))
-                    }
-                    .frame(width: 44, height: 42)
+                    Image(systemName: "camera.filters")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(viewModel.isShowingFilmDrawer ? amberGold : Color.white.opacity(0.72))
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Định dạng: \(formatBadgeTitle)")
+                .accessibilityLabel("Mở bộ màu film điện ảnh")
 
                 // 3. Composition Rule Quick Viewfinder Sheet
                 Button(action: {
                     viewModel.isCompositionRuleSheetPresented = true
                 }) {
                     Image(systemName: "viewfinder")
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.system(size: 15, weight: .medium))
                         .foregroundColor(viewModel.isCompositionRuleSheetPresented ? amberGold : Color.white.opacity(0.72))
-                        .frame(width: 42, height: 42)
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .accessibilityLabel("Quy tắc bố cục camera")
@@ -236,15 +213,15 @@ struct TopCameraBar: View {
                     viewModel.isShowingSettings = true
                 }) {
                     Image(systemName: "circle.grid.3x3.fill")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundColor(Color.white.opacity(0.75))
-                        .frame(width: 42, height: 42)
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .accessibilityLabel("Cài đặt hệ thống")
             }
             .padding(.horizontal, 4)
-            .frame(height: 44)
+            .frame(height: 42)
             .background(
                 Capsule()
                     .fill(Color(red: 0.10, green: 0.11, blue: 0.14).opacity(0.94))
@@ -265,30 +242,13 @@ struct TopCameraBar: View {
         @unknown default: return "bolt.fill"
         }
     }
-
-    private var formatBadgeTitle: String {
-        if viewModel.captureMode.isVideo {
-            if viewModel.activeVideoResolutionString.contains("4K") {
-                return "4K"
-            } else {
-                return "HD"
-            }
-        } else {
-            if viewModel.selectedPhotoFormat == .dng {
-                return "RAW"
-            } else {
-                return "12 MP"
-            }
-        }
-    }
 }
 
 // MARK: - In-Viewfinder Controls (Bottom Deck)
 
-// 1. AI Compose Button (Ai)
+// 1. AI Compose Button (nutAI.png)
 struct AIViewfinderButton: View {
     @ObservedObject var viewModel: CameraViewModel
-    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         Button(action: {
@@ -303,91 +263,58 @@ struct AIViewfinderButton: View {
             }
         }) {
             ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.45))
-                    .frame(width: 44, height: 44)
-                    .overlay(
-                        Circle()
-                            .stroke(aiBorderColor, lineWidth: 1.4)
-                    )
-                    .shadow(color: aiShadowColor, radius: 6)
-
-                if case .capturing = viewModel.aiSessionState {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(0.85)
+                if let uiImage = UIImage(named: "nutAI") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nutAI", ofType: "png") ?? "") {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 38, height: 38)
                 } else {
-                    HStack(spacing: 1.5) {
-                        Text("(")
-                            .font(.system(size: 14, weight: .light, design: .rounded))
-                        Text("Ai")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                        Text(")")
-                            .font(.system(size: 14, weight: .light, design: .rounded))
-                    }
-                    .foregroundColor(aiTextColor)
+                    Image("nutAI")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 38, height: 38)
                 }
             }
             .frame(width: 44, height: 44)
+            .scaleEffect(isPulsing ? 1.08 : 1.0)
+            .animation(.spring(response: 0.35, dampingFraction: 0.65), value: isPulsing)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Nút căn bố cục AI")
+        .accessibilityLabel("Nút AI Bố cục")
     }
 
-    private var aiBorderColor: Color {
+    private var isPulsing: Bool {
         switch viewModel.aiSessionState {
-        case .idle, .done:
-            return Color.white.opacity(0.35)
-        case .analyzing, .targetPlaced:
-            return amberGold
-        case .alignmentPerfect:
-            return Color.green
-        case .capturing:
-            return Color.white
-        }
-    }
-
-    private var aiTextColor: Color {
-        switch viewModel.aiSessionState {
-        case .idle, .done:
-            return Color.white.opacity(0.90)
-        case .analyzing, .targetPlaced:
-            return amberGold
-        case .alignmentPerfect:
-            return Color.green
-        case .capturing:
-            return Color.white
-        }
-    }
-
-    private var aiShadowColor: Color {
-        switch viewModel.aiSessionState {
-        case .idle, .done:
-            return Color.clear
-        case .analyzing, .targetPlaced:
-            return amberGold.opacity(0.45)
-        case .alignmentPerfect:
-            return Color.green.opacity(0.50)
-        case .capturing:
-            return Color.white.opacity(0.35)
+        case .analyzing, .targetPlaced, .alignmentPerfect:
+            return true
+        default:
+            return false
         }
     }
 }
 
-// 2. Optical Zoom Selector Pill (0,5x / 2)
+// 2. Optical Zoom Selector (Strictly 1x, 2x, 3x - Minimalist Text with Stroke Ring)
 struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
-    private var displayedZoomOptions: [CGFloat] {
-        let options = viewModel.availableDisplayZoomOptions
-        return options.isEmpty ? [1.0, 2.0] : options
+    private let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0]
+
+    private var activeSnappedZoom: CGFloat {
+        if viewModel.displayZoom < 1.5 {
+            return 1.0
+        } else if viewModel.displayZoom < 2.5 {
+            return 2.0
+        } else {
+            return 3.0
+        }
     }
 
     private var isPinchZoomOutsideOptions: Bool {
         guard viewModel.isPinchingZoom else { return false }
-        for option in displayedZoomOptions {
+        for option in zoomOptions {
             if abs(viewModel.displayZoom - option) < 0.08 {
                 return false
             }
@@ -401,7 +328,7 @@ struct ViewfinderZoomSelectorPill: View {
                 pinchZoomFloatingBadge
             }
 
-            optionsPillBar
+            optionsRow
         }
     }
 
@@ -417,31 +344,21 @@ struct ViewfinderZoomSelectorPill: View {
                     .fill(Color.black.opacity(0.85))
                     .overlay(Capsule().stroke(amberGold.opacity(0.40), lineWidth: 1.0))
             )
-            .offset(y: -30)
+            .offset(y: -32)
             .transition(.opacity.combined(with: .scale(scale: 0.90)))
     }
 
-    private var optionsPillBar: some View {
-        HStack(spacing: 2) {
-            ForEach(displayedZoomOptions, id: \.self) { zoom in
+    private var optionsRow: some View {
+        HStack(spacing: 4) {
+            ForEach(zoomOptions, id: \.self) { zoom in
                 zoomButton(for: zoom)
             }
         }
-        .padding(3)
-        .background(
-            Capsule()
-                .fill(Color.black.opacity(0.48))
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
-                )
-                .shadow(color: Color.black.opacity(0.35), radius: 6, y: 2)
-        )
     }
 
     @ViewBuilder
     private func zoomButton(for zoom: CGFloat) -> some View {
-        let isSelected = abs(viewModel.displayZoom - zoom) < 0.14
+        let isSelected = activeSnappedZoom == zoom
         Button(action: {
             let generator = UISelectionFeedbackGenerator()
             generator.prepare()
@@ -450,36 +367,23 @@ struct ViewfinderZoomSelectorPill: View {
                 viewModel.setZoomFromButton(zoom)
             }
         }) {
-            Text(zoomFormattedText(zoom))
-                .font(.system(size: 13, weight: isSelected ? .bold : .semibold, design: .rounded))
-                .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.85))
-                .frame(width: 36, height: 32)
-                .padding(.horizontal, 4)
-                .background(
-                    Group {
-                        if isSelected {
-                            Circle()
-                                .fill(Color(red: 0.12, green: 0.13, blue: 0.16))
-                                .matchedGeometryEffect(id: "active_viewfinder_zoom", in: zoomPillNamespace)
-                                .overlay(
-                                    Circle()
-                                        .stroke(amberGold.opacity(0.35), lineWidth: 1.0)
-                                )
-                        }
-                    }
-                )
+            ZStack {
+                if isSelected {
+                    Circle()
+                        .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
+                        .frame(width: 34, height: 34)
+                        .matchedGeometryEffect(id: "active_viewfinder_zoom", in: zoomPillNamespace)
+                }
+
+                Text("\(Int(zoom))x")
+                    .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.78))
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-    }
-
-    private func zoomFormattedText(_ val: CGFloat) -> String {
-        if val < 1.0 {
-            return String(format: "%.1fx", val).replacingOccurrences(of: ".", with: ",")
-        } else if val == floor(val) {
-            return String(format: "%.0f", val)
-        } else {
-            return String(format: "%.1f", val).replacingOccurrences(of: ".", with: ",")
-        }
+        .accessibilityLabel("Thu phóng \(Int(zoom))x")
     }
 }
 
