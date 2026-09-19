@@ -629,13 +629,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
         // Histogram chỉ là điều kiện phụ vì AE/AWB có thể đổi màu rất mạnh. Với
         // low-texture, màu còn kém phân biệt hơn nên hạ ngưỡng màu nhưng giữ kiểm tra
         // FeaturePrint và margin giữa hai ứng viên.
-        let minColorSim: Double = self.isLowTextureAnchor ? 0.32 : 0.42
-        let maxDist: Float = self.isLowTextureAnchor ? 0.38 : 0.42
+        let minColorSim: Double = self.isLowTextureAnchor ? 0.28 : 0.36
+        let maxDist: Float = self.isLowTextureAnchor ? 0.40 : 0.45
         
         var candidates: [(box: CGRect, dist: Float, colorSim: Double)] = []
         
-        // CHỈ tìm kiếm trong phạm vi hẹp cục bộ quanh tâm tìm kiếm (bán kính <= 0.05), TUYỆT ĐỐI KHÔNG quét toàn màn hình
-        let offsets: [CGFloat] = [-0.05, 0.0, 0.05]
+        // Lưới tìm kiếm thích ứng quanh tâm dự phóng 3D (bán kính lên tới 0.07)
+        let offsets: [CGFloat] = [-0.07, -0.035, 0.0, 0.035, 0.07]
         
         for dy in offsets {
             for dx in offsets {
@@ -841,9 +841,17 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             self.stableLockFrames += 1
                             trackRequest.inputObservation = newObs
                             self.lastTargetObservation = newObs
-                            self.anchorBoxSize = CGSize(width: max(0.08, min(0.5, newObs.boundingBox.width)),
-                                                        height: max(0.08, min(0.5, newObs.boundingBox.height)))
-                            self.lastVerifiedUIPoint = CGPoint(x: newObs.boundingBox.midX, y: 1.0 - newObs.boundingBox.midY)
+                            // EMA Damping cho kích thước bounding box để chống co giãn phập phồng (box breathing)
+                            let targetBoxW = max(0.08, min(0.5, newObs.boundingBox.width))
+                            let targetBoxH = max(0.08, min(0.5, newObs.boundingBox.height))
+                            self.anchorBoxSize = CGSize(
+                                width: self.anchorBoxSize.width * 0.85 + targetBoxW * 0.15,
+                                height: self.anchorBoxSize.height * 0.85 + targetBoxH * 0.15
+                            )
+                            
+                            let uiX = newObs.boundingBox.midX
+                            let uiY = 1.0 - newObs.boundingBox.midY
+                            self.lastVerifiedUIPoint = CGPoint(x: uiX, y: uiY)
                             
                             // Thích nghi chậm reference theo thay đổi phơi sáng (mỗi ~2s lock ổn định)
                             if self.stableLockFrames >= 60 {
@@ -856,43 +864,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                 }
                             }
                             
-                            var uiX = newObs.boundingBox.midX
-                            var uiY = 1.0 - newObs.boundingBox.midY
-                            
-                            // 3) Detection-based periodic correction. Saliency là request
-                            // đắt, tuyệt đối không chạy mỗi frame kể cả cảnh deformable.
-                            self.detectionCorrectionCounter += 1
-                            let isDeformable = self.currentSceneType.isDeformableNature
-                            let correctionInterval = isDeformable ? 8 : 15
-                            if self.detectionCorrectionCounter >= correctionInterval {
-                                self.detectionCorrectionCounter = 0
-                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
-                                    let centroidUIX = salientCentroid.x
-                                    let centroidUIY = 1.0 - salientCentroid.y
-                                    let box = newObs.boundingBox
-                                    let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
-                                    let centroidUI = CGPoint(x: centroidUIX, y: centroidUIY)
-                                    let acceptedRegion = isDeformable
-                                        ? boxUI
-                                        : boxUI.insetBy(dx: -0.02, dy: -0.02)
-                                    // Chỉ nắn khi centroid nằm trong vùng của chính box,
-                                    // không hút sang salient object lân cận.
-                                    if acceptedRegion.contains(centroidUI) {
-                                        let drift = hypot(centroidUIX - uiX, centroidUIY - uiY)
-                                        let maxOffset = min(box.width, box.height) * (isDeformable ? 0.40 : 0.45)
-                                        let minimumDrift: CGFloat = isDeformable ? 0.01 : 0.02
-                                        let correctionStrength: CGFloat = isDeformable ? 0.35 : 0.08
-                                        if drift > minimumDrift && drift < maxOffset {
-                                            uiX += (centroidUIX - uiX) * correctionStrength
-                                            uiY += (centroidUIY - uiY) * correctionStrength
-                                        }
-                                    }
-                                }
-                            }
-                            
+                            // Ground truth thuần túy từ VNTrackObjectRequest: Tuyệt đối KHÔNG nắn lệch tâm
+                            // bằng Saliency Centroid để triệt tiêu 100% hiện tượng vòng target đi xung quanh.
                             trackedPoint = CGPoint(x: uiX, y: uiY)
-                            // VNTrackObjectRequest đã qua identity cross-check là nguồn
-                            // ground truth. Mức >=0.65 phân biệt rõ với KLT auxiliary.
                             trackedConfidence = max(0.65, Double(newObs.confidence))
                         } else {
                             // ── NGHI TRICKER TRÔI: KHÔNG nối tiếp inputObservation (đông băng mỏ neo tại box cuối hợp lệ),
@@ -919,23 +893,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     trackedConfidence = min(0.48, kltConfidence)
                 }
                 
-                // 1B. Re-acquisition: chỉ khi mất dấu đủ lâu (>= 18 frame), HOẶC
-                // histogram + FeaturePrint đã cùng báo sai 6 frame liên tiếp.
-                let forceReacquire = trackerIdentityLost && self.identitySuspicionFrames >= 6
+                // 1B. Re-acquisition: Tái bắt mục tiêu tức thì khi camera lia về hướng cũ
+                let spatialPoint = SpatialTrackingEngine.shared.currentUnclampedScreenPoint
+                let isNearScreen = (spatialPoint.x >= -0.15 && spatialPoint.x <= 1.15 &&
+                                    spatialPoint.y >= -0.15 && spatialPoint.y <= 1.15)
+                let forceReacquire = trackerIdentityLost && self.identitySuspicionFrames >= 4
+                let timeSinceLastReId = CACurrentMediaTime() - self.lastReIdAttemptTime
                 
                 if trackedPoint == nil,
-                   (self.consecutiveLostFrames >= 18 || forceReacquire),
-                   self.consecutiveLostFrames <= 150,
-                   CACurrentMediaTime() - self.lastReIdAttemptTime >= 0.55 {
+                   (self.consecutiveLostFrames >= 2 || forceReacquire),
+                   isNearScreen,
+                   timeSinceLastReId >= 0.15 {
                     self.lastReIdAttemptTime = CACurrentMediaTime()
                     
-                    let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
-                    
-                    // Tâm tìm kiếm = trung điểm giữa vị trí quang học CUỐI CÙNG ĐÃ XÁC NHẬN và ước lượng không gian (gyro)
-                    let verified = self.lastVerifiedUIPoint
+                    // Tâm tìm kiếm được định vị trực tiếp từ ước lượng không gian 3D của thiết bị (spatialPoint),
+                    // đảm bảo khi lia máy từ trần nhà/sàn nhà trở lại, tâm tìm kiếm đón đúng vị trí trong phòng
                     let searchCenter = CGPoint(
-                        x: min(0.94, max(0.06, ((verified?.x ?? spatialPoint.x) + spatialPoint.x) / 2.0)),
-                        y: min(0.94, max(0.06, ((verified?.y ?? spatialPoint.y) + spatialPoint.y) / 2.0))
+                        x: min(0.92, max(0.08, spatialPoint.x)),
+                        y: min(0.92, max(0.08, spatialPoint.y))
                     )
                     
                     // Chỉ nạp lại mỏ neo khi Neural Re-ID xác nhận rõ ràng là vật thể ban đầu
@@ -957,7 +932,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         self.currentTrackRequest = newReq
                         self.sequenceHandler = VNSequenceRequestHandler()
                         
-                        // QUAN TRỌNG: cập nhật lại vân tay tham chiếu từ box mới (reference cũ đã lạc hậu)
+                        // Cập nhật lại vân tay tham chiếu từ box mới
                         self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: reIdBox)
                         self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: reIdBox)
                     }
