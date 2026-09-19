@@ -65,9 +65,13 @@ Physical camera behavior, thermal performance, and gesture ergonomics require an
   - Restored Build 142 filter constants, outlier handling, KLT behavior, and separate Street tracker.
   - `currentTargetPoint` is now written only when pinning a target or receiving a spatial tracker callback; the white reticle remains fixed at `(0.5, 0.5)`.
 - [x] Add regression coverage for centered Live View geometry and independent yellow/white reticles.
-- [ ] Pass macOS warning-as-error build, archive IPA, publish release, and verify the workflow at the pushed HEAD.
+- [x] Pass macOS warning-as-error build, archive IPA, publish release, and verify the workflow at the pushed implementation HEAD.
+  - The first redesign build exposed missing Build 142 confidence state and alignment-vector declarations; both were restored without changing tracker behavior.
+  - GitHub Actions run `35414313956` passed at implementation HEAD `b18c1ed5e7021cb4514b02875f1d5932acf126a9`.
+  - Swift package tests, CoreML export, the warning-as-error iOS Release build, the explicit zero-warning log gate, IPA packaging, and release publication all passed.
+  - Release `v1.0.0-build.197` contains `AISmartFramingCamera.ipa` (14,206,468 bytes, SHA-256 `9f9af501943f73094df6cfcaa2c683a1ef57e37040cd4b12c96d383949638014`) and the source archive.
 
 ### Current local validation
 
 - `git diff --check`: pass; only Git line-ending notices are emitted on Windows.
-- Swift/Xcode toolchains are not installed on this Windows host. Package tests and the iOS warning-as-error build will run on the repository's macOS GitHub Actions runner.
+- Swift/Xcode toolchains are not installed on this Windows host. GitHub Actions on macOS is therefore the authoritative Apple SDK validation environment; its complete strict build and packaging pipeline passed.

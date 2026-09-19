@@ -169,9 +169,9 @@ jobs:
           - **[Tải trực tiếp tốc độ cao qua Cloudflare HK CDN]($FAST_URL)** (Khuyến nghị cho mạng VNPT/Viettel/FPT, hỗ trợ tải tiếp khi rớt mạng).
 
           ## Features
-          - 🎯 Real-time AI Subject & Face Tracking (Neural Engine accelerated)
-          - 📐 Rule of Thirds & Golden Ratio Framing Guides
-          - ⚡ Magnetic Snap Haptics & Auto-Alignment Crosshair
+          - 🎯 Build 142 AI target tracking with separate optical and spatial reticles
+          - 📷 Centered 4:3 photo and 16:9 video viewfinders with stable overlay controls
+          - ⚡ Magnetic snap haptics and auto-alignment crosshair
           - 🎨 CoreImage Film Simulation Recipes (Fuji Pro 400H, Kodak Portra, Cine Teal/Orange)
           - 🔍 Dynamic Auto-Zoom Adjustment
 
