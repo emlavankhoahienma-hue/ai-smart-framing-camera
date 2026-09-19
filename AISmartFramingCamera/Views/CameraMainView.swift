@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 public enum CameraOverlayPanel: Equatable, Sendable {
     case none
@@ -13,6 +14,13 @@ private enum CameraChromeStyle {
     static let secondaryText = Color(red: 0.62, green: 0.62, blue: 0.65)
     static let divider = Color.white.opacity(0.10)
     static let amber = Color(red: 1.0, green: 0.72, blue: 0.0)
+}
+
+private enum CameraLayoutMetrics {
+    static let topBarHeight: CGFloat = 52
+    static let controlDeckHeight: CGFloat = 132
+    static let overlayGap: CGFloat = 10
+    static let zoomControlHeight: CGFloat = 48
 }
 
 public struct CameraMainView: View {
@@ -54,11 +62,12 @@ public struct CameraMainView: View {
             let previewFrame = previewGeometry.centeredFrame(in: proxy.size)
 
             ZStack {
+                // The viewfinder owns a fixed frame and never participates in control layout.
                 viewfinder
                     .frame(width: previewFrame.width, height: previewFrame.height)
                     .position(x: previewFrame.midX, y: previewFrame.midY)
 
-                cameraChrome
+                floatingCameraChrome(in: proxy.size, previewFrame: previewFrame)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipped()
@@ -79,41 +88,82 @@ public struct CameraMainView: View {
         )
     }
 
-    private var cameraChrome: some View {
-        VStack(spacing: 0) {
+    private func floatingCameraChrome(in size: CGSize, previewFrame: CGRect) -> some View {
+        let controlDeckTop = size.height - CameraLayoutMetrics.controlDeckHeight
+        let hudCenterY = max(
+            CameraLayoutMetrics.topBarHeight + 38,
+            previewFrame.minY + 41
+        )
+        let preferredZoomCenterY = min(
+            previewFrame.maxY - 34,
+            controlDeckTop - 32
+        )
+        let zoomCenterY = max(hudCenterY + 78, preferredZoomCenterY)
+        let floatingPanelBottom = zoomCenterY
+            - CameraLayoutMetrics.zoomControlHeight / 2
+            - CameraLayoutMetrics.overlayGap
+
+        return ZStack {
             VStack(spacing: 0) {
-                TopCameraBar(viewModel: viewModel)
+                TopBarView(viewModel: viewModel)
+                    .frame(height: CameraLayoutMetrics.topBarHeight)
 
-                if viewModel.activeCameraPanel == .telemetry {
-                    LiveColorHistogramHUDView(viewModel: viewModel)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 10)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-            .background(CameraChromeStyle.background.opacity(0.96))
-
-            Spacer(minLength: 0)
-
-            VStack(spacing: 8) {
-                ViewfinderZoomSwitcher(viewModel: viewModel)
-
-                if viewModel.captureMode == .proVideo {
-                    ProVideoManualControlsView(viewModel: viewModel)
-                        .frame(maxHeight: viewModel.activeCameraPanel == .proControls ? 216 : 58)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+                Spacer(minLength: 0)
 
                 CameraControlsView(viewModel: viewModel)
+                    .frame(height: CameraLayoutMetrics.controlDeckHeight)
             }
-            .padding(.top, 10)
-            .background(CameraChromeStyle.background.opacity(0.96))
+
+            if viewModel.activeCameraPanel == .telemetry {
+                LiveColorHistogramHUDView(viewModel: viewModel)
+                    .frame(width: max(280, previewFrame.width - 24))
+                    .position(x: previewFrame.midX, y: hudCenterY)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(3)
+            }
+
+            ViewfinderZoomSwitcher(viewModel: viewModel)
+                .frame(height: CameraLayoutMetrics.zoomControlHeight)
+                .position(x: previewFrame.midX, y: zoomCenterY)
+                .zIndex(4)
+
+            floatingDrawer(
+                availableWidth: size.width,
+                bottomY: floatingPanelBottom,
+                minimumTopY: hudCenterY + 42
+            )
+            .zIndex(2)
+        }
+    }
+
+    @ViewBuilder
+    private func floatingDrawer(
+        availableWidth: CGFloat,
+        bottomY: CGFloat,
+        minimumTopY: CGFloat
+    ) -> some View {
+        if viewModel.activeCameraPanel == .filmPresets {
+            let drawerHeight: CGFloat = 88
+            FilmPresetDrawer(viewModel: viewModel)
+                .frame(width: availableWidth, height: drawerHeight, alignment: .bottom)
+                .position(x: availableWidth / 2, y: bottomY - drawerHeight / 2)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if viewModel.captureMode == .proVideo {
+            let requestedHeight: CGFloat = viewModel.activeCameraPanel == .proControls ? 216 : 58
+            let availableHeight = max(58, bottomY - minimumTopY - CameraLayoutMetrics.overlayGap)
+            let drawerHeight = min(requestedHeight, availableHeight)
+
+            ProVideoManualControlsView(viewModel: viewModel)
+                .frame(width: availableWidth, height: drawerHeight, alignment: .bottom)
+                .position(x: availableWidth / 2, y: bottomY - drawerHeight / 2)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 }
 
-struct TopCameraBar: View {
+struct TopBarView: View {
     @ObservedObject var viewModel: CameraViewModel
+    @State private var isTorchEnabled = false
 
     var body: some View {
         ZStack {
@@ -131,11 +181,11 @@ struct TopCameraBar: View {
 
             HStack {
                 chromeButton(
-                    icon: flashIconName,
-                    tint: viewModel.activeFlashMode == .off ? CameraChromeStyle.primaryText : CameraChromeStyle.amber,
-                    label: "Chế độ đèn flash"
+                    icon: lightIconName,
+                    tint: isLightActive ? CameraChromeStyle.amber : CameraChromeStyle.primaryText,
+                    label: viewModel.captureMode.isVideo ? "Đèn pin" : "Chế độ đèn flash"
                 ) {
-                    viewModel.toggleFlash()
+                    handleLightButtonTap()
                 }
 
                 Spacer()
@@ -169,6 +219,17 @@ struct TopCameraBar: View {
                 .fill(CameraChromeStyle.divider)
                 .frame(height: 1)
         }
+        .background(CameraChromeStyle.background)
+        .onChange(of: viewModel.captureMode) { mode in
+            if !mode.isVideo && isTorchEnabled {
+                setTorchEnabled(false)
+            }
+        }
+        .onDisappear {
+            if isTorchEnabled {
+                setTorchEnabled(false)
+            }
+        }
     }
 
     private func chromeButton(
@@ -188,12 +249,62 @@ struct TopCameraBar: View {
         .accessibilityLabel(label)
     }
 
-    private var flashIconName: String {
+    private var isLightActive: Bool {
+        if viewModel.captureMode.isVideo {
+            return isTorchEnabled
+        }
+        return viewModel.activeFlashMode != .off
+    }
+
+    private var lightIconName: String {
+        if viewModel.captureMode.isVideo {
+            return isTorchEnabled ? "flashlight.on.fill" : "flashlight.off.fill"
+        }
+
         switch viewModel.activeFlashMode {
         case .auto: return "bolt.badge.automatic"
         case .on: return "bolt.fill"
         case .off: return "bolt.slash"
         @unknown default: return "bolt"
+        }
+    }
+
+    private func handleLightButtonTap() {
+        if viewModel.captureMode.isVideo {
+            setTorchEnabled(!isTorchEnabled)
+        } else {
+            viewModel.toggleFlash()
+        }
+    }
+
+    private func setTorchEnabled(_ enabled: Bool) {
+        viewModel.cameraService.scheduleDeviceConfiguration { device in
+            let requestedMode: AVCaptureDevice.TorchMode = enabled ? .on : .off
+            guard device.hasTorch, device.isTorchModeSupported(requestedMode) else {
+                DispatchQueue.main.async {
+                    self.isTorchEnabled = false
+                }
+                return
+            }
+
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+
+                if enabled {
+                    try device.setTorchModeOn(level: 1.0)
+                } else {
+                    device.torchMode = .off
+                }
+
+                DispatchQueue.main.async {
+                    self.isTorchEnabled = enabled
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isTorchEnabled = false
+                }
+            }
         }
     }
 }

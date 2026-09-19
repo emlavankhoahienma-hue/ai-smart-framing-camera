@@ -9,7 +9,7 @@ public struct LiveColorHistogramHUDView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             formatControl
 
             Rectangle()
@@ -25,16 +25,18 @@ public struct LiveColorHistogramHUDView: View {
 
             exposure
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .frame(height: 58)
-        .background(
+        .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(red: 0.075, green: 0.075, blue: 0.085))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.09), lineWidth: 1)
-                )
-        )
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.42).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous)))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.14), lineWidth: 0.75)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
         .accessibilityElement(children: .contain)
     }
 
@@ -57,7 +59,7 @@ public struct LiveColorHistogramHUDView: View {
                 }
             }
             .buttonStyle(PlainButtonStyle())
-            .frame(minWidth: 76, alignment: .leading)
+            .frame(minWidth: 72, alignment: .leading)
         } else {
             Button(action: { viewModel.togglePhotoFormat() }) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -68,7 +70,7 @@ public struct LiveColorHistogramHUDView: View {
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundColor(amber)
                 }
-                .frame(minWidth: 58, alignment: .leading)
+                .frame(minWidth: 54, alignment: .leading)
             }
             .buttonStyle(PlainButtonStyle())
         }
@@ -101,6 +103,6 @@ public struct LiveColorHistogramHUDView: View {
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundColor(.white.opacity(0.72))
         }
-        .frame(minWidth: 58, alignment: .trailing)
+        .frame(minWidth: 54, alignment: .trailing)
     }
 }

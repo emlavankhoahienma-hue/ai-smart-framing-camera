@@ -5,36 +5,32 @@ public struct CameraControlsView: View {
 
     public var body: some View {
         VStack(spacing: 6) {
-            // Film Preset Drawer (Expandable)
-            if viewModel.activeCameraPanel == .filmPresets {
-                FilmPresetDrawer(viewModel: viewModel)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
-            // Main Bottom Control Deck
             HStack(alignment: .center) {
-                // Left: Gallery Thumbnail
                 GalleryThumbnailButton(viewModel: viewModel)
-                    .frame(width: 52, height: 52)
+                    .frame(width: 64, height: 52)
 
                 Spacer()
 
-                // Center: Single Central Capture Controls (Photo: AI Pill + Central Shutter / Video: Record)
                 MainCaptureButton(viewModel: viewModel)
 
                 Spacer()
 
-                // Right: Color Drawer Toggle
                 FilterToggleButton(viewModel: viewModel)
-                    .frame(width: 52, height: 52)
+                    .frame(width: 64, height: 52)
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, 12)
 
-            // Capture mode stays directly below the shutter, independent of the preview layout.
             CameraModeSegmentedSwitcher(viewModel: viewModel)
-                .padding(.bottom, 12)
+                .padding(.bottom, 6)
         }
-        .background(Color(red: 0.035, green: 0.035, blue: 0.04))
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity)
+        .background(Color(red: 0.025, green: 0.025, blue: 0.03))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
+        }
     }
 }
 
@@ -92,6 +88,7 @@ struct CameraModeSegmentedSwitcher: View {
             }
         }
         .padding(3)
+        .frame(width: 218)
         .background(
             Capsule()
                 .fill(Color(red: 0.10, green: 0.10, blue: 0.11))
@@ -114,8 +111,8 @@ struct CameraModeSegmentedSwitcher: View {
             Text(item.title)
                 .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
                 .foregroundColor(isSelected ? .black : .white.opacity(0.85))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
                 .background(modePillBackground(isSelected: isSelected))
         }
         .buttonStyle(PlainButtonStyle())

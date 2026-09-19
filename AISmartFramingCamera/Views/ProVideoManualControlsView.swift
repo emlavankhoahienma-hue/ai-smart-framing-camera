@@ -15,7 +15,7 @@ public struct ProVideoManualControlsView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             // MARK: - Floating Pro Top Tabs
             HStack(spacing: 6) {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -79,13 +79,13 @@ public struct ProVideoManualControlsView: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(Color(red: 0.075, green: 0.075, blue: 0.085))
+                    .fill(Color.black.opacity(0.82))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.16), lineWidth: 0.75)
                     )
             )
 
@@ -111,12 +111,13 @@ public struct ProVideoManualControlsView: View {
                 .frame(maxHeight: 148)
                 .background(
                     RoundedRectangle(cornerRadius: 18)
-                        .fill(Color(red: 0.075, green: 0.075, blue: 0.085))
+                        .fill(Color.black.opacity(0.88))
                         .overlay(
                             RoundedRectangle(cornerRadius: 18)
-                                .stroke(Color.yellow.opacity(0.35), lineWidth: 1)
+                                .stroke(Color.yellow.opacity(0.32), lineWidth: 0.75)
                         )
                 )
+                .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
             }
         }
