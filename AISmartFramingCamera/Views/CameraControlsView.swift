@@ -1,744 +1,199 @@
 import SwiftUI
 
-public struct CameraControlsView: View {
-    @ObservedObject var viewModel: CameraViewModel
+// Presentation primitives shared by the camera and its sheets.
+enum CameraUI {
+    static let accent = Color(red: 1, green: 0.77, blue: 0.28)
+    static let canvas = Color(red: 0.045, green: 0.05, blue: 0.06)
+    static let spring = Animation.spring(response: 0.32, dampingFraction: 0.82)
+}
 
-    public var body: some View {
-        VStack(spacing: 8) {
-            // Film Preset Drawer (Expandable)
-            if viewModel.isShowingFilmDrawer {
-                FilmPresetDrawer(viewModel: viewModel)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
-            // Main Bottom Control Deck: Album (Left) - Shutter (Center) - Filter (Right)
-            HStack(alignment: .center) {
-                // Left: Gallery Thumbnail
-                GalleryThumbnailButton(viewModel: viewModel)
-                    .frame(width: 52, height: 52)
-
-                Spacer()
-
-                // Center: Single Central Capture Controls (Photo: AI Pill + Central Shutter / Video: Record)
-                MainCaptureButton(viewModel: viewModel)
-
-                Spacer()
-
-                // Right: Color Drawer Toggle
-                FilterToggleButton(viewModel: viewModel)
-                    .frame(width: 52, height: 52)
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 4)
-
-            // Mode Switcher (Ảnh / Video / Pro) đặt NGAY DƯỚI nút chụp
-            CameraModeSegmentedSwitcher(viewModel: viewModel)
-                .padding(.top, 2)
-                .padding(.bottom, 16)
+struct CameraGlass: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    func body(content: Content) -> some View {
+        content.background {
+            if reduceTransparency { CameraUI.canvas }
+            else { Rectangle().fill(.ultraThinMaterial) }
         }
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: [Color.clear, Color.black.opacity(0.88), Color.black]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .edgesIgnoringSafeArea(.bottom)
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.12)))
     }
 }
 
-// MARK: - Reliable Custom App Icon Component (Assets Catalog + Bundle Fallback + SF Symbols)
+struct CameraPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.7 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .animation(reduceMotion ? nil : CameraUI.spring, value: configuration.isPressed)
+    }
+}
+
+struct CameraIconButton: View {
+    let symbol: String
+    let label: String
+    var isActive = false
+    var action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 18, weight: .medium))
+                .foregroundColor(isActive ? CameraUI.accent : .white)
+                .frame(width: 44, height: 44)
+                .background(isActive ? CameraUI.accent.opacity(0.14) : .white.opacity(0.07), in: Circle())
+        }.buttonStyle(CameraPressStyle()).accessibilityLabel(label)
+    }
+}
+
+struct CameraDrawerHeader: View {
+    let title: String
+    let close: () -> Void
+    var body: some View {
+        HStack {
+            Text(title).font(.headline)
+            Spacer(minLength: 8)
+            CameraIconButton(symbol: "xmark", label: "Đóng \(title)", action: close)
+        }
+    }
+}
+
+public struct CameraControlsView: View {
+    @ObservedObject var viewModel: CameraViewModel
+    public var body: some View {
+        VStack(spacing: 8) {
+            LiveViewZoomSwitch(viewModel: viewModel)
+            HStack {
+                GalleryThumbnailButton(viewModel: viewModel).frame(maxWidth: .infinity)
+                MainCaptureButton(viewModel: viewModel)
+                CameraIconButton(symbol: "camera.filters", label: "Bộ lọc màu", isActive: viewModel.isShowingFilmDrawer) {
+                    viewModel.isShowingFilmDrawer.toggle()
+                    if viewModel.isShowingFilmDrawer { viewModel.isShowingProControlsDrawer = false }
+                }.frame(maxWidth: .infinity)
+            }.frame(height: 80)
+            CameraModeSegmentedSwitcher(viewModel: viewModel)
+        }.padding(.horizontal, 16).foregroundColor(.white)
+    }
+}
+
+struct CameraModeSegmentedSwitcher: View {
+    @ObservedObject var viewModel: CameraViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selection
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(CameraCaptureMode.allCases) { mode in
+                Button {
+                    guard !viewModel.isRecordingVideo, viewModel.captureMode != mode else { return }
+                    if viewModel.isAISessionActive { viewModel.cancelAISession() }
+                    if viewModel.isAIVideoDirectorActive { viewModel.dismissAIVideoDirector() }
+                    viewModel.captureMode = mode
+                    viewModel.isShowingFilmDrawer = false
+                    viewModel.isShowingProControlsDrawer = mode == .proVideo
+                    viewModel.haptics.triggerSelectionChange()
+                } label: {
+                    Text(title(mode)).font(.subheadline.weight(.semibold))
+                        .foregroundColor(viewModel.captureMode == mode ? CameraUI.accent : .white.opacity(0.65))
+                        .frame(width: 76, height: 44)
+                        .background {
+                            if viewModel.captureMode == mode {
+                                Capsule().fill(.white.opacity(0.09)).matchedGeometryEffect(id: "mode", in: selection)
+                            }
+                        }
+                }.buttonStyle(CameraPressStyle())
+                .accessibilityLabel("Chế độ \(title(mode))")
+                .accessibilityAddTraits(viewModel.captureMode == mode ? .isSelected : [])
+            }
+        }
+        .disabled(viewModel.isRecordingVideo || viewModel.aiSessionState == .capturing)
+        .animation(reduceMotion ? nil : CameraUI.spring, value: viewModel.captureMode)
+    }
+    private func title(_ mode: CameraCaptureMode) -> String {
+        switch mode { case .photo: return "Ảnh"; case .video: return "Video"; case .proVideo: return "Pro" }
+    }
+}
+
+struct MainCaptureButton: View {
+    @ObservedObject var viewModel: CameraViewModel
+    var body: some View {
+        Button {
+            if viewModel.captureMode.isVideo { viewModel.toggleVideoRecording() }
+            else { viewModel.takePhotoManual() }
+        } label: {
+            ZStack {
+                Circle().strokeBorder(.white.opacity(0.9), lineWidth: 3).frame(width: 78, height: 78)
+                RoundedRectangle(cornerRadius: viewModel.isRecordingVideo ? 8 : 34)
+                    .fill(viewModel.captureMode.isVideo ? Color.red : .white)
+                    .frame(width: viewModel.isRecordingVideo ? 32 : 64, height: viewModel.isRecordingVideo ? 32 : 64)
+                if viewModel.aiSessionState == .capturing { ProgressView().tint(.black) }
+            }.frame(width: 88, height: 80).contentShape(Rectangle())
+        }.buttonStyle(CameraPressStyle())
+        .disabled(!viewModel.isCameraReady || viewModel.aiSessionState == .capturing)
+        .accessibilityLabel(viewModel.captureMode.isVideo ? (viewModel.isRecordingVideo ? "Dừng quay" : "Bắt đầu quay") : "Chụp ảnh")
+    }
+}
+
+struct GalleryThumbnailButton: View {
+    @ObservedObject var viewModel: CameraViewModel
+    var body: some View {
+        Button {
+            if viewModel.captureMode.isVideo, viewModel.recordedVideoURL != nil { viewModel.isShowingVideoPreview = true }
+            else if viewModel.latestCapturedPhoto != nil { viewModel.isShowingPhotoDetail = true }
+            else if viewModel.recordedVideoURL != nil { viewModel.isShowingVideoPreview = true }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 13).fill(.white.opacity(0.08))
+                if viewModel.captureMode.isVideo, viewModel.recordedVideoURL != nil {
+                    Image(systemName: "play.rectangle.fill").font(.title3)
+                } else if let photo = viewModel.latestCapturedPhoto {
+                    Image(decorative: photo.processedImage, scale: 1).resizable().scaledToFill()
+                } else { Image(systemName: "photo.on.rectangle").font(.title3) }
+            }.frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 13))
+                .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.white.opacity(0.25)))
+        }.buttonStyle(CameraPressStyle())
+        .disabled(viewModel.isRecordingVideo || (viewModel.latestCapturedPhoto == nil && viewModel.recordedVideoURL == nil))
+        .accessibilityLabel("Xem ảnh hoặc video vừa chụp")
+    }
+}
+
+struct FilmPresetDrawer: View {
+    @ObservedObject var viewModel: CameraViewModel
+    var body: some View {
+        VStack(spacing: 0) {
+            CameraDrawerHeader(title: "Màu film") { viewModel.isShowingFilmDrawer = false }.padding(.horizontal, 16)
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(FilmPreset.allCases) { preset in
+                        Button { viewModel.selectPreset(preset) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: preset.isAIFullAuto ? "wand.and.stars" : "camera.filters").frame(width: 24)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(preset.displayName).font(.subheadline.weight(.semibold))
+                                    Text(preset.description).font(.caption).foregroundColor(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                if viewModel.selectedFilmPreset == preset { Image(systemName: "checkmark") }
+                                else if viewModel.aiRecommendedPreset == preset { Image(systemName: "sparkles") }
+                            }.padding(12).frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                            .foregroundColor(viewModel.selectedFilmPreset == preset ? CameraUI.accent : .white)
+                            .background(viewModel.selectedFilmPreset == preset ? .white.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 14))
+                        }.buttonStyle(CameraPressStyle())
+                    }
+                }.padding(.horizontal, 8).padding(.bottom, 12)
+            }
+        }.modifier(CameraGlass())
+    }
+}
+
 public struct CustomAppIconView: View {
     let name: String
     let fallbackSF: String
     let size: CGFloat
     let color: Color
-
     public init(name: String, fallbackSF: String, size: CGFloat, color: Color = .white) {
-        self.name = name
-        self.fallbackSF = fallbackSF
-        self.size = size
-        self.color = color
+        self.name = name; self.fallbackSF = fallbackSF; self.size = size; self.color = color
     }
-
     public var body: some View {
-        if let uiImage = UIImage(named: name) ?? UIImage(contentsOfFile: Bundle.main.path(forResource: name, ofType: "png") ?? "") {
-            Image(uiImage: uiImage)
-                .renderingMode(.template)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: size, height: size)
-                .foregroundColor(color)
-        } else {
-            Image(systemName: fallbackSF)
-                .font(.system(size: size * 0.70, weight: .bold))
-                .foregroundColor(color)
-        }
-    }
-}
-
-// MARK: - Sliding Segmented Mode Switcher (Ảnh / Video / Pro)
-struct CameraModeSegmentedSwitcher: View {
-    @ObservedObject var viewModel: CameraViewModel
-    @Namespace private var modeAnimationNamespace
-
-    private struct ModeItem: Identifiable {
-        let mode: CameraCaptureMode
-        let title: String
-        var id: String { title }
-    }
-
-    private let modes: [ModeItem] = [
-        ModeItem(mode: .photo, title: "Ảnh"),
-        ModeItem(mode: .video, title: "Video")
-    ]
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(modes) { item in
-                modeButton(for: item)
-            }
-        }
-        .padding(3)
-        .background(
-            Capsule()
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
-        )
-    }
-
-    @ViewBuilder
-    private func modeButton(for item: ModeItem) -> some View {
-        let isSelected = viewModel.captureMode == item.mode
-        Button(action: {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                viewModel.captureMode = item.mode
-            }
-        }) {
-            Text(item.title)
-                .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? .black : .white.opacity(0.85))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .background(modePillBackground(isSelected: isSelected))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Chế độ \(item.title)")
-    }
-
-    @ViewBuilder
-    private func modePillBackground(isSelected: Bool) -> some View {
-        if isSelected {
-            Capsule()
-                .fill(Color.yellow)
-                .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
-                .shadow(color: Color.yellow.opacity(0.35), radius: 4)
-        } else {
-            Color.clear
-        }
-    }
-}
-
-// MARK: - Main Capture Button (Photo: Apple-style Shutter with Drag-Left to AI Compose / Video: Record)
-struct MainCaptureButton: View {
-    @ObservedObject var viewModel: CameraViewModel
-    @State private var dragOffset: CGFloat = 0
-    @State private var isDraggingToAI: Bool = false
-    @State private var hasReachedDock: Bool = false
-    @State private var isTouchingShutter: Bool = false
-
-    var body: some View {
-        if viewModel.captureMode.isVideo {
-            videoRecordButton
-        } else {
-            photoCaptureControls
-        }
-    }
-
-    // MARK: - Photo Capture Controls (Central Shutter + Drag-Left to AI Compose Dock)
-    private var photoCaptureControls: some View {
-        ZStack {
-            // 1. Rãnh trượt kết nối (Track Slot) - Chỉ hiện khi kéo sang trái
-            if isDraggingToAI {
-                Capsule()
-                    .fill(Color.black.opacity(0.55))
-                    .frame(width: 72, height: 44)
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1)
-                    )
-                    .offset(x: -28)
-                    .opacity(trackOpacity)
-                    .animation(.easeOut(duration: 0.15), value: dragOffset)
-            }
-
-            // 2. AI Compose Left Dock Target (Chỉ hiện khi kéo sang trái)
-            aiComposeDockTarget
-
-            // 3. Nút Chụp Trung Tâm với viền cố định và lõi trượt mượt mà
-            centralShutterView
-        }
-        .frame(width: 156, height: 74)
-    }
-
-    private var trackOpacity: Double {
-        let offsetVal: Double = abs(Double(dragOffset))
-        let progress: Double = (offsetVal - 6.0) / 30.0
-        return min(1.0, max(0.0, progress))
-    }
-
-    private var dockOpacity: Double {
-        guard isDraggingToAI else { return 0.0 }
-        let offsetVal: Double = abs(Double(dragOffset))
-        let progress: Double = (offsetVal - 6.0) / 25.0
-        return min(1.0, max(0.0, progress))
-    }
-
-    private var dockScale: CGFloat {
-        guard isDraggingToAI else { return 0.8 }
-        let progress = min(CGFloat(1.0), abs(dragOffset) / CGFloat(56.0))
-        return CGFloat(0.85) + progress * CGFloat(0.3)
-    }
-
-    private var shutterStretchX: CGFloat {
-        let stretch = min(CGFloat(0.10), abs(dragOffset) / CGFloat(200.0))
-        return CGFloat(1.0) + stretch
-    }
-
-    private var shutterStretchY: CGFloat {
-        let squish = min(CGFloat(0.05), abs(dragOffset) / CGFloat(400.0))
-        return CGFloat(1.0) - squish
-    }
-
-    // MARK: - AI Compose Left Dock Target (Tọa độ -56pt)
-    private var aiComposeDockTarget: some View {
-        HStack {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.75))
-                    .frame(width: 44, height: 44)
-
-                Circle()
-                    .stroke(hasReachedDock ? Color.yellow : Color.white.opacity(0.35), lineWidth: hasReachedDock ? 2.5 : 1.2)
-                    .frame(width: 44, height: 44)
-
-                Image(systemName: "wand.and.stars")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundColor(hasReachedDock ? Color.yellow : Color.white.opacity(0.75))
-                    .scaleEffect(hasReachedDock ? 1.22 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
-            }
-            .shadow(color: hasReachedDock ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
-            .offset(x: -56)
-            .scaleEffect(dockScale)
-            .opacity(dockOpacity)
-            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
-
-            Spacer()
-        }
-    }
-
-    // MARK: - Central Shutter View (68×68)
-    private var centralShutterView: some View {
-        ZStack {
-            // Viền ngoài cố định tại tâm: Trắng chuẩn, đổi sang vàng hoặc xanh lá khi AI session bám nét
-            Circle()
-                .stroke(shutterRingColor, lineWidth: 3.2)
-                .frame(width: 68, height: 68)
-
-            // Lõi trong: Màu trắng, trượt sang trái theo ngón tay khi kéo
-            Circle()
-                .fill(Color.white)
-                .frame(
-                    width: (isTouchingShutter || viewModel.isShutterPressing) ? 50 : 58,
-                    height: (isTouchingShutter || viewModel.isShutterPressing) ? 50 : 58
-                )
-                .offset(x: dragOffset)
-                .scaleEffect(x: shutterStretchX, y: shutterStretchY)
-
-            if case .capturing = viewModel.aiSessionState {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .black))
-                    .offset(x: dragOffset)
-            }
-        }
-        .contentShape(Circle())
-        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isTouchingShutter)
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    let transX = value.translation.width
-
-                    isTouchingShutter = true
-
-                    // Khi người dùng kéo trượt sang trái (transX < 0)
-                    if transX < -6 {
-                        isDraggingToAI = true
-                        // Đàn hồi nhẹ nếu kéo vượt quá dock (-56pt)
-                        if transX < -56 {
-                            dragOffset = -56 + (transX + 56) * 0.25
-                        } else {
-                            dragOffset = transX
-                        }
-
-                        // Vượt ngưỡng -42pt: Chạm dock, kích hoạt haptic snap
-                        let reached = dragOffset <= -42
-                        if reached && !hasReachedDock {
-                            hasReachedDock = true
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.prepare()
-                            generator.impactOccurred()
-                        } else if !reached && hasReachedDock {
-                            hasReachedDock = false
-                        }
-                    } else if transX > 0 {
-                        // Kháng cự đàn hồi nếu kéo sang phải (không kích hoạt AI)
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                        dragOffset = min(15, transX * 0.2)
-                    } else {
-                        dragOffset = 0
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                    }
-                }
-                .onEnded { value in
-                    let transX = value.translation.width
-                    let transY = value.translation.height
-                    let didReachDock = hasReachedDock || dragOffset <= -42
-
-                    if didReachDock {
-                        // Đã kéo vào dock AI Compose: Rung mạnh & Bật/Tắt AI Compose
-                        let generator = UIImpactFeedbackGenerator(style: .heavy)
-                        generator.prepare()
-                        generator.impactOccurred()
-
-                        if viewModel.aiSessionState.isSessionActive {
-                            viewModel.cancelAISession()
-                        } else {
-                            viewModel.startAISession()
-                        }
-                    } else if !isDraggingToAI && abs(transX) < 14 && abs(transY) < 14 {
-                        // Nhấp chạm thông thường (không kéo): Chụp ảnh bình thường
-                        if viewModel.aiSessionState != .capturing {
-                            viewModel.takePhotoManual()
-                        }
-                    }
-
-                    // Hồi phục vị trí lõi nút chụp với animation nảy spring chuẩn Apple physics
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
-                        dragOffset = 0
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                        isTouchingShutter = false
-                    }
-                }
-        )
-        .accessibilityLabel("Nút chụp ảnh: Chạm để chụp, giữ kéo sang trái để AI Compose")
-    }
-
-    private var shutterRingColor: Color {
-        switch viewModel.aiSessionState {
-        case .idle, .done:
-            return .white
-        case .analyzing, .targetPlaced:
-            return .yellow
-        case .alignmentPerfect:
-            return .green
-        case .capturing:
-            return .white
-        }
-    }
-
-    // MARK: - Video Record Button (Touch to Record / Hold-Drag-Left to AI Video Director)
-    private var videoRecordButton: some View {
-        ZStack {
-            // 1. Rãnh trượt kết nối (Track Slot) - Chỉ hiện khi kéo sang trái
-            if isDraggingToAI {
-                Capsule()
-                    .fill(Color.black.opacity(0.55))
-                    .frame(width: 72, height: 44)
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1)
-                    )
-                    .offset(x: -28)
-                    .opacity(trackOpacity)
-                    .animation(.easeOut(duration: 0.15), value: dragOffset)
-            }
-
-            // 2. AI Video Director Left Dock Target (Chỉ hiện khi kéo sang trái)
-            aiVideoDirectorDockTarget
-
-            // 3. Nút quay trung tâm với viền cố định và lõi đỏ trượt mượt mà
-            centralVideoRecordView
-        }
-        .frame(width: 156, height: 74)
-    }
-
-    // MARK: - AI Video Director Left Dock Target (Tọa độ -56pt)
-    private var aiVideoDirectorDockTarget: some View {
-        HStack {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.75))
-                    .frame(width: 44, height: 44)
-
-                Circle()
-                    .stroke(hasReachedDock ? Color.yellow : (viewModel.isAIVideoDirectorActive ? Color.yellow.opacity(0.85) : Color.white.opacity(0.35)), lineWidth: hasReachedDock ? 2.5 : 1.2)
-                    .frame(width: 44, height: 44)
-
-                Image(systemName: "sparkles.tv")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundColor(hasReachedDock ? Color.yellow : (viewModel.isAIVideoDirectorActive ? Color.yellow : Color.white.opacity(0.75)))
-                    .scaleEffect(hasReachedDock ? 1.22 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
-            }
-            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? Color.yellow.opacity(0.6) : Color.clear, radius: 8)
-            .offset(x: -56)
-            .scaleEffect(dockScale)
-            .opacity(dockOpacity)
-            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
-
-            Spacer()
-        }
-    }
-
-    // MARK: - Central Video Record View
-    private var centralVideoRecordView: some View {
-        ZStack {
-            // Viền ngoài cố định tại tâm
-            Circle()
-                .stroke(viewModel.isAIVideoDirectorActive ? Color.yellow : Color.white, lineWidth: 3.5)
-                .frame(width: 76, height: 76)
-
-            // Lõi nút quay (đỏ): thu nhỏ lại hình vuông bo góc khi quay, hoặc trượt sang trái khi kéo
-            if viewModel.isRecordingVideo {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.red)
-                    .frame(width: 28, height: 28)
-                    .offset(x: dragOffset)
-            } else {
-                Circle()
-                    .fill(Color.red)
-                    .frame(
-                        width: isTouchingShutter ? 54 : 62,
-                        height: isTouchingShutter ? 54 : 62
-                    )
-                    .offset(x: dragOffset)
-                    .scaleEffect(x: shutterStretchX, y: shutterStretchY)
-            }
-
-            if viewModel.isAIVideoDirectorAnalyzing {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .offset(x: dragOffset)
-            }
-        }
-        .contentShape(Circle())
-        .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isTouchingShutter)
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { value in
-                    let transX = value.translation.width
-                    isTouchingShutter = true
-
-                    if transX < -6 {
-                        isDraggingToAI = true
-                        if transX < -56 {
-                            dragOffset = -56 + (transX + 56) * 0.25
-                        } else {
-                            dragOffset = transX
-                        }
-
-                        let reached = dragOffset <= -42
-                        if reached && !hasReachedDock {
-                            hasReachedDock = true
-                            let generator = UIImpactFeedbackGenerator(style: .medium)
-                            generator.prepare()
-                            generator.impactOccurred()
-                        } else if !reached && hasReachedDock {
-                            hasReachedDock = false
-                        }
-                    } else if transX > 0 {
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                        dragOffset = min(15, transX * 0.2)
-                    } else {
-                        dragOffset = 0
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                    }
-                }
-                .onEnded { value in
-                    let transX = value.translation.width
-                    let transY = value.translation.height
-                    let didReachDock = hasReachedDock || dragOffset <= -42
-
-                    if didReachDock {
-                        let generator = UIImpactFeedbackGenerator(style: .heavy)
-                        generator.prepare()
-                        generator.impactOccurred()
-
-                        if viewModel.isAIVideoDirectorActive {
-                            viewModel.dismissAIVideoDirector()
-                        } else {
-                            viewModel.requestAIVideoCinematographyGuidance()
-                        }
-                    } else if !isDraggingToAI && abs(transX) < 14 && abs(transY) < 14 {
-                        viewModel.toggleVideoRecording()
-                    }
-
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
-                        dragOffset = 0
-                        isDraggingToAI = false
-                        hasReachedDock = false
-                        isTouchingShutter = false
-                    }
-                }
-        )
-        .accessibilityLabel("Nút quay video: Chạm để quay, giữ kéo sang trái để AI Đạo diễn gợi ý cách quay")
-    }
-}
-
-// MARK: - Zoom Selector Pills
-struct ZoomSelectorPills: View {
-    @ObservedObject var viewModel: CameraViewModel
-    let options: [CGFloat]
-
-    @State private var targetedZoom: CGFloat = 1.0
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
-
-    var body: some View {
-        VStack(spacing: 4) {
-            // Floating zoom badge: chỉ xuất hiện nhẹ nhàng phía trên khi người dùng đang pinch thủ công trên kính ngắm
-            if viewModel.isPinchingZoom && !options.contains(where: { abs(viewModel.displayZoom - $0) < 0.08 }) {
-                Text(String(format: "%.1f×", viewModel.displayZoom))
-                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                    .foregroundColor(amberGold)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(Color(red: 0.08, green: 0.08, blue: 0.10).opacity(0.92))
-                            .overlay(Capsule().stroke(amberGold.opacity(0.35), lineWidth: 1))
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            }
-
-            HStack(spacing: 8) {
-                ForEach(options, id: \.self) { zoom in
-                    let isSelected = abs(targetedZoom - zoom) < 0.05 || (!viewModel.isPinchingZoom && abs(viewModel.displayZoom - zoom) < 0.12)
-                    Button(action: {
-                        targetedZoom = zoom
-                        viewModel.setZoomFromButton(zoom)
-                    }) {
-                        Text(zoom < 1.0 ? String(format: "%.1f×", zoom) : String(format: "%.0f×", zoom))
-                            .font(.system(size: 12, weight: isSelected ? .heavy : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? .black : .white)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 5.5)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? amberGold : Color.black.opacity(0.48))
-                            )
-                            .overlay(
-                                Capsule()
-                                    .stroke(isSelected ? amberGold : Color.white.opacity(0.10), lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-        }
-        .onAppear {
-            targetedZoom = viewModel.displayZoom
-        }
-        .onChange(of: viewModel.displayZoom) { newZoom in
-            if !viewModel.isPinchingZoom {
-                if let matched = options.first(where: { abs(newZoom - $0) < 0.12 }) {
-                    targetedZoom = matched
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Gallery Thumbnail Button
-struct GalleryThumbnailButton: View {
-    @ObservedObject var viewModel: CameraViewModel
-
-    var body: some View {
-        Button(action: {
-            if viewModel.latestCapturedPhoto != nil {
-                viewModel.isShowingPhotoDetail = true
-            }
-        }) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
-                    .frame(width: 50, height: 50)
-
-                if let photo = viewModel.latestCapturedPhoto {
-                    Image(decorative: photo.processedImage, scale: 1.0, orientation: .up)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 48, height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 11))
-                } else {
-                    CustomAppIconView(
-                        name: "iconnutxemanhganday",
-                        fallbackSF: "photo.on.rectangle.angled",
-                        size: 28,
-                        color: .white.opacity(0.88)
-                    )
-                }
-            }
-            .contentShape(Rectangle())
-        }
-    }
-}
-
-// MARK: - Filter Toggle Button
-struct FilterToggleButton: View {
-    @ObservedObject var viewModel: CameraViewModel
-
-    var body: some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                viewModel.isShowingFilmDrawer.toggle()
-            }
-        }) {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.55))
-                    .frame(width: 50, height: 50)
-
-                Circle()
-                    .stroke(viewModel.isAIFullColorEnabled ? Color.cyan : Color.white.opacity(0.35), lineWidth: 1.5)
-                    .frame(width: 50, height: 50)
-
-                CustomAppIconView(
-                    name: "iconchonmau",
-                    fallbackSF: "camera.filters",
-                    size: 28,
-                    color: viewModel.isAIFullColorEnabled ? .cyan : .white
-                )
-            }
-            .contentShape(Circle())
-        }
-    }
-}
-
-// MARK: - Film Preset Drawer (Danh Sách Tên Màu Film Tối Giản Typography Chuẩn Pro)
-struct FilmPresetDrawer: View {
-    @ObservedObject var viewModel: CameraViewModel
-
-    var body: some View {
-        VStack(spacing: 8) {
-            // Header: Tiêu đề & Nút đóng
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "camera.filters")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.yellow)
-                    Text("Bộ lọc màu film")
-                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                }
-
-                Spacer()
-
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                        viewModel.isShowingFilmDrawer = false
-                    }
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(.white.opacity(0.6))
-                }
-                .accessibilityLabel("Đóng bảng màu")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 4)
-
-            // Danh sách tên preset dạng Capsule/Pill tối giản chuẩn Pro Camera
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(FilmPreset.allCases) { preset in
-                        let isSelected = viewModel.selectedFilmPreset == preset
-                        let isAIRecommended = viewModel.aiRecommendedPreset == preset
-
-                        Button(action: {
-                            let generator = UISelectionFeedbackGenerator()
-                            generator.prepare()
-                            generator.selectionChanged()
-                            viewModel.selectPreset(preset)
-                        }) {
-                            HStack(spacing: 5) {
-                                if preset.isAIFullAuto {
-                                    Image(systemName: "wand.and.stars")
-                                        .font(.system(size: 11, weight: .bold))
-                                } else if isSelected {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 10, weight: .heavy))
-                                } else if isAIRecommended {
-                                    Image(systemName: "sparkles")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundColor(.yellow)
-                                }
-
-                                Text(preset.displayName)
-                                    .font(.system(size: 12.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                            }
-                            .foregroundColor(isSelected ? .black : .white.opacity(0.9))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? Color.yellow : (isAIRecommended ? Color.yellow.opacity(0.18) : Color.white.opacity(0.08)))
-                            )
-                            .overlay(
-                                Capsule()
-                                    .stroke(isSelected ? Color.yellow : (isAIRecommended ? Color.yellow.opacity(0.6) : Color.white.opacity(0.12)), lineWidth: 1)
-                            )
-                            .shadow(color: isSelected ? Color.yellow.opacity(0.35) : Color.clear, radius: 4)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .scaleEffect(isSelected ? 1.04 : 1.0)
-                        .animation(.spring(response: 0.25, dampingFraction: 0.65), value: isSelected)
-                        .accessibilityLabel("Chọn màu \(preset.displayName)")
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-            }
-        }
-        .padding(.vertical, 6)
-        .frame(maxHeight: 88)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
-        )
-        .gesture(
-            DragGesture(minimumDistance: 15)
-                .onEnded { value in
-                    if value.translation.height > 25 {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                            viewModel.isShowingFilmDrawer = false
-                        }
-                    }
-                }
-        )
-        .padding(.horizontal, 12)
-        .padding(.bottom, 4)
+        Group {
+            if let image = UIImage(named: name) { Image(uiImage: image).renderingMode(.template).resizable().scaledToFit() }
+            else { Image(systemName: fallbackSF).resizable().scaledToFit() }
+        }.frame(width: size, height: size).foregroundColor(color)
     }
 }

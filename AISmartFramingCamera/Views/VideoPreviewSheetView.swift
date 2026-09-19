@@ -18,109 +18,37 @@ public struct VideoPreviewSheetView: View {
     private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
 
     public var body: some View {
-        NavigationView {
-            ZStack {
-                darkBg.edgesIgnoringSafeArea(.all)
-
-                VStack(spacing: 16) {
-                    // 1. Video Player
-                    if let player = player {
-                        VideoPlayer(player: player)
-                            .frame(maxHeight: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .padding(.horizontal, 16)
-                            .onAppear { player.play() }
-                    } else {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: champagne))
-                            .frame(maxHeight: .infinity)
-                    }
-
-                    // 2. Status Note
-                    if let note = gradingSuccessNote {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(champagne)
-                            Text(note)
-                                .font(.caption.weight(.medium))
-                                .foregroundColor(.white.opacity(0.9))
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.white.opacity(0.08)))
-                    }
-
-                    // 3. Action Buttons: [Chỉnh màu], [Lưu], [Chia sẻ]
+        NavigationStack {
+            VStack(spacing: 16) {
+                if let player { VideoPlayer(player: player).frame(maxHeight: .infinity) }
+                else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
+                if let note = gradingSuccessNote {
+                    Text(note).font(.caption).foregroundColor(.secondary).padding(.horizontal)
+                }
+                VStack(spacing: 12) {
+                    Button(action: applyAICinematicColor) {
+                        HStack {
+                            if isGradingWithAI { ProgressView() } else { Image(systemName: "wand.and.stars") }
+                            Text(isGradingWithAI ? "Đang xử lý…" : "Áp dụng màu film & lưu bản mới")
+                        }.frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(.bordered).disabled(isGradingWithAI)
                     HStack(spacing: 12) {
-                        Button(action: applyAICinematicColor) {
-                            HStack(spacing: 6) {
-                                if isGradingWithAI {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .scaleEffect(0.8)
-                                } else {
-                                    Image(systemName: "wand.and.stars")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
-                                Text(isGradingWithAI ? "Đang xử lý…" : "Chỉnh màu")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
-                        }
-                        .disabled(isGradingWithAI)
-
-                        Button(action: { saveVideoToPhotos() }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: hasSavedToPhotos ? "checkmark" : "arrow.down")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text(hasSavedToPhotos ? "Đã lưu" : "Lưu")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(champagne)
-                            .cornerRadius(10)
-                        }
-
+                        Button { saveVideoToPhotos() } label: {
+                            Label(hasSavedToPhotos ? "Đã lưu" : "Lưu video", systemImage: hasSavedToPhotos ? "checkmark" : "square.and.arrow.down")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }.buttonStyle(.borderedProminent).disabled(isGradingWithAI || hasSavedToPhotos)
                         ShareLink(item: processedVideoURL ?? videoURL) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text("Chia sẻ")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
-                        }
+                            Label("Chia sẻ", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44)
+                        }.buttonStyle(.bordered).disabled(isGradingWithAI)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 14)
-                }
+                }.font(.subheadline).padding(.horizontal, 16).padding(.bottom, 12)
             }
-            .navigationBarTitle("Chi tiết video", displayMode: .inline)
-            .navigationBarItems(
-                trailing: Button("Đóng") {
-                    player?.pause()
-                    presentationMode.wrappedValue.dismiss()
-                }
-                .foregroundColor(champagne)
-            )
-            .onAppear {
-                player = AVPlayer(url: videoURL)
-            }
-            .onDisappear {
-                player?.pause()
-            }
-        }
+            .background(CameraUI.canvas).navigationTitle("Video vừa quay").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Xong") { presentationMode.wrappedValue.dismiss() } } }
+            .onAppear { if player == nil { player = AVPlayer(url: videoURL) }; player?.play() }
+            .onDisappear { player?.pause() }
+        }.tint(CameraUI.accent).preferredColorScheme(.dark)
     }
-
     private func applyAICinematicColor() {
         isGradingWithAI = true
         let asset = AVAsset(url: videoURL)

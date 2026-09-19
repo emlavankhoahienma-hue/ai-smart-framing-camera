@@ -1,457 +1,276 @@
 import SwiftUI
+import AVFoundation
+
+/// Only viewport geometry determines the preview frame. Drawers never participate in its layout.
+struct CameraViewportLayout {
+    let size: CGSize
+    let topBarHeight: CGFloat = 52
+    let deckHeight: CGFloat = 184
+    var stageHeight: CGFloat { max(0, size.height - topBarHeight - deckHeight - 12) }
+    var previewSize: CGSize {
+        let width = min(size.width, stageHeight * 3 / 4)
+        return CGSize(width: width, height: width * 4 / 3)
+    }
+    var previewCenter: CGPoint { CGPoint(x: size.width / 2, y: topBarHeight + stageHeight / 2) }
+    // 92 points are reserved for telemetry + AI status, even while they are hidden.
+    var drawerHeight: CGFloat { max(0, min(300, stageHeight - 104)) }
+}
 
 public struct CameraMainView: View {
     @StateObject private var viewModel = CameraViewModel()
-
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     public init() {}
 
     public var body: some View {
-        ZStack {
-            Color.black.edgesIgnoringSafeArea(.all)
-
-            if viewModel.hasCameraPermission {
-                // Giao diện máy ảnh chuẩn Apple Camera App: Kính ngắm 4:3 WYSIWYG sắc nét, không crop, không méo góc
-                VStack(spacing: 0) {
-                    // Top Bar Controls (Chứa Flash, Histogram & Info ở giữa, Cài đặt)
-                    TopCameraBar(viewModel: viewModel)
-                        .padding(.top, 4)
-
-                    // Floating AI Dynamic HUD Pill (Chỉ xuất hiện khi AI đang phân tích)
-                    AIStatusHUDView(viewModel: viewModel)
-                        .padding(.top, 2)
-
-                    Spacer(minLength: 0)
-
-                    // Kính ngắm Live View đồng bộ 4:3 cho cả Ảnh và Video (To, đẹp, không méo, không teo nhỏ)
-                    ZStack(alignment: .bottom) {
+        GeometryReader { proxy in
+            let layout = CameraViewportLayout(size: proxy.size)
+            ZStack(alignment: .top) {
+                Color.black.ignoresSafeArea()
+                if viewModel.hasCameraPermission {
+                    // This identity, frame and aspect ratio are independent of all overlay state.
+                    ZStack {
                         CameraPreviewView(viewModel: viewModel)
                         ARFramingOverlayView(viewModel: viewModel)
-
-                        // Nút Zoom Apple 1x / 2x trực tiếp trên Live View với panel tròn di chuyển
-                        LiveViewZoomSwitch(viewModel: viewModel)
-                            .padding(.bottom, 12)
                     }
-                    .aspectRatio(3.0 / 4.0, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .frame(maxWidth: .infinity)
+                    .frame(width: layout.previewSize.width, height: layout.previewSize.height)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .position(layout.previewCenter)
 
-                    Spacer(minLength: 0)
+                    TopCameraBar(viewModel: viewModel).frame(height: layout.topBarHeight)
+                    VStack(spacing: 6) {
+                        if viewModel.showHistogramInViewfinder || viewModel.captureMode == .proVideo {
+                            LiveColorHistogramHUDView(viewModel: viewModel)
+                        }
+                        AIStatusHUDView(viewModel: viewModel)
+                    }
+                    .padding(.top, 6)
+                    .frame(width: max(0, layout.previewSize.width - 20), height: 92, alignment: .top)
+                    .position(x: proxy.size.width / 2, y: layout.topBarHeight + 46)
 
-                    // Bottom Control Deck: Cụm Shutter ở trên, Mode Switcher (Ảnh / Video) ở dưới
+                    // The drawer's upper edge cannot enter the HUD's reserved area.
+                    if viewModel.isShowingFilmDrawer || (viewModel.captureMode == .proVideo && viewModel.isShowingProControlsDrawer) {
+                        Group {
+                            if viewModel.isShowingFilmDrawer { FilmPresetDrawer(viewModel: viewModel) }
+                            else { ProVideoManualControlsView(viewModel: viewModel) }
+                        }
+                        .frame(width: min(proxy.size.width - 24, 520), height: layout.drawerHeight)
+                        .clipped()
+                        .position(x: proxy.size.width / 2,
+                                  y: layout.topBarHeight + layout.stageHeight - layout.drawerHeight / 2 - 4)
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                    }
                     CameraControlsView(viewModel: viewModel)
+                        .frame(height: layout.deckHeight)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height - layout.deckHeight / 2 - 4)
+                } else {
+                    CameraPermissionPlaceholderView(viewModel: viewModel)
+                        .frame(width: proxy.size.width, height: proxy.size.height)
                 }
-            } else {
-                // Permission Request Screen
-                CameraPermissionPlaceholderView(viewModel: viewModel)
             }
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .animation(reduceMotion ? nil : CameraUI.spring, value: viewModel.isShowingFilmDrawer)
+            .animation(reduceMotion ? nil : CameraUI.spring, value: viewModel.isShowingProControlsDrawer)
         }
-        .sheet(isPresented: $viewModel.isShowingSettings) {
-            SettingsSheetView(viewModel: viewModel)
-        }
-        .sheet(isPresented: $viewModel.isCompositionRuleSheetPresented) {
-            CompositionRuleSheet(viewModel: viewModel)
-        }
+        .preferredColorScheme(.dark)
+        .tint(CameraUI.accent)
+        .sheet(isPresented: $viewModel.isShowingSettings) { SettingsSheetView(viewModel: viewModel) }
+        .sheet(isPresented: $viewModel.isCompositionRuleSheetPresented) { CompositionRuleSheet(viewModel: viewModel) }
         .sheet(isPresented: $viewModel.isShowingPhotoDetail) {
-            if let latest = viewModel.latestCapturedPhoto {
-                CapturedPhotoPreviewView(item: latest, viewModel: viewModel)
-            }
+            if let item = viewModel.latestCapturedPhoto { CapturedPhotoPreviewView(item: item, viewModel: viewModel) }
         }
         .sheet(isPresented: $viewModel.isShowingVideoPreview) {
-            if let videoURL = viewModel.recordedVideoURL {
-                VideoPreviewSheetView(videoURL: videoURL, viewModel: viewModel)
-            }
+            if let url = viewModel.recordedVideoURL { VideoPreviewSheetView(videoURL: url, viewModel: viewModel) }
         }
-        .onAppear {
-            viewModel.requestPermissionsAndStart()
-        }
+        .onAppear { viewModel.requestPermissionsAndStart() }
+        .alert("Không thể hoàn tất", isPresented: Binding(
+            get: { viewModel.saveErrorMessage != nil },
+            set: { if !$0 { viewModel.saveErrorMessage = nil } }
+        )) {
+            Button("Đóng", role: .cancel) { viewModel.saveErrorMessage = nil }
+        } message: { Text(viewModel.saveErrorMessage ?? "") }
     }
 }
-
-// MARK: - Apple-Style Live View Zoom Switch (1x · 2x với Panel Tròn Di Chuyển Mượt Mà Theo Ảnh Mẫu)
 
 public struct LiveViewZoomSwitch: View {
     @ObservedObject var viewModel: CameraViewModel
-    @Namespace private var zoomNamespace
-
-    private var is2xActive: Bool {
-        return viewModel.displayZoom >= 1.5
-    }
-
-    public init(viewModel: CameraViewModel) {
-        self.viewModel = viewModel
-    }
-
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var highlight
+    public init(viewModel: CameraViewModel) { self.viewModel = viewModel }
     public var body: some View {
         HStack(spacing: 2) {
-            // Nút 1x
-            Button(action: {
-                guard is2xActive else { return }
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.prepare()
-                generator.impactOccurred()
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
-                    viewModel.setZoomFromButton(1.0)
-                }
-            }) {
-                ZStack {
-                    if !is2xActive {
-                        Circle()
-                            .fill(Color.white.opacity(0.26))
-                            .matchedGeometryEffect(id: "zoom_active_circle_panel", in: zoomNamespace)
-                            .frame(width: 32, height: 32)
-                    } else {
-                        Color.clear
-                            .frame(width: 32, height: 32)
-                    }
-
-                    Text(!is2xActive ? "1x" : "1")
-                        .font(.system(size: 13, weight: !is2xActive ? .bold : .medium, design: .rounded))
-                        .foregroundColor(.white)
-                }
-                .frame(width: 34, height: 34)
-                .contentShape(Circle())
+            ForEach([CGFloat(1), CGFloat(2)], id: \.self) { zoom in
+                let selected = abs(viewModel.displayZoom - zoom) < 0.08
+                Button { viewModel.setZoomFromButton(zoom) } label: {
+                    Text("\(Int(zoom))×").font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundColor(selected ? CameraUI.accent : .white)
+                        .frame(width: 44, height: 44)
+                        .background {
+                            if selected { Circle().fill(.white.opacity(0.14)).matchedGeometryEffect(id: "zoom", in: highlight) }
+                        }
+                }.buttonStyle(CameraPressStyle())
+                    .accessibilityLabel("Thu phóng \(Int(zoom)) lần")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
             }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Chế độ phóng đại 1x")
-
-            // Nút 2x
-            Button(action: {
-                guard !is2xActive else { return }
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.prepare()
-                generator.impactOccurred()
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
-                    viewModel.setZoomFromButton(2.0)
-                }
-            }) {
-                ZStack {
-                    if is2xActive {
-                        Circle()
-                            .fill(Color.white.opacity(0.26))
-                            .matchedGeometryEffect(id: "zoom_active_circle_panel", in: zoomNamespace)
-                            .frame(width: 32, height: 32)
-                    } else {
-                        Color.clear
-                            .frame(width: 32, height: 32)
-                    }
-
-                    Text(is2xActive ? "2x" : "2")
-                        .font(.system(size: 13, weight: is2xActive ? .bold : .medium, design: .rounded))
-                        .foregroundColor(.white)
-                }
-                .frame(width: 34, height: 34)
-                .contentShape(Circle())
+            if abs(viewModel.displayZoom - 1) >= 0.08 && abs(viewModel.displayZoom - 2) >= 0.08 {
+                Text(String(format: "%.1f×", viewModel.displayZoom))
+                    .font(.caption.monospacedDigit()).foregroundColor(CameraUI.accent).padding(.horizontal, 8)
             }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Chế độ phóng đại 2x")
         }
-        .padding(3)
-        .background(
-            Capsule()
-                .fill(Color.black.opacity(0.48))
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.15), lineWidth: 0.8)
-                )
-        )
-        .shadow(color: Color.black.opacity(0.4), radius: 6, x: 0, y: 2)
+        .background(.white.opacity(0.05), in: Capsule())
+        .animation(reduceMotion ? nil : CameraUI.spring, value: viewModel.displayZoom)
+        .accessibilityElement(children: .contain)
     }
 }
 
-// MARK: - Quiet Pro Top Bar Component
-
+/// Sole owner of light/settings controls. Torch UI uses the existing serial device boundary.
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var torchOn = false
+    @State private var lightBusy = false
+    @State private var lightAvailable = false
+    @State private var lightError: String?
 
     var body: some View {
-        if viewModel.captureMode.isVideo {
-            // VIDEO MODE TOP BAR: [Flash/Torch] — 00:00 · 1080P 30FPS — [Cài đặt ⚙️]
-            HStack(spacing: 12) {
-                Button(action: {
-                    viewModel.toggleFlash()
-                }) {
-                    Image(systemName: flashIconName)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(viewModel.activeFlashMode == .off ? .white.opacity(0.85) : .yellow)
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Color.black.opacity(0.45)))
+        HStack(spacing: 8) {
+            CameraIconButton(symbol: lightSymbol, label: lightLabel, isActive: lightIsActive, action: changeLight)
+                .disabled(!viewModel.isCameraReady || !lightAvailable || lightBusy)
+                .accessibilityValue(viewModel.captureMode.isVideo ? (torchOn ? "Bật" : "Tắt") : flashValue)
+            Button(action: openComposition) {
+                HStack(spacing: 6) {
+                    Image(systemName: viewModel.isRecordingVideo ? "record.circle" : "viewfinder")
+                        .foregroundColor(viewModel.isRecordingVideo ? .red : CameraUI.accent)
+                    Text(viewModel.isRecordingVideo ? viewModel.videoRecordingTimeString : "Bố cục AI")
+                        .font(.caption.weight(.semibold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.8)
+                }.frame(maxWidth: .infinity, minHeight: 44)
+            }.buttonStyle(CameraPressStyle()).foregroundColor(.white)
+                .disabled(!viewModel.isCameraReady || viewModel.isRecordingVideo)
+            if viewModel.captureMode == .proVideo {
+                CameraIconButton(symbol: "slider.horizontal.3", label: "Điều khiển Pro", isActive: viewModel.isShowingProControlsDrawer) {
+                    viewModel.isShowingProControlsDrawer.toggle()
+                    viewModel.isShowingFilmDrawer = false
                 }
-                .accessibilityLabel("Bật tắt đèn flash")
-
-                Spacer()
-
-                // Video HUD: Thời gian quay & Độ phân giải/FPS
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(viewModel.isRecordingVideo ? Color.red : Color.gray.opacity(0.8))
-                            .frame(width: 7, height: 7)
-
-                        Text(viewModel.videoRecordingTimeString)
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.55))
-                    .clipShape(Capsule())
-
-                    Button(action: {
-                        viewModel.toggleVideoFormat()
-                    }) {
-                        Text(viewModel.activeVideoResolutionString)
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.9))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.55))
-                            .clipShape(Capsule())
-                    }
-                    .disabled(viewModel.isRecordingVideo)
-                    .accessibilityLabel("Đổi định dạng quay video")
-                }
-
-                Spacer()
-
-                Button(action: {
-                    viewModel.isShowingSettings = true
-                }) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white.opacity(0.9))
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Color.black.opacity(0.45)))
-                }
-                .accessibilityLabel("Cài đặt")
             }
-            .padding(.horizontal, 16)
-        } else {
-            // PHOTO MODE TOP BAR: [Flash] — [Mini Histogram & Info HUD] — [Cài đặt ⚙️]
-            HStack(spacing: 8) {
-                Button(action: {
-                    viewModel.toggleFlash()
-                }) {
-                    Image(systemName: flashIconName)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(viewModel.activeFlashMode == .off ? .white.opacity(0.85) : .yellow)
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Color.black.opacity(0.45)))
-                }
-                .accessibilityLabel("Chế độ đèn flash")
-
-                Spacer()
-
-                // Compact Pro Histogram & Photo Info HUD (Nằm chính giữa, không dính Flash/Settings)
-                if viewModel.showHistogramInViewfinder {
-                    LiveColorHistogramHUDView(viewModel: viewModel)
-                        .transition(.opacity)
-                }
-
-                Spacer()
-
-                Button(action: {
-                    viewModel.isShowingSettings = true
-                }) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white.opacity(0.9))
-                        .frame(width: 40, height: 40)
-                        .background(Circle().fill(Color.black.opacity(0.45)))
-                }
-                .accessibilityLabel("Cài đặt")
-            }
-            .padding(.horizontal, 16)
+            CameraIconButton(symbol: "gearshape", label: "Cài đặt") { viewModel.isShowingSettings = true }
+                .disabled(viewModel.isRecordingVideo)
+        }
+        .padding(.horizontal, 12)
+        .onAppear { refreshLight() }
+        .onChange(of: viewModel.isCameraReady) { _ in refreshLight() }
+        .onChange(of: viewModel.captureMode) { mode in
+            if !mode.isVideo { setTorch(false) }
+            refreshLight()
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase != .active { setTorch(false) } else { refreshLight() }
+        }
+        .onDisappear { setTorch(false) }
+        .alert("Đèn camera", isPresented: Binding(get: { lightError != nil }, set: { if !$0 { lightError = nil } })) {
+            Button("Đóng", role: .cancel) { lightError = nil }
+        } message: { Text(lightError ?? "") }
+    }
+    private var lightIsActive: Bool { viewModel.captureMode.isVideo ? torchOn : viewModel.activeFlashMode != .off }
+    private var flashValue: String {
+        switch viewModel.activeFlashMode { case .auto: return "Tự động"; case .on: return "Bật"; default: return "Tắt" }
+    }
+    private var lightLabel: String { viewModel.captureMode.isVideo ? "Đèn pin liên tục" : "Flash ảnh" }
+    private var lightSymbol: String {
+        if viewModel.captureMode.isVideo { return torchOn ? "flashlight.on.fill" : "flashlight.off.fill" }
+        switch viewModel.activeFlashMode {
+        case .auto: return "bolt.badge.automatic"
+        case .on: return "bolt.fill"
+        default: return "bolt.slash"
         }
     }
-
-    private var flashIconName: String {
-        switch viewModel.activeFlashMode {
-        case .auto: return "bolt.badge.automatic.fill"
-        case .on: return "bolt.fill"
-        case .off: return "bolt.slash.fill"
-        @unknown default: return "bolt.fill"
+    private func changeLight() {
+        if viewModel.captureMode.isVideo { setTorch(!torchOn) }
+        else { viewModel.toggleFlash() }
+    }
+    private func refreshLight() {
+        let video = viewModel.captureMode.isVideo
+        viewModel.cameraService.scheduleDeviceConfiguration { device in
+            let available = video ? (device.hasTorch && device.isTorchAvailable) : device.hasFlash
+            let enabled = device.torchMode == .on
+            DispatchQueue.main.async { lightAvailable = available; torchOn = enabled }
         }
+    }
+    private func setTorch(_ enabled: Bool) {
+        guard viewModel.isCameraReady else { return }
+        lightBusy = true
+        viewModel.cameraService.scheduleDeviceConfiguration { device in
+            var message: String?
+            do {
+                if device.hasTorch {
+                    guard !enabled || (device.isTorchAvailable && device.isTorchModeSupported(.on)) else {
+                        DispatchQueue.main.async { lightBusy = false; lightError = "Đèn pin hiện không khả dụng." }
+                        return
+                    }
+                    try device.lockForConfiguration()
+                    defer { device.unlockForConfiguration() }
+                    if enabled { try device.setTorchModeOn(level: 1) }
+                    else { device.torchMode = .off }
+                }
+            } catch { message = error.localizedDescription }
+            let active = device.torchMode == .on
+            let resultMessage = message
+            DispatchQueue.main.async { torchOn = active; lightBusy = false; lightError = resultMessage }
+        }
+    }
+    private func openComposition() {
+        if viewModel.captureMode.isVideo {
+            if viewModel.isAIVideoDirectorActive { viewModel.dismissAIVideoDirector() }
+            else { viewModel.requestAIVideoCinematographyGuidance() }
+        } else { viewModel.isCompositionRuleSheetPresented = true }
     }
 }
-
-// MARK: - Composition Rule Quick Sheet (Bố cục thông minh)
 
 struct CompositionRuleSheet: View {
     @ObservedObject var viewModel: CameraViewModel
-    @Environment(\.presentationMode) var presentationMode
-
+    @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Chọn quy tắc bố cục để hệ thống tự động nhận diện chủ thể và đưa ra hướng dẫn căn góc tối ưu.")
-                            .font(.system(size: 13))
-                            .foregroundColor(.gray)
-                            .padding(.horizontal, 4)
-
-                        ruleListView
-
-                        Divider().background(Color.gray.opacity(0.3)).padding(.vertical, 4)
-
-                        // Tiện ích nhanh
-                        VStack(spacing: 10) {
-                            Toggle("Live Photo", isOn: $viewModel.isLivePhotoEnabled)
-                        }
-                        .padding(.horizontal, 4)
+            List {
+                Section("Chọn cách căn khung hình") {
+                    ForEach(CompositionRule.allCases) { rule in
+                        Button { viewModel.selectRule(rule) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: rule.iconName).frame(width: 28).foregroundColor(CameraUI.accent)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(rule.displayNameVietnamese).foregroundColor(.primary)
+                                    Text(rule.descriptionVietnamese).font(.caption).foregroundColor(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                if viewModel.activeCompositionRule == rule { Image(systemName: "checkmark") }
+                            }.padding(.vertical, 6)
+                        }.accessibilityAddTraits(viewModel.activeCompositionRule == rule ? .isSelected : [])
                     }
-                    .padding(16)
                 }
-
-                bottomActionBar
-            }
-            .background(Color(red: 0.05, green: 0.05, blue: 0.06).edgesIgnoringSafeArea(.all))
-            .navigationBarTitle("Bố cục thông minh", displayMode: .inline)
-            .navigationBarItems(
-                trailing: Button("Xong") { presentationMode.wrappedValue.dismiss() }
-                    .foregroundColor(.yellow)
-            )
-        }
-    }
-
-    private var ruleListView: some View {
-        VStack(spacing: 8) {
-            ForEach(CompositionRule.allCases) { rule in
-                CompositionRuleRow(
-                    rule: rule,
-                    isSelected: viewModel.activeCompositionRule == rule,
-                    onSelect: { viewModel.selectRule(rule) }
-                )
-            }
-        }
-    }
-
-    private var bottomActionBar: some View {
-        VStack(spacing: 0) {
-            Divider().background(Color.gray.opacity(0.25))
-
-            if viewModel.aiSessionState.isSessionActive {
-                Button(action: {
-                    viewModel.cancelAISession()
-                    presentationMode.wrappedValue.dismiss()
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "stop.fill")
-                        Text("Dừng căn bố cục")
-                    }
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.red.opacity(0.85)))
+                Section {
+                    Toggle("Tự chụp khi căn khớp", isOn: $viewModel.isAutoCaptureOnAlignEnabled)
+                    Button(viewModel.isAISessionActive ? "Dừng căn bố cục" : "Bắt đầu căn bố cục") {
+                        if viewModel.isAISessionActive { viewModel.cancelAISession() }
+                        else { viewModel.startAISession() }
+                        dismiss()
+                    }.font(.headline).frame(minHeight: 44)
                 }
-                .padding(16)
-            } else {
-                Button(action: {
-                    presentationMode.wrappedValue.dismiss()
-                    viewModel.startAISession()
-                }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "viewfinder")
-                        Text("Bắt đầu căn bố cục")
-                    }
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(.black)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.yellow))
-                }
-                .padding(16)
-            }
-        }
-        .background(Color(red: 0.08, green: 0.08, blue: 0.09))
+            }.navigationTitle("Bố cục AI").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Xong") { dismiss() } } }
+        }.tint(CameraUI.accent).preferredColorScheme(.dark)
     }
 }
-
-// MARK: - Composition Rule Row
-
-struct CompositionRuleRow: View {
-    let rule: CompositionRule
-    let isSelected: Bool
-    let onSelect: () -> Void
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 12) {
-                Image(systemName: rule.iconName)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(isSelected ? Color.yellow : Color.white.opacity(0.8))
-                    .frame(width: 28)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(rule.displayNameVietnamese)
-                        .font(.system(size: 15, weight: isSelected ? .bold : .medium))
-                        .foregroundColor(Color.white)
-                    Text(rule.descriptionVietnamese)
-                        .font(.system(size: 12))
-                        .foregroundColor(Color.gray)
-                }
-
-                Spacer()
-
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(Color.yellow)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(backgroundShape)
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    private var backgroundShape: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(isSelected ? Color.yellow.opacity(0.12) : Color.white.opacity(0.05))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? Color.yellow.opacity(0.5) : Color.white.opacity(0.08), lineWidth: 1)
-            )
-    }
-}
-
-// MARK: - Permission Placeholder (Friendly & Non-technical)
 
 struct CameraPermissionPlaceholderView: View {
     @ObservedObject var viewModel: CameraViewModel
-
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: "camera.fill")
-                .font(.system(size: 54))
-                .foregroundColor(.yellow)
-
-            Text("Cho phép camera để bắt đầu")
-                .font(.title2.bold())
-                .foregroundColor(.white)
-
-            Text("AlignAI Studio cần camera để hiển thị bản xem trước, lấy nét và hỗ trợ căn bố cục.")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
-
-            Button(action: {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }) {
-                Text("Mở Cài đặt")
-                    .font(.headline)
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 14)
-                    .background(Color.yellow)
-                    .cornerRadius(12)
-            }
-        }
-        .padding()
+            Image(systemName: "camera.aperture").font(.system(size: 64, weight: .ultraLight)).foregroundColor(CameraUI.accent)
+            Text("Một góc nhìn mới").font(.title2.bold())
+            Text("Cho phép truy cập camera để chụp ảnh, quay video và nhận hướng dẫn bố cục.")
+                .foregroundColor(.secondary).multilineTextAlignment(.center)
+            Button("Cho phép camera") { viewModel.requestPermissionsAndStart() }.buttonStyle(.borderedProminent)
+            Button("Mở quyền ứng dụng") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+            }.frame(minHeight: 44)
+        }.padding(32)
     }
 }

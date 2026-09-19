@@ -1,221 +1,91 @@
 import SwiftUI
 
+/// Read-only drawing of engine output; all normalized coordinate conversions are preserved.
 public struct ARFramingOverlayView: View {
     @ObservedObject var viewModel: CameraViewModel
-
-    @State private var radarPulse: CGFloat = 1.0
-    @State private var radarOpacity: Double = 0.8
-    @State private var dashOffset: CGFloat = 0
-
     public var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
-            let screenCenter = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
-
             ZStack {
-                // 0. Focus Peaking Neon Edges (Báo nét điện ảnh)
-                if viewModel.isFocusPeakingEnabled, let peakingImage = viewModel.focusPeakingCGImage {
-                    Image(decorative: peakingImage, scale: 1.0, orientation: .up)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: size.width, height: size.height)
-                        .clipped()
-                        .allowsHitTesting(false)
-                        .opacity(1.0)
+                decoration(in: size).allowsHitTesting(false)
+                if viewModel.isShowingSunSlider, let point = viewModel.activeFocusSquarePoint {
+                    Slider(value: Binding(get: { Double(viewModel.activeSunExposureBias) }, set: {
+                        viewModel.adjustSunExposureBias(delta: Float($0) - viewModel.activeSunExposureBias)
+                    }), in: -2...2)
+                    .tint(CameraUI.accent).frame(width: min(150, size.width - 32), height: 44)
+                    .padding(.horizontal, 8).background(.black.opacity(0.55), in: Capsule())
+                    .position(x: min(max(90, point.x * size.width), size.width - 90),
+                              y: min(max(110, point.y * size.height + 64), size.height - 30))
+                    .accessibilityLabel("Điều chỉnh độ sáng")
                 }
-
-                // 1. Composition Grid Lines (hiện khi AI session active)
-                if viewModel.isAISessionActive {
-                    CompositionGridLines(rule: viewModel.activeCompositionRule, size: size)
-                        .opacity(0.28)
-                        .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive)
-                }
-
-                // 2. Detected Faces & Subject preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm)
-                if viewModel.showDetectionBoxes {
-                    ForEach(0..<viewModel.detectedFaceRects.count, id: \.self) { i in
-                        let rect = viewModel.detectedFaceRects[i]
-                        FaceDetectionBox(rect: convertBufferRectToScreen(rect, in: size))
-                    }
-
-                    if viewModel.isAISessionActive {
-                        ForEach(0..<viewModel.detectedSubjectRects.count, id: \.self) { i in
-                            let rect = viewModel.detectedSubjectRects[i]
-                            SubjectHighlightBox(rect: convertBufferRectToScreen(rect, in: size))
-                        }
-                    }
-                }
-
-                // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
-                // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
-                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
-                    let targetScreen = convertBufferPointToScreen(targetPoint, in: size)
-
-                    // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
-                    if viewModel.showGuidanceRay {
-                        GuidanceRayLine(
-                            from: screenCenter,
-                            to: targetScreen,
-                            dashOffset: dashOffset,
-                            distance: viewModel.alignmentDistance
-                        )
-                    }
-
-                    // Target Vàng
-                    TargetCircleView(
-                        isAligned: viewModel.isPerfectAlignment,
-                        alignmentDistance: viewModel.alignmentDistance,
-                        radarPulse: radarPulse,
-                        radarOpacity: radarOpacity,
-                        countdown: viewModel.autoCaptureCountdown,
-                        trackingQuality: viewModel.trackingQuality
-                    )
-                    .position(targetScreen)
-                }
-
-                // 5. TÂM TRẮNG GIỮA MÀN HÌNH — CHỈ HIỆN KHI AI ĐÃ XÁC ĐỊNH ĐƯỢC TARGET
-                // Trước đó (idle/đang phân tích) tâm này ẨN, không hiện gì cả.
-                if viewModel.showTargetCircle {
-                    CurrentCenterCrosshair(
-                        isAligned: viewModel.isPerfectAlignment,
-                        sessionState: viewModel.aiSessionState,
-                        distance: viewModel.alignmentDistance
-                    )
-                    .position(screenCenter)
-                    .transition(.opacity.combined(with: .scale(scale: 0.7)))
-                }
-
-                // 6. Countdown Overlay khi 2 tâm đã trùng khớp
-                if case .alignmentPerfect = viewModel.aiSessionState {
-                    CountdownOverlayView(countdown: viewModel.autoCaptureCountdown)
-                }
-
-                // 7. Success Flash
-                if viewModel.showAlignmentSuccessFlash {
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.green, lineWidth: 5)
-                        .padding(4)
-                        .transition(.opacity)
-                }
-
-                // 7b. AI Video Cinematography Director Overlay (Quỹ đạo, Các tâm đánh dấu & Chỉ dẫn cú máy)
                 if viewModel.isAIVideoDirectorActive {
                     AIVideoDirectorOverlayView(viewModel: viewModel, screenSize: size)
                 }
-
-                // 8. Gemini analyzing toast
-                if viewModel.isGeminiAnalyzing {
-                    GeminiAnalyzingBadge()
-                }
-
-                // 8c. Save error toast — hiện khi lưu ảnh thất bại hoặc thiếu quyền Photos
-                if let errorMsg = viewModel.saveErrorMessage {
-                    VStack {
-                        Spacer()
-                        Text(errorMsg)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.center)
-                            .padding(12)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.85)))
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 140)
-                    }
-                    .transition(.opacity)
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                            withAnimation { viewModel.saveErrorMessage = nil }
-                        }
-                    }
-                }
-
-                // 8b. Khóa AE/AF Banner (Chuẩn Camera iPhone)
-                if viewModel.isAEAFLocked {
-                    VStack {
-                        HStack(spacing: 6) {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 11, weight: .bold))
-                            Text("Đã khóa sáng và nét")
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        }
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 14).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.yellow))
-                        .padding(.top, 46)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-
-                        Spacer()
-                    }
-                }
-
-                // 8c. Thước Đo Cân Bằng Chân Trời (Virtual Horizon Leveler)
-                if viewModel.isHorizonLevelerEnabled && !viewModel.isAISessionActive && viewModel.captureMode == .photo {
-                    HorizonLevelerView(rollDegrees: viewModel.currentRollDegrees, isLevel: viewModel.isDeviceLevel)
-                        .position(screenCenter)
-                }
-
-                // 9. Smart Autofocus Yellow Square Indicator with Sun Exposure Slider (Apple Camera Style)
-                if let focusPoint = viewModel.activeFocusSquarePoint {
-                    FocusSquareWithSunSlider(
-                        isLocked: viewModel.isAEAFLocked,
-                        showSun: viewModel.isShowingSunSlider,
-                        exposureBias: viewModel.activeSunExposureBias,
-                        onAdjustBias: { delta in
-                            viewModel.adjustSunExposureBias(delta: delta)
-                        }
-                    )
-                    .position(x: focusPoint.x * size.width, y: focusPoint.y * size.height)
-                    .transition(.scale.combined(with: .opacity))
-                }
-
-                // 10. Capture Flash
-                if viewModel.activeFlashMode2 {
-                    Color.white.opacity(0.55)
-                        .ignoresSafeArea()
-                        .transition(.opacity)
-                }
-
-                // 11. AI Zoom Reveal Overlay (Khung bố cục điện ảnh mượt mà, không làm tối màn hình)
-                ZoomRevealOverlay(
-                    rect: viewModel.zoomRevealRect,
-                    isVisible: viewModel.isRevealingZoomTarget,
-                    targetZoom: viewModel.aiSuggestedZoom ?? 2.0
-                )
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { location in
-                let norm = convertScreenPointToBuffer(location, in: size)
-                if viewModel.isAEAFLocked {
-                    viewModel.unlockAEAF()
-                } else if case .targetPlaced = viewModel.aiSessionState {
-                    viewModel.pinTargetAndStartMotion(at: norm)
-                } else {
-                    viewModel.userDidTapToFocus(at: norm)
-                }
-            }
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.45)
-                    .sequenced(before: DragGesture(minimumDistance: 0))
-                    .onEnded { value in
-                        switch value {
-                        case .second(true, let drag):
-                            if let loc = drag?.location {
-                                let norm = convertScreenPointToBuffer(loc, in: size)
-                                viewModel.userDidLongPressToLockAEAF(at: norm)
-                            }
-                        default:
-                            break
-                        }
-                    }
-            )
-            .clipped()
-            .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
-            .onAppear { startAnimations() }
+            }.clipped()
         }
     }
 
-    // MARK: - AspectFill Coordinate Conversion Helpers
-    // Chuyển đổi toạ độ chuẩn hóa từ Camera Buffer (4:3) sang màn hình Preview
+    @ViewBuilder private func decoration(in size: CGSize) -> some View {
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        if viewModel.isFocusPeakingEnabled, let image = viewModel.focusPeakingCGImage {
+            Image(decorative: image, scale: 1).resizable().scaledToFill()
+                .frame(width: size.width, height: size.height).clipped()
+        }
+        if viewModel.isAISessionActive {
+            CompositionGridLines(rule: viewModel.activeCompositionRule, size: size).opacity(0.22)
+        }
+        if viewModel.showDetectionBoxes {
+            ForEach(Array(viewModel.detectedFaceRects.enumerated()), id: \.offset) { _, rect in
+                detectionBox(rect, size: size, color: .white.opacity(0.7))
+            }
+            if viewModel.isAISessionActive {
+                ForEach(Array(viewModel.detectedSubjectRects.enumerated()), id: \.offset) { _, rect in
+                    detectionBox(rect, size: size, color: CameraUI.accent)
+                }
+            }
+        }
+        if viewModel.showTargetCircle, let point = viewModel.currentTargetPoint {
+            let target = convertBufferPointToScreen(point, in: size)
+            if viewModel.showGuidanceRay {
+                Path { path in path.move(to: center); path.addLine(to: target) }
+                    .stroke(CameraUI.accent.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [4, 6]))
+            }
+            Image(systemName: "plus").font(.system(size: 24, weight: .ultraLight))
+                .foregroundColor(viewModel.isPerfectAlignment ? .green : .white).position(center)
+            ZStack {
+                Circle().strokeBorder(viewModel.isPerfectAlignment ? .green : CameraUI.accent, lineWidth: 2)
+                if viewModel.autoCaptureCountdown > 0 {
+                    Text("\(viewModel.autoCaptureCountdown)").font(.title2.weight(.semibold))
+                } else if viewModel.isPerfectAlignment { Image(systemName: "checkmark").foregroundColor(.green) }
+            }.frame(width: 54, height: 54).position(target)
+        }
+        if viewModel.isHorizonLevelerEnabled && !viewModel.isAISessionActive && viewModel.captureMode == .photo {
+            ZStack {
+                Capsule().fill(.white.opacity(0.45)).frame(width: 76, height: 1)
+                Capsule().fill(viewModel.isDeviceLevel ? CameraUI.accent : .white).frame(width: 48, height: 2)
+                    .rotationEffect(.degrees(-viewModel.currentRollDegrees))
+            }.position(center)
+        }
+        if let point = viewModel.activeFocusSquarePoint {
+            RoundedRectangle(cornerRadius: 8).strokeBorder(CameraUI.accent, lineWidth: 1.5)
+                .frame(width: 66, height: 66).position(x: point.x * size.width, y: point.y * size.height)
+        }
+        if viewModel.isRevealingZoomTarget {
+            let rect = viewModel.zoomRevealRect
+            RoundedRectangle(cornerRadius: 10).strokeBorder(CameraUI.accent.opacity(0.8), lineWidth: 1.5)
+                .frame(width: rect.width * size.width, height: rect.height * size.height)
+                .position(x: rect.midX * size.width, y: rect.midY * size.height)
+        }
+        if viewModel.showAlignmentSuccessFlash {
+            RoundedRectangle(cornerRadius: 18).strokeBorder(.green, lineWidth: 3)
+        }
+        if viewModel.activeFlashMode2 { Color.white.opacity(0.55) }
+    }
+    private func detectionBox(_ rect: CGRect, size: CGSize, color: Color) -> some View {
+        let mapped = convertBufferRectToScreen(rect, in: size)
+        return RoundedRectangle(cornerRadius: 8).strokeBorder(color, lineWidth: 1)
+            .frame(width: mapped.width, height: mapped.height).position(x: mapped.midX, y: mapped.midY)
+    }
     public static func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
         // Tỉ lệ cảm biến camera iOS ở chế độ portrait: 3:4 (width / height = 0.75)
         let bufferAspect: CGFloat = 3.0 / 4.0
@@ -288,17 +158,7 @@ public struct ARFramingOverlayView: View {
         }
     }
 
-    private func startAnimations() {
-        withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-            radarPulse = 1.40; radarOpacity = 0.15
-        }
-        withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-            dashOffset = -20
-        }
-    }
 }
-
-// MARK: - Composition Grid
 
 struct CompositionGridLines: View {
     let rule: CompositionRule
@@ -341,786 +201,37 @@ struct CompositionGridLines: View {
 
 // MARK: - Center Dot (Chấm Trắng Cố Định Ở Chính Giữa Màn Hình - Chuẩn Ảnh 1)
 
-struct CurrentCenterCrosshair: View {
-    let isAligned: Bool
-    let sessionState: AISessionState
-    let distance: CGFloat
-
-    var body: some View {
-        let dotColor: Color = isAligned ? .green : .white
-        let proximityScale: CGFloat = distance < 0.15 ? (1.0 + (0.15 - distance) * 0.9) : 1.0
-
-        ZStack {
-            // Chấm trắng đơn thuần, tinh tế đúng như Ảnh 1 (Solid White Dot)
-            Circle()
-                .fill(dotColor)
-                .frame(width: isAligned ? 12 : 11, height: isAligned ? 12 : 11)
-                .shadow(color: Color.black.opacity(0.75), radius: 1.5, x: 0, y: 0.5)
-                .shadow(color: dotColor.opacity(isAligned ? 0.85 : 0.25), radius: isAligned ? 6 : 1)
-
-            // Vòng viền xanh lục nhẹ khi đã khớp hoàn hảo
-            if isAligned {
-                Circle()
-                    .stroke(Color.green.opacity(0.55), lineWidth: 1.5)
-                    .frame(width: 17, height: 17)
-            }
-        }
-        .scaleEffect(proximityScale)
-        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isAligned)
-        .animation(.spring(response: 0.15, dampingFraction: 0.7), value: proximityScale)
-    }
-}
-
-// MARK: - Target Vòng Tròn Bé Với Tâm Dấu Cộng (+) - Chuẩn Ảnh 2
-
-struct PlusCrosshairShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        // Thanh ngang dấu cộng
-        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        // Thanh dọc dấu cộng
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        return path
-    }
-}
-
-struct TargetCircleView: View {
-    let isAligned: Bool
-    let alignmentDistance: CGFloat
-    let radarPulse: CGFloat
-    let radarOpacity: Double
-    let countdown: Int
-    let trackingQuality: TrackingQuality
-
-    private var ringColor: Color {
-        if isAligned { return .green }
-        switch trackingQuality {
-        case .locked, .predicting: return Color.yellow
-        case .reacquiring: return Color.orange
-        case .lost: return Color.red
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 6) {
-            ZStack {
-                // Sóng radar mỏng khi đang căn chỉnh
-                if !isAligned {
-                    Circle()
-                        .stroke(ringColor.opacity(radarOpacity * 0.6), lineWidth: 1.2)
-                        .frame(width: 28 * radarPulse, height: 28 * radarPulse)
-                }
-
-                // Vòng tròn bé như Ảnh 2 (Thin Golden Circle)
-                Circle()
-                    .stroke(ringColor, lineWidth: isAligned ? 2.2 : 1.6)
-                    .frame(width: 28, height: 28)
-                    .shadow(color: Color.black.opacity(0.5), radius: 2)
-                    .shadow(color: ringColor.opacity(isAligned ? 0.8 : 0.35), radius: isAligned ? 7 : 3)
-
-                // Dấu cộng (+) ở giữa tâm như Ảnh 2 (Plus Crosshair)
-                PlusCrosshairShape()
-                    .stroke(ringColor, lineWidth: isAligned ? 2.0 : 1.5)
-                    .frame(width: 9, height: 9)
-                    .shadow(color: Color.black.opacity(0.5), radius: 1)
-
-                if isAligned {
-                    Circle()
-                        .stroke(Color.green.opacity(0.4), lineWidth: 3.5)
-                        .frame(width: 36, height: 36)
-                        .scaleEffect(1.05)
-                }
-            }
-            .scaleEffect(isAligned ? 1.15 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
-
-            if trackingQuality == .reacquiring {
-                Text("Đang tìm lại mục tiêu…")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.75)))
-            } else if trackingQuality == .lost {
-                HStack(spacing: 4) {
-                    Image(systemName: "hand.tap.fill").font(.system(size: 9))
-                    Text("Chạm để đặt lại mục tiêu")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Capsule().fill(Color.red.opacity(0.8)))
-            }
-        }
-    }
-}
-
-// MARK: - Guidance Ray
-
-struct GuidanceRayLine: View {
-    let from: CGPoint
-    let to: CGPoint
-    let dashOffset: CGFloat
-    let distance: CGFloat
-
-    var body: some View {
-        Path { path in
-            path.move(to: from)
-            path.addLine(to: to)
-        }
-        .stroke(
-            Color.yellow.opacity(0.65 * Double(min(1.0, distance / 0.1 + 0.4))),
-            style: StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [5, 5], dashPhase: dashOffset)
-        )
-    }
-}
-
-// MARK: - Countdown Overlay
-
-struct CountdownOverlayView: View {
-    let countdown: Int
-    var body: some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 8) {
-                Image(systemName: "camera.fill").font(.system(size: 15, weight: .bold))
-                Text(countdown > 0 ? "Chụp trong \(countdown)..." : "Đang chụp...")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-            }
-            .foregroundColor(.black)
-            .padding(.horizontal, 18).padding(.vertical, 9)
-            .background(Capsule().fill(Color.green))
-            .shadow(color: Color.green.opacity(0.4), radius: 10)
-            Spacer().frame(height: 200)
-        }
-    }
-}
-
-// MARK: - Gemini Analyzing Badge
-
-struct GeminiAnalyzingBadge: View {
-    var body: some View {
-        VStack {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
-                    .scaleEffect(0.8)
-                Text("Đang phân tích…")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(
-                Capsule()
-                    .fill(Color.black.opacity(0.65))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
-            )
-            Spacer()
-        }
-        .padding(.top, 50)
-        .transition(.opacity)
-    }
-}
-
-// MARK: - Boxes
-
-struct FaceDetectionBox: View {
-    let rect: CGRect
-    var body: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .stroke(Color.cyan.opacity(0.7), lineWidth: 1.2)
-            .frame(width: max(20, rect.width), height: max(20, rect.height))
-            .position(x: rect.midX, y: rect.midY)
-    }
-}
-
-struct SubjectHighlightBox: View {
-    let rect: CGRect
-    var body: some View {
-        RoundedRectangle(cornerRadius: 6)
-            .stroke(Color.yellow.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            .frame(width: max(20, rect.width), height: max(20, rect.height))
-            .position(x: rect.midX, y: rect.midY)
-    }
-}
-
-// MARK: - Smart Focus Square Indicator with Sun EV Slider (Apple Camera Style)
-
-struct FocusSquareWithSunSlider: View {
-    let isLocked: Bool
-    let showSun: Bool
-    let exposureBias: Float
-    let onAdjustBias: (Float) -> Void
-
-    @State private var scale: CGFloat = 1.3
-
-    var body: some View {
-        HStack(spacing: 8) {
-            // Focus Box
-            ZStack {
-                Rectangle()
-                    .stroke(Color.yellow, lineWidth: isLocked ? 2.0 : 1.5)
-                    .frame(width: 65, height: 65)
-
-                // 4 Corner tick marks
-                VStack {
-                    HStack {
-                        Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
-                        Spacer()
-                        Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
-                    }
-                    Spacer()
-                    HStack {
-                        Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
-                        Spacer()
-                        Rectangle().fill(Color.yellow).frame(width: 6, height: 1.5)
-                    }
-                }
-                .frame(width: 65, height: 65)
-            }
-            .scaleEffect(scale)
-
-            // Vertical Sun Exposure Slider (Apple Camera Standard)
-            if showSun || isLocked {
-                VStack(spacing: 4) {
-                    ZStack(alignment: .center) {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.35))
-                            .frame(width: 1.5, height: 65)
-
-                        let sunOffset = CGFloat(-exposureBias / 2.0) * 26.0
-                        Image(systemName: "sun.max.fill")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.yellow)
-                            .offset(y: sunOffset)
-                    }
-                    .frame(width: 32, height: 75)
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 1)
-                            .onChanged { val in
-                                let delta = Float(-val.translation.height / 75.0) * 0.25
-                                onAdjustBias(delta)
-                            }
-                    )
-                }
-                .transition(.opacity)
-            }
-        }
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.2)) {
-                scale = 1.0
-            }
-        }
-    }
-}
-
-// MARK: - Virtual Horizon Leveler (Thước Cân Bằng Chân Trời)
-struct HorizonLevelerView: View {
-    let rollDegrees: Double
-    let isLevel: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Rectangle()
-                .fill(isLevel ? Color.yellow : Color.white.opacity(0.65))
-                .frame(width: 38, height: isLevel ? 2.0 : 1.2)
-
-            Circle()
-                .stroke(isLevel ? Color.yellow : Color.white.opacity(0.65), lineWidth: isLevel ? 2.0 : 1.2)
-                .frame(width: 8, height: 8)
-
-            Rectangle()
-                .fill(isLevel ? Color.yellow : Color.white.opacity(0.65))
-                .frame(width: 38, height: isLevel ? 2.0 : 1.2)
-        }
-        .rotationEffect(.degrees(-rollDegrees))
-        .opacity(abs(rollDegrees) > 25.0 ? 0.0 : (isLevel ? 1.0 : max(0.25, 1.0 - abs(rollDegrees) / 20.0)))
-        .animation(.easeInOut(duration: 0.15), value: isLevel)
-    }
-}
-
-// MARK: - AI Zoom Reveal Overlay (Bố Cục Điện Ảnh Mượt Mà, Không Làm Tối Màn Hình)
-struct ZoomRevealOverlay: View {
-    let rect: CGRect
-    let isVisible: Bool
-    var targetZoom: CGFloat = 2.0
-
-    var body: some View {
-        GeometryReader { geo in
-            let pixelRect = CGRect(
-                x: rect.origin.x * geo.size.width,
-                y: rect.origin.y * geo.size.height,
-                width: rect.width * geo.size.width,
-                height: rect.height * geo.size.height
-            )
-
-            if isVisible {
-                ZStack {
-                    // 1. Lớp làm mờ nhẹ điện ảnh vùng ngoài khung ngắm (Subtle Cinematic Focus Blur)
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.42)
-                        .mask(
-                            Path { path in
-                                path.addRect(CGRect(origin: .zero, size: geo.size))
-                                path.addRoundedRect(in: pixelRect, cornerSize: CGSize(width: 16, height: 16))
-                            }
-                            .fill(style: FillStyle(eoFill: true))
-                        )
-                        .ignoresSafeArea()
-
-                    // 2. Viền bóng mờ nhẹ chuyển tiếp mềm mại xung quanh viền cắt (Soft feathered edge)
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.black.opacity(0.18), lineWidth: 4)
-                        .blur(radius: 3)
-                        .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
-                        .position(x: pixelRect.midX, y: pixelRect.midY)
-
-                    // 3. Viền khung ngắm vàng mỏng nhẹ 1.8px (giữ màn hình sáng tự nhiên)
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            LinearGradient(
-                                colors: [Color.yellow, Color.yellow.opacity(0.7), Color.yellow],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.8
-                        )
-                        .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
-                        .position(x: pixelRect.midX, y: pixelRect.midY)
-                        .shadow(color: Color.yellow.opacity(0.35), radius: 8, x: 0, y: 0)
-
-                    // 4. Bốn góc ngắm bố cục điện ảnh (Cinematic Corner Ticks)
-                    CinematicCornerTicks(rect: pixelRect)
-
-                    // Huy hiệu AI ZOOM ở mép trên khung
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("AI ZOOM \(String(format: "%.1f", targetZoom))x")
-                            .font(.system(size: 9, weight: .heavy, design: .rounded))
-                    }
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3.5)
-                    .background(Capsule().fill(Color.yellow))
-                    .shadow(color: Color.black.opacity(0.35), radius: 4, x: 0, y: 2)
-                    .position(x: pixelRect.midX, y: max(24, pixelRect.minY - 12))
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .animation(.easeInOut(duration: 0.3), value: isVisible)
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-// 4 Góc ngắm bố cục điện ảnh (Corner Ticks)
-struct CinematicCornerTicks: View {
-    let rect: CGRect
-    private let tickLength: CGFloat = 16
-    private let tickWidth: CGFloat = 2.5
-
-    var body: some View {
-        Path { path in
-            let r: CGFloat = 8
-            // Góc trên trái
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY + tickLength))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
-            path.addArc(center: CGPoint(x: rect.minX + r, y: rect.minY + r), radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.minX + tickLength, y: rect.minY))
-
-            // Góc trên phải
-            path.move(to: CGPoint(x: rect.maxX - tickLength, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
-            path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.minY + r), radius: r, startAngle: .degrees(270), endAngle: .degrees(0), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + tickLength))
-
-            // Góc dưới trái
-            path.move(to: CGPoint(x: rect.minX, y: rect.maxY - tickLength))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - r))
-            path.addArc(center: CGPoint(x: rect.minX + r, y: rect.maxY - r), radius: r, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
-            path.addLine(to: CGPoint(x: rect.minX + tickLength, y: rect.maxY))
-
-            // Góc dưới phải
-            path.move(to: CGPoint(x: rect.maxX - tickLength, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.maxY))
-            path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.maxY - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - tickLength))
-        }
-        .stroke(Color.yellow, lineWidth: tickWidth)
-        .shadow(color: Color.yellow.opacity(0.6), radius: 4)
-    }
-}
-
-// MARK: - AI Video Cinematography Director Overlay View
 
 public struct AIVideoDirectorOverlayView: View {
     @ObservedObject var viewModel: CameraViewModel
     let screenSize: CGSize
-
-    @State private var dashPhase: CGFloat = 0
-    @State private var pulseScale: CGFloat = 1.0
-    @State private var pulseOpacity: Double = 0.85
-
     public var body: some View {
-        ZStack {
-            if viewModel.isAIVideoDirectorAnalyzing {
-                // 1. Loading Badge khi AI Cloud đang phân tích
-                VStack {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
-                            .scaleEffect(0.9)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "sparkles.tv")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.yellow)
-                                Text("ĐẠO DIỄN AI CLOUD")
-                                    .font(.system(size: 10, weight: .heavy, design: .rounded))
-                                    .foregroundColor(.yellow)
-                            }
-                            Text("Đang phân tích bối cảnh & lập hướng quay...")
-                                .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.black.opacity(0.82))
-                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.yellow.opacity(0.4), lineWidth: 1.2))
-                    )
-                    .shadow(color: Color.black.opacity(0.5), radius: 8)
-                    .padding(.top, 56)
-
-                    Spacer()
-                }
-                .transition(.move(edge: .top).combined(with: .opacity))
-            } else if let guidance = viewModel.activeVideoGuidance {
-                // 2. Trajectory motion path nối các tâm đánh dấu
-                let screenPoints = guidance.waypoints.map { wp in
-                    ARFramingOverlayView.convertBufferPointToScreen(wp.point, in: screenSize)
-                }
-
-                TrajectoryPathView(
-                    points: screenPoints,
-                    currentIndex: viewModel.currentActiveWaypointIndex,
-                    isCompleted: viewModel.hasCompletedAllWaypoints,
-                    dashPhase: dashPhase
-                )
-
-                // 3. Các tâm đánh dấu (Waypoints Reticles)
-                ForEach(0..<guidance.waypoints.count, id: \.self) { idx in
-                    let wp = guidance.waypoints[idx]
-                    let screenPt = screenPoints[idx]
-                    let isCurrent = idx == viewModel.currentActiveWaypointIndex && !viewModel.hasCompletedAllWaypoints
-                    let isPast = idx < viewModel.currentActiveWaypointIndex || viewModel.hasCompletedAllWaypoints
-
-                    CinematicWaypointMarker(
-                        waypoint: wp,
-                        isCurrent: isCurrent,
-                        isPast: isPast,
-                        pulseScale: pulseScale,
-                        pulseOpacity: pulseOpacity,
-                        recordingDuration: wp.recommendedDuration,
-                        elapsedDuration: viewModel.waypointElapsedSeconds,
-                        isRecording: viewModel.isRecordingVideo,
-                        onTap: {
-                            viewModel.selectWaypoint(index: idx)
-                        }
-                    )
-                    .position(screenPt)
-                }
-
-                // 4. Director Guidance HUD Card ở trên cùng
-                VStack {
-                    DirectorHUDCard(
-                        guidance: guidance,
-                        currentIndex: viewModel.currentActiveWaypointIndex,
-                        totalCount: guidance.waypoints.count,
-                        isCompleted: viewModel.hasCompletedAllWaypoints,
-                        onDismiss: {
-                            viewModel.dismissAIVideoDirector()
-                        }
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.top, 52)
-
-                    Spacer()
-                }
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .onAppear {
-            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-                dashPhase = -32
-            }
-            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
-                pulseScale = 1.35
-                pulseOpacity = 0.2
-            }
-        }
-    }
-}
-
-// MARK: - Director HUD Card
-
-struct DirectorHUDCard: View {
-    let guidance: AIVideoDirectorGuidance
-    let currentIndex: Int
-    let totalCount: Int
-    let isCompleted: Bool
-    let onDismiss: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Header: Title & Model badge & Close Button
-            HStack(alignment: .center) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles.tv")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.yellow)
-
-                    Text("ĐẠO DIỄN QUAY PHIM AI")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
-                        .foregroundColor(.yellow)
-
-                    let modelName = guidance.modelUsed.contains("google/") ? guidance.modelUsed.replacingOccurrences(of: "google/", with: "") : guidance.modelUsed
-                    Text(modelName)
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.8))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.white.opacity(0.16)))
-                }
-
-                Spacer()
-
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white.opacity(0.8))
-                        .padding(6)
-                        .background(Circle().fill(Color.white.opacity(0.2)))
-                }
-            }
-
-            // Shot Style & Pacing / Waypoint Counter Pills
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(guidance.shotStyleTitle)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-
-                Spacer()
-
-                // Waypoint Pill
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(isCompleted ? Color.green : Color.yellow)
-                        .frame(width: 6, height: 6)
-                    Text(isCompleted ? "HOÀN TẤT ✓" : "Tâm \(currentIndex + 1)/\(totalCount)")
-                        .font(.system(size: 10, weight: .heavy, design: .rounded))
-                        .foregroundColor(isCompleted ? .green : .yellow)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3.5)
-                .background(Capsule().fill(Color.black.opacity(0.45)))
-            }
-
-            // Movement Direction Instruction
-            Text(guidance.movementDirectionDescription)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundColor(.white.opacity(0.92))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Director Tip
-            if !guidance.directorTip.isEmpty {
-                HStack(alignment: .top, spacing: 5) {
-                    Text("💡")
-                        .font(.system(size: 10))
-                    Text(guidance.directorTip)
-                        .font(.system(size: 10.5, weight: .regular, design: .rounded))
-                        .foregroundColor(.yellow.opacity(0.95))
-                        .lineLimit(2)
-                }
-            }
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18)
-                        .stroke(
-                            LinearGradient(
-                                colors: [Color.yellow.opacity(0.7), Color.yellow.opacity(0.25)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.2
-                        )
-                )
-        )
-        .shadow(color: Color.black.opacity(0.6), radius: 12, x: 0, y: 4)
-    }
-}
-
-// MARK: - Trajectory Path View
-
-struct TrajectoryPathView: View {
-    let points: [CGPoint]
-    let currentIndex: Int
-    let isCompleted: Bool
-    let dashPhase: CGFloat
-
-    var body: some View {
-        guard points.count >= 2 else { return AnyView(EmptyView()) }
-
-        return AnyView(
+        if let guidance = viewModel.activeVideoGuidance {
+            let points = guidance.waypoints.map { ARFramingOverlayView.convertBufferPointToScreen($0.point, in: screenSize) }
             ZStack {
-                // Đường viền phát sáng nền
                 Path { path in
-                    path.move(to: points[0])
-                    for i in 1..<points.count {
-                        path.addLine(to: points[i])
+                    if let first = points.first {
+                        path.move(to: first)
+                        for point in points.dropFirst() { path.addLine(to: point) }
                     }
+                }.stroke(CameraUI.accent.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [5, 6]))
+                    .allowsHitTesting(false)
+                ForEach(Array(guidance.waypoints.enumerated()), id: \.offset) { index, waypoint in
+                    Button { viewModel.selectWaypoint(index: index) } label: {
+                        Text("\(index + 1)").font(.subheadline.bold()).frame(width: 44, height: 44)
+                            .background(index == viewModel.currentActiveWaypointIndex ? CameraUI.accent : .black.opacity(0.55), in: Circle())
+                            .foregroundColor(index == viewModel.currentActiveWaypointIndex ? .black : .white)
+                    }.position(points[index]).accessibilityLabel(waypoint.label + ". " + waypoint.actionTip)
                 }
-                .stroke(
-                    LinearGradient(
-                        colors: [Color.cyan.opacity(0.4), Color.yellow.opacity(0.6), Color.cyan.opacity(0.4)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    style: StrokeStyle(lineWidth: 4.0, lineCap: .round, lineJoin: .round)
-                )
-                .blur(radius: 2)
-
-                // Đường nét đứt chuyển động theo chiều di chuyển
-                Path { path in
-                    path.move(to: points[0])
-                    for i in 1..<points.count {
-                        path.addLine(to: points[i])
+                VStack {
+                    Spacer()
+                    if guidance.waypoints.indices.contains(viewModel.currentActiveWaypointIndex) {
+                        Text(guidance.waypoints[viewModel.currentActiveWaypointIndex].actionTip)
+                            .font(.caption).multilineTextAlignment(.center).padding(10)
+                            .background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 12))
                     }
-                }
-                .stroke(
-                    Color.yellow,
-                    style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round, dash: [8, 6], dashPhase: dashPhase)
-                )
-
-                // Các mũi tên chỉ hướng ở giữa các đoạn thẳng
-                ForEach(0..<(points.count - 1), id: \.self) { i in
-                    let p1 = points[i]
-                    let p2 = points[i + 1]
-                    let mid = CGPoint(x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5)
-                    let angle = atan2(p2.y - p1.y, p2.x - p1.x)
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .heavy))
-                        .foregroundColor(.yellow)
-                        .shadow(color: Color.black.opacity(0.8), radius: 3)
-                        .rotationEffect(.radians(Double(angle)))
-                        .position(mid)
-                }
-            }
-            .allowsHitTesting(false)
-        )
-    }
-}
-
-// MARK: - Cinematic Waypoint Marker
-
-struct CinematicWaypointMarker: View {
-    let waypoint: CinematicWaypoint
-    let isCurrent: Bool
-    let isPast: Bool
-    let pulseScale: CGFloat
-    let pulseOpacity: Double
-    let recordingDuration: Double
-    let elapsedDuration: Double
-    let isRecording: Bool
-    let onTap: () -> Void
-
-    private var markerColor: Color {
-        if isPast { return .green }
-        if isCurrent { return .yellow }
-        return .white.opacity(0.7)
-    }
-
-    var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 5) {
-                ZStack {
-                    // Sóng radar cho tâm đang được chọn
-                    if isCurrent {
-                        Circle()
-                            .stroke(Color.yellow, lineWidth: 1.8)
-                            .frame(width: 44, height: 44)
-                            .scaleEffect(pulseScale)
-                            .opacity(pulseOpacity)
-                    }
-
-                    // Vòng tròn ngoài
-                    Circle()
-                        .stroke(markerColor, lineWidth: isCurrent ? 2.5 : 1.6)
-                        .frame(width: 36, height: 36)
-                        .background(Circle().fill(Color.black.opacity(0.55)))
-                        .shadow(color: markerColor.opacity(isCurrent ? 0.6 : 0.3), radius: isCurrent ? 6 : 2)
-
-                    // Vòng đếm tiến độ quay nếu đang ghi hình tại tâm này
-                    if isCurrent && isRecording && recordingDuration > 0 {
-                        let prog = min(1.0, max(0.0, elapsedDuration / recordingDuration))
-                        Circle()
-                            .trim(from: 0, to: CGFloat(prog))
-                            .stroke(Color.green, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                            .frame(width: 36, height: 36)
-                            .rotationEffect(.degrees(-90))
-                    }
-
-                    // Biểu tượng tâm
-                    if isPast {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 14, weight: .black))
-                            .foregroundColor(.green)
-                    } else {
-                        Text("\(waypoint.id)")
-                            .font(.system(size: 14, weight: isCurrent ? .heavy : .bold, design: .rounded))
-                            .foregroundColor(markerColor)
-                    }
-                }
-
-                // Nhãn và hướng dẫn
-                VStack(spacing: 2) {
-                    Text(waypoint.label)
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundColor(isCurrent ? .yellow : (isPast ? .green : .white))
-
-                    if isCurrent && !waypoint.actionTip.isEmpty {
-                        Text(waypoint.actionTip)
-                            .font(.system(size: 9, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.9))
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(Color.black.opacity(0.75))
-                        .overlay(Capsule().stroke(markerColor.opacity(0.4), lineWidth: 0.8))
-                )
-                .shadow(color: Color.black.opacity(0.6), radius: 4)
+                }.padding(16).allowsHitTesting(false)
             }
         }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isCurrent ? 1.08 : 0.95)
-        .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isCurrent)
     }
 }

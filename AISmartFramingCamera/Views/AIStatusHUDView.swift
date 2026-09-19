@@ -2,105 +2,32 @@ import SwiftUI
 
 public struct AIStatusHUDView: View {
     @ObservedObject var viewModel: CameraViewModel
-
     public var body: some View {
-        // Chỉ hiện thanh trạng thái khi phiên căn bố cục đang hoạt động hoặc vừa chụp xong
-        if viewModel.aiSessionState != .idle {
+        if let message = status {
             HStack(spacing: 6) {
-                // Status icon
-                Image(systemName: statusIconName)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(statusAccentColor)
-
-                // Single clear status text
-                Text(statusText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.95))
-                    .lineLimit(1)
-
-                // Huy hiệu nhận biết AI Cloud / Local
-                if viewModel.activeAIIndicatorType == .cloud {
-                    Text("CLOUD")
-                        .font(.system(size: 8, weight: .heavy, design: .rounded))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(Color.yellow))
-                } else if viewModel.activeAIIndicatorType == .local {
-                    Text("LOCAL")
-                        .font(.system(size: 8, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(Color.red))
-                }
+                if viewModel.aiSessionState == .analyzing || viewModel.isAIVideoDirectorAnalyzing {
+                    ProgressView().controlSize(.mini).tint(CameraUI.accent)
+                } else { Image(systemName: viewModel.isPerfectAlignment ? "checkmark.circle" : "viewfinder").foregroundColor(CameraUI.accent) }
+                Text(message).font(.caption.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1)
-                    )
-            )
-            .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            .animation(.easeInOut(duration: 0.25), value: viewModel.aiSessionState)
+            .padding(.horizontal, 10).frame(height: 28)
+            .background(.black.opacity(0.62), in: Capsule()).foregroundColor(.white)
+            .accessibilityElement(children: .combine).allowsHitTesting(false)
         }
     }
-
-    private var statusIconName: String {
+    private var status: String? {
+        if viewModel.isAEAFLocked { return "Đã khóa sáng & nét · Chạm để mở" }
+        if viewModel.isAIVideoDirectorAnalyzing { return "Đang chuẩn bị hướng dẫn quay…" }
+        if viewModel.isAIVideoDirectorActive { return "Di chuyển máy theo các điểm đánh dấu" }
         switch viewModel.aiSessionState {
-        case .idle:
-            return "viewfinder"
-        case .analyzing:
-            return "sparkle"
+        case .idle: return nil
+        case .analyzing: return "Đang tìm bố cục…"
         case .targetPlaced:
-            if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {
-                return "arrow.triangle.2.circlepath"
-            }
-            return "scope"
-        case .alignmentPerfect:
-            return "checkmark.circle.fill"
-        case .capturing:
-            return "camera.fill"
-        case .done:
-            return "checkmark"
-        }
-    }
-
-    private var statusAccentColor: Color {
-        switch viewModel.aiSessionState {
-        case .idle: return .white.opacity(0.8)
-        case .analyzing: return .yellow
-        case .targetPlaced:
-            if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {
-                return .orange
-            }
-            return .yellow
-        case .alignmentPerfect: return .green
-        case .capturing: return .white
-        case .done: return .green
-        }
-    }
-
-    private var statusText: String {
-        switch viewModel.aiSessionState {
-        case .idle:
-            return "Bố cục thông minh"
-        case .analyzing:
-            return "Đang tìm chủ thể…"
-        case .targetPlaced:
-            if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {
-                return "Đang tìm lại chủ thể…"
-            }
-            return "Đã khóa chủ thể · Di chuyển máy đến vòng tròn"
-        case .alignmentPerfect:
-            return "Đã khớp · Giữ máy ổn định"
-        case .capturing:
-            return "Đang chụp…"
-        case .done:
-            return "Đã lưu ảnh"
+            return viewModel.trackingQuality == .lost || viewModel.trackingQuality == .reacquiring
+                ? "Đang tìm lại chủ thể…" : "Đưa vòng tròn về tâm khung hình"
+        case .alignmentPerfect: return "Đã căn khớp · Giữ máy ổn định"
+        case .capturing: return "Đang chụp…"
+        case .done: return "Đã chụp ảnh"
         }
     }
 }
