@@ -225,6 +225,7 @@ struct TopCameraBar: View {
                 .accessibilityLabel("Cài đặt")
             }
             .padding(.horizontal, 16)
+        } else {
             // PHOTO MODE TOP BAR: [Flash] — [Mini Histogram & Info HUD] — [Cài đặt ⚙️]
             HStack(spacing: 8) {
                 Button(action: {
