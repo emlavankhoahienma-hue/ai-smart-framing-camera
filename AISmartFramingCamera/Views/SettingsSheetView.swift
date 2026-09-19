@@ -3,9 +3,9 @@ import UIKit
 
 // MARK: - Settings Tab Category
 public enum SettingsSheetTab: String, CaseIterable, Identifiable {
-    case capture = "Chụp ảnh"
-    case ai = "AI Bố cục"
-    case advanced = "Nâng cao"
+    case capture = "Chụp ảnh & Quay phim"
+    case ai = "AI Bố cục & Cloud"
+    case advanced = "Nâng cao & Hệ thống"
 
     public var id: String { rawValue }
 
@@ -18,10 +18,10 @@ public enum SettingsSheetTab: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Main Settings View (Pro-Camera Luxury Edition)
+// MARK: - Main Settings View (Dark Luxury Pro Camera Edition)
 public struct SettingsSheetView: View {
     @ObservedObject var viewModel: CameraViewModel
-    @Environment(\.presentationMode) var presentationMode
+    @Environment(\.dismiss) private var dismiss
 
     @State private var selectedTab: SettingsSheetTab = .capture
     @Namespace private var tabNamespace
@@ -46,9 +46,9 @@ public struct SettingsSheetView: View {
     private let hapticSelection = UISelectionFeedbackGenerator()
     private let hapticImpact = UIImpactFeedbackGenerator(style: .medium)
 
-    // Design System Constants
-    private let canvasBackground = Color(red: 0.035, green: 0.035, blue: 0.045)
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    // Design System Tokens (Dark Luxury Pro Camera)
+    private let canvasBackground = Color(red: 0.035, green: 0.039, blue: 0.051) // #090A0D
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -60,60 +60,54 @@ public struct SettingsSheetView: View {
                 canvasBackground
                     .ignoresSafeArea()
 
-                GeometryReader { geometry in
-                    VStack(spacing: 0) {
-                        // Sheet Top Grabber Handle
-                        Capsule()
-                            .fill(Color.white.opacity(0.24))
-                            .frame(width: 38, height: 4.5)
-                            .padding(.top, 8)
-                            .padding(.bottom, 6)
+                VStack(spacing: 0) {
+                    // 1. Navigation Header (Cài đặt / Xong)
+                    navigationHeader
+                        .padding(.horizontal, 20)
+                        .padding(.top, 16)
+                        .padding(.bottom, 12)
 
-                        // Fluid Segmented Tab Bar
-                        tabSelectorPills
-                            .padding(.horizontal, 16)
-                            .padding(.top, 6)
-                            .padding(.bottom, 12)
-                            .frame(width: geometry.size.width)
+                    // 2. Fluid Segmented Tab Bar (Apple Capsule Material)
+                    tabSelectorPills
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 14)
 
-                        // Scrollable Content Area
-                        ScrollView(.vertical, showsIndicators: true) {
-                            VStack(spacing: 16) {
-                                if !searchText.isEmpty {
-                                    searchResultsView
-                                } else {
-                                    switch selectedTab {
-                                    case .capture:
-                                        PhotoCaptureSettingsSection(viewModel: viewModel)
-                                    case .ai:
-                                        AIFramingSettingsSection(
-                                            viewModel: viewModel,
-                                            geminiKeyInput: $geminiKeyInput,
-                                            isKeyVisible: $isKeyVisible,
-                                            selectedModel: $selectedModel,
-                                            isTestingKey: $isTestingKey,
-                                            testResult: $testResult,
-                                            showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
-                                            toastMessage: $toastMessage
-                                        )
-                                    case .advanced:
-                                        AdvancedSettingsSection(
-                                            viewModel: viewModel,
-                                            showResetSessionConfirmation: $showResetSessionConfirmation,
-                                            showDevConsole: $showDevConsole,
-                                            toastMessage: $toastMessage
-                                        )
-                                    }
+                    // 3. Scrollable Settings Content
+                    ScrollView(.vertical, showsIndicators: true) {
+                        VStack(spacing: 16) {
+                            if !searchText.isEmpty {
+                                searchResultsView
+                            } else {
+                                switch selectedTab {
+                                case .capture:
+                                    PhotoCaptureSettingsSection(viewModel: viewModel)
+                                        .transition(.opacity.combined(with: .offset(y: 8)))
+                                case .ai:
+                                    AIFramingSettingsSection(
+                                        viewModel: viewModel,
+                                        geminiKeyInput: $geminiKeyInput,
+                                        isKeyVisible: $isKeyVisible,
+                                        selectedModel: $selectedModel,
+                                        isTestingKey: $isTestingKey,
+                                        testResult: $testResult,
+                                        showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
+                                        toastMessage: $toastMessage
+                                    )
+                                    .transition(.opacity.combined(with: .offset(y: 8)))
+                                case .advanced:
+                                    AdvancedSettingsSection(
+                                        viewModel: viewModel,
+                                        showResetSessionConfirmation: $showResetSessionConfirmation,
+                                        showDevConsole: $showDevConsole,
+                                        toastMessage: $toastMessage
+                                    )
+                                    .transition(.opacity.combined(with: .offset(y: 8)))
                                 }
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 36)
-                            .frame(width: geometry.size.width)
                         }
-                        .frame(width: geometry.size.width)
-                        .clipped()
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 36)
                     }
-                    .frame(width: geometry.size.width, height: geometry.size.height)
                 }
 
                 // Floating Toast Notification
@@ -126,16 +120,6 @@ public struct SettingsSheetView: View {
                     }
                 }
             }
-            .navigationBarTitle("Cài đặt", displayMode: .inline)
-            .navigationBarItems(
-                trailing: Button("Xong") {
-                    hapticImpact.prepare()
-                    hapticImpact.impactOccurred()
-                    presentationMode.wrappedValue.dismiss()
-                }
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundColor(amberGold)
-            )
             .searchable(text: $searchText, prompt: "Tìm kiếm thông số, cài đặt...")
             .preferredColorScheme(.dark)
             .confirmationDialog(
@@ -172,51 +156,99 @@ public struct SettingsSheetView: View {
         }
     }
 
-    // MARK: - Fluid Segmented Tab Selector Pills
+    // MARK: - Navigation Header (Title + Amber Done Button)
+    private var navigationHeader: some View {
+        HStack {
+            // Invisible spacer for symmetrical centering
+            Text("Xong")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.clear)
+
+            Spacer()
+
+            Text("Cài đặt")
+                .font(.system(size: 18, weight: .bold, design: .default))
+                .foregroundColor(.white)
+
+            Spacer()
+
+            Button("Xong") {
+                hapticImpact.prepare()
+                hapticImpact.impactOccurred()
+                dismiss()
+            }
+            .font(.system(size: 16, weight: .bold, design: .rounded))
+            .foregroundColor(amberGold)
+            .accessibilityLabel("Đóng cài đặt")
+        }
+    }
+
+    // MARK: - Fluid Segmented Tab Selector (3-Tab Pill Capsule)
     private var tabSelectorPills: some View {
-        HStack(spacing: 6) {
-            ForEach(SettingsSheetTab.allCases) { tab in
+        HStack(spacing: 0) {
+            ForEach(Array(SettingsSheetTab.allCases.enumerated()), id: \.element.id) { index, tab in
                 let isSelected = selectedTab == tab
                 Button(action: {
                     hapticSelection.prepare()
                     hapticSelection.selectionChanged()
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
+                    withAnimation(.snappy(duration: 0.26)) {
                         selectedTab = tab
                     }
                 }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: tab.icon)
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(tab.rawValue)
-                            .font(.system(size: 12.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-                    }
-                    .foregroundColor(isSelected ? .black : Color.white.opacity(0.85))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 38)
-                    .background(
-                        ZStack {
+                    Text(tab.rawValue)
+                        .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .minimumScaleFactor(0.78)
+                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.60))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .padding(.horizontal, 4)
+                        .background {
                             if isSelected {
                                 Capsule()
-                                    .fill(amberGold)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                Color(red: 0.72, green: 0.46, blue: 0.18),
+                                                Color(red: 0.58, green: 0.36, blue: 0.14)
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
                                     .matchedGeometryEffect(id: "activeTabIndicatorPill", in: tabNamespace)
-                                    .shadow(color: amberGold.opacity(0.35), radius: 6, x: 0, y: 2)
-                            } else {
-                                Capsule()
-                                    .fill(Color(red: 0.08, green: 0.08, blue: 0.10))
+                                    .overlay {
+                                        Capsule()
+                                            .stroke(Color(red: 1.0, green: 0.78, blue: 0.35).opacity(0.40), lineWidth: 1)
+                                    }
+                                    .shadow(color: amberGold.opacity(0.25), radius: 6, y: 2)
                             }
                         }
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
-                    )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .buttonStyle(.plain)
+
+                // Divider between inactive tabs
+                if index < SettingsSheetTab.allCases.count - 1 {
+                    let nextTab = SettingsSheetTab.allCases[index + 1]
+                    if selectedTab != tab && selectedTab != nextTab {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 1, height: 18)
+                    }
+                }
             }
         }
-        .frame(height: 38)
+        .padding(3)
+        .background(
+            Capsule()
+                .fill(Color.white.opacity(0.06))
+                .overlay {
+                    Capsule()
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                }
+        )
+        .frame(height: 46)
     }
 
     // MARK: - Search Results Dynamic Filter View
@@ -264,12 +296,40 @@ public struct SettingsSheetView: View {
     }
 }
 
+// MARK: - Dedicated Row Icon Component (Category Colored Rounded Boxes)
+public struct SettingsRowIcon: View {
+    let icon: String
+    let color: Color
+
+    public init(_ icon: String, color: Color = Color(red: 1.0, green: 0.69, blue: 0.16)) {
+        self.icon = icon
+        self.color = color
+    }
+
+    public var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(color.opacity(0.16))
+                .frame(width: 36, height: 36)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(color.opacity(0.24), lineWidth: 0.8)
+                }
+
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(color)
+        }
+        .frame(width: 36, height: 36)
+    }
+}
+
 // MARK: - Sub-component: Film Preset Pill
 private struct FilmPresetPill: View {
     let preset: FilmPreset
     let isSelected: Bool
     let onSelect: () -> Void
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         Button(action: onSelect) {
@@ -285,7 +345,7 @@ private struct FilmPresetPill: View {
                 Text(preset.displayName)
                     .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
             }
-            .foregroundColor(isSelected ? .black : Color.white.opacity(0.9))
+            .foregroundColor(isSelected ? .black : Color.white.opacity(0.90))
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
@@ -297,7 +357,7 @@ private struct FilmPresetPill: View {
                     .stroke(isSelected ? amberGold : Color.white.opacity(0.12), lineWidth: 1)
             )
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
     }
 }
 
@@ -326,7 +386,7 @@ private struct PeakingColorCircleButton: View {
                     .padding(-2)
             )
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
     }
 }
 
@@ -335,18 +395,18 @@ private struct CompositionRuleCard: View {
     let rule: CompositionRule
     let isSelected: Bool
     let onSelect: () -> Void
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: rule.iconName)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.65))
-                    .frame(width: 16)
+                    .frame(width: 18)
 
                 Text(rule.displayNameVietnamese)
-                    .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
                     .foregroundColor(isSelected ? .white : Color.white.opacity(0.80))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -356,22 +416,22 @@ private struct CompositionRuleCard: View {
                 if isSelected {
                     Circle()
                         .fill(amberGold)
-                        .frame(width: 5, height: 5)
+                        .frame(width: 6, height: 6)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8.5)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
             .frame(maxWidth: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 11)
-                    .fill(isSelected ? amberGold.opacity(0.14) : Color(red: 0.05, green: 0.05, blue: 0.06))
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? amberGold.opacity(0.16) : Color(red: 0.05, green: 0.05, blue: 0.07))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 11)
-                    .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? amberGold.opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1)
             )
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
     }
 }
 
@@ -380,7 +440,7 @@ private struct SensitivityPill: View {
     let preset: TrackingSensitivityPreset
     let isPicked: Bool
     let onSelect: () -> Void
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         Button(action: onSelect) {
@@ -398,136 +458,165 @@ private struct SensitivityPill: View {
                         .stroke(isPicked ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
                 )
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
     }
 }
 
 // MARK: - 1. Photo Capture Settings Section (Pro Camera Luxury)
 struct PhotoCaptureSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         VStack(spacing: 14) {
             photoFormatCard
             videoCodecCard
-            proVideoSpecsCard
+            cameraHardwareSpecsCard
             filmColorCard
             viewfinderHUDCard
         }
     }
 
-    // Card 1: Định dạng ảnh & Lưu
+    // Card 1: Chụp ảnh & Định dạng
     @ViewBuilder
     private var photoFormatCard: some View {
-        SettingsSectionCard(title: "CHỤP ẢNH & ĐỊNH DẠNG", icon: "camera.fill") {
-            VStack(spacing: 12) {
-                SettingsPickerRow(title: "Định dạng lưu ảnh", icon: "doc.badge.gearshape") {
+        SettingsSectionCard(title: "CHỤP ẢNH", icon: "camera.fill", iconColor: amberGold) {
+            VStack(spacing: 0) {
+                SettingsPickerRow(
+                    title: "Định dạng ảnh",
+                    subtitle: "Chọn định dạng lưu ảnh",
+                    icon: "photo.fill",
+                    iconColor: amberGold,
+                    selectedValueString: viewModel.selectedPhotoFormat.rawValue
+                ) {
                     Picker("", selection: $viewModel.selectedPhotoFormat) {
                         ForEach(PhotoSaveFormat.allCases) { format in
                             Text(format.rawValue).tag(format)
                         }
                     }
-                    .pickerStyle(MenuPickerStyle())
-                    .tint(amberGold)
+                    .pickerStyle(.menu)
+                    .tint(Color.white.opacity(0.70))
                 }
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Live Photo",
-                    subtitle: "Ghi lại khoảnh khắc động kèm âm thanh trước và sau khi bấm máy",
+                    subtitle: "Lưu chuyển động ngắn trước và sau khi chụp",
                     icon: "livephoto",
+                    iconColor: Color(red: 0.25, green: 0.65, blue: 1.0),
                     isOn: $viewModel.isLivePhotoEnabled
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Lưu ảnh gốc không chỉnh",
                     subtitle: "Giữ file ảnh nguyên bản cảm biến không áp bộ lọc màu film",
                     icon: "photo.on.rectangle.angled",
+                    iconColor: Color(red: 0.35, green: 0.75, blue: 0.85),
                     isOn: $viewModel.isSaveOriginalPhotoEnabled
                 )
             }
         }
     }
 
-    // Card 2: Video & Codec
+    // Card 2: Quay phim (Video)
     @ViewBuilder
     private var videoCodecCard: some View {
-        SettingsSectionCard(title: "QUAY PHIM (VIDEO)", icon: "video.fill") {
-            VStack(spacing: 12) {
-                SettingsPickerRow(title: "Độ phân giải & FPS", icon: "speedometer") {
+        SettingsSectionCard(title: "QUAY VIDEO", icon: "video.fill", iconColor: Color(red: 0.72, green: 0.45, blue: 1.0)) {
+            VStack(spacing: 0) {
+                SettingsPickerRow(
+                    title: "Độ phân giải",
+                    subtitle: "Chọn độ phân giải và tốc độ khung hình",
+                    icon: "video.fill",
+                    iconColor: Color(red: 0.72, green: 0.45, blue: 1.0),
+                    selectedValueString: viewModel.selectedVideoFormatOption.rawValue
+                ) {
                     Picker("", selection: $viewModel.selectedVideoFormatOption) {
                         ForEach(VideoFormatOption.allCases) { opt in
                             Text(opt.rawValue).tag(opt)
                         }
                     }
-                    .pickerStyle(MenuPickerStyle())
-                    .tint(amberGold)
+                    .pickerStyle(.menu)
+                    .tint(Color.white.opacity(0.70))
                 }
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
-                SettingsPickerRow(title: "Bộ giải mã (Codec)", icon: "film") {
+                SettingsPickerRow(
+                    title: "Codec",
+                    subtitle: "Chọn định dạng nén video",
+                    icon: "cylinder.split.1x2.fill",
+                    iconColor: Color(red: 0.30, green: 0.85, blue: 0.55),
+                    selectedValueString: viewModel.selectedVideoCodec.rawValue
+                ) {
                     Picker("", selection: $viewModel.selectedVideoCodec) {
                         ForEach(VideoCodec.allCases) { codec in
                             Text(codec.rawValue).tag(codec)
                         }
                     }
-                    .pickerStyle(MenuPickerStyle())
-                    .tint(amberGold)
+                    .pickerStyle(.menu)
+                    .tint(Color.white.opacity(0.70))
                 }
             }
         }
     }
 
-    // Card 3: Video Pro Manual Telemetry Specs
+    // Card 3: Thông số phần cứng Camera (Lưới 2 cột cho màn hình nhỏ)
     @ViewBuilder
-    private var proVideoSpecsCard: some View {
-        SettingsSectionCard(title: "THÔNG SỐ PHẦN CỨNG VIDEO PRO", icon: "slider.horizontal.3") {
-            HStack(spacing: 8) {
+    private var cameraHardwareSpecsCard: some View {
+        SettingsSectionCard(title: "THÔNG SỐ PHẦN CỨNG CAMERA", icon: "slider.horizontal.3", iconColor: Color.orange) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                 telemetryBadge(title: "Khẩu độ", value: "f/\(String(format: "%.1f", viewModel.proVideoService.hardwareLensAperture))")
                 telemetryBadge(title: "Độ nhạy ISO", value: viewModel.proVideoService.isAutoISO ? "AUTO (\(Int(viewModel.proVideoService.measuredLiveISO)))" : "\(Int(viewModel.proVideoService.currentISO))")
                 telemetryBadge(title: "Màn trập", value: viewModel.proVideoService.isAutoShutter ? "AUTO" : "1/\(Int(viewModel.proVideoService.currentShutterSpeed))s")
                 telemetryBadge(title: "Bù sáng EV", value: String(format: "%+.1f", viewModel.proVideoService.currentEVBias))
             }
+            .padding(.vertical, 6)
         }
     }
 
-    // Card 4: Bộ màu film nghệ thuật
+    // Card 4: Màu sắc & Preset Film
     @ViewBuilder
     private var filmColorCard: some View {
-        SettingsSectionCard(title: "BỘ MÀU FILM NGHỆ THUẬT", icon: "paintpalette.fill") {
-            VStack(alignment: .leading, spacing: 14) {
+        SettingsSectionCard(title: "MÀU SẮC", icon: "paintpalette.fill", iconColor: Color(red: 0.95, green: 0.45, blue: 0.65)) {
+            VStack(alignment: .leading, spacing: 12) {
                 SettingsToggleRow(
                     title: "Tự động phân tích màu theo cảnh",
                     subtitle: "AI nhận diện bối cảnh để cân chỉnh độ tương phản và nhiệt độ màu",
                     icon: "wand.and.stars",
+                    iconColor: amberGold,
                     isOn: $viewModel.isAIFullColorEnabled
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
-                SettingsPickerRow(title: "Màu film đang chọn", icon: "camera.filters") {
+                SettingsPickerRow(
+                    title: "Preset mặc định",
+                    subtitle: "Áp dụng phong cách màu cho ảnh và video",
+                    icon: "camera.filters",
+                    iconColor: Color(red: 0.95, green: 0.45, blue: 0.65),
+                    selectedValueString: viewModel.selectedFilmPreset.displayName
+                ) {
                     Picker("", selection: $viewModel.selectedFilmPreset) {
                         ForEach(FilmPreset.allCases) { preset in
                             Text(preset.displayName).tag(preset)
                         }
                     }
-                    .pickerStyle(MenuPickerStyle())
-                    .tint(amberGold)
+                    .pickerStyle(.menu)
+                    .tint(Color.white.opacity(0.70))
                     .onChange(of: viewModel.selectedFilmPreset) { newPreset in
                         viewModel.selectPreset(newPreset)
                     }
                 }
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 Text("DANH SÁCH MẪU FILM NHANH:")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.50))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .padding(.top, 2)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -542,64 +631,71 @@ struct PhotoCaptureSettingsSection: View {
                             )
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                 }
             }
         }
     }
 
-    // Card 5: Khung ngắm & HUD
+    // Card 5: Khung ngắm & Chỉ báo HUD
     @ViewBuilder
     private var viewfinderHUDCard: some View {
-        SettingsSectionCard(title: "KHUNG NGẮM & CHỈ BÁO HUD", icon: "viewfinder") {
-            VStack(spacing: 12) {
+        SettingsSectionCard(title: "KHUNG NGẮM & CHỈ BÁO HUD", icon: "viewfinder", iconColor: Color(red: 0.35, green: 0.75, blue: 1.0)) {
+            VStack(spacing: 0) {
                 SettingsToggleRow(
                     title: "Cân bằng đường chân trời",
                     subtitle: "Hiển thị thước đo góc nghiêng gyro hỗ trợ giữ thẳng khung hình",
                     icon: "gyroscope",
+                    iconColor: Color(red: 1.0, green: 0.58, blue: 0.20),
                     isOn: $viewModel.isHorizonLevelerEnabled
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Focus peaking (Báo nét)",
                     subtitle: "Tô sáng viền tương phản của các điểm đang nằm trong vùng nét",
                     icon: "scope",
+                    iconColor: Color.green,
                     isOn: $viewModel.isFocusPeakingEnabled
                 )
 
                 if viewModel.isFocusPeakingEnabled {
                     peakingColorPickerRow
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Hiển thị khung nhận diện chủ thể",
                     subtitle: "Hiện bounding box xung quanh người, khuôn mặt hoặc đồ vật",
                     icon: "boundingbox",
+                    iconColor: Color.yellow,
                     isOn: $viewModel.showDetectionBoxes
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Thanh thông số & Biểu đồ HUD",
                     subtitle: "Hiển thị Shutter, ISO, Định dạng và Histogram trên màn hình chính",
                     icon: "chart.bar.fill",
+                    iconColor: amberGold,
                     isOn: $viewModel.showHistogramInViewfinder
                 )
 
                 if viewModel.showHistogramInViewfinder {
-                    Divider().background(Color.white.opacity(0.07))
+                    Divider().background(Color.white.opacity(0.06))
 
                     SettingsToggleRow(
                         title: "Mở rộng 32 cột màu báo cháy sáng",
                         subtitle: "Hiển thị dải quang phổ RGB và cảnh báo clipping ở vùng sáng",
                         icon: "waveform.path.ecg",
+                        iconColor: Color.red,
                         isOn: $viewModel.isHistogramBarExpanded
                     )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
         }
@@ -632,30 +728,30 @@ struct PhotoCaptureSettingsSection: View {
             }
             .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
         .padding(.horizontal, 4)
     }
 
     private func telemetryBadge(title: String, value: String) -> some View {
         VStack(spacing: 4) {
             Text(title)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.50))
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .foregroundColor(Color.white.opacity(0.48))
                 .lineLimit(1)
 
             Text(value)
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundColor(amberGold)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(red: 0.05, green: 0.05, blue: 0.06))
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color(red: 0.05, green: 0.05, blue: 0.07))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .stroke(Color.white.opacity(0.06), lineWidth: 1)
                 )
         )
@@ -673,7 +769,7 @@ struct AIFramingSettingsSection: View {
     @Binding var showDeleteKeyConfirmation: Bool
     @Binding var toastMessage: String?
 
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         VStack(spacing: 14) {
@@ -684,15 +780,15 @@ struct AIFramingSettingsSection: View {
 
     @ViewBuilder
     private var compositionRulesCard: some View {
-        SettingsSectionCard(title: "QUY TẮC BỐ CỤC THÔNG MINH", icon: "wand.and.stars") {
+        SettingsSectionCard(title: "QUY TẮC BỐ CỤC THÔNG MINH", icon: "wand.and.stars", iconColor: amberGold) {
             VStack(spacing: 12) {
                 // Visual Composition Cards Grid
                 VStack(alignment: .leading, spacing: 8) {
                     Text("QUY TẮC BỐ CỤC MẶC ĐỊNH:")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.50))
+                        .foregroundColor(Color.white.opacity(0.45))
 
-                    LazyVGrid(columns: [GridItem(.flexible(minimum: 80, maximum: .infinity), spacing: 8), GridItem(.flexible(minimum: 80, maximum: .infinity), spacing: 8)], spacing: 8) {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                         ForEach(CompositionRule.allCases) { rule in
                             CompositionRuleCard(
                                 rule: rule,
@@ -707,41 +803,45 @@ struct AIFramingSettingsSection: View {
                         }
                     }
                 }
+                .padding(.vertical, 4)
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Tự động zoom theo chủ thể",
                     subtitle: "Tự điều chỉnh độ phóng đại camera để đạt tỷ lệ bố cục chuẩn nhất",
                     icon: "arrow.up.left.and.down.right.magnifyingglass",
+                    iconColor: Color(red: 0.35, green: 0.75, blue: 1.0),
                     isOn: $viewModel.isAutoZoomEnabled
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Tự chụp khi khớp bố cục",
                     subtitle: "Tự động kích hoạt màn trập ngay khi hai tâm đạt độ khớp hoàn hảo",
                     icon: "camera.badge.ellipsis",
+                    iconColor: Color(red: 0.30, green: 0.85, blue: 0.55),
                     isOn: $viewModel.isAutoCaptureOnAlignEnabled
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Hiển thị tia hướng dẫn",
                     subtitle: "Vẽ đường định hướng nối từ tâm camera tới vị trí vàng đề xuất",
                     icon: "line.diagonal",
+                    iconColor: Color(red: 1.0, green: 0.58, blue: 0.20),
                     isOn: $viewModel.isGuidanceRayEnabled
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 // Tracking Sensitivity Segmented Control
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Label("Độ nhạy bám chủ thể", systemImage: "bolt.badge.clock.fill")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 13.5, weight: .medium))
                             .foregroundColor(.white)
                             .lineLimit(1)
                         Spacer()
@@ -768,30 +868,32 @@ struct AIFramingSettingsSection: View {
 
                     Text(viewModel.trackingSensitivity.rawValue)
                         .font(.system(size: 11))
-                        .foregroundColor(Color.white.opacity(0.50))
+                        .foregroundColor(Color.white.opacity(0.48))
                         .padding(.top, 2)
                 }
+                .padding(.vertical, 4)
             }
         }
     }
 
     @ViewBuilder
     private var aiCloudCard: some View {
-        SettingsSectionCard(title: "AI CLOUD & BẢO MẬT API KEY", icon: "lock.shield.fill") {
+        SettingsSectionCard(title: "AI CLOUD & BẢO MẬT API KEY", icon: "lock.shield.fill", iconColor: Color(red: 0.25, green: 0.85, blue: 0.45)) {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggleRow(
                     title: "Phân tích trực tuyến (OpenRouter AI)",
                     subtitle: "Gửi 1 khung hình chất lượng cao lên OpenRouter để AI phân tích bố cục & màu sắc",
                     icon: "network",
+                    iconColor: Color(red: 0.35, green: 0.55, blue: 1.0),
                     isOn: $viewModel.useGeminiForAnalysis
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 // API Status Badge
                 HStack {
                     Label("Trạng thái API Key", systemImage: "key.fill")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 13.5, weight: .medium))
                         .foregroundColor(.white.opacity(0.85))
                     Spacer()
                     if viewModel.geminiService.hasAPIKey {
@@ -799,43 +901,52 @@ struct AIFramingSettingsSection: View {
                             Circle().fill(Color.green).frame(width: 7, height: 7)
                             Text("Đã lưu Keychain").font(.system(size: 12, weight: .bold, design: .rounded)).foregroundColor(.green)
                         }
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(Color.green.opacity(0.12))
-                        .cornerRadius(8)
+                        .clipShape(Capsule())
                     } else {
                         HStack(spacing: 5) {
                             Circle().fill(Color.gray).frame(width: 7, height: 7)
                             Text("Chưa thiết lập").font(.system(size: 12)).foregroundColor(.gray)
                         }
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(Color.white.opacity(0.06))
-                        .cornerRadius(8)
+                        .clipShape(Capsule())
                     }
                 }
+                .padding(.vertical, 2)
 
-                SettingsPickerRow(title: "Mô hình AI", icon: "cpu") {
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsPickerRow(
+                    title: "Mô hình AI",
+                    subtitle: "Lựa chọn model thị giác máy tính",
+                    icon: "cpu",
+                    iconColor: Color(red: 0.72, green: 0.45, blue: 1.0),
+                    selectedValueString: selectedModel.displayName
+                ) {
                     Picker("", selection: $selectedModel) {
                         ForEach(AIVisionModel.allCases) { model in
                             Text(model.displayName).tag(model)
                         }
                     }
-                    .pickerStyle(MenuPickerStyle())
-                    .tint(amberGold)
+                    .pickerStyle(.menu)
+                    .tint(Color.white.opacity(0.70))
                     .onChange(of: selectedModel) { newModel in
                         viewModel.geminiService.selectedModel = newModel
                     }
                 }
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 // Key Input / Management
                 if viewModel.geminiService.hasAPIKey {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("OpenRouter API Key")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.system(size: 13.5, weight: .medium))
                                 .foregroundColor(.white)
                             Text("sk-or-••••••••••••••••")
                                 .font(.system(size: 11, design: .monospaced))
@@ -855,12 +966,12 @@ struct AIFramingSettingsSection: View {
                                 Image(systemName: "doc.on.doc")
                                 Text("Chép")
                             }
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 11.5, weight: .bold))
                             .foregroundColor(.white)
-                            .padding(.horizontal, 9)
+                            .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(Color.white.opacity(0.10))
-                            .cornerRadius(8)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
 
                         Button(role: .destructive, action: {
@@ -870,14 +981,15 @@ struct AIFramingSettingsSection: View {
                                 Image(systemName: "trash.fill")
                                 Text("Xóa")
                             }
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 11.5, weight: .bold))
                             .foregroundColor(.red)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(Color.red.opacity(0.14))
-                            .cornerRadius(8)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
+                    .padding(.vertical, 2)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
@@ -886,9 +998,9 @@ struct AIFramingSettingsSection: View {
                                 .padding(10)
                                 .frame(minWidth: 0, maxWidth: .infinity)
                                 .background(Color.black.opacity(0.45))
-                                .cornerRadius(8)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                                 )
 
@@ -908,9 +1020,10 @@ struct AIFramingSettingsSection: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .background(amberGold)
-                            .cornerRadius(8)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
+                    .padding(.vertical, 2)
                 }
 
                 // Test Connection Button (Async Ping)
@@ -935,7 +1048,7 @@ struct AIFramingSettingsSection: View {
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
                     .foregroundColor(amberGold)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 4)
                 }
 
                 if let res = testResult {
@@ -944,10 +1057,10 @@ struct AIFramingSettingsSection: View {
                         .foregroundColor(res.contains("❌") ? .red : .green)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.black.opacity(0.4))
-                        .cornerRadius(8)
+                        .background(Color.black.opacity(0.40))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .stroke(res.contains("❌") ? Color.red.opacity(0.3) : Color.green.opacity(0.3), lineWidth: 1)
                         )
                 }
@@ -958,9 +1071,10 @@ struct AIFramingSettingsSection: View {
                         .foregroundColor(amberGold)
                     Text("OpenRouter API Key được mã hóa lưu trữ độc quyền trong Apple Keychain của máy. Chỉ gửi 1 frame xem trước duy nhất khi bấm phân tích. Không lưu trữ ảnh người dùng.")
                         .font(.system(size: 11))
-                        .foregroundColor(.gray)
+                        .foregroundColor(Color.white.opacity(0.45))
                         .lineSpacing(2)
                 }
+                .padding(.top, 2)
             }
         }
     }
@@ -973,7 +1087,7 @@ struct AdvancedSettingsSection: View {
     @Binding var showDevConsole: Bool
     @Binding var toastMessage: String?
 
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         VStack(spacing: 14) {
@@ -985,30 +1099,33 @@ struct AdvancedSettingsSection: View {
 
     @ViewBuilder
     private var featuresCard: some View {
-        SettingsSectionCard(title: "TÍNH NĂNG MỞ RỘNG", icon: "gearshape.2.fill") {
-            VStack(spacing: 12) {
+        SettingsSectionCard(title: "TÍNH NĂNG MỞ RỘNG", icon: "gearshape.2.fill", iconColor: Color(red: 1.0, green: 0.58, blue: 0.20)) {
+            VStack(spacing: 0) {
                 SettingsToggleRow(
                     title: "Chế độ đi đường (Street Tracking)",
                     subtitle: "Tăng cường độ mượt và bù trừ rung lắc khi vừa đi bộ vừa chụp",
                     icon: "figure.walk",
+                    iconColor: Color(red: 1.0, green: 0.58, blue: 0.20),
                     isOn: $viewModel.isStreetTrackingModeEnabled
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Rung phản hồi khi căn đúng",
                     subtitle: "Phát nhịp rung Haptics thông minh khi tâm camera hút vào điểm tỷ lệ vàng",
                     icon: "hand.tap.fill",
+                    iconColor: amberGold,
                     isOn: $viewModel.isProximityHapticsEnabled
                 )
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
                     title: "Giữ màn hình luôn sáng",
                     subtitle: "Ngăn thiết bị tự động khóa màn hình trong suốt buổi chụp ảnh",
                     icon: "sun.max.fill",
+                    iconColor: Color.yellow,
                     isOn: $viewModel.isKeepScreenAwakeEnabled
                 )
             }
@@ -1017,14 +1134,14 @@ struct AdvancedSettingsSection: View {
 
     @ViewBuilder
     private var diagnosticsCard: some View {
-        SettingsSectionCard(title: "CHẨN ĐOÁN & ENGINE HỆ THỐNG", icon: "cross.case.fill") {
+        SettingsSectionCard(title: "CHẨN ĐOÁN & ENGINE HỆ THỐNG", icon: "cross.case.fill", iconColor: Color(red: 0.35, green: 0.75, blue: 1.0)) {
             VStack(alignment: .leading, spacing: 12) {
                 diagRow(label: "Động cơ thị giác", value: "Apple Vision + Optical Flow + Gyro")
                 diagRow(label: "AI Neural Engine", value: "AlignAI 114MB + CoreML YOLO")
                 diagRow(label: "Model hoạt động", value: viewModel.activeModelUsedName.isEmpty ? "Cục bộ on-device (Neural Engine)" : viewModel.activeModelUsedName)
                 diagRow(label: "Độ trễ phân tích", value: viewModel.geminiLatencyMs > 0 ? "\(viewModel.geminiLatencyMs) ms" : "0 ms (Realtime 60fps)")
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 Button(role: .destructive, action: {
                     showResetSessionConfirmation = true
@@ -1044,6 +1161,7 @@ struct AdvancedSettingsSection: View {
                             Text("Lỗi ghi nhận: \(err)")
                                 .font(.system(size: 10, design: .monospaced))
                                 .foregroundColor(.red)
+                                .fixedSize(horizontal: false, vertical: true)
                         } else {
                             Text("✓ Hệ thống đang chạy ổn định. Không có cảnh báo lỗi.")
                                 .font(.system(size: 11))
@@ -1060,41 +1178,52 @@ struct AdvancedSettingsSection: View {
 
     @ViewBuilder
     private var supportInfoCard: some View {
-        SettingsSectionCard(title: "HỖ TRỢ & THÔNG TIN", icon: "info.circle.fill") {
-            VStack(spacing: 12) {
+        SettingsSectionCard(title: "HỖ TRỢ & THÔNG TIN", icon: "info.circle.fill", iconColor: Color(red: 0.25, green: 0.85, blue: 0.45)) {
+            VStack(spacing: 0) {
                 NavigationLink(destination: FeedbackView()) {
-                    HStack {
-                        Label("Gửi góp ý & phản hồi", systemImage: "envelope.fill")
-                            .font(.system(size: 13, weight: .medium))
+                    HStack(spacing: 12) {
+                        SettingsRowIcon("envelope.fill", color: Color(red: 0.35, green: 0.65, blue: 1.0))
+
+                        Text("Gửi góp ý & phản hồi")
+                            .font(.system(size: 14.5, weight: .medium))
                             .foregroundColor(.white)
+
                         Spacer()
+
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 12))
-                            .foregroundColor(.gray)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color.white.opacity(0.35))
                     }
-                    .padding(.vertical, 2)
+                    .frame(minHeight: 52)
                 }
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
                 NavigationLink(destination: SupportDeveloperView()) {
-                    HStack {
-                        Label("Ủng hộ tác giả ☕", systemImage: "cup.and.saucer.fill")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                    HStack(spacing: 12) {
+                        SettingsRowIcon("cup.and.saucer.fill", color: amberGold)
+
+                        Text("Ủng hộ tác giả ☕")
+                            .font(.system(size: 14.5, weight: .bold, design: .rounded))
                             .foregroundColor(amberGold)
+
                         Spacer()
+
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 12))
-                            .foregroundColor(.gray)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color.white.opacity(0.35))
                     }
-                    .padding(.vertical, 2)
+                    .frame(minHeight: 52)
                 }
 
-                Divider().background(Color.white.opacity(0.07))
+                Divider().background(Color.white.opacity(0.06))
 
-                diagRow(label: "Tác giả", value: "VanKhoa (Trần Văn Trình)")
-                diagRow(label: "Liên hệ", value: "tranvantrinhhd@gmail.com")
-                diagRow(label: "Phiên bản", value: "AlignAI Camera v1.0.0 (Build 171)")
+                VStack(spacing: 8) {
+                    diagRow(label: "Tác giả", value: "VanKhoa (Trần Văn Trình)")
+                    diagRow(label: "Liên hệ", value: "tranvantrinhhd@gmail.com")
+                    diagRow(label: "Phiên bản", value: "AlignAI Camera v1.0.0 (Build 171)")
+                }
+                .padding(.vertical, 8)
             }
         }
     }
@@ -1103,11 +1232,13 @@ struct AdvancedSettingsSection: View {
         HStack {
             Text(label)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.75))
+                .foregroundColor(Color.white.opacity(0.70))
             Spacer()
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundColor(amberGold)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
         }
     }
 }
@@ -1118,7 +1249,7 @@ public struct SupportDeveloperView: View {
     @State private var showVietQR: Bool = false
     @State private var qrReloadID = UUID()
 
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
     private let vietQRURLString = "https://img.vietqr.io/image/mbbank-0344197212-compact2.png?amount=50000&addInfo=Donate%20AlignAI%20Camera&accountName=TRAN%20VAN%20TRINH"
 
     public init() {}
@@ -1153,7 +1284,7 @@ public struct SupportDeveloperView: View {
                 .padding(.bottom, 6)
 
                 // MB Bank Card
-                SettingsSectionCard(title: "NGÂN HÀNG QUÂN ĐỘI (MB BANK)", icon: "building.columns.fill") {
+                SettingsSectionCard(title: "NGÂN HÀNG QUÂN ĐỘI (MB BANK)", icon: "building.columns.fill", iconColor: amberGold) {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("TRAN VAN TRINH")
@@ -1180,13 +1311,13 @@ public struct SupportDeveloperView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(amberGold)
-                            .cornerRadius(8)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
                 }
 
                 // VietQR Card with Retry Logic
-                SettingsSectionCard(title: "MÃ VIETQR CHUYỂN KHOẢN NHANH", icon: "qrcode.viewfinder") {
+                SettingsSectionCard(title: "MÃ VIETQR CHUYỂN KHOẢN NHANH", icon: "qrcode.viewfinder", iconColor: Color(red: 0.25, green: 0.85, blue: 0.45)) {
                     VStack(spacing: 12) {
                         Button(action: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -1212,9 +1343,9 @@ public struct SupportDeveloperView: View {
                                         .resizable()
                                         .scaledToFit()
                                         .frame(maxHeight: 250)
-                                        .cornerRadius(14)
+                                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                                         .overlay(
-                                            RoundedRectangle(cornerRadius: 14)
+                                            RoundedRectangle(cornerRadius: 14, style: .continuous)
                                                 .stroke(Color.white.opacity(0.12), lineWidth: 1)
                                         )
                                 case .failure:
@@ -1233,7 +1364,7 @@ public struct SupportDeveloperView: View {
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 6)
                                         .background(amberGold)
-                                        .cornerRadius(8)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     }
                                     .frame(maxWidth: .infinity)
                                     .padding(20)
@@ -1251,7 +1382,7 @@ public struct SupportDeveloperView: View {
             }
             .padding(16)
         }
-        .background(Color(red: 0.035, green: 0.035, blue: 0.045).ignoresSafeArea())
+        .background(Color(red: 0.035, green: 0.039, blue: 0.051).ignoresSafeArea())
         .navigationTitle("Ủng hộ tác giả")
         .navigationBarTitleDisplayMode(.inline)
         .overlay(
@@ -1287,48 +1418,44 @@ public struct SupportDeveloperView: View {
 public struct SettingsSectionCard<Content: View>: View {
     let title: String
     let icon: String
+    var iconColor: Color = Color(red: 1.0, green: 0.69, blue: 0.16)
     let content: Content
 
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
-
-    public init(title: String, icon: String, @ViewBuilder content: () -> Content) {
+    public init(
+        title: String,
+        icon: String,
+        iconColor: Color = Color(red: 1.0, green: 0.69, blue: 0.16),
+        @ViewBuilder content: () -> Content
+    ) {
         self.title = title
         self.icon = icon
+        self.iconColor = iconColor
         self.content = content()
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(amberGold.opacity(0.16))
-                        .frame(width: 24, height: 24)
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(amberGold)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            // Uppercase Section Header
+            Text(title.uppercased())
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundColor(Color.white.opacity(0.50))
+                .tracking(0.6)
+                .padding(.leading, 8)
+                .padding(.bottom, 2)
 
-                Text(title)
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.50))
-                    .lineLimit(1)
-
-                Spacer()
-            }
-            .padding(.horizontal, 4)
-
+            // Inset Grouped Card Body
             VStack(spacing: 0) {
                 content
             }
             .frame(maxWidth: .infinity)
-            .padding(14)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
             .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(Color(red: 0.075, green: 0.075, blue: 0.090))
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color(red: 0.075, green: 0.080, blue: 0.098))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color.white.opacity(0.065), lineWidth: 1)
                     )
             )
         }
@@ -1341,27 +1468,25 @@ public struct SettingsToggleRow: View {
     let title: String
     var subtitle: String? = nil
     let icon: String
+    var iconColor: Color = Color(red: 1.0, green: 0.69, blue: 0.16)
     @Binding var isOn: Bool
 
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     public var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(amberGold)
-                .frame(width: 24)
+            SettingsRowIcon(icon, color: iconColor)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 14.5, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(1)
 
-                if let sub = subtitle {
+                if let sub = subtitle, !sub.isEmpty {
                     Text(sub)
-                        .font(.system(size: 10.5))
-                        .foregroundColor(Color.white.opacity(0.55))
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.52))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1373,7 +1498,8 @@ public struct SettingsToggleRow: View {
                 .labelsHidden()
                 .tint(amberGold)
         }
-        .frame(maxWidth: .infinity)
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 }
@@ -1381,37 +1507,61 @@ public struct SettingsToggleRow: View {
 // 3. SettingsPickerRow
 public struct SettingsPickerRow<Content: View>: View {
     let title: String
+    var subtitle: String? = nil
     let icon: String
+    var iconColor: Color = Color(red: 1.0, green: 0.69, blue: 0.16)
+    var selectedValueString: String = ""
     let picker: Content
 
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
-
-    public init(title: String, icon: String, @ViewBuilder picker: () -> Content) {
+    public init(
+        title: String,
+        subtitle: String? = nil,
+        icon: String,
+        iconColor: Color = Color(red: 1.0, green: 0.69, blue: 0.16),
+        selectedValueString: String = "",
+        @ViewBuilder picker: () -> Content
+    ) {
         self.title = title
+        self.subtitle = subtitle
         self.icon = icon
+        self.iconColor = iconColor
+        self.selectedValueString = selectedValueString
         self.picker = picker()
     }
 
     public var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(amberGold)
-                .frame(width: 22)
+        HStack(spacing: 12) {
+            SettingsRowIcon(icon, color: iconColor)
 
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .layoutPriority(1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14.5, weight: .medium))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
 
-            Spacer(minLength: 6)
+                if let sub = subtitle, !sub.isEmpty {
+                    Text(sub)
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.52))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
-            picker
-                .lineLimit(1)
-                .truncationMode(.tail)
+            Spacer(minLength: 8)
+
+            HStack(spacing: 4) {
+                picker
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.35))
+            }
         }
-        .frame(maxWidth: .infinity)
+        .frame(minHeight: 52)
+        .contentShape(Rectangle())
     }
 }
 
