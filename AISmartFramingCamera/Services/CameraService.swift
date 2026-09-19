@@ -758,6 +758,19 @@ public final class CameraService: NSObject {
                     self.updateMaxPhotoDimensions(for: camera)
                 }
             }
+
+            // Bảo toàn và tái áp dụng mức zoom phần cứng qua các lần đổi mode
+            if let camera = self.activeCamera {
+                do {
+                    try camera.lockForConfiguration()
+                    let clamped = max(self.minZoom, min(self.currentZoom, self.maxZoom))
+                    camera.videoZoomFactor = clamped
+                    camera.unlockForConfiguration()
+                } catch {
+                    CameraLogger.warning("CameraService: Không thể tái áp dụng zoom khi đổi mode", category: .capture)
+                }
+            }
+
             let formatStr = self.getActiveVideoResolutionAndFPS()
             DispatchQueue.main.async {
                 self.onActiveVideoFormatChanged?(formatStr)
