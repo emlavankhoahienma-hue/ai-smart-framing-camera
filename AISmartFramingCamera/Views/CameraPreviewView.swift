@@ -35,7 +35,7 @@ public struct CameraPreviewView: UIViewRepresentable {
             let point = gesture.location(in: view)
             let normalized = CGPoint(x: point.x / max(1, view.bounds.width), y: point.y / max(1, view.bounds.height))
             if viewModel.isAEAFLocked { viewModel.unlockAEAF() }
-            else if viewModel.aiSessionState == .targetPlaced { viewModel.pinTargetAndStartMotion(at: normalized) }
+            else if case .targetPlaced = viewModel.aiSessionState { viewModel.pinTargetAndStartMotion(at: normalized) }
             else {
                 viewModel.userDidTapToFocus(at: normalized, devicePoint: view.previewLayer.captureDevicePointConverted(fromLayerPoint: point))
             }
