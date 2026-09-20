@@ -7,6 +7,7 @@ modes. XCTest in tests/ exercises the actual Swift geometry on an Apple SDK.
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 import unittest
 import numpy as np
@@ -173,6 +174,47 @@ class GeometryTests(unittest.TestCase):
         self.assertNotIn('consecutiveLostFrames <= 150', vision)
         self.assertIn('onTargetTrackedWithTimestamp', vm)
         self.assertIn('guard !Task.isCancelled else { return }', vm)
+
+    def test_vision_continuation_uses_returned_observation_only(self):
+        root = Path(__file__).resolve().parents[1] / 'AISmartFramingCamera'
+        source = (root / 'Services/VisionFramingEngine.swift').read_text(encoding='utf-8')
+        assignments = re.findall(r'\binputObservation\s*=\s*([^\n;]+)', source)
+        self.assertEqual(assignments, ['observation'])
+        self.assertEqual(source.count('VNDetectedObjectObservation(boundingBox:'), 1)
+        self.assertIn('let observation = request.results?.first', source)
+        self.assertIn('guard continuity.reject() else { return nil }', source)
+        self.assertNotIn('request.inputObservation = VNDetectedObjectObservation', source)
+        self.assertNotIn('refineAnchorBox(around: seedPoint', source)
+
+    def test_zoom_projection_changes_only_on_hardware_feedback(self):
+        root = Path(__file__).resolve().parents[1] / 'AISmartFramingCamera'
+        vm = (root / 'ViewModels/CameraViewModel.swift').read_text(encoding='utf-8')
+        arguments = re.findall(r'updateZoomFactor\(([^\n)]+)\)', vm)
+        self.assertEqual(arguments, ['self.displayZoom', 'disp', 'self.displayZoom'])
+        self.assertIn('hasExecutedAutoZoomForSession = isManualRePin', vm)
+        self.assertIn('if isManualRePin { cameraService.cancelZoomRamp() }', vm)
+        self.assertIn('!isManualRePin && !self.hasExecutedAutoZoomForSession', vm)
+        self.assertEqual(vm.count('self.targetPinGeneration == pinGeneration'), 3)
+        self.assertEqual(vm.count('        prioritizeManualZoom()'), 4)
+
+    def test_overlay_redraw_does_not_destroy_tracking_session(self):
+        root = Path(__file__).resolve().parents[1] / 'AISmartFramingCamera'
+        overlay = (root / 'Views/ARFramingOverlayView.swift').read_text(encoding='utf-8')
+        self.assertNotIn('.onDisappear { viewModel.suspendSpatialTracking() }', overlay)
+        self.assertNotIn('UIApplication.willResignActiveNotification', overlay)
+        self.assertIn('UIApplication.didEnterBackgroundNotification', overlay)
+
+    def test_camera_config_and_xcode_membership(self):
+        root = Path(__file__).resolve().parents[1]
+        camera = (root / 'AISmartFramingCamera/Services/CameraService.swift').read_text(encoding='utf-8')
+        project = (root / 'AISmartFramingCamera.xcodeproj/project.pbxproj').read_text(encoding='utf-8')
+        self.assertIn('connection.isCameraIntrinsicMatrixDeliveryEnabled = true', camera)
+        self.assertIn('!captureSession.isRunning && connection.isCameraIntrinsicMatrixDeliverySupported', camera)
+        self.assertEqual(camera.count('self.configureTrackingConnection(connection)'), 2)
+        self.assertNotIn('IPHONEOS_DEPLOYMENT_TARGET = 16.0', project)
+        for name in ['TrackingGeometry.swift', 'NeuralTargetTracker.swift']:
+            self.assertIn(f'/* {name} in Sources */ =', project)
+            self.assertIn(f'path = {name};', project)
 
 
 METRICS = {}

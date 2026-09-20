@@ -146,6 +146,37 @@ public final class CameraService: NSObject {
         return workItem
     }
 
+    /// Configure while the session is stopped: intrinsics describe each
+    /// captured image, rather than a commanded zoom the lens has not reached.
+    private func configureTrackingConnection(_ connection: AVCaptureConnection) {
+        if connection.isVideoStabilizationSupported {
+            connection.preferredVideoStabilizationMode = .off
+        }
+        if !captureSession.isRunning && connection.isCameraIntrinsicMatrixDeliverySupported {
+            connection.isCameraIntrinsicMatrixDeliveryEnabled = true
+        }
+    }
+
+    /// An explicit user re-pin cancels an earlier AI lens ramp at its current
+    /// physical zoom. Configuration and the actual zoom read share sessionQueue.
+    public func cancelZoomRamp() {
+        sessionQueue.async { [weak self] in
+            guard let self, let camera = self.activeCamera else { return }
+            do {
+                try camera.lockForConfiguration()
+                camera.cancelVideoZoomRamp()
+                let zoom = camera.videoZoomFactor
+                camera.unlockForConfiguration()
+                self.currentZoom = zoom
+                DispatchQueue.main.async { [weak self] in
+                    self?.onLiveZoomFactorChanged?(zoom)
+                }
+            } catch {
+                CameraLogger.error("Không thể dừng AI zoom khi đặt lại mục tiêu", error: error, category: .capture)
+            }
+        }
+    }
+
     // MARK: - Session Setup
     public func setupSession(completion: @escaping (Bool) -> Void) {
         sessionQueue.async { [weak self] in
@@ -263,11 +294,9 @@ public final class CameraService: NSObject {
                         kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
                     ]
                     if let connection = self.videoDataOutput.connection(with: .video) {
+                        self.configureTrackingConnection(connection)
                         if connection.isVideoOrientationSupported {
                             connection.videoOrientation = .portrait
-                        }
-                        if connection.isCameraIntrinsicMatrixDeliverySupported {
-                            connection.isCameraIntrinsicMatrixDeliveryEnabled = true
                         }
                     }
                     self.videoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataQueue)
@@ -400,6 +429,8 @@ public final class CameraService: NSObject {
                 return
             }
 
+            let restart = self.captureSession.isRunning
+            if restart { self.captureSession.stopRunning() }
             self.captureSession.beginConfiguration()
             if let currentInput = self.videoDeviceInput {
                 self.captureSession.removeInput(currentInput)
@@ -427,14 +458,12 @@ public final class CameraService: NSObject {
                     }
 
                     if let connection = self.videoDataOutput.connection(with: .video) {
+                        self.configureTrackingConnection(connection)
                         if connection.isVideoOrientationSupported {
                             connection.videoOrientation = .portrait
                         }
                         if connection.isVideoMirroringSupported {
                             connection.isVideoMirrored = (targetPosition == .front)
-                        }
-                        if connection.isCameraIntrinsicMatrixDeliverySupported {
-                            connection.isCameraIntrinsicMatrixDeliveryEnabled = true
                         }
                     }
                     self.updateMaxPhotoDimensions(for: newCamera)
@@ -454,6 +483,7 @@ public final class CameraService: NSObject {
                 }
             }
             self.captureSession.commitConfiguration()
+            if restart { self.captureSession.startRunning() }
         }
     }
 

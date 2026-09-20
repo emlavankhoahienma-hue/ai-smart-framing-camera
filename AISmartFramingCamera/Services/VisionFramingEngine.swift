@@ -7,6 +7,48 @@ import CoreGraphics
 import ImageIO
 import QuartzCore
 
+/// A synthetic observation is used exactly once, to create this object. Every
+/// continuation must preserve the observation returned by Apple's tracker.
+/// A caller-defined replacement starts a NEW tracker (VNTrackingRequest contract).
+final class VisionObjectSequence {
+    private let sequence = VNSequenceRequestHandler()
+    private let request: VNTrackObjectRequest
+    private var lastBuffer: CVPixelBuffer?
+    private(set) var lastObservation: VNDetectedObjectObservation?
+
+    init(box: CGRect) {
+        request = VNTrackObjectRequest(detectedObjectObservation:
+            VNDetectedObjectObservation(boundingBox: box))
+        request.trackingLevel = .accurate
+    }
+
+    func advance(in buffer: CVPixelBuffer,
+                 orientation: CGImagePropertyOrientation) throws -> VNDetectedObjectObservation? {
+        // The selected image can also be the next admitted image. Do not tell
+        // Vision that the exact same retained camera frame is a new time step.
+        if let lastBuffer, lastBuffer === buffer { return lastObservation }
+        try sequence.perform([request], on: buffer, orientation: orientation)
+        let observation = request.results?.first as? VNDetectedObjectObservation
+        if let observation {
+            request.inputObservation = observation
+        }
+        lastObservation = observation
+        lastBuffer = buffer
+        return observation
+    }
+}
+
+/// Hysteresis for transient blur/appearance failure. Re-ID is allowed only
+/// after retiring the active sequence; never in parallel with a live tracker.
+struct VisionContinuityPolicy {
+    private(set) var consecutiveFailures = 0
+    mutating func accept() { consecutiveFailures = 0 }
+    mutating func reject() -> Bool {
+        consecutiveFailures += 1
+        return consecutiveFailures >= 3
+    }
+}
+
 /// Mutable Vision requests and templates belong exclusively to visionQueue.
 /// ingressLock protects settings, callbacks, admission and session generation.
 /// No synchronous dispatch to the main queue and at most one admitted frame.
@@ -78,8 +120,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
 
     // Queue-confined state. Frozen identity is only replaced by an explicit pin.
-    private var sequence = VNSequenceRequestHandler()
-    private var request: VNTrackObjectRequest?
+    private var tracker: VisionObjectSequence?
+    private var continuity = VisionContinuityPolicy()
     private var referencePrint: VNFeaturePrintObservation?
     private var referenceHistogram: [Float]?
     private var anchorUV = CGPoint(x: 0.5, y: 0.5)
@@ -145,7 +187,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     private func resetTrackingState() {
         NeuralTargetTracker.shared.clearAnchor()
-        sequence = VNSequenceRequestHandler(); request = nil
+        tracker = nil; continuity = VisionContinuityPolicy()
         referencePrint = nil; referenceHistogram = nil; lastBox = nil
         misses = 0; lastVerified = -.infinity; lastSearch = -.infinity; previousTime = -.infinity
         pendingRecovery = nil; seedBuffer = nil; pendingSeed = false
@@ -156,8 +198,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let sourceOrientation = seedBuffer == nil ? orientation : seedOrientation
         let w = min(0.8, max(0.04, seedSize.width)), h = min(0.8, max(0.04, seedSize.height))
         let centered = CGRect(x: seedPoint.x - w / 2, y: 1 - seedPoint.y - h / 2, width: w, height: h)
-        let box = (refineAnchorBox(around: seedPoint, in: source, orientation: sourceOrientation) ?? centered)
-            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        // A user pin must keep its selected image patch. Automatic saliency/face
+        // expansion can include a stronger background target in the same ROI.
+        let box = centered.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         guard !box.isNull, box.width > 0, box.height > 0 else { return }
         // Keep the selected physical point's relative location, not the new box center.
         anchorUV = CGPoint(x: (seedPoint.x - box.minX) / box.width,
@@ -168,15 +211,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
         if sourceOrientation == .up {
             NeuralTargetTracker.shared.setAnchorTemplate(from: source, at: seedPoint)
         }
-        let req = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: box))
-        req.trackingLevel = .accurate
+        let newTracker = VisionObjectSequence(box: box)
         if seedBuffer != nil {
             // Establish the template on the actual selected image, not on a later
             // frame captured after the user's hand has moved.
-            try? sequence.perform([req], on: source, orientation: sourceOrientation)
-            if let obs = req.results?.first as? VNDetectedObjectObservation { req.inputObservation = obs }
+            _ = try? newTracker.advance(in: source, orientation: sourceOrientation)
         }
-        request = req; seedBuffer = nil; pendingSeed = false
+        tracker = newTracker; seedBuffer = nil; pendingSeed = false
     }
 
     public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer,
@@ -225,16 +266,21 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private func track(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                        frame: TrackingFrameContext) -> (CGPoint, Double)? {
         let prediction = SpatialTrackingEngine.shared.projection(at: frame.timestamp, calibration: frame.calibration)
-        if let prediction, !prediction.isInsideImage {
-            request = nil; misses += 1; pendingRecovery = nil
+        // A bearing prediction alone must not kill a live optical tracker at a
+        // noisy FOV boundary. Only stop feeding images when clearly behind or
+        // well outside the image, allowing a 5% boundary margin.
+        if let prediction, !prediction.isInFront ||
+            !CGRect(x: -0.05, y: -0.05, width: 1.1, height: 1.1).contains(prediction.point) {
+            tracker = nil; continuity = VisionContinuityPolicy()
+            misses += 1; pendingRecovery = nil
             return nil
         }
         let dt = previousTime.isFinite ? min(0.1, max(0.001, frame.timestamp - previousTime)) : 1 / 30.0
         previousTime = frame.timestamp
-        if let request {
+        if let tracker {
             do {
-                try sequence.perform([request], on: buffer, orientation: orientation)
-                if let observation = request.results?.first as? VNDetectedObjectObservation, observation.confidence >= 0.40 {
+                if let observation = try tracker.advance(in: buffer, orientation: orientation),
+                   observation.confidence >= 0.40 {
                     let rawBox = observation.boundingBox
                     let rawPoint = point(in: rawBox)
                     let residual = prediction.map { hypot($0.point.x - rawPoint.x, $0.point.y - rawPoint.y) } ?? 0
@@ -253,20 +299,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         }
                         boxSize = CGSize(width: smooth(boxSize.width, rawBox.width),
                                          height: smooth(boxSize.height, rawBox.height))
-                        if let stableBox = box(at: rawPoint, size: boxSize) {
-                            request.inputObservation = VNDetectedObjectObservation(boundingBox: stableBox)
-                            lastBox = stableBox
-                        } else {
-                            request.inputObservation = observation; lastBox = rawBox
-                        }
+                        // Smoothed size belongs to the recovery search only.
+                        // NEVER feed a synthesized box back to the live sequence.
+                        lastBox = rawBox
+                        continuity.accept()
                         misses = 0; pendingRecovery = nil
                         return (rawPoint, Double(observation.confidence))
                     }
                 }
             } catch { /* An invalid observation never updates the spatial anchor. */ }
-            self.request = nil
+            misses += 1
+            pendingRecovery = nil
+            // Withhold the optical correction on a suspect frame, but retain
+            // Vision's identity through one or two bad frames instead of reseeding.
+            guard continuity.reject() else { return nil }
+            self.tracker = nil
+        } else {
+            misses += 1
         }
-        misses += 1
         // Persistent, local, pose-guided re-ID; no 150-frame expiry and no stale
         // screen-point averaging. Two distinct captured frames must agree.
         guard frame.timestamp - lastSearch >= 0.12,
@@ -281,15 +331,19 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                        y: previous.point.y - (previousPrediction?.point.y ?? center.y))
                 let newError = CGPoint(x: recovered.0.x - center.x, y: recovered.0.y - center.y)
                 if hypot(newError.x - oldError.x, newError.y - oldError.y) < 0.025 {
-                    sequence = VNSequenceRequestHandler()
-                    let obs = VNDetectedObjectObservation(boundingBox: recovered.2)
-                    let req = VNTrackObjectRequest(detectedObjectObservation: obs)
-                    req.trackingLevel = .accurate
-                    try? sequence.perform([req], on: buffer, orientation: orientation)
-                    req.inputObservation = obs; request = req
-                    lastBox = recovered.2; boxSize = recovered.2.size
+                    let recoveredTracker = VisionObjectSequence(box: recovered.2)
+                    // A failed Vision seed is not a successful reacquisition.
+                    guard let observation = try? recoveredTracker.advance(in: buffer, orientation: orientation),
+                          observation.confidence >= 0.40 else { pendingRecovery = nil; return nil }
+                    let confirmedPoint = point(in: observation.boundingBox)
+                    guard hypot(confirmedPoint.x - recovered.0.x, confirmedPoint.y - recovered.0.y) < 0.025 else {
+                        pendingRecovery = nil; return nil
+                    }
+                    tracker = recoveredTracker
+                    lastBox = observation.boundingBox; boxSize = recovered.2.size
+                    continuity.accept()
                     misses = 0; lastVerified = frame.timestamp; pendingRecovery = nil
-                    return (recovered.0, recovered.1)
+                    return (confirmedPoint, min(recovered.1, Double(observation.confidence)))
                 }
             }
             pendingRecovery = (recovered.0, frame.timestamp)

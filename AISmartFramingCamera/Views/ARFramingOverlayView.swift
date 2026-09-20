@@ -255,8 +255,9 @@ public struct ARFramingOverlayView: View {
                 SpatialTrackingEngine.shared.prepare()
                 startAnimations()
             }
-            .onDisappear { viewModel.suspendSpatialTracking() }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            // The overlay can be temporarily removed by SwiftUI or a sheet.
+            // It does not own the tracking session's lifetime.
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
                 viewModel.suspendSpatialTracking()
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in

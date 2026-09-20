@@ -103,6 +103,7 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - AI Session State Machine
     private var aiSessionGeneration: Int = 0
+    private var targetPinGeneration: UInt64 = 0
     @Published public var aiSessionState: AISessionState = .idle {
         didSet {
             switch aiSessionState {
@@ -307,7 +308,6 @@ public final class CameraViewModel: ObservableObject {
             displayZoom = targetZoom
             currentZoom = deviceZoom
             cameraService.smoothZoomFactor(to: deviceZoom, rate: 1.5)
-            SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
             haptics.triggerSelectionChange()
         }
     }
@@ -321,6 +321,7 @@ public final class CameraViewModel: ObservableObject {
         isZoomRampPhase = false
         lockOnProgress = 0
         isRevealingZoomTarget = true
+        let pinGeneration = targetPinGeneration
 
         withAnimation(.easeOut(duration: 0.35)) {
             lockOnProgress = 1.0
@@ -328,16 +329,15 @@ public final class CameraViewModel: ObservableObject {
 
         // Bắt đầu zoom quang/kỹ thuật số mượt mà sau 0.22s với tốc độ điện ảnh 1.2
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, self.targetPinGeneration == pinGeneration else { return }
             self.isZoomRampPhase = true
             self.displayZoom = targetZoom
             self.currentZoom = targetDeviceZoom
             self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: 1.2)
-            SpatialTrackingEngine.shared.updateZoomFactor(targetZoom)
 
             let estimatedRampDuration = Double(abs(targetDeviceZoom - self.liveZoomFactorForReveal)) / 1.2 + 0.35
             DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
-                guard let self = self else { return }
+                guard let self = self, self.targetPinGeneration == pinGeneration else { return }
                 withAnimation(.easeOut(duration: 0.30)) {
                     self.isRevealingZoomTarget = false
                 }
@@ -775,6 +775,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func switchCamera() {
+        targetPinGeneration &+= 1
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
         currentTargetPoint = nil
@@ -836,6 +837,7 @@ public final class CameraViewModel: ObservableObject {
     /// Bắt đầu phiên AI khi người dùng bấm nút AI — chỉ phân tích ĐÚNG 1 LẦN duy nhất
     public func startAISession() {
         guard aiSessionState == .idle || aiSessionState == .done else { return }
+        targetPinGeneration &+= 1
         haptics.triggerSelectionChange()
         self.aiSessionGeneration += 1
         let requestGeneration = self.aiSessionGeneration
@@ -887,6 +889,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func cancelAISession() {
+        targetPinGeneration &+= 1
         self.aiSessionGeneration += 1
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
@@ -914,6 +917,7 @@ public final class CameraViewModel: ObservableObject {
     /// Called when the camera overlay disappears or the app resigns active.
     /// A resumed CoreMotion reference frame must not inherit the old world ray.
     public func suspendSpatialTracking() {
+        targetPinGeneration &+= 1
         aiSessionGeneration += 1
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
@@ -1204,6 +1208,22 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
 
     public func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect? = nil) {
+        guard target.x.isFinite, target.y.isFinite,
+              (0...1).contains(target.x), (0...1).contains(target.y) else { return }
+        let isManualRePin: Bool
+        switch aiSessionState {
+        case .targetPlaced, .alignmentPerfect: isManualRePin = true
+        default: isManualRePin = false
+        }
+        targetPinGeneration &+= 1
+        let pinGeneration = targetPinGeneration
+        autoCaptureTask?.cancel()
+        autoCaptureTask = nil
+        autoCaptureCountdown = 0
+        isPerfectAlignment = false
+        isRevealingZoomTarget = false
+        isZoomRampPhase = false
+        if isManualRePin { cameraService.cancelZoomRamp() }
         // KHÔNG dùng tâm chủ thể để đè lên tọa độ AI nữa.
         // Ảnh gửi cho AI (cloud & local) là FULL ẢNH nên AI trả về tọa độ CHUẨN THEO ẢNH.
         // Target giờ PIN ĐÚNG TẠI TỌA ĐỘ AI TRẢ VỀ (target). subjectRect chỉ được dùng để
@@ -1212,8 +1232,10 @@ public final class CameraViewModel: ObservableObject {
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
-        trackingQuality = .locked
-        hasExecutedAutoZoomForSession = false
+        trackingQuality = .reacquiring
+        // A new user pin keeps the current lens framing instead of restarting
+        // the previous AI suggestion's zoom sequence.
+        hasExecutedAutoZoomForSession = isManualRePin
 
         let dx = pinPoint.x - 0.5
         let dy = pinPoint.y - 0.5
@@ -1228,11 +1250,11 @@ public final class CameraViewModel: ObservableObject {
         let selectedFrame = frameProcessor.latestTrackingFrameSnapshot()
         if let selectedFrame {
             SpatialTrackingEngine.shared.registerFrame(selectedFrame.1)
-            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: displayZoom,
+            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: CGFloat(SpatialTrackingEngine.shared.currentDisplayZoom),
                                                     timestamp: selectedFrame.1.timestamp,
                                                     calibration: selectedFrame.1.calibration)
         } else {
-            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: displayZoom)
+            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: CGFloat(SpatialTrackingEngine.shared.currentDisplayZoom))
         }
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
@@ -1281,9 +1303,12 @@ public final class CameraViewModel: ObservableObject {
             aiSessionState = .targetPlaced(locked: true)
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self, self.targetPinGeneration == pinGeneration,
+                  self.visionEngine.isTrackingTarget else { return }
             self.haptics.triggerSuccess()
-            if self.isAutoZoomEnabled && abs(self.pendingSuggestedZoom - self.displayZoom) > 0.15 {
+            if !isManualRePin && !self.hasExecutedAutoZoomForSession &&
+               self.isAutoZoomEnabled && abs(self.pendingSuggestedZoom - self.displayZoom) > 0.15 {
                 self.applyAISuggestedZoom(self.pendingSuggestedZoom, force: true)
             }
         }
@@ -1418,19 +1443,27 @@ public final class CameraViewModel: ObservableObject {
     private var lastContinuousZoomTime: CFTimeInterval = 0
     private var lastContinuousAppliedZoom: CGFloat = 1.0
 
+    private func prioritizeManualZoom() {
+        targetPinGeneration &+= 1
+        isRevealingZoomTarget = false
+        isZoomRampPhase = false
+        hasExecutedAutoZoomForSession = true
+    }
+
     public func setZoom(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite else { return }
+        prioritizeManualZoom()
         displayZoom = displayZoomVal
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         currentZoom = deviceZoom
         cameraService.setZoomFactor(deviceZoom)
-        SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
     }
 
     /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
     /// Tự động throttle AVFoundation calls (25ms) để chống nghẽn hàng đợi camera phần cứng
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite else { return }
+        prioritizeManualZoom()
         displayZoom = displayZoomVal
         selectedZoomPreset = displayZoomVal < 1.5 ? 1.0 : (displayZoomVal < 2.5 ? 2.0 : 3.0)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
@@ -1440,32 +1473,31 @@ public final class CameraViewModel: ObservableObject {
             lastContinuousZoomTime = now
             lastContinuousAppliedZoom = deviceZoom
             cameraService.setZoomFactor(deviceZoom)
-            SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
         }
     }
 
     /// Chốt zoom cuối cùng khi người dùng nhấc ngón tay kết thúc pinch
     public func finishZoomGesture(_ finalDisplayZoom: CGFloat) {
         guard finalDisplayZoom.isFinite else { return }
+        prioritizeManualZoom()
         displayZoom = finalDisplayZoom
         selectedZoomPreset = finalDisplayZoom < 1.5 ? 1.0 : (finalDisplayZoom < 2.5 ? 2.0 : 3.0)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(finalDisplayZoom)
         currentZoom = deviceZoom
         lastContinuousAppliedZoom = deviceZoom
         cameraService.setZoomFactor(deviceZoom)
-        SpatialTrackingEngine.shared.updateZoomFactor(finalDisplayZoom)
         haptics.triggerSelectionChange()
     }
 
     public func setZoomFromButton(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite else { return }
+        prioritizeManualZoom()
         haptics.triggerSelectionChange()
         selectedZoomPreset = displayZoomVal
         displayZoom = displayZoomVal
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         currentZoom = deviceZoom
         cameraService.setZoomFactor(deviceZoom)
-        SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
     }
 
     public func setExposure(_ bias: Float) {
