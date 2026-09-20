@@ -283,6 +283,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                    observation.confidence >= 0.40 {
                     let rawBox = observation.boundingBox
                     let rawPoint = point(in: rawBox)
+                    let residual = prediction.map { hypot($0.point.x - rawPoint.x, $0.point.y - rawPoint.y) } ?? 0
                     let highOpticalConfidence = observation.confidence >= 0.55
                     let needsIdentity = (frame.timestamp - lastVerified >= 1.0) || (misses > 1 && !highOpticalConfidence)
                     let identity = !needsIdentity || verify(buffer, box: rawBox, orientation: orientation, strict: false) != nil
