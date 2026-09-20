@@ -2200,7 +2200,10 @@ extension CameraViewModel: CameraServiceDelegate {
 
             var processedImageResult: CGImage = photo
             autoreleasepool {
-                if let params = finalColorParams {
+                if effectivePreset != .standard && !effectivePreset.isAIFullAuto {
+                    // Ưu tiên 100% chất màu chuẩn mực của dòng máy vintage người dùng đã chọn
+                    processedImageResult = FilmFilterEngine.shared.applyPreset(to: photo, preset: effectivePreset) ?? photo
+                } else if let params = finalColorParams {
                     processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(to: photo, preset: effectivePreset, params: params) ?? photo
                 } else {
                     processedImageResult = FilmFilterEngine.shared.applyPreset(to: photo, preset: effectivePreset) ?? photo

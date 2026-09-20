@@ -29,6 +29,13 @@ public struct CameraMainView: View {
                     // 3. Fixed 3:4 High-End Viewfinder (Live View)
                     ZStack {
                         CameraPreviewView(viewModel: viewModel)
+                            .saturation(viewModel.selectedFilmPreset.liveSaturation)
+                            .contrast(viewModel.selectedFilmPreset.liveContrast)
+                            .brightness(viewModel.selectedFilmPreset.liveBrightness)
+
+                        // Realtime Film Atmosphere & Optical Tint Overlay (Zero-Latency GPU Composition)
+                        FilmViewfinderAtmosphereOverlay(preset: viewModel.selectedFilmPreset)
+
                         ARFramingOverlayView(viewModel: viewModel)
                     }
                     .aspectRatio(3.0 / 4.0, contentMode: .fit)
@@ -165,15 +172,29 @@ struct TopCameraBar: View {
 
             Spacer(minLength: 8)
 
-            // Right: Pro Tools Capsule (Flash, Film Filters, Composition, Settings)
+            // Right: Pro Tools Capsule (Camera Flip, Flash, Film Filters, Settings)
             HStack(spacing: 2) {
+                // 0. Camera Switch Button (Trước / Sau - cạnh panel Histogram)
+                Button(action: {
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.prepare()
+                    generator.impactOccurred()
+                    viewModel.switchCamera()
+                }) {
+                    Image(systemName: "camera.rotate.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 38, height: 38)
+                }
+                .luxuryGoldInteractive(baseColor: Color.white.opacity(0.85))
+                .accessibilityLabel("Đổi camera trước và sau")
+
                 // 1. Flash Toggle Button
                 Button(action: {
                     viewModel.toggleFlash()
                 }) {
                     Image(systemName: flashIconName)
                         .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 40, height: 40)
+                        .frame(width: 38, height: 38)
                 }
                 .luxuryGoldInteractive(
                     baseColor: viewModel.activeFlashMode == .off ? Color.white.opacity(0.72) : amberGold
@@ -585,5 +606,69 @@ struct CameraPermissionPlaceholderView: View {
             }
         }
         .padding()
+    }
+}
+
+// MARK: - Live Viewfinder Film Atmosphere Overlay (Zero-Latency GPU Composition)
+public struct FilmViewfinderAtmosphereOverlay: View {
+    let preset: FilmPreset
+
+    public init(preset: FilmPreset) {
+        self.preset = preset
+    }
+
+    public var body: some View {
+        ZStack {
+            // 1. Color Tint Layer (Soft GPU Blend Mode)
+            if let tintColor = preset.liveTintOverlayColor {
+                tintColor
+                    .opacity(preset.liveTintOpacity)
+                    .blendMode(.color)
+            }
+
+            // 2. Optical Vignette Ring (For LOMO, ToyCam, 1998, Instant)
+            if preset.liveVignetteIntensity > 0 {
+                GeometryReader { geo in
+                    let maxDim = max(geo.size.width, geo.size.height)
+                    RadialGradient(
+                        gradient: Gradient(colors: [
+                            Color.clear,
+                            Color.clear,
+                            Color.black.opacity(preset.liveVignetteIntensity * 0.40),
+                            Color.black.opacity(preset.liveVignetteIntensity)
+                        ]),
+                        center: .center,
+                        startRadius: maxDim * 0.28,
+                        endRadius: maxDim * 0.72
+                    )
+                }
+            }
+
+            // 3. Retro Video / LCD Scanline Texture (For DV, VHS, Nokia 3310)
+            if preset.hasScanlines {
+                ScanlineRasterView()
+                    .opacity(0.12)
+            }
+        }
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.20), value: preset)
+    }
+}
+
+// MARK: - Lightweight Scanline Raster Pattern
+private struct ScanlineRasterView: View {
+    var body: some View {
+        GeometryReader { geo in
+            Path { path in
+                let spacing: CGFloat = 3.5
+                let count = Int(geo.size.height / spacing)
+                for i in 0..<count {
+                    let y = CGFloat(i) * spacing
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: geo.size.width, y: y))
+                }
+            }
+            .stroke(Color.black, lineWidth: 1.0)
+        }
     }
 }

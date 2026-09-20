@@ -19,12 +19,10 @@ public struct CameraControlsView: View {
 
             // Row 1: Balanced 3-Column Shutter Control Deck with Live Camera Badge
             HStack(alignment: .center, spacing: 0) {
-                // Left Column: Recent Photo Thumbnail (Equal Width)
-                HStack(spacing: 8) {
+                // Left Column: Recent Photo Thumbnail
+                HStack {
                     GalleryThumbnailButton(viewModel: viewModel)
-                        .frame(width: 48, height: 48)
-                    CameraFlipButton(viewModel: viewModel)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 50, height: 50)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
@@ -37,11 +35,11 @@ public struct CameraControlsView: View {
                 HStack {
                     Spacer()
                     SelectedCameraBadgeButton(viewModel: viewModel)
-                        .frame(width: 54, height: 54)
+                        .frame(width: 50, height: 50)
                 }
                 .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 18)
 
             // Row 2: Camera Mode Switcher (ẢNH / VIDEO) directly under Shutter
             CameraModeSegmentedSwitcher(viewModel: viewModel)
@@ -680,7 +678,22 @@ public struct SelectedCameraBadgeButton: View {
     }
 }
 
-// MARK: - Camera Card View (Storyboard Filmstrip Card with Badge & Icon)
+// MARK: - 35mm Film Sprocket Perforation Track
+private struct SprocketPerforationsRow: View {
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(0..<45, id: \.self) { _ in
+                RoundedRectangle(cornerRadius: 0.8)
+                    .fill(Color.white.opacity(0.18))
+                    .frame(width: 4.5, height: 3.2)
+            }
+        }
+        .frame(height: 4)
+        .clipped()
+    }
+}
+
+// MARK: - Camera Card View (Compact Storyboard Filmstrip Card)
 public struct CameraCardView: View {
     let preset: FilmPreset
     let isSelected: Bool
@@ -692,63 +705,63 @@ public struct CameraCardView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 1.5) {
             // Top Badge Chip
             HStack {
                 Text(preset.deviceBadge)
-                    .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 7.0, weight: .heavy, design: .monospaced))
                     .foregroundColor(isSelected ? .black : preset.previewColor)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1.5)
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 1.2)
                     .background(
                         Capsule()
                             .fill(isSelected ? amberGold : Color.black.opacity(0.45))
                     )
                 Spacer()
             }
-            .padding(.top, 4)
-            .padding(.horizontal, 5)
+            .padding(.top, 3)
+            .padding(.horizontal, 4)
 
-            Spacer(minLength: 2)
+            Spacer(minLength: 1)
 
             // Center Device Icon
             ZStack {
                 Circle()
-                    .fill(preset.previewColor.opacity(isSelected ? 0.28 : 0.12))
-                    .frame(width: 36, height: 36)
+                    .fill(preset.previewColor.opacity(isSelected ? 0.30 : 0.14))
+                    .frame(width: 30, height: 30)
 
                 Image(systemName: preset.deviceIconSF)
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(isSelected ? amberGold : .white.opacity(0.92))
             }
 
-            Spacer(minLength: 2)
+            Spacer(minLength: 1)
 
             // Bottom Name Label
             Text(preset.shortTitle)
-                .font(.system(size: 9.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                .font(.system(size: 8.5, weight: isSelected ? .bold : .medium, design: .rounded))
                 .foregroundColor(isSelected ? amberGold : .white)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .padding(.horizontal, 3)
-                .padding(.bottom, 5)
+                .minimumScaleFactor(0.70)
+                .padding(.horizontal, 2)
+                .padding(.bottom, 3.5)
         }
-        .frame(width: 66, height: 84)
+        .frame(width: 54, height: 68)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(red: 0.12, green: 0.13, blue: 0.17))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(red: 0.11, green: 0.12, blue: 0.15))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isSelected ? amberGold : Color.white.opacity(0.14), lineWidth: isSelected ? 2.0 : 1.0)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isSelected ? amberGold : Color.white.opacity(0.12), lineWidth: isSelected ? 1.8 : 0.8)
         )
-        .shadow(color: isSelected ? amberGold.opacity(0.50) : Color.clear, radius: 6)
+        .shadow(color: isSelected ? amberGold.opacity(0.45) : Color.clear, radius: 4)
         .scaleEffect(isSelected ? 1.04 : 1.0)
-        .animation(.spring(response: 0.25, dampingFraction: 0.68), value: isSelected)
+        .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isSelected)
     }
 }
 
-// MARK: - Film Preset Drawer (Storyboard 11 Categories & Filmstrip Reel)
+// MARK: - Film Preset Drawer (Compact Storyboard 35mm Reel & Tabs)
 public struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
@@ -758,34 +771,34 @@ public struct FilmPresetDrawer: View {
     }
 
     public var body: some View {
-        VStack(spacing: 8) {
-            // 1. Category Tab Bar Header
+        VStack(spacing: 4) {
+            // 1. Sleek Category Tab Bar Header
             HStack(spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 14) {
+                    HStack(spacing: 12) {
                         ForEach(FilmPresetCategory.allCases) { category in
                             let isSelected = viewModel.selectedFilmCategory == category
                             Button(action: {
                                 viewModel.selectFilmCategory(category)
                             }) {
-                                VStack(spacing: 4) {
+                                VStack(spacing: 3) {
                                     Text(category.displayName)
-                                        .font(.system(size: 12.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                                        .font(.system(size: 11.0, weight: isSelected ? .bold : .medium, design: .rounded))
                                         .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.60))
 
                                     // Selection bar indicator
                                     Rectangle()
                                         .fill(isSelected ? amberGold : Color.clear)
-                                        .frame(height: 2)
+                                        .frame(height: 1.8)
                                         .cornerRadius(1)
                                 }
-                                .padding(.horizontal, 2)
+                                .padding(.horizontal, 1)
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 2)
                 }
 
                 // Close Drawer Button
@@ -795,69 +808,66 @@ public struct FilmPresetDrawer: View {
                     }
                 }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 19))
+                        .font(.system(size: 17))
                         .foregroundColor(.white.opacity(0.55))
-                        .padding(.trailing, 12)
+                        .padding(.trailing, 10)
                 }
                 .accessibilityLabel("Đóng bảng màu máy ảnh")
             }
 
-            // 2. Filmstrip Camera Cards Reel
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 9) {
-                        ForEach(viewModel.selectedFilmCategory.presets) { preset in
-                            let isSelected = viewModel.selectedFilmPreset == preset
+            // 2. Authentic 35mm Filmstrip Track with Sprockets
+            VStack(spacing: 3) {
+                SprocketPerforationsRow()
 
-                            Button(action: {
-                                viewModel.selectPreset(preset)
-                            }) {
-                                CameraCardView(preset: preset, isSelected: isSelected)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(viewModel.selectedFilmCategory.presets) { preset in
+                                let isSelected = viewModel.selectedFilmPreset == preset
+
+                                Button(action: {
+                                    viewModel.selectPreset(preset)
+                                }) {
+                                    CameraCardView(preset: preset, isSelected: isSelected)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .id(preset.id)
                             }
-                            .buttonStyle(PlainButtonStyle())
-                            .id(preset.id)
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 2)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 4)
+                    .onAppear {
+                        proxy.scrollTo(viewModel.selectedFilmPreset.id, anchor: .center)
+                    }
                 }
-                .onAppear {
-                    proxy.scrollTo(viewModel.selectedFilmPreset.id, anchor: .center)
-                }
-            }
 
-            // 3. Preset Description Subtitle
-            HStack {
-                Text(viewModel.selectedFilmPreset.description)
-                    .font(.system(size: 11, weight: .regular, design: .rounded))
-                    .foregroundColor(.white.opacity(0.70))
-                    .lineLimit(1)
-                Spacer()
+                SprocketPerforationsRow()
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 4)
+            .padding(.vertical, 2)
+            .background(Color.black.opacity(0.40))
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color(red: 0.08, green: 0.09, blue: 0.12).opacity(0.96))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.14), lineWidth: 1.0)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
                 )
-                .shadow(color: Color.black.opacity(0.6), radius: 12, y: 4)
+                .shadow(color: Color.black.opacity(0.6), radius: 10, y: 3)
         )
         .gesture(
             DragGesture(minimumDistance: 15)
                 .onEnded { value in
-                    if value.translation.height > 25 {
+                    if value.translation.height > 20 {
                         withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
                             viewModel.isShowingFilmDrawer = false
                         }
                     }
                 }
         )
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 8)
         .padding(.bottom, 2)
     }
 }

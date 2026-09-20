@@ -1021,6 +1021,147 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
 
     public var isAIFullAuto: Bool { self == .aiFullAuto }
 
+    // MARK: - Live Viewfinder Simulation Properties (Zero-Latency GPU Composition)
+    public var isMonochrome: Bool {
+        switch self {
+        case .acrosBW, .triX400, .leicaMonochrom, .monochromeNoir, .grHighBW:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var liveSaturation: Double {
+        if isMonochrome { return 0.0 }
+        switch category {
+        case .trending:
+            switch self {
+            case .fujiX: return 1.06
+            case .cam1998: return 1.22
+            case .nokia3310: return 0.65
+            case .luxury8800: return 0.95
+            case .kambo: return 1.14
+            case .cpm35: return 1.08
+            default: return 1.05
+            }
+        case .vintagePhone:
+            return 0.86
+        case .fuji:
+            switch self {
+            case .velvia50: return 1.32
+            case .classicChrome: return 0.85
+            case .astia100F: return 0.96
+            default: return 1.05
+            }
+        case .vintageCam:
+            switch self {
+            case .lomoLCA: return 1.28
+            case .toyK: return 1.18
+            default: return 1.06
+            }
+        case .ccd:
+            return 1.24
+        case .kodak:
+            switch self {
+            case .ektar100: return 1.30
+            case .gold200: return 1.20
+            case .portra400: return 1.05
+            default: return 1.12
+            }
+        case .ricoh:
+            switch self {
+            case .grPositive: return 1.22
+            default: return 1.05
+            }
+        case .canon:
+            return 1.12
+        case .dv:
+            return 1.10
+        case .instant:
+            return 0.94
+        case .original:
+            return 1.0
+        }
+    }
+
+    public var liveContrast: Double {
+        switch self {
+        case .monochromeNoir, .grHighBW: return 1.36
+        case .acrosBW, .triX400, .leicaMonochrom: return 1.22
+        case .lomoLCA: return 1.26
+        case .cam1998, .toyK: return 1.18
+        case .velvia50: return 1.20
+        case .nokia3310: return 1.22
+        case .standard: return 1.0
+        default: return 1.06
+        }
+    }
+
+    public var liveBrightness: Double {
+        switch self {
+        case .keitai88, .fujiPro400H: return 0.02
+        case .nokia3310: return 0.04
+        case .luxury8800: return -0.01
+        default: return 0.0
+        }
+    }
+
+    public var liveTintOverlayColor: Color? {
+        if isMonochrome { return nil }
+        switch self {
+        case .fujiX, .fujiPro400H, .classicNeg:
+            return Color(red: 0.38, green: 0.90, blue: 0.78)
+        case .gold200, .colorPlus200, .vintageWarm, .luxury8800:
+            return Color(red: 1.0, green: 0.82, blue: 0.40)
+        case .ccd1Cyber, .blueSKCool, .dCcdWarm:
+            return Color(red: 0.25, green: 0.65, blue: 1.0)
+        case .nokia3310, .keitai88:
+            return Color(red: 0.50, green: 0.85, blue: 0.35)
+        case .cinestill800T:
+            return Color(red: 0.20, green: 0.60, blue: 0.90)
+        case .polaroid600, .sx70TimeZero, .instaxMini:
+            return Color(red: 1.0, green: 0.92, blue: 0.78)
+        case .miniDV43, .hi8Analog, .vhscHome:
+            return Color(red: 0.95, green: 0.80, blue: 0.48)
+        case .standard:
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    public var liveTintOpacity: Double {
+        switch self {
+        case .nokia3310: return 0.18
+        case .gold200, .colorPlus200: return 0.14
+        case .ccd1Cyber, .blueSKCool: return 0.11
+        case .fujiX, .fujiPro400H: return 0.08
+        case .polaroid600, .sx70TimeZero: return 0.10
+        case .miniDV43, .hi8Analog, .vhscHome: return 0.09
+        default: return 0.06
+        }
+    }
+
+    public var liveVignetteIntensity: Double {
+        switch self {
+        case .lomoLCA: return 0.58
+        case .toyK: return 0.45
+        case .cam1998, .cpm35: return 0.32
+        case .polaroid600, .sx70TimeZero: return 0.26
+        case .miniDV43, .hi8Analog: return 0.20
+        default: return 0.0
+        }
+    }
+
+    public var hasScanlines: Bool {
+        switch self {
+        case .miniDV43, .hi8Analog, .vhscHome, .nokia3310:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Danh sách các preset có thể lựa chọn thủ công (loại trừ .aiFullAuto)
     public static var selectablePresets: [FilmPreset] {
         return allCases.filter { !$0.isAIFullAuto }
