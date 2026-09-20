@@ -56,6 +56,7 @@ public enum CameraLogger {
         case tracking = "🎯 TRACKING_6DOF"
         case photoKit = "💾 PHOTOS"
         case ai = "🧠 AI"
+        case motion = "🧭 MOTION"
         case general = "⚙️ SYSTEM"
     }
     
@@ -71,6 +72,7 @@ public enum CameraLogger {
         case .tracking: os_log("%{public}@", log: trackingLog, type: .info, message)
         case .photoKit: os_log("%{public}@", log: photosLog, type: .info, message)
         case .ai: os_log("%{public}@", log: aiLog, type: .info, message)
+        case .motion: os_log("%{public}@", log: trackingLog, type: .info, message)
         case .general: os_log("%{public}@", log: .default, type: .info, message)
         }
         
