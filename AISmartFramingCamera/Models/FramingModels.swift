@@ -457,6 +457,11 @@ public struct AIColorParameters: Sendable {
     /// -0.3 (green) to +0.3 (magenta)
     public var tintShift: CGFloat = 0.0
 
+    // Backward-compatible semantic aliases
+    public var saturationLevel: CGFloat { saturationBoost }
+    public var highlightRecovery: CGFloat { highlightRoll }
+    public var vibranceBoost: CGFloat { saturationBoost - 1.0 }
+
     public init(
         warmthShift: CGFloat,
         saturationBoost: CGFloat,

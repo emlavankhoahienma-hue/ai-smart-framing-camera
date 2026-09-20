@@ -305,12 +305,12 @@ public final class FilmFilterEngine {
 
     // MARK: - 2. Vintage Phone Presets
     private func applyNokiaSymbian(_ input: CIImage) -> CIImage {
-        var out = adjustTempTint(input, targetTemp: 6300, targetTint: -3.5)
+        let out = adjustTempTint(input, targetTemp: 6300, targetTint: -3.5)
         return adjustColor(out, contrast: 1.04, saturation: 0.88, brightness: 0.01)
     }
 
     private func applyMotorolaV3(_ input: CIImage) -> CIImage {
-        var out = adjustTempTint(input, targetTemp: 6350, targetTint: 0.5)
+        let out = adjustTempTint(input, targetTemp: 6350, targetTint: 0.5)
         return adjustColor(out, contrast: 1.16, saturation: 0.96, brightness: 0.01)
     }
 
@@ -675,7 +675,7 @@ public final class FilmFilterEngine {
     }
 
     private func applyLeicaMonochrom(_ input: CIImage) -> CIImage {
-        var out = adjustColor(input, contrast: 1.15, saturation: 0.0)
+        let out = adjustColor(input, contrast: 1.15, saturation: 0.0)
         return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.01), p1: CGPoint(x: 0.25, y: 0.24), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, y: 0.99))
     }
 
