@@ -688,48 +688,33 @@ private struct ScanlineRasterView: View {
 // MARK: - Standby View khi Camera Ngủ Đông (Tiết kiệm CPU/GPU/RAM & Làm Mát Máy)
 struct CameraHibernationStandbyView: View {
     private let canvasBackground = Color(red: 0.035, green: 0.039, blue: 0.051) // #090A0D
-    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         ZStack {
             canvasBackground
                 .ignoresSafeArea()
 
-            VStack(spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [amberGold.opacity(0.18), Color.clear],
-                                center: .center,
-                                startRadius: 10,
-                                endRadius: 55
-                            )
-                        )
-                        .frame(width: 100, height: 100)
-
-                    Circle()
-                        .stroke(amberGold.opacity(0.35), lineWidth: 1.5)
-                        .frame(width: 58, height: 58)
-
-                    Image(systemName: "camera.viewfinder")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundColor(amberGold)
+            VStack(spacing: 12) {
+                if let uiImage = UIImage(named: "AppLogo") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "AppLogo", ofType: "png") ?? "") {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 76, height: 76)
+                } else {
+                    Image("AppLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 76, height: 76)
                 }
 
-                VStack(spacing: 4) {
-                    Text("AlignAI Camera")
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .tracking(0.8)
-                        .foregroundColor(.white)
-
-                    Text("Chế độ tạm nghỉ tiết kiệm pin & làm mát máy")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.48))
-                }
+                Text("AlignAI Camera")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .tracking(0.8)
+                    .foregroundColor(.white)
             }
             .padding(.horizontal, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+

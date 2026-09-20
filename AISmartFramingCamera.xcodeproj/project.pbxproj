@@ -51,6 +51,7 @@
 		C20000000000000000000040 /* TrackingGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000040 /* TrackingGeometry.swift */; };
 		C20000000000000000000041 /* NeuralTargetTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000041 /* NeuralTargetTracker.swift */; };
 		C20000000000000000000042 /* GyroCalibrationSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000042 /* GyroCalibrationSheetView.swift */; };
+		C20000000000000000000043 /* AppLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000043 /* AppLogo.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -100,6 +101,7 @@
 		C10000000000000000000040 /* TrackingGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingGeometry.swift; sourceTree = "<group>"; };
 		C10000000000000000000041 /* NeuralTargetTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralTargetTracker.swift; sourceTree = "<group>"; };
 		C10000000000000000000042 /* GyroCalibrationSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCalibrationSheetView.swift; sourceTree = "<group>"; };
+		C10000000000000000000043 /* AppLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppLogo.png; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -188,6 +190,7 @@
 				B100000000000000000000035 /* nutAI.png */,
 				B100000000000000000000036 /* nuticonbocucAI.png */,
 				B100000000000000000000039 /* nuticonbocuc.png */,
+				C10000000000000000000043 /* AppLogo.png */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -295,6 +298,7 @@
 				B20000000000000000000035 /* nutAI.png in Resources */,
 				B20000000000000000000036 /* nuticonbocucAI.png in Resources */,
 				B20000000000000000000037 /* nuticonbocuc.png in Resources */,
+				C20000000000000000000043 /* AppLogo.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
