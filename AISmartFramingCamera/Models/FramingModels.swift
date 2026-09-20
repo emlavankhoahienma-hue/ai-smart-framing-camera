@@ -1023,11 +1023,9 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
 
     /// Chuỗi catalog mô tả đầy đủ để gửi vào Prompt cho AI
     public static var aiCatalogDescription: String {
-        var catalog = "DANH MỤC 62 BỘ MÀU FILM & MÁY ẢNH RETRO CÓ SẴN (Hãy chọn chính xác 1 preset ID phù hợp nhất):
-"
+        var catalog = "DANH MỤC 62 BỘ MÀU FILM & MÁY ẢNH RETRO CÓ SẴN (Hãy chọn chính xác 1 preset ID phù hợp nhất):\n"
         for p in selectablePresets {
-            catalog += "- "\(p.rawValue)": [\(p.category.rawValue)] \(p.displayName) — \(p.description). Tối ưu cho: \(p.idealScenario)
-"
+            catalog += "- \"\(p.rawValue)\": [\(p.category.rawValue)] \(p.displayName) — \(p.description). Tối ưu cho: \(p.idealScenario)\n"
         }
         return catalog
     }
