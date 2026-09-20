@@ -79,11 +79,12 @@ public struct ARFramingOverlayView: View {
                     .transaction { $0.animation = nil }
 
                     if isDocked {
+                        let angle = atan2(projectedScreen.y - screenCenter.y,
+                                          projectedScreen.x - screenCenter.x)
                         Image(systemName: "arrow.up")
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(.yellow)
-                            .rotationEffect(.radians(atan2(projectedScreen.y - screenCenter.y,
-                                                         projectedScreen.x - screenCenter.x) + .pi / 2))
+                            .rotationEffect(.radians(Double(angle) + Double.pi / 2.0))
                             .position(targetScreen)
                             .accessibilityLabel("Quay camera theo hướng mũi tên để tìm lại mục tiêu")
                             .allowsHitTesting(false)

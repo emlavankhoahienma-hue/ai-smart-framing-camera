@@ -174,7 +174,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             // Establish the template on the actual selected image, not on a later
             // frame captured after the user's hand has moved.
             try? sequence.perform([req], on: source, orientation: sourceOrientation)
-            if let obs = req.results?.first { req.inputObservation = obs }
+            if let obs = req.results?.first as? VNDetectedObjectObservation { req.inputObservation = obs }
         }
         request = req; seedBuffer = nil; pendingSeed = false
     }
@@ -234,7 +234,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         if let request {
             do {
                 try sequence.perform([request], on: buffer, orientation: orientation)
-                if let observation = request.results?.first, observation.confidence >= 0.40 {
+                if let observation = request.results?.first as? VNDetectedObjectObservation, observation.confidence >= 0.40 {
                     let rawBox = observation.boundingBox
                     let rawPoint = point(in: rawBox)
                     let residual = prediction.map { hypot($0.point.x - rawPoint.x, $0.point.y - rawPoint.y) } ?? 0
@@ -311,10 +311,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
                               orientation: CGImagePropertyOrientation) -> VNFeaturePrintObservation? {
         guard let image = crop(buffer, box: box, orientation: orientation) else { return nil }
         let req = VNGenerateImageFeaturePrintRequest()
-        req.revision = VNGenerateImageFeaturePrintRequestRevision2
+        if #available(iOS 17.0, *) {
+            req.revision = VNGenerateImageFeaturePrintRequestRevision2
+        } else {
+            req.revision = VNGenerateImageFeaturePrintRequestRevision1
+        }
         req.imageCropAndScaleOption = .scaleFit
         guard (try? VNImageRequestHandler(cgImage: image, options: [:]).perform([req])) != nil else { return nil }
-        return req.results?.first
+        return req.results?.first as? VNFeaturePrintObservation
     }
 
     private func histogram(_ buffer: CVPixelBuffer, box: CGRect,
