@@ -96,8 +96,8 @@
 		B100000000000000000000037 /* PhotoGallerySheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGallerySheetView.swift; sourceTree = "<group>"; };
 		B100000000000000000000038 /* LuxuryInteractiveGoldButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxuryInteractiveGoldButtonStyle.swift; sourceTree = "<group>"; };
 		B100000000000000000000039 /* nuticonbocuc.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = nuticonbocuc.png; sourceTree = "<group>"; };
-		B100000000000000000000040 /* TrackingGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingGeometry.swift; sourceTree = "<group>"; };
-		B100000000000000000000041 /* NeuralTargetTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralTargetTracker.swift; sourceTree = "<group>"; };
+		B10000000000000000000040 /* TrackingGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingGeometry.swift; sourceTree = "<group>"; };
+		B10000000000000000000041 /* NeuralTargetTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralTargetTracker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -171,8 +171,8 @@
 				B100000000000000000000027 /* FocusPeakingEngine.swift */,
 				B100000000000000000000028 /* ProVideoManualControlsService.swift */,
 				B100000000000000000000031 /* RobustTargetEmbedder.bin */,
-				B100000000000000000000040 /* TrackingGeometry.swift */,
-				B100000000000000000000041 /* NeuralTargetTracker.swift */,
+				B10000000000000000000040 /* TrackingGeometry.swift */,
+				B10000000000000000000041 /* NeuralTargetTracker.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
