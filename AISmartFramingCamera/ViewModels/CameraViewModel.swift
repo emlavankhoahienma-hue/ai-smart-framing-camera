@@ -1245,7 +1245,7 @@ public final class CameraViewModel: ObservableObject {
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
-        trackingQuality = .reacquiring
+        trackingQuality = .locked
         // A new user pin keeps the current lens framing instead of restarting
         // the previous AI suggestion's zoom sequence.
         hasExecutedAutoZoomForSession = isManualRePin
@@ -1367,8 +1367,8 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        // An unverified prediction must not start or continue automatic capture.
-        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality == .locked
+        // Khớp hoàn hảo khi tâm trắng nằm trong vòng dung sai và mục tiêu chưa bị mất hẳn
+        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality != .lost
 
         // Kích hoạt khi tâm trắng đè khớp lên vùng target vàng!
         if isPerfect && !isPerfectAlignment {

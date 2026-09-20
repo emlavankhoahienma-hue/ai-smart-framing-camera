@@ -98,8 +98,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             generation &+= 1; active = true; worldRay = nil
             updateZoomFactor(zoom)
             pinTime = timestamp; pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
-            lastAccepted = -Double.infinity; lastProcessed = -Double.infinity
-            confidence = 0; estimated = screenPoint; pendingOutput = nil
+            lastAccepted = timestamp; lastProcessed = timestamp
+            confidence = 1.0; estimated = screenPoint; pendingOutput = nil
             resolvePin()
             publish()
         }
@@ -162,7 +162,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             lastProcessed = frame.timestamp
             guard let point, point.x.isFinite, point.y.isFinite,
                   (0...1).contains(point.x), (0...1).contains(point.y), value.isFinite,
-                  value >= max(threshold, lowTexture ? 0.65 : 0.35),
+                  value >= max(threshold, lowTexture ? 0.50 : 0.25),
                   let pose = TrackingGeometry.pose(at: frame.timestamp, in: history) else {
                 publish(); return
             }
@@ -206,9 +206,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 estimated = raw
             }
             let age = now - lastAccepted
-            quality = projected.isInsideImage && age < 0.50 ? .locked :
+            quality = projected.isInsideImage && age < 1.50 ? .locked :
                 (projected.isInsideImage ? .reacquiring : .predicting)
-            outputConfidence = age < 0.50 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
+            outputConfidence = age < 1.50 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
         }
         // No timeout deletes worldRay or appearance. Only explicit stop/re-pin.
         pendingOutput = (estimated, outputConfidence, quality, generation)

@@ -447,7 +447,7 @@ struct TargetCircleView: View {
             .scaleEffect(isAligned ? 1.15 : 1.0)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
 
-            if trackingQuality == .reacquiring {
+            if trackingQuality == .reacquiring && !isAligned {
                 Text("Đang tìm lại mục tiêu…")
                     .font(.system(size: 9, weight: .bold, design: .rounded))
                     .foregroundColor(.orange)
