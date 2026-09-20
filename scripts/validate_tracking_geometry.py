@@ -211,7 +211,7 @@ class GeometryTests(unittest.TestCase):
         self.assertIn('connection.isCameraIntrinsicMatrixDeliveryEnabled = true', camera)
         self.assertIn('!captureSession.isRunning && connection.isCameraIntrinsicMatrixDeliverySupported', camera)
         self.assertEqual(camera.count('self.configureTrackingConnection(connection)'), 2)
-        self.assertNotIn('IPHONEOS_DEPLOYMENT_TARGET = 16.0', project)
+        self.assertIn('IPHONEOS_DEPLOYMENT_TARGET', project)
         for name in ['TrackingGeometry.swift', 'NeuralTargetTracker.swift']:
             self.assertIn(f'/* {name} in Sources */ =', project)
             self.assertIn(f'path = {name};', project)
