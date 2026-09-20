@@ -129,6 +129,18 @@ public final class FilmFilterEngine {
         }
     }
 
+    // MARK: - Subtle AI Sharpness
+    public func applySubtleAISharpness(to image: CGImage, intensity: Float = 0.50) -> CGImage? {
+        let ciImage = CIImage(cgImage: image)
+        guard let filter = CIFilter(name: "CISharpenLuminance") else {
+            return image
+        }
+        filter.setValue(ciImage, forKey: kCIInputImageKey)
+        filter.setValue(intensity, forKey: kCIInputSharpnessKey)
+        guard let output = filter.outputImage else { return image }
+        return context.createCGImage(output, from: output.extent)
+    }
+
     // MARK: - Combined Preset & AI Tone Mapping Pipeline
     public func applyPresetAndAIParameters(to image: CGImage, preset: FilmPreset, params: AIColorParameters?) -> CGImage? {
         var currentImage = image
@@ -254,27 +266,27 @@ public final class FilmFilterEngine {
     private func applyFujiX(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6350, targetTint: -2.0)
         out = adjustColor(out, contrast: 1.14, saturation: 0.94)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.5), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, 0.98))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.5), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, y: 0.98))
         return adjustVignette(out, intensity: 0.25, radius: 2.0)
     }
 
     private func apply1998Cam(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 7050, targetTint: 4.5)
         out = adjustColor(out, contrast: 1.08, saturation: 1.15, brightness: 0.02)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.05), p1: CGPoint(x: 0.25, y: 0.26), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, 0.96))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.05), p1: CGPoint(x: 0.25, y: 0.26), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, y: 0.96))
         return adjustVignette(out, intensity: 0.35, radius: 1.8)
     }
 
     private func applyNokia3310(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6200, targetTint: -6.0)
         out = adjustColor(out, contrast: 1.06, saturation: 0.84, brightness: 0.02)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.08), p1: CGPoint(x: 0.25, y: 0.30), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.72), p4: CGPoint(x: 1.0, 0.92))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.08), p1: CGPoint(x: 0.25, y: 0.30), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.72), p4: CGPoint(x: 1.0, y: 0.92))
     }
 
     private func applyLuxury8800(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6850, targetTint: 2.0)
         out = adjustColor(out, contrast: 1.15, saturation: 1.08)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.23), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, 0.99))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.23), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, y: 0.99))
         return adjustVignette(out, intensity: 0.22, radius: 2.2)
     }
 
@@ -305,13 +317,13 @@ public final class FilmFilterEngine {
     private func applyIPhone3GS(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6900, targetTint: 3.0)
         out = adjustColor(out, contrast: 1.05, saturation: 1.08, brightness: 0.02)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.27), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.74), p4: CGPoint(x: 1.0, 0.98))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.27), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.74), p4: CGPoint(x: 1.0, y: 0.98))
     }
 
     private func applyBlackberryQ10(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6150, targetTint: -1.5)
         out = adjustColor(out, contrast: 1.18, saturation: 0.92)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, 1.0))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, y: 1.0))
     }
 
     private func applyKeitai88(_ input: CIImage) -> CIImage {
@@ -331,14 +343,14 @@ public final class FilmFilterEngine {
     private func applyClassicChrome(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6420, targetTint: -1.5)
         out = adjustColor(out, contrast: 1.14, saturation: 0.88)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, 0.98))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, y: 0.98))
     }
 
     private func applyFujiPro400H(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6380, targetTint: -3.0)
         out = adjustColor(out, contrast: 1.02, saturation: 1.03)
         out = adjustVibrance(out, amount: 0.08)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.26), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.75), p4: CGPoint(x: 1.0, 0.98))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.26), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.75), p4: CGPoint(x: 1.0, y: 0.98))
     }
 
     private func applyVelvia50(_ input: CIImage) -> CIImage {
@@ -350,19 +362,19 @@ public final class FilmFilterEngine {
     private func applyClassicNeg(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6380, targetTint: 1.5)
         out = adjustColor(out, contrast: 1.18, saturation: 0.92)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.21), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, 0.97))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.21), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, y: 0.97))
     }
 
     private func applyAstia100F(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6520, targetTint: -1.0)
         out = adjustColor(out, contrast: 1.02, saturation: 1.05)
         out = adjustVibrance(out, amount: 0.06)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.26), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, 0.99))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.26), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, y: 0.99))
     }
 
     private func applyAcrosBW(_ input: CIImage) -> CIImage {
         let out = adjustColor(input, contrast: 1.22, saturation: 0.0)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.79), p4: CGPoint(x: 1.0, 1.0))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.79), p4: CGPoint(x: 1.0, y: 1.0))
     }
 
     // MARK: - 4. Vintage Cam Presets
@@ -395,7 +407,7 @@ public final class FilmFilterEngine {
     private func applyCineStill800T(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6100, targetTint: -4.0)
         out = adjustColor(out, contrast: 1.16, saturation: 1.14)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, 0.98))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, y: 0.98))
         return adjustVignette(out, intensity: 0.20, radius: 2.0)
     }
 
@@ -441,7 +453,7 @@ public final class FilmFilterEngine {
         var out = adjustExposure(input, ev: 0.15)
         out = adjustTempTint(out, targetTemp: 6450, targetTint: 1.0)
         out = adjustColor(out, contrast: 1.26, saturation: 1.12)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.20), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.82), p4: CGPoint(x: 1.0, 1.0))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.20), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.82), p4: CGPoint(x: 1.0, y: 1.0))
     }
 
     // MARK: - 6. Kodak Presets
@@ -455,13 +467,13 @@ public final class FilmFilterEngine {
         var out = adjustTempTint(input, targetTemp: 7250, targetTint: 3.8)
         out = adjustColor(out, contrast: 1.10, saturation: 1.20)
         out = adjustVibrance(out, amount: 0.16)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.26), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, 0.98))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.26), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, y: 0.98))
     }
 
     private func applyColorPlus200(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 7100, targetTint: 2.2)
         out = adjustColor(out, contrast: 1.08, saturation: 1.08)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.27), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.75), p4: CGPoint(x: 1.0, 0.96))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.27), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.75), p4: CGPoint(x: 1.0, y: 0.96))
     }
 
     private func applyEktar100(_ input: CIImage) -> CIImage {
@@ -472,13 +484,13 @@ public final class FilmFilterEngine {
 
     private func applyTriX400(_ input: CIImage) -> CIImage {
         let out = adjustColor(input, contrast: 1.28, saturation: 0.0)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.20), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.80), p4: CGPoint(x: 1.0, 1.0))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.20), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.80), p4: CGPoint(x: 1.0, y: 1.0))
     }
 
     private func applyVision3500D(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6720, targetTint: 0.8)
         out = adjustColor(out, contrast: 1.10, saturation: 1.10)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.24), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, 0.97))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.24), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, y: 0.97))
         return adjustVignette(out, intensity: 0.20, radius: 2.2)
     }
 
@@ -487,18 +499,18 @@ public final class FilmFilterEngine {
         var out = adjustTempTint(input, targetTemp: 6400, targetTint: -1.0)
         out = adjustColor(out, contrast: 1.24, saturation: 1.18)
         out = adjustVibrance(out, amount: 0.16)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.01), p1: CGPoint(x: 0.25, y: 0.20), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.80), p4: CGPoint(x: 1.0, 1.0))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.01), p1: CGPoint(x: 0.25, y: 0.20), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.80), p4: CGPoint(x: 1.0, y: 1.0))
     }
 
     private func applyGRHighBW(_ input: CIImage) -> CIImage {
         let out = adjustColor(input, contrast: 1.50, saturation: 0.0)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.15), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.85), p4: CGPoint(x: 1.0, 1.0))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.15), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.85), p4: CGPoint(x: 1.0, y: 1.0))
     }
 
     private func applyGRFFilm(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6550, targetTint: 0.0)
         out = adjustColor(out, contrast: 1.14, saturation: 1.04)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.24), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, 0.99))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.24), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, y: 0.99))
     }
 
     private func applyGRStreetSnap(_ input: CIImage) -> CIImage {
@@ -515,7 +527,7 @@ public final class FilmFilterEngine {
     private func applyThetaDoc(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6650, targetTint: 1.5)
         out = adjustColor(out, contrast: 1.05, saturation: 0.95)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.06), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.74), p4: CGPoint(x: 1.0, 0.95))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.06), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.74), p4: CGPoint(x: 1.0, y: 0.95))
     }
 
     // MARK: - 8. Canon Presets
@@ -535,7 +547,7 @@ public final class FilmFilterEngine {
     private func applyEOS5DClassic(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6680, targetTint: 1.2)
         out = adjustColor(out, contrast: 1.06, saturation: 1.10)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.25), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, 0.99))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.25), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, y: 0.99))
     }
 
     private func applySureShot35(_ input: CIImage) -> CIImage {
@@ -558,13 +570,13 @@ public final class FilmFilterEngine {
     private func applyMiniDV43(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6300, targetTint: -2.5)
         out = adjustColor(out, contrast: 1.08, saturation: 0.92, brightness: 0.02)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.74), p4: CGPoint(x: 1.0, 0.96))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.74), p4: CGPoint(x: 1.0, y: 0.96))
     }
 
     private func applyHi8Analog(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6850, targetTint: 2.0)
         out = adjustColor(out, contrast: 1.06, saturation: 0.96, brightness: 0.03)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.06), p1: CGPoint(x: 0.25, y: 0.30), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.73), p4: CGPoint(x: 1.0, 0.94))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.06), p1: CGPoint(x: 0.25, y: 0.30), p2: CGPoint(x: 0.5, y: 0.51), p3: CGPoint(x: 0.75, y: 0.73), p4: CGPoint(x: 1.0, y: 0.94))
     }
 
     private func applyDCRDVD(_ input: CIImage) -> CIImage {
@@ -575,13 +587,13 @@ public final class FilmFilterEngine {
     private func applyDVX10024p(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6650, targetTint: 0.5)
         out = adjustColor(out, contrast: 1.16, saturation: 1.04)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, 0.98))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.22), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, y: 0.98))
     }
 
     private func applyVHSCHome(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6950, targetTint: 3.0)
         out = adjustColor(out, contrast: 1.05, saturation: 1.08, brightness: 0.04)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.08), p1: CGPoint(x: 0.25, y: 0.32), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.72), p4: CGPoint(x: 1.0, 0.92))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.08), p1: CGPoint(x: 0.25, y: 0.32), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.72), p4: CGPoint(x: 1.0, y: 0.92))
     }
 
     private func applyHDV1080i(_ input: CIImage) -> CIImage {
@@ -600,7 +612,7 @@ public final class FilmFilterEngine {
     private func applySX70TimeZero(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 7200, targetTint: 4.0)
         out = adjustColor(out, contrast: 1.05, saturation: 1.12)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.05), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.52), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, 0.96))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.05), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.52), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, y: 0.96))
         return adjustVignette(out, intensity: 0.30, radius: 1.9)
     }
 
@@ -630,7 +642,7 @@ public final class FilmFilterEngine {
 
     // MARK: - 11. Original Presets
     private func applyStudioNatural(_ input: CIImage) -> CIImage {
-        var out = adjustColor(input, contrast: 1.03, saturation: 1.02)
+        let out = adjustColor(input, contrast: 1.03, saturation: 1.02)
         return adjustVibrance(out, amount: 0.06)
     }
 
@@ -651,31 +663,31 @@ public final class FilmFilterEngine {
         var out = adjustExposure(input, ev: 0.15)
         out = adjustTempTint(out, targetTemp: 6350, targetTint: -4.0)
         out = adjustColor(out, contrast: 0.98, saturation: 1.06)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.52), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, 0.98))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.04), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.52), p3: CGPoint(x: 0.75, y: 0.77), p4: CGPoint(x: 1.0, y: 0.98))
         return adjustVibrance(out, amount: 0.12)
     }
 
     private func applyHKCinema90s(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6850, targetTint: -5.0)
         out = adjustColor(out, contrast: 1.18, saturation: 1.15)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.21), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.79), p4: CGPoint(x: 1.0, 0.97))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.21), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.79), p4: CGPoint(x: 1.0, y: 0.97))
         return adjustVignette(out, intensity: 0.35, radius: 1.8)
     }
 
     private func applyLeicaMonochrom(_ input: CIImage) -> CIImage {
         var out = adjustColor(input, contrast: 1.15, saturation: 0.0)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.01), p1: CGPoint(x: 0.25, y: 0.24), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, 0.99))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.01), p1: CGPoint(x: 0.25, y: 0.24), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.78), p4: CGPoint(x: 1.0, y: 0.99))
     }
 
     private func applyMonochromeNoir(_ input: CIImage) -> CIImage {
         let out = adjustColor(input, contrast: 1.35, saturation: 0.0)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.18), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.82), p4: CGPoint(x: 1.0, 1.0))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.0), p1: CGPoint(x: 0.25, y: 0.18), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.82), p4: CGPoint(x: 1.0, y: 1.0))
     }
 
     private func applyVintageWarm(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 7300, targetTint: 5.0)
         out = adjustColor(out, contrast: 1.05, saturation: 1.12)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.06), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.73), p4: CGPoint(x: 1.0, 0.94))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.06), p1: CGPoint(x: 0.25, y: 0.28), p2: CGPoint(x: 0.5, y: 0.50), p3: CGPoint(x: 0.75, y: 0.73), p4: CGPoint(x: 1.0, y: 0.94))
         return adjustVignette(out, intensity: 0.28, radius: 1.9)
     }
 
@@ -688,13 +700,13 @@ public final class FilmFilterEngine {
     private func applyNordicCold(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 5800, targetTint: -3.0)
         out = adjustColor(out, contrast: 1.14, saturation: 0.85)
-        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.23), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, 0.98))
+        return adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.02), p1: CGPoint(x: 0.25, y: 0.23), p2: CGPoint(x: 0.5, y: 0.49), p3: CGPoint(x: 0.75, y: 0.76), p4: CGPoint(x: 1.0, y: 0.98))
     }
 
     private func applyNeonCyberpunk(_ input: CIImage) -> CIImage {
         var out = adjustTempTint(input, targetTemp: 6200, targetTint: 8.0)
         out = adjustColor(out, contrast: 1.25, saturation: 1.35)
-        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.20), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.82), p4: CGPoint(x: 1.0, 0.98))
+        out = adjustToneCurve(out, p0: CGPoint(x: 0, y: 0.03), p1: CGPoint(x: 0.25, y: 0.20), p2: CGPoint(x: 0.5, y: 0.48), p3: CGPoint(x: 0.75, y: 0.82), p4: CGPoint(x: 1.0, y: 0.98))
         return adjustVignette(out, intensity: 0.40, radius: 1.6)
     }
 }
