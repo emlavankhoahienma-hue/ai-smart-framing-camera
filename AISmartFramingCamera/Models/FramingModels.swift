@@ -1065,7 +1065,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
             switch self {
             case .ektar100: return 1.30
             case .gold200: return 1.20
-            case .portra400: return 1.05
+            case .kodakPortra400: return 1.05
             default: return 1.12
             }
         case .ricoh:
