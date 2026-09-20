@@ -9,6 +9,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 private struct CameraFrameProcessingConfiguration: Sendable {
+    var isHibernating = false
     var isSettingsVisible = false
     var isFocusPeakingEnabled = false
     var focusPeakingColor: FocusPeakingColor = .green
@@ -37,6 +38,13 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         stateLock.unlock()
     }
 
+    func clearBuffers() {
+        stateLock.lock()
+        latestPixelBuffer = nil
+        latestFrameContext = nil
+        stateLock.unlock()
+    }
+
     func latestPixelBufferSnapshot() -> CVPixelBuffer? {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -51,6 +59,14 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     }
 
     func process(_ sampleBuffer: CMSampleBuffer) {
+        stateLock.lock()
+        let snapshot = configuration
+        stateLock.unlock()
+
+        // Zero-Cost Gate: Khi đang ngủ đông (mở Cài đặt, Bố cục, Thư viện, Chi tiết ảnh, Xem video, hoặc ẩn nền),
+        // lập tức thoát ngay mà không chạy bất kỳ tác vụ AI Vision, YOLO, Optical Flow, Histogram hay Peaking nào!
+        guard !snapshot.isHibernating else { return }
+
         // CameraService invokes this method on its serial videoDataQueue. Processing
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
         // another concurrency boundary.
@@ -62,7 +78,6 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         latestPixelBuffer = pixelBuffer
         latestFrameContext = TrackingFrameContext.read(sampleBuffer,
             zoom: SpatialTrackingEngine.shared.currentDisplayZoom)
-        let snapshot = configuration
         stateLock.unlock()
 
         guard !snapshot.isSettingsVisible else { return }
@@ -176,7 +191,9 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var isRecordingVideo: Bool = false
     @Published public var recordedVideoURL: URL? = nil
-    @Published public var isShowingVideoPreview: Bool = false
+    @Published public var isShowingVideoPreview: Bool = false {
+        didSet { updateCameraHibernationState() }
+    }
 
     // Video Duration & Resolution Stats (Mặc định 00:00:00, Đọc từ cài đặt hệ thống Camera iOS)
     @Published public var videoRecordingTimeString: String = "00:00:00"
@@ -235,7 +252,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var lastGyroCalibrationDate: Date? = nil {
         didSet { UserDefaults.standard.set(lastGyroCalibrationDate?.timeIntervalSince1970, forKey: "lastGyroCalibrationDate") }
     }
-    @Published public var isShowingGyroCalibration: Bool = false
+    @Published public var isShowingGyroCalibration: Bool = false {
+        didSet { updateCameraHibernationState() }
+    }
     private let horizonMotionManager = CMMotionManager()
     private var hasTriggeredLevelHaptic: Bool = false
 
@@ -420,13 +439,17 @@ public final class CameraViewModel: ObservableObject {
 
     // Capture & Review
     @Published public var latestCapturedPhoto: CapturedPhotoItem?
-    @Published public var isShowingPhotoDetail: Bool = false
-    @Published public var isShowingGallerySheet: Bool = false
+    @Published public var isShowingPhotoDetail: Bool = false {
+        didSet { updateCameraHibernationState() }
+    }
+    @Published public var isShowingGallerySheet: Bool = false {
+        didSet { updateCameraHibernationState() }
+    }
     @Published public var latestAlbumThumbnail: UIImage? = nil
     @Published public var isShowingSettings: Bool = false {
         didSet {
             if isShowingSettings { focusPeakingCGImage = nil }
-            updateFrameProcessingConfiguration()
+            updateCameraHibernationState()
         }
     }
     @Published public var isShowingFilmDrawer: Bool = false
@@ -435,6 +458,46 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeFlashMode2: Bool = false
     @Published public var autoCaptureCountdown: Int = 0
     @Published public var currentAIColorParams: AIColorParameters? = nil
+
+    // MARK: - Smart Camera Hibernation (Ngủ đông thông minh tiết kiệm CPU/GPU/RAM)
+    @Published public var isCameraHibernating: Bool = false
+    @Published public var isAppInBackground: Bool = false
+
+    public func updateCameraHibernationState() {
+        let shouldHibernate = isShowingSettings
+            || isShowingGyroCalibration
+            || isCompositionRuleSheetPresented
+            || isShowingPhotoDetail
+            || isShowingGallerySheet
+            || isShowingVideoPreview
+            || isAppInBackground
+
+        guard shouldHibernate != isCameraHibernating else { return }
+        isCameraHibernating = shouldHibernate
+
+        if shouldHibernate {
+            // 1. Khi mở màn hình che khuất camera, hủy phiên tracking hiện tại theo yêu cầu
+            if isAISessionActive || currentTargetPoint != nil {
+                cancelAISession()
+            }
+            // 2. Giải phóng bộ nhớ đồ họa tạm
+            focusPeakingCGImage = nil
+            frameProcessor.clearBuffers()
+            updateFrameProcessingConfiguration()
+            CameraLogger.info("Camera chuyển sang chế độ ngủ đông (Standby: 0% CPU/AI)", category: .general)
+        } else {
+            // Waking up
+            updateFrameProcessingConfiguration()
+            CameraLogger.info("Camera thức dậy, khôi phục pipeline 60fps tức thì", category: .general)
+        }
+    }
+
+    public func handleScenePhaseChange(_ phase: ScenePhase) {
+        let isBg = (phase == .background)
+        if isAppInBackground != isBg {
+            isAppInBackground = isBg
+        }
+    }
 
     // MARK: - Quiet Pro Camera User Settings
     @Published public var isAutoCaptureOnAlignEnabled: Bool = true {
@@ -464,7 +527,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isGuidanceRayEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isGuidanceRayEnabled, forKey: "isGuidanceRayEnabled") }
     }
-    @Published public var isCompositionRuleSheetPresented: Bool = false
+    @Published public var isCompositionRuleSheetPresented: Bool = false {
+        didSet { updateCameraHibernationState() }
+    }
 
     // Engine Source Indicator
     @Published public var activeEngineSource: AIEngineSource? = nil
@@ -650,6 +715,7 @@ public final class CameraViewModel: ObservableObject {
     private func updateFrameProcessingConfiguration() {
         frameProcessor.updateConfiguration(
             CameraFrameProcessingConfiguration(
+                isHibernating: isCameraHibernating,
                 isSettingsVisible: isShowingSettings,
                 isFocusPeakingEnabled: isFocusPeakingEnabled,
                 focusPeakingColor: focusPeakingColor
@@ -1933,7 +1999,7 @@ public final class CameraViewModel: ObservableObject {
         guard horizonMotionManager.isDeviceMotionAvailable else { return }
         horizonMotionManager.deviceMotionUpdateInterval = 1.0 / 30.0
         horizonMotionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: OperationQueue.main) { [weak self] (motion: CMDeviceMotion?, error: Error?) in
-            guard let self = self, let motion = motion, self.isHorizonLevelerEnabled, !self.isShowingSettings else { return }
+            guard let self = self, let motion = motion, self.isHorizonLevelerEnabled, !self.isCameraHibernating else { return }
             let gx = Double(motion.gravity.x)
             let gy = Double(motion.gravity.y)
             let rawRoll = atan2(gx, -gy) * 180.0 / .pi
