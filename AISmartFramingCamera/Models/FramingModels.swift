@@ -507,49 +507,257 @@ public enum FramingAlignmentState: Equatable {
     }
 }
 
-// MARK: - Film Simulation Presets
+// MARK: - Film Preset Categories (11 Nhóm theo Storyboard & Máy ảnh Retro)
+public enum FilmPresetCategory: String, CaseIterable, Identifiable, Sendable {
+    case trending = "Trending"
+    case vintagePhone = "Vintage phone"
+    case fuji = "Fuji"
+    case vintageCam = "Vintage cam"
+    case ccd = "CCD"
+    case kodak = "Kodak"
+    case ricoh = "Ricoh"
+    case canon = "Canon"
+    case dv = "DV"
+    case instant = "Instant"
+    case original = "Original"
+
+    public var id: String { rawValue }
+
+    public var displayName: String { rawValue }
+
+    public var defaultIconSF: String {
+        switch self {
+        case .trending: return "flame.fill"
+        case .vintagePhone: return "phone.fill"
+        case .fuji: return "camera.fill"
+        case .vintageCam: return "camera.metering.matrix"
+        case .ccd: return "camera.aperture"
+        case .kodak: return "film.fill"
+        case .ricoh: return "viewfinder"
+        case .canon: return "camera.viewfinder"
+        case .dv: return "video.fill"
+        case .instant: return "photo.fill"
+        case .original: return "sparkles"
+        }
+    }
+
+    public var presets: [FilmPreset] {
+        FilmPreset.selectablePresets.filter { $0.category == self }
+    }
+}
+
+// MARK: - Film Simulation Presets (62 Tone Màu Đỉnh Cao)
 public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
-    case standard = "Standard Clean"
-    case fujiPro400H = "Fuji Pro 400H"
-    case kodakPortra400 = "Kodak Portra 400"
+    // 1. Trending (6 tones)
+    case fujiX = "FUJI X"
+    case cam1998 = "1998"
+    case nokia3310 = "NOKIA"
+    case luxury8800 = "8800"
+    case kambo = "Kambo"
+    case cpm35 = "CPM35"
+
+    // 2. Vintage phone (6 tones)
+    case nokiaSymbian = "Nokia Symbian"
+    case motorolaV3 = "Motorola V3"
+    case iphone3GS = "iPhone 3GS"
+    case blackberryQ10 = "Blackberry Q10"
+    case keitai88 = "Keitai 88"
+    case sonyK800i = "Sony K800"
+
+    // 3. Fuji (6 tones)
     case classicChrome = "Classic Chrome"
-    case cinemaTealOrange = "Teal & Orange"
+    case fujiPro400H = "Fuji Pro 400H"
     case velvia50 = "Fuji Velvia 50"
+    case classicNeg = "Classic Neg"
+    case astia100F = "Astia 100F"
+    case acrosBW = "Neopan Acros"
+
+    // 4. Vintage cam (6 tones)
+    case lomoLCA = "LOMO LC-A"
+    case medium120LG = "120LG"
+    case fxn35 = "FXN 35"
+    case toyK = "Toy K"
+    case cinestill800T = "CineStill 800T"
+    case cam1998Street = "1998 Street"
+
+    // 5. CCD (6 tones)
+    case ccd1Cyber = "CCD1"
+    case dCcdWarm = "D-CCD"
+    case blueSKCool = "BlueSK"
+    case mangaCam = "MangaCam"
+    case gCcdGold = "G-CCD"
+    case instaLiteFlash = "InstaLite"
+
+    // 6. Kodak (6 tones)
+    case kodakPortra400 = "Kodak Portra 400"
+    case gold200 = "Kodak Gold 200"
+    case colorPlus200 = "Kodak ColorPlus"
+    case ektar100 = "Kodak Ektar 100"
+    case triX400 = "Kodak Tri-X 400"
+    case vision3500D = "Kodak 500D"
+
+    // 7. Ricoh (6 tones)
+    case grPositive = "GR3 Positive"
+    case grHighBW = "GR High-B&W"
+    case grFFilm = "GR F"
+    case grStreetSnap = "GR Street"
+    case caplioR = "Caplio R"
+    case thetaDoc = "Theta Doc"
+
+    // 8. Canon (6 tones)
+    case powershotG = "PowerShot G"
+    case ixusY2K = "Canon IXUS"
+    case eos5DClassic = "Canon EOS 5D"
+    case sureShot35 = "Canon SureShot"
+    case canonF1 = "Canon F-1"
+    case powershotPro1 = "Canon Pro1"
+
+    // 9. DV (6 tones)
+    case miniDV43 = "MiniDV 4:3"
+    case hi8Analog = "Hi8"
+    case dcrDVD = "DCR-DVD"
+    case dvx10024p = "DVX100"
+    case vhscHome = "VHS-C"
+    case hdv1080i = "HDV 1080i"
+
+    // 10. Instant (6 tones)
+    case polaroid600 = "POLA 600"
+    case sx70TimeZero = "SX-70"
+    case instaxMini = "MINI 7"
+    case instaxWide = "WIDE 300"
+    case instaxSquare = "SQ10"
+    case polaroidSpectra = "Spectra"
+
+    // 11. Original (2 tones)
+    case standard = "Original Clean"
+    case studioNatural = "Studio Natural"
+
+    // Legacy Compatibility Cases
+    case cinemaTealOrange = "Teal & Orange"
     case sunsetGlow = "Sunset Glow"
     case tokyoAiry = "Tokyo Clean"
     case hkCinema90s = "HK Cinema 90s"
-    case cinestill800T = "CineStill 800T"
     case leicaMonochrom = "Leica Monochrom"
     case monochromeNoir = "Noir High Contrast"
-    case triX400 = "Kodak Tri-X 400"
     case vintageWarm = "Vintage Warm 70s"
     case streetClassic = "Street Classic"
     case nordicCold = "Nordic Minimal"
-    case ektar100 = "Kodak Ektar 100"
     case neonCyberpunk = "Cyberpunk Night"
     case aiFullAuto = "AI Full Auto Color"
 
     public var id: String { rawValue }
 
+    public var category: FilmPresetCategory {
+        switch self {
+        case .fujiX, .cam1998, .nokia3310, .luxury8800, .kambo, .cpm35, .cinemaTealOrange, .sunsetGlow:
+            return .trending
+        case .nokiaSymbian, .motorolaV3, .iphone3GS, .blackberryQ10, .keitai88, .sonyK800i:
+            return .vintagePhone
+        case .classicChrome, .fujiPro400H, .velvia50, .classicNeg, .astia100F, .acrosBW, .tokyoAiry:
+            return .fuji
+        case .lomoLCA, .medium120LG, .fxn35, .toyK, .cinestill800T, .cam1998Street, .vintageWarm:
+            return .vintageCam
+        case .ccd1Cyber, .dCcdWarm, .blueSKCool, .mangaCam, .gCcdGold, .instaLiteFlash:
+            return .ccd
+        case .kodakPortra400, .gold200, .colorPlus200, .ektar100, .triX400, .vision3500D:
+            return .kodak
+        case .grPositive, .grHighBW, .grFFilm, .grStreetSnap, .caplioR, .thetaDoc, .streetClassic:
+            return .ricoh
+        case .powershotG, .ixusY2K, .eos5DClassic, .sureShot35, .canonF1, .powershotPro1:
+            return .canon
+        case .miniDV43, .hi8Analog, .dcrDVD, .dvx10024p, .vhscHome, .hdv1080i, .hkCinema90s:
+            return .dv
+        case .polaroid600, .sx70TimeZero, .instaxMini, .instaxWide, .instaxSquare, .polaroidSpectra:
+            return .instant
+        case .standard, .studioNatural, .leicaMonochrom, .monochromeNoir, .nordicCold, .neonCyberpunk, .aiFullAuto:
+            return .original
+        }
+    }
+
     public var displayName: String {
         switch self {
-        case .standard: return "Tự nhiên"
-        case .fujiPro400H: return "Fuji Pastel"
-        case .kodakPortra400: return "Portra Ấm"
+        case .fujiX: return "Fuji X100"
+        case .cam1998: return "1998 Cam"
+        case .nokia3310: return "Nokia 3310"
+        case .luxury8800: return "Nokia 8800"
+        case .kambo: return "Kambo Snap"
+        case .cpm35: return "Canon CPM35"
+
+        case .nokiaSymbian: return "Nokia Classic"
+        case .motorolaV3: return "Motorola V3"
+        case .iphone3GS: return "iPhone 3GS"
+        case .blackberryQ10: return "Blackberry"
+        case .keitai88: return "Keitai 88"
+        case .sonyK800i: return "Sony K800i"
+
         case .classicChrome: return "Classic Chrome"
+        case .fujiPro400H: return "Fuji Pro 400H"
+        case .velvia50: return "Velvia 50"
+        case .classicNeg: return "Classic Neg"
+        case .astia100F: return "Astia 100F"
+        case .acrosBW: return "Neopan Acros"
+
+        case .lomoLCA: return "LOMO LC-A"
+        case .medium120LG: return "120 Medium"
+        case .fxn35: return "Fujica FXN"
+        case .toyK: return "Toy Camera"
+        case .cinestill800T: return "CineStill 800T"
+        case .cam1998Street: return "90s Street"
+
+        case .ccd1Cyber: return "Sony CCD1"
+        case .dCcdWarm: return "D-CCD Warm"
+        case .blueSKCool: return "BlueSK Cool"
+        case .mangaCam: return "MangaCam"
+        case .gCcdGold: return "G-CCD Gold"
+        case .instaLiteFlash: return "InstaLite"
+
+        case .kodakPortra400: return "Portra 400"
+        case .gold200: return "Kodak Gold"
+        case .colorPlus200: return "ColorPlus"
+        case .ektar100: return "Ektar 100"
+        case .triX400: return "Tri-X 400"
+        case .vision3500D: return "Vision3 500D"
+
+        case .grPositive: return "GR3 Positive"
+        case .grHighBW: return "GR High B&W"
+        case .grFFilm: return "Ricoh GR1"
+        case .grStreetSnap: return "GR Street"
+        case .caplioR: return "Caplio R"
+        case .thetaDoc: return "Ricoh Doc"
+
+        case .powershotG: return "PowerShot G"
+        case .ixusY2K: return "Canon IXUS"
+        case .eos5DClassic: return "EOS 5D"
+        case .sureShot35: return "SureShot 35"
+        case .canonF1: return "Canon F-1"
+        case .powershotPro1: return "PowerShot Pro"
+
+        case .miniDV43: return "MiniDV 4:3"
+        case .hi8Analog: return "Hi8 Analog"
+        case .dcrDVD: return "DCR-DVD"
+        case .dvx10024p: return "DVX100 24p"
+        case .vhscHome: return "VHS-C Home"
+        case .hdv1080i: return "HDV 1080i"
+
+        case .polaroid600: return "Polaroid 600"
+        case .sx70TimeZero: return "SX-70 Time"
+        case .instaxMini: return "Instax Mini"
+        case .instaxWide: return "Instax Wide"
+        case .instaxSquare: return "Instax Square"
+        case .polaroidSpectra: return "Spectra"
+
+        case .standard: return "Tự nhiên"
+        case .studioNatural: return "Studio Natural"
+
         case .cinemaTealOrange: return "Điện ảnh Teal"
-        case .velvia50: return "Velvia Rực rỡ"
         case .sunsetGlow: return "Hoàng hôn Vàng"
         case .tokyoAiry: return "Tokyo Mơ màng"
         case .hkCinema90s: return "Hồng Kông 90s"
-        case .cinestill800T: return "CineStill Đêm"
         case .leicaMonochrom: return "Leica Đen trắng"
         case .monochromeNoir: return "Noir Tương phản"
-        case .triX400: return "Tri-X Phóng sự"
         case .vintageWarm: return "Hoài niệm 70s"
         case .streetClassic: return "Đường phố Pro"
         case .nordicCold: return "Bắc Âu Lạnh"
-        case .ektar100: return "Ektar Sắc nét"
         case .neonCyberpunk: return "Cyberpunk Đêm"
         case .aiFullAuto: return "Tự động AI"
         }
@@ -557,73 +765,252 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
 
     public var shortTitle: String {
         switch self {
-        case .standard: return "TỰ NHIÊN"
-        case .fujiPro400H: return "PASTEL"
-        case .kodakPortra400: return "PORTRA"
+        case .fujiX: return "FUJI X"
+        case .cam1998: return "1998"
+        case .nokia3310: return "3310"
+        case .luxury8800: return "8800"
+        case .kambo: return "KAMBO"
+        case .cpm35: return "CPM35"
+
+        case .nokiaSymbian: return "NOKIA"
+        case .motorolaV3: return "RAZR"
+        case .iphone3GS: return "3GS"
+        case .blackberryQ10: return "Q10"
+        case .keitai88: return "KEITAI"
+        case .sonyK800i: return "K800"
+
         case .classicChrome: return "CHROME"
-        case .cinemaTealOrange: return "TEAL"
+        case .fujiPro400H: return "PRO400H"
         case .velvia50: return "VELVIA"
+        case .classicNeg: return "CLS NEG"
+        case .astia100F: return "ASTIA"
+        case .acrosBW: return "ACROS"
+
+        case .lomoLCA: return "LOMO"
+        case .medium120LG: return "120LG"
+        case .fxn35: return "FXN"
+        case .toyK: return "TOY K"
+        case .cinestill800T: return "CINE800"
+        case .cam1998Street: return "90S CAM"
+
+        case .ccd1Cyber: return "CCD1"
+        case .dCcdWarm: return "D-CCD"
+        case .blueSKCool: return "BLUESK"
+        case .mangaCam: return "MANGA"
+        case .gCcdGold: return "G-CCD"
+        case .instaLiteFlash: return "FLASH"
+
+        case .kodakPortra400: return "PORTRA"
+        case .gold200: return "GOLD200"
+        case .colorPlus200: return "CLRPLUS"
+        case .ektar100: return "EKTAR"
+        case .triX400: return "TRI-X"
+        case .vision3500D: return "500D"
+
+        case .grPositive: return "GR POS"
+        case .grHighBW: return "GR B&W"
+        case .grFFilm: return "GR1"
+        case .grStreetSnap: return "SNAP"
+        case .caplioR: return "CAPLIO"
+        case .thetaDoc: return "DOC"
+
+        case .powershotG: return "CANON G"
+        case .ixusY2K: return "IXUS"
+        case .eos5DClassic: return "EOS 5D"
+        case .sureShot35: return "SURE"
+        case .canonF1: return "F-1"
+        case .powershotPro1: return "PRO1"
+
+        case .miniDV43: return "MINIDV"
+        case .hi8Analog: return "HI8"
+        case .dcrDVD: return "DCR"
+        case .dvx10024p: return "DVX"
+        case .vhscHome: return "VHS-C"
+        case .hdv1080i: return "HDV"
+
+        case .polaroid600: return "POLA"
+        case .sx70TimeZero: return "SX-70"
+        case .instaxMini: return "MINI 7"
+        case .instaxWide: return "WIDE300"
+        case .instaxSquare: return "SQ10"
+        case .polaroidSpectra: return "SPECTRA"
+
+        case .standard: return "RAW"
+        case .studioNatural: return "STUDIO"
+
+        case .cinemaTealOrange: return "TEAL"
         case .sunsetGlow: return "HOÀNG HÔN"
         case .tokyoAiry: return "TOKYO"
         case .hkCinema90s: return "HK 90S"
-        case .cinestill800T: return "CINESTILL"
-        case .leicaMonochrom: return "LEICA BW"
+        case .leicaMonochrom: return "LEICA"
         case .monochromeNoir: return "NOIR"
-        case .triX400: return "TRI-X"
-        case .vintageWarm: return "HOÀI NIỆM"
-        case .streetClassic: return "ĐƯỜNG PHỐ"
+        case .vintageWarm: return "70S"
+        case .streetClassic: return "STREET"
         case .nordicCold: return "BẮC ÂU"
-        case .ektar100: return "EKTAR"
         case .neonCyberpunk: return "CYBER"
         case .aiFullAuto: return "TỰ ĐỘNG"
         }
     }
 
+    public var deviceBadge: String {
+        switch category {
+        case .trending: return "TREND"
+        case .vintagePhone: return "PHONE"
+        case .fuji: return "FUJI"
+        case .vintageCam: return "CAM"
+        case .ccd: return "CCD"
+        case .kodak: return "KODAK"
+        case .ricoh: return "RICOH"
+        case .canon: return "CANON"
+        case .dv: return "DV"
+        case .instant: return "INSTANT"
+        case .original: return "ORIG"
+        }
+    }
+
+    public var deviceIconSF: String {
+        switch self {
+        case .fujiX, .classicChrome, .fujiPro400H, .velvia50, .classicNeg, .astia100F, .acrosBW:
+            return "camera.fill"
+        case .nokia3310, .nokiaSymbian, .motorolaV3, .iphone3GS, .blackberryQ10, .keitai88, .sonyK800i:
+            return "phone.fill"
+        case .cam1998, .luxury8800, .kambo, .cpm35, .lomoLCA, .medium120LG, .fxn35, .toyK, .cinestill800T, .cam1998Street:
+            return "camera.metering.matrix"
+        case .ccd1Cyber, .dCcdWarm, .blueSKCool, .mangaCam, .gCcdGold, .instaLiteFlash:
+            return "camera.aperture"
+        case .kodakPortra400, .gold200, .colorPlus200, .ektar100, .triX400, .vision3500D:
+            return "film.fill"
+        case .grPositive, .grHighBW, .grFFilm, .grStreetSnap, .caplioR, .thetaDoc:
+            return "viewfinder"
+        case .powershotG, .ixusY2K, .eos5DClassic, .sureShot35, .canonF1, .powershotPro1:
+            return "camera.viewfinder"
+        case .miniDV43, .hi8Analog, .dcrDVD, .dvx10024p, .vhscHome, .hdv1080i:
+            return "video.fill"
+        case .polaroid600, .sx70TimeZero, .instaxMini, .instaxWide, .instaxSquare, .polaroidSpectra:
+            return "photo.fill"
+        default:
+            return "sparkles"
+        }
+    }
+
+    public var previewColor: Color {
+        switch category {
+        case .trending: return Color(red: 1.0, green: 0.65, blue: 0.20)
+        case .vintagePhone: return Color(red: 0.60, green: 0.70, blue: 0.85)
+        case .fuji: return Color(red: 0.35, green: 0.75, blue: 0.55)
+        case .vintageCam: return Color(red: 0.85, green: 0.55, blue: 0.35)
+        case .ccd: return Color(red: 0.40, green: 0.65, blue: 0.95)
+        case .kodak: return Color(red: 0.95, green: 0.75, blue: 0.15)
+        case .ricoh: return Color(red: 0.80, green: 0.30, blue: 0.30)
+        case .canon: return Color(red: 0.90, green: 0.35, blue: 0.35)
+        case .dv: return Color(red: 0.45, green: 0.50, blue: 0.60)
+        case .instant: return Color(red: 0.40, green: 0.80, blue: 0.85)
+        case .original: return Color.white.opacity(0.85)
+        }
+    }
+
     public var description: String {
         switch self {
-        case .standard: return "Màu thực tế trung thực, dải sáng tối đa"
-        case .fujiPro400H: return "Tone xanh pastel nhẹ, tôn da tươi sáng trong trẻo"
-        case .kodakPortra400: return "Sắc ấm vàng dịu, chuyển màu highlight và tone da mượt mà"
+        case .fujiX: return "Phong cách Fujifilm X100V tôn da trắng sáng, shadow đằm thắm"
+        case .cam1998: return "Máy ảnh dùng 1 lần năm 1998, ánh đỏ hoài niệm thập niên 90"
+        case .nokia3310: return "Chất lo-fi điện thoại phím bấm những năm 2000"
+        case .luxury8800: return "Tông kim loại vàng ấm sang trọng, tương phản đầm ấm"
+        case .kambo: return "Máy ảnh đồ chơi Nhật Bản, trong trẻo, ánh cam ấm áp"
+        case .cpm35: return "Canon SureShot 35mm đậm chất du lịch đời thường"
+
+        case .nokiaSymbian: return "Tông điện thoại cổ điển, hơi ngả vàng/xanh lục dịu"
+        case .motorolaV3: return "Motorola Razr V3 nắp gập huyền thoại Y2K"
+        case .iphone3GS: return "Tông màu ấm dịu dàng, hạt nhẹ, hoài niệm smartphone 2009"
+        case .blackberryQ10: return "Tông màu doanh nhân lạnh, shadow sâu, độ nét cao"
+        case .keitai88: return "Điện thoại gập Nhật Bản, tone mơ màng, da trắng sứ"
+        case .sonyK800i: return "Cyber-shot K800i chân thực, hơi ấm, chi tiết tốt"
+
         case .classicChrome: return "Màu phim phóng sự tài liệu, độ bão hòa dịu, shadow đằm thắm"
-        case .cinemaTealOrange: return "Tương phản điện ảnh Hollywood, shadow xanh teal đối lập da ấm"
-        case .velvia50: return "Sắc màu rực rỡ bùng nổ, xanh lá và biển sâu thẳm, tương phản cao"
-        case .sunsetGlow: return "Ấm áp rực rỡ, nhấn mạnh ánh sáng ven vàng ruộm khi hoàng hôn"
-        case .tokyoAiry: return "Phong cách Nhật Bản mơ màng, highlight trong trẻo, da mịn màng"
-        case .hkCinema90s: return "Shadow xanh ngọc lục bảo (Wong Kar-wai), ánh đèn vàng ấm hoài niệm"
-        case .cinestill800T: return "Phim điện ảnh đêm, tone lạnh dịu với quầng ấm quanh ánh đèn"
-        case .leicaMonochrom: return "Đen trắng thuần khiết Leica, dải chuyển xám bạc vô cực tinh tế"
-        case .monochromeNoir: return "Đen trắng tương phản cao nghệ thuật, bóng đen sâu kịch tính"
-        case .triX400: return "Đen trắng phóng sự báo chí, hạt phim rõ nét, giàu cảm xúc đời thường"
-        case .vintageWarm: return "Phong cách retro thập niên 70 hoài niệm, fade nhẹ vùng đen"
-        case .streetClassic: return "Màu đường phố sắc nét, micro-contrast cao, chiều sâu khối đanh thép"
-        case .nordicCold: return "Tone lạnh Bắc Âu tối giản, khử bão hòa màu nóng, thanh khiết"
-        case .ektar100: return "Hạt siêu mịn, sắc đỏ và xanh dương rực rỡ sắc sảo, độ nét cao"
-        case .neonCyberpunk: return "Shadow lam tím huyền bí, highlight hồng tím neon viễn tưởng"
-        case .aiFullAuto: return "Tự động phân tích và áp dụng preset tối ưu nhất theo thời gian thực"
+        case .fujiPro400H: return "Tone xanh pastel nhẹ, tôn da tươi sáng trong trẻo"
+        case .velvia50: return "Sắc màu rực rỡ bùng nổ, xanh lá và biển sâu thẳm"
+        case .classicNeg: return "Fujifilm Superia hoài niệm đường phố Nhật Bản"
+        case .astia100F: return "Tông chân dung dịu nhẹ, chuyển vùng sáng tối êm ái"
+        case .acrosBW: return "Đen trắng sâu thẳm với độ chuyển xám bạc tinh tế"
+
+        case .lomoLCA: return "Lomography LC-A, tối 4 góc mạnh, bão hòa rực rỡ ngẫu hứng"
+        case .medium120LG: return "Diana/Holga 120 Medium Format mơ màng mờ ảo"
+        case .fxn35: return "Fujica 35mm Rangefinder, màu phim thập niên 70 sắc nét"
+        case .toyK: return "Toy Camera ống kính nhựa biến ảo, ấm áp dịu dàng"
+        case .cinestill800T: return "Phim điện ảnh đêm, tone lạnh với quầng ấm quanh đèn"
+        case .cam1998Street: return "Màu máy cơ bỏ túi thập niên 90 đường phố"
+
+        case .ccd1Cyber: return "Sony Cyber-shot CCD 2000s, da mượt, trời trong"
+        case .dCcdWarm: return "Digicam CCD ấm, chụp tiệc với flash trực tiếp hoài cổ"
+        case .blueSKCool: return "CCD tone lạnh Bắc Âu, highlight sáng rực rỡ"
+        case .mangaCam: return "Cảm biến CCD phong cách Anime Nhật Bản, da sáng hồng"
+        case .gCcdGold: return "Bắt sáng hoàng hôn rực rỡ, sắc cam vàng đượm"
+        case .instaLiteFlash: return "Y2K Party Flash CCD, tương phản gắt thời thượng"
+
+        case .kodakPortra400: return "Sắc ấm vàng dịu, chuyển màu highlight và da cực mượt mà"
+        case .gold200: return "Kodak Gold 200, sắc nắng hè vàng óng ả, hạt film mịn"
+        case .colorPlus200: return "Kodak ColorPlus, tone phim bình dân hoài cổ kinh điển"
+        case .ektar100: return "Hạt siêu mịn, sắc đỏ và xanh dương rực rỡ sắc sảo"
+        case .triX400: return "Đen trắng phóng sự báo chí, hạt phim rõ nét, cảm xúc"
+        case .vision3500D: return "Phim nhựa điện ảnh Hollywood 35mm dải động rộng"
+
+        case .grPositive: return "Ricoh GR III Positive Film, tương phản cao, xanh thẳm"
+        case .grHighBW: return "Ricoh GR High Contrast Black & White, kịch tính đường phố"
+        case .grFFilm: return "Ricoh GR1 28mm huyền thoại đường phố sắc nét"
+        case .grStreetSnap: return "Tối ưu chụp nhanh snapshot đường phố, shadow sâu"
+        case .caplioR: return "Digicam Ricoh đời đầu, chân thực mộc mạc"
+        case .thetaDoc: return "Tone phim tài liệu đời thường hoài niệm"
+
+        case .powershotG: return "Canon PowerShot G7/G9 CCD cao cấp, da hồng hào"
+        case .ixusY2K: return "Canon IXY/IXUS Digicam bỏ túi thời thượng, da sáng"
+        case .eos5DClassic: return "Canon 5D 'Queen' Fullframe, màu da kinh điển bất hủ"
+        case .sureShot35: return "Canon Autoboy/SureShot ngắm chụp gia đình vui tươi"
+        case .canonF1: return "Máy cơ chuyên nghiệp truyền thống, màu sắc chuẩn mực"
+        case .powershotPro1: return "Ống kính viền đỏ L trên cảm biến CCD"
+
+        case .miniDV43: return "Sony MiniDV Handycam, màu băng từ những năm 2000"
+        case .hi8Analog: return "Video analog gia đình thập niên 90, mộc mạc ấm áp"
+        case .dcrDVD: return "Màu đĩa quang DVD gia đình rực rỡ tươi sáng"
+        case .dvx10024p: return "Panasonic DVX100, màu phim độc lập indie 24fps"
+        case .vhscHome: return "Video gia đình thập niên 80-90, ấm áp gần gũi"
+        case .hdv1080i: return "Băng từ độ nét cao truyền hình thập niên 2000"
+
+        case .polaroid600: return "Polaroid 600 Vintage, tương phản cao, hạt to retro"
+        case .sx70TimeZero: return "Polaroid SX-70 màu ấm nghệ thuật, highlight vàng bơ"
+        case .instaxMini: return "Fujifilm Instax Mini tươi sáng, da trắng hồng, viền mềm"
+        case .instaxWide: return "Fujifilm Instax Wide góc rộng trong trẻo tự nhiên"
+        case .instaxSquare: return "Fujifilm Instax SQ vuông vức hiện đại, màu cân bằng"
+        case .polaroidSpectra: return "Polaroid Spectra khung hình rộng, màu đằm thắm"
+
+        case .standard: return "Màu thực tế trung thực, dải sáng tối đa"
+        case .studioNatural: return "Tối ưu dải tương phản tự nhiên nhẹ nhàng"
+
+        case .cinemaTealOrange: return "Tương phản điện ảnh Hollywood, teal đối lập da ấm"
+        case .sunsetGlow: return "Ấm áp rực rỡ, nhấn mạnh ánh sáng ven vàng ruộm"
+        case .tokyoAiry: return "Phong cách Nhật Bản mơ màng, highlight trong trẻo"
+        case .hkCinema90s: return "Shadow ngọc lục bảo, ánh đèn vàng ấm Wong Kar-wai"
+        case .leicaMonochrom: return "Đen trắng thuần khiết Leica, dải xám bạc vô cực"
+        case .monochromeNoir: return "Đen trắng tương phản cao nghệ thuật, bóng đen sâu"
+        case .vintageWarm: return "Phong cách retro thập niên 70 hoài niệm"
+        case .streetClassic: return "Màu đường phố sắc nét, micro-contrast cao"
+        case .nordicCold: return "Tone lạnh Bắc Âu tối giản, khử bão hòa màu nóng"
+        case .neonCyberpunk: return "Shadow lam tím huyền bí, highlight hồng tím neon"
+        case .aiFullAuto: return "Tự động phân tích và áp dụng preset tối ưu"
         }
     }
 
     public var idealScenario: String {
         switch self {
-        case .standard: return "Mọi cảnh chụp cần độ chân thực tuyệt đối của cảm biến"
-        case .fujiPro400H: return "Chân dung ban ngày, ngoài trời, cafe, hoa cỏ, trang phục sáng màu"
-        case .kodakPortra400: return "Chân dung nắng chiều, khoảnh khắc gia đình, ấm cúng hoài niệm"
-        case .classicChrome: return "Ảnh tài liệu, phố cổ, kiến trúc cổ điển, đời sống sinh hoạt"
-        case .cinemaTealOrange: return "Du lịch, biển đảo, bầu trời xanh, đô thị hiện đại kịch tính"
-        case .velvia50: return "Phong cảnh núi non hùng vĩ, mây trời, biển xanh ngắt, thiên nhiên hoa lá"
-        case .sunsetGlow: return "Hoàng hôn, bình minh, chiều tà, ngược sáng ven tóc (rim light)"
-        case .tokyoAiry: return "Nàng thơ học đường, thời trang nhẹ nhàng, hoa anh đào, không gian tĩnh lặng"
-        case .hkCinema90s: return "Quán ăn đêm, phố hoa đèn màu, ngõ hẻm retro, chân dung tâm trạng"
-        case .cinestill800T: return "Đêm thành phố, trạm xăng, biển hiệu neon, ánh sáng đèn đường vàng"
-        case .leicaMonochrom: return "Chân dung nghệ thuật có chiều sâu, ảnh đặc tả cảm xúc, chi tiết kiến trúc"
-        case .monochromeNoir: return "Hình khối kiến trúc tương phản gắt, bóng đổ ấn tượng, tối giản"
-        case .triX400: return "Phóng sự đời thường, chuyển động đường phố, khoảnh khắc ngẫu nhiên"
-        case .vintageWarm: return "Đồ vật cổ xưa, kỷ niệm, không gian gỗ ấm cúng, ảnh kỷ yếu retro"
-        case .streetClassic: return "Nhiếp ảnh đường phố snap, con người lao động, nhịp sống đô thị sôi động"
-        case .nordicCold: return "Ngày âm u nhiều mây, mùa đông tuyết, sương mù, nội thất tối giản"
-        case .ektar100: return "Thời trang cao cấp, xe cộ, kiến trúc hiện đại sắc sảo, đồ ăn hấp dẫn"
-        case .neonCyberpunk: return "Đêm mưa ướt phản chiếu ánh đèn, cyberpunk, bar pub ngập ánh sáng neon"
-        case .aiFullAuto: return "Tự động nhận diện bối cảnh và kích hoạt preset tốt nhất"
+        case .fujiX, .classicChrome, .classicNeg: return "Đường phố, cafe, kiến trúc cổ, đời sống sinh hoạt"
+        case .fujiPro400H, .astia100F, .kodakPortra400, .eos5DClassic, .powershotG: return "Chân dung ban ngày, ngoài trời, cafe, hoa cỏ, da sáng"
+        case .cam1998, .vintageWarm, .toyK, .colorPlus200: return "Kỷ niệm, bạn bè, du lịch hoài niệm thập niên 90"
+        case .nokia3310, .nokiaSymbian, .motorolaV3, .iphone3GS, .keitai88, .sonyK800i: return "Chụp snapshot vui nhộn Y2K, trang phục retro, tiệc bạn bè"
+        case .ccd1Cyber, .dCcdWarm, .blueSKCool, .mangaCam, .gCcdGold, .instaLiteFlash, .ixusY2K: return "Digicam tiệc đêm, flash trực tiếp, chụp gương, thời trang Y2K"
+        case .velvia50, .gold200, .ektar100, .grPositive: return "Phong cảnh núi non hùng vĩ, mây trời, biển xanh rực rỡ"
+        case .triX400, .acrosBW, .grHighBW, .leicaMonochrom, .monochromeNoir: return "Đen trắng nghệ thuật, biểu cảm khuôn mặt, bóng đổ kịch tính"
+        case .cinestill800T, .neonCyberpunk, .hkCinema90s: return "Đêm thành phố, trạm xăng, biển hiệu neon, ánh sáng đèn đường"
+        case .miniDV43, .hi8Analog, .dcrDVD, .dvx10024p, .vhscHome, .hdv1080i: return "Video retro, khoảnh khắc gia đình, du lịch vintage"
+        case .polaroid600, .sx70TimeZero, .instaxMini, .instaxWide, .instaxSquare, .polaroidSpectra: return "Ảnh kỷ niệm lấy liền, sinh nhật, dã ngoại, khoảnh khắc gần gũi"
+        default: return "Mọi cảnh chụp cần chất lượng chân thực hoặc tự động AI"
         }
     }
 
@@ -636,9 +1023,11 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
 
     /// Chuỗi catalog mô tả đầy đủ để gửi vào Prompt cho AI
     public static var aiCatalogDescription: String {
-        var catalog = "DANH MỤC 18 BỘ MÀU FILM CÓ SẴN (Hãy chọn chính xác 1 preset ID phù hợp nhất):\n"
+        var catalog = "DANH MỤC 62 BỘ MÀU FILM & MÁY ẢNH RETRO CÓ SẴN (Hãy chọn chính xác 1 preset ID phù hợp nhất):
+"
         for p in selectablePresets {
-            catalog += "- \"\(p.rawValue)\": \(p.displayName) — \(p.description). Tối ưu cho: \(p.idealScenario)\n"
+            catalog += "- "\(p.rawValue)": [\(p.category.rawValue)] \(p.displayName) — \(p.description). Tối ưu cho: \(p.idealScenario)
+"
         }
         return catalog
     }
@@ -658,6 +1047,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
             }
         }
         // Match theo từ khóa ngữ nghĩa
+        if clean.contains("fuji x") || clean.contains("x100") { return .fujiX }
         if clean.contains("fuji") && clean.contains("pastel") { return .fujiPro400H }
         if clean.contains("portra") || clean.contains("am ap") || clean.contains("ấm") { return .kodakPortra400 }
         if clean.contains("chrome") || clean.contains("tai lieu") || clean.contains("tài liệu") { return .classicChrome }
@@ -675,10 +1065,18 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
         if clean.contains("nordic") || clean.contains("bac au") || clean.contains("bắc âu") || clean.contains("lanh") { return .nordicCold }
         if clean.contains("ektar") || clean.contains("sac net") || clean.contains("sắc nét") { return .ektar100 }
         if clean.contains("cyber") || clean.contains("neon") || clean.contains("tuong lai") || clean.contains("tương lai") { return .neonCyberpunk }
+        if clean.contains("ccd") { return .ccd1Cyber }
+        if clean.contains("nokia") || clean.contains("phone") { return .nokia3310 }
+        if clean.contains("kodak") || clean.contains("gold") { return .gold200 }
+        if clean.contains("ricoh") || clean.contains("gr") { return .grPositive }
+        if clean.contains("canon") || clean.contains("ixus") { return .ixusY2K }
+        if clean.contains("dv") || clean.contains("camcorder") || clean.contains("vhs") { return .miniDV43 }
+        if clean.contains("pola") || clean.contains("polaroid") || clean.contains("instant") { return .polaroid600 }
         if clean.contains("standard") || clean.contains("tu nhien") || clean.contains("tự nhiên") { return .standard }
         return nil
     }
 }
+
 
 // MARK: - Captured Photo Item
 public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {

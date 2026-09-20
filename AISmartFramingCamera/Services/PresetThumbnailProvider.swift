@@ -8,9 +8,14 @@ public final class PresetThumbnailProvider {
     private var thumbnailCache: [FilmPreset: UIImage] = [:]
     
     private init() {
-        preheatThumbnails()
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            for preset in FilmPresetCategory.trending.presets {
+                _ = self.thumbnail(for: preset)
+            }
+        }
     }
-    
+
     public func thumbnail(for preset: FilmPreset) -> UIImage {
         if let cached = thumbnailCache[preset] {
             return cached
@@ -18,12 +23,6 @@ public final class PresetThumbnailProvider {
         let generated = generateThumbnail(for: preset)
         thumbnailCache[preset] = generated
         return generated
-    }
-    
-    private func preheatThumbnails() {
-        for preset in FilmPreset.allCases {
-            thumbnailCache[preset] = generateThumbnail(for: preset)
-        }
     }
     
     private func generateThumbnail(for preset: FilmPreset) -> UIImage {

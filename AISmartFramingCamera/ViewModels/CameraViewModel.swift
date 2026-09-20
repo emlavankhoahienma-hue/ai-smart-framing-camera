@@ -125,6 +125,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var selectedFilmPreset: FilmPreset = .fujiPro400H {
         didSet { UserDefaults.standard.set(selectedFilmPreset.rawValue, forKey: "selectedFilmPreset") }
     }
+    @Published public var selectedFilmCategory: FilmPresetCategory = .trending {
+        didSet { UserDefaults.standard.set(selectedFilmCategory.rawValue, forKey: "selectedFilmCategory") }
+    }
     @Published public var isAIFullColorEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isAIFullColorEnabled, forKey: "isAIFullColorEnabled") }
     }
@@ -518,6 +521,10 @@ public final class CameraViewModel: ObservableObject {
         }
         if let presetRaw = defaults.string(forKey: "selectedFilmPreset"), let preset = FilmPreset(rawValue: presetRaw) {
             self.selectedFilmPreset = preset
+            self.selectedFilmCategory = preset.category
+        }
+        if let categoryRaw = defaults.string(forKey: "selectedFilmCategory"), let cat = FilmPresetCategory(rawValue: categoryRaw) {
+            self.selectedFilmCategory = cat
         }
         if let modeRaw = defaults.string(forKey: "captureMode"), let mode = CameraCaptureMode(rawValue: modeRaw) {
             self.captureMode = mode
@@ -1552,6 +1559,7 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut) {
             selectedFilmPreset = preset
+            selectedFilmCategory = preset.category
             if preset.isAIFullAuto {
                 isAIFullColorEnabled = true
             } else {
@@ -1559,6 +1567,13 @@ public final class CameraViewModel: ObservableObject {
                 currentAIColorParams = nil
                 geminiColorRecipe = nil
             }
+        }
+    }
+
+    public func selectFilmCategory(_ category: FilmPresetCategory) {
+        haptics.triggerSelectionChange()
+        withAnimation(.easeInOut) {
+            selectedFilmCategory = category
         }
     }
 

@@ -600,7 +600,7 @@ struct PhotoCaptureSettingsSection: View {
                     selectedValueString: viewModel.selectedFilmPreset.displayName
                 ) {
                     Picker("", selection: $viewModel.selectedFilmPreset) {
-                        ForEach(FilmPreset.allCases) { preset in
+                        ForEach(FilmPreset.selectablePresets) { preset in
                             Text(preset.displayName).tag(preset)
                         }
                     }
@@ -620,7 +620,7 @@ struct PhotoCaptureSettingsSection: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(FilmPreset.allCases) { preset in
+                        ForEach(FilmPreset.selectablePresets) { preset in
                             FilmPresetPill(
                                 preset: preset,
                                 isSelected: viewModel.selectedFilmPreset == preset,
