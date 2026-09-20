@@ -642,7 +642,7 @@ public struct SelectedCameraBadgeButton: View {
 
     public var body: some View {
         Button(action: {
-            haptics.triggerSelectionChange()
+            HapticFeedbackService.shared.triggerSelectionChange()
             withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
                 viewModel.isShowingFilmDrawer.toggle()
             }

@@ -2236,6 +2236,7 @@ extension CameraViewModel: CameraServiceDelegate {
         let activeRule = self.activeCompositionRule
         let sessionState = self.aiSessionState
         let score: Double = (sessionState == .alignmentPerfect || sessionState == .capturing) ? 1.0 : (framingResult?.alignmentScore ?? 0.8)
+        let isFilmActive = self.isFilmSimulationActive
 
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -2243,7 +2244,7 @@ extension CameraViewModel: CameraServiceDelegate {
 
             var processedImageResult: CGImage = photo
             autoreleasepool {
-                if !self.isFilmSimulationActive || effectivePreset == .standard {
+                if !isFilmActive || effectivePreset == .standard {
                     // Chế độ GỐC (TẮT màu) -> Giữ nguyên 100% cảm biến gốc iPhone, không qua CoreImage
                     processedImageResult = photo
                 } else if effectivePreset != .standard && !effectivePreset.isAIFullAuto {
@@ -2262,7 +2263,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 rawPhotoData: rawData,
                 livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
-                appliedPreset: self.isFilmSimulationActive ? effectivePreset : .standard,
+                appliedPreset: isFilmActive ? effectivePreset : .standard,
                 compositionRule: activeRule,
                 alignmentScore: score,
                 iso: iso,
