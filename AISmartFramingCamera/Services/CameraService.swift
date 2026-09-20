@@ -945,7 +945,7 @@ public final class CameraService: NSObject {
     }
 
     // MARK: - Capture Photo
-    public func capturePhoto(isDNG: Bool = false) {
+    public func capturePhoto(isDNG: Bool = false, isHEIF: Bool = false) {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             guard !self.isPhotoCaptureInFlight else {
@@ -964,6 +964,9 @@ public final class CameraService: NSObject {
             if isDNG, let rawFormat = self.photoOutput.availableRawPhotoPixelFormatTypes.first {
                 photoSettings = AVCapturePhotoSettings(rawPixelFormatType: rawFormat)
                 CameraLogger.info("📸 Kích hoạt chụp RAW DNG thực thụ (Format: \(rawFormat))", category: .capture)
+            } else if isHEIF && self.photoOutput.availablePhotoCodecTypes.contains(.hevc) {
+                photoSettings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.hevc])
+                CameraLogger.info("📸 Kích hoạt chụp phần cứng HEIF/HEVC thực thụ", category: .capture)
             } else {
                 photoSettings = AVCapturePhotoSettings()
             }

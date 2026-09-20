@@ -1313,9 +1313,13 @@ public struct SubjectDetectionResult {
 // MARK: - Photo Save Format
 public enum PhotoSaveFormat: String, CaseIterable, Identifiable, Sendable {
     case jpeg = "JPEG"
-    case heic = "HEIC"
-    case dng = "DNG"
     case heif = "HEIF"
+    case dng = "DNG"
+    case heic = "HEIC"
+
+    public static var allCases: [PhotoSaveFormat] {
+        [.jpeg, .heif, .dng]
+    }
 
     public var id: String { rawValue }
 }

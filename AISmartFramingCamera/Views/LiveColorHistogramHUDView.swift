@@ -238,9 +238,8 @@ public struct LiveColorHistogramHUDView: View {
 
         switch viewModel.selectedPhotoFormat {
         case .jpeg: return "JPEG"
-        case .heic: return "HEIC"
+        case .heic, .heif: return "HEIF"
         case .dng: return "DNG"
-        case .heif: return "HEIF"
         }
     }
 
