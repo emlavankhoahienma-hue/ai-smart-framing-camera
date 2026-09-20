@@ -1,98 +1,105 @@
 import Foundation
 import CoreMotion
 import CoreGraphics
-import UIKit
+import simd
 
+/// One manager for legacy motion guidance and spatial tracking. The manager,
+/// subscribers and legacy baseline are protected by the same recursive lock.
+/// Callbacks run outside the lock. start/stop never waits for the main queue.
 public final class DeviceMotionService: @unchecked Sendable {
     public static let shared = DeviceMotionService()
-    
-    private let motionManager = CMMotionManager()
-    private let motionQueue = OperationQueue()
-    
-    private var referenceAttitude: CMAttitude? = nil
-    private var isTracking = false
-    
-    // Callback on main thread: (deltaX, deltaY) in normalized screen coordinates (-1.0 to 1.0)
-    public var onMotionUpdate: ((CGFloat, CGFloat) -> Void)?
-    
-    // Camera Field of View factor (~65 degrees horizontal FOV on iPhone wide lens)
-    // 1 radian ~ 57.3 deg -> normalized FOV factor ~ 0.88
-    private let sensitivityFactor: CGFloat = 0.85
-    
-    public init() {
-        motionQueue.name = "com.alignai.motionQueue"
-        motionQueue.maxConcurrentOperationCount = 1
-        motionQueue.qualityOfService = .userInteractive
+    private let manager = CMMotionManager()
+    private let queue: OperationQueue
+    private let lock = NSRecursiveLock()
+    private var subscribers: [UUID: (TrackingMotionSample) -> Void] = [:]
+    private var legacyActive = false
+    private var legacyGeneration: UInt64 = 0
+    private var reference: simd_quatd?
+    private var motionCallback: ((CGFloat, CGFloat) -> Void)?
+
+    public var onMotionUpdate: ((CGFloat, CGFloat) -> Void)? {
+        get { lock.withLock { motionCallback } }
+        set { lock.withLock { motionCallback = newValue } }
     }
-    
-    // MARK: - Start Tracking from Current Device Orientation
-    public func startTracking() {
-        guard motionManager.isDeviceMotionAvailable else { return }
-        
-        referenceAttitude = nil
-        isTracking = true
-        
-        motionManager.deviceMotionUpdateInterval = 1.0 / 60.0 // 60 Hz smooth updates
-        motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
-            guard let self = self, let motion = motion, self.isTracking else { return }
-            
-            if self.referenceAttitude == nil {
-                // First frame: capture baseline attitude (Khóa mốc tọa độ không gian)
-                self.referenceAttitude = motion.attitude.copy() as? CMAttitude
-                return
-            }
-            
-            guard let ref = self.referenceAttitude else { return }
-            
-            // Compute relative rotation from reference using quaternions/matrices
-            // This is ABSOLUTE relative rotation, it DOES NOT DRIFT like rotationRate integration
-            let currentAttitude = motion.attitude
-            currentAttitude.multiply(byInverseOf: ref)
-            
-            let yawDelta = CGFloat(currentAttitude.yaw)
-            let pitchDelta = CGFloat(currentAttitude.pitch)
-            
-            var deltaX: CGFloat = 0
-            var deltaY: CGFloat = 0
-            
-            // Hỗ trợ tự động căn xoay theo các hướng cầm máy
-            let orientation = UIDevice.current.orientation
-            switch orientation {
-            case .landscapeLeft:
-                // Máy quay ngang trái: 
-                // Pan Right (yaw > 0) -> target moves to Earpiece (-Y) -> deltaY > 0
-                // Tilt Up (pitch > 0) -> target moves to Vol Buttons (-X) -> deltaX > 0
-                deltaX = pitchDelta * self.sensitivityFactor
-                deltaY = yawDelta * self.sensitivityFactor
-            case .landscapeRight:
-                // Máy quay ngang phải
-                // Pan Right (yaw > 0) -> target moves to Charging Port (+Y) -> deltaY < 0
-                // Tilt Up (pitch > 0) -> target moves to Power Button (+X) -> deltaX < 0
-                deltaX = -pitchDelta * self.sensitivityFactor
-                deltaY = -yawDelta * self.sensitivityFactor
-            case .portraitUpsideDown:
-                deltaX = -yawDelta * self.sensitivityFactor
-                deltaY = pitchDelta * self.sensitivityFactor
-            default: // .portrait, .unknown, .faceUp, .faceDown
-                deltaX = yawDelta * self.sensitivityFactor
-                deltaY = -pitchDelta * self.sensitivityFactor
-            }
-            
-            DispatchQueue.main.async {
-                self.onMotionUpdate?(deltaX, deltaY)
-            }
+
+    public init() {
+        queue = OperationQueue()
+        queue.name = "com.alignai.motion"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .userInteractive
+    }
+
+    func subscribe(_ callback: @escaping (TrackingMotionSample) -> Void) -> UUID {
+        lock.withLock {
+            let id = UUID()
+            subscribers[id] = callback
+            startIfNeeded()
+            return id
         }
     }
-    
-    // MARK: - Reset Baseline Anchor
-    public func resetReferenceAttitude() {
-        referenceAttitude = nil
+
+    func unsubscribe(_ id: UUID) {
+        lock.withLock {
+            subscribers.removeValue(forKey: id)
+            stopIfUnused()
+        }
     }
-    
-    // MARK: - Stop Tracking
+
+    public func startTracking() {
+        lock.withLock {
+            legacyGeneration &+= 1; legacyActive = true; reference = nil
+            startIfNeeded()
+        }
+    }
+
+    public func resetReferenceAttitude() { lock.withLock { reference = nil } }
+
     public func stopTracking() {
-        isTracking = false
-        referenceAttitude = nil
-        motionManager.stopDeviceMotionUpdates()
+        lock.withLock {
+            legacyGeneration &+= 1; legacyActive = false; reference = nil
+            stopIfUnused()
+        }
+    }
+
+    private func stopIfUnused() {
+        if subscribers.isEmpty && !legacyActive { manager.stopDeviceMotionUpdates() }
+    }
+
+    private func startIfNeeded() {
+        guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
+        manager.deviceMotionUpdateInterval = 1 / 60.0
+        manager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: queue) { [weak self] motion, _ in
+            guard let self, let motion else { return }
+            let r = motion.attitude.rotationMatrix
+            // CoreMotion DCM maps reference -> device. Invert to unproject an
+            // image ray into the reference frame. No Euler angles or rate gains.
+            let worldToDevice = simd_double3x3(columns: (
+                SIMD3(r.m11, r.m21, r.m31), SIMD3(r.m12, r.m22, r.m32), SIMD3(r.m13, r.m23, r.m33)))
+            let pose = simd_quatd(worldToDevice.transpose)
+            let sample = TrackingMotionSample(timestamp: motion.timestamp, deviceToWorld: pose)
+            self.lock.lock()
+            let handlers = Array(self.subscribers.values)
+            let generation = self.legacyGeneration
+            var delta: CGPoint?
+            if self.legacyActive {
+                if self.reference == nil { self.reference = pose }
+                if let reference = self.reference {
+                    let ray = pose.inverse.act(reference.act(SIMD3(0, 0, -1)))
+                    let projected = TrackingCalibration.fallback().project(deviceRay: ray)
+                    delta = CGPoint(x: projected.point.x - 0.5, y: projected.point.y - 0.5)
+                }
+            }
+            self.lock.unlock()
+            handlers.forEach { $0(sample) }
+            if let delta {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    let callback = self.lock.withLock {
+                        self.legacyActive && self.legacyGeneration == generation ? self.motionCallback : nil
+                    }
+                    callback?(delta.x, delta.y)
+                }
+            }
+        }
     }
 }

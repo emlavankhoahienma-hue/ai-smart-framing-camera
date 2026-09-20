@@ -1,71 +1,51 @@
+import Foundation
 import Vision
 import CoreVideo
 import CoreGraphics
+import QuartzCore
 import simd
 
-/// Định vị chuyển động camera (xoay + dịch chuyển) bằng cách so sánh trực tiếp 
-/// nội dung hình ảnh giữa khung hình mốc (lúc còn bám tốt) và khung hình hiện 
-/// tại — không cần ARKit, không cần IMU đo vị trí.
+/// Optional short-baseline image registration candidate, not metric odometry
+/// and not object identity. The fusion path deliberately does not promote a
+/// whole-image homography to a .locked target observation.
 public final class VisualOdometryEngine: @unchecked Sendable {
     public static let shared = VisualOdometryEngine()
-    
-    private var referenceBuffer: CVPixelBuffer?
-    private var referencePointVisionSpace: CGPoint?
-    
+    private let lock = NSLock()
+    private var reference: (buffer: CVPixelBuffer, point: CGPoint, time: TimeInterval)?
+    private var generation: UInt64 = 0
     private init() {}
-    
-    /// Lưu lại khung hình mốc mới + điểm target tương ứng (hệ tọa độ UI: gốc trên-trái)
-    public func setReferenceFrame(_ buffer: CVPixelBuffer, atUIPoint uiPoint: CGPoint) {
-        self.referenceBuffer = buffer
-        // Vision dùng hệ gốc dưới-trái, cần lật trục Y để khớp chuẩn Vision
-        self.referencePointVisionSpace = CGPoint(x: uiPoint.x, y: 1.0 - uiPoint.y)
+
+    public func setReferenceFrame(_ buffer: CVPixelBuffer, atUIPoint point: CGPoint) {
+        guard point.x.isFinite, point.y.isFinite else { return }
+        lock.withLock {
+            generation &+= 1
+            reference = (buffer, point, CACurrentMediaTime())
+        }
     }
-    
-    public func hasReference() -> Bool {
-        return referenceBuffer != nil
-    }
-    
-    public func clearReference() {
-        referenceBuffer = nil
-        referencePointVisionSpace = nil
-    }
-    
-    /// Ước lượng vị trí hiện tại của target dựa trên biến đổi hình ảnh thật 
-    /// giữa khung hình mốc và khung hình hiện tại. Trả về nil nếu không tính 
-    /// được (chưa có khung mốc, hoặc ảnh quá khác biệt để so khớp).
+
+    public func hasReference() -> Bool { lock.withLock { reference != nil } }
+    public func clearReference() { lock.withLock { generation &+= 1; reference = nil } }
+
     public func estimateCurrentUIPoint(currentBuffer: CVPixelBuffer) -> CGPoint? {
-        guard let refBuffer = referenceBuffer, let refPoint = referencePointVisionSpace else {
-            return nil
-        }
-        
-        let request = VNHomographicImageRegistrationRequest(targetedCVPixelBuffer: currentBuffer)
-        let handler = VNImageRequestHandler(cvPixelBuffer: refBuffer, options: [:])
-        
-        do {
-            try handler.perform([request])
-            guard let result = request.results?.first as? VNImageHomographicAlignmentObservation else {
-                return nil
-            }
-            
-            let warp = result.warpTransform
-            let homogeneous = simd_float3(Float(refPoint.x), Float(refPoint.y), 1.0)
-            let transformed = warp * homogeneous
-            
-            guard abs(transformed.z) > 0.0001 else { return nil }
-            
-            let visionResultX = CGFloat(transformed.x / transformed.z)
-            let visionResultY = CGFloat(transformed.y / transformed.z)
-            
-            // Loại kết quả vô lý (ra ngoài khung hình quá xa - homography lỗi/không khớp được)
-            guard visionResultX > -0.5 && visionResultX < 1.5 && visionResultY > -0.5 && visionResultY < 1.5 else {
-                return nil
-            }
-            
-            // Chuyển ngược lại hệ UI (gốc trên-trái)
-            return CGPoint(x: visionResultX, y: 1.0 - visionResultY)
-        } catch {
-            CameraLogger.info("VisualOdometryEngine lỗi: \(error.localizedDescription)", category: .tracking)
-            return nil
-        }
+        let snapshot = lock.withLock { (reference, generation) }
+        guard let reference = snapshot.0, CACurrentMediaTime() - reference.time < 0.25 else { return nil }
+        // Floating image = saved image; reference image = current handler image.
+        // Vision's transform maps floating image pixels into reference pixels.
+        let request = VNHomographicImageRegistrationRequest(targetedCVPixelBuffer: reference.buffer)
+        let handler = VNImageRequestHandler(cvPixelBuffer: currentBuffer, orientation: .up, options: [:])
+        guard (try? handler.perform([request])) != nil, let observation = request.results?.first,
+              observation.confidence >= 0.5 else { return nil }
+        let matrix = observation.warpTransform
+        guard abs(simd_determinant(matrix)) > 1e-8 else { return nil }
+        let width = Float(CVPixelBufferGetWidth(reference.buffer))
+        let height = Float(CVPixelBufferGetHeight(reference.buffer))
+        let p = SIMD3(Float(reference.point.x) * width, Float(1 - reference.point.y) * height, 1)
+        let q = matrix * p
+        guard q.x.isFinite, q.y.isFinite, q.z.isFinite, abs(q.z) > 1e-6 else { return nil }
+        let result = CGPoint(x: CGFloat(q.x / q.z) / CGFloat(CVPixelBufferGetWidth(currentBuffer)),
+                             y: 1 - CGFloat(q.y / q.z) / CGFloat(CVPixelBufferGetHeight(currentBuffer)))
+        guard (-0.25...1.25).contains(result.x), (-0.25...1.25).contains(result.y),
+              lock.withLock({ generation == snapshot.1 }) else { return nil }
+        return result
     }
 }

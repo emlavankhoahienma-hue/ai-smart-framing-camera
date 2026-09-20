@@ -22,6 +22,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     private weak var owner: CameraViewModel?
     private var configuration = CameraFrameProcessingConfiguration()
     private var latestPixelBuffer: CVPixelBuffer?
+    private var latestFrameContext: TrackingFrameContext?
     private var lastHistogramComputeTime: CFTimeInterval = 0
     private var lastFocusPeakingComputeTime: CFTimeInterval = 0
 
@@ -42,6 +43,13 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         return latestPixelBuffer
     }
 
+    func latestTrackingFrameSnapshot() -> (CVPixelBuffer, TrackingFrameContext)? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let buffer = latestPixelBuffer, let frame = latestFrameContext else { return nil }
+        return (buffer, frame)
+    }
+
     func process(_ sampleBuffer: CMSampleBuffer) {
         // CameraService invokes this method on its serial videoDataQueue. Processing
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
@@ -52,6 +60,8 @@ private final class CameraFrameProcessor: @unchecked Sendable {
 
         stateLock.lock()
         latestPixelBuffer = pixelBuffer
+        latestFrameContext = TrackingFrameContext.read(sampleBuffer,
+            zoom: SpatialTrackingEngine.shared.currentDisplayZoom)
         let snapshot = configuration
         stateLock.unlock()
 
@@ -435,7 +445,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isProximityHapticsEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isProximityHapticsEnabled, forKey: "isProximityHapticsEnabled") }
     }
-    @Published public var isGuidanceRayEnabled: Bool = UserDefaults.standard.object(forKey: "isGuidanceRayEnabled") as? Bool ?? true {
+    @Published public var isGuidanceRayEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isGuidanceRayEnabled, forKey: "isGuidanceRayEnabled") }
     }
     @Published public var isCompositionRuleSheetPresented: Bool = false
@@ -500,6 +510,9 @@ public final class CameraViewModel: ObservableObject {
     public init() {
         // Load saved settings
         let defaults = UserDefaults.standard
+        if let enabled = defaults.object(forKey: "isGuidanceRayEnabled") as? Bool {
+            self.isGuidanceRayEnabled = enabled
+        }
         if let ruleRaw = defaults.string(forKey: "activeCompositionRule"), let rule = CompositionRule(rawValue: ruleRaw) {
             self.activeCompositionRule = rule
         }
@@ -703,9 +716,10 @@ public final class CameraViewModel: ObservableObject {
             self.handleVisionDetection(detection)
         }
 
-        visionEngine.onTargetTracked = { [weak self] trackedPoint, confidence, pixelBuffer in
+        visionEngine.onTargetTrackedWithTimestamp = { [weak self] trackedPoint, confidence, pixelBuffer, frame in
             guard let self = self, !self.isShowingSettings else { return }
-            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence, pixelBuffer: pixelBuffer)
+            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence,
+                                           pixelBuffer: pixelBuffer, frame: frame)
         }
 
         // Smart Autofocus (Face Priority > Saliency > Center)
@@ -761,6 +775,14 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func switchCamera() {
+        visionEngine.stopTrackingObject()
+        SpatialTrackingEngine.shared.stopTracking()
+        currentTargetPoint = nil
+        isPerfectAlignment = false
+        autoCaptureTask?.cancel()
+        autoCaptureTask = nil
+        autoCaptureCountdown = 0
+        aiSessionState = .idle
         haptics.triggerSelectionChange()
         cameraService.switchCamera()
     }
@@ -786,6 +808,7 @@ public final class CameraViewModel: ObservableObject {
 
 
     private func setupMotionCallbacks() {
+        SpatialTrackingEngine.shared.prepare()
         // Động cơ Tracking Không Gian Chuẩn Xác: Thống nhất một callback duy nhất
         SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, _, quality in
             guard let self = self, !self.isShowingSettings else { return }
@@ -793,8 +816,10 @@ public final class CameraViewModel: ObservableObject {
             self.currentTargetPoint = point
             self.trackingQuality = quality
             // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
-            if case .targetPlaced = self.aiSessionState {
+            switch self.aiSessionState {
+            case .targetPlaced, .alignmentPerfect:
                 self.evaluateAlignment(at: point)
+            default: break
             }
         }
     }
@@ -884,6 +909,23 @@ public final class CameraViewModel: ObservableObject {
             activeEngineSource = nil
             arTrackingWarning = nil
         }
+    }
+
+    /// Called when the camera overlay disappears or the app resigns active.
+    /// A resumed CoreMotion reference frame must not inherit the old world ray.
+    public func suspendSpatialTracking() {
+        aiSessionGeneration += 1
+        autoCaptureTask?.cancel()
+        autoCaptureTask = nil
+        autoCaptureCountdown = 0
+        visionEngine.stopTrackingObject()
+        visionEngine.captureNextFrameForGemini = false
+        visionEngine.onFrameCapturedForAI = nil
+        SpatialTrackingEngine.shared.suspend()
+        initialTargetPoint = nil
+        currentTargetPoint = nil
+        isPerfectAlignment = false
+        aiSessionState = .idle
     }
 
     // MARK: - Vision & Gemini One-Shot Handling
@@ -1110,16 +1152,22 @@ public final class CameraViewModel: ObservableObject {
         }
         // Nếu nằm giữa 20.0 và 30.0: giữ nguyên trạng thái trước đó
         SpatialTrackingEngine.shared.setLowTextureFlag(isCurrentlyLowTexture)
+        visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
         CameraLogger.info("Texture Variance: \(String(format: "%.2f", variance)) -> LowTexture (Ưu tiên Gyro): \(isCurrentlyLowTexture ? "BẬT" : "TẮT")", category: .tracking)
     }
 
     private func computeTextureVariance(pixelBuffer: CVPixelBuffer, normalizedRect: CGRect) -> Double {
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return 1000 }
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 1000 }
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let planar = format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                     format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        guard planar || format == kCVPixelFormatType_32BGRA else { return 1000 }
+        let address = planar ? CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) : CVPixelBufferGetBaseAddress(pixelBuffer)
+        guard let baseAddress = address else { return 1000 }
+        let width = planar ? CVPixelBufferGetWidthOfPlane(pixelBuffer, 0) : CVPixelBufferGetWidth(pixelBuffer)
+        let height = planar ? CVPixelBufferGetHeightOfPlane(pixelBuffer, 0) : CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = planar ? CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0) : CVPixelBufferGetBytesPerRow(pixelBuffer)
         let buffer = baseAddress.assumingMemoryBound(to: UInt8.self)
 
         let regionX = max(0, Int(normalizedRect.origin.x * CGFloat(width)))
@@ -1132,8 +1180,12 @@ public final class CameraViewModel: ObservableObject {
         while y < min(regionY + regionH, height) {
             var x = regionX
             while x < min(regionX + regionW, width) {
-                let offset = y * bytesPerRow + x * 4
-                if offset + 2 < bytesPerRow * height {
+                let offset = y * bytesPerRow + x * (planar ? 1 : 4)
+                if planar {
+                    let value = Double(buffer[offset])
+                    values.append(format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ?
+                                  max(0, min(255, (value - 16) * 255 / 219)) : value)
+                } else if offset + 2 < bytesPerRow * height {
                     let b = Double(buffer[offset])
                     let g = Double(buffer[offset + 1])
                     let r = Double(buffer[offset + 2])
@@ -1173,7 +1225,15 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
         SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
         SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
-        SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: currentZoom)
+        let selectedFrame = frameProcessor.latestTrackingFrameSnapshot()
+        if let selectedFrame {
+            SpatialTrackingEngine.shared.registerFrame(selectedFrame.1)
+            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: displayZoom,
+                                                    timestamp: selectedFrame.1.timestamp,
+                                                    calibration: selectedFrame.1.calibration)
+        } else {
+            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: displayZoom)
+        }
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = target
@@ -1181,7 +1241,6 @@ public final class CameraViewModel: ObservableObject {
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: buffer, normalizedRect: region)
             applyTextureVarianceHysteresis(variance: variance)
-            NeuralTargetTracker.shared.setAnchorTemplate(from: buffer, at: anchorTarget)
         } else {
             shouldCheckTextureOnNextFrame = true
         }
@@ -1208,7 +1267,7 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.startTrackingObject(
             at: target,
             size: initialSize,
-            refiningBuffer: frameProcessor.latestPixelBufferSnapshot(),
+            refiningBuffer: selectedFrame?.0,
             orientation: .up
         )
 
@@ -1232,7 +1291,8 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
 
-    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double, pixelBuffer: CVPixelBuffer) {
+    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double,
+                                            pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext) {
         // Tiếp nhận cập nhật cả trong alignmentPerfect (zoom reveal) để vòng vàng bám vật thể
         // xuyên suốt quá trình zoom — tránh nhảy vị trí khi zoom hoàn tất
         switch aiSessionState {
@@ -1249,7 +1309,7 @@ public final class CameraViewModel: ObservableObject {
         }
 
         // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào Động cơ Tracking Không Gian
-        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, pixelBuffer: pixelBuffer)
+        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, frame: frame)
     }
 
     private func evaluateAlignment(at point: CGPoint) {
@@ -1268,10 +1328,11 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        let isPerfect = dist <= calculator.alignmentTolerance
+        // An unverified prediction must not start or continue automatic capture.
+        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality == .locked
 
         // Kích hoạt khi tâm trắng đè khớp lên vùng target vàng!
-        if isPerfect && !isPerfectAlignment && (trackingQuality == .locked || trackingQuality == .predicting) {
+        if isPerfect && !isPerfectAlignment {
             isPerfectAlignment = true
             haptics.triggerMagneticSnap()
             withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
@@ -1318,16 +1379,18 @@ public final class CameraViewModel: ObservableObject {
         autoCaptureCountdown = 1 // 1 giây phản hồi nhanh chụp ngay
 
         autoCaptureTask = Task {
-            try? await Task.sleep(nanoseconds: initialWait)
-            await MainActor.run { self.autoCaptureCountdown = 0 }
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            await MainActor.run {
-                if self.isPerfectAlignment {
-                    self.executeCapture()
-                } else {
-                    self.aiSessionState = .targetPlaced(locked: true)
-                    self.autoCaptureCountdown = 0
-                }
+            do {
+                try await Task.sleep(nanoseconds: initialWait)
+                guard !Task.isCancelled else { return }
+                self.autoCaptureCountdown = 0
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch { return }
+            guard !Task.isCancelled else { return }
+            if self.isPerfectAlignment && self.trackingQuality == .locked {
+                self.executeCapture()
+            } else {
+                self.aiSessionState = .targetPlaced(locked: true)
+                self.autoCaptureCountdown = 0
             }
         }
     }

@@ -1,25 +1,19 @@
-﻿import os
-import sys
-import time
-import math
+"""Synthetic CNN training with measured held-out metrics and optional CoreML export.
+
+Not run as part of the tracking refactor. Synthetic validation is not evidence of
+real-world identity robustness. No raw .bin export and no fabricated scores.
+Requires: torch, numpy, pillow; export additionally requires coremltools on macOS.
+"""
+import argparse
+import json
 import random
+from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
 
-print("=" * 70)
-print("🚀 ALIGNAI STUDIO — NEURAL TARGET TRACKING TRAINING PIPELINE")
-print("🔥 Huấn luyện Mô hình Bám Chủ Thể Chống Nhiễu Ánh Sáng & Chói Nắng")
-print("=" * 70)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"🖥️ Thiết bị tính toán: {device} (Tối ưu hóa chạy êm mượt trên mọi CPU)")
-
-# 1. BỘ GIẢ LẬP MÔI TRƯỜNG ÁNH SÁNG NGOÀI TRỜI (SYNTHETIC LIGHTING SIMULATOR)
 class SyntheticLightingSimulator:
     """Mô phỏng chân thực các điều kiện ánh sáng khắc nghiệt ngoài trời và trong nhà"""
     
@@ -90,11 +84,11 @@ class SyntheticLightingSimulator:
         if random.random() < 0.3: aug = cls.apply_motion_blur(aug)
         return aug
 
-# 2. TẠO DATASET TỔNG HỢP MỤC TIÊU ĐA DẠNG (SYNTHETIC TARGET DATASET)
 class SyntheticTargetDataset(Dataset):
     """Tạo các cặp Anchor - Positive - Negative với hàng ngàn biến thể ánh sáng"""
-    def __init__(self, num_samples=600, img_size=128):
+    def __init__(self, num_samples=600, img_size=128, identity_offset=0):
         self.num_samples = num_samples
+        self.identity_offset = identity_offset
         self.img_size = img_size
         self.simulator = SyntheticLightingSimulator()
         
@@ -104,18 +98,18 @@ class SyntheticTargetDataset(Dataset):
     def _create_base_subject(self, subject_id):
         img = Image.new("RGB", (self.img_size, self.img_size), color=(20, 20, 20))
         draw = ImageDraw.Draw(img)
-        random.seed(subject_id)
+        rng = random.Random(subject_id)
         
         # Nền phong cảnh / tường ngẫu nhiên
-        bg_r = random.randint(40, 220)
-        bg_g = random.randint(40, 220)
-        bg_b = random.randint(40, 220)
+        bg_r = rng.randint(40, 220)
+        bg_g = rng.randint(40, 220)
+        bg_b = rng.randint(40, 220)
         draw.rectangle([0, 0, self.img_size, self.img_size], fill=(bg_r, bg_g, bg_b))
         
         # Vật thể / Hình khối đặc trưng (Khuôn mặt, người, túi xách, biển hiệu)
-        obj_r = random.randint(30, 240)
-        obj_g = random.randint(30, 240)
-        obj_b = random.randint(30, 240)
+        obj_r = rng.randint(30, 240)
+        obj_g = rng.randint(30, 240)
+        obj_b = rng.randint(30, 240)
         
         shape_type = subject_id % 4
         if shape_type == 0:
@@ -136,7 +130,6 @@ class SyntheticTargetDataset(Dataset):
             draw.rectangle([25, 30, 103, 95], fill=(obj_r, obj_g, obj_b))
             draw.line([(25, 30), (103, 95)], fill=(255, 255, 255), width=3)
             
-        random.seed()
         return img
     
     def _to_tensor(self, pil_img):
@@ -149,8 +142,8 @@ class SyntheticTargetDataset(Dataset):
         return tensor
     
     def __getitem__(self, idx):
-        anchor_id = idx % 50
-        neg_id = (anchor_id + random.randint(1, 40)) % 50
+        anchor_id = self.identity_offset + idx % 50
+        neg_id = self.identity_offset + (idx + random.randint(1, 49)) % 50
         
         base_anchor = self._create_base_subject(anchor_id)
         base_neg = self._create_base_subject(neg_id)
@@ -165,7 +158,6 @@ class SyntheticTargetDataset(Dataset):
             self._to_tensor(negative_img)
         )
 
-# 3. KIẾN TRÚC MẠNG SIÊU NHẸ NEURAL TARGET EMBEDDER (~1.2 MB)
 class ConvBlock(nn.Module):
     def __init__(self, in_c, out_c, stride=1):
         super().__init__()
@@ -178,7 +170,7 @@ class ConvBlock(nn.Module):
         return self.conv(x)
 
 class RobustTargetEmbedder(nn.Module):
-    """Mô hình nhúng vân tay đặc trưng 128-d siêu nhẹ (chỉ ~1.2 MB, tối ưu ANE 60fps)"""
+    """128-dimensional CNN. Device throughput is not measured here."""
     def __init__(self, embedding_dim=128):
         super().__init__()
         self.stem = ConvBlock(3, 16, stride=2)    # 128x128 -> 64x64
@@ -204,170 +196,98 @@ class RobustTargetEmbedder(nn.Module):
         # Chuẩn hóa L2 về hình cầu đơn vị (Unit Sphere)
         return nn.functional.normalize(emb, p=2, dim=1)
 
-# 4. TIẾN HÀNH HUẤN LUYỆN (TRAINING EXECUTION)
-model = RobustTargetEmbedder(embedding_dim=128).to(device)
-param_count = sum(p.numel() for p in model.parameters())
-model_size_mb = (param_count * 4) / (1024 * 1024)
-print(f"📊 Tổng số tham số (Parameters): {param_count:,}")
-print(f"📦 Dung lượng Model ước tính: {model_size_mb:.2f} MB (Rất nhẹ, hoàn toàn phù hợp iOS)")
+class ImageInputEmbedder(nn.Module):
+    """The CoreML image adapter supplies RGB [0,1]; normalize inside the graph."""
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        self.register_buffer('mean', torch.tensor([.485, .456, .406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([.229, .224, .225]).view(1, 3, 1, 1))
 
-dataset = SyntheticTargetDataset(num_samples=480, img_size=128)
-dataloader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=True)
+    def forward(self, image):
+        return self.model((image - self.mean) / self.std)
 
-criterion = nn.TripletMarginLoss(margin=0.4, p=2)
-optimizer = optim.AdamW(model.parameters(), lr=0.002, weight_decay=1e-4)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=15)
 
-epochs = 15
-losses = []
-pos_sims = []
-neg_sims = []
+@torch.no_grad()
+def evaluate(model, loader, device):
+    model.eval()
+    positive, negative = [], []
+    for a, p, n in loader:
+        ea, ep, en = [model(x.to(device)) for x in (a, p, n)]
+        positive.extend((ea * ep).sum(1).cpu().tolist())
+        negative.extend((ea * en).sum(1).cpu().tolist())
+    return {'positive_cosine_mean': float(np.mean(positive)),
+            'negative_cosine_mean': float(np.mean(negative)),
+            'true_accept_rate_at_0_75': float(np.mean(np.array(positive) >= .75)),
+            'false_accept_rate_at_0_75': float(np.mean(np.array(negative) >= .75)),
+            'pairs_per_class': len(positive)}
 
-start_time = time.time()
-print("\n🏋️ BẮT ĐẦU QUÁ TRÌNH HUẤN LUYỆN TRÊN MÔI TRƯỜNG GIẢ LẬP ÁNH SÁNG:")
-print("-" * 70)
 
-for epoch in range(1, epochs + 1):
-    model.train()
-    running_loss = 0.0
-    epoch_pos_sim = 0.0
-    epoch_neg_sim = 0.0
-    batches = 0
-    
-    for anchor, positive, negative in dataloader:
-        anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
-        
-        optimizer.zero_grad()
-        emb_a = model(anchor)
-        emb_p = model(positive)
-        emb_n = model(negative)
-        
-        loss = criterion(emb_a, emb_p, emb_n)
-        loss.backward()
-        optimizer.step()
-        
-        running_loss += loss.item()
-        
-        # Tính Cosine Similarity
-        with torch.no_grad():
-            sim_p = torch.sum(emb_a * emb_p, dim=1).mean().item()
-            sim_n = torch.sum(emb_a * emb_n, dim=1).mean().item()
-            epoch_pos_sim += sim_p
-            epoch_neg_sim += sim_n
-            
-        batches += 1
-        
-    scheduler.step()
-    
-    avg_loss = running_loss / batches
-    avg_pos = epoch_pos_sim / batches
-    avg_neg = epoch_neg_sim / batches
-    
-    losses.append(avg_loss)
-    pos_sims.append(avg_pos)
-    neg_sims.append(avg_neg)
-    
-    print(f"Epoch [{epoch:02d}/{epochs:02d}] | Loss: {avg_loss:.4f} | Độ bám cùng chủ thể (Pos Sim): {avg_pos*100:.1f}% | Phân biệt vật khác (Neg Sim): {avg_neg*100:.1f}%")
+def export_coreml(model, directory):
+    import coremltools as ct
+    wrapped = ImageInputEmbedder(model.cpu().eval()).eval()
+    example = torch.rand(1, 3, 128, 128)
+    traced = torch.jit.trace(wrapped, example)
+    converted = ct.convert(traced, convert_to='mlprogram',
+        minimum_deployment_target=ct.target.iOS17,
+        inputs=[ct.ImageType(name='image', shape=example.shape, scale=1 / 255.,
+                             color_layout=ct.colorlayout.RGB)],
+        outputs=[ct.TensorType(name='embedding')])
+    converted.user_defined_metadata['tracking_schema'] = 'rgb128_imagenet_in_graph_l2_128_v1'
+    converted.save(str(directory / 'RobustTargetEmbedder.mlpackage'))
+    # On macOS compare the converted model against PyTorch using the exact bytes.
+    pixels = np.random.default_rng(226).integers(0, 256, (128, 128, 3), dtype=np.uint8)
+    pil = Image.fromarray(pixels)
+    tensor = torch.from_numpy(pixels.astype(np.float32) / 255).permute(2, 0, 1).unsqueeze(0)
+    with torch.no_grad():
+        expected = wrapped(tensor).numpy().reshape(-1)
+    actual = np.asarray(converted.predict({'image': pil})['embedding']).reshape(-1)
+    cosine = float(np.dot(expected, actual) / (np.linalg.norm(expected) * np.linalg.norm(actual)))
+    if not np.isfinite(cosine) or cosine < .999:
+        raise RuntimeError(f'CoreML/PyTorch preprocessing parity failed: {cosine}')
+    return cosine
 
-total_training_time = time.time() - start_time
-print("-" * 70)
-print(f"🎉 HUẤN LUYỆN HOÀN TẤT TRONG: {total_training_time:.2f} giây ({total_training_time/60:.2f} phút)!")
 
-# 5. ĐO LƯỜNG ĐỘ BÁM TRÊN 6 ĐIỀU KIỆN ÁNH SÁNG NGOÀI TRỜI CỰC ĐOAN
-model.eval()
-conditions = [
-    "1. Nắng Gắt & Chói (Sun Flare)",
-    "2. Bóng Đổ Gắt (Harsh Shadow)",
-    "3. Ngược Sáng (Backlight)",
-    "4. Hoàng Hôn (Warm Sunset)",
-    "5. Trời Râm Mát (Cool Overcast)",
-    "6. Lia Máy Nhanh (Motion Blur)"
-]
-condition_scores = [94.8, 92.5, 91.2, 96.4, 95.7, 89.6]
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--epochs', type=int, default=15)
+    parser.add_argument('--samples', type=int, default=480)
+    parser.add_argument('--output-dir', type=Path, default=Path('training_artifacts'))
+    parser.add_argument('--export-coreml', action='store_true')
+    args = parser.parse_args()
+    if args.epochs < 1 or args.samples < 16:
+        parser.error('epochs >= 1 and samples >= 16 are required')
+    random.seed(226); np.random.seed(226); torch.manual_seed(226)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = RobustTargetEmbedder().to(device)
+    train = DataLoader(SyntheticTargetDataset(args.samples), batch_size=16, shuffle=True, drop_last=True)
+    # Identity IDs do not overlap training. Evaluation augmentation is seeded.
+    validation = DataLoader(SyntheticTargetDataset(256, identity_offset=1000), batch_size=16)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=.002, weight_decay=1e-4)
+    criterion = nn.TripletMarginLoss(margin=.4)
+    losses = []
+    for epoch in range(args.epochs):
+        model.train()
+        total, count = 0., 0
+        for a, p, n in train:
+            optimizer.zero_grad()
+            ea, ep, en = [model(x.to(device)) for x in (a, p, n)]
+            loss = criterion(ea, ep, en)
+            loss.backward(); optimizer.step()
+            total += loss.item(); count += 1
+        losses.append(total / count)
+        print(f'epoch={epoch + 1} triplet_loss={losses[-1]:.6f}', flush=True)
+    random.seed(1226); np.random.seed(1226); torch.manual_seed(1226)
+    metrics = evaluate(model, validation, device)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    torch.save({'state_dict': model.cpu().state_dict(), 'architecture': 'RobustTargetEmbedder_v1',
+                'normalization': 'ImageNet_RGB', 'seed': 226}, args.output_dir / 'embedder.pt')
+    report = {'scope': 'synthetic disjoint-identity validation only', 'losses': losses,
+              'validation': metrics, 'real_device_validated': False}
+    if args.export_coreml:
+        report['coreml_pytorch_cosine'] = export_coreml(model, args.output_dir)
+    (args.output_dir / 'training_report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
 
-# 6. TỰ ĐỘNG XUẤT SƠ ĐỒ ĐỒ THỊ BÁO CÁO (TRAINING REPORT DIAGRAM)
-downloads_dir = "C:\\Users\\admin\\Downloads"
-os.makedirs(downloads_dir, exist_ok=True)
-diagram_path = os.path.join(downloads_dir, "AlignAI_Training_Report_Diagram.png")
 
-fig = plt.figure(figsize=(14, 10), dpi=150)
-fig.patch.set_facecolor('#121214')
-
-# Tiêu đề chính
-plt.suptitle("ALIGNAI STUDIO — NEURAL TARGET EMBEDDER TRAINING REPORT\n"
-             "Báo Cáo Huấn Luyện AI Bám Chủ Thể Chống Nhiễu Ánh Sáng Ngoài Trời",
-             fontsize=15, fontweight='bold', color='#FFD700', y=0.98)
-
-# Subplot 1: Đồ thị Loss hội tụ
-ax1 = plt.subplot(2, 2, 1)
-ax1.set_facecolor('#1E1E24')
-ax1.plot(range(1, epochs + 1), losses, color='#FF5722', linewidth=2.5, marker='o', label='Triplet Loss (Hội tụ)')
-ax1.set_title("1. Đường Cong Hội Tụ Loss (Loss Convergence)", color='white', fontsize=11, fontweight='bold')
-ax1.set_xlabel("Epochs", color='#AAAAAA')
-ax1.set_ylabel("Margin Loss", color='#AAAAAA')
-ax1.grid(True, linestyle='--', alpha=0.2, color='white')
-ax1.tick_params(colors='#AAAAAA')
-ax1.legend(facecolor='#2A2A35', labelcolor='white')
-
-# Subplot 2: Độ tương đồng vân tay (Similarity Tracking)
-ax2 = plt.subplot(2, 2, 2)
-ax2.set_facecolor('#1E1E24')
-ax2.plot(range(1, epochs + 1), [p * 100 for p in pos_sims], color='#00E676', linewidth=2.5, marker='s', label='Cùng Chủ Thể (Kháng chói nắng)')
-ax2.plot(range(1, epochs + 1), [n * 100 for n in neg_sims], color='#FF5252', linewidth=2.0, linestyle='--', marker='^', label='Vật Thể Khác (Chống bắt nhầm)')
-ax2.set_title("2. Độ Bám Nhận Diện Vân Tay Chủ Thể (%)", color='white', fontsize=11, fontweight='bold')
-ax2.set_xlabel("Epochs", color='#AAAAAA')
-ax2.set_ylabel("Cosine Similarity (%)", color='#AAAAAA')
-ax2.grid(True, linestyle='--', alpha=0.2, color='white')
-ax2.tick_params(colors='#AAAAAA')
-ax2.legend(facecolor='#2A2A35', labelcolor='white')
-
-# Subplot 3: Khả năng bám trên 6 điều kiện thời tiết khắc nghiệt
-ax3 = plt.subplot(2, 2, 3)
-ax3.set_facecolor('#1E1E24')
-bars = ax3.barh(conditions, condition_scores, color=['#FFB300', '#7E57C2', '#29B6F6', '#FF7043', '#26A69A', '#AB47BC'], height=0.55)
-ax3.set_xlim(0, 100)
-ax3.set_title("3. Độ Bám Ổn Định Dưới 6 Môi Trường Ánh Sáng (%)", color='white', fontsize=11, fontweight='bold')
-ax3.grid(True, linestyle='--', alpha=0.2, color='white', axis='x')
-ax3.tick_params(colors='#AAAAAA')
-for bar in bars:
-    w = bar.get_width()
-    ax3.text(w + 1.2, bar.get_y() + bar.get_height()/2, f"{w:.1f}%", va='center', color='white', fontweight='bold', fontsize=9.5)
-
-# Subplot 4: Bảng tóm tắt thông số kỹ thuật
-ax4 = plt.subplot(2, 2, 4)
-ax4.set_facecolor('#1E1E24')
-ax4.axis('off')
-
-summary_text = (
-    "📊 TÓM TẮT THÔNG SỐ MODEL ĐÃ HUẤN LUYỆN:\n\n"
-    f"• ⏱️ Thời gian huấn luyện (Training Time): {total_training_time:.1f} giây\n"
-    f"• 📦 Dung lượng Model (Model Size): {model_size_mb:.2f} MB (Tối ưu < 5MB)\n"
-    f"• 🧠 Kiến trúc Mạng (Backbone): Lightweight ConvNeXt-Nano\n"
-    f"• 🧬 Kích thước Vector Đặc trưng: 128 Chiều (Unit Sphere)\n"
-    f"• ⚡ Tốc độ xử lý trên Apple Neural Engine: 1.8 ms / frame (~60 FPS)\n"
-    f"• 🎯 Độ chính xác bám ngoài trời nắng: 94.8%\n"
-    f"• 🛡️ Cơ chế phối hợp: Dual-Layer với Gyro 60Hz (Không xung đột)\n"
-    f"• 📁 File Model: RobustTargetEmbedder.pt (Lưu tại Downloads)"
-)
-
-ax4.text(0.05, 0.5, summary_text, transform=ax4.transAxes, color='white', fontsize=10.5,
-         verticalalignment='center', fontfamily='monospace',
-         bbox=dict(boxstyle='round,pad=1.0', facecolor='#252530', edgecolor='#FFD700', linewidth=1.5))
-
-plt.tight_layout(rect=[0, 0.03, 1, 0.94])
-plt.savefig(diagram_path, facecolor=fig.get_facecolor(), edgecolor='none')
-plt.close()
-
-print(f"\n📈 ĐÃ VẼ VÀ XUẤT SƠ ĐỒ THÀNH CÔNG TẠI:")
-print(f"👉 {diagram_path}")
-
-# 7. LƯU FILE MODEL PYTORCH ĐÃ HUẤN LUYỆN
-model_out_path = os.path.join(downloads_dir, "RobustTargetEmbedder.pt")
-torch.save(model.state_dict(), model_out_path)
-print(f"👉 File Model: {model_out_path} ({model_size_mb:.2f} MB)")
-
-# Lưu bản sao vào thư mục dự án
-project_model_path = os.path.join(os.getcwd(), "AISmartFramingCamera", "Services", "RobustTargetEmbedder.pt")
-torch.save(model.state_dict(), project_model_path)
-print(f"👉 Bản sao dự án: {project_model_path}")
-print("=" * 70)
+if __name__ == '__main__':
+    main()

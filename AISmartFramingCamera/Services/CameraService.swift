@@ -266,6 +266,9 @@ public final class CameraService: NSObject {
                         if connection.isVideoOrientationSupported {
                             connection.videoOrientation = .portrait
                         }
+                        if connection.isCameraIntrinsicMatrixDeliverySupported {
+                            connection.isCameraIntrinsicMatrixDeliveryEnabled = true
+                        }
                     }
                     self.videoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataQueue)
                 }
@@ -429,6 +432,9 @@ public final class CameraService: NSObject {
                         }
                         if connection.isVideoMirroringSupported {
                             connection.isVideoMirrored = (targetPosition == .front)
+                        }
+                        if connection.isCameraIntrinsicMatrixDeliverySupported {
+                            connection.isCameraIntrinsicMatrixDeliveryEnabled = true
                         }
                     }
                     self.updateMaxPhotoDimensions(for: newCamera)

@@ -51,7 +51,10 @@ public struct ARFramingOverlayView: View {
                 // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
                 // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
                 if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
-                    let targetScreen = convertBufferPointToScreen(targetPoint, in: size)
+                    let projectedScreen = convertBufferPointToScreen(targetPoint, in: size)
+                    let targetScreen = TrackingGeometry.dock(projectedScreen, size: size)
+                    let isDocked = hypot(projectedScreen.x - targetScreen.x,
+                                         projectedScreen.y - targetScreen.y) > 0.5
 
                     // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
                     if viewModel.showGuidanceRay {
@@ -73,6 +76,18 @@ public struct ARFramingOverlayView: View {
                         trackingQuality: viewModel.trackingQuality
                     )
                     .position(targetScreen)
+                    .transaction { $0.animation = nil }
+
+                    if isDocked {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(.yellow)
+                            .rotationEffect(.radians(atan2(projectedScreen.y - screenCenter.y,
+                                                         projectedScreen.x - screenCenter.x) + .pi / 2))
+                            .position(targetScreen)
+                            .accessibilityLabel("Quay camera theo hướng mũi tên để tìm lại mục tiêu")
+                            .allowsHitTesting(false)
+                    }
                 }
 
                 // 5. TÂM TRẮNG GIỮA MÀN HÌNH — CHỈ HIỆN KHI AI ĐÃ XÁC ĐỊNH ĐƯỢC TARGET
@@ -235,37 +250,25 @@ public struct ARFramingOverlayView: View {
             )
             .clipped()
             .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
-            .onAppear { startAnimations() }
+            .onAppear {
+                SpatialTrackingEngine.shared.prepare()
+                startAnimations()
+            }
+            .onDisappear { viewModel.suspendSpatialTracking() }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                viewModel.suspendSpatialTracking()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                SpatialTrackingEngine.shared.prepare()
+            }
         }
     }
 
     // MARK: - AspectFill Coordinate Conversion Helpers
     // Chuyển đổi toạ độ chuẩn hóa từ Camera Buffer (4:3) sang màn hình Preview
     public static func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
-        // Tỉ lệ cảm biến camera iOS ở chế độ portrait: 3:4 (width / height = 0.75)
-        let bufferAspect: CGFloat = 3.0 / 4.0
-        let screenAspect = screenSize.width / max(1.0, screenSize.height)
-
-        if abs(screenAspect - bufferAspect) < 0.03 {
-            // Khung ngắm chuẩn 4:3 (WYSIWYG 100% khớp cảm biến camera Apple): Ánh xạ 1:1 chính xác tuyệt đối
-            return CGPoint(x: point.x * screenSize.width, y: point.y * screenSize.height)
-        }
-
-        if screenAspect < bufferAspect {
-            // Màn hình hẹp hơn khung camera -> Bị crop 2 bên trái/phải
-            let displayedWidth = screenSize.height * bufferAspect
-            let horizontalCropOffset = (displayedWidth - screenSize.width) / 2.0
-            let screenX = point.x * displayedWidth - horizontalCropOffset
-            let screenY = point.y * screenSize.height
-            return CGPoint(x: screenX, y: screenY)
-        } else {
-            // Màn hình rộng hơn khung camera -> Bị crop trên/dưới
-            let displayedHeight = screenSize.width / bufferAspect
-            let verticalCropOffset = (displayedHeight - screenSize.height) / 2.0
-            let screenX = point.x * screenSize.width
-            let screenY = point.y * displayedHeight - verticalCropOffset
-            return CGPoint(x: screenX, y: screenY)
-        }
+        TrackingGeometry.screenPoint(point, size: screenSize,
+            aspect: SpatialTrackingEngine.shared.currentBufferAspect)
     }
 
     public static func convertBufferRectToScreen(_ rect: CGRect, in screenSize: CGSize) -> CGRect {
@@ -288,29 +291,10 @@ public struct ARFramingOverlayView: View {
     }
 
     private func convertScreenPointToBuffer(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
-        let bufferAspect: CGFloat = 3.0 / 4.0
-        let screenAspect = screenSize.width / max(1.0, screenSize.height)
-
-        if abs(screenAspect - bufferAspect) < 0.03 {
-            return CGPoint(
-                x: max(0.02, min(0.98, point.x / screenSize.width)),
-                y: max(0.02, min(0.98, point.y / screenSize.height))
-            )
-        }
-
-        if screenAspect < bufferAspect {
-            let displayedWidth = screenSize.height * bufferAspect
-            let horizontalCropOffset = (displayedWidth - screenSize.width) / 2.0
-            let bufferX = (point.x + horizontalCropOffset) / displayedWidth
-            let bufferY = point.y / screenSize.height
-            return CGPoint(x: max(0.02, min(0.98, bufferX)), y: max(0.02, min(0.98, bufferY)))
-        } else {
-            let displayedHeight = screenSize.width / bufferAspect
-            let verticalCropOffset = (displayedHeight - screenSize.height) / 2.0
-            let bufferX = point.x / screenSize.width
-            let bufferY = (point.y + verticalCropOffset) / displayedHeight
-            return CGPoint(x: max(0.02, min(0.98, bufferX)), y: max(0.02, min(0.98, bufferY)))
-        }
+        let p = TrackingGeometry.bufferPoint(point, size: screenSize,
+            aspect: SpatialTrackingEngine.shared.currentBufferAspect)
+        // Only user input is clipped to the image domain, never estimator state.
+        return CGPoint(x: max(0, min(1, p.x)), y: max(0, min(1, p.y)))
     }
 
     private func startAnimations() {

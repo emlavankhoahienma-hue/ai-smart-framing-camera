@@ -1,1000 +1,483 @@
 import Foundation
 import Vision
 import CoreMedia
+import CoreVideo
 import CoreImage
 import CoreGraphics
+import ImageIO
 import QuartzCore
 
+/// Mutable Vision requests and templates belong exclusively to visionQueue.
+/// ingressLock protects settings, callbacks, admission and session generation.
+/// No synchronous dispatch to the main queue and at most one admitted frame.
 public final class VisionFramingEngine: @unchecked Sendable {
     public static let shared = VisionFramingEngine()
-    
-    private let visionQueue = DispatchQueue(
-        label: "com.aismartframing.visionQueue",
-        qos: .userInteractive,
-        attributes: [],
-        autoreleaseFrequency: .workItem
-    )
-    
-    private let sharedCIContext = CIContext(options: [.useSoftwareRenderer: false])
-    
-    private let processingLock = NSLock()
-    private var _captureNextFrameForGemini = false
-    public var captureNextFrameForGemini: Bool {
-        get { processingLock.lock(); defer { processingLock.unlock() }; return _captureNextFrameForGemini }
-        set { processingLock.lock(); _captureNextFrameForGemini = newValue; processingLock.unlock() }
-    }
+    private let visionQueue = DispatchQueue(label: "com.alignai.vision", qos: .userInitiated,
+                                            autoreleaseFrequency: .workItem)
+    private let ingressLock = NSLock()
+    private let context = CIContext(options: [.useSoftwareRenderer: false])
+    private var busy = false
+    private var generation: UInt64 = 0
+    private var active = false
+    private var idle = false
+    private var lowTexture = false
+    private var scene: DetectedSceneType = .general
+    private var captureNext = false
+    private var captured: CGImage?
+    private var lastAdmission = -Double.infinity
+    private var detectionCallback: ((SubjectDetectionResult) -> Void)?
+    private var targetCallback: ((CGPoint?, Double, CVPixelBuffer) -> Void)?
+    private var timedTargetCallback: ((CGPoint?, Double, CVPixelBuffer, TrackingFrameContext) -> Void)?
+    private var focusCallback: ((CGPoint, SmartFocusType) -> Void)?
+    private var captureCallback: ((CGImage) -> Void)?
+    private var targetDeliveryScheduled = false
+    private var pendingTargetDelivery: (CGPoint?, Double, CVPixelBuffer, TrackingFrameContext?, UInt64)?
 
-    private var _isLowTextureAnchor = false
+    public var isTrackingTarget: Bool { ingressLock.withLock { active } }
+    public var isIdlePreviewMode: Bool {
+        get { ingressLock.withLock { idle } }
+        set { ingressLock.withLock { idle = newValue } }
+    }
     public var isLowTextureAnchor: Bool {
-        get { processingLock.lock(); defer { processingLock.unlock() }; return _isLowTextureAnchor }
-        set { processingLock.lock(); _isLowTextureAnchor = newValue; processingLock.unlock() }
+        get { ingressLock.withLock { lowTexture } }
+        set { ingressLock.withLock { lowTexture = newValue } }
     }
-
-    private var _currentSceneType: DetectedSceneType = .general
     public var currentSceneType: DetectedSceneType {
-        get { processingLock.lock(); defer { processingLock.unlock() }; return _currentSceneType }
-        set { processingLock.lock(); _currentSceneType = newValue; processingLock.unlock() }
+        get { ingressLock.withLock { scene } }
+        set { ingressLock.withLock { scene = newValue } }
+    }
+    public var captureNextFrameForGemini: Bool {
+        get { ingressLock.withLock { captureNext } }
+        set { ingressLock.withLock { captureNext = newValue } }
+    }
+    public var capturedGeminiFrame: CGImage? {
+        get { ingressLock.withLock { captured } }
+        set { ingressLock.withLock { captured = newValue } }
+    }
+    public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)? {
+        get { ingressLock.withLock { detectionCallback } }
+        set { ingressLock.withLock { detectionCallback = newValue } }
+    }
+    public var onTargetTracked: ((CGPoint?, Double, CVPixelBuffer) -> Void)? {
+        get { ingressLock.withLock { targetCallback } }
+        set { ingressLock.withLock { targetCallback = newValue } }
+    }
+    /// Preferred callback. If installed, it replaces legacy delivery to prevent
+    /// double fusion. Legacy callers retain their original signature.
+    public var onTargetTrackedWithTimestamp: ((CGPoint?, Double, CVPixelBuffer, TrackingFrameContext) -> Void)? {
+        get { ingressLock.withLock { timedTargetCallback } }
+        set { ingressLock.withLock { timedTargetCallback = newValue } }
+    }
+    public var onSmartFocusPointCalculated: ((CGPoint, SmartFocusType) -> Void)? {
+        get { ingressLock.withLock { focusCallback } }
+        set { ingressLock.withLock { focusCallback = newValue } }
+    }
+    public var onFrameCapturedForAI: ((CGImage) -> Void)? {
+        get { ingressLock.withLock { captureCallback } }
+        set { ingressLock.withLock { captureCallback = newValue } }
     }
 
-    private var isProcessingFrame = false
-    private var lastProcessTime: TimeInterval = 0
-    private let frameThrottleInterval: TimeInterval = 0.033 // ~30 FPS for ultra-smooth optical tracking
-    public var isIdlePreviewMode: Bool = false
-    private let idleThrottleInterval: TimeInterval = 0.2 // ~5 FPS lúc rảnh, vẫn đủ mượt cho preview mặt/scene
-    
-    // Callbacks
-    public var onDetectionCompleted: ((SubjectDetectionResult) -> Void)?
-    public var onTargetTracked: ((CGPoint?, Double, CVPixelBuffer) -> Void)?
-    public var onSmartFocusPointCalculated: ((CGPoint, SmartFocusType) -> Void)?
-    
-    // Gemini Frame Capture
-    public var capturedGeminiFrame: CGImage? = nil
-    public var onFrameCapturedForAI: ((CGImage) -> Void)?
-    
-    // Visual Feature Object Tracking (VNTrackObjectRequest + Deep FeaturePrint Re-ID + Color Histogram + KLT Point Cluster)
-    public private(set) var isTrackingTarget: Bool = false
-    private var sequenceHandler = VNSequenceRequestHandler()
-    private var lastTargetObservation: VNDetectedObjectObservation? = nil
-    private var referenceFeaturePrint: VNFeaturePrintObservation? = nil
-    private var referenceColorHistogram: [Float]? = nil
-    private var consecutiveLostFrames: Int = 0
-    
-    // KLT (Lucas-Kanade) Feature Point Cluster Tracker + RANSAC
-    private var kltTrackedPoints: [CGPoint] = []
-    private var kltPreviousBuffer: CVPixelBuffer? = nil
-    private var kltTargetBox: CGRect = .zero
+    // Queue-confined state. Frozen identity is only replaced by an explicit pin.
+    private var sequence = VNSequenceRequestHandler()
+    private var request: VNTrackObjectRequest?
+    private var referencePrint: VNFeaturePrintObservation?
+    private var referenceHistogram: [Float]?
+    private var anchorUV = CGPoint(x: 0.5, y: 0.5)
+    private var boxSize = CGSize(width: 0.14, height: 0.14)
+    private var lastBox: CGRect?
+    private var misses = 0
+    private var lastVerified = -Double.infinity
+    private var lastSearch = -Double.infinity
+    private var previousTime = -Double.infinity
+    private var latestBuffer: CVPixelBuffer?
+    private var latestOrientation: CGImagePropertyOrientation = .up
+    private var seedBuffer: CVPixelBuffer?
+    private var seedOrientation: CGImagePropertyOrientation = .up
+    private var seedPoint = CGPoint(x: 0.5, y: 0.5)
+    private var seedSize = CGSize(width: 0.14, height: 0.14)
+    private var pendingSeed = false
+    private var pendingRecovery: (point: CGPoint, time: TimeInterval)?
 
-    // Xác minh danh tính vật thể liên tuyến (chống tracker trôi sang vật thể khác)
-    private var lastVerifiedUIPoint: CGPoint? = nil
-    private var identitySuspicionFrames: Int = 0
-    private var histogramCheckCounter: Int = 0
-    private var histogramMismatchStreak: Int = 0
-    private var featurePrintCheckCounter: Int = 0
-    private var detectionCorrectionCounter: Int = 0
-    private var stableLockFrames: Int = 0
-    private var anchorBoxSize: CGSize = CGSize(width: 0.14, height: 0.14)
-    private var lastReIdAttemptTime: CFTimeInterval = 0
-    
-    // Vision Detection Requests
-    private lazy var faceDetectionRequest: VNDetectFaceRectanglesRequest = {
-        let req = VNDetectFaceRectanglesRequest()
-        req.revision = VNDetectFaceRectanglesRequestRevision3
-        return req
-    }()
-    
-    private lazy var faceLandmarksRequest: VNDetectFaceLandmarksRequest = {
-        let req = VNDetectFaceLandmarksRequest()
-        req.revision = VNDetectFaceLandmarksRequestRevision3
-        return req
-    }()
-    
-    private lazy var humanPoseRequest: VNDetectHumanBodyPoseRequest = {
-        let req = VNDetectHumanBodyPoseRequest()
-        req.revision = VNDetectHumanBodyPoseRequestRevision1
-        return req
-    }()
-    
-    private lazy var saliencyRequest: VNGenerateObjectnessBasedSaliencyImageRequest = {
-        let req = VNGenerateObjectnessBasedSaliencyImageRequest()
-        req.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
-        return req
-    }()
-    
-    private lazy var sceneClassificationRequest: VNClassifyImageRequest = {
-        let req = VNClassifyImageRequest()
-        req.revision = VNClassifyImageRequestRevision1
-        return req
-    }()
-    
     public init() {}
-    
-    // MARK: - Visual Object Tracking Control
-    private var currentTrackRequest: VNTrackObjectRequest? = nil
-    
-    /// Tinh chỉnh Bounding Box mỏ neo ban đầu ôm khít chủ thể thật thay vì dùng box vuông cố định
-    /// Sử dụng Objectness Saliency và Human Body Pose / Face detection
-    public func refineAnchorBox(
-        around tapUIPoint: CGPoint,
-        in buffer: CVPixelBuffer,
-        orientation: CGImagePropertyOrientation = .up
-    ) -> CGRect? {
-        let tapVision = CGPoint(x: tapUIPoint.x, y: 1.0 - tapUIPoint.y)
+
+    public func refineAnchorBox(around point: CGPoint, in buffer: CVPixelBuffer,
+                                orientation: CGImagePropertyOrientation = .up) -> CGRect? {
+        let face = VNDetectFaceRectanglesRequest()
+        let saliency = VNGenerateObjectnessBasedSaliencyImageRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-        
-        // 1. Ưu tiên kiểm tra Human Body Pose nếu điểm chạm thuộc về người
-        let poseReq = VNDetectHumanBodyPoseRequest()
-        poseReq.revision = VNDetectHumanBodyPoseRequestRevision1
-        if (try? handler.perform([poseReq])) != nil,
-           let observations = poseReq.results, !observations.isEmpty {
-            for obs in observations {
-                if let recognizedPoints = try? obs.recognizedPoints(.all) {
-                    let validPoints = recognizedPoints.values.filter { $0.confidence > 0.25 }.map { $0.location }
-                    guard !validPoints.isEmpty else { continue }
-                    
-                    let xs = validPoints.map { $0.x }
-                    let ys = validPoints.map { $0.y }
-                    guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { continue }
-                    
-                    let bodyBox = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-                    let paddedBody = bodyBox.insetBy(dx: -max(0.04, bodyBox.width * 0.08), dy: -max(0.04, bodyBox.height * 0.08))
-                    
-                    if paddedBody.insetBy(dx: -0.04, dy: -0.04).contains(tapVision) {
-                        let w = min(0.65, max(0.12, paddedBody.width))
-                        let h = min(0.75, max(0.15, paddedBody.height))
-                        return CGRect(
-                            x: min(1.0 - w, max(0.01, paddedBody.midX - w / 2.0)),
-                            y: min(1.0 - h, max(0.01, paddedBody.midY - h / 2.0)),
-                            width: w,
-                            height: h
-                        )
-                    }
-                }
-            }
-        }
-        
-        // 2. Kiểm tra Face Detection nếu chạm vào mặt hoặc đầu
-        let faceReq = VNDetectFaceRectanglesRequest()
-        faceReq.revision = VNDetectFaceRectanglesRequestRevision3
-        if (try? handler.perform([faceReq])) != nil,
-           let faceResults = faceReq.results, !faceResults.isEmpty {
-            for face in faceResults {
-                if face.boundingBox.insetBy(dx: -0.04, dy: -0.04).contains(tapVision) {
-                    let faceBox = face.boundingBox
-                    let w = min(0.60, max(0.14, faceBox.width * 1.8))
-                    let h = min(0.70, max(0.18, faceBox.height * 2.5))
-                    return CGRect(
-                        x: min(1.0 - w, max(0.01, faceBox.midX - w / 2.0)),
-                        y: min(1.0 - h, max(0.01, faceBox.midY - h * 0.4)),
-                        width: w,
-                        height: h
-                    )
-                }
-            }
-        }
-        
-        // 3. Objectness-based Saliency (Đồ vật, thú cưng, chi tiết nổi bật)
-        let salReq = VNGenerateObjectnessBasedSaliencyImageRequest()
-        salReq.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
-        if (try? handler.perform([salReq])) != nil,
-           let result = salReq.results?.first as? VNSaliencyImageObservation,
-           let objects = result.salientObjects, !objects.isEmpty {
-            let candidates = objects.filter { $0.boundingBox.insetBy(dx: -0.03, dy: -0.03).contains(tapVision) }
-            if let best = candidates.max(by: { $0.confidence < $1.confidence }) {
-                let w = min(0.65, max(0.10, best.boundingBox.width * 1.15))
-                let h = min(0.65, max(0.10, best.boundingBox.height * 1.15))
-                return CGRect(
-                    x: min(1.0 - w, max(0.01, best.boundingBox.midX - w / 2.0)),
-                    y: min(1.0 - h, max(0.01, best.boundingBox.midY - h / 2.0)),
-                    width: w,
-                    height: h
-                )
-            }
-        }
-        
-        return nil
+        guard (try? handler.perform([face, saliency])) != nil else { return nil }
+        let visionPoint = CGPoint(x: point.x, y: 1 - point.y)
+        let boxes = (face.results ?? []).map(\.boundingBox) +
+            (saliency.results?.first?.salientObjects ?? []).map(\.boundingBox)
+        return boxes.filter { $0.contains(visionPoint) && $0.width > 0.03 && $0.height > 0.03 }
+            .min { $0.width * $0.height < $1.width * $1.height }
     }
-    
-    /// Khởi động tracking bám dính vào vùng cảnh vật/vật thể/chữ tại toạ độ mục tiêu
-    public func startTrackingObject(
-        at normalizedPoint: CGPoint,
-        size: CGSize = CGSize(width: 0.12, height: 0.12),
-        refiningBuffer: CVPixelBuffer? = nil,
-        orientation: CGImagePropertyOrientation = .up
-    ) {
-        var targetPoint = normalizedPoint
-        var targetSize = size
 
-        if let buffer = refiningBuffer,
-           let refinedBox = refineAnchorBox(around: normalizedPoint, in: buffer, orientation: orientation) {
-            let boxCenterUI = CGPoint(x: refinedBox.midX, y: 1.0 - refinedBox.midY)
-            let dist = hypot(boxCenterUI.x - normalizedPoint.x, boxCenterUI.y - normalizedPoint.y)
-            if dist < 0.15 {
-                targetPoint = boxCenterUI
-            }
-            targetSize = CGSize(width: refinedBox.width, height: refinedBox.height)
-            CameraLogger.info("🎯 [Vision] Đã tinh chỉnh Anchor Box ôm khít chủ thể: tâm=(\(String(format: "%.3f", targetPoint.x)), \(String(format: "%.3f", targetPoint.y))), size: \(targetSize)", category: .tracking)
+    public func startTrackingObject(at point: CGPoint, size: CGSize = CGSize(width: 0.12, height: 0.12),
+                                    refiningBuffer: CVPixelBuffer? = nil,
+                                    orientation: CGImagePropertyOrientation = .up) {
+        guard point.x.isFinite, point.y.isFinite, size.width.isFinite, size.height.isFinite,
+              (0...1).contains(point.x), (0...1).contains(point.y),
+              size.width > 0, size.height > 0 else { return }
+        let epoch = ingressLock.withLock { () -> UInt64 in
+            generation &+= 1; active = true; return generation
         }
-        
-        // Convert UI coordinate (top-left origin) to Vision coordinate (bottom-left origin)
-        // Kẹp TÂM box trong frame (thay vì kẹp origin) để box lớn gần mép không bị thò ra ngoài
-        let halfW = targetSize.width / 2.0
-        let halfH = targetSize.height / 2.0
-        let centerX = min(1.0 - halfW - 0.005, max(halfW + 0.005, targetPoint.x))
-        let centerYVision = min(1.0 - halfH - 0.005, max(halfH + 0.005, 1.0 - targetPoint.y))
-        
-        let clampedRect = CGRect(
-            x: centerX - halfW,
-            y: centerYVision - halfH,
-            width: targetSize.width,
-            height: targetSize.height
-        )
-        
-        let initialObservation = VNDetectedObjectObservation(boundingBox: clampedRect)
-        self.lastTargetObservation = initialObservation
-        
-        // Chuẩn Apple WWDC: Khởi tạo VNTrackObjectRequest ĐÚNG 1 LẦN DUY NHẤT để tích lũy bộ nhớ tracking
-        let req = VNTrackObjectRequest(detectedObjectObservation: initialObservation)
-        req.trackingLevel = .accurate
-        self.currentTrackRequest = req
-        
-        self.referenceFeaturePrint = nil
-        self.referenceColorHistogram = nil
-        self.kltTrackedPoints = []
-        self.kltPreviousBuffer = nil
-        self.kltTargetBox = clampedRect
-        self.consecutiveLostFrames = 0
-        self.sequenceHandler = VNSequenceRequestHandler()
-        // Reset toàn bộ trạng thái xác minh danh tính & re-acquisition
-        self.lastVerifiedUIPoint = targetPoint
-        self.identitySuspicionFrames = 0
-        self.histogramCheckCounter = 0
-        self.histogramMismatchStreak = 0
-        self.featurePrintCheckCounter = 0
-        self.detectionCorrectionCounter = 0
-        self.stableLockFrames = 0
-        self.anchorBoxSize = targetSize
-        self.lastReIdAttemptTime = 0
-        self.isTrackingTarget = true
-        CameraLogger.info("🎯 [Vision] Khởi tạo VNTrackObjectRequest duy nhất tại: (\(String(format: "%.3f", targetPoint.x)), \(String(format: "%.3f", targetPoint.y))), size: \(targetSize)", category: .tracking)
-    }
-    
-    public func stopTrackingObject() {
-        self.isTrackingTarget = false
-        self.currentTrackRequest?.isLastFrame = true
-        self.currentTrackRequest = nil
-        self.lastTargetObservation = nil
-        self.referenceFeaturePrint = nil
-        self.referenceColorHistogram = nil
-        self.kltTrackedPoints = []
-        self.kltPreviousBuffer = nil
-        self.consecutiveLostFrames = 0
-        self.sequenceHandler = VNSequenceRequestHandler()
-        self.lastVerifiedUIPoint = nil
-        self.identitySuspicionFrames = 0
-        self.histogramCheckCounter = 0
-        self.histogramMismatchStreak = 0
-        self.featurePrintCheckCounter = 0
-        self.detectionCorrectionCounter = 0
-        self.stableLockFrames = 0
-        self.lastReIdAttemptTime = 0
-        CameraLogger.info("🎯 [Vision] Đã dừng và giải phóng VNTrackObjectRequest", category: .tracking)
-    }
-    
-    // MARK: - Bám Chùm Điểm Hình Học KLT (Lucas-Kanade Feature Point Cluster + RANSAC)
-    private func extractKLTFeaturePoints(in roi: CGRect, buffer: CVPixelBuffer) -> [CGPoint] {
-        CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        
-        let width = CVPixelBufferGetWidth(buffer)
-        let height = CVPixelBufferGetHeight(buffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return [] }
-        
-        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
-        
-        let minX = max(4, min(width - 5, Int(roi.origin.x * CGFloat(width))))
-        let minY = max(4, min(height - 5, Int((1.0 - roi.origin.y - roi.size.height) * CGFloat(height))))
-        let maxX = max(minX + 8, min(width - 5, Int((roi.origin.x + roi.size.width) * CGFloat(width))))
-        let maxY = max(minY + 8, min(height - 5, Int((1.0 - roi.origin.y) * CGFloat(height))))
-        
-        var corners: [(point: CGPoint, score: Float)] = []
-        let step = max(3, (maxX - minX) / 20)
-        
-        for y in stride(from: minY + 2, to: maxY - 2, by: step) {
-            for x in stride(from: minX + 2, to: maxX - 2, by: step) {
-                let offR = y * bytesPerRow + (x + 1) * 4
-                let offL = y * bytesPerRow + (x - 1) * 4
-                let offD = (y + 1) * bytesPerRow + x * 4
-                let offU = (y - 1) * bytesPerRow + x * 4
-                
-                let lumR = Float(data[offR]) * 0.114 + Float(data[offR+1]) * 0.587 + Float(data[offR+2]) * 0.299
-                let lumL = Float(data[offL]) * 0.114 + Float(data[offL+1]) * 0.587 + Float(data[offL+2]) * 0.299
-                let lumD = Float(data[offD]) * 0.114 + Float(data[offD+1]) * 0.587 + Float(data[offD+2]) * 0.299
-                let lumU = Float(data[offU]) * 0.114 + Float(data[offU+1]) * 0.587 + Float(data[offU+2]) * 0.299
-                
-                let ix = (lumR - lumL) * 0.5
-                let iy = (lumD - lumU) * 0.5
-                let score = ix * ix + iy * iy
-                
-                if score > 80.0 {
-                    let normX = CGFloat(x) / CGFloat(width)
-                    let normY = 1.0 - (CGFloat(y) / CGFloat(height))
-                    corners.append((point: CGPoint(x: normX, y: normY), score: score))
-                }
-            }
-        }
-        
-        // Trọng số tâm (Center-weighting): Ưu tiên các điểm đặc trưng nằm gần tâm box (chủ thể thật)
-        // và giảm mạnh điểm của các điểm gần mép biên (thường là viền tường, mép bàn, hoa văn nền)
-        let boxCenter = CGPoint(x: roi.midX, y: roi.midY)
-        let maxDist = max(0.02, max(roi.width, roi.height) / 2.0)
-        corners = corners.map { c in
-            let d = hypot(c.point.x - boxCenter.x, c.point.y - boxCenter.y)
-            let centerWeight = Float(max(0.20, 1.0 - (d / maxDist)))
-            return (point: c.point, score: c.score * centerWeight)
-        }
-        
-        corners.sort { $0.score > $1.score }
-        let top = corners.prefix(30).map { $0.point }
-        if top.count < 8 {
-            var grid: [CGPoint] = top
-            for r in 0..<3 {
-                for c in 0..<3 {
-                    // Tập trung lưới điểm vào 60% vùng trung tâm ROI thay vì mép ngoài
-                    let gx = roi.origin.x + roi.size.width * (0.20 + 0.60 * (CGFloat(c) + 0.5) / 3.0)
-                    let gy = roi.origin.y + roi.size.height * (0.20 + 0.60 * (CGFloat(r) + 0.5) / 3.0)
-                    grid.append(CGPoint(x: gx, y: gy))
-                }
-            }
-            return grid
-        }
-        return top
-    }
-    
-    private func trackKLTCluster(in currentBuffer: CVPixelBuffer) -> (uiPoint: CGPoint, confidence: Double)? {
-        guard !kltTrackedPoints.isEmpty, let prevBuffer = kltPreviousBuffer else {
-            self.kltPreviousBuffer = currentBuffer
-            return nil
-        }
-        defer { self.kltPreviousBuffer = currentBuffer }
-        
-        let width = CGFloat(CVPixelBufferGetWidth(currentBuffer))
-        let height = CGFloat(CVPixelBufferGetHeight(currentBuffer))
-        
-        CVPixelBufferLockBaseAddress(prevBuffer, .readOnly)
-        CVPixelBufferLockBaseAddress(currentBuffer, .readOnly)
-        defer {
-            CVPixelBufferUnlockBaseAddress(prevBuffer, .readOnly)
-            CVPixelBufferUnlockBaseAddress(currentBuffer, .readOnly)
-        }
-        
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(currentBuffer)
-        guard let prevData = CVPixelBufferGetBaseAddress(prevBuffer)?.assumingMemoryBound(to: UInt8.self),
-              let currData = CVPixelBufferGetBaseAddress(currentBuffer)?.assumingMemoryBound(to: UInt8.self) else {
-            return nil
-        }
-        
-        var displacedPoints: [CGPoint] = []
-        var displacementVectors: [CGVector] = []
-        let winR = 3
-        let searchR = 6
-        
-        for pt in kltTrackedPoints {
-            let px = Int(pt.x * width)
-            let py = Int((1.0 - pt.y) * height)
-            
-            guard px >= winR + searchR, px < Int(width) - (winR + searchR),
-                  py >= winR + searchR, py < Int(height) - (winR + searchR) else { continue }
-            
-            var bestDx = 0
-            var bestDy = 0
-            var minSAD = Float.greatestFiniteMagnitude
-            
-            for dy in -searchR...searchR {
-                for dx in -searchR...searchR {
-                    var sad: Float = 0
-                    for wy in -winR...winR {
-                        for wx in -winR...winR {
-                            let pOff = (py + wy) * bytesPerRow + (px + wx) * 4
-                            let cOff = (py + dy + wy) * bytesPerRow + (px + dx + wx) * 4
-                            let pLum = Float(prevData[pOff]) * 0.114 + Float(prevData[pOff+1]) * 0.587 + Float(prevData[pOff+2]) * 0.299
-                            let cLum = Float(currData[cOff]) * 0.114 + Float(currData[cOff+1]) * 0.587 + Float(currData[cOff+2]) * 0.299
-                            sad += abs(pLum - cLum)
-                        }
-                    }
-                    if sad < minSAD {
-                        minSAD = sad
-                        bestDx = dx
-                        bestDy = dy
-                    }
-                }
-            }
-            
-            let avgErr = minSAD / Float((winR * 2 + 1) * (winR * 2 + 1))
-            if avgErr < 32.0 {
-                let normDx = CGFloat(bestDx) / width
-                let normDy = -CGFloat(bestDy) / height
-                displacedPoints.append(CGPoint(x: pt.x + normDx, y: pt.y + normDy))
-                displacementVectors.append(CGVector(dx: normDx, dy: normDy))
-            }
-        }
-        
-        guard displacementVectors.count >= 4 else { return nil }
-        
-        let sortedDx = displacementVectors.map { $0.dx }.sorted()
-        let sortedDy = displacementVectors.map { $0.dy }.sorted()
-        let medianDx = sortedDx[sortedDx.count / 2]
-        let medianDy = sortedDy[sortedDy.count / 2]
-        
-        var inliers: [CGPoint] = []
-        for (i, v) in displacementVectors.enumerated() {
-            if hypot(v.dx - medianDx, v.dy - medianDy) < 0.035 {
-                inliers.append(displacedPoints[i])
-            }
-        }
-        
-        guard !inliers.isEmpty else { return nil }
-
-        let originalPointCount = self.kltTrackedPoints.count
-
-        let avgX = inliers.map { $0.x }.reduce(0, +) / CGFloat(inliers.count)
-        let avgY = inliers.map { $0.y }.reduce(0, +) / CGFloat(inliers.count)
-        self.kltTrackedPoints = inliers
-
-        let uiPoint = CGPoint(x: avgX, y: 1.0 - avgY)
-        let inlierRatio = Double(inliers.count) / Double(max(1, originalPointCount))
-        let confidence = max(0.70, min(0.95, 0.60 + inlierRatio * 0.35))
-        return (uiPoint, confidence)
-    }
-    
-    private func extractFeaturePrint(from buffer: CVPixelBuffer, regionOfInterest: CGRect) -> VNFeaturePrintObservation? {
-        let req = VNGenerateImageFeaturePrintRequest()
-        req.imageCropAndScaleOption = .scaleFit
-        req.regionOfInterest = CGRect(
-            x: max(0, min(0.9, regionOfInterest.origin.x)),
-            y: max(0, min(0.9, regionOfInterest.origin.y)),
-            width: max(0.05, min(1.0, regionOfInterest.size.width)),
-            height: max(0.05, min(1.0, regionOfInterest.size.height))
-        )
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, options: [:])
-        do {
-            try handler.perform([req])
-            return req.results?.first as? VNFeaturePrintObservation
-        } catch {
-            return nil
-        }
-    }
-    
-    private func extractColorHistogram(from buffer: CVPixelBuffer, region: CGRect) -> [Float] {
-        CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        
-        let width = CVPixelBufferGetWidth(buffer)
-        let height = CVPixelBufferGetHeight(buffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return Array(repeating: 0, count: 24) }
-        
-        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
-        var hist = Array(repeating: Float(0), count: 24)
-        var totalPixels: Float = 0
-        
-        let minX = max(0, min(width - 1, Int(region.origin.x * CGFloat(width))))
-        let minY = max(0, min(height - 1, Int((1.0 - region.origin.y - region.size.height) * CGFloat(height))))
-        let maxX = max(minX + 1, min(width, Int((region.origin.x + region.size.width) * CGFloat(width))))
-        let maxY = max(minY + 1, min(height, Int((1.0 - region.origin.y) * CGFloat(height))))
-        
-        let step = max(1, (maxX - minX) / 16)
-        
-        for y in stride(from: minY, to: maxY, by: max(1, step)) {
-            for x in stride(from: minX, to: maxX, by: max(1, step)) {
-                let offset = y * bytesPerRow + x * 4
-                let b = Float(data[offset])
-                let g = Float(data[offset + 1])
-                let r = Float(data[offset + 2])
-                
-                let rBin = min(7, Int(r / 32))
-                let gBin = min(7, Int(g / 32)) + 8
-                let bBin = min(7, Int(b / 32)) + 16
-                
-                hist[rBin] += 1
-                hist[gBin] += 1
-                hist[bBin] += 1
-                totalPixels += 3
-            }
-        }
-        
-        if totalPixels > 0 {
-            for i in 0..<24 {
-                hist[i] /= totalPixels
-            }
-        }
-        return hist
-    }
-    
-    private func compareColorHistograms(_ h1: [Float], _ h2: [Float]) -> Float {
-        guard h1.count == h2.count && !h1.isEmpty else { return 0 }
-        var bhattacharyya: Float = 0
-        for i in 0..<h1.count {
-            bhattacharyya += sqrt(max(0, h1[i] * h2[i]))
-        }
-        return bhattacharyya
-    }
-    
-    private func extractSaliencyCentroid(from buffer: CVPixelBuffer, near visionBox: CGRect) -> CGPoint? {
-        let req = VNGenerateObjectnessBasedSaliencyImageRequest()
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, options: [:])
-        do {
-            try handler.perform([req])
-            if let result = req.results?.first as? VNSaliencyImageObservation,
-               let salientObjects = result.salientObjects {
-                let boxCenter = CGPoint(x: visionBox.midX, y: visionBox.midY)
-                var closestCentroid: CGPoint? = nil
-                var minDistance: CGFloat = CGFloat.greatestFiniteMagnitude
-                
-                for obj in salientObjects {
-                    let objCenter = CGPoint(x: obj.boundingBox.midX, y: obj.boundingBox.midY)
-                    let d = hypot(objCenter.x - boxCenter.x, objCenter.y - boxCenter.y)
-                    // Chỉ cho phép hút cực hẹp trong phạm vi chính vật thể đó (d < 0.08)
-                    if d < minDistance && d < 0.08 {
-                        minDistance = d
-                        closestCentroid = objCenter
-                    }
-                }
-                return closestCentroid
-            }
-        } catch {
-            return nil
-        }
-        return nil
-    }
-    
-    /// Tái chiếm target sau khi mất dấu — chỉ nhận khi ứng viên TỐT HƠN RÕ RỆT so với các ứng viên còn lại
-    /// (margin chống mơ hồ) để tránh bám nhầm sang vật thể khác nằm gần đó (đặc biệt vật thể trắng/nền trắng).
-    /// - searchCenter: tâm tìm kiếm (trung điểm giữa vị trí quang học cuối đã xác nhận và ước lượng không gian)
-    /// - anchorSize: kích thước box gốc lúc pin (không dùng box cố định)
-    private func attemptNeuralReIdentification(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, searchCenter: CGPoint, anchorSize: CGSize) -> (CGPoint, Double, CGRect)? {
-        guard let refPrint = self.referenceFeaturePrint else { return nil }
-        
-        let boxW = max(0.10, min(0.45, anchorSize.width))
-        let boxH = max(0.10, min(0.45, anchorSize.height))
-        // Vật thể low-texture (trắng/đơn sắc): feature print kém phân biệt hơn -> siết ngưỡng chặt hơn
-        let minColorSim: Double = self.isLowTextureAnchor ? 0.80 : 0.70
-        let maxDist: Float = self.isLowTextureAnchor ? 0.25 : 0.28
-        
-        var candidates: [(box: CGRect, dist: Float, colorSim: Double)] = []
-        
-        // CHỈ tìm kiếm trong phạm vi hẹp cục bộ quanh tâm tìm kiếm (bán kính <= 0.05), TUYỆT ĐỐI KHÔNG quét toàn màn hình
-        let offsets: [CGFloat] = [-0.05, 0.0, 0.05]
-        
-        for dy in offsets {
-            for dx in offsets {
-                let testUix = min(0.94, max(0.06, searchCenter.x + dx))
-                let testUiy = min(0.94, max(0.06, searchCenter.y + dy))
-                let vx = max(0.01, min(1.0 - boxW - 0.01, testUix - boxW / 2))
-                let vy = max(0.01, min(1.0 - boxH - 0.01, (1.0 - testUiy) - boxH / 2))
-                let clampedBox = CGRect(x: vx, y: vy, width: boxW, height: boxH)
-                
-                let req = VNGenerateImageFeaturePrintRequest()
-                req.imageCropAndScaleOption = .scaleFit
-                req.regionOfInterest = clampedBox
-                let h = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-                do {
-                    try h.perform([req])
-                    guard let candidatePrint = req.results?.first as? VNFeaturePrintObservation else { continue }
-                    var dist: Float = 0
-                    try refPrint.computeDistance(&dist, to: candidatePrint)
-                    
-                    let colorSim: Double
-                    if let refHist = self.referenceColorHistogram {
-                        let candHist = self.extractColorHistogram(from: buffer, region: clampedBox)
-                        colorSim = Double(self.compareColorHistograms(refHist, candHist))
-                    } else {
-                        colorSim = 1.0
-                    }
-                    
-                    if dist < maxDist && colorSim >= minColorSim {
-                        candidates.append((clampedBox, dist, colorSim))
-                    }
-                } catch {
-                    continue
-                }
-            }
-        }
-        
-        guard !candidates.isEmpty else { return nil }
-        
-        let sorted = candidates.sorted { $0.dist < $1.dist }
-        let best = sorted[0]
-        
-        // Loại kết quả MƠ HỒI: ứng viên thứ 2 gần ngang ứng viên tốt nhất -> không dám chắc là vật thể thật
-        if sorted.count > 1, sorted[1].dist - best.dist < 0.04 {
-            CameraLogger.info("🎯 [Vision] Re-ID bỏ qua — kết quả mơ hồ (best: \(String(format: "%.3f", best.dist)), runner-up: \(String(format: "%.3f", sorted[1].dist)))", category: .tracking)
-            return nil
-        }
-        
-        CameraLogger.info("🎯 [Vision] Re-ID thành công (Dist: \(String(format: "%.3f", best.dist)), Color: \(String(format: "%.2f", best.colorSim)), candidates: \(candidates.count))", category: .tracking)
-        let uiX = best.box.midX
-        let uiY = 1.0 - best.box.midY
-        let confidence = max(0.70, Double(1.0 - (Double(best.dist) / Double(maxDist))) * 0.7 + best.colorSim * 0.3)
-        return (CGPoint(x: uiX, y: uiY), confidence, best.box)
-    }
-    
-    /// Cầu nối KLT cho các frame mất dấu ngắn (lia máy nhanh / nhòe chuyển động):
-    /// seed điểm từ buffer TRƯỚC (đã giữ nóng) theo box tracker cuối, rồi dò dịch chuyển sang frame hiện tại
-    private func kltBridgePoint(in currentBuffer: CVPixelBuffer) -> (CGPoint, Double)? {
-        guard let lastObs = self.lastTargetObservation, let prevBuffer = self.kltPreviousBuffer else { return nil }
-        
-        if self.kltTrackedPoints.isEmpty {
-            self.kltTrackedPoints = self.extractKLTFeaturePoints(in: lastObs.boundingBox, buffer: prevBuffer)
-            guard self.kltTrackedPoints.count >= 4 else { return nil }
-        }
-        
-        guard let (pt, conf) = self.trackKLTCluster(in: currentBuffer) else {
-            self.kltTrackedPoints = [] // seed lại từ frame kế tiếp
-            return nil
-        }
-        
-        // Sanity: điểm KLT phải nằm gần vị trí cuối đã xác nhận (chống KLT bắt nhầm cụm điểm nền)
-        if let verified = self.lastVerifiedUIPoint, hypot(pt.x - verified.x, pt.y - verified.y) >= 0.12 {
-            self.kltTrackedPoints = []
-            return nil
-        }
-        
-        return (pt, conf)
-    }
-    
-    // MARK: - Process Incoming Video PixelBuffer
-    public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer, orientation: CGImagePropertyOrientation = .up) {
-        let currentTime = CACurrentMediaTime()
-        let effectiveThrottle = isIdlePreviewMode ? idleThrottleInterval : frameThrottleInterval
-        guard currentTime - lastProcessTime >= effectiveThrottle else { return }
-        
-        let shouldProcess: Bool = {
-            processingLock.lock()
-            defer { processingLock.unlock() }
-            if isProcessingFrame { return false }
-            isProcessingFrame = true
-            return true
-        }()
-        guard shouldProcess else { return }
-        
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            processingLock.lock()
-            isProcessingFrame = false
-            processingLock.unlock()
-            return
-        }
-        
-        lastProcessTime = currentTime
-        
-        // Capture frame for Gemini if requested
-        let shouldCaptureForGemini = captureNextFrameForGemini
-        if shouldCaptureForGemini {
-            captureNextFrameForGemini = false
-            let ciImg = CIImage(cvPixelBuffer: pixelBuffer)
-            if let cgImg = self.sharedCIContext.createCGImage(ciImg, from: ciImg.extent) {
-                DispatchQueue.main.async { [weak self] in
-                    self?.capturedGeminiFrame = cgImg
-                    self?.onFrameCapturedForAI?(cgImg)
-                    self?.onFrameCapturedForAI = nil
-                }
-            }
-        }
-        
         visionQueue.async { [weak self] in
-            guard let self = self else { return }
-            defer {
-                self.processingLock.lock()
-                self.isProcessingFrame = false
-                self.processingLock.unlock()
-            }
-            
-            // 1. Nếu đang ở chế độ tracking mục tiêu (Target Placed)
-            if self.isTrackingTarget, let trackRequest = self.currentTrackRequest {
-                // Khởi tạo vân tay tham chiếu đúng 1 lần tại khung đầu
-                if self.referenceFeaturePrint == nil, let obs = self.lastTargetObservation {
-                    self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: obs.boundingBox)
-                    self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: obs.boundingBox)
-                }
-                
-                var trackedPoint: CGPoint? = nil
-                var trackedConfidence: Double = 0.0
-                var trackerIdentityLost = false
-                
-                do {
-                    // Truyền lại request gốc vào sequenceHandler để Apple Vision tích lũy vector vận tốc và bộ lọc Kalman
-                    try self.sequenceHandler.perform([trackRequest], on: pixelBuffer, orientation: orientation)
-                    if let results = trackRequest.results as? [VNDetectedObjectObservation], let newObs = results.first,
-                       newObs.confidence > 0.20 {
-                        
-                        // ── XÁC MINH DANH TÍNH VẬT THỂ LIÊN TUYẾN (chống tracker trôi sang vật thể khác) ──
-                        var identityOK = true
-                        
-                        // 1) Histogram màu 24-bin (rẻ): kiểm tra mỗi 3 frame
-                        // Ngưỡng 0.68 kết hợp streak 3 lần liên tiếp: chống trôi sang nền/vật khác nhưng chịu được AE/AWB camera thực tế
-                        self.histogramCheckCounter += 1
-                        if self.histogramCheckCounter >= 3, let refHist = self.referenceColorHistogram {
-                            self.histogramCheckCounter = 0
-                            let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
-                            let colorSim = self.compareColorHistograms(refHist, curHist)
-                            if colorSim < 0.68 {
-                                self.histogramMismatchStreak += 1
-                                if self.histogramMismatchStreak >= 3 {
-                                    identityOK = false
-                                    CameraLogger.info("🎯 [Vision] Mất khớp histogram liên tiếp (\(String(format: "%.2f", colorSim))) — giữ mỏ neo", category: .tracking)
-                                }
-                            } else {
-                                self.histogramMismatchStreak = 0
-                            }
-                        }
-                        
-                        // 2) Deep Feature Print (đắt): kiểm tra mỗi 20 frame
-                        if identityOK, let refPrint = self.referenceFeaturePrint {
-                            self.featurePrintCheckCounter += 1
-                            if self.featurePrintCheckCounter >= 20 {
-                                self.featurePrintCheckCounter = 0
-                                if let curPrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: newObs.boundingBox) {
-                                    var dist: Float = 0
-                                    do {
-                                        try refPrint.computeDistance(&dist, to: curPrint)
-                                        if dist > 0.58 {
-                                            identityOK = false
-                                            CameraLogger.info("🎯 [Vision] Mất khớp feature print (dist: \(String(format: "%.2f", dist))) — nghi tracker trôi", category: .tracking)
-                                        }
-                                    } catch {
-                                        // Lỗi tính distance: bỏ qua lần kiểm tra này
-                                    }
-                                }
-                            }
-                        }
-                        
-                        if identityOK {
-                            // ── KHUNG HỢP LỆ: nối tiếp sequence, cập nhật mỏ neo & vị trí đã xác nhận ──
-                            self.identitySuspicionFrames = 0
-                            self.consecutiveLostFrames = 0
-                            self.stableLockFrames += 1
-                            trackRequest.inputObservation = newObs
-                            self.lastTargetObservation = newObs
-                            self.anchorBoxSize = CGSize(width: max(0.08, min(0.5, newObs.boundingBox.width)),
-                                                        height: max(0.08, min(0.5, newObs.boundingBox.height)))
-                            self.lastVerifiedUIPoint = CGPoint(x: newObs.boundingBox.midX, y: 1.0 - newObs.boundingBox.midY)
-                            
-                            // Thích nghi chậm reference theo thay đổi phơi sáng (mỗi ~2s lock ổn định)
-                            if self.stableLockFrames >= 60 {
-                                self.stableLockFrames = 0
-                                let curHist = self.extractColorHistogram(from: pixelBuffer, region: newObs.boundingBox)
-                                if let refHist = self.referenceColorHistogram, refHist.count == curHist.count {
-                                    var blended = [Float](repeating: 0, count: refHist.count)
-                                    for i in 0..<refHist.count { blended[i] = refHist[i] * 0.85 + curHist[i] * 0.15 }
-                                    self.referenceColorHistogram = blended
-                                }
-                            }
-                            
-                            var uiX = newObs.boundingBox.midX
-                            var uiY = 1.0 - newObs.boundingBox.midY
-                            
-                            // 3) Detection-based Periodic Correction (Nắn mỏ neo nhẹ nhàng mỗi 15 frame bằng Saliency Centroid với lực 0.08, chống rung giật)
-                            self.detectionCorrectionCounter += 1
-                            if self.detectionCorrectionCounter >= 15 {
-                                self.detectionCorrectionCounter = 0
-                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
-                                    let centroidUIX = salientCentroid.x
-                                    let centroidUIY = 1.0 - salientCentroid.y
-                                    let box = newObs.boundingBox
-                                    let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
-                                    // Chỉ nắn khi centroid nằm trong hoặc rất sát box đang bám (tránh hút sang đối tượng ngoài)
-                                    if boxUI.insetBy(dx: -0.02, dy: -0.02).contains(CGPoint(x: centroidUIX, y: centroidUIY)) {
-                                        let drift = hypot(centroidUIX - uiX, centroidUIY - uiY)
-                                        let maxOffset = min(box.width, box.height) * 0.45
-                                        if drift > 0.02 && drift < maxOffset {
-                                            uiX += (centroidUIX - uiX) * 0.08
-                                            uiY += (centroidUIY - uiY) * 0.08
-                                        }
-                                    }
-                                }
-                            } else if self.currentSceneType.isDeformableNature,
-                               let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
-                                let box = newObs.boundingBox
-                                let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
-                                let centroidUI = CGPoint(x: salientCentroid.x, y: 1.0 - salientCentroid.y)
-                                if boxUI.contains(centroidUI) {
-                                    let maxOffset = min(box.width, box.height) * 0.40
-                                    var dx = centroidUI.x - uiX
-                                    var dy = centroidUI.y - uiY
-                                    dx = max(-maxOffset, min(maxOffset, dx))
-                                    dy = max(-maxOffset, min(maxOffset, dy))
-                                    uiX += dx * 0.5
-                                    uiY += dy * 0.5
-                                }
-                            }
-                            
-                            trackedPoint = CGPoint(x: uiX, y: uiY)
-                            trackedConfidence = Double(newObs.confidence)
-                        } else {
-                            // ── NGHI TRICKER TRÔI: KHÔNG nối tiếp inputObservation (đông băng mỏ neo tại box cuối hợp lệ),
-                            //    đếm frame mất để kích hoạt re-acquisition khi cần ──
-                            trackerIdentityLost = true
-                            self.identitySuspicionFrames += 1
-                            self.stableLockFrames = 0
-                            self.consecutiveLostFrames += 1
-                        }
-                    } else {
-                        self.consecutiveLostFrames += 1
-                    }
-                } catch {
-                    self.consecutiveLostFrames += 1
-                }
-                
-                // 1A. Cầu nối KLT cho mất dấu NGẮN (1-10 frame: lia máy nhanh / nhòe chuyển động)
-                if trackedPoint == nil, self.consecutiveLostFrames <= 10,
-                   let (kltPoint, kltConfidence) = self.kltBridgePoint(in: pixelBuffer) {
-                    trackedPoint = kltPoint
-                    // KLT là observation trung: đủ để engine tin (>= ngưỡng nhận) nhưng không reset VO reference
-                    trackedConfidence = min(0.55, kltConfidence)
-                    self.consecutiveLostFrames = min(self.consecutiveLostFrames, 4)
-                }
-                
-                // 1B. Re-acquisition: chỉ khi mất dấu đủ lâu (>= 20 frame), HOẶC tracker bị nghi trôi
-                // xa vị trí đã xác nhận; rate-limit 0.4s/lần để không nghẽn vision queue
-                let forceReacquire: Bool = {
-                    guard trackerIdentityLost, self.identitySuspicionFrames >= 5,
-                          let verified = self.lastVerifiedUIPoint, let lastObs = self.lastTargetObservation else { return false }
-                    let drifted = hypot(lastObs.boundingBox.midX - verified.x, (1.0 - lastObs.boundingBox.midY) - verified.y)
-                    return drifted > 0.06
-                }()
-                
-                if trackedPoint == nil,
-                   (self.consecutiveLostFrames >= 20 || forceReacquire),
-                   self.consecutiveLostFrames <= 150,
-                   CACurrentMediaTime() - self.lastReIdAttemptTime >= 0.4 {
-                    self.lastReIdAttemptTime = CACurrentMediaTime()
-                    
-                    let spatialPoint = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
-                    
-                    // Tâm tìm kiếm = trung điểm giữa vị trí quang học CUỐI CÙNG ĐÃ XÁC NHẬN và ước lượng không gian (gyro)
-                    let verified = self.lastVerifiedUIPoint
-                    let searchCenter = CGPoint(
-                        x: min(0.94, max(0.06, ((verified?.x ?? spatialPoint.x) + spatialPoint.x) / 2.0)),
-                        y: min(0.94, max(0.06, ((verified?.y ?? spatialPoint.y) + spatialPoint.y) / 2.0))
-                    )
-                    
-                    // Chỉ nạp lại mỏ neo khi Neural Re-ID xác nhận rõ ràng là vật thể ban đầu
-                    if let (reIdPoint, reIdConfidence, reIdBox) = self.attemptNeuralReIdentification(in: pixelBuffer, orientation: orientation, searchCenter: searchCenter, anchorSize: self.anchorBoxSize) {
-                        trackedPoint = reIdPoint
-                        trackedConfidence = reIdConfidence
-                        self.consecutiveLostFrames = 0
-                        self.identitySuspicionFrames = 0
-                        self.stableLockFrames = 0
-                        self.kltTrackedPoints = []
-                        
-                        let reObs = VNDetectedObjectObservation(boundingBox: reIdBox)
-                        self.lastTargetObservation = reObs
-                        self.anchorBoxSize = CGSize(width: max(0.08, min(0.5, reIdBox.width)),
-                                                    height: max(0.08, min(0.5, reIdBox.height)))
-                        self.lastVerifiedUIPoint = reIdPoint
-                        let newReq = VNTrackObjectRequest(detectedObjectObservation: reObs)
-                        newReq.trackingLevel = .accurate
-                        self.currentTrackRequest = newReq
-                        self.sequenceHandler = VNSequenceRequestHandler()
-                        
-                        // QUAN TRỌNG: cập nhật lại vân tay tham chiếu từ box mới (reference cũ đã lạc hậu)
-                        self.referenceFeaturePrint = self.extractFeaturePrint(from: pixelBuffer, regionOfInterest: reIdBox)
-                        self.referenceColorHistogram = self.extractColorHistogram(from: pixelBuffer, region: reIdBox)
-                    }
-                }
-                
-                // Giữ nóng buffer trước cho KLT (retain 1 frame; pool không ghi đè buffer đang giữ)
-                self.kltPreviousBuffer = pixelBuffer
-                
-                DispatchQueue.main.async {
-                    self.onTargetTracked?(trackedPoint, trackedConfidence, pixelBuffer)
-                }
-                return
-            }
-            
-            // 2. Chế độ phát hiện thông minh đa tầng bằng NeuralSubjectIntelligenceEngine (Apple Neural Engine ANE)
-            let neuralOutput = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
-                pixelBuffer: pixelBuffer,
-                orientation: orientation
-            )
-            
-            var result = SubjectDetectionResult()
-            result.detectedScene = neuralOutput.detectedScene
-            result.faceRectangles = neuralOutput.allFaceRects
-            result.primaryEyePosition = neuralOutput.primaryEyePosition
-            result.lookingDirection = neuralOutput.lookingDirection
-            
-            if let primary = neuralOutput.primaryCandidate {
-                // Nếu chụp nhóm có nhiều khuôn mặt, ưu tiên khung bao nhóm (groupBoundingBox) để không ai bị mất góc
-                if neuralOutput.allFaceRects.count > 1, let groupBox = neuralOutput.groupBoundingBox {
-                    result.dominantSubjectRect = groupBox
-                } else {
-                    result.dominantSubjectRect = primary.boundingBox
-                }
-                result.confidence = primary.confidence
-            }
-            
-            // Smart Focus Point
-            let smartFocusPoint: CGPoint
-            let smartFocusType: SmartFocusType
-            if let eye = neuralOutput.primaryEyePosition {
-                smartFocusPoint = eye
-                smartFocusType = .face
-            } else if let primary = neuralOutput.primaryCandidate {
-                smartFocusPoint = primary.center
-                smartFocusType = (primary.category == .face) ? .face : .salientObject
-            } else {
-                smartFocusPoint = CGPoint(x: 0.5, y: 0.5)
-                smartFocusType = .center
-            }
-            
-            let luma = Self.estimateLuminance(from: pixelBuffer)
-            result.averageLuminance = luma.luminance
-            result.estimatedColorTemp = luma.colorTemp
-            
-            DispatchQueue.main.async {
-                self.onDetectionCompleted?(result)
-                self.onSmartFocusPointCalculated?(smartFocusPoint, smartFocusType)
-            }
+            guard let self, self.isCurrent(epoch) else { return }
+            self.resetTrackingState()
+            self.seedPoint = point; self.seedSize = size
+            self.seedBuffer = refiningBuffer; self.seedOrientation = orientation
+            self.pendingSeed = true
         }
-    }
-    
-    private static func estimateLuminance(from buffer: CVPixelBuffer) -> (luminance: Float, colorTemp: Float) {
-        CVPixelBufferLockBaseAddress(buffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        
-        let width = CVPixelBufferGetWidth(buffer)
-        let height = CVPixelBufferGetHeight(buffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
-            return (0.5, 5500)
-        }
-        
-        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
-        let sampleSize = 16
-        let startX = (width / 2) - (sampleSize / 2)
-        let startY = (height / 2) - (sampleSize / 2)
-        
-        var totalR: Float = 0; var totalG: Float = 0; var totalB: Float = 0
-        var sampleCount: Float = 0
-        
-        for row in 0..<sampleSize {
-            for col in 0..<sampleSize {
-                let px = startX + col
-                let py = startY + row
-                guard px >= 0 && px < width && py >= 0 && py < height else { continue }
-                let offset = py * bytesPerRow + px * 4
-                let b = Float(data[offset]) / 255.0
-                let g = Float(data[offset + 1]) / 255.0
-                let r = Float(data[offset + 2]) / 255.0
-                totalR += r; totalG += g; totalB += b
-                sampleCount += 1
-            }
-        }
-        
-        guard sampleCount > 0 else { return (0.5, 5500) }
-        let avgR = totalR / sampleCount
-        let avgG = totalG / sampleCount
-        let avgB = totalB / sampleCount
-        let luma = 0.2126 * avgR + 0.7152 * avgG + 0.0722 * avgB
-        let rBRatio = avgR > 0 ? avgB / avgR : 1.0
-        let estimatedK = max(2700, min(9000, 3500 + rBRatio * 3000))
-        return (luma, estimatedK)
     }
 
-    /// Chụp tức thì khung hình hiện tại cho AI Cloud phân tích
-    public func captureImmediateFrame(completion: @escaping (CGImage?) -> Void) {
-        if let lastBuf = self.kltPreviousBuffer {
-            let ciImg = CIImage(cvPixelBuffer: lastBuf)
-            if let cgImg = self.sharedCIContext.createCGImage(ciImg, from: ciImg.extent) {
-                completion(cgImg)
-                return
+    public func stopTrackingObject() {
+        let epoch = ingressLock.withLock { () -> UInt64 in
+            generation &+= 1; active = false; return generation
+        }
+        visionQueue.async { [weak self] in
+            guard let self, self.isCurrent(epoch) else { return }
+            self.resetTrackingState()
+        }
+    }
+
+    private func isCurrent(_ epoch: UInt64) -> Bool { ingressLock.withLock { generation == epoch } }
+
+    private func resetTrackingState() {
+        NeuralTargetTracker.shared.clearAnchor()
+        sequence = VNSequenceRequestHandler(); request = nil
+        referencePrint = nil; referenceHistogram = nil; lastBox = nil
+        misses = 0; lastVerified = -.infinity; lastSearch = -.infinity; previousTime = -.infinity
+        pendingRecovery = nil; seedBuffer = nil; pendingSeed = false
+    }
+
+    private func seed(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) {
+        let source = seedBuffer ?? buffer
+        let sourceOrientation = seedBuffer == nil ? orientation : seedOrientation
+        let w = min(0.8, max(0.04, seedSize.width)), h = min(0.8, max(0.04, seedSize.height))
+        let centered = CGRect(x: seedPoint.x - w / 2, y: 1 - seedPoint.y - h / 2, width: w, height: h)
+        let box = (refineAnchorBox(around: seedPoint, in: source, orientation: sourceOrientation) ?? centered)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !box.isNull, box.width > 0, box.height > 0 else { return }
+        // Keep the selected physical point's relative location, not the new box center.
+        anchorUV = CGPoint(x: (seedPoint.x - box.minX) / box.width,
+                           y: ((1 - seedPoint.y) - box.minY) / box.height)
+        boxSize = box.size; lastBox = box
+        referencePrint = featurePrint(source, box: box, orientation: sourceOrientation)
+        referenceHistogram = histogram(source, box: box, orientation: sourceOrientation)
+        if sourceOrientation == .up {
+            NeuralTargetTracker.shared.setAnchorTemplate(from: source, at: seedPoint)
+        }
+        let req = VNTrackObjectRequest(detectedObjectObservation: VNDetectedObjectObservation(boundingBox: box))
+        req.trackingLevel = .accurate
+        if seedBuffer != nil {
+            // Establish the template on the actual selected image, not on a later
+            // frame captured after the user's hand has moved.
+            try? sequence.perform([req], on: source, orientation: sourceOrientation)
+            if let obs = req.results?.first { req.inputObservation = obs }
+        }
+        request = req; seedBuffer = nil; pendingSeed = false
+    }
+
+    public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer,
+                                         orientation: CGImagePropertyOrientation = .up) {
+        guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let spatial = SpatialTrackingEngine.shared
+        let frame = orientation == .up ? TrackingFrameContext.read(sampleBuffer, zoom: spatial.currentDisplayZoom) : nil
+        if let frame { spatial.registerFrame(frame) }
+        let now = CACurrentMediaTime()
+        let admission = ingressLock.withLock { () -> (UInt64, Bool, Bool)? in
+            guard !busy, now - lastAdmission >= (idle && !active ? 0.2 : 1 / 32.0) else { return nil }
+            busy = true; lastAdmission = now
+            let capture = captureNext; captureNext = false
+            return (generation, active, capture)
+        }
+        guard let (epoch, tracking, capture) = admission else { return }
+        visionQueue.async { [weak self] in
+            guard let self else { return }
+            defer { self.ingressLock.withLock { self.busy = false } }
+            self.latestBuffer = buffer; self.latestOrientation = orientation
+            self.deliverCaptures(buffer, orientation: orientation, requested: capture, epoch: epoch)
+            guard self.isCurrent(epoch) else { return }
+            if tracking {
+                guard let frame else { self.deliver(nil, confidence: 0, buffer: buffer, frame: nil, epoch: epoch); return }
+                if self.pendingSeed { self.seed(in: buffer, orientation: orientation) }
+                let result = self.track(buffer, orientation: orientation, frame: frame)
+                self.deliver(result?.0, confidence: result?.1 ?? 0, buffer: buffer, frame: frame, epoch: epoch)
+            } else {
+                self.detect(buffer, orientation: orientation, epoch: epoch)
             }
         }
-        self.onFrameCapturedForAI = { img in
-            completion(img)
+    }
+
+    private func point(in box: CGRect) -> CGPoint {
+        CGPoint(x: box.minX + anchorUV.x * box.width, y: 1 - (box.minY + anchorUV.y * box.height))
+    }
+
+    private func box(at point: CGPoint, size: CGSize) -> CGRect? {
+        let b = CGRect(x: point.x - anchorUV.x * size.width,
+                       y: 1 - point.y - anchorUV.y * size.height, width: size.width, height: size.height)
+        // Never slide/clamp a candidate onto the image edge: that changes identity.
+        guard b.minX >= 0, b.minY >= 0, b.maxX <= 1, b.maxY <= 1 else { return nil }
+        return b
+    }
+
+    private func track(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+                       frame: TrackingFrameContext) -> (CGPoint, Double)? {
+        let prediction = SpatialTrackingEngine.shared.projection(at: frame.timestamp, calibration: frame.calibration)
+        if let prediction, !prediction.isInsideImage {
+            request = nil; misses += 1; pendingRecovery = nil
+            return nil
         }
-        self.captureNextFrameForGemini = true
+        let dt = previousTime.isFinite ? min(0.1, max(0.001, frame.timestamp - previousTime)) : 1 / 30.0
+        previousTime = frame.timestamp
+        if let request {
+            do {
+                try sequence.perform([request], on: buffer, orientation: orientation)
+                if let observation = request.results?.first, observation.confidence >= 0.40 {
+                    let rawBox = observation.boundingBox
+                    let rawPoint = point(in: rawBox)
+                    let residual = prediction.map { hypot($0.point.x - rawPoint.x, $0.point.y - rawPoint.y) } ?? 0
+                    let needsIdentity = frame.timestamp - lastVerified >= 0.15 || misses > 0
+                    let identity = !needsIdentity || verify(buffer, box: rawBox, orientation: orientation, strict: false) != nil
+                    if identity, rawBox.width > 0.01, rawBox.height > 0.01,
+                       rawBox.minX >= 0, rawBox.minY >= 0, rawBox.maxX <= 1, rawBox.maxY <= 1,
+                       residual <= SpatialTrackingEngine.shared.maxObservationJump {
+                        if needsIdentity { lastVerified = frame.timestamp }
+                        // A bounded log-size step suppresses scale breathing. The
+                        // actual tracked point stays fixed while the ROI resizes.
+                        let gain = 1 - exp(-2 * Double.pi * 1.5 * dt)
+                        func smooth(_ old: CGFloat, _ new: CGFloat) -> CGFloat {
+                            let delta = min(0.12, max(-0.12, log(Double(new / old))))
+                            return old * CGFloat(exp(gain * delta))
+                        }
+                        boxSize = CGSize(width: smooth(boxSize.width, rawBox.width),
+                                         height: smooth(boxSize.height, rawBox.height))
+                        if let stableBox = box(at: rawPoint, size: boxSize) {
+                            request.inputObservation = VNDetectedObjectObservation(boundingBox: stableBox)
+                            lastBox = stableBox
+                        } else {
+                            request.inputObservation = observation; lastBox = rawBox
+                        }
+                        misses = 0; pendingRecovery = nil
+                        return (rawPoint, Double(observation.confidence))
+                    }
+                }
+            } catch { /* An invalid observation never updates the spatial anchor. */ }
+            self.request = nil
+        }
+        misses += 1
+        // Persistent, local, pose-guided re-ID; no 150-frame expiry and no stale
+        // screen-point averaging. Two distinct captured frames must agree.
+        guard frame.timestamp - lastSearch >= 0.12,
+              let center = prediction?.point ?? lastBox.map({ point(in: $0) }) else { return nil }
+        lastSearch = frame.timestamp
+        if let recovered = search(buffer, center: center, orientation: orientation) {
+            if let previous = pendingRecovery, frame.timestamp > previous.time,
+               frame.timestamp - previous.time < 0.5 {
+                // Compare in world bearings so a continuing pan does not fail confirmation.
+                let previousPrediction = SpatialTrackingEngine.shared.projection(at: previous.time, calibration: frame.calibration)
+                let oldError = CGPoint(x: previous.point.x - (previousPrediction?.point.x ?? center.x),
+                                       y: previous.point.y - (previousPrediction?.point.y ?? center.y))
+                let newError = CGPoint(x: recovered.0.x - center.x, y: recovered.0.y - center.y)
+                if hypot(newError.x - oldError.x, newError.y - oldError.y) < 0.025 {
+                    sequence = VNSequenceRequestHandler()
+                    let obs = VNDetectedObjectObservation(boundingBox: recovered.2)
+                    let req = VNTrackObjectRequest(detectedObjectObservation: obs)
+                    req.trackingLevel = .accurate
+                    try? sequence.perform([req], on: buffer, orientation: orientation)
+                    req.inputObservation = obs; request = req
+                    lastBox = recovered.2; boxSize = recovered.2.size
+                    misses = 0; lastVerified = frame.timestamp; pendingRecovery = nil
+                    return (recovered.0, recovered.1)
+                }
+            }
+            pendingRecovery = (recovered.0, frame.timestamp)
+        } else { pendingRecovery = nil }
+        return nil
+    }
+
+    private func crop(_ buffer: CVPixelBuffer, box: CGRect, orientation: CGImagePropertyOrientation) -> CGImage? {
+        let image = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+        let bounds = image.extent
+        let roi = CGRect(x: bounds.minX + box.minX * bounds.width,
+                         y: bounds.minY + box.minY * bounds.height,
+                         width: box.width * bounds.width, height: box.height * bounds.height).intersection(bounds)
+        guard !roi.isNull, roi.width >= 8, roi.height >= 8 else { return nil }
+        return context.createCGImage(image, from: roi)
+    }
+
+    private func featurePrint(_ buffer: CVPixelBuffer, box: CGRect,
+                              orientation: CGImagePropertyOrientation) -> VNFeaturePrintObservation? {
+        guard let image = crop(buffer, box: box, orientation: orientation) else { return nil }
+        let req = VNGenerateImageFeaturePrintRequest()
+        req.revision = VNGenerateImageFeaturePrintRequestRevision2
+        req.imageCropAndScaleOption = .scaleFit
+        guard (try? VNImageRequestHandler(cgImage: image, options: [:]).perform([req])) != nil else { return nil }
+        return req.results?.first
+    }
+
+    private func histogram(_ buffer: CVPixelBuffer, box: CGRect,
+                           orientation: CGImagePropertyOrientation) -> [Float]? {
+        guard let image = crop(buffer, box: box, orientation: orientation) else { return nil }
+        var rgba = [UInt8](repeating: 0, count: 24 * 24 * 4)
+        let drawn = rgba.withUnsafeMutableBytes { bytes -> Bool in
+            guard let ctx = CGContext(data: bytes.baseAddress, width: 24, height: 24,
+                                      bitsPerComponent: 8, bytesPerRow: 96,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: 24, height: 24)); return true
+        }
+        guard drawn else { return nil }
+        var bins = [Float](repeating: 0, count: 64)
+        var count: Float = 0
+        for i in stride(from: 0, to: rgba.count, by: 4) {
+            let r = Float(rgba[i]), g = Float(rgba[i + 1]), b = Float(rgba[i + 2])
+            let total = r + g + b
+            guard total > 24 else { continue }
+            bins[min(7, Int(8 * r / total)) * 8 + min(7, Int(8 * g / total))] += 1
+            count += 1
+        }
+        guard count > 0 else { return nil }
+        return bins.map { $0 / count }
+    }
+
+    private func verify(_ buffer: CVPixelBuffer, box: CGRect, orientation: CGImagePropertyOrientation,
+                        strict: Bool) -> Double? {
+        guard let referencePrint, let current = featurePrint(buffer, box: box, orientation: orientation) else { return nil }
+        var distance: Float = 0
+        guard (try? referencePrint.computeDistance(&distance, to: current)) != nil, distance.isFinite else { return nil }
+        let config = ingressLock.withLock { (lowTexture, scene.isDeformableNature) }
+        // Starting thresholds for revision 2, not probabilities or trained claims.
+        let maximum: Float = strict ? (config.0 ? 0.32 : 0.42) : (config.1 ? 0.65 : 0.60)
+        guard distance <= maximum else { return nil }
+        if strict, orientation == .up, NeuralTargetTracker.shared.hasActiveTrainedModel {
+            let p = point(in: box)
+            // The optional CNN uses a fixed 0.16 image crop; at the image edge,
+            // only the box-based feature print remains available.
+            if (0.08...0.92).contains(p.x), (0.08...0.92).contains(p.y),
+               NeuralTargetTracker.shared.verifyTarget(in: buffer, at: p) < 0.75 { return nil }
+        }
+        if let referenceHistogram, let currentHistogram = histogram(buffer, box: box, orientation: orientation) {
+            let similarity = zip(referenceHistogram, currentHistogram).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+            guard similarity >= (strict ? 0.72 : 0.45) else { return nil }
+        }
+        return Double(distance)
+    }
+
+    private func search(_ buffer: CVPixelBuffer, center: CGPoint,
+                        orientation: CGImagePropertyOrientation) -> (CGPoint, Double, CGRect)? {
+        let step = max(0.02, min(0.06, min(boxSize.width, boxSize.height) * 0.3))
+        var candidates: [(CGPoint, Double, CGRect)] = []
+        for offset in [CGPoint.zero, CGPoint(x: -step, y: 0), CGPoint(x: step, y: 0),
+                       CGPoint(x: 0, y: -step), CGPoint(x: 0, y: step),
+                       CGPoint(x: -step, y: -step), CGPoint(x: step, y: step),
+                       CGPoint(x: -step, y: step), CGPoint(x: step, y: -step)] {
+            let p = CGPoint(x: center.x + offset.x, y: center.y + offset.y)
+            guard let roi = box(at: p, size: boxSize),
+                  let distance = verify(buffer, box: roi, orientation: orientation, strict: true) else { continue }
+            candidates.append((p, distance, roi))
+        }
+        candidates.sort { $0.1 < $1.1 }
+        guard let best = candidates.first else { return nil }
+        // Nearby overlapping crops are one hypothesis. Only compare distinct ROIs.
+        if let rival = candidates.dropFirst().first(where: {
+            hypot($0.0.x - best.0.x, $0.0.y - best.0.y) > step * 1.5
+        }), rival.1 - best.1 < 0.04 { return nil }
+        return (best.0, 0.80, best.2)
+    }
+
+    private func deliver(_ point: CGPoint?, confidence: Double, buffer: CVPixelBuffer,
+                         frame: TrackingFrameContext?, epoch: UInt64) {
+        let schedule = ingressLock.withLock { () -> Bool in
+            guard generation == epoch else { return false }
+            pendingTargetDelivery = (point, confidence, buffer, frame, epoch)
+            guard !targetDeliveryScheduled else { return false }
+            targetDeliveryScheduled = true
+            return true
+        }
+        guard schedule else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let delivery = self.ingressLock.withLock { () -> (CGPoint?, Double, CVPixelBuffer, TrackingFrameContext?, UInt64)? in
+                let delivery = self.pendingTargetDelivery
+                self.pendingTargetDelivery = nil; self.targetDeliveryScheduled = false
+                return delivery
+            }
+            guard let (point, confidence, buffer, frame, epoch) = delivery, self.isCurrent(epoch) else { return }
+            if let timed = self.onTargetTrackedWithTimestamp {
+                if let frame { timed(point, confidence, buffer, frame) }
+            } else { self.onTargetTracked?(point, confidence, buffer) }
+        }
+    }
+
+    private func detect(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation, epoch: UInt64) {
+        let output = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(pixelBuffer: buffer, orientation: orientation)
+        var result = SubjectDetectionResult()
+        result.detectedScene = output.detectedScene
+        result.faceRectangles = output.allFaceRects
+        result.primaryEyePosition = output.primaryEyePosition
+        result.lookingDirection = output.lookingDirection
+        if let primary = output.primaryCandidate {
+            result.dominantSubjectRect = output.allFaceRects.count > 1 ? (output.groupBoundingBox ?? primary.boundingBox) : primary.boundingBox
+            result.confidence = primary.confidence
+        }
+        let focus: CGPoint
+        let type: SmartFocusType
+        if let eye = output.primaryEyePosition { focus = eye; type = .face }
+        else if let primary = output.primaryCandidate {
+            focus = primary.center; type = primary.category == .face ? .face : .salientObject
+        } else { focus = CGPoint(x: 0.5, y: 0.5); type = .center }
+        let luma = luminance(buffer)
+        result.averageLuminance = luma.0; result.estimatedColorTemp = luma.1
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isCurrent(epoch) else { return }
+            self.onDetectionCompleted?(result)
+            self.onSmartFocusPointCalculated?(focus, type)
+        }
+    }
+
+    private func luminance(_ buffer: CVPixelBuffer) -> (Float, Float) {
+        let image = CIImage(cvPixelBuffer: buffer)
+        let avg = image.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: image.extent)])
+        var rgba = [UInt8](repeating: 0, count: 4)
+        rgba.withUnsafeMutableBytes { bytes in
+            context.render(avg, toBitmap: bytes.baseAddress!, rowBytes: 4,
+                           bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8,
+                           colorSpace: CGColorSpaceCreateDeviceRGB())
+        }
+        let r = Float(rgba[0]) / 255, g = Float(rgba[1]) / 255, b = Float(rgba[2]) / 255
+        return (0.2126 * r + 0.7152 * g + 0.0722 * b, max(2700, min(9000, 3500 + b / max(r, 0.01) * 3000)))
+    }
+
+    private func deliverCaptures(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+                                 requested: Bool, epoch: UInt64? = nil) {
+        guard requested else { return }
+        let image = CIImage(cvPixelBuffer: buffer).oriented(orientation)
+        let cg = context.createCGImage(image, from: image.extent)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let cg, requested else { return }
+            if let epoch, !self.isCurrent(epoch) { return }
+            self.capturedGeminiFrame = cg
+            let callback = self.ingressLock.withLock { () -> ((CGImage) -> Void)? in
+                let callback = self.captureCallback; self.captureCallback = nil; return callback
+            }
+            callback?(cg)
+        }
+    }
+
+    public func captureImmediateFrame(completion: @escaping (CGImage?) -> Void) {
+        visionQueue.async { [weak self] in
+            guard let self else { DispatchQueue.main.async { completion(nil) }; return }
+            if let buffer = self.latestBuffer {
+                let image = CIImage(cvPixelBuffer: buffer).oriented(self.latestOrientation)
+                let cg = self.context.createCGImage(image, from: image.extent)
+                DispatchQueue.main.async { completion(cg) }
+            } else {
+                // No image available: report failure rather than retaining an
+                // unbounded callback until an unknown future camera session.
+                DispatchQueue.main.async { completion(nil) }
+            }
+        }
     }
 }
