@@ -2084,6 +2084,30 @@ public final class CameraViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
 
+    // MARK: - HEIF Encoding Helper (Embeds Orientation and Full EXIF Metadata)
+    private nonisolated static func encodeImageToHEIF(cgImage: CGImage, metadata: [String: Any]) -> Data? {
+        let outputData = NSMutableData()
+        if let destination = CGImageDestinationCreateWithData(
+            outputData as CFMutableData,
+            UTType.heic.identifier as CFString,
+            1,
+            nil
+        ) {
+            CGImageDestinationAddImage(destination, cgImage, metadata as CFDictionary)
+            if CGImageDestinationFinalize(destination) {
+                return outputData as Data
+            }
+        }
+
+        // Dự phòng bằng CoreImage CIContext
+        let ciImage = CIImage(cgImage: cgImage)
+        let context = CIContext(options: [.useSoftwareRenderer: false])
+        let colorSpace = ciImage.colorSpace
+            ?? CGColorSpace(name: CGColorSpace.sRGB)
+            ?? CGColorSpaceCreateDeviceRGB()
+        return context.heifRepresentation(of: ciImage, format: .RGBA8, colorSpace: colorSpace, options: [:])
+    }
+
     // MARK: - Live Photo Metadata Injection (Preserves Film Filter & Apple Content Identifier)
     private nonisolated static func makeLivePhotoColorGradedData(
         from processedCGImage: CGImage,
@@ -2231,26 +2255,21 @@ public final class CameraViewModel: ObservableObject {
                 }
 
                 if photoFormat == .heic || photoFormat == .heif {
-                    let ciImage = CIImage(cgImage: item.processedImage)
-                    let context = CIContext(options: [.useSoftwareRenderer: false])
-                    let colorSpace = ciImage.colorSpace
-                        ?? CGColorSpace(name: CGColorSpace.sRGB)
-                        ?? CGColorSpaceCreateDeviceRGB()
-
-                    var options: [CIImageRepresentationOption: Any] = [:]
+                    var metadata: [String: Any] = [:]
                     if let rawData = item.rawPhotoData,
                        let source = CGImageSourceCreateWithData(rawData as CFData, nil),
                        let meta = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any] {
-                        var mutableMeta = meta
-                        mutableMeta[kCGImagePropertyOrientation as String] = 1
-                        options[.properties] = mutableMeta
+                        metadata = meta
                     }
+                    metadata[kCGImagePropertyOrientation as String] = 1
 
-                    if let heicData = context.heifRepresentation(of: ciImage, format: .RGBA8, colorSpace: colorSpace, options: options) {
-                        let origHeicData: Data? = shouldSaveOriginal ? context.heifRepresentation(of: CIImage(cgImage: item.originalImage), format: .RGBA8, colorSpace: colorSpace, options: options) : nil
+                    let heicData = Self.encodeImageToHEIF(cgImage: item.processedImage, metadata: metadata)
+                    let origHeicData: Data? = shouldSaveOriginal ? Self.encodeImageToHEIF(cgImage: item.originalImage, metadata: metadata) : nil
+
+                    if let mainHeicData = heicData {
                         PHPhotoLibrary.shared().performChanges({
                             let creationRequest = PHAssetCreationRequest.forAsset()
-                            creationRequest.addResource(with: .photo, data: heicData, options: nil)
+                            creationRequest.addResource(with: .photo, data: mainHeicData, options: nil)
                             if let origData = origHeicData {
                                 let origRequest = PHAssetCreationRequest.forAsset()
                                 origRequest.addResource(with: .photo, data: origData, options: nil)
