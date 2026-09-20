@@ -755,16 +755,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             self.stableLockFrames += 1
                             trackRequest.inputObservation = newObs
                             self.lastTargetObservation = newObs
-                            let targetBoxW = max(0.08, min(0.5, newObs.boundingBox.width))
-                            let targetBoxH = max(0.08, min(0.5, newObs.boundingBox.height))
-                            self.anchorBoxSize = CGSize(
-                                width: self.anchorBoxSize.width * 0.85 + targetBoxW * 0.15,
-                                height: self.anchorBoxSize.height * 0.85 + targetBoxH * 0.15
-                            )
-                            
-                            let uiX = newObs.boundingBox.midX
-                            let uiY = 1.0 - newObs.boundingBox.midY
-                            self.lastVerifiedUIPoint = CGPoint(x: uiX, y: uiY)
+                            self.anchorBoxSize = CGSize(width: max(0.08, min(0.5, newObs.boundingBox.width)),
+                                                        height: max(0.08, min(0.5, newObs.boundingBox.height)))
+                            self.lastVerifiedUIPoint = CGPoint(x: newObs.boundingBox.midX, y: 1.0 - newObs.boundingBox.midY)
                             
                             // Thích nghi chậm reference theo thay đổi phơi sáng (mỗi ~2s lock ổn định)
                             if self.stableLockFrames >= 60 {
@@ -777,8 +770,44 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                 }
                             }
                             
-                            // Tâm bounding box từ Apple Vision là ground truth quang học chính xác tuyệt đối,
-                            // loại bỏ hoàn toàn hiện tượng rung lắc/nhảy tọa độ do Saliency Centroid.
+                            var uiX = newObs.boundingBox.midX
+                            var uiY = 1.0 - newObs.boundingBox.midY
+                            
+                            // 3) Detection-based Periodic Correction (Nắn mỏ neo nhẹ nhàng mỗi 15 frame bằng Saliency Centroid với lực 0.08, chống rung giật)
+                            self.detectionCorrectionCounter += 1
+                            if self.detectionCorrectionCounter >= 15 {
+                                self.detectionCorrectionCounter = 0
+                                if let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                    let centroidUIX = salientCentroid.x
+                                    let centroidUIY = 1.0 - salientCentroid.y
+                                    let box = newObs.boundingBox
+                                    let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
+                                    // Chỉ nắn khi centroid nằm trong hoặc rất sát box đang bám (tránh hút sang đối tượng ngoài)
+                                    if boxUI.insetBy(dx: -0.02, dy: -0.02).contains(CGPoint(x: centroidUIX, y: centroidUIY)) {
+                                        let drift = hypot(centroidUIX - uiX, centroidUIY - uiY)
+                                        let maxOffset = min(box.width, box.height) * 0.45
+                                        if drift > 0.02 && drift < maxOffset {
+                                            uiX += (centroidUIX - uiX) * 0.08
+                                            uiY += (centroidUIY - uiY) * 0.08
+                                        }
+                                    }
+                                }
+                            } else if self.currentSceneType.isDeformableNature,
+                               let salientCentroid = self.extractSaliencyCentroid(from: pixelBuffer, near: newObs.boundingBox) {
+                                let box = newObs.boundingBox
+                                let boxUI = CGRect(x: box.minX, y: 1.0 - box.maxY, width: box.width, height: box.height)
+                                let centroidUI = CGPoint(x: salientCentroid.x, y: 1.0 - salientCentroid.y)
+                                if boxUI.contains(centroidUI) {
+                                    let maxOffset = min(box.width, box.height) * 0.40
+                                    var dx = centroidUI.x - uiX
+                                    var dy = centroidUI.y - uiY
+                                    dx = max(-maxOffset, min(maxOffset, dx))
+                                    dy = max(-maxOffset, min(maxOffset, dy))
+                                    uiX += dx * 0.5
+                                    uiY += dy * 0.5
+                                }
+                            }
+                            
                             trackedPoint = CGPoint(x: uiX, y: uiY)
                             trackedConfidence = Double(newObs.confidence)
                         } else {
