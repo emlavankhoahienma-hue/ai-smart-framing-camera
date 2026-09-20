@@ -220,12 +220,22 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isShowingSunSlider: Bool = false
     @Published public var activeSunExposureBias: Float = 0.0
 
-    // MARK: - Thước Đo Cân Bằng Chân Trời (Horizon Leveler)
+    // MARK: - Thước Đo Cân Bằng Chân Trời (Horizon Leveler) & Hiệu Chuẩn Gyro
     @Published public var isHorizonLevelerEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isHorizonLevelerEnabled, forKey: "isHorizonLevelerEnabled") }
     }
     @Published public var currentRollDegrees: Double = 0.0
     @Published public var isDeviceLevel: Bool = false
+    @Published public var gyroRollOffsetDegrees: Double = 0.0 {
+        didSet { UserDefaults.standard.set(gyroRollOffsetDegrees, forKey: "gyroRollOffsetDegrees") }
+    }
+    @Published public var gyroPitchOffsetDegrees: Double = 0.0 {
+        didSet { UserDefaults.standard.set(gyroPitchOffsetDegrees, forKey: "gyroPitchOffsetDegrees") }
+    }
+    @Published public var lastGyroCalibrationDate: Date? = nil {
+        didSet { UserDefaults.standard.set(lastGyroCalibrationDate?.timeIntervalSince1970, forKey: "lastGyroCalibrationDate") }
+    }
+    @Published public var isShowingGyroCalibration: Bool = false
     private let horizonMotionManager = CMMotionManager()
     private var hasTriggeredLevelHaptic: Bool = false
 
@@ -559,6 +569,15 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "isHorizonLevelerEnabled") != nil {
             self.isHorizonLevelerEnabled = defaults.bool(forKey: "isHorizonLevelerEnabled")
+        }
+        if defaults.object(forKey: "gyroRollOffsetDegrees") != nil {
+            self.gyroRollOffsetDegrees = defaults.double(forKey: "gyroRollOffsetDegrees")
+        }
+        if defaults.object(forKey: "gyroPitchOffsetDegrees") != nil {
+            self.gyroPitchOffsetDegrees = defaults.double(forKey: "gyroPitchOffsetDegrees")
+        }
+        if let timestamp = defaults.object(forKey: "lastGyroCalibrationDate") as? Double {
+            self.lastGyroCalibrationDate = Date(timeIntervalSince1970: timestamp)
         }
         if defaults.object(forKey: "isFocusPeakingEnabled") != nil {
             self.isFocusPeakingEnabled = defaults.bool(forKey: "isFocusPeakingEnabled")
@@ -1917,9 +1936,10 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self, let motion = motion, self.isHorizonLevelerEnabled, !self.isShowingSettings else { return }
             let gx = Double(motion.gravity.x)
             let gy = Double(motion.gravity.y)
-            let roll = atan2(gx, -gy) * 180.0 / .pi
-            self.currentRollDegrees = roll
-            let level = abs(roll) <= 0.8
+            let rawRoll = atan2(gx, -gy) * 180.0 / .pi
+            let calibratedRoll = rawRoll - self.gyroRollOffsetDegrees
+            self.currentRollDegrees = calibratedRoll
+            let level = abs(calibratedRoll) <= 0.8
             if level && !self.isDeviceLevel && !self.hasTriggeredLevelHaptic {
                 self.haptics.triggerSelectionChange()
                 self.hasTriggeredLevelHaptic = true
@@ -1928,6 +1948,30 @@ public final class CameraViewModel: ObservableObject {
             }
             self.isDeviceLevel = level
         }
+    }
+
+    // MARK: - Gyro Calibration API
+    public func applyGyroCalibration(rollOffset: Double, pitchOffset: Double) {
+        self.gyroRollOffsetDegrees = rollOffset
+        self.gyroPitchOffsetDegrees = pitchOffset
+        self.lastGyroCalibrationDate = Date()
+        DeviceMotionService.shared.recalibrateBaselines()
+        SpatialTrackingEngine.shared.stopTracking()
+        self.haptics.triggerSuccess()
+        CameraLogger.info("Đã áp dụng hiệu chuẩn Gyro mới: RollOffset=\(String(format: "%.2f", rollOffset))°, PitchOffset=\(String(format: "%.2f", pitchOffset))°", category: .motion)
+    }
+
+    public func resetGyroCalibration() {
+        self.gyroRollOffsetDegrees = 0.0
+        self.gyroPitchOffsetDegrees = 0.0
+        self.lastGyroCalibrationDate = nil
+        UserDefaults.standard.removeObject(forKey: "gyroRollOffsetDegrees")
+        UserDefaults.standard.removeObject(forKey: "gyroPitchOffsetDegrees")
+        UserDefaults.standard.removeObject(forKey: "lastGyroCalibrationDate")
+        DeviceMotionService.shared.recalibrateBaselines()
+        SpatialTrackingEngine.shared.stopTracking()
+        self.haptics.triggerSelectionChange()
+        CameraLogger.info("Đã đặt lại thông số Gyro calibration về mặc định 0.0°", category: .motion)
     }
 
     public func applyFocusAndExposure(to point: CGPoint, source: SmartFocusType, force: Bool = false) {

@@ -153,6 +153,9 @@ public struct SettingsSheetView: View {
                 selectedModel = viewModel.geminiService.selectedModel
                 customModelInput = viewModel.geminiService.customModelName
             }
+            .sheet(isPresented: $viewModel.isShowingGyroCalibration) {
+                GyroCalibrationSheetView(viewModel: viewModel)
+            }
         }
     }
 
@@ -256,7 +259,7 @@ public struct SettingsSheetView: View {
     private var searchResultsView: some View {
         let q = searchText.lowercased()
         VStack(spacing: 16) {
-            if "định dạng ảnh raw jpeg heic dng live photo lưu ảnh gốc video codec 4k 1080p fps film màu fuji kodak leica horizon focus peaking histogram".contains(q) {
+            if "định dạng ảnh raw jpeg heic dng live photo lưu ảnh gốc video codec 4k 1080p fps film màu fuji kodak leica horizon focus peaking histogram hiệu chuẩn con quay gyro cân đối xứng".contains(q) {
                 PhotoCaptureSettingsSection(viewModel: viewModel)
             }
             if "bố cục tỷ lệ vàng 1/3 tam giác xoắn ốc ai zoom bám chủ thể tự chụp tia hướng dẫn openrouter api key gemini model ping latency".contains(q) {
@@ -271,7 +274,7 @@ public struct SettingsSheetView: View {
                     toastMessage: $toastMessage
                 )
             }
-            if "hệ thống đường phố street tracking rung haptic màn hình sáng chẩn đoán engine nhật ký log debug feedback góp ý donate ủng hộ".contains(q) {
+            if "hệ thống đường phố street tracking rung haptic màn hình sáng chẩn đoán engine nhật ký log debug feedback góp ý donate ủng hộ hiệu chuẩn con quay gyro 6dof".contains(q) {
                 AdvancedSettingsSection(
                     viewModel: viewModel,
                     showResetSessionConfirmation: $showResetSessionConfirmation,
@@ -649,6 +652,22 @@ struct PhotoCaptureSettingsSection: View {
                     iconColor: Color(red: 1.0, green: 0.58, blue: 0.20),
                     isOn: $viewModel.isHorizonLevelerEnabled
                 )
+
+                if viewModel.isHorizonLevelerEnabled {
+                    Divider().background(Color.white.opacity(0.06))
+
+                    SettingsActionRow(
+                        title: "Hiệu chuẩn con quay & Thước cân",
+                        subtitle: viewModel.lastGyroCalibrationDate != nil
+                            ? "Đã cân bằng (Bù lệch Roll: \(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°)"
+                            : "Khử sai số ốp lưng, camera lồi và triệt tiêu trôi tĩnh",
+                        icon: "slider.horizontal.2.square.on.square",
+                        iconColor: amberGold,
+                        badgeText: viewModel.lastGyroCalibrationDate != nil ? "\(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°" : "Cần cân"
+                    ) {
+                        viewModel.isShowingGyroCalibration = true
+                    }
+                }
 
                 Divider().background(Color.white.opacity(0.06))
 
@@ -1128,6 +1147,20 @@ struct AdvancedSettingsSection: View {
                     iconColor: Color.yellow,
                     isOn: $viewModel.isKeepScreenAwakeEnabled
                 )
+
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsActionRow(
+                    title: "Hiệu chuẩn con quay hồi chuyển 60Hz",
+                    subtitle: viewModel.lastGyroCalibrationDate != nil
+                        ? "Đã tối ưu hóa IMU (Bù lệch Roll: \(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°)"
+                        : "Khử trôi (Zero-bias) và cân chỉnh 3 trục xoay cho tracking 6DoF",
+                    icon: "gyroscope",
+                    iconColor: amberGold,
+                    badgeText: viewModel.lastGyroCalibrationDate != nil ? "\(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°" : "Chưa cân"
+                ) {
+                    viewModel.isShowingGyroCalibration = true
+                }
             }
         }
     }
@@ -1565,7 +1598,76 @@ public struct SettingsPickerRow<Content: View>: View {
     }
 }
 
-// 4. ToastBanner
+// 4. SettingsActionRow
+public struct SettingsActionRow: View {
+    let title: String
+    var subtitle: String? = nil
+    let icon: String
+    var iconColor: Color = Color(red: 1.0, green: 0.69, blue: 0.16)
+    var badgeText: String? = nil
+    let action: () -> Void
+
+    public init(
+        title: String,
+        subtitle: String? = nil,
+        icon: String,
+        iconColor: Color = Color(red: 1.0, green: 0.69, blue: 0.16),
+        badgeText: String? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.icon = icon
+        self.iconColor = iconColor
+        self.badgeText = badgeText
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                SettingsRowIcon(icon, color: iconColor)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 14.5, weight: .medium))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    if let sub = subtitle, !sub.isEmpty {
+                        Text(sub)
+                            .font(.system(size: 11.5, weight: .regular))
+                            .foregroundColor(Color.white.opacity(0.52))
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                if let badge = badgeText, !badge.isEmpty {
+                    Text(badge)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(Color(red: 1.0, green: 0.69, blue: 0.16))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule().fill(Color(red: 1.0, green: 0.69, blue: 0.16).opacity(0.15))
+                        )
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.35))
+            }
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// 5. ToastBanner
 public struct ToastBanner: View {
     let message: String
 

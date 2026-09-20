@@ -50,6 +50,7 @@
 		B20000000000000000000037 /* nuticonbocuc.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000039 /* nuticonbocuc.png */; };
 		C20000000000000000000040 /* TrackingGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000040 /* TrackingGeometry.swift */; };
 		C20000000000000000000041 /* NeuralTargetTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000041 /* NeuralTargetTracker.swift */; };
+		C20000000000000000000042 /* GyroCalibrationSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000042 /* GyroCalibrationSheetView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -98,6 +99,7 @@
 		B100000000000000000000039 /* nuticonbocuc.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = nuticonbocuc.png; sourceTree = "<group>"; };
 		C10000000000000000000040 /* TrackingGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingGeometry.swift; sourceTree = "<group>"; };
 		C10000000000000000000041 /* NeuralTargetTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralTargetTracker.swift; sourceTree = "<group>"; };
+		C10000000000000000000042 /* GyroCalibrationSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCalibrationSheetView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -214,6 +216,7 @@
 				B100000000000000000000029 /* ProVideoManualControlsView.swift */,
 				B100000000000000000000037 /* PhotoGallerySheetView.swift */,
 				B100000000000000000000038 /* LuxuryInteractiveGoldButtonStyle.swift */,
+				C10000000000000000000042 /* GyroCalibrationSheetView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -337,6 +340,7 @@
 				B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */,
 				B20000000000000000000027 /* PhotoGallerySheetView.swift in Sources */,
 				B20000000000000000000028 /* LuxuryInteractiveGoldButtonStyle.swift in Sources */,
+				C20000000000000000000042 /* GyroCalibrationSheetView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

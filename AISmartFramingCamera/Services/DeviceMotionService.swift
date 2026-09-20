@@ -54,6 +54,13 @@ public final class DeviceMotionService: @unchecked Sendable {
 
     public func resetReferenceAttitude() { lock.withLock { reference = nil } }
 
+    public func recalibrateBaselines() {
+        lock.withLock {
+            reference = nil
+            legacyGeneration &+= 1
+        }
+    }
+
     public func stopTracking() {
         lock.withLock {
             legacyGeneration &+= 1; legacyActive = false; reference = nil
