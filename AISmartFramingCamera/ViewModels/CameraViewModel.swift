@@ -749,9 +749,9 @@ public final class CameraViewModel: ObservableObject {
 
         cameraService.onLiveZoomFactorChanged = { [weak self] zoom in
             guard let self = self else { return }
-            self.liveZoomFactorForReveal = zoom
             self.currentZoom = zoom
             let disp = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
+            self.liveZoomFactorForReveal = disp
             self.displayZoom = disp
             if self.isPinchingZoom {
                 self.selectedZoomPreset = disp < 1.5 ? 1.0 : (disp < 2.5 ? 2.0 : 3.0)
@@ -1272,7 +1272,8 @@ public final class CameraViewModel: ObservableObject {
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
         let anchorTarget = target
-        if let buffer = frameProcessor.latestPixelBufferSnapshot() {
+        if let buffer = selectedFrame?.0 {
+            shouldCheckTextureOnNextFrame = false
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: buffer, normalizedRect: region)
             applyTextureVarianceHysteresis(variance: variance)

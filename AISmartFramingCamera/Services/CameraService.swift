@@ -500,9 +500,10 @@ public final class CameraService: NSObject {
                 try camera.lockForConfiguration()
                 defer { camera.unlockForConfiguration() }
                 camera.videoZoomFactor = clampedZoom
-                self.currentZoom = clampedZoom
+                let actualZoom = camera.videoZoomFactor
+                self.currentZoom = actualZoom
                 DispatchQueue.main.async {
-                    self.delegate?.cameraService(self, didChangeZoomFactor: clampedZoom)
+                    self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
                 }
             } catch {
                 CameraLogger.error("CameraService: Error setting zoom", error: error, category: .capture)
@@ -522,9 +523,12 @@ public final class CameraService: NSObject {
                 try camera.lockForConfiguration()
                 defer { camera.unlockForConfiguration() }
                 camera.ramp(toVideoZoomFactor: clampedZoom, withRate: rate)
-                self.currentZoom = clampedZoom
+                // A ramp command is not a measurement. KVO supplies subsequent
+                // actual factors; never project the target at the future zoom.
+                let actualZoom = camera.videoZoomFactor
+                self.currentZoom = actualZoom
                 DispatchQueue.main.async {
-                    self.delegate?.cameraService(self, didChangeZoomFactor: clampedZoom)
+                    self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
                 }
             } catch {
                 CameraLogger.error("CameraService: Error smooth zoom", error: error, category: .capture)

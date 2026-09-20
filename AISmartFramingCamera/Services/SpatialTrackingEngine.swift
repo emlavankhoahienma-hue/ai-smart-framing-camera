@@ -197,11 +197,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         var outputConfidence = 0.0
         if let worldRay, let sample = history.last, now - sample.timestamp < 0.15 {
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
-            estimated = projected.point
+            let raw = projected.point
+            let delta = hypot(raw.x - estimated.x, raw.y - estimated.y)
+            if delta < 0.0035 {
+                estimated = CGPoint(x: estimated.x * 0.82 + raw.x * 0.18,
+                                    y: estimated.y * 0.82 + raw.y * 0.18)
+            } else {
+                estimated = raw
+            }
             let age = now - lastAccepted
-            quality = projected.isInsideImage && age < 0.15 ? .locked :
+            quality = projected.isInsideImage && age < 0.50 ? .locked :
                 (projected.isInsideImage ? .reacquiring : .predicting)
-            outputConfidence = age < 0.15 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
+            outputConfidence = age < 0.50 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
         }
         // No timeout deletes worldRay or appearance. Only explicit stop/re-pin.
         pendingOutput = (estimated, outputConfidence, quality, generation)
