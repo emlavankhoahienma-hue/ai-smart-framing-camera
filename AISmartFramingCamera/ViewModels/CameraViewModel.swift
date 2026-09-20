@@ -122,13 +122,16 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeCompositionRule: CompositionRule = .goldenRatio {
         didSet { UserDefaults.standard.set(activeCompositionRule.rawValue, forKey: "activeCompositionRule") }
     }
+    @Published public var isFilmSimulationActive: Bool = false {
+        didSet { UserDefaults.standard.set(isFilmSimulationActive, forKey: "isFilmSimulationActive") }
+    }
     @Published public var selectedFilmPreset: FilmPreset = .fujiPro400H {
         didSet { UserDefaults.standard.set(selectedFilmPreset.rawValue, forKey: "selectedFilmPreset") }
     }
     @Published public var selectedFilmCategory: FilmPresetCategory = .trending {
         didSet { UserDefaults.standard.set(selectedFilmCategory.rawValue, forKey: "selectedFilmCategory") }
     }
-    @Published public var isAIFullColorEnabled: Bool = true {
+    @Published public var isAIFullColorEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isAIFullColorEnabled, forKey: "isAIFullColorEnabled") }
     }
     @Published public var aiRecommendedPreset: FilmPreset? = nil
@@ -534,6 +537,9 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "isGuidanceRayEnabled") != nil {
             self.isGuidanceRayEnabled = defaults.bool(forKey: "isGuidanceRayEnabled")
+        }
+        if defaults.object(forKey: "isFilmSimulationActive") != nil {
+            self.isFilmSimulationActive = defaults.bool(forKey: "isFilmSimulationActive")
         }
         if defaults.object(forKey: "isAIFullColorEnabled") != nil {
             self.isAIFullColorEnabled = defaults.bool(forKey: "isAIFullColorEnabled")
@@ -1558,8 +1564,15 @@ public final class CameraViewModel: ObservableObject {
     public func selectPreset(_ preset: FilmPreset) {
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut) {
-            selectedFilmPreset = preset
-            selectedFilmCategory = preset.category
+            if preset == .standard {
+                isFilmSimulationActive = false
+                selectedFilmPreset = .standard
+                selectedFilmCategory = .original
+            } else {
+                isFilmSimulationActive = true
+                selectedFilmPreset = preset
+                selectedFilmCategory = preset.category
+            }
             if preset.isAIFullAuto {
                 isAIFullColorEnabled = true
             } else {
@@ -1567,6 +1580,36 @@ public final class CameraViewModel: ObservableObject {
                 currentAIColorParams = nil
                 geminiColorRecipe = nil
             }
+        }
+    }
+
+    public func toggleFilmSimulation() {
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+            isFilmSimulationActive.toggle()
+            if !isFilmSimulationActive {
+                isAIFullColorEnabled = false
+            }
+        }
+    }
+
+    public func disableFilmSimulation() {
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+            isFilmSimulationActive = false
+            isAIFullColorEnabled = false
+        }
+    }
+
+    public func enableFilmSimulation(preset: FilmPreset? = nil) {
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+            isFilmSimulationActive = true
+            if let p = preset, p != .standard {
+                selectedFilmPreset = p
+                selectedFilmCategory = p.category
+            }
+            isAIFullColorEnabled = false
         }
     }
 
@@ -2200,7 +2243,10 @@ extension CameraViewModel: CameraServiceDelegate {
 
             var processedImageResult: CGImage = photo
             autoreleasepool {
-                if effectivePreset != .standard && !effectivePreset.isAIFullAuto {
+                if !self.isFilmSimulationActive || effectivePreset == .standard {
+                    // Chế độ GỐC (TẮT màu) -> Giữ nguyên 100% cảm biến gốc iPhone, không qua CoreImage
+                    processedImageResult = photo
+                } else if effectivePreset != .standard && !effectivePreset.isAIFullAuto {
                     // Ưu tiên 100% chất màu chuẩn mực của dòng máy vintage người dùng đã chọn
                     processedImageResult = FilmFilterEngine.shared.applyPreset(to: photo, preset: effectivePreset) ?? photo
                 } else if let params = finalColorParams {
@@ -2216,7 +2262,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 rawPhotoData: rawData,
                 livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
-                appliedPreset: effectivePreset,
+                appliedPreset: self.isFilmSimulationActive ? effectivePreset : .standard,
                 compositionRule: activeRule,
                 alignmentScore: score,
                 iso: iso,

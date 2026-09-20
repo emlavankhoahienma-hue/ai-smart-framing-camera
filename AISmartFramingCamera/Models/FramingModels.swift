@@ -1036,49 +1036,69 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
         switch category {
         case .trending:
             switch self {
-            case .fujiX: return 1.06
-            case .cam1998: return 1.22
-            case .nokia3310: return 0.65
-            case .luxury8800: return 0.95
-            case .kambo: return 1.14
-            case .cpm35: return 1.08
-            default: return 1.05
+            case .fujiX: return 0.94
+            case .cam1998: return 1.02
+            case .nokia3310: return 0.78
+            case .luxury8800: return 0.94
+            case .kambo: return 1.04
+            case .cpm35: return 0.98
+            default: return 0.96
             }
         case .vintagePhone:
-            return 0.86
+            switch self {
+            case .iphone3GS: return 0.95
+            case .motorolaV3: return 0.90
+            default: return 0.86
+            }
         case .fuji:
             switch self {
-            case .velvia50: return 1.32
-            case .classicChrome: return 0.85
-            case .astia100F: return 0.96
-            default: return 1.05
+            case .velvia50: return 1.08
+            case .classicChrome: return 0.82
+            case .classicNeg: return 0.90
+            case .fujiPro400H: return 0.92
+            case .astia100F: return 0.95
+            default: return 0.92
             }
         case .vintageCam:
             switch self {
-            case .lomoLCA: return 1.28
-            case .toyK: return 1.18
-            default: return 1.06
+            case .lomoLCA: return 1.06
+            case .toyK: return 1.02
+            case .cinestill800T: return 0.96
+            default: return 0.98
             }
         case .ccd:
-            return 1.24
+            switch self {
+            case .mangaCam: return 1.02
+            case .gCcdGold: return 1.04
+            default: return 0.98
+            }
         case .kodak:
             switch self {
-            case .ektar100: return 1.30
-            case .gold200: return 1.20
-            case .kodakPortra400: return 1.05
-            default: return 1.12
+            case .kodakPortra400: return 0.94
+            case .gold200: return 1.02
+            case .colorPlus200: return 0.98
+            case .ektar100: return 1.06
+            case .vision3500D: return 0.95
+            default: return 0.98
             }
         case .ricoh:
             switch self {
-            case .grPositive: return 1.22
-            default: return 1.05
+            case .grPositive: return 1.06
+            case .grFFilm: return 0.96
+            case .grStreetSnap: return 0.98
+            default: return 0.96
             }
         case .canon:
-            return 1.12
+            switch self {
+            case .eos5DClassic: return 0.96
+            case .powershotG: return 1.02
+            case .ixusY2K: return 1.00
+            default: return 0.98
+            }
         case .dv:
-            return 1.10
+            return 0.92
         case .instant:
-            return 0.94
+            return 0.88
         case .original:
             return 1.0
         }
@@ -1086,21 +1106,21 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
 
     public var liveContrast: Double {
         switch self {
-        case .monochromeNoir, .grHighBW: return 1.36
-        case .acrosBW, .triX400, .leicaMonochrom: return 1.22
-        case .lomoLCA: return 1.26
-        case .cam1998, .toyK: return 1.18
-        case .velvia50: return 1.20
-        case .nokia3310: return 1.22
+        case .monochromeNoir, .grHighBW: return 1.25
+        case .acrosBW, .triX400, .leicaMonochrom: return 1.15
+        case .lomoLCA: return 1.08
+        case .grPositive, .velvia50: return 1.08
+        case .cam1998, .toyK: return 1.04
+        case .nokia3310: return 1.05
         case .standard: return 1.0
-        default: return 1.06
+        default: return 1.03
         }
     }
 
     public var liveBrightness: Double {
         switch self {
-        case .keitai88, .fujiPro400H: return 0.02
-        case .nokia3310: return 0.04
+        case .keitai88, .fujiPro400H: return 0.015
+        case .nokia3310: return 0.02
         case .luxury8800: return -0.01
         default: return 0.0
         }
@@ -1132,13 +1152,13 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
 
     public var liveTintOpacity: Double {
         switch self {
-        case .nokia3310: return 0.18
-        case .gold200, .colorPlus200: return 0.14
-        case .ccd1Cyber, .blueSKCool: return 0.11
-        case .fujiX, .fujiPro400H: return 0.08
-        case .polaroid600, .sx70TimeZero: return 0.10
-        case .miniDV43, .hi8Analog, .vhscHome: return 0.09
-        default: return 0.06
+        case .nokia3310: return 0.08
+        case .gold200, .colorPlus200: return 0.06
+        case .ccd1Cyber, .blueSKCool: return 0.05
+        case .fujiX, .fujiPro400H: return 0.04
+        case .polaroid600, .sx70TimeZero: return 0.05
+        case .miniDV43, .hi8Analog, .vhscHome: return 0.05
+        default: return 0.03
         }
     }
 

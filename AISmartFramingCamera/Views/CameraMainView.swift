@@ -29,12 +29,14 @@ public struct CameraMainView: View {
                     // 3. Fixed 3:4 High-End Viewfinder (Live View)
                     ZStack {
                         CameraPreviewView(viewModel: viewModel)
-                            .saturation(viewModel.selectedFilmPreset.liveSaturation)
-                            .contrast(viewModel.selectedFilmPreset.liveContrast)
-                            .brightness(viewModel.selectedFilmPreset.liveBrightness)
+                            .saturation(viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.liveSaturation : 1.0)
+                            .contrast(viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.liveContrast : 1.0)
+                            .brightness(viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.liveBrightness : 0.0)
 
                         // Realtime Film Atmosphere & Optical Tint Overlay (Zero-Latency GPU Composition)
-                        FilmViewfinderAtmosphereOverlay(preset: viewModel.selectedFilmPreset)
+                        if viewModel.isFilmSimulationActive {
+                            FilmViewfinderAtmosphereOverlay(preset: viewModel.selectedFilmPreset)
+                        }
 
                         ARFramingOverlayView(viewModel: viewModel)
                     }

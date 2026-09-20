@@ -631,7 +631,7 @@ struct CameraFlipButton: View {
     }
 }
 
-// MARK: - Selected Camera Mini Badge Button (Storyboard Right Shutter Deck)
+// MARK: - Selected Camera Mini Badge Button (Opens Drawer)
 public struct SelectedCameraBadgeButton: View {
     @ObservedObject var viewModel: CameraViewModel
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
@@ -642,11 +642,8 @@ public struct SelectedCameraBadgeButton: View {
 
     public var body: some View {
         Button(action: {
-            let haptic = UISelectionFeedbackGenerator()
-            haptic.prepare()
-            haptic.selectionChanged()
-
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
+            haptics.triggerSelectionChange()
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
                 viewModel.isShowingFilmDrawer.toggle()
             }
         }) {
@@ -657,24 +654,41 @@ public struct SelectedCameraBadgeButton: View {
                         .frame(width: 48, height: 38)
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(viewModel.isShowingFilmDrawer ? amberGold : Color.white.opacity(0.25), lineWidth: 1.2)
+                                .stroke(
+                                    viewModel.isShowingFilmDrawer ? amberGold :
+                                        (viewModel.isFilmSimulationActive ? amberGold.opacity(0.70) : Color.white.opacity(0.20)),
+                                    lineWidth: viewModel.isFilmSimulationActive || viewModel.isShowingFilmDrawer ? 1.4 : 1.0
+                                )
                         )
-                        .shadow(color: viewModel.isShowingFilmDrawer ? amberGold.opacity(0.40) : Color.black.opacity(0.4), radius: 4, y: 2)
+                        .shadow(
+                            color: viewModel.isFilmSimulationActive ? amberGold.opacity(0.35) : Color.black.opacity(0.35),
+                            radius: 4,
+                            y: 2
+                        )
 
-                    Image(systemName: viewModel.selectedFilmPreset.deviceIconSF)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(viewModel.isShowingFilmDrawer ? amberGold : viewModel.selectedFilmPreset.previewColor)
+                    if viewModel.isFilmSimulationActive {
+                        Image(systemName: viewModel.selectedFilmPreset.deviceIconSF)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(viewModel.isShowingFilmDrawer ? amberGold : viewModel.selectedFilmPreset.previewColor)
+                    } else {
+                        Image(systemName: "camera.filters")
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundColor(.white.opacity(0.50))
+                    }
                 }
 
-                Text(viewModel.selectedFilmPreset.shortTitle)
-                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                    .foregroundColor(viewModel.isShowingFilmDrawer ? amberGold : .white.opacity(0.85))
+                Text(viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.shortTitle : "GỐC (OFF)")
+                    .font(.system(size: 8.0, weight: .bold, design: .rounded))
+                    .foregroundColor(
+                        viewModel.isShowingFilmDrawer ? amberGold :
+                            (viewModel.isFilmSimulationActive ? amberGold : .white.opacity(0.55))
+                    )
                     .lineLimit(1)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Mở bảng màu máy ảnh \(viewModel.selectedFilmPreset.displayName)")
+        .accessibilityLabel(viewModel.isFilmSimulationActive ? "Bảng màu máy ảnh \(viewModel.selectedFilmPreset.displayName)" : "Màu giả lập đang tắt, chạm để mở bảng màu")
     }
 }
 
@@ -690,6 +704,68 @@ private struct SprocketPerforationsRow: View {
         }
         .frame(height: 4)
         .clipped()
+    }
+}
+
+// MARK: - Raw Original Clean Card (Turn Off Simulation)
+private struct RawCleanCardView: View {
+    let isSelected: Bool
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
+
+    var body: some View {
+        VStack(spacing: 1.5) {
+            // Top Badge Chip
+            HStack {
+                Text("GỐC")
+                    .font(.system(size: 7.0, weight: .heavy, design: .monospaced))
+                    .foregroundColor(isSelected ? .black : .white.opacity(0.80))
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 1.2)
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? amberGold : Color.white.opacity(0.15))
+                    )
+                Spacer()
+            }
+            .padding(.top, 3)
+            .padding(.horizontal, 4)
+
+            Spacer(minLength: 1)
+
+            // Center Device Icon
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(isSelected ? 0.25 : 0.08))
+                    .frame(width: 30, height: 30)
+
+                Image(systemName: "circle.slash")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(isSelected ? amberGold : .white.opacity(0.70))
+            }
+
+            Spacer(minLength: 1)
+
+            // Bottom Name Label
+            Text("TẮT MÀU")
+                .font(.system(size: 8.0, weight: isSelected ? .bold : .medium, design: .rounded))
+                .foregroundColor(isSelected ? amberGold : .white.opacity(0.70))
+                .lineLimit(1)
+                .minimumScaleFactor(0.70)
+                .padding(.horizontal, 2)
+                .padding(.bottom, 3.5)
+        }
+        .frame(width: 54, height: 68)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(red: 0.11, green: 0.12, blue: 0.15))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isSelected ? amberGold : Color.white.opacity(0.12), lineWidth: isSelected ? 1.8 : 0.8)
+        )
+        .shadow(color: isSelected ? amberGold.opacity(0.45) : Color.clear, radius: 4)
+        .scaleEffect(isSelected ? 1.04 : 1.0)
+        .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isSelected)
     }
 }
 
@@ -772,8 +848,40 @@ public struct FilmPresetDrawer: View {
 
     public var body: some View {
         VStack(spacing: 4) {
-            // 1. Sleek Category Tab Bar Header
-            HStack(spacing: 0) {
+            // 1. Sleek Category Tab Bar Header with Master ON/OFF Toggle
+            HStack(spacing: 8) {
+                // Master ON / OFF Toggle Pill
+                Button(action: {
+                    viewModel.toggleFilmSimulation()
+                }) {
+                    HStack(spacing: 4.5) {
+                        Circle()
+                            .fill(viewModel.isFilmSimulationActive ? amberGold : Color.gray.opacity(0.60))
+                            .frame(width: 6.5, height: 6.5)
+
+                        Text(viewModel.isFilmSimulationActive ? "MÀU: BẬT" : "MÀU: TẮT")
+                            .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                            .foregroundColor(viewModel.isFilmSimulationActive ? amberGold : .white.opacity(0.70))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3.5)
+                    .background(
+                        Capsule()
+                            .fill(viewModel.isFilmSimulationActive ? amberGold.opacity(0.16) : Color.white.opacity(0.08))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(viewModel.isFilmSimulationActive ? amberGold.opacity(0.45) : Color.white.opacity(0.16), lineWidth: 1.0)
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.leading, 10)
+                .accessibilityLabel("Bật tắt màu giả lập")
+
+                Divider()
+                    .frame(height: 16)
+                    .background(Color.white.opacity(0.20))
+
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         ForEach(FilmPresetCategory.allCases) { category in
@@ -797,7 +905,7 @@ public struct FilmPresetDrawer: View {
                             .buttonStyle(PlainButtonStyle())
                         }
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 4)
                     .padding(.vertical, 2)
                 }
 
@@ -822,8 +930,17 @@ public struct FilmPresetDrawer: View {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
+                            // Dedicated [ GỐC / TẮT MÀU ] Card
+                            Button(action: {
+                                viewModel.disableFilmSimulation()
+                            }) {
+                                RawCleanCardView(isSelected: !viewModel.isFilmSimulationActive)
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .id("raw_off_card")
+
                             ForEach(viewModel.selectedFilmCategory.presets) { preset in
-                                let isSelected = viewModel.selectedFilmPreset == preset
+                                let isSelected = viewModel.isFilmSimulationActive && viewModel.selectedFilmPreset == preset
 
                                 Button(action: {
                                     viewModel.selectPreset(preset)
@@ -838,7 +955,11 @@ public struct FilmPresetDrawer: View {
                         .padding(.vertical, 2)
                     }
                     .onAppear {
-                        proxy.scrollTo(viewModel.selectedFilmPreset.id, anchor: .center)
+                        if viewModel.isFilmSimulationActive {
+                            proxy.scrollTo(viewModel.selectedFilmPreset.id, anchor: .center)
+                        } else {
+                            proxy.scrollTo("raw_off_card", anchor: .center)
+                        }
                     }
                 }
 
