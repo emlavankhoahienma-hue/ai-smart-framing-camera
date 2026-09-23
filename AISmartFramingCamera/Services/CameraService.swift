@@ -64,10 +64,25 @@ public final class CameraService: NSObject {
     public let captureSession = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "com.alignai.camera.sessionQueue", qos: .userInteractive)
     private let videoDataQueue = DispatchQueue(label: "com.alignai.camera.videoDataQueue", qos: .userInteractive)
+    private let photoProcessingQueue = DispatchQueue(label: "com.alignai.camera.photoProcessing", qos: .userInitiated,
+                                                     autoreleaseFrequency: .workItem)
+    private let analysisGate = NSLock()
+    private var analysisPaused = false
+    private let zoomMappingLock = NSLock()
+    private var zoomConversionState: (multiplier: CGFloat, minimum: CGFloat, maximum: CGFloat,
+                                      minDisplay: CGFloat, maxDisplay: CGFloat,
+                                      teleBase: CGFloat) = (1, 1, 10, 1, 10, .infinity)
+    private var frameDeviceZoom: CGFloat = 1
 
     private var activeCamera: AVCaptureDevice?
+    private var primaryBackCamera: AVCaptureDevice?
+    private var physicalTelephotoCamera: AVCaptureDevice?
+    private var primaryDisplayMultiplier: CGFloat = 1
+    private var nativeTelephotoDisplayZoom: CGFloat = .infinity
+    public private(set) var isUsingPhysicalTelephoto = false
     private var zoomObservation: NSKeyValueObservation?
     public var onLiveZoomFactorChanged: ((CGFloat) -> Void)?
+    public var onPhysicalTelephotoChanged: ((Bool) -> Void)?
     private var videoDeviceInput: AVCaptureDeviceInput?
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
@@ -85,23 +100,64 @@ public final class CameraService: NSObject {
     // Virtual Multi-Camera Mapping (Apple Camera App style: 0.5x, 1x, 2x, 3x/5x)
     public private(set) var displayMultiplier: CGFloat = 1.0
     public private(set) var hasUltraWideLens: Bool = false
+    public private(set) var hasTelephotoLens: Bool = false
     public private(set) var availableDisplayZoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0]
     public private(set) var defaultDisplayZoom: CGFloat = 1.0
 
     public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
-        guard displayZoom.isFinite, displayMultiplier.isFinite, displayMultiplier > 0 else {
-            return max(minZoom, min(defaultDisplayZoom, maxZoom))
+        let state = zoomMappingLock.withLock { zoomConversionState }
+        guard displayZoom.isFinite, state.multiplier.isFinite, state.multiplier > 0 else {
+            return max(state.minimum, min(defaultDisplayZoom, state.maximum))
         }
-        let devZoom = displayZoom * displayMultiplier
-        guard devZoom.isFinite else { return max(minZoom, min(defaultDisplayZoom, maxZoom)) }
-        return max(minZoom, min(devZoom, maxZoom))
+        let devZoom = displayZoom * state.multiplier
+        guard devZoom.isFinite else { return max(state.minimum, min(defaultDisplayZoom, state.maximum)) }
+        return max(state.minimum, min(devZoom, state.maximum))
     }
 
     public func convertDeviceZoomToDisplayZoom(_ deviceZoom: CGFloat) -> CGFloat {
-        guard deviceZoom.isFinite, displayMultiplier.isFinite, displayMultiplier > 0 else {
+        let multiplier = zoomMappingLock.withLock { zoomConversionState.multiplier }
+        guard deviceZoom.isFinite, multiplier.isFinite, multiplier > 0 else {
             return defaultDisplayZoom
         }
-        return deviceZoom / displayMultiplier
+        return deviceZoom / multiplier
+    }
+
+    public var minimumDisplayZoom: CGFloat {
+        zoomMappingLock.withLock { zoomConversionState.minDisplay }
+    }
+
+    public var maximumDisplayZoom: CGFloat {
+        zoomMappingLock.withLock { zoomConversionState.maxDisplay }
+    }
+
+    /// Snapshot used when a video buffer has no measured intrinsics. KVO updates
+    /// it before the main-thread UI callback, avoiding a frame of stale zoom.
+    public var frameDisplayZoom: Double {
+        zoomMappingLock.withLock {
+            Double(frameDeviceZoom / max(zoomConversionState.multiplier, 0.001))
+        }
+    }
+
+    public func preferredOpticalDisplayZoom(for requested: CGFloat) -> CGFloat {
+        let native = zoomMappingLock.withLock { zoomConversionState.teleBase }
+        guard requested.isFinite, native.isFinite,
+              requested >= native * 0.94, requested < native else { return requested }
+        return native
+    }
+
+    private func refreshZoomConversionState() {
+        let base = primaryBackCamera ?? activeCamera
+        let baseMultiplier = primaryBackCamera == nil ? displayMultiplier : primaryDisplayMultiplier
+        let minimumDisplay = (base?.minAvailableVideoZoomFactor ?? minZoom) / baseMultiplier
+        let baseMaximum = (base?.maxAvailableVideoZoomFactor ?? maxZoom) / baseMultiplier
+        let teleMaximum = physicalTelephotoCamera.map {
+            $0.maxAvailableVideoZoomFactor * nativeTelephotoDisplayZoom
+        } ?? 0
+        zoomMappingLock.withLock {
+            zoomConversionState = (displayMultiplier, minZoom, maxZoom,
+                minimumDisplay, min(10, max(baseMaximum, teleMaximum)), nativeTelephotoDisplayZoom)
+            frameDeviceZoom = activeCamera?.videoZoomFactor ?? minZoom
+        }
     }
 
     public var flashMode: AVCaptureDevice.FlashMode = .auto
@@ -177,6 +233,71 @@ public final class CameraService: NSObject {
         }
     }
 
+    /// Run on sessionQueue. The virtual device may substitute a cropped wide
+    /// image in low light; an explicit telephoto input uses the optical lens.
+    private func routeLens(for displayZoom: CGFloat) -> (AVCaptureDevice, CGFloat)? {
+        guard let current = activeCamera else { return nil }
+        let wantsTele = currentCameraPosition == .back &&
+            physicalTelephotoCamera != nil &&
+            displayZoom >= nativeTelephotoDisplayZoom &&
+            currentCaptureMode == .photo &&
+            !isRecordingVideo && !movieFileOutput.isRecording
+        let selected = wantsTele ? physicalTelephotoCamera! : (primaryBackCamera ?? current)
+        guard selected !== current else {
+            return (current, max(minZoom, min(displayZoom * displayMultiplier, maxZoom)))
+        }
+        guard !isPhotoCaptureInFlight, let oldInput = videoDeviceInput,
+              let newInput = try? AVCaptureDeviceInput(device: selected) else { return nil }
+        captureSession.beginConfiguration()
+        captureSession.removeInput(oldInput)
+        guard captureSession.canAddInput(newInput) else {
+            captureSession.addInput(oldInput)
+            captureSession.commitConfiguration()
+            return nil
+        }
+        captureSession.addInput(newInput)
+        videoDeviceInput = newInput
+        activeCamera = selected
+        isUsingPhysicalTelephoto = wantsTele
+        displayMultiplier = wantsTele ? 1 / nativeTelephotoDisplayZoom : primaryDisplayMultiplier
+        minZoom = selected.minAvailableVideoZoomFactor
+        maxZoom = min(selected.maxAvailableVideoZoomFactor, 10)
+        refreshZoomConversionState()
+        zoomObservation?.invalidate()
+        zoomObservation = selected.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
+            guard let zoom = change.newValue else { return }
+            self?.zoomMappingLock.withLock { self?.frameDeviceZoom = zoom }
+            DispatchQueue.main.async { [weak self] in self?.onLiveZoomFactorChanged?(zoom) }
+        }
+        if let connection = videoDataOutput.connection(with: .video) {
+            configureTrackingConnection(connection)
+            if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
+        }
+        if let connection = photoOutput.connection(with: .video),
+           connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+        updateMaxPhotoDimensions(for: selected)
+        captureSession.commitConfiguration()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onPhysicalTelephotoChanged?(wantsTele)
+        }
+        return (selected, max(minZoom, min(displayZoom * displayMultiplier, maxZoom)))
+    }
+
+    /// Keep the preview session warm while suppressing sample-buffer consumers.
+    /// The ISP and preview layer still use power while the session is running.
+    public func setAnalysisPaused(_ paused: Bool) {
+        analysisGate.withLock { analysisPaused = paused }
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            let isPaused = self.analysisGate.withLock { self.analysisPaused }
+            self.videoDataOutput.setSampleBufferDelegate(isPaused ? nil : self,
+                                                         queue: isPaused ? nil : self.videoDataQueue)
+        }
+    }
+
     // MARK: - Session Setup
     public func setupSession(completion: @escaping (Bool) -> Void) {
         sessionQueue.async { [weak self] in
@@ -188,6 +309,7 @@ public final class CameraService: NSObject {
             let deviceDiscovery = AVCaptureDevice.DiscoverySession(
                 deviceTypes: [
                     .builtInTripleCamera,
+                    .builtInDualCamera,
                     .builtInDualWideCamera,
                     .builtInWideAngleCamera
                 ],
@@ -195,17 +317,28 @@ public final class CameraService: NSObject {
                 position: .back
             )
 
-            guard let camera = deviceDiscovery.devices.first else {
+            let preferredTypes: [AVCaptureDevice.DeviceType] = [
+                .builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera, .builtInWideAngleCamera
+            ]
+            guard let camera = preferredTypes.compactMap({ type in
+                deviceDiscovery.devices.first(where: { $0.deviceType == type })
+            }).first else {
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(false) }
                 return
             }
 
             self.activeCamera = camera
+            self.primaryBackCamera = camera
+            self.physicalTelephotoCamera = AVCaptureDevice.default(.builtInTelephotoCamera,
+                for: .video, position: .back)
+            self.hasTelephotoLens = self.physicalTelephotoCamera != nil
+            self.isUsingPhysicalTelephoto = false
             self.currentCameraPosition = .back
             self.zoomObservation?.invalidate()
             self.zoomObservation = camera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
                 guard let newValue = change.newValue else { return }
+                self?.zoomMappingLock.withLock { self?.frameDeviceZoom = newValue }
                 DispatchQueue.main.async {
                     self?.onLiveZoomFactorChanged?(newValue)
                 }
@@ -234,7 +367,7 @@ public final class CameraService: NSObject {
                 } else if self.maxZoom >= wideBase * 3.0 {
                     options.append(3.0)
                 }
-                if self.maxZoom >= wideBase * 5.0 {
+                if self.maxZoom >= wideBase * 5.0 && !options.contains(5.0) {
                     options.append(5.0)
                 }
                 self.availableDisplayZoomOptions = options
@@ -249,9 +382,30 @@ public final class CameraService: NSObject {
                 self.availableDisplayZoomOptions = options
             }
 
+            self.primaryDisplayMultiplier = self.displayMultiplier
+            self.nativeTelephotoDisplayZoom = .infinity
+            if let tele = self.physicalTelephotoCamera {
+                if camera.deviceType == .builtInTripleCamera, let last = switchFactors.last {
+                    self.nativeTelephotoDisplayZoom = CGFloat(last.doubleValue) / self.displayMultiplier
+                } else if camera.deviceType == .builtInDualCamera, let first = switchFactors.first {
+                    self.nativeTelephotoDisplayZoom = CGFloat(first.doubleValue)
+                } else {
+                    let wideAngle = Double(camera.activeFormat.videoFieldOfView) * .pi / 360
+                    let teleAngle = Double(tele.activeFormat.videoFieldOfView) * .pi / 360
+                    self.nativeTelephotoDisplayZoom = CGFloat(tan(wideAngle) / max(0.01, tan(teleAngle)))
+                }
+            }
+            if !self.nativeTelephotoDisplayZoom.isFinite || self.nativeTelephotoDisplayZoom < 1.5 {
+                self.physicalTelephotoCamera = nil
+                self.hasTelephotoLens = false
+                self.nativeTelephotoDisplayZoom = .infinity
+            }
+            self.refreshZoomConversionState()
+
             // Đặt mức zoom khởi động mặc định là 1.0x (Cảm biến chính Wide sắc nét chuẩn xác)
             let initialDeviceZoom = self.convertDisplayZoomToDeviceZoom(1.0)
             self.currentZoom = initialDeviceZoom
+            self.zoomMappingLock.withLock { self.frameDeviceZoom = initialDeviceZoom }
 
             do {
                 try camera.lockForConfiguration()
@@ -306,7 +460,7 @@ public final class CameraService: NSObject {
                 if self.captureSession.canAddOutput(self.photoOutput) {
                     self.captureSession.addOutput(self.photoOutput)
                     self.updateMaxPhotoDimensions(for: camera)
-                    self.photoOutput.maxPhotoQualityPrioritization = .quality
+                    self.photoOutput.maxPhotoQualityPrioritization = .balanced
 
                     if #available(iOS 17.0, *) {
                         if self.photoOutput.isZeroShutterLagSupported {
@@ -420,11 +574,16 @@ public final class CameraService: NSObject {
             guard let self = self else { return }
             let targetPosition: AVCaptureDevice.Position = (self.currentCameraPosition == .back) ? .front : .back
             let discovery = AVCaptureDevice.DiscoverySession(
-                deviceTypes: targetPosition == .front ? [.builtInWideAngleCamera] : [.builtInTripleCamera, .builtInDualWideCamera, .builtInWideAngleCamera],
+                deviceTypes: targetPosition == .front ? [.builtInWideAngleCamera] : [.builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera, .builtInWideAngleCamera],
                 mediaType: .video,
                 position: targetPosition
             )
-            guard let newCamera = discovery.devices.first else {
+            let preferredTypes: [AVCaptureDevice.DeviceType] = targetPosition == .front ?
+                [.builtInWideAngleCamera] :
+                [.builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera, .builtInWideAngleCamera]
+            guard let newCamera = preferredTypes.compactMap({ type in
+                discovery.devices.first(where: { $0.deviceType == type })
+            }).first else {
                 CameraLogger.warning("CameraService: Không tìm thấy thiết bị camera cho vị trí \(targetPosition == .front ? "Trước" : "Sau")", category: .capture)
                 return
             }
@@ -432,6 +591,7 @@ public final class CameraService: NSObject {
             let restart = self.captureSession.isRunning
             if restart { self.captureSession.stopRunning() }
             self.captureSession.beginConfiguration()
+            var didSwitch = false
             if let currentInput = self.videoDeviceInput {
                 self.captureSession.removeInput(currentInput)
             }
@@ -442,16 +602,54 @@ public final class CameraService: NSObject {
                     self.videoDeviceInput = newInput
                     self.activeCamera = newCamera
                     self.currentCameraPosition = targetPosition
+                    self.primaryBackCamera = targetPosition == .back ? newCamera : nil
+                    self.physicalTelephotoCamera = targetPosition == .back ?
+                        AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back) : nil
+                    self.hasTelephotoLens = self.physicalTelephotoCamera != nil
+                    self.isUsingPhysicalTelephoto = false
                     self.minZoom = newCamera.minAvailableVideoZoomFactor
-                    self.maxZoom = min(newCamera.maxAvailableVideoZoomFactor, 5.0)
+                    self.maxZoom = min(newCamera.maxAvailableVideoZoomFactor, 10.0)
                     self.displayMultiplier = 1.0
-                    self.hasUltraWideLens = false
-                    self.availableDisplayZoomOptions = [1.0, 2.0]
+                    self.primaryDisplayMultiplier = 1.0
+                    self.nativeTelephotoDisplayZoom = .infinity
+                    if let tele = self.physicalTelephotoCamera {
+                        let switches = newCamera.virtualDeviceSwitchOverVideoZoomFactors
+                        if newCamera.deviceType == .builtInTripleCamera, let last = switches.last,
+                           let first = switches.first {
+                            self.primaryDisplayMultiplier = CGFloat(first.doubleValue)
+                            self.displayMultiplier = self.primaryDisplayMultiplier
+                            self.nativeTelephotoDisplayZoom = CGFloat(last.doubleValue) / self.primaryDisplayMultiplier
+                        } else if newCamera.deviceType == .builtInDualCamera, let first = switches.first {
+                            self.nativeTelephotoDisplayZoom = CGFloat(first.doubleValue)
+                        } else {
+                            let wideAngle = Double(newCamera.activeFormat.videoFieldOfView) * .pi / 360
+                            let teleAngle = Double(tele.activeFormat.videoFieldOfView) * .pi / 360
+                            self.nativeTelephotoDisplayZoom = CGFloat(tan(wideAngle) / max(0.01, tan(teleAngle)))
+                        }
+                    }
+                    if !self.nativeTelephotoDisplayZoom.isFinite || self.nativeTelephotoDisplayZoom < 1.5 {
+                        self.physicalTelephotoCamera = nil
+                        self.hasTelephotoLens = false
+                        self.nativeTelephotoDisplayZoom = .infinity
+                    }
+                    self.hasUltraWideLens = targetPosition == .back &&
+                        (newCamera.deviceType == .builtInTripleCamera ||
+                         newCamera.deviceType == .builtInDualWideCamera)
+                    self.availableDisplayZoomOptions = self.hasUltraWideLens ? [0.5, 1.0, 2.0] : [1.0, 2.0]
+                    if self.hasTelephotoLens, self.nativeTelephotoDisplayZoom.isFinite,
+                       !self.availableDisplayZoomOptions.contains(where: {
+                           abs($0 - self.nativeTelephotoDisplayZoom) < 0.05
+                       }) {
+                        self.availableDisplayZoomOptions.append(self.nativeTelephotoDisplayZoom)
+                        self.availableDisplayZoomOptions.sort()
+                    }
                     self.defaultDisplayZoom = 1.0
+                    self.refreshZoomConversionState()
 
                     self.zoomObservation?.invalidate()
                     self.zoomObservation = newCamera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
                         guard let newValue = change.newValue else { return }
+                        self?.zoomMappingLock.withLock { self?.frameDeviceZoom = newValue }
                         DispatchQueue.main.async {
                             self?.onLiveZoomFactorChanged?(newValue)
                         }
@@ -467,11 +665,24 @@ public final class CameraService: NSObject {
                         }
                     }
                     self.updateMaxPhotoDimensions(for: newCamera)
+                    if self.displayMultiplier > 1 {
+                        do {
+                            try newCamera.lockForConfiguration()
+                            newCamera.videoZoomFactor = min(newCamera.maxAvailableVideoZoomFactor,
+                                                            self.displayMultiplier)
+                            newCamera.unlockForConfiguration()
+                        } catch {
+                            CameraLogger.error("Không thể đặt mức zoom mặc định khi đổi camera", error: error,
+                                               category: .capture)
+                        }
+                    }
                     let initialZoom = newCamera.videoZoomFactor
                     self.currentZoom = initialZoom
+                    self.zoomMappingLock.withLock { self.frameDeviceZoom = initialZoom }
                     DispatchQueue.main.async {
                         self.delegate?.cameraService(self, didChangeZoomFactor: initialZoom)
                     }
+                    didSwitch = true
                     CameraLogger.info("CameraService: Đã chuyển sang camera \(targetPosition == .front ? "Trước" : "Sau")", category: .capture)
                 } else if let currentInput = self.videoDeviceInput {
                     self.captureSession.addInput(currentInput)
@@ -484,56 +695,54 @@ public final class CameraService: NSObject {
             }
             self.captureSession.commitConfiguration()
             if restart { self.captureSession.startRunning() }
+            if didSwitch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onPhysicalTelephotoChanged?(false)
+                }
+            }
         }
     }
 
     // MARK: - Zoom Control
-    public func setZoomFactor(_ factor: CGFloat) {
-        sessionQueue.async { [weak self] in
-            guard let self = self, let camera = self.activeCamera else { return }
-            guard factor.isFinite else {
-                CameraLogger.warning("CameraService: Bỏ qua zoom không hữu hạn", category: .capture)
-                return
+    private func applyDisplayZoom(_ displayZoom: CGFloat, rate: Float?) {
+        guard displayZoom.isFinite, displayZoom > 0,
+              let camera = activeCamera else { return }
+        let requested = max(minZoom, min(displayZoom * displayMultiplier, maxZoom))
+        let (selectedCamera, factor) = routeLens(for: displayZoom) ?? (camera, requested)
+        do {
+            try selectedCamera.lockForConfiguration()
+            if let rate, rate.isFinite, rate > 0 {
+                selectedCamera.ramp(toVideoZoomFactor: factor, withRate: rate)
+            } else {
+                selectedCamera.videoZoomFactor = factor
             }
-            let clampedZoom = max(self.minZoom, min(factor, self.maxZoom))
-            do {
-                try camera.lockForConfiguration()
-                defer { camera.unlockForConfiguration() }
-                camera.videoZoomFactor = clampedZoom
-                let actualZoom = camera.videoZoomFactor
-                self.currentZoom = actualZoom
-                DispatchQueue.main.async {
-                    self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
-                }
-            } catch {
-                CameraLogger.error("CameraService: Error setting zoom", error: error, category: .capture)
+            let actual = selectedCamera.videoZoomFactor
+            selectedCamera.unlockForConfiguration()
+            currentZoom = actual
+            zoomMappingLock.withLock { frameDeviceZoom = actual }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.delegate?.cameraService(self, didChangeZoomFactor: actual)
             }
+        } catch {
+            CameraLogger.error("Không thể điều chỉnh zoom", error: error, category: .capture)
         }
     }
 
+    public func setDisplayZoomFactor(_ displayZoom: CGFloat) {
+        sessionQueue.async { [weak self] in self?.applyDisplayZoom(displayZoom, rate: nil) }
+    }
+
+    public func smoothDisplayZoomFactor(to displayZoom: CGFloat, rate: Float = 2.2) {
+        sessionQueue.async { [weak self] in self?.applyDisplayZoom(displayZoom, rate: rate) }
+    }
+
+    public func setZoomFactor(_ factor: CGFloat) {
+        setDisplayZoomFactor(convertDeviceZoomToDisplayZoom(factor))
+    }
+
     public func smoothZoomFactor(to factor: CGFloat, rate: Float = 2.2) {
-        sessionQueue.async { [weak self] in
-            guard let self = self, let camera = self.activeCamera else { return }
-            guard factor.isFinite, rate.isFinite, rate > 0 else {
-                CameraLogger.warning("CameraService: Bỏ qua zoom/rate không hợp lệ", category: .capture)
-                return
-            }
-            let clampedZoom = max(self.minZoom, min(factor, self.maxZoom))
-            do {
-                try camera.lockForConfiguration()
-                defer { camera.unlockForConfiguration() }
-                camera.ramp(toVideoZoomFactor: clampedZoom, withRate: rate)
-                // A ramp command is not a measurement. KVO supplies subsequent
-                // actual factors; never project the target at the future zoom.
-                let actualZoom = camera.videoZoomFactor
-                self.currentZoom = actualZoom
-                DispatchQueue.main.async {
-                    self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
-                }
-            } catch {
-                CameraLogger.error("CameraService: Error smooth zoom", error: error, category: .capture)
-            }
-        }
+        smoothDisplayZoomFactor(to: convertDeviceZoomToDisplayZoom(factor), rate: rate)
     }
 
     // MARK: - Exposure Bias
@@ -974,7 +1183,7 @@ public final class CameraService: NSObject {
             if self.activeCamera?.isFlashAvailable == true {
                 photoSettings.flashMode = self.flashMode
             }
-            photoSettings.photoQualityPrioritization = .quality
+            photoSettings.photoQualityPrioritization = .balanced
             let maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
             if maxPhotoDimensions.width > 0, maxPhotoDimensions.height > 0 {
                 photoSettings.maxPhotoDimensions = maxPhotoDimensions
@@ -1006,6 +1215,7 @@ public final class CameraService: NSObject {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard !analysisGate.withLock({ analysisPaused }) else { return }
         // Giới hạn tần số dispatch stats lên UI tối đa 5Hz (0.2s) để tránh lag main thread
         let now = CACurrentMediaTime()
         if now - lastStatsUpdateTime >= 0.20 {
@@ -1046,6 +1256,10 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
 // MARK: - AVCapturePhotoCaptureDelegate
 extension CameraService: AVCapturePhotoCaptureDelegate {
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        photoProcessingQueue.async { [weak self] in self?.processCapturedPhoto(photo, error: error) }
+    }
+
+    private func processCapturedPhoto(_ photo: AVCapturePhoto, error: Error?) {
         if let error = error {
             CameraLogger.error("Lỗi chụp ảnh từ phần cứng AVFoundation", error: error, category: .capture)
             self.currentPhotoCaptured = nil
@@ -1108,6 +1322,12 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
     }
 
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingLivePhotoToMovieFileAt outputFileURL: URL, duration: CMTime, photoDisplayTime: CMTime, resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        photoProcessingQueue.async { [weak self] in
+            self?.processLivePhotoMovie(at: outputFileURL, error: error)
+        }
+    }
+
+    private func processLivePhotoMovie(at outputFileURL: URL, error: Error?) {
         if let error = error {
             CameraLogger.error("Lỗi ghi file video Live Photo: \(error.localizedDescription)", error: error, category: .capture)
             self.currentLivePhotoURL = nil
@@ -1118,6 +1338,10 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
     }
 
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        photoProcessingQueue.async { [weak self] in self?.completePhotoCapture(error: error) }
+    }
+
+    private func completePhotoCapture(error: Error?) {
         sessionQueue.async { [weak self] in
             self?.isPhotoCaptureInFlight = false
         }

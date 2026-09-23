@@ -342,7 +342,9 @@ struct ViewfinderZoomSelectorPill: View {
     @Namespace private var zoomPillNamespace
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
-    private let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0]
+    private var zoomOptions: [CGFloat] {
+        viewModel.availableDisplayZoomOptions.filter { $0 >= 1.0 }
+    }
 
     private var isPinchZoomOutsideOptions: Bool {
         guard viewModel.isPinchingZoom else { return false }
@@ -407,7 +409,7 @@ struct ViewfinderZoomSelectorPill: View {
                         .matchedGeometryEffect(id: "active_viewfinder_zoom", in: zoomPillNamespace)
                 }
 
-                Text("\(Int(zoom))x")
+                Text(zoom == CGFloat(Int(zoom)) ? "\(Int(zoom))x" : String(format: "%.1fx", Double(zoom)))
                     .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
                     .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.78))
             }
@@ -415,7 +417,7 @@ struct ViewfinderZoomSelectorPill: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Thu phóng \(Int(zoom))x")
+        .accessibilityLabel("Thu phóng \(String(format: "%.1f", Double(zoom)))x")
     }
 }
 
@@ -733,4 +735,3 @@ struct CameraHibernationStandbyView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
-

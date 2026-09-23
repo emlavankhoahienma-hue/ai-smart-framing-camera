@@ -164,10 +164,30 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var seedOrientation: CGImagePropertyOrientation = .up
     private var seedPoint = CGPoint(x: 0.5, y: 0.5)
     private var seedSize = CGSize(width: 0.14, height: 0.14)
+    private var seedSubjectRect: CGRect?
     private var pendingSeed = false
     private var pendingRecovery: (point: CGPoint, frame: TrackingFrameContext)?
 
     public init() {}
+
+    /// Preserve the frozen target fingerprint while discarding a tracker whose
+    /// image sequence belongs to the previous physical camera.
+    func prepareForLensSwitch() {
+        let epoch = ingressLock.withLock { () -> UInt64 in
+            generation &+= 1
+            pendingTargetDelivery = nil
+            return generation
+        }
+        visionQueue.async { [weak self] in
+            guard let self, self.isCurrent(epoch) else { return }
+            self.tracker = nil
+            self.patchFlow.reset()
+            self.continuity = VisionContinuityPolicy()
+            self.pendingRecovery = nil
+            self.misses = max(self.misses, 20)
+            self.lastSearch = -.infinity
+        }
+    }
 
     public func refineAnchorBox(around point: CGPoint, in buffer: CVPixelBuffer,
                                 orientation: CGImagePropertyOrientation = .up) -> CGRect? {
@@ -185,6 +205,21 @@ public final class VisionFramingEngine: @unchecked Sendable {
     public func startTrackingObject(at point: CGPoint, size: CGSize = CGSize(width: 0.12, height: 0.12),
                                     refiningBuffer: CVPixelBuffer? = nil,
                                     orientation: CGImagePropertyOrientation = .up) {
+        beginTracking(at: point, size: size, subjectRect: nil,
+                      refiningBuffer: refiningBuffer, orientation: orientation)
+    }
+
+    func startTrackingObject(at point: CGPoint, subjectRect: CGRect,
+                             refiningBuffer: CVPixelBuffer? = nil,
+                             orientation: CGImagePropertyOrientation = .up) {
+        guard subjectRect.width > 0, subjectRect.height > 0,
+              subjectRect.contains(point) else { return }
+        beginTracking(at: point, size: subjectRect.size, subjectRect: subjectRect,
+                      refiningBuffer: refiningBuffer, orientation: orientation)
+    }
+
+    private func beginTracking(at point: CGPoint, size: CGSize, subjectRect: CGRect?,
+                               refiningBuffer: CVPixelBuffer?, orientation: CGImagePropertyOrientation) {
         guard point.x.isFinite, point.y.isFinite, size.width.isFinite, size.height.isFinite,
               (0...1).contains(point.x), (0...1).contains(point.y),
               size.width > 0, size.height > 0 else { return }
@@ -197,6 +232,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             guard let self, self.isCurrent(epoch) else { return }
             self.resetTrackingState()
             self.seedPoint = point; self.seedSize = size
+            self.seedSubjectRect = subjectRect
             self.seedBuffer = refiningBuffer; self.seedOrientation = orientation
             self.pendingSeed = true
         }
@@ -223,14 +259,17 @@ public final class VisionFramingEngine: @unchecked Sendable {
         referencePrint = nil; referenceHistogram = nil; lastBox = nil
         misses = 0; lastVerified = -.infinity; lastSearch = -.infinity
         searchCursor = 0; previousTime = -.infinity
-        pendingRecovery = nil; seedBuffer = nil; pendingSeed = false
+        pendingRecovery = nil; seedBuffer = nil; seedSubjectRect = nil; pendingSeed = false
     }
 
     private func seed(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) {
         let source = seedBuffer ?? buffer
         let sourceOrientation = seedBuffer == nil ? orientation : seedOrientation
         let w = min(0.8, max(0.04, seedSize.width)), h = min(0.8, max(0.04, seedSize.height))
-        let centered = CGRect(x: seedPoint.x - w / 2, y: 1 - seedPoint.y - h / 2, width: w, height: h)
+        let centered = seedSubjectRect.map {
+            CGRect(x: $0.minX, y: 1 - $0.maxY, width: $0.width, height: $0.height)
+        } ?? CGRect(x: seedPoint.x - w / 2, y: 1 - seedPoint.y - h / 2,
+                    width: w, height: h)
         // A user pin must keep its selected image patch. Automatic saliency/face
         // expansion can include a stronger background target in the same ROI.
         let box = centered.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
@@ -251,7 +290,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             // frame captured after the user's hand has moved.
             _ = try? newTracker.advance(in: source, orientation: sourceOrientation)
         }
-        tracker = newTracker; seedBuffer = nil; pendingSeed = false
+        tracker = newTracker; seedBuffer = nil; seedSubjectRect = nil; pendingSeed = false
     }
 
     public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer,
@@ -275,7 +314,10 @@ public final class VisionFramingEngine: @unchecked Sendable {
         if let frame { spatial.registerFrame(frame) }
         let now = CACurrentMediaTime()
         let admission = ingressLock.withLock { () -> (UInt64, Bool, Bool)? in
-            guard !busy, now - lastAdmission >= (idle && !active ? 0.2 : 1 / 32.0) else { return nil }
+            // Full local detection runs several Vision/CoreML requests. Limit
+            // it independently from the 30 Hz object-tracking path.
+            let interval = active ? 1 / 32.0 : (idle ? 0.6 : 0.15)
+            guard !busy, now - lastAdmission >= interval else { return nil }
             busy = true; lastAdmission = now
             let capture = captureNext; captureNext = false
             return (generation, active, capture)
@@ -343,7 +385,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                                             orientation: orientation, strict: false) : .match(0)
                     let evidence: TrackingOpticalEvidence
                     switch appearance {
-                    case .match: evidence = .verifiedContinuation
+                    case .match:
+                        evidence = needsIdentity ? .verifiedContinuation : .geometryContinuation
                     case .unavailable:
                         // A missing FeaturePrint is not evidence that a new
                         // background patch is the selected object. Require an
@@ -639,6 +682,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         result.lookingDirection = output.lookingDirection
         if let primary = output.primaryCandidate {
             result.dominantSubjectRect = output.allFaceRects.count > 1 ? (output.groupBoundingBox ?? primary.boundingBox) : primary.boundingBox
+            result.dominantSubjectCategory = output.allFaceRects.count > 1 ? .human : primary.category
             result.confidence = primary.confidence
         }
         let focus: CGPoint

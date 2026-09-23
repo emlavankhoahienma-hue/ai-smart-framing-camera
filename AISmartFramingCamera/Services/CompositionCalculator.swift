@@ -69,9 +69,12 @@ public final class CompositionCalculator {
         // Auto-Zoom evaluation based on subject bounding box scale & scene context (2-Tier Analysis)
         let isGroupPhoto = detection.faceRectangles.count > 1
         if let dominantRect = detection.dominantSubjectRect {
-            recommendedZoom = computeOptimalZoom(subjectRect: dominantRect, currentZoom: currentZoom, isGroup: isGroupPhoto, scene: detection.detectedScene)
+            recommendedZoom = computeOptimalZoom(subjectRect: dominantRect, currentZoom: currentZoom,
+                isGroup: isGroupPhoto, scene: detection.detectedScene,
+                category: detection.dominantSubjectCategory)
         } else if let faceRect = detection.faceRectangles.first {
-            recommendedZoom = computeOptimalZoom(subjectRect: faceRect, currentZoom: currentZoom, isGroup: isGroupPhoto, scene: detection.detectedScene)
+            recommendedZoom = computeOptimalZoom(subjectRect: faceRect, currentZoom: currentZoom,
+                isGroup: isGroupPhoto, scene: detection.detectedScene, category: .face)
         } else if detection.detectedScene == .landscape || isGroupPhoto {
             recommendedZoom = 1.0
         }
@@ -194,40 +197,38 @@ public final class CompositionCalculator {
         subjectRect: CGRect,
         currentZoom: CGFloat,
         isGroup: Bool = false,
-        scene: DetectedSceneType = .general
+        scene: DetectedSceneType = .general,
+        category: NeuralSubjectCategory = .general
     ) -> CGFloat {
-        // Tier 2: Bối cảnh cảnh quan & Nhóm đông người
-        // Nhóm đông người hoặc phong cảnh rộng: giữ 1x (hoặc zoom out về 1x nếu đang zoom)
         if isGroup || scene == .landscape || scene == .sky || scene == .water {
             return 1.0
         }
+        guard subjectRect.width > 0, subjectRect.height > 0,
+              subjectRect.minX >= 0, subjectRect.minY >= 0,
+              subjectRect.maxX <= 1, subjectRect.maxY <= 1,
+              currentZoom.isFinite, currentZoom > 0 else { return 1.0 }
 
-        // Kiểm tra khoảng cách mép khung hình:
-        // Nếu chủ thể sát mép khung hình: không tự zoom vào để tránh cắt cụt chủ thể
-        let margin: CGFloat = 0.08
-        let isNearEdge = subjectRect.minX < margin ||
-                         subjectRect.maxX > (1.0 - margin) ||
-                         subjectRect.minY < margin ||
-                         subjectRect.maxY > (1.0 - margin)
-        if isNearEdge {
-            return 1.0
+        // Zoom is centered on the optical axis. Bound the recommendation by
+        // both desired subject size and room to every edge, so a small subject
+        // near the edge cannot be cut off by an automatic lens change.
+        let desiredHeight: CGFloat
+        switch category {
+        case .human: desiredHeight = 0.70
+        case .face: desiredHeight = 0.34
+        case .animal: desiredHeight = 0.55
+        case .foregroundObject: desiredHeight = 0.46
+        case .general: desiredHeight = scene == .portrait ? 0.62 : 0.48
         }
-
-        // Tier 2: Phân tích tỉ lệ diện tích & vị trí đối xứng so với tâm
-        let subjectArea = subjectRect.width * subjectRect.height
-        let isNearCenter = abs(subjectRect.midX - 0.5) < 0.28 && abs(subjectRect.midY - 0.5) < 0.28
-
-        // 1. Chủ thể ở xa hoặc chi tiết nhỏ (chiếm < 8% khung hình và nằm gần trung tâm): gợi ý / zoom lên 3x
-        if subjectArea < 0.08 && isNearCenter {
-            return 3.0
-        }
-
-        // 2. Chân dung bán thân (1 người, chiếm 10-25% khung hình, nới lỏng 8%-28%): gợi ý / zoom lên 2x để tỉ lệ đẹp
-        if subjectArea >= 0.08 && subjectArea <= 0.28 {
-            return 2.0
-        }
-
-        // 3. Chủ thể đã chiếm diện tích lớn (> 28% khung hình) hoặc bối cảnh toàn cảnh: giữ 1.0x
-        return 1.0
+        let desiredWidth: CGFloat = category == .face ? 0.44 : 0.65
+        let sizeScale = min(desiredHeight / subjectRect.height,
+                            desiredWidth / subjectRect.width)
+        let extentX = max(abs(subjectRect.minX - 0.5), abs(subjectRect.maxX - 0.5))
+        let extentY = max(abs(subjectRect.minY - 0.5), abs(subjectRect.maxY - 0.5))
+        let safeScale = min(0.46 / max(extentX, 0.001),
+                            0.46 / max(extentY, 0.001))
+        let requested = min(3.0, currentZoom * min(sizeScale, safeScale))
+        if requested < 1.75 { return 1.0 }
+        if requested < 2.75 { return 2.0 }
+        return 3.0
     }
 }

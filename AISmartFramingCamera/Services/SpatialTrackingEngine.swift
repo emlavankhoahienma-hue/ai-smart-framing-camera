@@ -133,6 +133,17 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         }
     }
 
+    /// A new physical camera has a different optical center and intrinsic
+    /// matrix. Retain the world bearing for guidance, but require fresh vision
+    /// evidence before the UI may report a verified lock or auto-capture.
+    public func invalidateVerificationForLensChange() {
+        lock.withLock {
+            guard active else { return }
+            lastVerified = -.infinity
+            publish()
+        }
+    }
+
     public func projection(at timestamp: TimeInterval, calibration k: TrackingCalibration) -> TrackingProjection? {
         lock.withLock {
             guard active, let worldRay, let pose = TrackingGeometry.pose(at: timestamp, in: history) else { return nil }
@@ -215,15 +226,15 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private func publish() {
         guard active else { return }
         let now = CACurrentMediaTime()
-        var quality: TrackingQuality = .reacquiring
+        var quality: TrackingQuality = now - pinTime < 2.0 ? .predicting : .reacquiring
         var outputConfidence = 0.0
         if let worldRay, let sample = history.last, now - sample.timestamp < 0.15 {
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
             estimated = projected.point
-            let age = now - lastAccepted
-            let isVerified = (now - lastVerified < 1.20) || (age < 0.80)
+            let age = now - (lastAccepted.isFinite ? lastAccepted : pinTime)
+            let isVerified = now - lastVerified < 0.35
             quality = projected.isInsideImage && isVerified ? .locked :
-                (projected.isInsideImage ? .reacquiring : .predicting)
+                (age < 2.0 ? .predicting : .reacquiring)
             outputConfidence = age < 1.20 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
         }
         // No timeout deletes worldRay or appearance. Only explicit stop/re-pin.

@@ -3,7 +3,7 @@
 //  AISmartFramingCamera
 //
 //  Khung ngắm thu nhỏ quang học Rangefinder (Windowed Zoom)
-//  Tự động phân tích bối cảnh AI, co giãn tiêu cự mm và cắt ảnh cảm biến 48MP siêu nét.
+//  Gợi ý tiêu cự và điều khiển zoom của camera; crop ảnh chỉ theo tỷ lệ khung.
 //
 
 import SwiftUI
@@ -48,7 +48,7 @@ public struct WindowedZoomOverlayView: View {
                     .frame(width: windowRect.width, height: windowRect.height)
 
                 // Chỉ để lại đúng số mm trên khung, không có viền tròn bao quanh
-                Text("\(Int(round(viewModel.windowedZoomFocalLength)))mm")
+                Text("\(Int(round(viewModel.windowedZoomFocalLength)))mm · \(viewModel.isOpticalTelephotoActive ? "TELE" : "WIDE")")
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundColor(viewModel.isAIWindowedFocalRecommended ? amberGold : .white)
                     .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
@@ -75,6 +75,7 @@ public struct WindowedZoomOverlayView: View {
                 }
                 .onEnded { _ in
                     isPinching = false
+                    viewModel.finishWindowedFocalGesture()
                     viewModel.haptics.triggerSelectionChange()
                 }
         )

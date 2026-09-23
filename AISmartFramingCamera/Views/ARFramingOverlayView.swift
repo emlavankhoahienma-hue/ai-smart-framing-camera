@@ -230,17 +230,17 @@ public struct ARFramingOverlayView: View {
                     .onChanged { scale in
                         if !isPinching {
                             isPinching = true
-                            pinchBaseZoom = viewModel.currentZoom
+                            pinchBaseZoom = viewModel.displayZoom
                             viewModel.isPinchingZoom = true
                         }
-                        let minZ = viewModel.cameraService.minZoom
-                        let maxZ = viewModel.cameraService.maxZoom
+                        let minZ = viewModel.cameraService.minimumDisplayZoom
+                        let maxZ = viewModel.cameraService.maximumDisplayZoom
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
                         viewModel.setZoomContinuous(targetZoom)
                     }
                     .onEnded { scale in
-                        let minZ = viewModel.cameraService.minZoom
-                        let maxZ = viewModel.cameraService.maxZoom
+                        let minZ = viewModel.cameraService.minimumDisplayZoom
+                        let maxZ = viewModel.cameraService.maximumDisplayZoom
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
                         viewModel.finishZoomGesture(targetZoom)
                         isPinching = false

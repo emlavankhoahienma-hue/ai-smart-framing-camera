@@ -1248,6 +1248,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
     public let originalImage: CGImage
     public let processedImage: CGImage
     public let rawPhotoData: Data?
+    public let isAspectCropped: Bool
     public let livePhotoMovieURL: URL?
     public let sceneType: DetectedSceneType
     public let appliedPreset: FilmPreset
@@ -1266,6 +1267,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         originalImage: CGImage,
         processedImage: CGImage,
         rawPhotoData: Data? = nil,
+        isAspectCropped: Bool = false,
         livePhotoMovieURL: URL? = nil,
         sceneType: DetectedSceneType,
         appliedPreset: FilmPreset,
@@ -1279,6 +1281,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         self.originalImage = originalImage
         self.processedImage = processedImage
         self.rawPhotoData = rawPhotoData
+        self.isAspectCropped = isAspectCropped
         self.livePhotoMovieURL = livePhotoMovieURL
         self.sceneType = sceneType
         self.appliedPreset = appliedPreset
@@ -1297,6 +1300,7 @@ public struct SubjectDetectionResult {
     public var humanBodyPoses: [CGPoint] = []
     public var saliencyPoints: [CGPoint] = []
     public var dominantSubjectRect: CGRect?
+    public var dominantSubjectCategory: NeuralSubjectCategory = .general
     public var primaryEyePosition: CGPoint?
     public var lookingDirection: CGVector = CGVector(dx: 0, dy: 0)
     public var detectedScene: DetectedSceneType = .general
@@ -1357,21 +1361,17 @@ public enum WindowedZoomAspectRatio: String, CaseIterable, Identifiable, Sendabl
 
     /// Tính toán tỉ lệ kích thước khung ngắm (fraction từ 0.0 đến 1.0 so với toàn cảnh 3:4)
     public func windowFractions(focalLength: Double) -> (widthFraction: CGFloat, heightFraction: CGFloat) {
-        let focal = max(24.0, min(135.0, focalLength))
-        let scale = 24.0 / focal // Tại 24mm: scale = 1.0; tại 35mm: scale ≈ 0.686; tại 50mm: scale = 0.48; tại 85mm: scale ≈ 0.282
-
-        // Khung ngắm rangefinder tối đa chiếm 92% chiều rộng/cao để luôn chừa viền context
+        // Magnification is supplied by the capture lens. The mask is framing,
+        // not another digital zoom operation.
         let maxScale: CGFloat = 0.92
 
         switch self {
         case .ratio3_4:
-            let effectiveScale = min(maxScale, CGFloat(scale))
-            return (effectiveScale, effectiveScale)
+            return (maxScale, maxScale)
         case .ratio1_1:
             // Khung vuông: w = container.width * effectiveScale, h = w
             // Vì container là 3:4 (hContainer = wContainer * 4/3), nên hFraction = effectiveScale * (3.0 / 4.0)
-            let effectiveScale = min(maxScale, CGFloat(scale))
-            return (effectiveScale, effectiveScale * (3.0 / 4.0))
+            return (maxScale, maxScale * (3.0 / 4.0))
         }
     }
 }

@@ -193,13 +193,15 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(arguments, ['self.displayZoom', 'disp', 'self.displayZoom'])
         self.assertIn('hasExecutedAutoZoomForSession = isManualRePin', vm)
         self.assertIn('if isManualRePin { cameraService.cancelZoomRamp() }', vm)
-        self.assertIn('!isManualRePin && !self.hasExecutedAutoZoomForSession', vm)
+        self.assertIn('quality == .locked, !self.hasExecutedAutoZoomForSession', vm)
+        self.assertIn('self.applyAISuggestedZoom(self.pendingSuggestedZoom, force: true)', vm)
+        self.assertNotIn('!isManualRePin && !self.hasExecutedAutoZoomForSession', vm)
         self.assertEqual(vm.count('self.targetPinGeneration == pinGeneration'), 3)
         self.assertEqual(vm.count('        prioritizeManualZoom()'), 4)
         camera = (root / 'Services/CameraService.swift').read_text(encoding='utf-8')
         self.assertNotIn('didChangeZoomFactor: clampedZoom', camera)
-        self.assertEqual(camera.count('didChangeZoomFactor: actualZoom'), 2)
-        self.assertEqual(camera.count('let actualZoom = camera.videoZoomFactor'), 2)
+        self.assertIn('didChangeZoomFactor: actual', camera)
+        self.assertIn('let actual = selectedCamera.videoZoomFactor', camera)
 
     def test_overlay_redraw_does_not_destroy_tracking_session(self):
         root = Path(__file__).resolve().parents[1] / 'AISmartFramingCamera'

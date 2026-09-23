@@ -61,8 +61,8 @@ public struct CameraPreviewView: UIViewRepresentable {
             if gesture.state == .began {
                 initialZoom = parent.viewModel.displayZoom
             }
-            let minDisplay = parent.viewModel.cameraService.convertDeviceZoomToDisplayZoom(parent.viewModel.cameraService.minZoom)
-            let maxDisplay = parent.viewModel.cameraService.convertDeviceZoomToDisplayZoom(parent.viewModel.cameraService.maxZoom)
+            let minDisplay = parent.viewModel.cameraService.minimumDisplayZoom
+            let maxDisplay = parent.viewModel.cameraService.maximumDisplayZoom
             let newDisplayZoom = max(minDisplay, min(initialZoom * gesture.scale, maxDisplay))
 
             if gesture.state == .ended || gesture.state == .cancelled {
