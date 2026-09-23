@@ -451,10 +451,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
                               orientation: CGImagePropertyOrientation) -> VNFeaturePrintObservation? {
         guard let image = crop(buffer, box: box, orientation: orientation) else { return nil }
         let req = VNGenerateImageFeaturePrintRequest()
-        req.revision = VNGenerateImageFeaturePrintRequestRevision2
+        if #available(iOS 17.0, *) {
+            req.revision = VNGenerateImageFeaturePrintRequestRevision2
+        } else {
+            req.revision = VNGenerateImageFeaturePrintRequestRevision1
+        }
         req.imageCropAndScaleOption = .scaleFit
         guard (try? VNImageRequestHandler(cgImage: image, options: [:]).perform([req])) != nil else { return nil }
-        return req.results?.first
+        return req.results?.first as? VNFeaturePrintObservation
     }
 
     private func histogram(_ buffer: CVPixelBuffer, box: CGRect,
