@@ -1446,8 +1446,7 @@ public final class CameraViewModel: ObservableObject {
             at: target,
             size: initialSize,
             refiningBuffer: selectedFrame?.0,
-            orientation: .up,
-            frameContext: selectedFrame?.1
+            orientation: .up
         )
 
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu

@@ -848,147 +848,160 @@ public struct FilmPresetDrawer: View {
 
     public var body: some View {
         VStack(spacing: 4) {
-            // 1. Sleek Category Tab Bar Header with Master ON/OFF Toggle
-            HStack(spacing: 8) {
-                // Master ON / OFF Toggle Pill
-                Button(action: {
-                    viewModel.toggleFilmSimulation()
-                }) {
-                    HStack(spacing: 4.5) {
-                        Circle()
-                            .fill(viewModel.isFilmSimulationActive ? amberGold : Color.gray.opacity(0.60))
-                            .frame(width: 6.5, height: 6.5)
+            headerBar
+            filmstripTrack
+        }
+        .padding(.vertical, 4)
+        .background(drawerBackground)
+        .gesture(dismissDragGesture)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 2)
+    }
 
-                        Text(viewModel.isFilmSimulationActive ? "MÀU: BẬT" : "MÀU: TẮT")
-                            .font(.system(size: 9.5, weight: .heavy, design: .rounded))
-                            .foregroundColor(viewModel.isFilmSimulationActive ? amberGold : .white.opacity(0.70))
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3.5)
-                    .background(
-                        Capsule()
-                            .fill(viewModel.isFilmSimulationActive ? amberGold.opacity(0.16) : Color.white.opacity(0.08))
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(viewModel.isFilmSimulationActive ? amberGold.opacity(0.45) : Color.white.opacity(0.16), lineWidth: 1.0)
-                    )
+    // MARK: - Subviews
+
+    @ViewBuilder
+    private var headerBar: some View {
+        HStack(spacing: 8) {
+            // Master ON / OFF Toggle Pill
+            Button(action: {
+                viewModel.toggleFilmSimulation()
+            }) {
+                HStack(spacing: 4.5) {
+                    Circle()
+                        .fill(viewModel.isFilmSimulationActive ? amberGold : Color.gray.opacity(0.60))
+                        .frame(width: 6.5, height: 6.5)
+
+                    Text(viewModel.isFilmSimulationActive ? "MÀU: BẬT" : "MÀU: TẮT")
+                        .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                        .foregroundColor(viewModel.isFilmSimulationActive ? amberGold : .white.opacity(0.70))
                 }
-                .buttonStyle(PlainButtonStyle())
-                .padding(.leading, 10)
-                .accessibilityLabel("Bật tắt màu giả lập")
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3.5)
+                .background(
+                    Capsule()
+                        .fill(viewModel.isFilmSimulationActive ? amberGold.opacity(0.16) : Color.white.opacity(0.08))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(viewModel.isFilmSimulationActive ? amberGold.opacity(0.45) : Color.white.opacity(0.16), lineWidth: 1.0)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .padding(.leading, 10)
+            .accessibilityLabel("Bật tắt màu giả lập")
 
-                Divider()
-                    .frame(height: 16)
-                    .background(Color.white.opacity(0.20))
+            Divider()
+                .frame(height: 16)
+                .background(Color.white.opacity(0.20))
 
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(FilmPresetCategory.allCases) { category in
+                        let isSelected = viewModel.selectedFilmCategory == category
+                        Button(action: {
+                            viewModel.selectFilmCategory(category)
+                        }) {
+                            VStack(spacing: 3) {
+                                Text(category.displayName)
+                                    .font(.system(size: 11.0, weight: isSelected ? .bold : .medium, design: .rounded))
+                                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.60))
+
+                                // Selection bar indicator
+                                Rectangle()
+                                    .fill(isSelected ? amberGold : Color.clear)
+                                    .frame(height: 1.8)
+                                    .cornerRadius(1)
+                            }
+                            .padding(.horizontal, 1)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+            }
+
+            // Close Drawer Button
+            Button(action: {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
+                    viewModel.isShowingFilmDrawer = false
+                }
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 17))
+                    .foregroundColor(.white.opacity(0.55))
+                    .padding(.trailing, 10)
+            }
+            .accessibilityLabel("Đóng bảng màu máy ảnh")
+        }
+    }
+
+    @ViewBuilder
+    private var filmstripTrack: some View {
+        VStack(spacing: 3) {
+            SprocketPerforationsRow()
+
+            ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(FilmPresetCategory.allCases) { category in
-                            let isSelected = viewModel.selectedFilmCategory == category
-                            Button(action: {
-                                viewModel.selectFilmCategory(category)
-                            }) {
-                                VStack(spacing: 3) {
-                                    Text(category.displayName)
-                                        .font(.system(size: 11.0, weight: isSelected ? .bold : .medium, design: .rounded))
-                                        .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.60))
+                    HStack(spacing: 8) {
+                        // Dedicated [ GỐC / TẮT MÀU ] Card
+                        Button(action: {
+                            viewModel.disableFilmSimulation()
+                        }) {
+                            RawCleanCardView(isSelected: !viewModel.isFilmSimulationActive)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .id("raw_off_card")
 
-                                    // Selection bar indicator
-                                    Rectangle()
-                                        .fill(isSelected ? amberGold : Color.clear)
-                                        .frame(height: 1.8)
-                                        .cornerRadius(1)
-                                }
-                                .padding(.horizontal, 1)
+                        ForEach(viewModel.selectedFilmCategory.presets) { preset in
+                            let isSelected = viewModel.isFilmSimulationActive && viewModel.selectedFilmPreset == preset
+
+                            Button(action: {
+                                viewModel.selectPreset(preset)
+                            }) {
+                                CameraCardView(preset: preset, isSelected: isSelected)
                             }
                             .buttonStyle(PlainButtonStyle())
+                            .id(preset.id)
                         }
                     }
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 2)
                 }
+                .onAppear {
+                    if viewModel.isFilmSimulationActive {
+                        proxy.scrollTo(viewModel.selectedFilmPreset.id, anchor: .center)
+                    } else {
+                        proxy.scrollTo("raw_off_card", anchor: .center)
+                    }
+                }
+            }
 
-                // Close Drawer Button
-                Button(action: {
+            SprocketPerforationsRow()
+        }
+        .padding(.vertical, 2)
+        .background(Color.black.opacity(0.40))
+    }
+
+    private var drawerBackground: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(Color(red: 0.08, green: 0.09, blue: 0.12).opacity(0.96))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
+            )
+            .shadow(color: Color.black.opacity(0.6), radius: 10, y: 3)
+    }
+
+    private var dismissDragGesture: some Gesture {
+        DragGesture(minimumDistance: 15)
+            .onEnded { value in
+                if value.translation.height > 20 {
                     withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
                         viewModel.isShowingFilmDrawer = false
                     }
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 17))
-                        .foregroundColor(.white.opacity(0.55))
-                        .padding(.trailing, 10)
                 }
-                .accessibilityLabel("Đóng bảng màu máy ảnh")
             }
-
-            // 2. Authentic 35mm Filmstrip Track with Sprockets
-            VStack(spacing: 3) {
-                SprocketPerforationsRow()
-
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            // Dedicated [ GỐC / TẮT MÀU ] Card
-                            Button(action: {
-                                viewModel.disableFilmSimulation()
-                            }) {
-                                RawCleanCardView(isSelected: !viewModel.isFilmSimulationActive)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .id("raw_off_card")
-
-                            ForEach(viewModel.selectedFilmCategory.presets) { preset in
-                                let isSelected = viewModel.isFilmSimulationActive && viewModel.selectedFilmPreset == preset
-
-                                Button(action: {
-                                    viewModel.selectPreset(preset)
-                                }) {
-                                    CameraCardView(preset: preset, isSelected: isSelected)
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                                .id(preset.id)
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 2)
-                    }
-                    .onAppear {
-                        if viewModel.isFilmSimulationActive {
-                            proxy.scrollTo(viewModel.selectedFilmPreset.id, anchor: .center)
-                        } else {
-                            proxy.scrollTo("raw_off_card", anchor: .center)
-                        }
-                    }
-                }
-
-                SprocketPerforationsRow()
-            }
-            .padding(.vertical, 2)
-            .background(Color.black.opacity(0.40))
-        }
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(red: 0.08, green: 0.09, blue: 0.12).opacity(0.96))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
-                )
-                .shadow(color: Color.black.opacity(0.6), radius: 10, y: 3)
-        )
-        .gesture(
-            DragGesture(minimumDistance: 15)
-                .onEnded { value in
-                    if value.translation.height > 20 {
-                        withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
-                            viewModel.isShowingFilmDrawer = false
-                        }
-                    }
-                }
-        )
-        .padding(.horizontal, 8)
-        .padding(.bottom, 2)
     }
 }

@@ -28,7 +28,7 @@ final class VisionObjectSequence {
         // Vision that the exact same retained camera frame is a new time step.
         if let lastBuffer, lastBuffer === buffer { return lastObservation }
         try sequence.perform([request], on: buffer, orientation: orientation)
-        let observation = request.results?.first
+        let observation = request.results?.first as? VNDetectedObjectObservation
         if let observation {
             request.inputObservation = observation
         }
