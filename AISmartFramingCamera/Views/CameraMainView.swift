@@ -82,14 +82,11 @@ public struct CameraMainView: View {
 
                             Spacer(minLength: 8)
 
-                            // Center: Optical Zoom Selector Pill or Windowed Focal Length Pill
-                            if viewModel.isWindowedZoomActive {
-                                WindowedFocalLengthSelectorPill(viewModel: viewModel)
-                            } else {
+                            // Center: Optical Zoom Selector Pill (khi tắt Windowed Zoom)
+                            if !viewModel.isWindowedZoomActive {
                                 ViewfinderZoomSelectorPill(viewModel: viewModel)
+                                Spacer(minLength: 8)
                             }
-
-                            Spacer(minLength: 8)
 
                             // Right: Framing Tool (nuticonbocucAI)
                             ViewfinderFramingButton(viewModel: viewModel)

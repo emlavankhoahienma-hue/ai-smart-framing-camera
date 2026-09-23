@@ -998,6 +998,15 @@ public final class CameraViewModel: ObservableObject {
                     self.consolidateLocalAnalysisAndLockTarget()
                 }
             }
+        } else {
+            // Chế độ Cục bộ (On-Device Neural Engine / YOLO): Tự động tổng hợp và khóa mục tiêu nhanh chóng
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self = self else { return }
+                if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
+                    self.isOneShotCaptured = true
+                    self.consolidateLocalAnalysisAndLockTarget()
+                }
+            }
         }
     }
 
@@ -1136,9 +1145,9 @@ public final class CameraViewModel: ObservableObject {
             return
         }
 
-        // 2. Chế độ cục bộ (On-device Vision / CoreML): Thu thập đủ 5 frames để lọc nhiễu và khóa mục tiêu
+        // 2. Chế độ cục bộ (On-device Vision / CoreML): Thu thập 4 frames (~0.2s) để ổn định và khóa mục tiêu tức thì
         analysisFrames.append(detection)
-        if analysisFrames.count >= analysisFramesNeeded {
+        if analysisFrames.count >= 4 {
             isOneShotCaptured = true
             consolidateLocalAnalysisAndLockTarget()
         }
@@ -1387,7 +1396,7 @@ public final class CameraViewModel: ObservableObject {
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
-        trackingQuality = .reacquiring
+        trackingQuality = .locked
         // A new user pin keeps the current lens framing instead of restarting
         // the previous AI suggestion's zoom sequence.
         hasExecutedAutoZoomForSession = isManualRePin
@@ -1513,8 +1522,8 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        // Khớp hoàn hảo khi tâm trắng nằm trong vòng dung sai và mục tiêu được khóa quang học xác minh
-        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality == .locked
+        // Khớp hoàn hảo khi tâm trắng nằm trong vòng dung sai và mục tiêu chưa bị mất hẳn
+        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality != .lost
 
         // Kích hoạt khi tâm trắng đè khớp lên vùng target vàng!
         if isPerfect && !isPerfectAlignment {
@@ -1571,7 +1580,7 @@ public final class CameraViewModel: ObservableObject {
                 try await Task.sleep(nanoseconds: 200_000_000)
             } catch { return }
             guard !Task.isCancelled else { return }
-            if self.isPerfectAlignment && self.trackingQuality == .locked {
+            if self.isPerfectAlignment && self.trackingQuality != .lost {
                 self.executeCapture()
             } else {
                 self.aiSessionState = .targetPlaced(locked: true)

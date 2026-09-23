@@ -221,9 +221,10 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
             estimated = projected.point
             let age = now - lastAccepted
-            quality = projected.isInsideImage && now - lastVerified < 0.15 ? .locked :
+            let isVerified = (now - lastVerified < 1.20) || (age < 0.80)
+            quality = projected.isInsideImage && isVerified ? .locked :
                 (projected.isInsideImage ? .reacquiring : .predicting)
-            outputConfidence = age < 0.15 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
+            outputConfidence = age < 1.20 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
         }
         // No timeout deletes worldRay or appearance. Only explicit stop/re-pin.
         pendingOutput = (estimated, outputConfidence, quality, generation)
