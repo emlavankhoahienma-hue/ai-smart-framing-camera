@@ -8,8 +8,12 @@ enum TrackingObservationGate {
     static func accepts(isInFront: Bool, residual: CGFloat,
                         maximumJump: CGFloat, evidence: TrackingOpticalEvidence) -> Bool {
         if evidence == .reidentified { return residual.isFinite }
+        if evidence == .confirmedContinuation { return residual.isFinite }
         guard isInFront, residual.isFinite else { return false }
-        let limit = evidence == .geometryContinuation ? min(maximumJump, 0.04) : maximumJump
+        // A world bearing can disagree with a continuing optical track after
+        // translation or a calibration change. Keep a broad sanity bound, then
+        // reduce the correction gain instead of discarding small/medium errors.
+        let limit = max(0.30, maximumJump * 2)
         return residual <= limit
     }
 }
@@ -102,13 +106,26 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     }
 
     public func lockAnchor(at screenPoint: CGPoint, zoom: CGFloat, timestamp: TimeInterval,
-                           calibration pinCalibration: TrackingCalibration? = nil) {
+                           calibration pinCalibration: TrackingCalibration? = nil,
+                           pinnedWorldRay: SIMD3<Double>? = nil) {
         guard screenPoint.x.isFinite, screenPoint.y.isFinite, timestamp.isFinite else { return }
+        if let pinnedWorldRay {
+            let length = simd_length(pinnedWorldRay)
+            guard pinnedWorldRay.x.isFinite, pinnedWorldRay.y.isFinite,
+                  pinnedWorldRay.z.isFinite, length.isFinite, length > 1e-6 else { return }
+        }
         prepare()
         lock.withLock {
-            generation &+= 1; active = true; worldRay = nil
+            generation &+= 1; active = true
             updateZoomFactor(zoom)
-            pinTime = timestamp; pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
+            pinTime = timestamp
+            if let pinnedWorldRay {
+                worldRay = simd_normalize(pinnedWorldRay)
+                pendingPin = nil
+            } else {
+                worldRay = nil
+                pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
+            }
             lastAccepted = -Double.infinity; lastVerified = -.infinity
             lastProcessed = -Double.infinity
             confidence = 0; estimated = screenPoint; pendingOutput = nil
@@ -140,6 +157,23 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         }
     }
 
+    /// Snapshot the pose while the capture frame is still in the short motion
+    /// history. Cloud analysis can return long after that history has expired.
+    func pose(at timestamp: TimeInterval) -> simd_quatd? {
+        lock.withLock { TrackingGeometry.pose(at: timestamp, in: history) }
+    }
+
+    /// Use a fresh motion sample when the exact camera timestamp falls just
+    /// outside the interpolation window during camera start or lens switching.
+    func latestPose(maxAge: TimeInterval = 0.25) -> simd_quatd? {
+        lock.withLock {
+            guard maxAge.isFinite, maxAge > 0, let sample = history.last else { return nil }
+            let age = CACurrentMediaTime() - sample.timestamp
+            guard age >= -0.05, age <= maxAge else { return nil }
+            return sample.deviceToWorld
+        }
+    }
+
     private func resolvePin() {
         guard let (point, time, k) = pendingPin,
               let pose = TrackingGeometry.pose(at: time, in: history) else { return }
@@ -150,6 +184,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private func receive(_ sample: TrackingMotionSample, epoch: UInt64) {
         lock.withLock {
             guard epoch == motionEpoch else { return }
+            let q = sample.deviceToWorld.vector
+            let qLength = simd_length(q)
+            guard sample.timestamp.isFinite, q.x.isFinite, q.y.isFinite,
+                  q.z.isFinite, q.w.isFinite, qLength.isFinite,
+                  qLength > 1e-9 else { return }
             guard sample.timestamp > (history.last?.timestamp ?? -Double.infinity) else { return }
             history.append(sample)
             history.removeAll { $0.timestamp < sample.timestamp - 3 }
@@ -180,7 +219,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             lastProcessed = frame.timestamp
             guard let point, point.x.isFinite, point.y.isFinite,
                   (0...1).contains(point.x), (0...1).contains(point.y), value.isFinite,
-                  value >= max(threshold, lowTexture ? 0.65 : 0.35),
+                  value >= max(threshold, lowTexture ? 0.50 : 0.30),
                   let pose = TrackingGeometry.pose(at: frame.timestamp, in: history) else {
                 publish(); return
             }
@@ -194,12 +233,21 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                     residual: residual, maximumJump: jump, evidence: evidence) else { publish(); return }
                 let dt = lastAccepted.isFinite ? min(0.1, frame.timestamp - lastAccepted) : 1 / 30.0
                 // Filter ONLY world-bearing innovation. Camera rotation bypasses
-                // this filter completely. Higher cutoff follows real translation.
-                let cutoff = (street || scene.isDeformableNature ? 2.0 : 0.7) + min(10, Double(residual) * 100)
+                // this filter completely. A larger residual gets a useful but
+                // bounded correction rather than an abrupt snap or a hard reject.
+                let cutoff = (street || scene.isDeformableNature ? 2.0 : 0.7) + min(6, Double(residual) * 40)
                 let ordinaryGain = (1 - exp(-2 * .pi * cutoff * dt)) * min(1, max(0, value))
-                let gain = evidence == .geometryContinuation ? min(0.08, ordinaryGain) : ordinaryGain
-                worldRay = evidence == .reidentified ? observed :
-                    simd_normalize(ray * (1 - gain) + observed * gain)
+                let residualWeight = max(0.45, 1 / (1 + pow(Double(residual) / 0.20, 2)))
+                let evidenceWeight = evidence == .geometryContinuation ? 0.70 : 1.0
+                let gain = ordinaryGain * residualWeight * evidenceWeight
+                if evidence == .reidentified {
+                    worldRay = observed
+                } else {
+                    let blended = ray * (1 - gain) + observed * gain
+                    let length = simd_length(blended)
+                    guard length.isFinite, length > 1e-9 else { publish(); return }
+                    worldRay = blended / length
+                }
             } else {
                 // The first timestamped visual fix can initialize if pinning
                 // happened before the first CoreMotion sample.
@@ -219,12 +267,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         var outputConfidence = 0.0
         if let worldRay, let sample = history.last, now - sample.timestamp < 0.15 {
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
-            estimated = projected.point
-            let age = now - lastAccepted
-            let isVerified = (now - lastVerified < 1.20) || (age < 0.80)
-            quality = projected.isInsideImage && isVerified ? .locked :
-                (projected.isInsideImage ? .reacquiring : .predicting)
-            outputConfidence = age < 1.20 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
+            if projected.point.x.isFinite, projected.point.y.isFinite {
+                estimated = projected.point
+                let age = now - lastAccepted
+                let isVerified = (now - lastVerified < 1.20) || (age < 0.80)
+                quality = projected.isInsideImage && isVerified ? .locked :
+                    (projected.isInsideImage ? .reacquiring : .predicting)
+                outputConfidence = age < 1.20 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
+            }
         }
         // No timeout deletes worldRay or appearance. Only explicit stop/re-pin.
         pendingOutput = (estimated, outputConfidence, quality, generation)

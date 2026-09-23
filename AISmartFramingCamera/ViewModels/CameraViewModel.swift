@@ -7,6 +7,7 @@ import QuartzCore
 import CoreMotion
 import ImageIO
 import UniformTypeIdentifiers
+import simd
 
 private struct CameraFrameProcessingConfiguration: Sendable {
     var isHibernating = false
@@ -108,6 +109,16 @@ private final class CameraFrameProcessor: @unchecked Sendable {
 
 @MainActor
 public final class CameraViewModel: ObservableObject {
+    private struct AITrackingSource {
+        let buffer: CVPixelBuffer
+        let frame: TrackingFrameContext
+        let pose: simd_quatd
+        let subjectRect: CGRect?
+        let faceRects: [CGRect]
+    }
+
+    private var cloudTrackingSource: AITrackingSource?
+    private var localTrackingSource: AITrackingSource?
     // MARK: - Services
     public let cameraService = CameraService.shared
     public let visionEngine = VisionFramingEngine.shared
@@ -593,6 +604,7 @@ public final class CameraViewModel: ObservableObject {
 
     // Internal State
     private var autoCaptureTask: Task<Void, Never>? = nil
+    private var stateBeforeCapture: AISessionState = .idle
     private var analysisFrames: [SubjectDetectionResult] = []
     private let analysisFramesNeeded = 6 // Collect 6 stable frames (~0.30s, 5-8 frames window) for rock-solid stabilization
     private var isOneShotCaptured = false
@@ -819,6 +831,23 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    private func handleVisionDetectionWithSource(_ detection: SubjectDetectionResult,
+                                                  buffer: CVPixelBuffer,
+                                                  frame: TrackingFrameContext?) {
+        guard !isShowingSettings else { return }
+        if aiSessionState == .analyzing && cloudTrackingSource == nil {
+            if let frame, let pose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) {
+                localTrackingSource = AITrackingSource(
+                    buffer: buffer, frame: frame, pose: pose,
+                    subjectRect: detection.dominantSubjectRect ?? detection.faceRectangles.first,
+                    faceRects: detection.faceRectangles)
+            } else {
+                localTrackingSource = nil
+            }
+        }
+        handleVisionDetection(detection)
+    }
+
     private func setupCallbacks() {
         cameraService.onActiveVideoFormatChanged = { [weak self] format in
             DispatchQueue.main.async {
@@ -826,9 +855,16 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        visionEngine.onDetectionCompleted = { [weak self] detection in
-            guard let self = self, !self.isShowingSettings else { return }
-            self.handleVisionDetection(detection)
+        visionEngine.onDetectionWithSource = { [weak self] detection, buffer, frame in
+            // Vision currently delivers on main; retain a safe boundary if a
+            // future caller invokes this callback from its processing queue.
+            if Thread.isMainThread {
+                self?.handleVisionDetectionWithSource(detection, buffer: buffer, frame: frame)
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.handleVisionDetectionWithSource(detection, buffer: buffer, frame: frame)
+                }
+            }
         }
 
         visionEngine.onTargetMeasurement = { [weak self] measurement in
@@ -958,7 +994,13 @@ public final class CameraViewModel: ObservableObject {
         // Reset state
         SpatialTrackingEngine.shared.stopTracking()
         visionEngine.stopTrackingObject()
+        visionEngine.onFrameCapturedForAI = nil
+        visionEngine.onFrameCapturedForAIWithSource = nil
+        visionEngine.capturedGeminiFrame = nil
         analysisFrames = []
+        cloudTrackingSource = nil
+        localTrackingSource = nil
+        isGeminiAnalyzing = false
         initialTargetPoint = nil
         currentTargetPoint = nil
         trackingQuality = .locked
@@ -975,28 +1017,52 @@ public final class CameraViewModel: ObservableObject {
             aiSessionState = .analyzing
         }
 
-        // Yêu cầu Vision Engine chụp 1 frame chất lượng cao gửi cho Gemini
-        visionEngine.captureNextFrameForGemini = true
-
         if useGeminiForAnalysis && geminiService.hasAPIKey {
-            // Lắng nghe trực tiếp khi VisionEngine kết xuất xong frame CGImage chất lượng cao
-            visionEngine.onFrameCapturedForAI = { [weak self] frame in
-                DispatchQueue.main.async {
+            // Keep the exact camera frame and CoreMotion pose used by Gemini.
+            visionEngine.onFrameCapturedForAIWithSource = { [weak self] frame, buffer, context in
+                DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
+                    self.visionEngine.capturedGeminiFrame = nil
                     if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
                         self.isOneShotCaptured = true
+                        guard let buffer, let context,
+                              let pose = SpatialTrackingEngine.shared.pose(at: context.timestamp) else {
+                            self.geminiError = "Không đồng bộ được khung hình AI với chuyển động camera"
+                            self.consolidateLocalAnalysisAndLockTarget()
+                            return
+                        }
+                        let nearbyDetection = self.localTrackingSource.flatMap { candidate in
+                            abs(candidate.frame.timestamp - context.timestamp) < 0.08 ? candidate : nil
+                        }
+                        self.cloudTrackingSource = AITrackingSource(
+                            buffer: buffer, frame: context, pose: pose,
+                            subjectRect: nearbyDetection?.subjectRect,
+                            faceRects: nearbyDetection?.faceRects ?? [])
+                        // This cloud buffer is detached from AVCapture's pool.
+                        // Drop the last local pool buffer while Gemini runs.
+                        self.localTrackingSource = nil
                         self.callGeminiAnalysis(frame: frame)
                     }
                 }
             }
 
-            // An toàn dự phòng: Nếu sau 3.5s cloud không phản hồi hoặc frame chụp bị nghẽn, tự động chuyển về Local
+            // If no camera frame arrives, use the local analysis instead of
+            // leaving the session in .analyzing indefinitely.
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
                 guard let self = self else { return }
                 if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
                     self.isOneShotCaptured = true
                     self.consolidateLocalAnalysisAndLockTarget()
                 }
+            }
+            // A captured frame can still be followed by a stalled cloud call.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+                guard let self, self.aiSessionGeneration == requestGeneration,
+                      self.aiSessionState == .analyzing, self.isGeminiAnalyzing else { return }
+                self.isGeminiAnalyzing = false
+                self.cloudTrackingSource = nil
+                self.geminiError = "Phân tích cloud quá thời gian, đã chuyển sang AI trên máy"
+                self.consolidateLocalAnalysisAndLockTarget()
             }
         } else {
             // Chế độ Cục bộ (On-Device Neural Engine / YOLO): Tự động tổng hợp và khóa mục tiêu nhanh chóng
@@ -1008,6 +1074,8 @@ public final class CameraViewModel: ObservableObject {
                 }
             }
         }
+        // Register the callback before admitting the capture frame.
+        visionEngine.captureNextFrameForGemini = true
     }
 
     public func cancelAISession() {
@@ -1020,6 +1088,10 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
         visionEngine.captureNextFrameForGemini = false
         visionEngine.onFrameCapturedForAI = nil
+        visionEngine.onFrameCapturedForAIWithSource = nil
+        cloudTrackingSource = nil
+        localTrackingSource = nil
+        isGeminiAnalyzing = false
         trackingQuality = .locked
 
         withAnimation(.easeInOut(duration: 0.3)) {
@@ -1047,6 +1119,10 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.stopTrackingObject()
         visionEngine.captureNextFrameForGemini = false
         visionEngine.onFrameCapturedForAI = nil
+        visionEngine.onFrameCapturedForAIWithSource = nil
+        cloudTrackingSource = nil
+        localTrackingSource = nil
+        isGeminiAnalyzing = false
         SpatialTrackingEngine.shared.suspend()
         initialTargetPoint = nil
         currentTargetPoint = nil
@@ -1114,8 +1190,8 @@ public final class CameraViewModel: ObservableObject {
             return
 
         case .targetPlaced, .alignmentPerfect:
-            // ĐÃ KHÓA TARGET: Dừng toàn bộ phân tích Vision để không bị nhảy lung tung!
-            // Chuyển động target lúc này hoàn toàn do con quay hồi chuyển Gyroscope điều khiển
+            // Bỏ qua kết quả phân tích bố cục sau khi ghim. Chuỗi Vision bám vật thể
+            // vẫn chạy riêng và hiệu chỉnh hướng thế giới qua onTargetMeasurement.
             return
 
         case .analyzing:
@@ -1132,21 +1208,17 @@ public final class CameraViewModel: ObservableObject {
         if let dominant = detection.dominantSubjectRect {
             self.detectedSubjectRects = [dominant]
         }
+        analysisFrames.append(detection)
+        if analysisFrames.count > 6 { analysisFrames.removeFirst() }
 
-        // 1. Nếu đang bật phân tích Cloud (OpenRouter) và có API Key:
+        // 1. Cloud capture is delivered with its exact buffer and frame context
+        // through onFrameCapturedForAIWithSource; do not launch from the legacy
+        // image-only cache, which could lose the capture pose.
         if useGeminiForAnalysis && geminiService.hasAPIKey {
-            // Kiểm tra xem đã có frame chụp cho Gemini chưa
-            if let frame = visionEngine.capturedGeminiFrame {
-                visionEngine.capturedGeminiFrame = nil
-                isOneShotCaptured = true
-                callGeminiAnalysis(frame: frame)
-            }
-            // ƯU TIÊN TUYỆT ĐỐI CHO CLOUD: Không kích hoạt consolidateLocalAnalysisAndLockTarget ở đây!
             return
         }
 
         // 2. Chế độ cục bộ (On-device Vision / CoreML): Thu thập 4 frames (~0.2s) để ổn định và khóa mục tiêu tức thì
-        analysisFrames.append(detection)
         if analysisFrames.count >= 4 {
             isOneShotCaptured = true
             consolidateLocalAnalysisAndLockTarget()
@@ -1155,13 +1227,22 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - Gemini Analysis (One-shot)
 
+    private func normalizedSubjectRect(_ rect: CGRect?) -> CGRect? {
+        guard let rect, rect.minX.isFinite, rect.minY.isFinite,
+              rect.maxX.isFinite, rect.maxY.isFinite,
+              rect.width > 0, rect.height > 0,
+              rect.minX >= 0, rect.minY >= 0,
+              rect.maxX <= 1, rect.maxY <= 1 else { return nil }
+        return rect
+    }
+
     private func callGeminiAnalysis(frame: CGImage) {
         guard !isGeminiAnalyzing else { return }
         isGeminiAnalyzing = true
         let requestGeneration = self.aiSessionGeneration
 
-        let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
-        let faceRects = detectedFaceRects
+        let subjectRect = normalizedSubjectRect(cloudTrackingSource?.subjectRect)
+        let faceRects = cloudTrackingSource?.faceRects ?? []
 
         geminiService.analyzeForComposition(
             image: frame,
@@ -1169,24 +1250,35 @@ public final class CameraViewModel: ObservableObject {
             subjectRect: subjectRect,
             faceRects: faceRects
         ) { [weak self] result in
-            guard let self = self else { return }
-            self.isGeminiAnalyzing = false
-            guard self.aiSessionGeneration == requestGeneration, self.aiSessionState == .analyzing else {
-                CameraLogger.info("Bỏ qua phản hồi Gemini trễ (phiên đã đổi/kết thúc)", category: .ai)
-                return
-            }
-            switch result {
-            case .success(let response):
-                self.handleGeminiResponse(response)
-            case .failure(let error):
-                self.geminiError = error.localizedDescription
-                // Lỗi API -> Tự động Fallback qua Neural Engine cục bộ (CoreML / Vision) để vẫn dùng được app
-                self.consolidateLocalAnalysisAndLockTarget()
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                guard self.aiSessionGeneration == requestGeneration, self.aiSessionState == .analyzing else {
+                    CameraLogger.info("Bỏ qua phản hồi Gemini trễ (phiên đã đổi/kết thúc)", category: .ai)
+                    return
+                }
+                self.isGeminiAnalyzing = false
+                switch result {
+                case .success(let response):
+                    self.handleGeminiResponse(response)
+                case .failure(let error):
+                    self.geminiError = error.localizedDescription
+                    self.cloudTrackingSource = nil
+                    // Lỗi API -> Tự động Fallback qua Neural Engine cục bộ (CoreML / Vision) để vẫn dùng được app
+                    self.consolidateLocalAnalysisAndLockTarget()
+                }
             }
         }
     }
 
     private func handleGeminiResponse(_ response: GeminiFramingResponse) {
+        guard response.targetX.isFinite, response.targetY.isFinite,
+              (0...1).contains(response.targetX), (0...1).contains(response.targetY),
+              response.suggestedZoom.isFinite, response.suggestedZoom > 0 else {
+            geminiError = "AI trả về tọa độ hoặc mức zoom không hợp lệ; đã chuyển sang AI trên máy"
+            cloudTrackingSource = nil
+            consolidateLocalAnalysisAndLockTarget()
+            return
+        }
         self.geminiColorRecipe = response.colorRecipe
         self.geminiExplanation = response.explanation
         self.detectedScene = response.sceneType
@@ -1210,7 +1302,7 @@ public final class CameraViewModel: ObservableObject {
         }
 
         var targetPoint = CGPoint(x: response.targetX, y: response.targetY)
-        let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
+        let subjectRect = normalizedSubjectRect(cloudTrackingSource?.subjectRect)
 
         // Nếu Gemini trả về tọa độ trung tâm (0.5, 0.5) nhưng ta có chủ thể thực tế rõ ràng phát hiện lệch tâm,
         // ưu tiên gắn target vào chủ thể để người dùng căn trúng chủ thể & zoom đẹp mắt!
@@ -1237,40 +1329,28 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        pinTargetAndStartMotion(at: targetPoint, subjectRect: subjectRect)
+        pinTargetAndStartMotion(at: targetPoint, subjectRect: subjectRect,
+                                source: cloudTrackingSource)
+        cloudTrackingSource = nil
+        localTrackingSource = nil
     }
 
     // MARK: - Local Neural Engine Analysis (One-shot)
 
     private func consolidateLocalAnalysisAndLockTarget() {
         var dominantScene: DetectedSceneType = .general
-        var avgDetection = SubjectDetectionResult()
+        // Position, eyes and gaze must all come from the same recent image.
+        // Averaging image coordinates across a camera pan moves the target
+        // toward an old screen location even when every detection is correct.
+        var avgDetection = analysisFrames.last ?? SubjectDetectionResult()
 
         if !analysisFrames.isEmpty {
             var sceneCounts: [DetectedSceneType: Int] = [:]
             for f in analysisFrames { sceneCounts[f.detectedScene, default: 0] += 1 }
             dominantScene = sceneCounts.max(by: { $0.value < $1.value })?.key ?? .general
-
-            let validFrames = analysisFrames.filter { $0.dominantSubjectRect != nil }
-            if !validFrames.isEmpty {
-                let avgX = validFrames.compactMap { $0.dominantSubjectRect?.midX }.reduce(0, +) / CGFloat(validFrames.count)
-                let avgY = validFrames.compactMap { $0.dominantSubjectRect?.midY }.reduce(0, +) / CGFloat(validFrames.count)
-                let avgW = validFrames.compactMap { $0.dominantSubjectRect?.width }.reduce(0, +) / CGFloat(validFrames.count)
-                let avgH = validFrames.compactMap { $0.dominantSubjectRect?.height }.reduce(0, +) / CGFloat(validFrames.count)
-                avgDetection.dominantSubjectRect = CGRect(x: avgX - avgW/2, y: avgY - avgH/2, width: avgW, height: avgH)
-                avgDetection.detectedScene = dominantScene
-                avgDetection.averageLuminance = analysisFrames.map { $0.averageLuminance }.reduce(0, +) / Float(analysisFrames.count)
-                avgDetection.estimatedColorTemp = analysisFrames.map { $0.estimatedColorTemp }.reduce(0, +) / Float(analysisFrames.count)
-            }
-            if let faceFrame = analysisFrames.first(where: { !$0.faceRectangles.isEmpty }) {
-                avgDetection.faceRectangles = faceFrame.faceRectangles
-            }
-            if let eyeFrame = analysisFrames.first(where: { $0.primaryEyePosition != nil }) {
-                avgDetection.primaryEyePosition = eyeFrame.primaryEyePosition
-            }
-            if let gazeFrame = analysisFrames.first(where: { abs($0.lookingDirection.dx) > 0.05 }) {
-                avgDetection.lookingDirection = gazeFrame.lookingDirection
-            }
+            avgDetection.detectedScene = dominantScene
+            avgDetection.averageLuminance = analysisFrames.map { $0.averageLuminance }.reduce(0, +) / Float(analysisFrames.count)
+            avgDetection.estimatedColorTemp = analysisFrames.map { $0.estimatedColorTemp }.reduce(0, +) / Float(analysisFrames.count)
         }
 
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
@@ -1301,7 +1381,14 @@ public final class CameraViewModel: ObservableObject {
             setExposure(max(-1.0, min(1.0, lumaError * 1.2)))
         }
 
-        pinTargetAndStartMotion(at: result.targetPoint, subjectRect: avgDetection.dominantSubjectRect)
+        let localTarget = result.targetPoint
+        let safeTarget = localTarget.x.isFinite && localTarget.y.isFinite &&
+            (0...1).contains(localTarget.x) && (0...1).contains(localTarget.y)
+            ? localTarget : CGPoint(x: 0.5, y: 0.5)
+        pinTargetAndStartMotion(at: safeTarget,
+                                subjectRect: normalizedSubjectRect(avgDetection.dominantSubjectRect),
+                                source: localTrackingSource)
+        localTrackingSource = nil
     }
 
     // MARK: - State for Hybrid Optical + Spatial Tracking
@@ -1372,8 +1459,14 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
 
     public func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect? = nil) {
+        pinTargetAndStartMotion(at: target, subjectRect: subjectRect, source: nil)
+    }
+
+    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,
+                                         source: AITrackingSource?) {
         guard target.x.isFinite, target.y.isFinite,
               (0...1).contains(target.x), (0...1).contains(target.y) else { return }
+        let subjectRect = normalizedSubjectRect(subjectRect)
         let isManualRePin: Bool
         switch aiSessionState {
         case .targetPlaced, .alignmentPerfect: isManualRePin = true
@@ -1388,15 +1481,30 @@ public final class CameraViewModel: ObservableObject {
         isRevealingZoomTarget = false
         isZoomRampPhase = false
         if isManualRePin { cameraService.cancelZoomRamp() }
-        // KHÔNG dùng tâm chủ thể để đè lên tọa độ AI nữa.
-        // Ảnh gửi cho AI (cloud & local) là FULL ẢNH nên AI trả về tọa độ CHUẨN THEO ẢNH.
-        // Target giờ PIN ĐÚNG TẠI TỌA ĐỘ AI TRẢ VỀ (target). subjectRect chỉ được dùng để
-        // lấy KÍCH THƯỚC khung bám & điểm lấy nét phần cứng, KHÔNG thay thế tọa độ target.
-        let pinPoint = target
+        // Gemini's point belongs to its captured image. Convert it to a world
+        // bearing from that image's pose, then project into the current frame.
+        let selectedFrame = frameProcessor.latestTrackingFrameSnapshot()
+        var pinPoint = target
+        var pinnedWorldRay: SIMD3<Double>?
+        var hasCurrentProjection = source == nil
+        if let source {
+            let ray = source.pose.act(source.frame.calibration.deviceRay(at: target))
+            pinnedWorldRay = ray
+            if let currentFrame = selectedFrame?.1,
+               let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
+                    ?? SpatialTrackingEngine.shared.latestPose() {
+                let projected = currentFrame.calibration.project(
+                    deviceRay: currentPose.inverse.act(ray)).point
+                if projected.x.isFinite, projected.y.isFinite {
+                    pinPoint = projected
+                    hasCurrentProjection = true
+                }
+            }
+        }
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
-        trackingQuality = .locked
+        trackingQuality = hasCurrentProjection ? .locked : .reacquiring
         // A new user pin keeps the current lens framing instead of restarting
         // the previous AI suggestion's zoom sequence.
         hasExecutedAutoZoomForSession = isManualRePin
@@ -1411,19 +1519,21 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.isLowTextureAnchor = isCurrentlyLowTexture
         SpatialTrackingEngine.shared.isStreetMode = isStreetTrackingModeEnabled
         SpatialTrackingEngine.shared.activeSceneType = self.detectedScene
-        let selectedFrame = frameProcessor.latestTrackingFrameSnapshot()
         if let selectedFrame {
             SpatialTrackingEngine.shared.registerFrame(selectedFrame.1)
             SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: CGFloat(SpatialTrackingEngine.shared.currentDisplayZoom),
-                                                    timestamp: selectedFrame.1.timestamp,
-                                                    calibration: selectedFrame.1.calibration)
+                                                     timestamp: selectedFrame.1.timestamp,
+                                                     calibration: selectedFrame.1.calibration,
+                                                     pinnedWorldRay: pinnedWorldRay)
         } else {
-            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: CGFloat(SpatialTrackingEngine.shared.currentDisplayZoom))
+            SpatialTrackingEngine.shared.lockAnchor(at: pinPoint,
+                zoom: CGFloat(SpatialTrackingEngine.shared.currentDisplayZoom),
+                timestamp: CACurrentMediaTime(), pinnedWorldRay: pinnedWorldRay)
         }
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
-        let anchorTarget = target
-        if let buffer = selectedFrame?.0 {
+        let anchorTarget = source == nil ? pinPoint : target
+        if let buffer = source?.buffer ?? selectedFrame?.0 {
             shouldCheckTextureOnNextFrame = false
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
             let variance = computeTextureVariance(pixelBuffer: buffer, normalizedRect: region)
@@ -1435,7 +1545,7 @@ public final class CameraViewModel: ObservableObject {
         // 2. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (Apple Vision VNTrackObjectRequest)
         // Khi vật thể là màu trắng/đơn sắc (isCurrentlyLowTexture): Mở rộng khung bám để bao quát đường viền cạnh tương phản với nền
         let isLow = isCurrentlyLowTexture
-        self.initialPhysicalSubjectCenter = target
+        self.initialPhysicalSubjectCenter = pinPoint
         let initialSize: CGSize
         if let sRect = subjectRect {
             // Dùng TỌA ĐỘ AI (target) làm TÂM khung bám; chỉ lấy KÍCH THƯỚC từ subjectRect
@@ -1450,16 +1560,21 @@ public final class CameraViewModel: ObservableObject {
             initialSize = CGSize(width: targetSize, height: targetSize)
         }
 
-        // Tự động tinh chỉnh mỏ neo bằng Saliency & Human Pose/Face detection từ buffer hiện tại
+        // A delayed Gemini response seeds appearance from its original image;
+        // the spatial bearing already points into the current camera view.
         visionEngine.startTrackingObject(
-            at: target,
+            at: source == nil ? pinPoint : target,
             size: initialSize,
-            refiningBuffer: selectedFrame?.0,
-            orientation: .up
+            refiningBuffer: source?.buffer ?? selectedFrame?.0,
+            orientation: .up,
+            sourceTimestamp: source?.frame.timestamp ?? selectedFrame?.1.timestamp
         )
 
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
-        let focusTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
+        let focusTarget = (source == nil ? subjectRect : nil).map {
+            CGPoint(x: $0.midX, y: $0.midY)
+        } ??
+            CGPoint(x: min(1, max(0, pinPoint.x)), y: min(1, max(0, pinPoint.y)))
         let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
         cameraService.setSmartFocusAndExposure(at: devPoint)
 
@@ -1479,7 +1594,7 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
+    // MARK: - Optical Visual Object Tracking Handler
 
     private func handleVisualTargetTracked(_ measurement: TrackingOpticalMeasurement) {
         // Tiếp nhận cập nhật cả trong alignmentPerfect (zoom reveal) để vòng vàng bám vật thể
@@ -1522,8 +1637,9 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        // Khớp hoàn hảo khi tâm trắng nằm trong vòng dung sai và mục tiêu chưa bị mất hẳn
-        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality != .lost
+        // Keep the target visible during prediction/reacquisition, but require
+        // recent optical support before the magnetic snap or auto capture.
+        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality == .locked
 
         // Kích hoạt khi tâm trắng đè khớp lên vùng target vàng!
         if isPerfect && !isPerfectAlignment {
@@ -1572,15 +1688,17 @@ public final class CameraViewModel: ObservableObject {
 
         autoCaptureCountdown = 1 // 1 giây phản hồi nhanh chụp ngay
 
-        autoCaptureTask = Task {
+        autoCaptureTask = Task { [weak self] in
             do {
                 try await Task.sleep(nanoseconds: initialWait)
                 guard !Task.isCancelled else { return }
-                self.autoCaptureCountdown = 0
+                self?.autoCaptureCountdown = 0
                 try await Task.sleep(nanoseconds: 200_000_000)
             } catch { return }
-            guard !Task.isCancelled else { return }
-            if self.isPerfectAlignment && self.trackingQuality != .lost {
+            guard !Task.isCancelled, let self else { return }
+            if self.aiSessionState == .alignmentPerfect && !self.isShutterPressing &&
+               self.isPerfectAlignment && self.trackingQuality == .locked &&
+               self.alignmentDistance <= self.calculator.alignmentTolerance {
                 self.executeCapture()
             } else {
                 self.aiSessionState = .targetPlaced(locked: true)
@@ -1590,6 +1708,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func executeCapture() {
+        guard aiSessionState == .alignmentPerfect, !isShutterPressing else { return }
+        autoCaptureTask?.cancel()
+        autoCaptureTask = nil
+        stateBeforeCapture = aiSessionState
         motionService.stopTracking()
         visionEngine.stopTrackingObject()
         // Dừng hẳn engine spatial — trước đây 60Hz gyro vẫn chạy nền sau khi chụp
@@ -2136,7 +2258,13 @@ public final class CameraViewModel: ObservableObject {
             toggleVideoRecording()
             return
         }
-        guard !isShutterPressing else { return }
+        guard !isShutterPressing, aiSessionState != .capturing else { return }
+        if aiSessionState == .analyzing { cancelAISession() }
+        autoCaptureTask?.cancel()
+        autoCaptureTask = nil
+        autoCaptureCountdown = 0
+        isPerfectAlignment = false
+        stateBeforeCapture = aiSessionState
 
         // Cho phép chụp thủ công bất kỳ lúc nào (ngay cả khi chưa bật AI hoặc AI đã hoàn tất)
         haptics.triggerShutterClick()
@@ -2526,10 +2654,29 @@ extension CameraViewModel: CameraServiceDelegate {
     }
 
     public func cameraService(_ service: CameraService, didFailCaptureWithError error: Error) {
+        // AVCapture can reject a new request while an earlier capture is
+        // finishing. Restore this request's UI state instead of stranding it
+        // in .capturing; repeated failure callbacks are ignored below.
+        guard aiSessionState == .capturing else { return }
         haptics.triggerSelectionChange()
-        withAnimation {
-            aiSessionState = .targetPlaced(locked: true)
-            isShutterPressing = false
+        isShutterPressing = false
+        let hadLiveTarget: Bool
+        switch stateBeforeCapture {
+        case .targetPlaced, .alignmentPerfect: hadLiveTarget = true
+        default: hadLiveTarget = false
+        }
+        if hadLiveTarget, let point = currentTargetPoint, point.x.isFinite, point.y.isFinite,
+           (0...1).contains(point.x), (0...1).contains(point.y) {
+            if SpatialTrackingEngine.shared.isTrackingActive {
+                withAnimation { aiSessionState = .targetPlaced(locked: true) }
+            } else {
+                // Automatic capture stops tracking before asking AVFoundation.
+                // Restore a live target if that capture fails.
+                aiSessionState = .targetPlaced(locked: true)
+                pinTargetAndStartMotion(at: point)
+            }
+        } else {
+            withAnimation { aiSessionState = stateBeforeCapture == .done ? .done : .idle }
         }
         saveErrorMessage = "Chụp ảnh thất bại: \(error.localizedDescription). Vui lòng thử lại."
     }

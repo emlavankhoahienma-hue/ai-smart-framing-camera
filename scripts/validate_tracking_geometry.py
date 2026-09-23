@@ -110,6 +110,16 @@ class GeometryTests(unittest.TestCase):
         self.assertLess(max(errors), 1e-12)
         self.assertGreater(max(wrong_errors), .1)
 
+        # A cloud target returned later still belongs to its captured image.
+        captured_pose = rotation([0, 1, 0], -.15)
+        current_pose = rotation([0, 1, 0], -.55)
+        captured_point = np.array([.68, .42])
+        bearing = captured_pose @ self.camera.ray(captured_point)
+        current_point, front = self.camera.project(current_pose.T @ bearing)
+        self.assertTrue(front)
+        self.assertGreater(np.linalg.norm(current_point - captured_point), .1)
+        np.testing.assert_allclose(current_pose @ self.camera.ray(current_point), bearing, atol=1e-12)
+
     def test_aspect_fill_round_trip_and_docking_collinearity(self):
         for size in [(390, 844), (390, 520), (844, 390)]:
             for point in [[.1, .9], [-3, 2], [.5, .5]]:
@@ -130,19 +140,32 @@ class GeometryTests(unittest.TestCase):
         rng = np.random.default_rng(226)
         world = self.anchor.copy()
         raw, filtered = [], []
-        for _ in range(1800):
-            point = np.array([.5, .5]) + rng.normal(0, .003, 2)
+        def update(world, point):
             predicted, _ = self.camera.project(world)
             residual = np.linalg.norm(point - predicted)
-            cutoff = .7 + min(10, residual * 100)
-            gain = (1 - math.exp(-2 * math.pi * cutoff / 30)) * .9
+            cutoff = .7 + min(6, residual * 40)
+            ordinary_gain = (1 - math.exp(-2 * math.pi * cutoff / 30)) * .9
+            residual_weight = max(.45, 1 / (1 + (residual / .20) ** 2))
+            gain = ordinary_gain * residual_weight * .70  # geometry continuation
             world = world * (1 - gain) + self.camera.ray(point) * gain
-            world /= np.linalg.norm(world)
+            return world / np.linalg.norm(world)
+        for _ in range(1800):
+            point = np.array([.5, .5]) + rng.normal(0, .003, 2)
+            world = update(world, point)
             raw.append(point)
             filtered.append(self.camera.project(world)[0])
         ratio = np.var(np.array(filtered)[100:] - .5) / np.var(np.array(raw)[100:] - .5)
         self.assertLess(ratio, .2)
         METRICS['static_noise_variance_ratio_reference_model'] = float(ratio)
+
+        # A consistent optical offset must converge without a one-frame snap.
+        world = self.camera.ray([.5, .5])
+        shifted = np.array([.75, .5])
+        first = self.camera.project(update(world, shifted))[0]
+        self.assertLess(np.linalg.norm(first - [.5, .5]), .10)
+        for _ in range(30):
+            world = update(world, shifted)
+        self.assertLess(np.linalg.norm(self.camera.project(world)[0] - shifted), .02)
 
     def test_tremor_tracks_image_instead_of_freezing_screen(self):
         errors = []
@@ -236,7 +259,8 @@ class GeometryTests(unittest.TestCase):
         vision = (root / 'Services/VisionFramingEngine.swift').read_text(encoding='utf-8')
         vm = (root / 'ViewModels/CameraViewModel.swift').read_text(encoding='utf-8')
         self.assertIn('if evidence == .reidentified { return residual.isFinite }', spatial)
-        self.assertIn('worldRay = evidence == .reidentified ? observed', spatial)
+        self.assertIn('if evidence == .reidentified {\n                    worldRay = observed', spatial)
+        self.assertIn('guard length.isFinite, length > 1e-9', spatial)
         self.assertIn('return (confirmedPoint, min(recovered.1, Double(observation.confidence)), .reidentified)', vision)
         self.assertIn('pendingTargetDelivery?.4 == .reidentified && evidence != .reidentified', vision)
         self.assertIn('evidence: measurement.evidence', vm)
