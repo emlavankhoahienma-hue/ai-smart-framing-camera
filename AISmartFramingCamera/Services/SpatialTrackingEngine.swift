@@ -9,7 +9,7 @@ enum TrackingObservationGate {
                         maximumJump: CGFloat, evidence: TrackingOpticalEvidence) -> Bool {
         if evidence == .reidentified { return residual.isFinite }
         guard isInFront, residual.isFinite else { return false }
-        let limit = evidence == .geometryContinuation ? min(maximumJump, 0.04) : maximumJump
+        let limit = maximumJump
         return residual <= limit
     }
 }
@@ -191,7 +191,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             lastProcessed = frame.timestamp
             guard let point, point.x.isFinite, point.y.isFinite,
                   (0...1).contains(point.x), (0...1).contains(point.y), value.isFinite,
-                  value >= max(threshold, lowTexture ? 0.65 : 0.35),
+                  value >= max(threshold, lowTexture ? 0.50 : 0.25),
                   let pose = TrackingGeometry.pose(at: frame.timestamp, in: history) else {
                 publish(); return
             }
@@ -208,7 +208,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 // this filter completely. Higher cutoff follows real translation.
                 let cutoff = (street || scene.isDeformableNature ? 2.0 : 0.7) + min(10, Double(residual) * 100)
                 let ordinaryGain = (1 - exp(-2 * .pi * cutoff * dt)) * min(1, max(0, value))
-                let gain = evidence == .geometryContinuation ? min(0.08, ordinaryGain) : ordinaryGain
+                let gain = ordinaryGain
                 worldRay = evidence == .reidentified ? observed :
                     simd_normalize(ray * (1 - gain) + observed * gain)
             } else {
@@ -217,7 +217,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 worldRay = observed; pendingPin = nil
             }
             lastAccepted = frame.timestamp
-            if evidence != .geometryContinuation { lastVerified = frame.timestamp }
+            lastVerified = frame.timestamp
             confidence = min(1, value)
             publish()
         }
@@ -230,7 +230,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         var outputConfidence = 0.0
         if let worldRay, let sample = history.last, now - sample.timestamp < 0.35 {
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
-            estimated = projected.point
+            let raw = projected.point
+            let delta = hypot(raw.x - estimated.x, raw.y - estimated.y)
+            if delta < 0.0035 {
+                estimated = CGPoint(x: estimated.x * 0.82 + raw.x * 0.18,
+                                    y: estimated.y * 0.82 + raw.y * 0.18)
+            } else {
+                estimated = raw
+            }
             let age = now - (lastAccepted.isFinite ? lastAccepted : pinTime)
             let isVerified = now - lastVerified < 1.0
             quality = projected.isInsideImage && (isVerified || age < 2.5) ? .locked :

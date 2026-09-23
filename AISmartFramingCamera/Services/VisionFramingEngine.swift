@@ -266,10 +266,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let source = seedBuffer ?? buffer
         let sourceOrientation = seedBuffer == nil ? orientation : seedOrientation
         let w = min(0.8, max(0.04, seedSize.width)), h = min(0.8, max(0.04, seedSize.height))
-        let centered = seedSubjectRect.map {
-            CGRect(x: $0.minX, y: 1 - $0.maxY, width: $0.width, height: $0.height)
-        } ?? CGRect(x: seedPoint.x - w / 2, y: 1 - seedPoint.y - h / 2,
-                    width: w, height: h)
+        let centered = CGRect(x: seedPoint.x - w / 2, y: 1 - seedPoint.y - h / 2,
+                              width: w, height: h)
         // A user pin must keep its selected image patch. Automatic saliency/face
         // expansion can include a stronger background target in the same ROI.
         let box = centered.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
@@ -330,12 +328,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
             self.deliverCaptures(buffer, orientation: orientation, requested: capture, epoch: epoch)
             guard self.isCurrent(epoch) else { return }
             if tracking {
-                guard let frame else { self.deliver(nil, confidence: 0, buffer: buffer, frame: nil,
-                                                    evidence: nil, epoch: epoch); return }
+                guard let frame else { return }
                 if self.pendingSeed { self.seed(in: buffer, orientation: orientation) }
-                let result = self.track(buffer, orientation: orientation, frame: frame)
-                self.deliver(result?.0, confidence: result?.1 ?? 0, buffer: buffer, frame: frame,
-                             evidence: result?.2, epoch: epoch)
+                if let result = self.track(buffer, orientation: orientation, frame: frame) {
+                    self.deliver(result.0, confidence: result.1, buffer: buffer, frame: frame,
+                                 evidence: result.2, epoch: epoch)
+                }
             } else {
                 self.detect(buffer, orientation: orientation, epoch: epoch)
             }
@@ -380,7 +378,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     let measuredPoint = flow?.isReliable == true ? flow!.point : rawPoint
                     let residual = prediction.map { hypot($0.point.x - measuredPoint.x,
                                                            $0.point.y - measuredPoint.y) } ?? 0
-                    let needsIdentity = frame.timestamp - lastVerified >= 0.35 || misses > 1
+                    let highOpticalConfidence = observation.confidence >= 0.50
+                    let needsIdentity = (frame.timestamp - lastVerified >= 1.0) || (misses > 1 && !highOpticalConfidence)
                     let appearance = needsIdentity ? verify(buffer, box: rawBox,
                                                             orientation: orientation, strict: false) : .match(0)
                     let evidence: TrackingOpticalEvidence
@@ -388,22 +387,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     case .match:
                         evidence = needsIdentity ? .verifiedContinuation : .geometryContinuation
                     case .unavailable:
-                        // A missing FeaturePrint is not evidence that a new
-                        // background patch is the selected object. Require an
-                        // independent, consistent point-flow observation.
-                        guard flow?.isReliable == true, observation.confidence >= 0.65 else {
+                        guard flow?.isReliable == true || highOpticalConfidence else {
                             misses += 1; pendingRecovery = nil
                             if continuity.reject() { self.tracker = nil; patchFlow.reset() }
                             return nil
                         }
                         evidence = .geometryContinuation
-                    case .mismatch: misses += 1; pendingRecovery = nil
-                        if continuity.reject() { self.tracker = nil; patchFlow.reset() }
-                        return nil
+                    case .mismatch:
+                        if highOpticalConfidence {
+                            evidence = .geometryContinuation
+                        } else {
+                            misses += 1; pendingRecovery = nil
+                            if continuity.reject() { self.tracker = nil; patchFlow.reset() }
+                            return nil
+                        }
                     }
                     if rawBox.width > 0.01, rawBox.height > 0.01,
                        rawBox.minX >= 0, rawBox.minY >= 0, rawBox.maxX <= 1, rawBox.maxY <= 1,
-                       residual <= SpatialTrackingEngine.shared.maxObservationJump {
+                       residual <= SpatialTrackingEngine.shared.maxObservationJump * 1.5 {
                         if needsIdentity, case .match = appearance { lastVerified = frame.timestamp }
                         // A bounded log-size step suppresses scale breathing. The
                         // actual tracked point stays fixed while the ROI resizes.

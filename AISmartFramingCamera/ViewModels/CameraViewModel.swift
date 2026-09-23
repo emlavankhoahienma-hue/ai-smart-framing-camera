@@ -593,9 +593,9 @@ public final class CameraViewModel: ObservableObject {
 
     public var confidenceAcceptThreshold: Double {
         switch trackingSensitivity {
-        case .low: return 0.20
-        case .medium: return 0.30
-        case .high: return 0.40
+        case .low: return 0.15
+        case .medium: return 0.20
+        case .high: return 0.30
         }
     }
 
@@ -609,9 +609,9 @@ public final class CameraViewModel: ObservableObject {
 
     public var maxJumpPerFrame: CGFloat {
         switch trackingSensitivity {
-        case .low: return 0.18
-        case .medium: return 0.15 // Giới hạn bước nhảy tối ưu thực tế, chống giật nảy
-        case .high: return 0.12
+        case .low: return 0.25
+        case .medium: return 0.20 // Giới hạn bước nhảy tối ưu thực tế, bám mượt mà
+        case .high: return 0.15
         }
     }
 
@@ -1510,23 +1510,9 @@ public final class CameraViewModel: ObservableObject {
             initialSize = CGSize(width: targetSize, height: targetSize)
         }
 
-        // Tự động tinh chỉnh mỏ neo bằng Saliency & Human Pose/Face detection từ buffer hiện tại
-        if let subjectRect {
-            let expanded = CGRect(x: subjectRect.midX - initialSize.width / 2,
-                                  y: subjectRect.midY - initialSize.height / 2,
-                                  width: initialSize.width, height: initialSize.height)
-                .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-            if expanded.contains(target) {
-                visionEngine.startTrackingObject(at: target, subjectRect: expanded,
-                    refiningBuffer: selectedFrame?.0, orientation: .up)
-            } else {
-                visionEngine.startTrackingObject(at: target, size: initialSize,
-                    refiningBuffer: selectedFrame?.0, orientation: .up)
-            }
-        } else {
-            visionEngine.startTrackingObject(at: target, size: initialSize,
-                refiningBuffer: selectedFrame?.0, orientation: .up)
-        }
+        // Khởi động Optical Tracking bám trực tiếp vào target với initialSize
+        visionEngine.startTrackingObject(at: target, size: initialSize,
+            refiningBuffer: selectedFrame?.0, orientation: .up)
 
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
         let focusTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ?? target
