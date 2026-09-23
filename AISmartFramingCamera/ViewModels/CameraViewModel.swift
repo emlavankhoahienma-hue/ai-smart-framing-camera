@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 enum TrackingCapturePolicy {
     static func canCapture(distance: CGFloat, tolerance: CGFloat,
                            quality: TrackingQuality, isZooming: Bool) -> Bool {
-        distance.isFinite && distance <= tolerance && quality == .locked && !isZooming
+        distance.isFinite && distance <= tolerance && quality != .lost && !isZooming
     }
 }
 
@@ -1457,7 +1457,7 @@ public final class CameraViewModel: ObservableObject {
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
-        trackingQuality = .predicting
+        trackingQuality = .locked
         // A new user pin keeps the current lens framing instead of restarting
         // the previous AI suggestion's zoom sequence.
         hasExecutedAutoZoomForSession = isManualRePin

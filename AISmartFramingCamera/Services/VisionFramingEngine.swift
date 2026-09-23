@@ -45,7 +45,7 @@ struct VisionContinuityPolicy {
     mutating func accept() { consecutiveFailures = 0 }
     mutating func reject() -> Bool {
         consecutiveFailures += 1
-        return consecutiveFailures >= 3
+        return consecutiveFailures >= 8
     }
 }
 
@@ -380,7 +380,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     let measuredPoint = flow?.isReliable == true ? flow!.point : rawPoint
                     let residual = prediction.map { hypot($0.point.x - measuredPoint.x,
                                                            $0.point.y - measuredPoint.y) } ?? 0
-                    let needsIdentity = frame.timestamp - lastVerified >= 0.15 || misses > 0
+                    let needsIdentity = frame.timestamp - lastVerified >= 0.35 || misses > 1
                     let appearance = needsIdentity ? verify(buffer, box: rawBox,
                                                             orientation: orientation, strict: false) : .match(0)
                     let evidence: TrackingOpticalEvidence
@@ -593,22 +593,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
                          CGPoint(x: center.x - step, y: center.y + step),
                          CGPoint(x: center.x + step, y: center.y - step)]
         if misses >= 6 {
-            let radius: CGFloat = misses < 20 ? 0.12 : 0.26
+            let radius: CGFloat = 0.10
             for index in 0..<8 {
                 let angle = Double(index) * Double.pi / 4
                 proposals.append(CGPoint(x: center.x + radius * CGFloat(cos(angle)),
                                          y: center.y + radius * CGFloat(sin(angle))))
             }
-        }
-        if misses >= 20 {
-            // Sweep a 5x5 image grid over successive searches. The fixed
-            // budget avoids blocking 30 Hz tracking with a full-frame scan.
-            for index in 0..<8 {
-                let cell = (searchCursor + index) % 25
-                proposals.append(CGPoint(x: (CGFloat(cell % 5) + 0.5) / 5,
-                                         y: (CGFloat(cell / 5) + 0.5) / 5))
-            }
-            searchCursor = (searchCursor + 8) % 25
         }
         var expensiveChecks = 0
         for (index, p) in proposals.prefix(25).enumerated() {

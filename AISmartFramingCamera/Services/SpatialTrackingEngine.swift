@@ -109,9 +109,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             generation &+= 1; active = true; worldRay = nil
             updateZoomFactor(zoom)
             pinTime = timestamp; pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
-            lastAccepted = -Double.infinity; lastVerified = -.infinity
-            lastProcessed = -Double.infinity
-            confidence = 0; estimated = screenPoint; pendingOutput = nil
+            lastAccepted = timestamp; lastVerified = timestamp
+            lastProcessed = timestamp - 0.05
+            confidence = 1.0; estimated = screenPoint; pendingOutput = nil
             resolvePin()
             publish()
         }
@@ -228,14 +228,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         var quality: TrackingQuality = now - pinTime < 2.0 ? .predicting : .reacquiring
         var outputConfidence = 0.0
-        if let worldRay, let sample = history.last, now - sample.timestamp < 0.15 {
+        if let worldRay, let sample = history.last, now - sample.timestamp < 0.35 {
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
             estimated = projected.point
             let age = now - (lastAccepted.isFinite ? lastAccepted : pinTime)
-            let isVerified = now - lastVerified < 0.35
-            quality = projected.isInsideImage && isVerified ? .locked :
-                (age < 2.0 ? .predicting : .reacquiring)
-            outputConfidence = age < 1.20 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
+            let isVerified = now - lastVerified < 1.0
+            quality = projected.isInsideImage && (isVerified || age < 2.5) ? .locked :
+                (projected.isInsideImage ? .predicting : .reacquiring)
+            outputConfidence = age < 2.0 ? confidence : min(0.60, confidence * exp(-max(0, age - 2.0) / 5))
         }
         // No timeout deletes worldRay or appearance. Only explicit stop/re-pin.
         pendingOutput = (estimated, outputConfidence, quality, generation)

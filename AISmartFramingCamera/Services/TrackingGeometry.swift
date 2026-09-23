@@ -115,17 +115,20 @@ struct TrackingMotionSample: Sendable {
 
 enum TrackingGeometry {
     static func pose(at time: TimeInterval, in history: [TrackingMotionSample]) -> simd_quatd? {
-        guard let first = history.first, let last = history.last,
-              time >= first.timestamp - 0.02, time <= last.timestamp + 0.02 else { return nil }
-        if time <= first.timestamp { return first.deviceToWorld }
-        if time >= last.timestamp { return last.deviceToWorld }
+        guard let first = history.first, let last = history.last else { return nil }
+        if time <= first.timestamp {
+            return (first.timestamp - time < 0.5) ? first.deviceToWorld : nil
+        }
+        if time >= last.timestamp {
+            return (time - last.timestamp < 0.5) ? last.deviceToWorld : nil
+        }
         for i in 1..<history.count where history[i].timestamp >= time {
             let a = history[i - 1], b = history[i]
-            guard b.timestamp - a.timestamp < 0.1 else { return nil }
+            guard b.timestamp - a.timestamp < 0.2 else { return nil }
             let t = (time - a.timestamp) / (b.timestamp - a.timestamp)
             return simd_slerp(a.deviceToWorld, b.deviceToWorld, t)
         }
-        return nil
+        return last.deviceToWorld
     }
 
     static func screenPoint(_ point: CGPoint, size: CGSize, aspect: CGFloat) -> CGPoint {
