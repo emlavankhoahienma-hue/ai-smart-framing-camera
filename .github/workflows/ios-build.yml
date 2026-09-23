@@ -176,4 +176,8 @@ jobs:
 
           ## System Requirements
           - iPhone with A11 Bionic to A18 Pro (iPhone 8 / X or later)
-          - iOS 16.0 or later"
+          - iOS 16.0 or later" || \
+          gh release upload "$TAG" \
+            AISmartFramingCamera.ipa \
+            AISmartFramingCamera-SourceCode.zip \
+            --clobber
