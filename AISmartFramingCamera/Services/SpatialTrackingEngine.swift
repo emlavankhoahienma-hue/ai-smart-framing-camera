@@ -4,6 +4,16 @@ import CoreVideo
 import QuartzCore
 import simd
 
+enum TrackingObservationGate {
+    static func accepts(isInFront: Bool, residual: CGFloat,
+                        maximumJump: CGFloat, evidence: TrackingOpticalEvidence) -> Bool {
+        if evidence == .reidentified { return residual.isFinite }
+        guard isInFront, residual.isFinite else { return false }
+        let limit = evidence == .geometryContinuation ? min(maximumJump, 0.04) : maximumJump
+        return residual <= limit
+    }
+}
+
 /// A persistent world bearing, NOT a metric 3D position. Pure rotation is
 /// observable from CoreMotion; translation is corrected while Vision sees the
 /// target. Off-screen translation requires a separate 6DoF/depth provider.
@@ -22,6 +32,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var active = false
     private var generation: UInt64 = 0
     private var lastAccepted = -Double.infinity
+    private var lastVerified = -Double.infinity
     private var lastProcessed = -Double.infinity
     private var pinTime = -Double.infinity
     private var confidence = 0.0
@@ -98,8 +109,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             generation &+= 1; active = true; worldRay = nil
             updateZoomFactor(zoom)
             pinTime = timestamp; pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
-            lastAccepted = timestamp; lastProcessed = timestamp
-            confidence = 1.0; estimated = screenPoint; pendingOutput = nil
+            lastAccepted = -Double.infinity; lastVerified = -.infinity
+            lastProcessed = -Double.infinity
+            confidence = 0; estimated = screenPoint; pendingOutput = nil
             resolvePin()
             publish()
         }
@@ -156,36 +168,46 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     }
 
     public func updateWithOpticalDetection(point: CGPoint?, confidence value: Double, frame: TrackingFrameContext) {
+        updateWithOpticalDetection(point: point, confidence: value, frame: frame,
+                                   evidence: .verifiedContinuation)
+    }
+
+    func updateWithOpticalDetection(point: CGPoint?, confidence value: Double,
+                                    frame: TrackingFrameContext, evidence: TrackingOpticalEvidence) {
         lock.withLock {
             guard active, frame.timestamp >= pinTime,
                   frame.timestamp > lastProcessed, frame.calibration.isValid else { return }
             lastProcessed = frame.timestamp
             guard let point, point.x.isFinite, point.y.isFinite,
                   (0...1).contains(point.x), (0...1).contains(point.y), value.isFinite,
-                  value >= max(threshold, lowTexture ? 0.50 : 0.25),
+                  value >= max(threshold, lowTexture ? 0.65 : 0.35),
                   let pose = TrackingGeometry.pose(at: frame.timestamp, in: history) else {
                 publish(); return
             }
             let observed = pose.act(frame.calibration.deviceRay(at: point))
             if let ray = worldRay {
                 let predicted = frame.calibration.project(deviceRay: pose.inverse.act(ray))
-                guard predicted.isInFront else { publish(); return }
                 let residual = hypot(point.x - predicted.point.x, point.y - predicted.point.y)
-                // Reject a jump. Never turn repeated rejected detections into a
-                // forced reset, and never refresh confidence on rejected input.
-                guard residual <= jump else { publish(); return }
+                // Only a separately confirmed re-ID may move the bearing beyond
+                // the ordinary continuation gate after parallax or a long absence.
+                guard TrackingObservationGate.accepts(isInFront: predicted.isInFront,
+                    residual: residual, maximumJump: jump, evidence: evidence) else { publish(); return }
                 let dt = lastAccepted.isFinite ? min(0.1, frame.timestamp - lastAccepted) : 1 / 30.0
                 // Filter ONLY world-bearing innovation. Camera rotation bypasses
                 // this filter completely. Higher cutoff follows real translation.
                 let cutoff = (street || scene.isDeformableNature ? 2.0 : 0.7) + min(10, Double(residual) * 100)
-                let gain = (1 - exp(-2 * .pi * cutoff * dt)) * min(1, max(0, value))
-                worldRay = simd_normalize(ray * (1 - gain) + observed * gain)
+                let ordinaryGain = (1 - exp(-2 * .pi * cutoff * dt)) * min(1, max(0, value))
+                let gain = evidence == .geometryContinuation ? min(0.08, ordinaryGain) : ordinaryGain
+                worldRay = evidence == .reidentified ? observed :
+                    simd_normalize(ray * (1 - gain) + observed * gain)
             } else {
                 // The first timestamped visual fix can initialize if pinning
                 // happened before the first CoreMotion sample.
                 worldRay = observed; pendingPin = nil
             }
-            lastAccepted = frame.timestamp; confidence = min(1, value)
+            lastAccepted = frame.timestamp
+            if evidence != .geometryContinuation { lastVerified = frame.timestamp }
+            confidence = min(1, value)
             publish()
         }
     }
@@ -197,18 +219,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         var outputConfidence = 0.0
         if let worldRay, let sample = history.last, now - sample.timestamp < 0.15 {
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
-            let raw = projected.point
-            let delta = hypot(raw.x - estimated.x, raw.y - estimated.y)
-            if delta < 0.0035 {
-                estimated = CGPoint(x: estimated.x * 0.82 + raw.x * 0.18,
-                                    y: estimated.y * 0.82 + raw.y * 0.18)
-            } else {
-                estimated = raw
-            }
+            estimated = projected.point
             let age = now - lastAccepted
-            quality = projected.isInsideImage && age < 1.50 ? .locked :
+            quality = projected.isInsideImage && now - lastVerified < 0.15 ? .locked :
                 (projected.isInsideImage ? .reacquiring : .predicting)
-            outputConfidence = age < 1.50 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
+            outputConfidence = age < 0.15 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
         }
         // No timeout deletes worldRay or appearance. Only explicit stop/re-pin.
         pendingOutput = (estimated, outputConfidence, quality, generation)

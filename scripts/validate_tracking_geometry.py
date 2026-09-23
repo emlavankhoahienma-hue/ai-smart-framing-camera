@@ -172,7 +172,7 @@ class GeometryTests(unittest.TestCase):
         self.assertNotIn('outlierStreak', spatial)
         self.assertNotIn('extractSaliencyCentroid', vision)
         self.assertNotIn('consecutiveLostFrames <= 150', vision)
-        self.assertIn('onTargetTrackedWithTimestamp', vm)
+        self.assertIn('visionEngine.onTargetMeasurement', vm)
         self.assertIn('guard !Task.isCancelled else { return }', vm)
 
     def test_vision_continuation_uses_returned_observation_only(self):
@@ -196,6 +196,10 @@ class GeometryTests(unittest.TestCase):
         self.assertIn('!isManualRePin && !self.hasExecutedAutoZoomForSession', vm)
         self.assertEqual(vm.count('self.targetPinGeneration == pinGeneration'), 3)
         self.assertEqual(vm.count('        prioritizeManualZoom()'), 4)
+        camera = (root / 'Services/CameraService.swift').read_text(encoding='utf-8')
+        self.assertNotIn('didChangeZoomFactor: clampedZoom', camera)
+        self.assertEqual(camera.count('didChangeZoomFactor: actualZoom'), 2)
+        self.assertEqual(camera.count('let actualZoom = camera.videoZoomFactor'), 2)
 
     def test_overlay_redraw_does_not_destroy_tracking_session(self):
         root = Path(__file__).resolve().parents[1] / 'AISmartFramingCamera'
@@ -211,10 +215,29 @@ class GeometryTests(unittest.TestCase):
         self.assertIn('connection.isCameraIntrinsicMatrixDeliveryEnabled = true', camera)
         self.assertIn('!captureSession.isRunning && connection.isCameraIntrinsicMatrixDeliverySupported', camera)
         self.assertEqual(camera.count('self.configureTrackingConnection(connection)'), 2)
-        self.assertIn('IPHONEOS_DEPLOYMENT_TARGET', project)
-        for name in ['TrackingGeometry.swift', 'NeuralTargetTracker.swift']:
+        self.assertNotIn('IPHONEOS_DEPLOYMENT_TARGET = 16.0', project)
+        for name in ['TrackingGeometry.swift', 'NeuralTargetTracker.swift', 'TargetPatchFlow.swift']:
             self.assertIn(f'/* {name} in Sources */ =', project)
             self.assertIn(f'path = {name};', project)
+
+    def test_reidentification_can_correct_a_large_world_bearing_error(self):
+        root = Path(__file__).resolve().parents[1] / 'AISmartFramingCamera'
+        spatial = (root / 'Services/SpatialTrackingEngine.swift').read_text(encoding='utf-8')
+        vision = (root / 'Services/VisionFramingEngine.swift').read_text(encoding='utf-8')
+        vm = (root / 'ViewModels/CameraViewModel.swift').read_text(encoding='utf-8')
+        self.assertIn('if evidence == .reidentified { return residual.isFinite }', spatial)
+        self.assertIn('worldRay = evidence == .reidentified ? observed', spatial)
+        self.assertIn('return (confirmedPoint, min(recovered.1, Double(observation.confidence)), .reidentified)', vision)
+        self.assertIn('pendingTargetDelivery?.4 == .reidentified && evidence != .reidentified', vision)
+        self.assertIn('evidence: measurement.evidence', vm)
+
+    def test_frame_context_is_shared_between_vision_and_pin_snapshot(self):
+        root = Path(__file__).resolve().parents[1] / 'AISmartFramingCamera'
+        vm = (root / 'ViewModels/CameraViewModel.swift').read_text(encoding='utf-8')
+        vision = (root / 'Services/VisionFramingEngine.swift').read_text(encoding='utf-8')
+        self.assertIn('orientation: .up, frameContext: frame', vm)
+        self.assertIn('latestFrameContext = frame', vm)
+        self.assertIn('let frame = orientation == .up && frameContext?.orientation == .up && matchesSize', vision)
 
 
 METRICS = {}

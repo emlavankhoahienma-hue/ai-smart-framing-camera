@@ -1340,3 +1340,54 @@ public struct HistogramBarData: Identifiable, Equatable, @unchecked Sendable {
         return lhs.id == rhs.id && abs(lhs.height - rhs.height) < 0.001
     }
 }
+
+// MARK: - Windowed Zoom Models
+public enum WindowedZoomAspectRatio: String, CaseIterable, Identifiable, Sendable {
+    case ratio3_4 = "3:4"
+    case ratio1_1 = "1:1"
+
+    public var id: String { rawValue }
+
+    public var ratioHeightOverWidth: CGFloat {
+        switch self {
+        case .ratio3_4: return 4.0 / 3.0 // chiều cao / chiều rộng cho ảnh đứng dọc
+        case .ratio1_1: return 1.0
+        }
+    }
+
+    /// Tính toán tỉ lệ kích thước khung ngắm (fraction từ 0.0 đến 1.0 so với toàn cảnh 3:4)
+    public func windowFractions(focalLength: Double) -> (widthFraction: CGFloat, heightFraction: CGFloat) {
+        let focal = max(24.0, min(135.0, focalLength))
+        let scale = 24.0 / focal // Tại 24mm: scale = 1.0; tại 35mm: scale ≈ 0.686; tại 50mm: scale = 0.48; tại 85mm: scale ≈ 0.282
+
+        // Khung ngắm rangefinder tối đa chiếm 92% chiều rộng/cao để luôn chừa viền context
+        let maxScale: CGFloat = 0.92
+
+        switch self {
+        case .ratio3_4:
+            let effectiveScale = min(maxScale, CGFloat(scale))
+            return (effectiveScale, effectiveScale)
+        case .ratio1_1:
+            // Khung vuông: w = container.width * effectiveScale, h = w
+            // Vì container là 3:4 (hContainer = wContainer * 4/3), nên hFraction = effectiveScale * (3.0 / 4.0)
+            let effectiveScale = min(maxScale, CGFloat(scale))
+            return (effectiveScale, effectiveScale * (3.0 / 4.0))
+        }
+    }
+}
+
+public struct WindowedFocalLengthPreset: Identifiable, Equatable, Sendable {
+    public let focalLength: Double
+    public let label: String
+    public let sceneRecommendation: String
+
+    public var id: Double { focalLength }
+
+    public static let standardPresets: [WindowedFocalLengthPreset] = [
+        WindowedFocalLengthPreset(focalLength: 28.0, label: "28mm", sceneRecommendation: "Phong Cảnh / Đô Thị"),
+        WindowedFocalLengthPreset(focalLength: 35.0, label: "35mm", sceneRecommendation: "Đời Thường Cổ Điển"),
+        WindowedFocalLengthPreset(focalLength: 50.0, label: "50mm", sceneRecommendation: "Tiêu Chuẩn Mắt Người"),
+        WindowedFocalLengthPreset(focalLength: 85.0, label: "85mm", sceneRecommendation: "Chân Dung Hoàng Kim")
+    ]
+}
+

@@ -28,7 +28,7 @@ final class VisionObjectSequence {
         // Vision that the exact same retained camera frame is a new time step.
         if let lastBuffer, lastBuffer === buffer { return lastObservation }
         try sequence.perform([request], on: buffer, orientation: orientation)
-        let observation = request.results?.first as? VNDetectedObjectObservation
+        let observation = request.results?.first
         if let observation {
             request.inputObservation = observation
         }
@@ -47,6 +47,26 @@ struct VisionContinuityPolicy {
         consecutiveFailures += 1
         return consecutiveFailures >= 3
     }
+}
+
+enum TrackingOpticalEvidence: Equatable {
+    case verifiedContinuation
+    case geometryContinuation
+    case reidentified
+}
+
+struct TrackingOpticalMeasurement {
+    let point: CGPoint
+    let confidence: Double
+    let pixelBuffer: CVPixelBuffer
+    let frame: TrackingFrameContext
+    let evidence: TrackingOpticalEvidence
+}
+
+private enum AppearanceResult {
+    case match(Double)
+    case mismatch
+    case unavailable
 }
 
 /// Mutable Vision requests and templates belong exclusively to visionQueue.
@@ -70,10 +90,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var detectionCallback: ((SubjectDetectionResult) -> Void)?
     private var targetCallback: ((CGPoint?, Double, CVPixelBuffer) -> Void)?
     private var timedTargetCallback: ((CGPoint?, Double, CVPixelBuffer, TrackingFrameContext) -> Void)?
+    private var measurementCallback: ((TrackingOpticalMeasurement) -> Void)?
     private var focusCallback: ((CGPoint, SmartFocusType) -> Void)?
     private var captureCallback: ((CGImage) -> Void)?
     private var targetDeliveryScheduled = false
-    private var pendingTargetDelivery: (CGPoint?, Double, CVPixelBuffer, TrackingFrameContext?, UInt64)?
+    private var pendingTargetDelivery: (CGPoint?, Double, CVPixelBuffer, TrackingFrameContext?, TrackingOpticalEvidence?, UInt64)?
 
     public var isTrackingTarget: Bool { ingressLock.withLock { active } }
     public var isIdlePreviewMode: Bool {
@@ -104,11 +125,15 @@ public final class VisionFramingEngine: @unchecked Sendable {
         get { ingressLock.withLock { targetCallback } }
         set { ingressLock.withLock { targetCallback = newValue } }
     }
-    /// Preferred callback. If installed, it replaces legacy delivery to prevent
-    /// double fusion. Legacy callers retain their original signature.
+    /// Preferred public callback. If installed, it replaces the legacy public
+    /// callback; the app's internal evidence callback remains independent.
     public var onTargetTrackedWithTimestamp: ((CGPoint?, Double, CVPixelBuffer, TrackingFrameContext) -> Void)? {
         get { ingressLock.withLock { timedTargetCallback } }
         set { ingressLock.withLock { timedTargetCallback = newValue } }
+    }
+    var onTargetMeasurement: ((TrackingOpticalMeasurement) -> Void)? {
+        get { ingressLock.withLock { measurementCallback } }
+        set { ingressLock.withLock { measurementCallback = newValue } }
     }
     public var onSmartFocusPointCalculated: ((CGPoint, SmartFocusType) -> Void)? {
         get { ingressLock.withLock { focusCallback } }
@@ -122,6 +147,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     // Queue-confined state. Frozen identity is only replaced by an explicit pin.
     private var tracker: VisionObjectSequence?
     private var continuity = VisionContinuityPolicy()
+    private let patchFlow = TargetPatchFlow()
     private var referencePrint: VNFeaturePrintObservation?
     private var referenceHistogram: [Float]?
     private var anchorUV = CGPoint(x: 0.5, y: 0.5)
@@ -130,6 +156,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var misses = 0
     private var lastVerified = -Double.infinity
     private var lastSearch = -Double.infinity
+    private var searchCursor = 0
     private var previousTime = -Double.infinity
     private var latestBuffer: CVPixelBuffer?
     private var latestOrientation: CGImagePropertyOrientation = .up
@@ -138,7 +165,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var seedPoint = CGPoint(x: 0.5, y: 0.5)
     private var seedSize = CGSize(width: 0.14, height: 0.14)
     private var pendingSeed = false
-    private var pendingRecovery: (point: CGPoint, time: TimeInterval)?
+    private var pendingRecovery: (point: CGPoint, frame: TrackingFrameContext)?
 
     public init() {}
 
@@ -162,7 +189,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
               (0...1).contains(point.x), (0...1).contains(point.y),
               size.width > 0, size.height > 0 else { return }
         let epoch = ingressLock.withLock { () -> UInt64 in
-            generation &+= 1; active = true; return generation
+            generation &+= 1; active = true
+            pendingTargetDelivery = nil
+            return generation
         }
         visionQueue.async { [weak self] in
             guard let self, self.isCurrent(epoch) else { return }
@@ -175,7 +204,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     public func stopTrackingObject() {
         let epoch = ingressLock.withLock { () -> UInt64 in
-            generation &+= 1; active = false; return generation
+            generation &+= 1; active = false
+            pendingTargetDelivery = nil
+            return generation
         }
         visionQueue.async { [weak self] in
             guard let self, self.isCurrent(epoch) else { return }
@@ -188,8 +219,10 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private func resetTrackingState() {
         NeuralTargetTracker.shared.clearAnchor()
         tracker = nil; continuity = VisionContinuityPolicy()
+        patchFlow.reset()
         referencePrint = nil; referenceHistogram = nil; lastBox = nil
-        misses = 0; lastVerified = -.infinity; lastSearch = -.infinity; previousTime = -.infinity
+        misses = 0; lastVerified = -.infinity; lastSearch = -.infinity
+        searchCursor = 0; previousTime = -.infinity
         pendingRecovery = nil; seedBuffer = nil; pendingSeed = false
     }
 
@@ -210,6 +243,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         referenceHistogram = histogram(source, box: box, orientation: sourceOrientation)
         if sourceOrientation == .up {
             NeuralTargetTracker.shared.setAnchorTemplate(from: source, at: seedPoint)
+            patchFlow.seed(buffer: source, box: box, point: seedPoint)
         }
         let newTracker = VisionObjectSequence(box: box)
         if seedBuffer != nil {
@@ -222,9 +256,22 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer,
                                          orientation: CGImagePropertyOrientation = .up) {
+        let frame = orientation == .up ? TrackingFrameContext.read(sampleBuffer,
+            zoom: SpatialTrackingEngine.shared.currentDisplayZoom) : nil
+        processVideoSampleBuffer(sampleBuffer, orientation: orientation, frameContext: frame)
+    }
+
+    func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer,
+                                  orientation: CGImagePropertyOrientation,
+                                  frameContext: TrackingFrameContext?) {
         guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let spatial = SpatialTrackingEngine.shared
-        let frame = orientation == .up ? TrackingFrameContext.read(sampleBuffer, zoom: spatial.currentDisplayZoom) : nil
+        let matchesSize = frameContext.map {
+            $0.imageSize == .zero ||
+            (Int($0.imageSize.width) == CVPixelBufferGetWidth(buffer) &&
+             Int($0.imageSize.height) == CVPixelBufferGetHeight(buffer))
+        } ?? false
+        let frame = orientation == .up && frameContext?.orientation == .up && matchesSize ? frameContext : nil
         if let frame { spatial.registerFrame(frame) }
         let now = CACurrentMediaTime()
         let admission = ingressLock.withLock { () -> (UInt64, Bool, Bool)? in
@@ -241,10 +288,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
             self.deliverCaptures(buffer, orientation: orientation, requested: capture, epoch: epoch)
             guard self.isCurrent(epoch) else { return }
             if tracking {
-                guard let frame else { self.deliver(nil, confidence: 0, buffer: buffer, frame: nil, epoch: epoch); return }
+                guard let frame else { self.deliver(nil, confidence: 0, buffer: buffer, frame: nil,
+                                                    evidence: nil, epoch: epoch); return }
                 if self.pendingSeed { self.seed(in: buffer, orientation: orientation) }
                 let result = self.track(buffer, orientation: orientation, frame: frame)
-                self.deliver(result?.0, confidence: result?.1 ?? 0, buffer: buffer, frame: frame, epoch: epoch)
+                self.deliver(result?.0, confidence: result?.1 ?? 0, buffer: buffer, frame: frame,
+                             evidence: result?.2, epoch: epoch)
             } else {
                 self.detect(buffer, orientation: orientation, epoch: epoch)
             }
@@ -264,7 +313,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
 
     private func track(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
-                       frame: TrackingFrameContext) -> (CGPoint, Double)? {
+                       frame: TrackingFrameContext) -> (CGPoint, Double, TrackingOpticalEvidence)? {
         let prediction = SpatialTrackingEngine.shared.projection(at: frame.timestamp, calibration: frame.calibration)
         // A bearing prediction alone must not kill a live optical tracker at a
         // noisy FOV boundary. Only stop feeding images when clearly behind or
@@ -272,6 +321,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         if let prediction, !prediction.isInFront ||
             !CGRect(x: -0.05, y: -0.05, width: 1.1, height: 1.1).contains(prediction.point) {
             tracker = nil; continuity = VisionContinuityPolicy()
+            patchFlow.reset()
             misses += 1; pendingRecovery = nil
             return nil
         }
@@ -283,14 +333,35 @@ public final class VisionFramingEngine: @unchecked Sendable {
                    observation.confidence >= 0.40 {
                     let rawBox = observation.boundingBox
                     let rawPoint = point(in: rawBox)
-                    let residual = prediction.map { hypot($0.point.x - rawPoint.x, $0.point.y - rawPoint.y) } ?? 0
-                    let highOpticalConfidence = observation.confidence >= 0.55
-                    let needsIdentity = (frame.timestamp - lastVerified >= 1.0) || (misses > 1 && !highOpticalConfidence)
-                    let identity = !needsIdentity || verify(buffer, box: rawBox, orientation: orientation, strict: false) != nil
-                    if identity, rawBox.width > 0.01, rawBox.height > 0.01,
+                    let flow = orientation == .up ? patchFlow.evaluate(buffer: buffer, box: rawBox,
+                                                                       fallback: rawPoint) : nil
+                    let measuredPoint = flow?.isReliable == true ? flow!.point : rawPoint
+                    let residual = prediction.map { hypot($0.point.x - measuredPoint.x,
+                                                           $0.point.y - measuredPoint.y) } ?? 0
+                    let needsIdentity = frame.timestamp - lastVerified >= 0.15 || misses > 0
+                    let appearance = needsIdentity ? verify(buffer, box: rawBox,
+                                                            orientation: orientation, strict: false) : .match(0)
+                    let evidence: TrackingOpticalEvidence
+                    switch appearance {
+                    case .match: evidence = .verifiedContinuation
+                    case .unavailable:
+                        // A missing FeaturePrint is not evidence that a new
+                        // background patch is the selected object. Require an
+                        // independent, consistent point-flow observation.
+                        guard flow?.isReliable == true, observation.confidence >= 0.65 else {
+                            misses += 1; pendingRecovery = nil
+                            if continuity.reject() { self.tracker = nil; patchFlow.reset() }
+                            return nil
+                        }
+                        evidence = .geometryContinuation
+                    case .mismatch: misses += 1; pendingRecovery = nil
+                        if continuity.reject() { self.tracker = nil; patchFlow.reset() }
+                        return nil
+                    }
+                    if rawBox.width > 0.01, rawBox.height > 0.01,
                        rawBox.minX >= 0, rawBox.minY >= 0, rawBox.maxX <= 1, rawBox.maxY <= 1,
                        residual <= SpatialTrackingEngine.shared.maxObservationJump {
-                        if needsIdentity { lastVerified = frame.timestamp }
+                        if needsIdentity, case .match = appearance { lastVerified = frame.timestamp }
                         // A bounded log-size step suppresses scale breathing. The
                         // actual tracked point stays fixed while the ROI resizes.
                         let gain = 1 - exp(-2 * Double.pi * 1.5 * dt)
@@ -303,9 +374,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         // Smoothed size belongs to the recovery search only.
                         // NEVER feed a synthesized box back to the live sequence.
                         lastBox = rawBox
+                        if let flow { patchFlow.accept(flow, box: rawBox, point: measuredPoint) }
+                        else { patchFlow.seed(buffer: buffer, box: rawBox, point: measuredPoint) }
                         continuity.accept()
                         misses = 0; pendingRecovery = nil
-                        return (rawPoint, Double(observation.confidence))
+                        return (measuredPoint, Double(observation.confidence), evidence)
                     }
                 }
             } catch { /* An invalid observation never updates the spatial anchor. */ }
@@ -315,19 +388,30 @@ public final class VisionFramingEngine: @unchecked Sendable {
             // Vision's identity through one or two bad frames instead of reseeding.
             guard continuity.reject() else { return nil }
             self.tracker = nil
+            patchFlow.reset()
         } else {
             misses += 1
         }
-        // Persistent, local, pose-guided re-ID; no 150-frame expiry and no stale
-        // screen-point averaging. Two distinct captured frames must agree.
-        guard frame.timestamp - lastSearch >= 0.12,
-              let center = prediction?.point ?? lastBox.map({ point(in: $0) }) else { return nil }
+        // Search near the bearing first, then sweep the visible image after a
+        // longer miss. Two distinct captured frames must agree.
+        guard frame.timestamp - lastSearch >= 0.18,
+              referencePrint != nil else { return nil }
         lastSearch = frame.timestamp
-        if let recovered = search(buffer, center: center, orientation: orientation) {
-            if let previous = pendingRecovery, frame.timestamp > previous.time,
-               frame.timestamp - previous.time < 0.5 {
-                // Compare in world bearings so a continuing pan does not fail confirmation.
-                let previousPrediction = SpatialTrackingEngine.shared.projection(at: previous.time, calibration: frame.calibration)
+        let center = prediction?.point ?? lastBox.map({ point(in: $0) }) ?? seedPoint
+        var searchCenter = center
+        if let previous = pendingRecovery,
+           let oldProjection = SpatialTrackingEngine.shared.projection(
+               at: previous.frame.timestamp, calibration: previous.frame.calibration) {
+            searchCenter = CGPoint(x: center.x + previous.point.x - oldProjection.point.x,
+                                   y: center.y + previous.point.y - oldProjection.point.y)
+        }
+        if let recovered = search(buffer, center: searchCenter, orientation: orientation) {
+            if let previous = pendingRecovery, frame.timestamp > previous.frame.timestamp,
+               frame.timestamp - previous.frame.timestamp < 0.5 {
+                // Each candidate uses its own capture calibration. Reusing the
+                // current zoom for an older frame can reject a real match.
+                let previousPrediction = SpatialTrackingEngine.shared.projection(
+                    at: previous.frame.timestamp, calibration: previous.frame.calibration)
                 let oldError = CGPoint(x: previous.point.x - (previousPrediction?.point.x ?? center.x),
                                        y: previous.point.y - (previousPrediction?.point.y ?? center.y))
                 let newError = CGPoint(x: recovered.0.x - center.x, y: recovered.0.y - center.y)
@@ -342,12 +426,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     }
                     tracker = recoveredTracker
                     lastBox = observation.boundingBox; boxSize = recovered.2.size
+                    patchFlow.seed(buffer: buffer, box: observation.boundingBox, point: confirmedPoint)
                     continuity.accept()
                     misses = 0; lastVerified = frame.timestamp; pendingRecovery = nil
-                    return (confirmedPoint, min(recovered.1, Double(observation.confidence)))
+                    return (confirmedPoint, min(recovered.1, Double(observation.confidence)), .reidentified)
                 }
             }
-            pendingRecovery = (recovered.0, frame.timestamp)
+            pendingRecovery = (recovered.0, frame)
         } else { pendingRecovery = nil }
         return nil
     }
@@ -366,18 +451,40 @@ public final class VisionFramingEngine: @unchecked Sendable {
                               orientation: CGImagePropertyOrientation) -> VNFeaturePrintObservation? {
         guard let image = crop(buffer, box: box, orientation: orientation) else { return nil }
         let req = VNGenerateImageFeaturePrintRequest()
-        if #available(iOS 17.0, *) {
-            req.revision = VNGenerateImageFeaturePrintRequestRevision2
-        } else {
-            req.revision = VNGenerateImageFeaturePrintRequestRevision1
-        }
+        req.revision = VNGenerateImageFeaturePrintRequestRevision2
         req.imageCropAndScaleOption = .scaleFit
         guard (try? VNImageRequestHandler(cgImage: image, options: [:]).perform([req])) != nil else { return nil }
-        return req.results?.first as? VNFeaturePrintObservation
+        return req.results?.first
     }
 
     private func histogram(_ buffer: CVPixelBuffer, box: CGRect,
                            orientation: CGImagePropertyOrientation) -> [Float]? {
+        if orientation == .up, CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA {
+            guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+            let bytes = base.assumingMemoryBound(to: UInt8.self)
+            let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+            let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+            guard width > 0, height > 0 else { return nil }
+            var bins = [Float](repeating: 0, count: 64)
+            var count: Float = 0
+            for y in 0..<24 {
+                let imageY = min(height - 1, max(0, Int((Double(1 - box.maxY) +
+                    (Double(y) + 0.5) * Double(box.height) / 24) * Double(height))))
+                for x in 0..<24 {
+                    let imageX = min(width - 1, max(0, Int((Double(box.minX) +
+                        (Double(x) + 0.5) * Double(box.width) / 24) * Double(width))))
+                    let offset = imageY * rowBytes + imageX * 4
+                    let b = Float(bytes[offset]), g = Float(bytes[offset + 1])
+                    let r = Float(bytes[offset + 2]), total = r + g + b
+                    guard total > 24 else { continue }
+                    bins[min(7, Int(8 * r / total)) * 8 + min(7, Int(8 * g / total))] += 1
+                    count += 1
+                }
+            }
+            return count > 0 ? bins.map { $0 / count } : nil
+        }
         guard let image = crop(buffer, box: box, orientation: orientation) else { return nil }
         var rgba = [UInt8](repeating: 0, count: 24 * 24 * 4)
         let drawn = rgba.withUnsafeMutableBytes { bytes -> Bool in
@@ -402,40 +509,78 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
 
     private func verify(_ buffer: CVPixelBuffer, box: CGRect, orientation: CGImagePropertyOrientation,
-                        strict: Bool) -> Double? {
-        guard let referencePrint, let current = featurePrint(buffer, box: box, orientation: orientation) else { return nil }
+                        strict: Bool) -> AppearanceResult {
+        guard let referencePrint, let current = featurePrint(buffer, box: box, orientation: orientation)
+            else { return .unavailable }
         var distance: Float = 0
-        guard (try? referencePrint.computeDistance(&distance, to: current)) != nil, distance.isFinite else { return nil }
+        guard (try? referencePrint.computeDistance(&distance, to: current)) != nil, distance.isFinite
+            else { return .unavailable }
         let config = ingressLock.withLock { (lowTexture, scene.isDeformableNature) }
         // Starting thresholds for revision 2, not probabilities or trained claims.
         let maximum: Float = strict ? (config.0 ? 0.32 : 0.42) : (config.1 ? 0.65 : 0.60)
-        guard distance <= maximum else { return nil }
+        guard distance <= maximum else { return .mismatch }
         if strict, orientation == .up, NeuralTargetTracker.shared.hasActiveTrainedModel {
             let p = point(in: box)
             // The optional CNN uses a fixed 0.16 image crop; at the image edge,
             // only the box-based feature print remains available.
             if (0.08...0.92).contains(p.x), (0.08...0.92).contains(p.y),
-               NeuralTargetTracker.shared.verifyTarget(in: buffer, at: p) < 0.75 { return nil }
+               NeuralTargetTracker.shared.verifyTarget(in: buffer, at: p) < 0.75 { return .mismatch }
         }
         if let referenceHistogram, let currentHistogram = histogram(buffer, box: box, orientation: orientation) {
             let similarity = zip(referenceHistogram, currentHistogram).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
-            guard similarity >= (strict ? 0.72 : 0.45) else { return nil }
+            guard similarity >= (strict ? 0.72 : 0.45) else { return .mismatch }
         }
-        return Double(distance)
+        return .match(Double(distance))
     }
 
     private func search(_ buffer: CVPixelBuffer, center: CGPoint,
                         orientation: CGImagePropertyOrientation) -> (CGPoint, Double, CGRect)? {
         let step = max(0.02, min(0.06, min(boxSize.width, boxSize.height) * 0.3))
         var candidates: [(CGPoint, Double, CGRect)] = []
-        for offset in [CGPoint.zero, CGPoint(x: -step, y: 0), CGPoint(x: step, y: 0),
-                       CGPoint(x: 0, y: -step), CGPoint(x: 0, y: step),
-                       CGPoint(x: -step, y: -step), CGPoint(x: step, y: step),
-                       CGPoint(x: -step, y: step), CGPoint(x: step, y: -step)] {
-            let p = CGPoint(x: center.x + offset.x, y: center.y + offset.y)
-            guard let roi = box(at: p, size: boxSize),
-                  let distance = verify(buffer, box: roi, orientation: orientation, strict: true) else { continue }
-            candidates.append((p, distance, roi))
+        var proposals = [center, CGPoint(x: center.x - step, y: center.y),
+                         CGPoint(x: center.x + step, y: center.y),
+                         CGPoint(x: center.x, y: center.y - step),
+                         CGPoint(x: center.x, y: center.y + step),
+                         CGPoint(x: center.x - step, y: center.y - step),
+                         CGPoint(x: center.x + step, y: center.y + step),
+                         CGPoint(x: center.x - step, y: center.y + step),
+                         CGPoint(x: center.x + step, y: center.y - step)]
+        if misses >= 6 {
+            let radius: CGFloat = misses < 20 ? 0.12 : 0.26
+            for index in 0..<8 {
+                let angle = Double(index) * Double.pi / 4
+                proposals.append(CGPoint(x: center.x + radius * CGFloat(cos(angle)),
+                                         y: center.y + radius * CGFloat(sin(angle))))
+            }
+        }
+        if misses >= 20 {
+            // Sweep a 5x5 image grid over successive searches. The fixed
+            // budget avoids blocking 30 Hz tracking with a full-frame scan.
+            for index in 0..<8 {
+                let cell = (searchCursor + index) % 25
+                proposals.append(CGPoint(x: (CGFloat(cell % 5) + 0.5) / 5,
+                                         y: (CGFloat(cell / 5) + 0.5) / 5))
+            }
+            searchCursor = (searchCursor + 8) % 25
+        }
+        var expensiveChecks = 0
+        for (index, p) in proposals.prefix(25).enumerated() {
+            let budget = index < 9 ? (misses >= 20 ? 4 : 6) : (index < 17 ? 8 : 12)
+            guard expensiveChecks < budget else { continue }
+            let scale: CGFloat = index >= 17 ? [0.75, 1.0, 1.35][(searchCursor + index) % 3] : 1
+            let candidateSize = CGSize(width: boxSize.width * scale, height: boxSize.height * scale)
+            guard let roi = box(at: p, size: candidateSize) else { continue }
+            // Cheap color evidence runs before the heavier FeaturePrint.
+            if let referenceHistogram, let current = histogram(buffer, box: roi, orientation: orientation) {
+                let similarity = zip(referenceHistogram, current).reduce(Float(0)) {
+                    $0 + sqrt($1.0 * $1.1)
+                }
+                guard similarity >= 0.62 else { continue }
+            }
+            expensiveChecks += 1
+            if case let .match(distance) = verify(buffer, box: roi, orientation: orientation, strict: true) {
+                candidates.append((p, distance, roi))
+            }
         }
         candidates.sort { $0.1 < $1.1 }
         guard let best = candidates.first else { return nil }
@@ -447,10 +592,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
 
     private func deliver(_ point: CGPoint?, confidence: Double, buffer: CVPixelBuffer,
-                         frame: TrackingFrameContext?, epoch: UInt64) {
+                         frame: TrackingFrameContext?, evidence: TrackingOpticalEvidence?, epoch: UInt64) {
         let schedule = ingressLock.withLock { () -> Bool in
             guard generation == epoch else { return false }
-            pendingTargetDelivery = (point, confidence, buffer, frame, epoch)
+            // The large, verified bearing correction must reach Spatial before
+            // a newer ordinary frame can replace it in the Main coalescer.
+            if pendingTargetDelivery?.4 == .reidentified && evidence != .reidentified { return false }
+            pendingTargetDelivery = (point, confidence, buffer, frame, evidence, epoch)
             guard !targetDeliveryScheduled else { return false }
             targetDeliveryScheduled = true
             return true
@@ -458,12 +606,20 @@ public final class VisionFramingEngine: @unchecked Sendable {
         guard schedule else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let delivery = self.ingressLock.withLock { () -> (CGPoint?, Double, CVPixelBuffer, TrackingFrameContext?, UInt64)? in
+            let delivery = self.ingressLock.withLock { () -> (CGPoint?, Double, CVPixelBuffer,
+                TrackingFrameContext?, TrackingOpticalEvidence?, UInt64)? in
                 let delivery = self.pendingTargetDelivery
                 self.pendingTargetDelivery = nil; self.targetDeliveryScheduled = false
                 return delivery
             }
-            guard let (point, confidence, buffer, frame, epoch) = delivery, self.isCurrent(epoch) else { return }
+            guard let (point, confidence, buffer, frame, evidence, epoch) = delivery,
+                  self.isCurrent(epoch) else { return }
+            if let measured = self.onTargetMeasurement {
+                if let point, let frame, let evidence {
+                    measured(TrackingOpticalMeasurement(point: point, confidence: confidence,
+                        pixelBuffer: buffer, frame: frame, evidence: evidence))
+                }
+            }
             if let timed = self.onTargetTrackedWithTimestamp {
                 if let frame { timed(point, confidence, buffer, frame) }
             } else { self.onTargetTracked?(point, confidence, buffer) }

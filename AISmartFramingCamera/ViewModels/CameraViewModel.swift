@@ -67,17 +67,19 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         // lập tức thoát ngay mà không chạy bất kỳ tác vụ AI Vision, YOLO, Optical Flow, Histogram hay Peaking nào!
         guard !snapshot.isHibernating else { return }
 
+        let frame = TrackingFrameContext.read(sampleBuffer,
+            zoom: SpatialTrackingEngine.shared.currentDisplayZoom)
+
         // CameraService invokes this method on its serial videoDataQueue. Processing
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
         // another concurrency boundary.
-        VisionFramingEngine.shared.processVideoSampleBuffer(sampleBuffer, orientation: .up)
+        VisionFramingEngine.shared.processVideoSampleBuffer(sampleBuffer, orientation: .up, frameContext: frame)
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         stateLock.lock()
         latestPixelBuffer = pixelBuffer
-        latestFrameContext = TrackingFrameContext.read(sampleBuffer,
-            zoom: SpatialTrackingEngine.shared.currentDisplayZoom)
+        latestFrameContext = frame
         stateLock.unlock()
 
         guard !snapshot.isSettingsVisible else { return }
@@ -453,6 +455,21 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     @Published public var isShowingFilmDrawer: Bool = false
+
+    // MARK: - Windowed Zoom State (Optical Rangefinder Framing)
+    @Published public var isWindowedZoomActive: Bool = false {
+        didSet {
+            if isWindowedZoomActive {
+                if aiSessionState.isSessionActive {
+                    cancelAISession()
+                }
+            }
+        }
+    }
+    @Published public var windowedZoomFocalLength: Double = 35.0
+    @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
+    @Published public var isAIWindowedFocalRecommended: Bool = false
+
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
     @Published public var activeFlashMode2: Bool = false
@@ -814,10 +831,9 @@ public final class CameraViewModel: ObservableObject {
             self.handleVisionDetection(detection)
         }
 
-        visionEngine.onTargetTrackedWithTimestamp = { [weak self] trackedPoint, confidence, pixelBuffer, frame in
+        visionEngine.onTargetMeasurement = { [weak self] measurement in
             guard let self = self, !self.isShowingSettings else { return }
-            self.handleVisualTargetTracked(point: trackedPoint, confidence: confidence,
-                                           pixelBuffer: pixelBuffer, frame: frame)
+            self.handleVisualTargetTracked(measurement)
         }
 
         // Smart Autofocus (Face Priority > Saliency > Center)
@@ -1027,6 +1043,48 @@ public final class CameraViewModel: ObservableObject {
         currentTargetPoint = nil
         isPerfectAlignment = false
         aiSessionState = .idle
+    }
+
+    // MARK: - AI Windowed Focal Length Auto-Framing
+    public func applyAIWindowedFocalLengthRecommendation() {
+        let targetMm: Double
+
+        if let face = detectedFaceRects.first {
+            // Có khuôn mặt trong khung hình -> Đánh giá kích thước/khoảng cách
+            let faceHeight = face.height
+            if faceHeight < 0.20 {
+                // Mặt nhỏ, chủ thể ở xa -> Tiêu cự chân dung nén viền 85mm
+                targetMm = 85.0
+            } else if faceHeight < 0.35 {
+                // Mặt cỡ vừa -> Tiêu cự mắt người chuẩn 50mm
+                targetMm = 50.0
+            } else {
+                // Cận cảnh lớn -> Tiêu cự đời thường 35mm
+                targetMm = 35.0
+            }
+        } else {
+            switch detectedScene {
+            case .portrait:
+                targetMm = 85.0
+            case .macro, .food:
+                targetMm = 50.0
+            case .street, .pet:
+                targetMm = 50.0
+            case .landscape, .sunset, .architecture, .sky, .water, .foliage:
+                targetMm = 28.0
+            case .night:
+                targetMm = 35.0
+            case .general:
+                targetMm = 35.0
+            }
+        }
+
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.74)) {
+            self.windowedZoomFocalLength = targetMm
+            self.isAIWindowedFocalRecommended = true
+        }
+        self.haptics.triggerSuccess()
+        CameraLogger.info("AI Windowed Zoom đề xuất tiêu cự: \(Int(targetMm))mm cho bối cảnh \(self.detectedScene.rawValue)", category: .ai)
     }
 
     // MARK: - Vision & Gemini One-Shot Handling
@@ -1329,7 +1387,7 @@ public final class CameraViewModel: ObservableObject {
 
         initialTargetPoint = pinPoint
         currentTargetPoint = pinPoint
-        trackingQuality = .locked
+        trackingQuality = .reacquiring
         // A new user pin keeps the current lens framing instead of restarting
         // the previous AI suggestion's zoom sequence.
         hasExecutedAutoZoomForSession = isManualRePin
@@ -1388,7 +1446,8 @@ public final class CameraViewModel: ObservableObject {
             at: target,
             size: initialSize,
             refiningBuffer: selectedFrame?.0,
-            orientation: .up
+            orientation: .up,
+            frameContext: selectedFrame?.1
         )
 
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
@@ -1414,8 +1473,7 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - 1. Optical Visual Object Tracking Handler (Bám chặt 100% vào vật thể/chữ thực tế trên màn hình)
 
-    private func handleVisualTargetTracked(point: CGPoint?, confidence: Double,
-                                            pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext) {
+    private func handleVisualTargetTracked(_ measurement: TrackingOpticalMeasurement) {
         // Tiếp nhận cập nhật cả trong alignmentPerfect (zoom reveal) để vòng vàng bám vật thể
         // xuyên suốt quá trình zoom — tránh nhảy vị trí khi zoom hoàn tất
         switch aiSessionState {
@@ -1427,12 +1485,17 @@ public final class CameraViewModel: ObservableObject {
         if shouldCheckTextureOnNextFrame, let target = currentTargetPoint ?? initialTargetPoint {
             shouldCheckTextureOnNextFrame = false
             let region = CGRect(x: max(0, target.x - 0.08), y: max(0, target.y - 0.08), width: 0.16, height: 0.16)
-            let variance = computeTextureVariance(pixelBuffer: pixelBuffer, normalizedRect: region)
+            let variance = computeTextureVariance(pixelBuffer: measurement.pixelBuffer, normalizedRect: region)
             applyTextureVarianceHysteresis(variance: variance)
         }
 
         // Truyền trực tiếp tọa độ quang học thực tế của vật thể vào Động cơ Tracking Không Gian
-        SpatialTrackingEngine.shared.updateWithOpticalDetection(point: point, confidence: confidence, frame: frame)
+        SpatialTrackingEngine.shared.updateWithOpticalDetection(
+            point: measurement.point,
+            confidence: measurement.confidence,
+            frame: measurement.frame,
+            evidence: measurement.evidence
+        )
     }
 
     private func evaluateAlignment(at point: CGPoint) {
@@ -1451,8 +1514,8 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        // Khớp hoàn hảo khi tâm trắng nằm trong vòng dung sai và mục tiêu chưa bị mất hẳn
-        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality != .lost
+        // Khớp hoàn hảo khi tâm trắng nằm trong vòng dung sai và mục tiêu được khóa quang học xác minh
+        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality == .locked
 
         // Kích hoạt khi tâm trắng đè khớp lên vùng target vàng!
         if isPerfect && !isPerfectAlignment {
@@ -2388,30 +2451,50 @@ extension CameraViewModel: CameraServiceDelegate {
         let sessionState = self.aiSessionState
         let score: Double = (sessionState == .alignmentPerfect || sessionState == .capturing) ? 1.0 : (framingResult?.alignmentScore ?? 0.8)
         let isFilmActive = self.isFilmSimulationActive
+        let isWindowed = self.isWindowedZoomActive
+        let windowFocal = self.windowedZoomFocalLength
+        let windowAspect = self.windowedZoomAspectRatio
 
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
 
-            var processedImageResult: CGImage = photo
+            // Nếu đang bật Windowed Zoom -> Cắt ảnh gốc 48MP chính xác theo tỉ lệ và kích thước khung ngắm
+            let effectiveSourcePhoto: CGImage
+            if isWindowed {
+                let fractions = windowAspect.windowFractions(focalLength: windowFocal)
+                let origW = CGFloat(photo.width)
+                let origH = CGFloat(photo.height)
+                let cropW = round(origW * fractions.widthFraction)
+                let cropH = round(origH * fractions.heightFraction)
+                let cropX = round((origW - cropW) / 2.0)
+                let cropY = round((origH - cropH) / 2.0)
+                let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
+                effectiveSourcePhoto = photo.cropping(to: cropRect) ?? photo
+                CameraLogger.info("Windowed Zoom Crop: \(photo.width)x\(photo.height) -> \(effectiveSourcePhoto.width)x\(effectiveSourcePhoto.height) (\(Int(windowFocal))mm, \(windowAspect.rawValue))", category: .capture)
+            } else {
+                effectiveSourcePhoto = photo
+            }
+
+            var processedImageResult: CGImage = effectiveSourcePhoto
             autoreleasepool {
                 if !isFilmActive || effectivePreset == .standard {
                     // Chế độ GỐC (TẮT màu) -> Giữ nguyên 100% cảm biến gốc iPhone, không qua CoreImage
-                    processedImageResult = photo
+                    processedImageResult = effectiveSourcePhoto
                 } else if effectivePreset != .standard && !effectivePreset.isAIFullAuto {
                     // Ưu tiên 100% chất màu chuẩn mực của dòng máy vintage người dùng đã chọn
-                    processedImageResult = FilmFilterEngine.shared.applyPreset(to: photo, preset: effectivePreset) ?? photo
+                    processedImageResult = FilmFilterEngine.shared.applyPreset(to: effectiveSourcePhoto, preset: effectivePreset) ?? effectiveSourcePhoto
                 } else if let params = finalColorParams {
-                    processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(to: photo, preset: effectivePreset, params: params) ?? photo
+                    processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(to: effectiveSourcePhoto, preset: effectivePreset, params: params) ?? effectiveSourcePhoto
                 } else {
-                    processedImageResult = FilmFilterEngine.shared.applyPreset(to: photo, preset: effectivePreset) ?? photo
+                    processedImageResult = FilmFilterEngine.shared.applyPreset(to: effectiveSourcePhoto, preset: effectivePreset) ?? effectiveSourcePhoto
                 }
             }
 
             let item = CapturedPhotoItem(
-                originalImage: photo,
+                originalImage: effectiveSourcePhoto,
                 processedImage: processedImageResult,
-                rawPhotoData: rawData,
+                rawPhotoData: isWindowed ? nil : rawData,
                 livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
                 appliedPreset: isFilmActive ? effectivePreset : .standard,

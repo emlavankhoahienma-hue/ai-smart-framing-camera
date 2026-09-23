@@ -79,12 +79,11 @@ public struct ARFramingOverlayView: View {
                     .transaction { $0.animation = nil }
 
                     if isDocked {
-                        let angle = atan2(projectedScreen.y - screenCenter.y,
-                                          projectedScreen.x - screenCenter.x)
                         Image(systemName: "arrow.up")
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(.yellow)
-                            .rotationEffect(.radians(Double(angle) + Double.pi / 2.0))
+                            .rotationEffect(.radians(atan2(projectedScreen.y - screenCenter.y,
+                                                         projectedScreen.x - screenCenter.x) + .pi / 2))
                             .position(targetScreen)
                             .accessibilityLabel("Quay camera theo hướng mũi tên để tìm lại mục tiêu")
                             .allowsHitTesting(false)
@@ -447,7 +446,7 @@ struct TargetCircleView: View {
             .scaleEffect(isAligned ? 1.15 : 1.0)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
 
-            if trackingQuality == .reacquiring && !isAligned {
+            if trackingQuality == .reacquiring {
                 Text("Đang tìm lại mục tiêu…")
                     .font(.system(size: 9, weight: .bold, design: .rounded))
                     .foregroundColor(.orange)

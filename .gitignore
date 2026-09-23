@@ -25,3 +25,5 @@ Payload/
 # OS
 .DS_Store
 Thumbs.db
+# Test outputs
+patch_flow_reference_results.json

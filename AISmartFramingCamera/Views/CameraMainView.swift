@@ -41,6 +41,14 @@ public struct CameraMainView: View {
 
                         ARFramingOverlayView(viewModel: viewModel)
 
+                        // Khung ngắm thu nhỏ quang học Rangefinder (Windowed Zoom)
+                        if viewModel.isWindowedZoomActive {
+                            GeometryReader { proxy in
+                                WindowedZoomOverlayView(viewModel: viewModel, containerSize: proxy.size)
+                            }
+                            .transition(.opacity.animation(.easeInOut(duration: 0.25)))
+                        }
+
                         // Màn hình chờ thương hiệu khi camera ngủ đông (tiết kiệm CPU/GPU/RAM)
                         if viewModel.isCameraHibernating {
                             CameraHibernationStandbyView()
@@ -74,8 +82,12 @@ public struct CameraMainView: View {
 
                             Spacer(minLength: 8)
 
-                            // Center: Optical Zoom Selector Pill (0,5x / 2)
-                            ViewfinderZoomSelectorPill(viewModel: viewModel)
+                            // Center: Optical Zoom Selector Pill or Windowed Focal Length Pill
+                            if viewModel.isWindowedZoomActive {
+                                WindowedFocalLengthSelectorPill(viewModel: viewModel)
+                            } else {
+                                ViewfinderZoomSelectorPill(viewModel: viewModel)
+                            }
 
                             Spacer(minLength: 8)
 
@@ -213,23 +225,23 @@ struct TopCameraBar: View {
                 )
                 .accessibilityLabel("Chế độ đèn flash")
 
-                // 2. Film Filter Drawer Button (Moved from standalone diamond button)
+                // 2. Windowed Zoom Mode Toggle Button (Icon 4 cạnh reticle / viewfinder)
                 Button(action: {
                     let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.prepare()
                     generator.impactOccurred()
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
-                        viewModel.isShowingFilmDrawer.toggle()
+                        viewModel.isWindowedZoomActive.toggle()
                     }
                 }) {
-                    Image(systemName: "camera.filters")
+                    Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
                         .font(.system(size: 15, weight: .semibold))
                         .frame(width: 40, height: 40)
                 }
                 .luxuryGoldInteractive(
-                    baseColor: viewModel.isShowingFilmDrawer ? amberGold : Color.white.opacity(0.72)
+                    baseColor: viewModel.isWindowedZoomActive ? amberGold : Color.white.opacity(0.72)
                 )
-                .accessibilityLabel("Mở bộ màu film điện ảnh")
+                .accessibilityLabel("Chế độ khung ngắm thu nhỏ Windowed Zoom")
 
                 // 3. Settings Sheet Button (9-Dot Grid Icon matching Reference)
                 Button(action: {
@@ -280,10 +292,14 @@ struct AIViewfinderButton: View {
             haptic.prepare()
             haptic.impactOccurred()
 
-            if viewModel.aiSessionState.isSessionActive {
-                viewModel.cancelAISession()
+            if viewModel.isWindowedZoomActive {
+                viewModel.applyAIWindowedFocalLengthRecommendation()
             } else {
-                viewModel.startAISession()
+                if viewModel.aiSessionState.isSessionActive {
+                    viewModel.cancelAISession()
+                } else {
+                    viewModel.startAISession()
+                }
             }
         }) {
             ZStack {
@@ -311,6 +327,9 @@ struct AIViewfinderButton: View {
     }
 
     private var isPulsing: Bool {
+        if viewModel.isWindowedZoomActive {
+            return viewModel.isAIWindowedFocalRecommended
+        }
         switch viewModel.aiSessionState {
         case .analyzing, .targetPlaced, .alignmentPerfect:
             return true

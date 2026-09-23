@@ -68,9 +68,13 @@ public struct TrackingFrameContext: Sendable {
     /// Capture PTS expressed in the host clock, never Vision completion time.
     public let timestamp: TimeInterval
     public let calibration: TrackingCalibration
+    public let orientation: CGImagePropertyOrientation
+    public let imageSize: CGSize
 
-    public init(timestamp: TimeInterval, calibration: TrackingCalibration) {
+    public init(timestamp: TimeInterval, calibration: TrackingCalibration,
+                orientation: CGImagePropertyOrientation = .up, imageSize: CGSize = .zero) {
         self.timestamp = timestamp; self.calibration = calibration
+        self.orientation = orientation; self.imageSize = imageSize
     }
 
     static func read(_ sample: CMSampleBuffer, zoom: Double) -> Self? {
@@ -98,7 +102,8 @@ public struct TrackingFrameContext: Sendable {
                 k = measured
             }
         }
-        return Self(timestamp: timestamp, calibration: k)
+        return Self(timestamp: timestamp, calibration: k, orientation: .up,
+                    imageSize: CGSize(width: width, height: height))
     }
 }
 
