@@ -477,31 +477,19 @@ public final class CameraViewModel: ObservableObject {
                     cancelAISession()
                 }
                 zoomBeforeWindowed = displayZoom
-                applyWindowedHardwareZoom(force: true)
+                cameraService.smoothDisplayZoomFactor(to: 1.0, rate: 2.0)
             } else {
-                cameraService.smoothDisplayZoomFactor(to: zoomBeforeWindowed, rate: 2)
+                cameraService.smoothDisplayZoomFactor(to: zoomBeforeWindowed, rate: 2.0)
             }
         }
     }
-    @Published public var windowedZoomFocalLength: Double = 35.0 {
-        didSet { if isWindowedZoomActive { applyWindowedHardwareZoom(force: false) } }
-    }
+    @Published public var windowedZoomFocalLength: Double = 35.0
     @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
     @Published public var isAIWindowedFocalRecommended: Bool = false
     private var zoomBeforeWindowed: CGFloat = 1
-    private var lastWindowedZoomCommandTime: CFTimeInterval = 0
-
-    private func applyWindowedHardwareZoom(force: Bool) {
-        let now = CACurrentMediaTime()
-        guard force || now - lastWindowedZoomCommandTime >= 0.06 else { return }
-        lastWindowedZoomCommandTime = now
-        let desired = CGFloat(windowedZoomFocalLength / 26.0)
-        cameraService.setDisplayZoomFactor(cameraService.preferredOpticalDisplayZoom(for: desired))
-    }
 
     public func finishWindowedFocalGesture() {
         guard isWindowedZoomActive else { return }
-        applyWindowedHardwareZoom(force: true)
     }
 
     @Published public var showAlignmentSuccessFlash: Bool = false
@@ -1343,12 +1331,6 @@ public final class CameraViewModel: ObservableObject {
             if let gazeFrame = analysisFrames.first(where: { abs($0.lookingDirection.dx) > 0.05 }) {
                 avgDetection.lookingDirection = gazeFrame.lookingDirection
             }
-        }
-
-        guard avgDetection.dominantSubjectRect != nil || !avgDetection.faceRectangles.isEmpty else {
-            aiSessionState = .idle
-            geminiError = "Chưa nhận diện được chủ thể rõ ràng. Hãy đưa vật thể vào khung hình rồi thử lại."
-            return
         }
 
         let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: displayZoom)
@@ -2591,25 +2573,26 @@ extension CameraViewModel: CameraServiceDelegate {
         let score: Double = (sessionState == .alignmentPerfect || sessionState == .capturing) ? 1.0 : (framingResult?.alignmentScore ?? 0.8)
         let isFilmActive = self.isFilmSimulationActive
         let isWindowed = self.isWindowedZoomActive
+        let windowFocal = self.windowedZoomFocalLength
         let windowAspect = self.windowedZoomAspectRatio
 
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         photoRenderQueue.async { [weak self] in
             guard let self = self else { return }
 
-            // The lens already supplies the requested magnification. Only an
-            // optional square aspect crop remains; focal-length cropping here
-            // would apply digital zoom a second time.
+            // Nếu đang bật Windowed Zoom -> Cắt ảnh gốc chính xác theo tỉ lệ và kích thước khung ngắm
             let effectiveSourcePhoto: CGImage
-            if isWindowed && windowAspect == .ratio1_1 {
+            if isWindowed {
+                let fractions = windowAspect.windowFractions(focalLength: windowFocal)
                 let origW = CGFloat(photo.width)
                 let origH = CGFloat(photo.height)
-                let cropW = min(origW, origH)
-                let cropH = cropW
+                let cropW = round(origW * fractions.widthFraction)
+                let cropH = round(origH * fractions.heightFraction)
                 let cropX = round((origW - cropW) / 2.0)
                 let cropY = round((origH - cropH) / 2.0)
                 let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
                 effectiveSourcePhoto = photo.cropping(to: cropRect) ?? photo
+                CameraLogger.info("Windowed Zoom Crop: \(photo.width)x\(photo.height) -> \(effectiveSourcePhoto.width)x\(effectiveSourcePhoto.height) (\(Int(windowFocal))mm, \(windowAspect.rawValue))", category: .capture)
             } else {
                 effectiveSourcePhoto = photo
             }
@@ -2632,8 +2615,8 @@ extension CameraViewModel: CameraServiceDelegate {
             let item = CapturedPhotoItem(
                 originalImage: effectiveSourcePhoto,
                 processedImage: processedImageResult,
-                rawPhotoData: rawData,
-                isAspectCropped: isWindowed && windowAspect == .ratio1_1,
+                rawPhotoData: isWindowed ? nil : rawData,
+                isAspectCropped: isWindowed,
                 livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
                 appliedPreset: isFilmActive ? effectivePreset : .standard,

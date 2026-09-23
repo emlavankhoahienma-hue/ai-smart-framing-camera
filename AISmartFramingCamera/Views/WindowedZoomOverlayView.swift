@@ -58,6 +58,16 @@ public struct WindowedZoomOverlayView: View {
         }
         .frame(width: containerSize.width, height: containerSize.height)
         .contentShape(Rectangle())
+        .onTapGesture { location in
+            let normX = max(0.05, min(0.95, location.x / containerSize.width))
+            let normY = max(0.05, min(0.95, location.y / containerSize.height))
+            let normPoint = CGPoint(x: normX, y: normY)
+            if viewModel.isAEAFLocked {
+                viewModel.unlockAEAF()
+            } else {
+                viewModel.userDidTapToFocus(at: normPoint)
+            }
+        }
         .gesture(
             MagnificationGesture()
                 .onChanged { value in

@@ -204,7 +204,7 @@ public struct ARFramingOverlayView: View {
                 let norm = convertScreenPointToBuffer(location, in: size)
                 if viewModel.isAEAFLocked {
                     viewModel.unlockAEAF()
-                } else if case .targetPlaced = viewModel.aiSessionState {
+                } else if viewModel.aiSessionState.isSessionActive {
                     viewModel.pinTargetAndStartMotion(at: norm)
                 } else {
                     viewModel.userDidTapToFocus(at: norm)

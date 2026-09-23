@@ -1361,17 +1361,21 @@ public enum WindowedZoomAspectRatio: String, CaseIterable, Identifiable, Sendabl
 
     /// Tính toán tỉ lệ kích thước khung ngắm (fraction từ 0.0 đến 1.0 so với toàn cảnh 3:4)
     public func windowFractions(focalLength: Double) -> (widthFraction: CGFloat, heightFraction: CGFloat) {
-        // Magnification is supplied by the capture lens. The mask is framing,
-        // not another digital zoom operation.
+        let focal = max(24.0, min(135.0, focalLength))
+        let scale = 24.0 / focal // Tại 24mm: scale = 1.0; tại 35mm: scale ≈ 0.686; tại 50mm: scale = 0.48; tại 85mm: scale ≈ 0.282
+
+        // Khung ngắm rangefinder tối đa chiếm 92% chiều rộng/cao để luôn chừa viền context
         let maxScale: CGFloat = 0.92
 
         switch self {
         case .ratio3_4:
-            return (maxScale, maxScale)
+            let effectiveScale = min(maxScale, CGFloat(scale))
+            return (effectiveScale, effectiveScale)
         case .ratio1_1:
             // Khung vuông: w = container.width * effectiveScale, h = w
             // Vì container là 3:4 (hContainer = wContainer * 4/3), nên hFraction = effectiveScale * (3.0 / 4.0)
-            return (maxScale, maxScale * (3.0 / 4.0))
+            let effectiveScale = min(maxScale, CGFloat(scale))
+            return (effectiveScale, effectiveScale * (3.0 / 4.0))
         }
     }
 }

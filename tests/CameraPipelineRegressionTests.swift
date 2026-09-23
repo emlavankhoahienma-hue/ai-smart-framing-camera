@@ -26,10 +26,10 @@ final class CameraPipelineRegressionTests: XCTestCase {
             subjectRect: subject, currentZoom: 1, category: .foregroundObject), 3)
     }
 
-    func testWindowedFocalLengthDoesNotApplyASecondCrop() {
-        let wide = WindowedZoomAspectRatio.ratio3_4.windowFractions(focalLength: 24)
+    func testWindowedFocalLengthScalesWindowDynamically() {
+        let wide = WindowedZoomAspectRatio.ratio3_4.windowFractions(focalLength: 28)
         let tele = WindowedZoomAspectRatio.ratio3_4.windowFractions(focalLength: 85)
-        XCTAssertEqual(wide.widthFraction, tele.widthFraction)
-        XCTAssertEqual(wide.heightFraction, tele.heightFraction)
+        XCTAssertGreaterThan(wide.widthFraction, tele.widthFraction)
+        XCTAssertGreaterThan(wide.heightFraction, tele.heightFraction)
     }
 }
