@@ -216,9 +216,19 @@ class GeometryTests(unittest.TestCase):
         self.assertIn('!captureSession.isRunning && connection.isCameraIntrinsicMatrixDeliverySupported', camera)
         self.assertEqual(camera.count('self.configureTrackingConnection(connection)'), 2)
         self.assertNotIn('IPHONEOS_DEPLOYMENT_TARGET = 16.0', project)
-        for name in ['TrackingGeometry.swift', 'NeuralTargetTracker.swift', 'TargetPatchFlow.swift']:
+        for name in ['TrackingGeometry.swift', 'NeuralTargetTracker.swift', 'TargetPatchFlow.swift', 'WindowedZoomOverlayView.swift']:
             self.assertIn(f'/* {name} in Sources */ =', project)
             self.assertIn(f'path = {name};', project)
+            # Ensure fileRef in Sources matches the exact fileRef in PBXFileReference and PBXGroup
+            import re
+            build_match = re.search(r'fileRef = ([A-F0-9]+) /\* ' + re.escape(name), project)
+            file_match = re.search(r'([A-F0-9]+) /\* ' + re.escape(name) + r' \*/ = \{isa = PBXFileReference', project)
+            group_match = re.search(r'([A-F0-9]+) /\* ' + re.escape(name) + r' \*/,', project)
+            self.assertIsNotNone(build_match, f'Missing build fileRef for {name}')
+            self.assertIsNotNone(file_match, f'Missing fileRef definition for {name}')
+            self.assertIsNotNone(group_match, f'Missing group entry for {name}')
+            self.assertEqual(build_match.group(1), file_match.group(1), f'ID mismatch between build and file for {name}')
+            self.assertEqual(file_match.group(1), group_match.group(1), f'ID mismatch between file and group for {name}')
 
     def test_reidentification_can_correct_a_large_world_bearing_error(self):
         root = Path(__file__).resolve().parents[1] / 'AISmartFramingCamera'
