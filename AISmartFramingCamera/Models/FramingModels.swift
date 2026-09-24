@@ -189,6 +189,7 @@ public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
 public enum AIEngineSource: Equatable {
     case geminiCloud(model: String)
     case localTrained114MB(category: String)
+    case semanticLocal(label: String)
     case yoloNeural(label: String)
     case appleNeuralEngine(scene: String)
 
@@ -202,6 +203,8 @@ public enum AIEngineSource: Equatable {
             return "✨ OpenRouter: \(clean)"
         case .localTrained114MB(let cat):
             return "🧠 AI Local 114MB (\(cat))"
+        case .semanticLocal(let label):
+            return "🧠 SigLIP + Vision/YOLO (\(label))"
         case .yoloNeural(let label):
             return "⚡ YOLOv11 Neural (\(label))"
         case .appleNeuralEngine(let scene):
@@ -220,6 +223,8 @@ public enum AIEngineSource: Equatable {
             return "OPENROUTER (\(clean))"
         case .localTrained114MB:
             return "AI 114MB"
+        case .semanticLocal:
+            return "SIGLIP"
         case .yoloNeural(let label):
             return "YOLO (\(label.uppercased()))"
         case .appleNeuralEngine:
@@ -231,6 +236,7 @@ public enum AIEngineSource: Equatable {
         switch self {
         case .geminiCloud: return "sparkles"
         case .localTrained114MB: return "brain.head.profile"
+        case .semanticLocal: return "brain.head.profile"
         case .yoloNeural: return "bolt.shield.fill"
         case .appleNeuralEngine: return "cpu.fill"
         }
@@ -240,6 +246,7 @@ public enum AIEngineSource: Equatable {
         switch self {
         case .geminiCloud: return .cyan
         case .localTrained114MB: return .yellow
+        case .semanticLocal: return .yellow
         case .yoloNeural: return .orange
         case .appleNeuralEngine: return .green
         }

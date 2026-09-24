@@ -65,10 +65,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         guard let vnModel = self.yoloCoreMLModel else { return [] }
         
         var detectedCandidates: [NeuralSubjectCandidate] = []
-        let semaphore = DispatchSemaphore(value: 0)
-        
         let request = VNCoreMLRequest(model: vnModel) { [weak self] req, error in
-            defer { semaphore.signal() }
             guard let self = self, error == nil else { return }
             
             if let results = req.results as? [VNRecognizedObjectObservation] {
@@ -105,7 +102,6 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
             try handler.perform([request])
-            _ = semaphore.wait(timeout: .now() + 0.05) // Tối đa 50ms
         } catch {
             CameraLogger.error("Lỗi thực thi YOLO Request", error: error, category: .ai)
         }
@@ -186,12 +182,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         if area < 0.02 {
             areaScore = area / 0.02 * 0.5
         } else if area > 0.55 {
-            // Giảm mạnh điểm diện tích với các vùng quá lớn (tường/hậu cảnh tối)
-            if area >= 0.85 {
-                areaScore = 0.02
-            } else {
-                areaScore = max(0.05, 0.40 * (1.0 - (area - 0.55) / 0.30))
-            }
+            areaScore = max(0.45, 1.0 - (area - 0.55) * 1.1)
         } else {
             areaScore = 1.0 - abs(area - 0.25) * 1.2
         }

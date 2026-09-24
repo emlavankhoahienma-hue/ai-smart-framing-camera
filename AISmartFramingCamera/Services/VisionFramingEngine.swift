@@ -62,6 +62,7 @@ struct TrackingOpticalMeasurement {
     let pixelBuffer: CVPixelBuffer
     let frame: TrackingFrameContext
     let evidence: TrackingOpticalEvidence
+    let subjectBox: CGRect?
 }
 
 private enum AppearanceResult {
@@ -97,7 +98,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var captureCallback: ((CGImage) -> Void)?
     private var captureSourceCallback: ((CGImage, CVPixelBuffer?, TrackingFrameContext?) -> Void)?
     private var targetDeliveryScheduled = false
-    private var pendingTargetDelivery: (CGPoint?, Double, CVPixelBuffer, TrackingFrameContext?, TrackingOpticalEvidence?, UInt64)?
+    private var pendingTargetDelivery: (CGPoint?, Double, CVPixelBuffer, TrackingFrameContext?, TrackingOpticalEvidence?, CGRect?, UInt64)?
     private var detectionDeliveryScheduled = false
     private var pendingDetectionDelivery: (SubjectDetectionResult, CVPixelBuffer, TrackingFrameContext?, CGPoint, SmartFocusType, UInt64)?
 
@@ -305,7 +306,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
         if let frame { spatial.registerFrame(frame) }
         let now = CACurrentMediaTime()
         let admission = ingressLock.withLock { () -> (UInt64, Bool, Bool)? in
-            guard !busy, now - lastAdmission >= (idle && !active ? 0.2 : 1 / 32.0) else { return nil }
+            // Full scene analysis runs once on the detached AI capture. Preview
+            // needs only a lightweight face pass; tracking retains its own FPS.
+            guard !busy, now - lastAdmission >= (active ? 1 / 32.0 : 0.2) else { return nil }
             busy = true; lastAdmission = now
             let capture = captureNext; captureNext = false
             return (generation, active, capture)
@@ -380,11 +383,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     let measuredPoint = (flow?.isReliable == true ? flow?.point : nil) ?? rawPoint
                     let residual = prediction.map { hypot($0.point.x - measuredPoint.x,
                                                            $0.point.y - measuredPoint.y) } ?? 0
-                    // A healthy VN sequence and patch flow do not need a neural
-                    // fingerprint every few frames. Recheck sooner after misses.
-                    let appearanceInterval = misses > 0 ? 0.5 : 1.5
+                    // Run the expensive fingerprint only when continuity looks
+                    // doubtful. A healthy Vision sequence should not hitch the
+                    // viewfinder with a recurring neural request.
                     let needsIdentity = referencePrint != nil &&
-                        frame.timestamp - lastAppearanceCheck >= appearanceInterval
+                        (misses > 0 || residual > 0.18) &&
+                        frame.timestamp - lastAppearanceCheck >= 0.75
                     let appearance: AppearanceResult
                     if needsIdentity {
                         lastAppearanceCheck = frame.timestamp
@@ -707,7 +711,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
             if pendingTargetDelivery?.4 == .reidentified && evidence != .reidentified { return false }
             if pendingTargetDelivery?.4 == .confirmedContinuation &&
                 evidence != .confirmedContinuation && evidence != .reidentified { return false }
-            pendingTargetDelivery = (point, confidence, buffer, frame, evidence, epoch)
+            let box = lastBox.map {
+                CGRect(x: $0.minX, y: 1 - $0.maxY,
+                       width: $0.width, height: $0.height)
+            }
+            pendingTargetDelivery = (point, confidence, buffer, frame, evidence, box, epoch)
             guard !targetDeliveryScheduled else { return false }
             targetDeliveryScheduled = true
             return true
@@ -716,17 +724,18 @@ public final class VisionFramingEngine: @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let delivery = self.ingressLock.withLock { () -> (CGPoint?, Double, CVPixelBuffer,
-                TrackingFrameContext?, TrackingOpticalEvidence?, UInt64)? in
+                TrackingFrameContext?, TrackingOpticalEvidence?, CGRect?, UInt64)? in
                 let delivery = self.pendingTargetDelivery
                 self.pendingTargetDelivery = nil; self.targetDeliveryScheduled = false
                 return delivery
             }
-            guard let (point, confidence, buffer, frame, evidence, epoch) = delivery,
+            guard let (point, confidence, buffer, frame, evidence, box, epoch) = delivery,
                   self.isCurrent(epoch) else { return }
             if let measured = self.onTargetMeasurement {
                 if let point, let frame, let evidence {
                     measured(TrackingOpticalMeasurement(point: point, confidence: confidence,
-                        pixelBuffer: buffer, frame: frame, evidence: evidence))
+                        pixelBuffer: buffer, frame: frame, evidence: evidence,
+                        subjectBox: box))
                 }
             }
             if let timed = self.onTargetTrackedWithTimestamp {
@@ -737,21 +746,21 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     private func detect(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                         frame: TrackingFrameContext?, epoch: UInt64) {
-        let output = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(pixelBuffer: buffer, orientation: orientation)
         var result = SubjectDetectionResult()
-        result.detectedScene = output.detectedScene
-        result.faceRectangles = output.allFaceRects
-        result.primaryEyePosition = output.primaryEyePosition
-        result.lookingDirection = output.lookingDirection
-        if let primary = output.primaryCandidate {
-            result.dominantSubjectRect = output.allFaceRects.count > 1 ? (output.groupBoundingBox ?? primary.boundingBox) : primary.boundingBox
-            result.confidence = primary.confidence
+        let faceRequest = VNDetectFaceRectanglesRequest()
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+        if (try? handler.perform([faceRequest])) != nil {
+            result.faceRectangles = (faceRequest.results ?? []).filter { $0.confidence >= 0.45 }.map {
+                CGRect(x: $0.boundingBox.minX, y: 1 - $0.boundingBox.maxY,
+                       width: $0.boundingBox.width, height: $0.boundingBox.height)
+            }
+            result.dominantSubjectRect = result.faceRectangles.first
+            result.confidence = faceRequest.results?.first?.confidence ?? 0
         }
         let focus: CGPoint
         let type: SmartFocusType
-        if let eye = output.primaryEyePosition { focus = eye; type = .face }
-        else if let primary = output.primaryCandidate {
-            focus = primary.center; type = primary.category == .face ? .face : .salientObject
+        if let face = result.faceRectangles.first {
+            focus = CGPoint(x: face.midX, y: face.midY); type = .face
         } else { focus = CGPoint(x: 0.5, y: 0.5); type = .center }
         let luma = luminance(buffer)
         result.averageLuminance = luma.0; result.estimatedColorTemp = luma.1

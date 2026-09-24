@@ -29,6 +29,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var watchdog: DispatchSourceTimer?
     private var history: [TrackingMotionSample] = []
     private var worldRay: SIMD3<Double>?
+    private var subjectWorldRay: SIMD3<Double>?
+    private var guideFromSubject: simd_quatd?
     private var pendingPin: (CGPoint, TimeInterval, TrackingCalibration)?
     private var calibration = TrackingCalibration.fallback()
     private var lastFrameTime = -Double.infinity
@@ -107,7 +109,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
 
     public func lockAnchor(at screenPoint: CGPoint, zoom: CGFloat, timestamp: TimeInterval,
                            calibration pinCalibration: TrackingCalibration? = nil,
-                           pinnedWorldRay: SIMD3<Double>? = nil) {
+                           pinnedWorldRay: SIMD3<Double>? = nil,
+                           trackedSubjectRay: SIMD3<Double>? = nil) {
         guard screenPoint.x.isFinite, screenPoint.y.isFinite, timestamp.isFinite else { return }
         if let pinnedWorldRay {
             let length = simd_length(pinnedWorldRay)
@@ -121,9 +124,19 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             pinTime = timestamp
             if let pinnedWorldRay {
                 worldRay = simd_normalize(pinnedWorldRay)
+                if let trackedSubjectRay {
+                    let length = simd_length(trackedSubjectRay)
+                    subjectWorldRay = length.isFinite && length > 1e-6 ?
+                        simd_normalize(trackedSubjectRay) : nil
+                    guideFromSubject = subjectWorldRay.map {
+                        simd_quatd(from: $0, to: simd_normalize(pinnedWorldRay))
+                    }
+                } else { subjectWorldRay = nil; guideFromSubject = nil }
                 pendingPin = nil
             } else {
                 worldRay = nil
+                subjectWorldRay = nil
+                guideFromSubject = nil
                 pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
             }
             lastAccepted = -Double.infinity; lastVerified = -.infinity
@@ -152,8 +165,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
 
     public func projection(at timestamp: TimeInterval, calibration k: TrackingCalibration) -> TrackingProjection? {
         lock.withLock {
-            guard active, let worldRay, let pose = TrackingGeometry.pose(at: timestamp, in: history) else { return nil }
-            return k.project(deviceRay: pose.inverse.act(worldRay))
+            guard active, let ray = subjectWorldRay ?? worldRay,
+                  let pose = TrackingGeometry.pose(at: timestamp, in: history) else { return nil }
+            return k.project(deviceRay: pose.inverse.act(ray))
         }
     }
 
@@ -224,7 +238,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 publish(); return
             }
             let observed = pose.act(frame.calibration.deviceRay(at: point))
-            if let ray = worldRay {
+            if let ray = subjectWorldRay ?? worldRay {
                 let predicted = frame.calibration.project(deviceRay: pose.inverse.act(ray))
                 let residual = hypot(point.x - predicted.point.x, point.y - predicted.point.y)
                 // Only a separately confirmed re-ID may move the bearing beyond
@@ -240,13 +254,22 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 let residualWeight = max(0.45, 1 / (1 + pow(Double(residual) / 0.20, 2)))
                 let evidenceWeight = evidence == .geometryContinuation ? 0.70 : 1.0
                 let gain = ordinaryGain * residualWeight * evidenceWeight
+                let corrected: SIMD3<Double>
                 if evidence == .reidentified {
-                    worldRay = observed
+                    corrected = observed
                 } else {
                     let blended = ray * (1 - gain) + observed * gain
                     let length = simd_length(blended)
                     guard length.isFinite, length > 1e-9 else { publish(); return }
-                    worldRay = blended / length
+                    corrected = blended / length
+                }
+                if subjectWorldRay != nil, let guideFromSubject {
+                    // Keep the source-frame angular offset exactly. Incremental
+                    // corrections would slowly rotate the guide around the subject.
+                    worldRay = guideFromSubject.act(corrected)
+                    subjectWorldRay = corrected
+                } else {
+                    worldRay = corrected
                 }
             } else {
                 // The first timestamped visual fix can initialize if pinning
@@ -294,7 +317,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
 
     public func stopTracking() {
         lock.withLock {
-            generation &+= 1; active = false; worldRay = nil; pendingPin = nil; pendingOutput = nil
+            generation &+= 1; active = false; worldRay = nil; subjectWorldRay = nil
+            guideFromSubject = nil
+            pendingPin = nil; pendingOutput = nil
         }
         // Keep the shared pose stream warm for the next selected camera image.
         // suspend() releases it when the camera screen leaves the foreground.

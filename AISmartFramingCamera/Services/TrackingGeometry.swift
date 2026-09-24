@@ -70,11 +70,14 @@ public struct TrackingFrameContext: Sendable {
     public let calibration: TrackingCalibration
     public let orientation: CGImagePropertyOrientation
     public let imageSize: CGSize
+    public let displayZoom: Double
 
     public init(timestamp: TimeInterval, calibration: TrackingCalibration,
-                orientation: CGImagePropertyOrientation = .up, imageSize: CGSize = .zero) {
+                orientation: CGImagePropertyOrientation = .up, imageSize: CGSize = .zero,
+                displayZoom: Double = 1.0) {
         self.timestamp = timestamp; self.calibration = calibration
         self.orientation = orientation; self.imageSize = imageSize
+        self.displayZoom = displayZoom
     }
 
     static func read(_ sample: CMSampleBuffer, zoom: Double) -> Self? {
@@ -103,7 +106,7 @@ public struct TrackingFrameContext: Sendable {
             }
         }
         return Self(timestamp: timestamp, calibration: k, orientation: .up,
-                    imageSize: CGSize(width: width, height: height))
+                    imageSize: CGSize(width: width, height: height), displayZoom: zoom)
     }
 }
 

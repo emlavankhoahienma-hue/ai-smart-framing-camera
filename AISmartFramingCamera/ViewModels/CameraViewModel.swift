@@ -8,6 +8,7 @@ import CoreMotion
 import ImageIO
 import UniformTypeIdentifiers
 import simd
+import Vision
 
 private struct CameraFrameProcessingConfiguration: Sendable {
     var isHibernating = false
@@ -119,6 +120,14 @@ public final class CameraViewModel: ObservableObject {
 
     private var cloudTrackingSource: AITrackingSource?
     private var localTrackingSource: AITrackingSource?
+    private var localCandidatePlans: [LocalFramingPlan] = []
+    private var localEvidenceCandidates: [NeuralSubjectCandidate] = []
+    private var postZoomFaceCount = 0
+    private var localAnalysisExpired = false
+    private var localAnalysisFinished = false
+    @Published public private(set) var localSuggestionRects: [CGRect] = []
+    @Published public private(set) var localSelectionMessage: String? = nil
+    private var allowsAutoCaptureForCurrentTarget = true
     // MARK: - Services
     public let cameraService = CameraService.shared
     public let visionEngine = VisionFramingEngine.shared
@@ -244,7 +253,19 @@ public final class CameraViewModel: ObservableObject {
     @Published public var lockOnProgress: CGFloat = 0
     @Published public var liveZoomFactorForReveal: CGFloat = 1.0
     private var pendingTargetZoomForReveal: CGFloat = 1.0
+    private var zoomRevealStartDisplayZoom: CGFloat = 1.0
+    private var zoomRevealStartsIn = true
     private var isZoomRampPhase: Bool = false
+    private var zoomAwaitingVerification = false
+    private var zoomVerified = true
+    private var zoomVerificationTask: Task<Void, Never>?
+    private var zoomStartFrameTimestamp = -Double.infinity
+    private var postZoomFaceMinimumTimestamp = -Double.infinity
+    private var latestOpticalFrameTimestamp = -Double.infinity
+    private var latestOpticalPoint: CGPoint?
+    private var latestOpticalBox: CGRect?
+    private var latestOpticalCalibration: TrackingCalibration?
+    private var needsFocusOnTrackedSubject = false
 
     // MARK: - Sun Exposure Slider & Horizon Leveler
     @Published public var isShowingSunSlider: Bool = false
@@ -288,10 +309,12 @@ public final class CameraViewModel: ObservableObject {
     @Published public var focusPeakingCGImage: CGImage? = nil
 
     public var zoomRevealRect: CGRect {
-        guard isRevealingZoomTarget, pendingTargetZoomForReveal > 1.05 else {
+        guard isRevealingZoomTarget, pendingTargetZoomForReveal > 0 else {
             return CGRect(x: 0, y: 0, width: 1.0, height: 1.0)
         }
-        let targetSize = 1.0 / pendingTargetZoomForReveal
+        let targetSize = min(1.0, max(0.20,
+            zoomRevealStartsIn ? zoomRevealStartDisplayZoom / pendingTargetZoomForReveal :
+                pendingTargetZoomForReveal / zoomRevealStartDisplayZoom))
 
         // Tiêu điểm của chủ thể / target (thay vì cố định 0.5, 0.5)
         let focalPoint = currentTargetPoint ?? initialTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
@@ -305,7 +328,9 @@ public final class CameraViewModel: ObservableObject {
             return CGRect(x: minX, y: minY, width: size, height: size)
         } else {
             // Giai đoạn 2: khi camera phần cứng đang ramp zoom, khung đồng bộ mở rộng ra mép màn hình
-            let ratio = min(1.0, liveZoomFactorForReveal / pendingTargetZoomForReveal)
+            let ratio = min(1.0, max(0.20,
+                zoomRevealStartsIn ? liveZoomFactorForReveal / pendingTargetZoomForReveal :
+                    pendingTargetZoomForReveal / liveZoomFactorForReveal))
             let minX = max(0.0, min(1.0 - ratio, focalPoint.x - ratio / 2.0))
             let minY = max(0.0, min(1.0 - ratio, focalPoint.y - ratio / 2.0))
             return CGRect(x: minX, y: minY, width: ratio, height: ratio)
@@ -326,6 +351,7 @@ public final class CameraViewModel: ObservableObject {
     public func applyAISuggestedZoom(_ targetZoom: CGFloat, force: Bool = false) {
         guard isAutoZoomEnabled else { return }
         guard targetZoom.isFinite, currentZoom.isFinite else { return }
+        guard aiSessionState == .alignmentPerfect else { return }
 
         // Cooldown: Tối thiểu 2.5s giữa các lần tự động zoom
         let now = Date()
@@ -344,54 +370,41 @@ public final class CameraViewModel: ObservableObject {
 
         CameraLogger.info("Thực thi AI Auto-Zoom: \(displayZoom)x -> \(targetZoom)x", category: .ai)
 
-        let preset = targetZoom < 1.5 ? 1.0 : (targetZoom < 2.5 ? 2.0 : 3.0)
-        selectedZoomPreset = preset
-
-        if targetZoom > displayZoom {
-            // Zoom In: Kích hoạt hiệu ứng reveal điện ảnh và ramp camera
-            triggerZoomRevealAnimation(targetZoom: targetZoom)
-        } else {
-            // Zoom Out: Ramp trực tiếp ống kính mượt mà về mức góc rộng hơn (ví dụ 3x/2x về 1x)
-            let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetZoom)
-            displayZoom = targetZoom
-            currentZoom = deviceZoom
-            cameraService.smoothZoomFactor(to: deviceZoom, rate: 1.5)
-            haptics.triggerSelectionChange()
-        }
+        triggerZoomRevealAnimation(targetZoom: targetZoom)
     }
 
     public func triggerZoomRevealAnimation(targetZoom: CGFloat) {
         guard targetZoom.isFinite, currentZoom.isFinite else { return }
         let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetZoom)
         guard abs(targetDeviceZoom - currentZoom) > 0.05 else { return }
+        zoomVerified = false
+        zoomAwaitingVerification = true
+        zoomStartFrameTimestamp = frameProcessor.latestTrackingFrameSnapshot()?.1.timestamp ?? CACurrentMediaTime()
+        postZoomFaceMinimumTimestamp = -Double.infinity
         pendingTargetZoomForReveal = targetZoom
+        zoomRevealStartDisplayZoom = max(0.1, displayZoom)
+        zoomRevealStartsIn = targetZoom > displayZoom
         liveZoomFactorForReveal = displayZoom
         isZoomRampPhase = false
         lockOnProgress = 0
         isRevealingZoomTarget = true
         let pinGeneration = targetPinGeneration
 
-        withAnimation(.easeOut(duration: 0.35)) {
+        withAnimation(.easeInOut(duration: 0.60)) {
             lockOnProgress = 1.0
         }
 
-        // Bắt đầu zoom quang/kỹ thuật số mượt mà sau 0.22s với tốc độ điện ảnh 1.2
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.60) { [weak self] in
             guard let self = self, self.targetPinGeneration == pinGeneration else { return }
             self.isZoomRampPhase = true
-            self.displayZoom = targetZoom
-            self.currentZoom = targetDeviceZoom
-            self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: 1.2)
-
-            let estimatedRampDuration = Double(abs(targetDeviceZoom - self.liveZoomFactorForReveal)) / 1.2 + 0.35
-            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedRampDuration) { [weak self] in
-                guard let self = self, self.targetPinGeneration == pinGeneration else { return }
-                withAnimation(.easeOut(duration: 0.30)) {
-                    self.isRevealingZoomTarget = false
-                }
-                self.isZoomRampPhase = false
-                self.haptics.triggerLight()
-            }
+            let distance = abs(targetDeviceZoom - self.currentZoom)
+            let duration = min(3.2, max(1.6, Double(distance) / 1.0))
+            self.cameraService.smoothZoomFactor(to: targetDeviceZoom,
+                rate: Float(Double(distance) / duration))
+        }
+        zoomVerificationTask?.cancel()
+        zoomVerificationTask = Task { [weak self] in
+            await self?.verifyZoomAfterRamp(pinGeneration: pinGeneration)
         }
     }
 
@@ -605,8 +618,6 @@ public final class CameraViewModel: ObservableObject {
     // Internal State
     private var autoCaptureTask: Task<Void, Never>? = nil
     private var stateBeforeCapture: AISessionState = .idle
-    private var analysisFrames: [SubjectDetectionResult] = []
-    private let analysisFramesNeeded = 6 // Collect 6 stable frames (~0.30s, 5-8 frames window) for rock-solid stabilization
     private var isOneShotCaptured = false
     private var lastFocusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     private var lastForcedResetTime: TimeInterval = 0
@@ -832,20 +843,60 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func handleVisionDetectionWithSource(_ detection: SubjectDetectionResult,
-                                                  buffer: CVPixelBuffer,
-                                                  frame: TrackingFrameContext?) {
+                                                   frame: TrackingFrameContext?) {
         guard !isShowingSettings else { return }
-        if aiSessionState == .analyzing && cloudTrackingSource == nil {
-            if let frame, let pose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) {
-                localTrackingSource = AITrackingSource(
-                    buffer: buffer, frame: frame, pose: pose,
-                    subjectRect: detection.dominantSubjectRect ?? detection.faceRectangles.first,
-                    faceRects: detection.faceRectangles)
-            } else {
-                localTrackingSource = nil
+        // Suggestions need only the frame geometry; do not retain a live pool buffer.
+        if localAnalysisFinished, !localCandidatePlans.isEmpty,
+           let source = localTrackingSource, let frame,
+           let pose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) {
+            localSuggestionRects = localCandidatePlans.map {
+                reprojectSuggestion($0.subjectRect, from: source,
+                                    to: frame.calibration, pose: pose)
             }
         }
         handleVisionDetection(detection)
+    }
+
+    private func reprojectSuggestion(_ rect: CGRect, from source: AITrackingSource,
+                                     to calibration: TrackingCalibration,
+                                     pose: simd_quatd) -> CGRect {
+        let corners = [CGPoint(x: rect.minX, y: rect.minY),
+                       CGPoint(x: rect.maxX, y: rect.minY),
+                       CGPoint(x: rect.minX, y: rect.maxY),
+                       CGPoint(x: rect.maxX, y: rect.maxY)]
+        let projections = corners.map { point in
+            calibration.project(deviceRay: pose.inverse.act(
+                source.pose.act(source.frame.calibration.deviceRay(at: point))))
+        }
+        guard projections.allSatisfy({ $0.isInFront &&
+            $0.point.x.isFinite && $0.point.y.isFinite }) else {
+            return CGRect(x: -1, y: -1, width: 0, height: 0)
+        }
+        let xs = projections.map(\.point.x), ys = projections.map(\.point.y)
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max(),
+              minX > -2, maxX < 3, minY > -2, maxY < 3 else {
+            return CGRect(x: -1, y: -1, width: 0, height: 0)
+        }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    public func cancelAIZoomForGesture() {
+        targetPinGeneration &+= 1
+        autoCaptureTask?.cancel()
+        autoCaptureTask = nil
+        zoomVerificationTask?.cancel()
+        zoomVerificationTask = nil
+        autoCaptureCountdown = 0
+        cameraService.cancelZoomRamp()
+        isRevealingZoomTarget = false
+        isZoomRampPhase = false
+        zoomAwaitingVerification = false
+        zoomVerified = false
+        postZoomFaceMinimumTimestamp = -Double.infinity
+        allowsAutoCaptureForCurrentTarget = false
+        hasExecutedAutoZoomForSession = true
+        localSelectionMessage = "Bạn đã đổi zoom; kiểm tra bố cục và chụp tay."
     }
 
     private func setupCallbacks() {
@@ -855,14 +906,14 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        visionEngine.onDetectionWithSource = { [weak self] detection, buffer, frame in
+        visionEngine.onDetectionWithSource = { [weak self] detection, _, frame in
             // Vision currently delivers on main; retain a safe boundary if a
             // future caller invokes this callback from its processing queue.
             if Thread.isMainThread {
-                self?.handleVisionDetectionWithSource(detection, buffer: buffer, frame: frame)
+                self?.handleVisionDetectionWithSource(detection, frame: frame)
             } else {
                 DispatchQueue.main.async { [weak self] in
-                    self?.handleVisionDetectionWithSource(detection, buffer: buffer, frame: frame)
+                    self?.handleVisionDetectionWithSource(detection, frame: frame)
                 }
             }
         }
@@ -987,6 +1038,12 @@ public final class CameraViewModel: ObservableObject {
     public func startAISession() {
         guard aiSessionState == .idle || aiSessionState == .done else { return }
         targetPinGeneration &+= 1
+        if zoomAwaitingVerification { cameraService.cancelZoomRamp() }
+        zoomVerificationTask?.cancel()
+        zoomVerificationTask = nil
+        autoCaptureTask?.cancel()
+        autoCaptureTask = nil
+        autoCaptureCountdown = 0
         haptics.triggerSelectionChange()
         self.aiSessionGeneration += 1
         let requestGeneration = self.aiSessionGeneration
@@ -997,9 +1054,21 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.onFrameCapturedForAI = nil
         visionEngine.onFrameCapturedForAIWithSource = nil
         visionEngine.capturedGeminiFrame = nil
-        analysisFrames = []
         cloudTrackingSource = nil
         localTrackingSource = nil
+        localCandidatePlans = []
+        localEvidenceCandidates = []
+        postZoomFaceCount = 0
+        localAnalysisExpired = false
+        localAnalysisFinished = false
+        localSuggestionRects = []
+        localSelectionMessage = nil
+        allowsAutoCaptureForCurrentTarget = true
+        zoomAwaitingVerification = false
+        zoomVerified = true
+        postZoomFaceMinimumTimestamp = -Double.infinity
+        isRevealingZoomTarget = false
+        isZoomRampPhase = false
         isGeminiAnalyzing = false
         initialTargetPoint = nil
         currentTargetPoint = nil
@@ -1028,16 +1097,14 @@ public final class CameraViewModel: ObservableObject {
                         guard let buffer, let context,
                               let pose = SpatialTrackingEngine.shared.pose(at: context.timestamp) else {
                             self.geminiError = "Không đồng bộ được khung hình AI với chuyển động camera"
-                            self.consolidateLocalAnalysisAndLockTarget()
+                            self.localSelectionMessage = "Không có ảnh đồng bộ. Chạm vùng muốn chụp hoặc chụp tay."
                             return
                         }
-                        let nearbyDetection = self.localTrackingSource.flatMap { candidate in
-                            abs(candidate.frame.timestamp - context.timestamp) < 0.08 ? candidate : nil
-                        }
+                        let nearbyDetection = self.latestSubjectDetectionResult
                         self.cloudTrackingSource = AITrackingSource(
                             buffer: buffer, frame: context, pose: pose,
-                            subjectRect: nearbyDetection?.subjectRect,
-                            faceRects: nearbyDetection?.faceRects ?? [])
+                            subjectRect: nearbyDetection?.dominantSubjectRect,
+                            faceRects: nearbyDetection?.faceRectangles ?? [])
                         // This cloud buffer is detached from AVCapture's pool.
                         // Drop the last local pool buffer while Gemini runs.
                         self.localTrackingSource = nil
@@ -1052,7 +1119,7 @@ public final class CameraViewModel: ObservableObject {
                 guard let self = self else { return }
                 if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
                     self.isOneShotCaptured = true
-                    self.consolidateLocalAnalysisAndLockTarget()
+                    self.localSelectionMessage = "Camera chưa gửi ảnh AI. Chạm vùng muốn chụp hoặc chụp tay."
                 }
             }
             // A captured frame can still be followed by a stalled cloud call.
@@ -1060,18 +1127,46 @@ public final class CameraViewModel: ObservableObject {
                 guard let self, self.aiSessionGeneration == requestGeneration,
                       self.aiSessionState == .analyzing, self.isGeminiAnalyzing else { return }
                 self.isGeminiAnalyzing = false
-                self.cloudTrackingSource = nil
                 self.geminiError = "Phân tích cloud quá thời gian, đã chuyển sang AI trên máy"
-                self.consolidateLocalAnalysisAndLockTarget()
+                self.analyzeCloudCaptureLocally()
             }
         } else {
-            // Chế độ Cục bộ (On-Device Neural Engine / YOLO): Tự động tổng hợp và khóa mục tiêu nhanh chóng
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self = self else { return }
-                if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
+            visionEngine.onFrameCapturedForAIWithSource = { [weak self] _, buffer, context in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.aiSessionGeneration == requestGeneration,
+                          self.aiSessionState == .analyzing, !self.isOneShotCaptured else { return }
                     self.isOneShotCaptured = true
-                    self.consolidateLocalAnalysisAndLockTarget()
+                    self.visionEngine.capturedGeminiFrame = nil
+                    guard let buffer, let context,
+                          let pose = SpatialTrackingEngine.shared.pose(at: context.timestamp) else {
+                        self.localAnalysisFinished = true
+                        self.localSelectionMessage = "Không đồng bộ được ảnh và cảm biến. Chạm vùng muốn chụp."
+                        return
+                    }
+                    let source = AITrackingSource(buffer: buffer, frame: context, pose: pose,
+                                                  subjectRect: nil, faceRects: [])
+                    self.localTrackingSource = source
+                    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                        let output = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
+                            pixelBuffer: buffer, orientation: context.orientation)
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self, self.aiSessionGeneration == requestGeneration,
+                                  self.aiSessionState == .analyzing,
+                                  !self.localAnalysisExpired else { return }
+                            self.finishLocalAnalysis(output, source: source)
+                        }
+                    }
                 }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
+                guard let self, self.aiSessionGeneration == requestGeneration,
+                      self.aiSessionState == .analyzing,
+                      !self.localAnalysisFinished else { return }
+                self.localAnalysisExpired = true
+                self.localTrackingSource = nil
+                self.localCandidatePlans = []
+                self.localSuggestionRects = []
+                self.localSelectionMessage = "AI quá thời gian. Chạm vùng muốn chụp hoặc chụp tay."
             }
         }
         // Register the callback before admitting the capture frame.
@@ -1081,6 +1176,12 @@ public final class CameraViewModel: ObservableObject {
     public func cancelAISession() {
         targetPinGeneration &+= 1
         self.aiSessionGeneration += 1
+        if zoomAwaitingVerification { cameraService.cancelZoomRamp() }
+        zoomVerificationTask?.cancel()
+        zoomVerificationTask = nil
+        zoomAwaitingVerification = false
+        isRevealingZoomTarget = false
+        isZoomRampPhase = false
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         visionEngine.stopTrackingObject()
@@ -1113,6 +1214,12 @@ public final class CameraViewModel: ObservableObject {
     public func suspendSpatialTracking() {
         targetPinGeneration &+= 1
         aiSessionGeneration += 1
+        if zoomAwaitingVerification { cameraService.cancelZoomRamp() }
+        zoomVerificationTask?.cancel()
+        zoomVerificationTask = nil
+        zoomAwaitingVerification = false
+        isRevealingZoomTarget = false
+        isZoomRampPhase = false
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         autoCaptureCountdown = 0
@@ -1208,8 +1315,6 @@ public final class CameraViewModel: ObservableObject {
         if let dominant = detection.dominantSubjectRect {
             self.detectedSubjectRects = [dominant]
         }
-        analysisFrames.append(detection)
-        if analysisFrames.count > 6 { analysisFrames.removeFirst() }
 
         // 1. Cloud capture is delivered with its exact buffer and frame context
         // through onFrameCapturedForAIWithSource; do not launch from the legacy
@@ -1218,11 +1323,8 @@ public final class CameraViewModel: ObservableObject {
             return
         }
 
-        // 2. Chế độ cục bộ (On-device Vision / CoreML): Thu thập 4 frames (~0.2s) để ổn định và khóa mục tiêu tức thì
-        if analysisFrames.count >= 4 {
-            isOneShotCaptured = true
-            consolidateLocalAnalysisAndLockTarget()
-        }
+        // A detached one-shot image is analyzed separately; live detections
+        // are only lightweight preview evidence and cannot select a target.
     }
 
     // MARK: - Gemini Analysis (One-shot)
@@ -1256,15 +1358,14 @@ public final class CameraViewModel: ObservableObject {
                     CameraLogger.info("Bỏ qua phản hồi Gemini trễ (phiên đã đổi/kết thúc)", category: .ai)
                     return
                 }
+                guard self.isGeminiAnalyzing else { return }
                 self.isGeminiAnalyzing = false
                 switch result {
                 case .success(let response):
                     self.handleGeminiResponse(response)
                 case .failure(let error):
                     self.geminiError = error.localizedDescription
-                    self.cloudTrackingSource = nil
-                    // Lỗi API -> Tự động Fallback qua Neural Engine cục bộ (CoreML / Vision) để vẫn dùng được app
-                    self.consolidateLocalAnalysisAndLockTarget()
+                    self.analyzeCloudCaptureLocally()
                 }
             }
         }
@@ -1275,13 +1376,13 @@ public final class CameraViewModel: ObservableObject {
               (0...1).contains(response.targetX), (0...1).contains(response.targetY),
               response.suggestedZoom.isFinite, response.suggestedZoom > 0 else {
             geminiError = "AI trả về tọa độ hoặc mức zoom không hợp lệ; đã chuyển sang AI trên máy"
-            cloudTrackingSource = nil
-            consolidateLocalAnalysisAndLockTarget()
+            analyzeCloudCaptureLocally()
             return
         }
         self.geminiColorRecipe = response.colorRecipe
         self.geminiExplanation = response.explanation
         self.detectedScene = response.sceneType
+        self.postZoomFaceCount = cloudTrackingSource?.faceRects.count ?? 0
         self.activeCompositionRule = response.compositionRule
         self.activeModelUsedName = response.modelUsed
         self.activeEngineSource = .geminiCloud(model: response.modelUsed)
@@ -1337,58 +1438,33 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - Local Neural Engine Analysis (One-shot)
 
-    private func consolidateLocalAnalysisAndLockTarget() {
-        var dominantScene: DetectedSceneType = .general
-        // Position, eyes and gaze must all come from the same recent image.
-        // Averaging image coordinates across a camera pan moves the target
-        // toward an old screen location even when every detection is correct.
-        var avgDetection = analysisFrames.last ?? SubjectDetectionResult()
-
-        if !analysisFrames.isEmpty {
-            var sceneCounts: [DetectedSceneType: Int] = [:]
-            for f in analysisFrames { sceneCounts[f.detectedScene, default: 0] += 1 }
-            dominantScene = sceneCounts.max(by: { $0.value < $1.value })?.key ?? .general
-            avgDetection.detectedScene = dominantScene
-            avgDetection.averageLuminance = analysisFrames.map { $0.averageLuminance }.reduce(0, +) / Float(analysisFrames.count)
-            avgDetection.estimatedColorTemp = analysisFrames.map { $0.estimatedColorTemp }.reduce(0, +) / Float(analysisFrames.count)
+    private func analyzeCloudCaptureLocally() {
+        guard let source = cloudTrackingSource else {
+            localSelectionMessage = "Không có ảnh nguồn để phân tích. Chạm vùng muốn chụp hoặc chụp tay."
+            return
         }
-
-        let result = calculator.calculateTarget(from: avgDetection, rule: activeCompositionRule, currentZoom: currentZoom)
-        self.framingResult = result
-        self.aiSuggestedZoom = result.recommendedZoomFactor
-        self.pendingSuggestedZoom = result.recommendedZoomFactor
-        self.hasExecutedAutoZoomForSession = false
-
-        // Xác định chính xác nguồn Engine AI đang hoạt động để hiển thị rõ ràng trên HUD
-        if NeuralTargetTracker.shared.hasActiveTrainedModel {
-            self.activeEngineSource = .localTrained114MB(category: dominantScene.localizedName)
-        } else if YOLODetectionEngine.shared.hasYOLOModel {
-            self.activeEngineSource = .yoloNeural(label: dominantScene.localizedName)
-        } else {
-            self.activeEngineSource = .appleNeuralEngine(scene: dominantScene.localizedName)
+        cloudTrackingSource = nil
+        localTrackingSource = source
+        localAnalysisFinished = false
+        let generation = aiSessionGeneration
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let output = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
+                pixelBuffer: source.buffer, orientation: source.frame.orientation)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.aiSessionGeneration == generation,
+                      self.aiSessionState == .analyzing,
+                      !self.localAnalysisExpired else { return }
+                self.finishLocalAnalysis(output, source: source)
+            }
         }
-
-        let localPreset = dominantScene.recommendedFilter
-        self.aiRecommendedPreset = localPreset
-        self.aiPresetMatchReason = "\(localPreset.displayName) — Tối ưu cho bối cảnh \(dominantScene.localizedName)"
-        if selectedFilmPreset.isAIFullAuto {
-            selectedFilmPreset = localPreset
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            guard let self, self.aiSessionGeneration == generation,
+                  self.aiSessionState == .analyzing,
+                  !self.localAnalysisFinished else { return }
+            self.localAnalysisExpired = true
+            self.localTrackingSource = nil
+            self.localSelectionMessage = "AI trên máy quá thời gian. Chạm vùng muốn chụp hoặc chụp tay."
         }
-
-        if isAIFullColorEnabled {
-            currentAIColorParams = dominantScene.aiFullColorParameters
-            let lumaError: Float = 0.50 - avgDetection.averageLuminance
-            setExposure(max(-1.0, min(1.0, lumaError * 1.2)))
-        }
-
-        let localTarget = result.targetPoint
-        let safeTarget = localTarget.x.isFinite && localTarget.y.isFinite &&
-            (0...1).contains(localTarget.x) && (0...1).contains(localTarget.y)
-            ? localTarget : CGPoint(x: 0.5, y: 0.5)
-        pinTargetAndStartMotion(at: safeTarget,
-                                subjectRect: normalizedSubjectRect(avgDetection.dominantSubjectRect),
-                                source: localTrackingSource)
-        localTrackingSource = nil
     }
 
     // MARK: - State for Hybrid Optical + Spatial Tracking
@@ -1459,11 +1535,136 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
 
     public func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect? = nil) {
+        allowsAutoCaptureForCurrentTarget = false
         pinTargetAndStartMotion(at: target, subjectRect: subjectRect, source: nil)
     }
 
+    private func finishLocalAnalysis(_ output: NeuralAnalysisOutput, source: AITrackingSource) {
+        localAnalysisFinished = true
+        guard source.frame.displayZoom.isFinite, source.frame.displayZoom > 0,
+              abs(displayZoom - CGFloat(source.frame.displayZoom)) <= 0.08 else {
+            localTrackingSource = nil
+            localSelectionMessage = "Ống kính đã đổi trong lúc AI phân tích. Chạm vùng muốn chụp hoặc chạy AI lại."
+            return
+        }
+        detectedScene = output.detectedScene
+        detectedFaceRects = output.allFaceRects
+        postZoomFaceCount = output.allFaceRects.count
+        let localPreset = output.detectedScene.recommendedFilter
+        aiRecommendedPreset = localPreset
+        aiPresetMatchReason = "\(localPreset.displayName) — Tối ưu cho bối cảnh \(output.detectedScene.localizedName)"
+        if selectedFilmPreset.isAIFullAuto { selectedFilmPreset = localPreset }
+        if isAIFullColorEnabled { currentAIColorParams = output.detectedScene.aiFullColorParameters }
+        let candidates = output.allCandidates.sorted {
+            $0.prominenceScore * (1 + CompositionPreferenceStore.shared.bonus(
+                scene: output.detectedScene, candidate: $0)) >
+            $1.prominenceScore * (1 + CompositionPreferenceStore.shared.bonus(
+                scene: output.detectedScene, candidate: $1))
+        }.filter { candidate in
+            guard candidate.boundingBox.minX >= 0, candidate.boundingBox.minY >= 0,
+                  candidate.boundingBox.maxX <= 1, candidate.boundingBox.maxY <= 1 else { return false }
+            return candidate.confidence >= 0.48
+        }
+        var distinct: [NeuralSubjectCandidate] = []
+        for candidate in candidates {
+            let duplicate = distinct.contains { existing in
+                let intersection = existing.boundingBox.intersection(candidate.boundingBox)
+                let smaller = min(existing.areaRatio, candidate.areaRatio)
+                return Double(intersection.width * intersection.height) > smaller * 0.65
+            }
+            if !duplicate { distinct.append(candidate) }
+            if distinct.count == 3 { break }
+        }
+        let feasible = distinct.compactMap { candidate -> (NeuralSubjectCandidate, LocalFramingPlan)? in
+            let otherPeople = distinct.filter {
+                $0.id != candidate.id && $0.category == .human
+            }.map(\.boundingBox)
+            // Even a face inside the chosen person's box can be cut by zoom.
+            let companions = output.allFaceRects + otherPeople
+            guard let plan = LocalFramingGeometry.plan(subject: candidate, companions: companions,
+                scene: output.detectedScene, gaze: output.lookingDirection,
+                frame: source.frame, pose: source.pose,
+                currentZoom: CGFloat(source.frame.displayZoom),
+                allowedZooms: cameraService.availableDisplayZoomOptions) else { return nil }
+            return (candidate, plan)
+        }
+        localEvidenceCandidates = feasible.map(\.0)
+        localCandidatePlans = feasible.map(\.1)
+        localSuggestionRects = localCandidatePlans.map(\.subjectRect)
+        detectedSubjectRects = localSuggestionRects
+        if output.usedSemanticModel {
+            activeEngineSource = .semanticLocal(label: output.detectedScene.localizedName)
+        } else if YOLODetectionEngine.shared.hasYOLOModel {
+            activeEngineSource = .yoloNeural(label: output.detectedScene.localizedName)
+        } else {
+            activeEngineSource = .appleNeuralEngine(scene: output.detectedScene.localizedName)
+        }
+        if let best = localCandidatePlans.first,
+           let firstCandidate = localEvidenceCandidates.first,
+           let measuredThreshold = LocalAutoselectCalibration.threshold(
+                scene: output.detectedScene, category: firstCandidate.category),
+           best.confidence >= max(0.72, measuredThreshold),
+           (localEvidenceCandidates.count == 1 ||
+            localEvidenceCandidates[0].prominenceScore > localEvidenceCandidates[1].prominenceScore * 1.35) {
+            acceptLocalPlan(best, source: source)
+        } else {
+            localSelectionMessage = localCandidatePlans.isEmpty ?
+                "Chưa đủ bằng chứng để chọn chủ thể. Chạm vùng muốn chụp hoặc chụp tay." :
+                "Chọn một vùng được đánh dấu, hoặc chạm vùng khác để chụp tay."
+        }
+    }
+
+    public func chooseLocalSuggestion(at point: CGPoint) {
+        guard case .analyzing = aiSessionState else { return }
+        if let index = localSuggestionRects.firstIndex(where: { $0.insetBy(dx: -0.025, dy: -0.025).contains(point) }),
+           index < localCandidatePlans.count, let source = localTrackingSource {
+            CompositionPreferenceStore.shared.record(scene: detectedScene,
+                candidates: localEvidenceCandidates, selectedIndex: index,
+                actualZoom: displayZoom)
+            acceptLocalPlan(localCandidatePlans[index], source: source)
+        } else {
+            allowsAutoCaptureForCurrentTarget = false
+            localTrackingSource = nil
+            localCandidatePlans = []
+            localEvidenceCandidates = []
+            localSuggestionRects = []
+            localSelectionMessage = "Chụp tay: vùng này chưa đủ bằng chứng để tự căn và chụp."
+            pendingSuggestedZoom = displayZoom
+            pinTargetAndStartMotion(at: point)
+        }
+    }
+
+    private func acceptLocalPlan(_ plan: LocalFramingPlan, source: AITrackingSource) {
+        let dx = plan.aimPointInSource.x - 0.5
+        let dy = plan.aimPointInSource.y - 0.5
+        let distance = hypot(dx, dy)
+        let angle = atan2(dy, dx) * 180 / .pi
+        framingResult = FramingTargetResult(targetPoint: plan.aimPointInSource,
+            currentCenter: CGPoint(x: 0.5, y: 0.5),
+            offsetVector: CGVector(dx: dx, dy: dy), distance: distance,
+            angleDegrees: angle < 0 ? angle + 360 : angle,
+            alignmentScore: max(0, min(1, 1 - Double(distance / 0.40))),
+            isAligned: distance <= calculator.alignmentTolerance,
+            recommendedZoomFactor: plan.zoom, optimalRule: activeCompositionRule,
+            guideDescription: "Đưa tâm trắng vào vòng vàng, sau đó AI sẽ zoom an toàn.")
+        pendingSuggestedZoom = plan.zoom
+        aiSuggestedZoom = plan.zoom
+        hasExecutedAutoZoomForSession = false
+        allowsAutoCaptureForCurrentTarget = true
+        localCandidatePlans = []
+        localEvidenceCandidates = []
+        localSuggestionRects = []
+        localSelectionMessage = nil
+        pinTargetAndStartMotion(at: plan.aimPointInSource,
+            subjectRect: plan.subjectRect, source: source,
+            trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay)
+        localTrackingSource = nil
+    }
+
     private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,
-                                         source: AITrackingSource?) {
+                                          source: AITrackingSource?,
+                                          trackedPoint: CGPoint? = nil,
+                                          pinnedGuideRay: SIMD3<Double>? = nil) {
         guard target.x.isFinite, target.y.isFinite,
               (0...1).contains(target.x), (0...1).contains(target.y) else { return }
         let subjectRect = normalizedSubjectRect(subjectRect)
@@ -1474,22 +1675,36 @@ public final class CameraViewModel: ObservableObject {
         }
         targetPinGeneration &+= 1
         let pinGeneration = targetPinGeneration
+        zoomVerificationTask?.cancel()
+        zoomVerificationTask = nil
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         autoCaptureCountdown = 0
         isPerfectAlignment = false
+        let hadZoomRamp = zoomAwaitingVerification
         isRevealingZoomTarget = false
         isZoomRampPhase = false
-        if isManualRePin { cameraService.cancelZoomRamp() }
+        zoomAwaitingVerification = false
+        zoomVerified = true
+        postZoomFaceMinimumTimestamp = -Double.infinity
+        latestOpticalPoint = nil
+        latestOpticalBox = nil
+        latestOpticalCalibration = nil
+        needsFocusOnTrackedSubject = false
+        if isManualRePin || hadZoomRamp { cameraService.cancelZoomRamp() }
         // Gemini's point belongs to its captured image. Convert it to a world
         // bearing from that image's pose, then project into the current frame.
         let selectedFrame = frameProcessor.latestTrackingFrameSnapshot()
         var pinPoint = target
-        var pinnedWorldRay: SIMD3<Double>?
+        var pinnedWorldRay: SIMD3<Double>? = pinnedGuideRay
+        var trackedSubjectRay: SIMD3<Double>?
         var hasCurrentProjection = source == nil
         if let source {
-            let ray = source.pose.act(source.frame.calibration.deviceRay(at: target))
+            let ray = pinnedGuideRay ?? source.pose.act(source.frame.calibration.deviceRay(at: target))
             pinnedWorldRay = ray
+            if let trackedPoint {
+                trackedSubjectRay = source.pose.act(source.frame.calibration.deviceRay(at: trackedPoint))
+            }
             if let currentFrame = selectedFrame?.1,
                let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                     ?? SpatialTrackingEngine.shared.latestPose() {
@@ -1522,17 +1737,19 @@ public final class CameraViewModel: ObservableObject {
         if let selectedFrame {
             SpatialTrackingEngine.shared.registerFrame(selectedFrame.1)
             SpatialTrackingEngine.shared.lockAnchor(at: pinPoint, zoom: CGFloat(SpatialTrackingEngine.shared.currentDisplayZoom),
-                                                     timestamp: selectedFrame.1.timestamp,
-                                                     calibration: selectedFrame.1.calibration,
-                                                     pinnedWorldRay: pinnedWorldRay)
+                                                      timestamp: selectedFrame.1.timestamp,
+                                                      calibration: selectedFrame.1.calibration,
+                                                      pinnedWorldRay: pinnedWorldRay,
+                                                      trackedSubjectRay: trackedSubjectRay)
         } else {
             SpatialTrackingEngine.shared.lockAnchor(at: pinPoint,
                 zoom: CGFloat(SpatialTrackingEngine.shared.currentDisplayZoom),
-                timestamp: CACurrentMediaTime(), pinnedWorldRay: pinnedWorldRay)
+                timestamp: CACurrentMediaTime(), pinnedWorldRay: pinnedWorldRay,
+                trackedSubjectRay: trackedSubjectRay)
         }
 
         // 1. Đánh giá độ phẳng Texture & Đăng ký Vân tay Nơ-ron AI trước để xác định kích thước khung bám tối ưu
-        let anchorTarget = source == nil ? pinPoint : target
+        let anchorTarget = source == nil ? pinPoint : (trackedPoint ?? target)
         if let buffer = source?.buffer ?? selectedFrame?.0 {
             shouldCheckTextureOnNextFrame = false
             let region = CGRect(x: max(0, anchorTarget.x - 0.08), y: max(0, anchorTarget.y - 0.08), width: 0.16, height: 0.16)
@@ -1545,11 +1762,10 @@ public final class CameraViewModel: ObservableObject {
         // 2. Khởi động Optical Tracking bám CHÍNH XÁC VÀO VẬT THỂ THẬT (Apple Vision VNTrackObjectRequest)
         // Khi vật thể là màu trắng/đơn sắc (isCurrentlyLowTexture): Mở rộng khung bám để bao quát đường viền cạnh tương phản với nền
         let isLow = isCurrentlyLowTexture
-        self.initialPhysicalSubjectCenter = pinPoint
+        self.initialPhysicalSubjectCenter = anchorTarget
         let initialSize: CGSize
         if let sRect = subjectRect {
-            // Dùng TỌA ĐỘ AI (target) làm TÂM khung bám; chỉ lấy KÍCH THƯỚC từ subjectRect
-            // để box đủ lớn bao trọn chủ thể mà không làm lệch tâm target khỏi tọa độ AI.
+            // The optical box is centred on the subject, never on the guide.
             let expandRatio: CGFloat = isLow ? 1.35 : 1.10
             let minBox: CGFloat = isLow ? 0.20 : 0.08
             let clampedW = min(0.60, max(minBox, sRect.width * expandRatio))
@@ -1563,7 +1779,7 @@ public final class CameraViewModel: ObservableObject {
         // A delayed Gemini response seeds appearance from its original image;
         // the spatial bearing already points into the current camera view.
         visionEngine.startTrackingObject(
-            at: source == nil ? pinPoint : target,
+            at: anchorTarget,
             size: initialSize,
             refiningBuffer: source?.buffer ?? selectedFrame?.0,
             orientation: .up,
@@ -1571,12 +1787,28 @@ public final class CameraViewModel: ObservableObject {
         )
 
         // 3. Tự động đồng bộ đo sáng & lấy nét phần cứng (Hardware ISP AE/AF) vào đúng tâm mục tiêu
-        let focusTarget = (source == nil ? subjectRect : nil).map {
-            CGPoint(x: $0.midX, y: $0.midY)
-        } ??
-            CGPoint(x: min(1, max(0, pinPoint.x)), y: min(1, max(0, pinPoint.y)))
-        let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
-        cameraService.setSmartFocusAndExposure(at: devPoint)
+        // AE/AF coordinates belong to the *current* preview. The selected
+        // subject box and tracking patch can belong to an older AI frame.
+        let focusTarget: CGPoint?
+        if let trackedSubjectRay, let currentFrame = selectedFrame?.1,
+           let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
+                ?? SpatialTrackingEngine.shared.latestPose() {
+            let projected = currentFrame.calibration.project(
+                deviceRay: currentPose.inverse.act(trackedSubjectRay))
+            focusTarget = projected.isInsideImage ? projected.point : nil
+            needsFocusOnTrackedSubject = focusTarget == nil
+        } else if trackedSubjectRay != nil {
+            focusTarget = nil
+            needsFocusOnTrackedSubject = true
+        } else {
+            focusTarget = subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) } ??
+                CGPoint(x: min(1, max(0, anchorTarget.x)),
+                        y: min(1, max(0, anchorTarget.y)))
+        }
+        if let focusTarget {
+            let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
+            cameraService.setSmartFocusAndExposure(at: devPoint)
+        }
 
         haptics.triggerSelectionChange()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.65)) {
@@ -1587,10 +1819,7 @@ public final class CameraViewModel: ObservableObject {
             guard let self, self.targetPinGeneration == pinGeneration,
                   self.visionEngine.isTrackingTarget else { return }
             self.haptics.triggerSuccess()
-            if !isManualRePin && !self.hasExecutedAutoZoomForSession &&
-               self.isAutoZoomEnabled && abs(self.pendingSuggestedZoom - self.displayZoom) > 0.15 {
-                self.applyAISuggestedZoom(self.pendingSuggestedZoom, force: true)
-            }
+            // The lens must not move until the user aligns the guide.
         }
     }
 
@@ -1604,6 +1833,17 @@ public final class CameraViewModel: ObservableObject {
             break
         default:
             return
+        }
+        latestOpticalFrameTimestamp = measurement.frame.timestamp
+        latestOpticalPoint = measurement.point
+        latestOpticalBox = measurement.subjectBox
+        latestOpticalCalibration = measurement.frame.calibration
+        if needsFocusOnTrackedSubject, measurement.confidence >= 0.55,
+           (0...1).contains(measurement.point.x),
+           (0...1).contains(measurement.point.y) {
+            needsFocusOnTrackedSubject = false
+            cameraService.setSmartFocusAndExposure(at:
+                CameraService.convertUIPointToDevicePoint(measurement.point))
         }
         if shouldCheckTextureOnNextFrame, let target = currentTargetPoint ?? initialTargetPoint {
             shouldCheckTextureOnNextFrame = false
@@ -1651,12 +1891,14 @@ public final class CameraViewModel: ObservableObject {
             }
 
             // KÍCH HOẠT ZOOM ĐÚNG KHI TÂM TRẮNG KHỚP VÀO TÂM VÀNG (nếu chưa zoom)
-            let willZoom = isAutoZoomEnabled && !hasExecutedAutoZoomForSession && abs(pendingSuggestedZoom - displayZoom) > 0.15
+            let willZoom = zoomAwaitingVerification ||
+                (isAutoZoomEnabled && !hasExecutedAutoZoomForSession &&
+                 abs(pendingSuggestedZoom - displayZoom) > 0.15)
             if willZoom {
-                applyAISuggestedZoom(pendingSuggestedZoom)
+                if !zoomAwaitingVerification { applyAISuggestedZoom(pendingSuggestedZoom) }
             }
 
-            if isAutoCaptureOnAlignEnabled {
+            if isAutoCaptureOnAlignEnabled && allowsAutoCaptureForCurrentTarget {
                 startAutoCaptureCountdown(isZooming: willZoom)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -1683,28 +1925,112 @@ public final class CameraViewModel: ObservableObject {
 
     private func startAutoCaptureCountdown(isZooming: Bool = false) {
         autoCaptureTask?.cancel()
-
-        let initialWait: UInt64 = isZooming ? 1_400_000_000 : 800_000_000
-
-        autoCaptureCountdown = 1 // 1 giây phản hồi nhanh chụp ngay
+        autoCaptureCountdown = 0
 
         autoCaptureTask = Task { [weak self] in
+            guard let self else { return }
             do {
-                try await Task.sleep(nanoseconds: initialWait)
+                if isZooming || self.zoomAwaitingVerification {
+                    let deadline = CACurrentMediaTime() + 7.0
+                    while self.zoomAwaitingVerification && CACurrentMediaTime() < deadline {
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                        guard !Task.isCancelled, self.aiSessionState == .alignmentPerfect,
+                              self.isPerfectAlignment, !self.isPinchingZoom else { return }
+                    }
+                    guard self.zoomVerified && !self.zoomAwaitingVerification,
+                          abs(self.displayZoom - self.pendingSuggestedZoom) <= 0.06 else { return }
+                }
+                self.autoCaptureCountdown = 1
+                try await Task.sleep(nanoseconds: 800_000_000)
                 guard !Task.isCancelled else { return }
-                self?.autoCaptureCountdown = 0
+                self.autoCaptureCountdown = 0
                 try await Task.sleep(nanoseconds: 200_000_000)
             } catch { return }
-            guard !Task.isCancelled, let self else { return }
+            guard !Task.isCancelled else { return }
             if self.aiSessionState == .alignmentPerfect && !self.isShutterPressing &&
-               self.isPerfectAlignment && self.trackingQuality == .locked &&
-               self.alignmentDistance <= self.calculator.alignmentTolerance {
+                self.isPerfectAlignment && self.trackingQuality == .locked &&
+                self.alignmentDistance <= self.calculator.alignmentTolerance &&
+                !self.zoomAwaitingVerification && self.zoomVerified &&
+                !self.isPinchingZoom && self.allowsAutoCaptureForCurrentTarget &&
+                self.currentCropSafeForCapture() {
                 self.executeCapture()
             } else {
                 self.aiSessionState = .targetPlaced(locked: true)
                 self.autoCaptureCountdown = 0
             }
         }
+    }
+
+    private func verifyZoomAfterRamp(pinGeneration: UInt64) async {
+        let deadline = CACurrentMediaTime() + 7.0
+        var reachedAt: TimeInterval?
+        var settledSince: TimeInterval?
+        while CACurrentMediaTime() < deadline {
+            do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return }
+            guard !Task.isCancelled, targetPinGeneration == pinGeneration,
+                  !isPinchingZoom else { return }
+            let reached = abs(displayZoom - pendingSuggestedZoom) <= 0.06
+            if reached {
+                if reachedAt == nil { reachedAt = CACurrentMediaTime() }
+            } else { reachedAt = nil }
+            let fresh = latestOpticalFrameTimestamp >
+                max(zoomStartFrameTimestamp + 0.20, (reachedAt ?? .infinity) + 0.05)
+            let boxSafe = latestOpticalBox.map {
+                $0.minX >= 0.025 && $0.minY >= 0.025 &&
+                $0.maxX <= 0.975 && $0.maxY <= 0.975
+            } ?? false
+            if reached && fresh && boxSafe &&
+               latestOpticalCalibration?.isValid == true && trackingQuality == .locked {
+                if settledSince == nil { settledSince = CACurrentMediaTime() }
+                if CACurrentMediaTime() - (settledSince ?? 0) >= 0.35 {
+                    if verifyPostZoomFaces(after: reachedAt ?? zoomStartFrameTimestamp) {
+                        postZoomFaceMinimumTimestamp = reachedAt ?? zoomStartFrameTimestamp
+                        zoomVerified = true
+                        zoomAwaitingVerification = false
+                        isRevealingZoomTarget = false
+                        isZoomRampPhase = false
+                        selectedZoomPreset = displayZoom < 1.5 ? 1.0 :
+                            (displayZoom < 2.5 ? 2.0 : 3.0)
+                        return
+                    }
+                    localSelectionMessage = "Không xác nhận được mọi khuôn mặt sau zoom; hãy chụp tay."
+                    break
+                }
+            } else { settledSince = nil }
+        }
+        zoomAwaitingVerification = false
+        isRevealingZoomTarget = false
+        isZoomRampPhase = false
+        if localSelectionMessage == nil {
+            localSelectionMessage = "Zoom chưa ổn định; hãy kiểm tra khung hình và chụp tay."
+        }
+    }
+
+    private func verifyPostZoomFaces(after minimumTimestamp: TimeInterval) -> Bool {
+        guard postZoomFaceCount > 0 else { return true }
+        guard let snapshot = frameProcessor.latestTrackingFrameSnapshot(),
+              snapshot.1.timestamp > max(minimumTimestamp,
+                                         latestOpticalFrameTimestamp - 0.25),
+              snapshot.1.calibration.isValid else { return false }
+        let request = VNDetectFaceRectanglesRequest()
+        let handler = VNImageRequestHandler(cvPixelBuffer: snapshot.0,
+                                            orientation: .up, options: [:])
+        guard (try? handler.perform([request])) != nil else { return false }
+        let faces = (request.results ?? []).filter { $0.confidence >= 0.38 }
+        guard faces.count >= postZoomFaceCount else { return false }
+        return faces.allSatisfy {
+            let r = $0.boundingBox
+            return r.minX >= 0.025 && r.minY >= 0.025 &&
+                   r.maxX <= 0.975 && r.maxY <= 0.975
+        }
+    }
+
+    private func currentCropSafeForCapture() -> Bool {
+        guard let box = latestOpticalBox, latestOpticalCalibration?.isValid == true,
+              CACurrentMediaTime() - latestOpticalFrameTimestamp < 0.5,
+              box.minX >= 0.025, box.minY >= 0.025,
+              box.maxX <= 0.975, box.maxY <= 0.975 else { return false }
+        return verifyPostZoomFaces(after: postZoomFaceMinimumTimestamp)
     }
 
     private func executeCapture() {

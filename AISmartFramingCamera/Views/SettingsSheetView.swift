@@ -787,13 +787,46 @@ struct AIFramingSettingsSection: View {
     @Binding var testResult: String?
     @Binding var showDeleteKeyConfirmation: Bool
     @Binding var toastMessage: String?
+    @State private var showDeleteFeedbackConfirmation = false
+    @State private var feedbackRevision = 0
 
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         VStack(spacing: 14) {
             compositionRulesCard
+            compositionFeedbackCard
             aiCloudCard
+        }
+    }
+
+    private var compositionFeedbackCard: some View {
+        SettingsSectionCard(title: "SỞ THÍCH BỐ CỤC TRÊN MÁY", icon: "square.and.pencil", iconColor: amberGold) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("AI học từ vùng bạn chọn. File chỉ chứa loại cảnh, đặc trưng bố cục và mức zoom thực tế; không chứa ảnh, GPS hoặc đặc trưng khuôn mặt.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.72))
+                if let url = CompositionPreferenceStore.shared.exportURL {
+                    ShareLink(item: url) {
+                        Label("Xuất dữ liệu lựa chọn", systemImage: "square.and.arrow.up")
+                    }
+                    .id(feedbackRevision)
+                }
+                Button(role: .destructive) {
+                    showDeleteFeedbackConfirmation = true
+                } label: {
+                    Label("Xóa dữ liệu học bố cục", systemImage: "trash")
+                }
+            }
+            .foregroundColor(.white)
+            .confirmationDialog("Xóa toàn bộ lựa chọn đã lưu?",
+                                isPresented: $showDeleteFeedbackConfirmation) {
+                Button("Xóa dữ liệu", role: .destructive) {
+                    CompositionPreferenceStore.shared.deleteAll()
+                    feedbackRevision += 1
+                    toastMessage = "Đã xóa dữ liệu học bố cục."
+                }
+            }
         }
     }
 

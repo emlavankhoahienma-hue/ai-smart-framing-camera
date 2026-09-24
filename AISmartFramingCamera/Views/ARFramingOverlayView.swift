@@ -48,6 +48,31 @@ public struct ARFramingOverlayView: View {
                     }
                 }
 
+                if case .analyzing = viewModel.aiSessionState {
+                    ForEach(0..<viewModel.localSuggestionRects.count, id: \.self) { index in
+                        let rect = convertBufferRectToScreen(viewModel.localSuggestionRects[index], in: size)
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.yellow, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+                            .frame(width: rect.width, height: rect.height)
+                            .position(x: rect.midX, y: rect.midY)
+                            .allowsHitTesting(false)
+                    }
+                }
+                if let message = viewModel.localSelectionMessage {
+                    VStack {
+                        Spacer()
+                        Text(message)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.78)))
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 145)
+                    }
+                    .allowsHitTesting(false)
+                }
+
                 // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
                 // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
                 if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
@@ -196,7 +221,7 @@ public struct ARFramingOverlayView: View {
                 ZoomRevealOverlay(
                     rect: viewModel.zoomRevealRect,
                     isVisible: viewModel.isRevealingZoomTarget,
-                    targetZoom: viewModel.aiSuggestedZoom ?? 2.0
+                    displayZoom: viewModel.displayZoom
                 )
             }
             .contentShape(Rectangle())
@@ -206,6 +231,9 @@ public struct ARFramingOverlayView: View {
                     viewModel.unlockAEAF()
                 } else if case .targetPlaced = viewModel.aiSessionState {
                     viewModel.pinTargetAndStartMotion(at: norm)
+                } else if case .analyzing = viewModel.aiSessionState,
+                          viewModel.localSelectionMessage != nil {
+                    viewModel.chooseLocalSuggestion(at: norm)
                 } else {
                     viewModel.userDidTapToFocus(at: norm)
                 }
@@ -231,6 +259,7 @@ public struct ARFramingOverlayView: View {
                         if !isPinching {
                             isPinching = true
                             pinchBaseZoom = viewModel.currentZoom
+                            viewModel.cancelAIZoomForGesture()
                             viewModel.isPinchingZoom = true
                         }
                         let minZ = viewModel.cameraService.minZoom
@@ -656,7 +685,7 @@ struct HorizonLevelerView: View {
 struct ZoomRevealOverlay: View {
     let rect: CGRect
     let isVisible: Bool
-    var targetZoom: CGFloat = 2.0
+    let displayZoom: CGFloat
 
     var body: some View {
         GeometryReader { geo in
@@ -710,7 +739,7 @@ struct ZoomRevealOverlay: View {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 9, weight: .bold))
-                        Text("AI ZOOM \(String(format: "%.1f", targetZoom))x")
+                        Text("AI ZOOM \(String(format: "%.1f", displayZoom))x")
                             .font(.system(size: 9, weight: .heavy, design: .rounded))
                     }
                     .foregroundColor(.black)

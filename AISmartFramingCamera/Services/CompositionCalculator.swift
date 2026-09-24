@@ -1,5 +1,233 @@
 import Foundation
 import CoreGraphics
+import simd
+
+/// The optical tracker follows subjectPoint. The yellow guide follows aimWorldRay.
+/// These are different bearings whenever the requested composition is off centre.
+struct LocalFramingPlan {
+    let subjectPoint: CGPoint
+    let subjectRect: CGRect
+    let aimPointInSource: CGPoint
+    let aimWorldRay: SIMD3<Double>
+    let zoom: CGFloat
+    let expectedSubjectRect: CGRect
+    let confidence: Double
+}
+
+enum LocalAutoselectCalibration {
+    private static let thresholds: [String: Double] = {
+        guard let url = Bundle.main.url(forResource: "LocalAutoselectThresholds", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let values = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
+        return values.filter { $0.value.isFinite && (0.55...1.0).contains($0.value) }
+    }()
+    static func threshold(scene: DetectedSceneType,
+                          category: NeuralSubjectCategory) -> Double? {
+        thresholds[scene.rawValue + "|" + category.rawValue]
+    }
+}
+
+/// Only coarse composition features are written. No image, location, or face
+/// landmarks leave memory. The learned term can move ranking by at most 15%.
+final class CompositionPreferenceStore {
+    static let shared = CompositionPreferenceStore()
+    private struct Feature: Codable {
+        let category: String
+        let x: Int
+        let y: Int
+        let area: Int
+    }
+    private struct Choice: Codable {
+        let scene: String
+        let candidates: [Feature]
+        let selectedIndex: Int
+        let actualZoomTenths: Int
+    }
+    private let url: URL
+    private var selected: [String: Int] = [:]
+    private var considered: [String: Int] = [:]
+
+    private init() {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory,
+                                                in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+        let directory = support.appendingPathComponent("AlignAI Camera", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory,
+            withIntermediateDirectories: true)
+        url = directory.appendingPathComponent("composition_feedback.jsonl")
+        if let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) {
+            for line in text.split(separator: "\n").suffix(1000) {
+                if let choice = try? JSONDecoder().decode(Choice.self, from: Data(line.utf8)) {
+                    learn(choice)
+                }
+            }
+        }
+    }
+
+    private func feature(_ candidate: NeuralSubjectCandidate) -> Feature {
+        let r = candidate.boundingBox
+        if candidate.category == .face {
+            return Feature(category: NeuralSubjectCategory.human.rawValue,
+                           x: 0, y: 0, area: 0)
+        }
+        return Feature(category: candidate.category.rawValue,
+            x: Int((r.midX * 10).rounded()), y: Int((r.midY * 10).rounded()),
+            area: Int((candidate.areaRatio * 20).rounded()))
+    }
+    private func keys(scene: String, feature: Feature) -> [String] {
+        let base = scene + "|" + feature.category
+        // Face candidates are reduced to a generic human label; never infer
+        // a position or size preference from their omitted coordinates.
+        guard feature.x != 0 || feature.y != 0 || feature.area != 0 else {
+            return [base]
+        }
+        return [base, base + "|horizontal:" + String(feature.x / 3),
+                base + "|size:" + String(feature.area / 4)]
+    }
+    private func learn(_ choice: Choice) {
+        for (index, candidate) in choice.candidates.enumerated() {
+            for key in keys(scene: choice.scene, feature: candidate) {
+                considered[key, default: 0] += 1
+                if index == choice.selectedIndex { selected[key, default: 0] += 1 }
+            }
+        }
+    }
+    func bonus(scene: DetectedSceneType, candidate: NeuralSubjectCandidate) -> Double {
+        let candidateKeys = keys(scene: scene.rawValue, feature: feature(candidate))
+        let weights = candidateKeys.count == 1 ? [1.0] : [0.50, 0.30, 0.20]
+        var learned = 0.0
+        for (key, weight) in zip(candidateKeys, weights) {
+            let n = considered[key, default: 0]
+            guard n >= 3 else { continue }
+            let wins = selected[key, default: 0]
+            learned += weight * (Double(wins + 1) / Double(n + 2) - 0.5)
+        }
+        return max(-0.15, min(0.15, learned * 0.3))
+    }
+    func record(scene: DetectedSceneType, candidates: [NeuralSubjectCandidate],
+                selectedIndex: Int, actualZoom: CGFloat) {
+        guard candidates.indices.contains(selectedIndex), actualZoom.isFinite else { return }
+        let choice = Choice(scene: scene.rawValue, candidates: candidates.map(feature),
+            selectedIndex: selectedIndex,
+            actualZoomTenths: Int((actualZoom * 10).rounded()))
+        guard let encoded = try? JSONEncoder().encode(choice) else { return }
+        var line = encoded; line.append(0x0A)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? line.write(to: url, options: .atomic)
+        } else if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            do { _ = try handle.seekToEnd(); try handle.write(contentsOf: line) } catch { return }
+        }
+        learn(choice)
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attributes[.size] as? Int, size > 1_000_000,
+           let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) {
+            let recent = text.split(separator: "\n").suffix(1000).joined(separator: "\n") + "\n"
+            try? Data(recent.utf8).write(to: url, options: .atomic)
+        }
+    }
+    var exportURL: URL? { FileManager.default.fileExists(atPath: url.path) ? url : nil }
+    func deleteAll() {
+        try? FileManager.default.removeItem(at: url)
+        selected.removeAll(); considered.removeAll()
+    }
+}
+
+enum LocalFramingGeometry {
+    private static let forward = SIMD3<Double>(0, 0, -1)
+
+    /// Simulates a camera rotation and digital crop against the exact source calibration.
+    /// A physical lens handoff is still provisional and must be checked on a new frame.
+    static func plan(subject: NeuralSubjectCandidate, companions: [CGRect],
+                     scene: DetectedSceneType, gaze: CGVector,
+                     frame: TrackingFrameContext, pose: simd_quatd,
+                     currentZoom: CGFloat, allowedZooms: [CGFloat]) -> LocalFramingPlan? {
+        let k = frame.calibration
+        let box = subject.boundingBox
+        guard k.isValid, valid(box), currentZoom.isFinite, currentZoom > 0 else { return nil }
+        let s = subject.center
+        let subjectRay = k.deviceRay(at: s)
+        let portrait = subject.category == .human || subject.category == .face
+        let preserveScene = portrait && (scene == .landscape || scene == .architecture || scene == .sunset)
+        let places: [CGPoint]
+        if scene == .architecture || scene == .landscape || scene == .sky || scene == .water {
+            places = [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.5, y: 0.38),
+                      CGPoint(x: 0.38, y: 0.5), CGPoint(x: 0.62, y: 0.5)]
+        } else {
+            let preferredX: CGFloat = gaze.dx > 0.12 ? 0.38 : (gaze.dx < -0.12 ? 0.62 : 0.38)
+            places = [CGPoint(x: preferredX, y: portrait ? 0.40 : 0.50),
+                      CGPoint(x: 1 - preferredX, y: portrait ? 0.40 : 0.50),
+                      CGPoint(x: 0.5, y: 0.5)]
+        }
+        let zooms = Array(Set(([currentZoom] + allowedZooms).filter {
+            $0.isFinite && $0 >= 0.5 && $0 <= 5
+        })).sorted()
+        var best: (LocalFramingPlan, Double)?
+        for zoom in zooms {
+            let ratio = Double(zoom / currentZoom)
+            guard ratio.isFinite, ratio > 0 else { continue }
+            let future = TrackingCalibration(fx: k.fx * ratio, fy: k.fy * ratio,
+                                             cx: k.cx, cy: k.cy, aspect: k.aspect,
+                                             isMeasured: false)
+            for d in places {
+                // R maps the desired final subject ray into the current subject ray.
+                // The future optical axis is R * forward, expressed in source axes.
+                let rotation = simd_quatd(from: future.deviceRay(at: d), to: subjectRay)
+                let aimDeviceRay = rotation.act(forward)
+                let aim = k.project(deviceRay: aimDeviceRay)
+                guard aim.isInFront, aim.point.x.isFinite, aim.point.y.isFinite,
+                      (0...1).contains(aim.point.x), (0...1).contains(aim.point.y),
+                      let projected = project(box, from: k, to: future, rotation: rotation),
+                      safe(projected, margin: 0.035) else { continue }
+                var companionsSafe = true
+                for other in companions where valid(other) {
+                    guard let expected = project(other, from: k, to: future,
+                                                 rotation: rotation),
+                          safe(expected, margin: 0.025) else {
+                        companionsSafe = false; break
+                    }
+                }
+                guard companionsSafe else { continue }
+                let targetArea = preserveScene ? 0.10 : (portrait ? 0.22 :
+                    (scene == .architecture ? 0.34 : 0.24))
+                let area = Double(projected.width * projected.height)
+                let sizeFit = 1 - min(1, abs(log(max(0.001, area) / targetArea)) / 2.5)
+                let motion = hypot(Double(aim.point.x - 0.5), Double(aim.point.y - 0.5))
+                let zoomCost = abs(log(ratio))
+                let spaceBonus = gaze.dx > 0.12 ? Double(0.5 - d.x) * 0.16 :
+                    (gaze.dx < -0.12 ? Double(d.x - 0.5) * 0.16 : 0)
+                let score = 0.65 * sizeFit - 0.10 * motion - 0.08 * zoomCost + spaceBonus
+                let ray = pose.act(aimDeviceRay)
+                let plan = LocalFramingPlan(subjectPoint: s, subjectRect: box,
+                    aimPointInSource: aim.point, aimWorldRay: ray, zoom: zoom,
+                    expectedSubjectRect: projected,
+                    confidence: min(1, max(0, Double(subject.confidence) * (0.55 + 0.45 * sizeFit))))
+                if let previous = best {
+                    if score > previous.1 { best = (plan, score) }
+                } else { best = (plan, score) }
+            }
+        }
+        return best?.0
+    }
+
+    private static func valid(_ r: CGRect) -> Bool {
+        [r.minX, r.minY, r.maxX, r.maxY].allSatisfy(\.isFinite) &&
+            r.width > 0.01 && r.height > 0.01 && r.minX >= 0 && r.minY >= 0 &&
+            r.maxX <= 1 && r.maxY <= 1
+    }
+    private static func safe(_ r: CGRect, margin: CGFloat) -> Bool {
+        r.minX >= margin && r.minY >= margin && r.maxX <= 1 - margin && r.maxY <= 1 - margin
+    }
+    private static func project(_ rect: CGRect, from source: TrackingCalibration,
+                                to output: TrackingCalibration, rotation: simd_quatd) -> CGRect? {
+        let points = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+                      CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)]
+        let projected = points.map { output.project(deviceRay: rotation.inverse.act(source.deviceRay(at: $0))) }
+        guard projected.allSatisfy({ $0.isInFront && $0.point.x.isFinite && $0.point.y.isFinite }) else { return nil }
+        let xs = projected.map(\.point.x), ys = projected.map(\.point.y)
+        guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+}
 
 public struct FramingTargetResult {
     public let targetPoint: CGPoint          // Normalized coordinate (0.0...1.0)
