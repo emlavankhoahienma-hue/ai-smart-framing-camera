@@ -110,7 +110,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
 
 @MainActor
 public final class CameraViewModel: ObservableObject {
-    private struct AITrackingSource {
+    private struct AITrackingSource: @unchecked Sendable {
         let buffer: CVPixelBuffer
         let frame: TrackingFrameContext
         let pose: simd_quatd
