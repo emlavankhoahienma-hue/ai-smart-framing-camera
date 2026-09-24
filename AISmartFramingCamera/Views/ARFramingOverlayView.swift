@@ -50,12 +50,16 @@ public struct ARFramingOverlayView: View {
 
                 if case .analyzing = viewModel.aiSessionState {
                     ForEach(0..<viewModel.localSuggestionRects.count, id: \.self) { index in
-                        let rect = convertBufferRectToScreen(viewModel.localSuggestionRects[index], in: size)
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.yellow, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
-                            .frame(width: rect.width, height: rect.height)
-                            .position(x: rect.midX, y: rect.midY)
-                            .allowsHitTesting(false)
+                        let sourceRect = viewModel.localSuggestionRects[index]
+                        if !sourceRect.isEmpty, sourceRect.maxX > 0, sourceRect.maxY > 0,
+                           sourceRect.minX < 1, sourceRect.minY < 1 {
+                            let rect = convertBufferRectToScreen(sourceRect, in: size)
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.yellow, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+                                .frame(width: rect.width, height: rect.height)
+                                .position(x: rect.midX, y: rect.midY)
+                                .allowsHitTesting(false)
+                        }
                     }
                 }
                 if let message = viewModel.localSelectionMessage {

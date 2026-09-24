@@ -266,6 +266,8 @@ public final class CameraViewModel: ObservableObject {
     private var latestOpticalBox: CGRect?
     private var latestOpticalCalibration: TrackingCalibration?
     private var needsFocusOnTrackedSubject = false
+    private var targetPinStartedAt = -Double.infinity
+    private var lastFailedCaptureOpticalTimestamp = -Double.infinity
 
     // MARK: - Sun Exposure Slider & Horizon Leveler
     @Published public var isShowingSunSlider: Bool = false
@@ -846,11 +848,11 @@ public final class CameraViewModel: ObservableObject {
                                                    frame: TrackingFrameContext?) {
         guard !isShowingSettings else { return }
         // Suggestions need only the frame geometry; do not retain a live pool buffer.
-        if localAnalysisFinished, !localCandidatePlans.isEmpty,
+        if localAnalysisFinished, !localEvidenceCandidates.isEmpty,
            let source = localTrackingSource, let frame,
            let pose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) {
-            localSuggestionRects = localCandidatePlans.map {
-                reprojectSuggestion($0.subjectRect, from: source,
+            localSuggestionRects = localEvidenceCandidates.map {
+                reprojectSuggestion($0.boundingBox, from: source,
                                     to: frame.calibration, pose: pose)
             }
         }
@@ -1015,7 +1017,15 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self, !self.isShowingSettings else { return }
             // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
             self.currentTargetPoint = point
-            self.trackingQuality = quality
+            // A single missed Vision result must not flash "reacquiring" and
+            // tear down alignment while the last optical frame is still fresh.
+            // The final shutter gate below still checks a real, safe frame.
+            let opticalAge = CACurrentMediaTime() - self.latestOpticalFrameTimestamp
+            let briefOpticalGap = quality != .lost && opticalAge >= 0 && opticalAge < 0.45
+            let seeding = quality == .reacquiring && self.latestOpticalPoint == nil &&
+                CACurrentMediaTime() - self.targetPinStartedAt < 0.8
+            self.trackingQuality = quality == .locked || briefOpticalGap ? .locked :
+                (seeding ? .predicting : quality)
             // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
             switch self.aiSessionState {
             case .targetPlaced, .alignmentPerfect:
@@ -1064,6 +1074,7 @@ public final class CameraViewModel: ObservableObject {
         localSuggestionRects = []
         localSelectionMessage = nil
         allowsAutoCaptureForCurrentTarget = true
+        lastAutoZoomExecutionTime = .distantPast
         zoomAwaitingVerification = false
         zoomVerified = true
         postZoomFaceMinimumTimestamp = -Double.infinity
@@ -1563,7 +1574,9 @@ public final class CameraViewModel: ObservableObject {
         }.filter { candidate in
             guard candidate.boundingBox.minX >= 0, candidate.boundingBox.minY >= 0,
                   candidate.boundingBox.maxX <= 1, candidate.boundingBox.maxY <= 1 else { return false }
-            return candidate.confidence >= 0.48
+            // A weaker but localized Vision region may still be useful as a
+            // tap suggestion. It never bypasses the calibrated auto-choice gate.
+            return candidate.confidence >= 0.35
         }
         var distinct: [NeuralSubjectCandidate] = []
         for candidate in candidates {
@@ -1573,7 +1586,7 @@ public final class CameraViewModel: ObservableObject {
                 return Double(intersection.width * intersection.height) > smaller * 0.65
             }
             if !duplicate { distinct.append(candidate) }
-            if distinct.count == 3 { break }
+            if distinct.count == 12 { break }
         }
         let feasible = distinct.compactMap { candidate -> (NeuralSubjectCandidate, LocalFramingPlan)? in
             let otherPeople = distinct.filter {
@@ -1587,10 +1600,25 @@ public final class CameraViewModel: ObservableObject {
                 currentZoom: CGFloat(source.frame.displayZoom),
                 allowedZooms: cameraService.availableDisplayZoomOptions) else { return nil }
             return (candidate, plan)
-        }
-        localEvidenceCandidates = feasible.map(\.0)
+        }.prefix(3)
         localCandidatePlans = feasible.map(\.1)
-        localSuggestionRects = localCandidatePlans.map(\.subjectRect)
+        // If no zoom/crop plan survives, still show up to three localized
+        // regions for an explicit tap. Those taps remain manual capture only.
+        localEvidenceCandidates = feasible.isEmpty ? Array(distinct.prefix(3)) : feasible.map(\.0)
+        if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
+           let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
+                ?? SpatialTrackingEngine.shared.latestPose() {
+            localSuggestionRects = localEvidenceCandidates.map {
+                reprojectSuggestion($0.boundingBox, from: source,
+                                    to: currentFrame.calibration, pose: currentPose)
+            }
+        } else {
+            // A delayed analysis cannot paint source-frame boxes at stale
+            // screen coordinates. The next synchronized preview will reproject.
+            localSuggestionRects = localEvidenceCandidates.map { _ in
+                CGRect(x: -1, y: -1, width: 0, height: 0)
+            }
+        }
         detectedSubjectRects = localSuggestionRects
         if output.usedSemanticModel {
             activeEngineSource = .semanticLocal(label: output.detectedScene.localizedName)
@@ -1608,20 +1636,39 @@ public final class CameraViewModel: ObservableObject {
             localEvidenceCandidates[0].prominenceScore > localEvidenceCandidates[1].prominenceScore * 1.35) {
             acceptLocalPlan(best, source: source)
         } else {
-            localSelectionMessage = localCandidatePlans.isEmpty ?
-                "Chưa đủ bằng chứng để chọn chủ thể. Chạm vùng muốn chụp hoặc chụp tay." :
-                "Chọn một vùng được đánh dấu, hoặc chạm vùng khác để chụp tay."
+            if localEvidenceCandidates.isEmpty {
+                localSelectionMessage = "Chưa xác định được vùng đáng tin cậy. Chạm vùng muốn chụp hoặc chụp tay."
+            } else if localCandidatePlans.isEmpty {
+                localSelectionMessage = "AI thấy vùng có thể chọn nhưng chưa kiểm định được bố cục. Chạm vùng đánh dấu để ghim và chụp tay."
+            } else {
+                localSelectionMessage = "Chọn một vùng được đánh dấu, hoặc chạm vùng khác để chụp tay."
+            }
         }
     }
 
     public func chooseLocalSuggestion(at point: CGPoint) {
         guard case .analyzing = aiSessionState else { return }
-        if let index = localSuggestionRects.firstIndex(where: { $0.insetBy(dx: -0.025, dy: -0.025).contains(point) }),
-           index < localCandidatePlans.count, let source = localTrackingSource {
-            CompositionPreferenceStore.shared.record(scene: detectedScene,
-                candidates: localEvidenceCandidates, selectedIndex: index,
-                actualZoom: displayZoom)
-            acceptLocalPlan(localCandidatePlans[index], source: source)
+        if let index = localSuggestionRects.firstIndex(where: {
+            !$0.isEmpty && $0.insetBy(dx: -0.025, dy: -0.025).contains(point)
+        }), index < localEvidenceCandidates.count,
+           let source = localTrackingSource {
+            if index < localCandidatePlans.count {
+                CompositionPreferenceStore.shared.record(scene: detectedScene,
+                    candidates: localEvidenceCandidates, selectedIndex: index,
+                    actualZoom: displayZoom)
+                acceptLocalPlan(localCandidatePlans[index], source: source)
+            } else {
+                let candidate = localEvidenceCandidates[index]
+                localCandidatePlans = []
+                localEvidenceCandidates = []
+                localSuggestionRects = []
+                allowsAutoCaptureForCurrentTarget = false
+                pendingSuggestedZoom = displayZoom
+                pinTargetAndStartMotion(at: candidate.center,
+                    subjectRect: candidate.boundingBox, source: source)
+                localTrackingSource = nil
+                localSelectionMessage = "Đã ghim vùng bạn chọn; kiểm tra bố cục và chụp tay."
+            }
         } else {
             allowsAutoCaptureForCurrentTarget = false
             localTrackingSource = nil
@@ -1675,6 +1722,8 @@ public final class CameraViewModel: ObservableObject {
         }
         targetPinGeneration &+= 1
         let pinGeneration = targetPinGeneration
+        targetPinStartedAt = CACurrentMediaTime()
+        lastFailedCaptureOpticalTimestamp = -.infinity
         zoomVerificationTask?.cancel()
         zoomVerificationTask = nil
         autoCaptureTask?.cancel()
@@ -1688,6 +1737,7 @@ public final class CameraViewModel: ObservableObject {
         zoomVerified = true
         postZoomFaceMinimumTimestamp = -Double.infinity
         latestOpticalPoint = nil
+        latestOpticalFrameTimestamp = -.infinity
         latestOpticalBox = nil
         latestOpticalCalibration = nil
         needsFocusOnTrackedSubject = false
@@ -1879,7 +1929,9 @@ public final class CameraViewModel: ObservableObject {
 
         // Keep the target visible during prediction/reacquisition, but require
         // recent optical support before the magnetic snap or auto capture.
-        let isPerfect = dist <= calculator.alignmentTolerance && trackingQuality == .locked
+        let tolerance = calculator.alignmentTolerance
+        let isPerfect = trackingQuality == .locked &&
+            (dist <= tolerance || (isPerfectAlignment && dist <= tolerance * 1.30))
 
         // Kích hoạt khi tâm trắng đè khớp lên vùng target vàng!
         if isPerfect && !isPerfectAlignment {
@@ -1912,6 +1964,15 @@ public final class CameraViewModel: ObservableObject {
             withAnimation {
                 aiSessionState = .targetPlaced(locked: true)
             }
+        } else if isPerfect && isPerfectAlignment &&
+                  dist <= tolerance && aiSessionState == .targetPlaced(locked: true) &&
+                  isAutoCaptureOnAlignEnabled && allowsAutoCaptureForCurrentTarget &&
+                  !zoomAwaitingVerification && zoomVerified &&
+                  latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp + 0.03 {
+            // A previous countdown may have ended during a brief bad frame.
+            // Re-arm without replaying the magnetic snap or zoom animation.
+            aiSessionState = .alignmentPerfect
+            startAutoCaptureCountdown()
         }
 
         if !isPerfect {
@@ -1957,6 +2018,7 @@ public final class CameraViewModel: ObservableObject {
             } else {
                 self.aiSessionState = .targetPlaced(locked: true)
                 self.autoCaptureCountdown = 0
+                self.lastFailedCaptureOpticalTimestamp = self.latestOpticalFrameTimestamp
             }
         }
     }

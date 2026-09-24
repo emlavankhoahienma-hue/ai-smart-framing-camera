@@ -15,6 +15,9 @@ SPATIAL = (ROOT / "Services/SpatialTrackingEngine.swift").read_text(encoding="ut
 NEURAL = (ROOT / "Services/NeuralSubjectIntelligenceEngine.swift").read_text(encoding="utf-8")
 VM = (ROOT / "ViewModels/CameraViewModel.swift").read_text(encoding="utf-8")
 VISION = (ROOT / "Services/VisionFramingEngine.swift").read_text(encoding="utf-8")
+YOLO = (ROOT / "Services/YOLODetectionEngine.swift").read_text(encoding="utf-8")
+WORKFLOW = (ROOT.parent / ".github/workflows/ios-build.yml").read_text(encoding="utf-8")
+BUNDLE_CHECK = (ROOT.parent / "scripts/verify_model_bundle.py").read_text(encoding="utf-8")
 
 
 def aim_x(subject_x: float, desired_x: float, fx: float, zoom_ratio: float) -> float:
@@ -70,10 +73,10 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("YOLODetectionEngine.shared.detectObjects", NEURAL)
 
     def test_ambiguous_result_requires_selection(self):
-        self.assertIn("if distinct.count == 3 { break }", VM)
+        self.assertIn("if distinct.count == 12 { break }", VM)
         self.assertIn("best.confidence >= max(0.72, measuredThreshold)", VM)
-        self.assertIn("localSuggestionRects = localCandidatePlans.map", VM)
-        self.assertIn("reprojectSuggestion($0.subjectRect, from: source", VM)
+        self.assertIn("localSuggestionRects = localEvidenceCandidates.map", VM)
+        self.assertIn("reprojectSuggestion($0.boundingBox, from: source", VM)
         self.assertIn("allowsAutoCaptureForCurrentTarget = false", VM)
         self.assertNotIn("consolidateLocalAnalysisAndLockTarget", VM)
 
@@ -87,6 +90,15 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("cameraService.cancelZoomRamp()", VM)
         self.assertIn("!self.zoomAwaitingVerification && self.zoomVerified", VM)
         self.assertIn("self.trackingQuality == .locked", VM)
+
+    def test_stronger_detector_has_matching_old_device_fallback_assets(self):
+        for name in ("yolo11n", "yolo11s"):
+            self.assertIn(name + ".pt", WORKFLOW)
+            self.assertIn(name + ".mlmodelc", WORKFLOW)
+            self.assertIn('"' + name + '"', YOLO)
+            self.assertIn('"' + name + '"', BUNDLE_CHECK)
+        self.assertIn("physicalMemory >= 6_000_000_000", YOLO)
+        self.assertIn("Vision remains the fallback", YOLO)
 
 
 if __name__ == "__main__":

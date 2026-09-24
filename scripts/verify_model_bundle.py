@@ -7,7 +7,10 @@ import sys
 from pathlib import Path
 
 
-YOLO_WEIGHTS_SHA256 = "f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36"
+YOLO_WEIGHTS_SHA256 = {
+    "yolo11n": "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1",
+    "yolo11s": "85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5",
+}
 
 
 def tree_hash(directory: Path) -> str:
@@ -28,7 +31,8 @@ def tree_hash(directory: Path) -> str:
 def main() -> None:
     bundle = Path(sys.argv[1])
     siglip = tree_hash(bundle / "SigLIPBaseImage.mlmodelc")
-    yolo = tree_hash(bundle / "YOLOv11.mlmodelc")
+    yolo = {name: tree_hash(bundle / f"{name}.mlmodelc")
+            for name in YOLO_WEIGHTS_SHA256}
     prompt_path = bundle / "SigLIPPrompts.json"
     source_manifest = bundle / "SigLIPModelManifest.json"
     prompts = json.loads(prompt_path.read_text(encoding="utf-8"))
@@ -41,8 +45,8 @@ def main() -> None:
     source_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (bundle / "YOLOModelManifest.json").write_text(json.dumps({
         "repository": "ultralytics/assets", "release": "v8.3.0",
-        "weightsSHA256": YOLO_WEIGHTS_SHA256,
-        "compiledSHA256": yolo,
+        "models": {name: {"weightsSHA256": YOLO_WEIGHTS_SHA256[name],
+                           "compiledSHA256": yolo[name]} for name in yolo},
     }, indent=2), encoding="utf-8")
     print(f"SigLIP compiled SHA256: {siglip}")
     print(f"YOLO compiled SHA256: {yolo}")

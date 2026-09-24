@@ -4,92 +4,97 @@ import Vision
 import CoreGraphics
 import UIKit
 
-/// Động cơ Nhận Diện Vật Thể YOLOv11 CoreML (YOLO Real-time 80 Classes Neural Detection)
-/// Chạy trực tiếp trên Apple Neural Engine (ANE) của chip A12 Bionic trở lên
+/// Nhận diện 80 lớp COCO qua model YOLO Core ML đã đóng gói.
+/// YOLO11s serves high-memory devices, YOLO11n serves older devices.
+/// Vision remains the fallback when loading or inference fails.
 public final class YOLODetectionEngine: @unchecked Sendable {
     public static let shared = YOLODetectionEngine()
-    
+
+    private let modelLock = NSLock()
     private var yoloCoreMLModel: VNCoreMLModel?
-    private var isModelLoaded: Bool = false
+    private var loadedModelName: String?
     
     public init() {
         loadYOLOModel()
     }
     
-    /// Tải model YOLOv11 CoreML từ App Bundle
+    /// Load one model at a time so the stronger tier does not keep the nano
+    /// weights resident on devices that already load SigLIP for a one-shot AI.
     public func loadYOLOModel() {
-        // Tìm file .mlmodelc (đã biên dịch) hoặc .mlpackage trong App Bundle
-        if let modelURL = Bundle.main.url(forResource: "YOLOv11", withExtension: "mlmodelc") ??
-                          Bundle.main.url(forResource: "yolo11n", withExtension: "mlmodelc") ??
-                          Bundle.main.url(forResource: "yolov8n", withExtension: "mlmodelc") {
-            do {
-                let config = MLModelConfiguration()
-                config.computeUnits = .all // Tận dụng tối đa Apple Neural Engine + GPU + CPU
-                let mlModel = try MLModel(contentsOf: modelURL, configuration: config)
-                let vnModel = try VNCoreMLModel(for: mlModel)
-                self.yoloCoreMLModel = vnModel
-                self.isModelLoaded = true
-                CameraLogger.success("Đã nạp thành công Model YOLOv11 CoreML (Neural Engine ANE)", category: .ai)
-            } catch {
-                CameraLogger.warning("Không thể nạp YOLOv11 compiled model: \(error)", category: .ai)
+        let highMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
+        let names = (highMemory ? ["yolo11s"] : []) +
+            ["yolo11n", "YOLOv11", "yolov8n"]
+        for name in names {
+            guard let model = makeModel(named: name) else { continue }
+            modelLock.withLock {
+                yoloCoreMLModel = model
+                loadedModelName = name
             }
-        } else if let packageURL = Bundle.main.url(forResource: "YOLOv11", withExtension: "mlpackage") ??
-                                   Bundle.main.url(forResource: "yolo11n", withExtension: "mlpackage") ??
-                                   Bundle.main.url(forResource: "yolov8n", withExtension: "mlpackage") {
-            do {
-                let compiledURL = try MLModel.compileModel(at: packageURL)
-                let config = MLModelConfiguration()
-                config.computeUnits = .all
-                let mlModel = try MLModel(contentsOf: compiledURL, configuration: config)
-                let vnModel = try VNCoreMLModel(for: mlModel)
-                self.yoloCoreMLModel = vnModel
-                self.isModelLoaded = true
-                CameraLogger.success("Đã biên dịch & nạp Model YOLOv11 CoreML", category: .ai)
-            } catch {
-                CameraLogger.warning("Lỗi biên dịch YOLO package: \(error)", category: .ai)
-            }
-        } else {
-            CameraLogger.info("Model YOLOv11 chưa được đính kèm bundle, sử dụng Vision Native Fallback", category: .ai)
+            CameraLogger.success("Đã nạp YOLO CoreML: \(name)", category: .ai)
+            return
+        }
+        CameraLogger.info("Model YOLO chưa khả dụng, dùng Apple Vision", category: .ai)
+    }
+
+    private func makeModel(named name: String) -> VNCoreMLModel? {
+        let compiled = Bundle.main.url(forResource: name, withExtension: "mlmodelc")
+        let package = Bundle.main.url(forResource: name, withExtension: "mlpackage")
+        guard let url = compiled ?? package else { return nil }
+        do {
+            let modelURL = compiled == nil ? try MLModel.compileModel(at: url) : url
+            let config = MLModelConfiguration()
+            config.computeUnits = .all
+            return try VNCoreMLModel(for: MLModel(contentsOf: modelURL,
+                                                  configuration: config))
+        } catch {
+            CameraLogger.warning("Không thể nạp \(name): \(error)", category: .ai)
+            return nil
         }
     }
     
     public var hasYOLOModel: Bool {
-        return isModelLoaded && yoloCoreMLModel != nil
+        modelLock.withLock { yoloCoreMLModel != nil }
     }
     
-    /// Chạy nhận diện 80 danh mục vật thể thời gian thực bằng YOLOv11
+    /// Chạy nhận diện 80 lớp COCO trên một ảnh nguồn.
     public func detectObjects(
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation = .up
     ) -> [NeuralSubjectCandidate] {
-        guard let vnModel = self.yoloCoreMLModel else { return [] }
+        guard let vnModel = modelLock.withLock({ yoloCoreMLModel }) else { return [] }
         
         var detectedCandidates: [NeuralSubjectCandidate] = []
         let request = VNCoreMLRequest(model: vnModel) { [weak self] req, error in
             guard let self = self, error == nil else { return }
             
             if let results = req.results as? [VNRecognizedObjectObservation] {
-                for obs in results where obs.confidence >= 0.48 {
+                for obs in results where obs.confidence >= 0.35 {
                     guard let topLabel = obs.labels.first else { continue }
-                    let category = self.mapYOLOLabelToCategory(topLabel.identifier)
-                    let localizedName = self.localizeYOLOLabel(topLabel.identifier)
+                    // Vision object and class scores are independent evidence.
+                    // A weak class may propose a box, but cannot assert identity.
+                    let confidence = min(obs.confidence, topLabel.confidence)
+                    guard confidence >= 0.35 else { continue }
+                    let category = confidence >= 0.48 ?
+                        self.mapYOLOLabelToCategory(topLabel.identifier) : .general
+                    let localizedName = confidence >= 0.48 ?
+                        self.localizeYOLOLabel(topLabel.identifier) : "Vùng có thể chọn"
                     
                     // Vision (Bottom-Left) -> UI (Top-Left)
-                    let uiRect = CGRect(
+                    let rawRect = CGRect(
                         x: obs.boundingBox.origin.x,
                         y: 1.0 - obs.boundingBox.origin.y - obs.boundingBox.height,
                         width: obs.boundingBox.width,
                         height: obs.boundingBox.height
                     )
                     
-                    guard self.isValidBox(uiRect) else { continue }
+                    guard let uiRect = self.clippedValidBox(rawRect) else { continue }
                     
-                    let score = self.calculateYOLOProminenceScore(rect: uiRect, confidence: obs.confidence, category: category)
+                    let score = self.calculateYOLOProminenceScore(rect: uiRect, confidence: confidence, category: category)
                     
                     detectedCandidates.append(NeuralSubjectCandidate(
                         boundingBox: uiRect,
                         category: category,
-                        confidence: obs.confidence,
+                        confidence: confidence,
                         label: localizedName,
                         prominenceScore: score
                     ))
@@ -104,6 +109,23 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             try handler.perform([request])
         } catch {
             CameraLogger.error("Lỗi thực thi YOLO Request", error: error, category: .ai)
+            detectedCandidates.removeAll()
+            let failedSmall = modelLock.withLock { loadedModelName == "yolo11s" }
+            if failedSmall {
+                // The current frame can safely continue through Vision. Release
+                // the failed model before loading nano for the next AI session.
+                modelLock.withLock {
+                    yoloCoreMLModel = nil
+                    loadedModelName = nil
+                }
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    guard let self, let nano = self.makeModel(named: "yolo11n") else { return }
+                    self.modelLock.withLock {
+                        self.yoloCoreMLModel = nano
+                        self.loadedModelName = "yolo11n"
+                    }
+                }
+            }
         }
         
         return detectedCandidates.sorted { $0.prominenceScore > $1.prominenceScore }
@@ -195,9 +217,15 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         return Double(confidence) * 1.6 * areaScore * centerScore * category.priorityWeight
     }
     
-    private func isValidBox(_ rect: CGRect) -> Bool {
-        guard rect.width >= 0.04, rect.height >= 0.04 else { return false }
-        guard rect.width <= 0.96, rect.height <= 0.96 else { return false }
-        return true
+    private func clippedValidBox(_ rect: CGRect) -> CGRect? {
+        guard rect.minX.isFinite, rect.minY.isFinite,
+              rect.width.isFinite, rect.height.isFinite,
+              rect.width > 0, rect.height > 0 else { return nil }
+        let visible = rect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !visible.isNull, !visible.isEmpty,
+              visible.width >= 0.04, visible.height >= 0.04,
+              visible.width <= 0.99, visible.height <= 0.99,
+              visible.width * visible.height >= rect.width * rect.height * 0.80 else { return nil }
+        return visible
     }
 }

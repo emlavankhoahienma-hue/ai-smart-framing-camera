@@ -35,20 +35,39 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Export & Compile YOLO CoreML Model
+      - name: Export & Compile pinned YOLO11 CoreML models
         env:
           # Ultralytics/CoreMLTools currently emit upstream torch tracing and
           # output-renaming notices that do not identify defects in this app.
           PYTHONWARNINGS: ignore
         run: |
-          pip install --upgrade pip "ultralytics>=8.3.0" "coremltools>=8.0"
-          python -c "
-          from ultralytics import YOLO
-          model = YOLO('yolov8n.pt')
-          model.export(format='coreml', nms=True)
-          "
-          xcrun coremlc compile yolov8n.mlpackage .
-          ls -la
+          pip install --upgrade pip
+          pip install "torch==2.5.1" "numpy==1.26.4" \
+            "ultralytics==8.3.0" "coremltools==8.3.0"
+          curl --fail --location --retry 3 \
+            https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt \
+            --output yolo11n.pt
+          curl --fail --location --retry 3 \
+            https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt \
+            --output yolo11s.pt
+          echo "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1  yolo11n.pt" | shasum -a 256 --check
+          echo "85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5  yolo11s.pt" | shasum -a 256 --check
+          python -c "from ultralytics import YOLO; YOLO('yolo11n.pt').export(format='coreml', nms=True); YOLO('yolo11s.pt').export(format='coreml', nms=True)"
+          xcrun coremlc compile yolo11n.mlpackage .
+          xcrun coremlc compile yolo11s.mlpackage .
+          test -d yolo11n.mlmodelc
+          test -d yolo11s.mlmodelc
+
+      - name: Export, verify and compile pinned SigLIP
+        run: |
+          pip install "torch==2.5.1" "transformers==4.46.3" \
+            "huggingface_hub==0.26.2" "safetensors==0.4.5" \
+            "numpy==1.26.4" "Pillow==11.0.0"
+          python scripts/export_siglip_coreml.py
+          xcrun coremlc compile SigLIPBaseImage.mlpackage .
+          test -d SigLIPBaseImage.mlmodelc
+          test -s SigLIPPrompts.json
+          test -s SigLIPModelManifest.json
 
       - name: Build for iOS (unsigned)
         run: |
@@ -110,15 +129,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
-          if [ -d "yolov8n.mlmodelc" ]; then
-            cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
-            cp -r yolov8n.mlmodelc Payload/AISmartFramingCamera.app/yolov8n.mlmodelc
-            echo "✓ Đã tích hợp thành công YOLO CoreML vào App Bundle!"
-          elif [ -d "yolo11n.mlmodelc" ]; then
-            cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/YOLOv11.mlmodelc
-            cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/yolo11n.mlmodelc
-            echo "✓ Đã tích hợp thành công YOLO CoreML vào App Bundle!"
-          fi
+          test -d yolo11n.mlmodelc
+          test -d yolo11s.mlmodelc
+          cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/
+          cp -r yolo11s.mlmodelc Payload/AISmartFramingCamera.app/
           if [ -f "AISmartFramingCamera/Services/RobustTargetEmbedder.bin" ]; then
             cp AISmartFramingCamera/Services/RobustTargetEmbedder.bin Payload/AISmartFramingCamera.app/
             echo "✓ Đã tích hợp thành công RobustTargetEmbedder.bin vào App Bundle!"
@@ -127,6 +141,17 @@ jobs:
             cat AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part* > Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin
             echo "✓ Đã tích hợp thành công AlignAI_SubjectRanker_Weights (114 MB) vào App Bundle!"
           fi
+          test -d Payload/AISmartFramingCamera.app/yolo11n.mlmodelc
+          test -d Payload/AISmartFramingCamera.app/yolo11s.mlmodelc
+          test -d SigLIPBaseImage.mlmodelc
+          cp -r SigLIPBaseImage.mlmodelc Payload/AISmartFramingCamera.app/
+          cp SigLIPPrompts.json SigLIPModelManifest.json Payload/AISmartFramingCamera.app/
+          if [ -s AISmartFramingCamera/Resources/LocalAutoselectThresholds.json ]; then
+            cp AISmartFramingCamera/Resources/LocalAutoselectThresholds.json Payload/AISmartFramingCamera.app/
+          fi
+          test -d Payload/AISmartFramingCamera.app/SigLIPBaseImage.mlmodelc
+          test -s Payload/AISmartFramingCamera.app/SigLIPPrompts.json
+          python scripts/verify_model_bundle.py Payload/AISmartFramingCamera.app
 
       - name: Package IPA
         run: |

@@ -205,7 +205,9 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(assignments, ['observation'])
         self.assertEqual(source.count('VNDetectedObjectObservation(boundingBox:'), 1)
         self.assertIn('let observation = request.results?.first', source)
-        self.assertIn('guard continuity.reject() else { return nil }', source)
+        self.assertIn('guard shouldRetireSequence(afterFailureAt: frame.timestamp) else { return nil }', source)
+        self.assertIn('timestamp - seedTimestamp > 0.8', source)
+        self.assertIn('continuity.consecutiveFailures >= 2', source)
         self.assertNotIn('request.inputObservation = VNDetectedObjectObservation', source)
         self.assertNotIn('refineAnchorBox(around: seedPoint', source)
 

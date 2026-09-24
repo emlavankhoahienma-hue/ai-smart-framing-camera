@@ -45,7 +45,10 @@ struct VisionContinuityPolicy {
     mutating func accept() { consecutiveFailures = 0 }
     mutating func reject() -> Bool {
         consecutiveFailures += 1
-        return consecutiveFailures >= 3
+        // A short pan or exposure transition can spoil several consecutive
+        // camera frames. Withhold those measurements, but keep Vision's
+        // sequence long enough to resume the same object without a re-ID scan.
+        return consecutiveFailures >= 6
     }
 }
 
@@ -172,6 +175,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var lastSearch = -Double.infinity
     private var searchCursor = 0
     private var previousTime = -Double.infinity
+    private var seedTimestamp = -Double.infinity
+    private var hasLiveObservation = false
     private var latestBuffer: CVPixelBuffer?
     private var latestOrientation: CGImagePropertyOrientation = .up
     private var seedBuffer: CVPixelBuffer?
@@ -248,6 +253,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         misses = 0; lastAppearanceCheck = -.infinity
         lastSearch = -.infinity
         searchCursor = 0; previousTime = -.infinity
+        seedTimestamp = -.infinity; hasLiveObservation = false
         pendingRecovery = nil; seedBuffer = nil; pendingSeed = false
         pendingLargeInnovation = nil
         latestBuffer = nil
@@ -255,6 +261,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     private func seed(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                       timestamp: TimeInterval) {
+        seedTimestamp = timestamp
         let source = seedBuffer ?? buffer
         let sourceOrientation = seedBuffer == nil ? orientation : seedOrientation
         let w = min(0.8, max(0.04, seedSize.width)), h = min(0.8, max(0.04, seedSize.height))
@@ -347,6 +354,16 @@ public final class VisionFramingEngine: @unchecked Sendable {
         return b
     }
 
+    private func shouldRetireSequence(afterFailureAt timestamp: TimeInterval) -> Bool {
+        let ordinaryRetirement = continuity.reject()
+        // The image used for an AI decision may be seconds old. If its VN
+        // sequence never obtains a single live observation, move promptly to
+        // appearance-verified recovery around the current world projection.
+        let staleSource = !hasLiveObservation && seedTimestamp.isFinite &&
+            timestamp - seedTimestamp > 0.8
+        return ordinaryRetirement || (staleSource && continuity.consecutiveFailures >= 2)
+    }
+
     private func track(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                        frame: TrackingFrameContext) -> (CGPoint, Double, TrackingOpticalEvidence)? {
         let prediction = SpatialTrackingEngine.shared.projection(at: frame.timestamp, calibration: frame.calibration)
@@ -374,7 +391,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                           rawBox.minX >= 0, rawBox.minY >= 0,
                           rawBox.maxX <= 1, rawBox.maxY <= 1 else {
                         misses += 1; pendingRecovery = nil; pendingLargeInnovation = nil
-                        if continuity.reject() { self.tracker = nil; patchFlow.reset() }
+                        if shouldRetireSequence(afterFailureAt: frame.timestamp) {
+                            self.tracker = nil; patchFlow.reset()
+                        }
                         return nil
                     }
                     let rawPoint = point(in: rawBox)
@@ -387,8 +406,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     // doubtful. A healthy Vision sequence should not hitch the
                     // viewfinder with a recurring neural request.
                     let needsIdentity = referencePrint != nil &&
-                        (misses > 0 || residual > 0.18) &&
-                        frame.timestamp - lastAppearanceCheck >= 0.75
+                        (misses > 0 || (residual > 0.24 && flow?.isReliable != true)) &&
+                        frame.timestamp - lastAppearanceCheck >= 1.5
                     let appearance: AppearanceResult
                     if needsIdentity {
                         lastAppearanceCheck = frame.timestamp
@@ -398,17 +417,19 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         appearance = .unavailable
                     }
                     var evidence: TrackingOpticalEvidence
+                    let ordinaryLimit = max(0.30, SpatialTrackingEngine.shared.maxObservationJump * 2)
                     switch appearance {
                     case .match: evidence = .verifiedContinuation
                     case .unavailable:
                         // Follow the live VN sequence with patch-flow support;
                         // a very confident nearby VN point can bridge weak texture.
-                        let supported = (flow?.isReliable == true && observation.confidence >= 0.60) ||
-                            (observation.confidence >= 0.80 &&
-                             residual <= SpatialTrackingEngine.shared.maxObservationJump)
+                        let supported = (flow?.isReliable == true && observation.confidence >= 0.55) ||
+                            (observation.confidence >= 0.70 && residual <= ordinaryLimit)
                         guard supported else {
                             misses += 1; pendingRecovery = nil; pendingLargeInnovation = nil
-                            if continuity.reject() { self.tracker = nil; patchFlow.reset() }
+                            if shouldRetireSequence(afterFailureAt: frame.timestamp) {
+                                self.tracker = nil; patchFlow.reset()
+                            }
                             return nil
                         }
                         evidence = .geometryContinuation
@@ -416,17 +437,19 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         // Lighting can change the frozen appearance template.
                         // Keep a nearby, independently consistent flow track.
                         guard flow?.isReliable == true, (flow?.inliers ?? 0) >= 7,
-                              observation.confidence >= 0.70,
-                              residual <= SpatialTrackingEngine.shared.maxObservationJump else {
+                              observation.confidence >= 0.65,
+                              residual <= max(0.22,
+                                  SpatialTrackingEngine.shared.maxObservationJump * 1.5) else {
                             misses += 1; pendingRecovery = nil; pendingLargeInnovation = nil
-                            if continuity.reject() { self.tracker = nil; patchFlow.reset() }
+                            if shouldRetireSequence(afterFailureAt: frame.timestamp) {
+                                self.tracker = nil; patchFlow.reset()
+                            }
                             return nil
                         }
                         evidence = .geometryContinuation
                     }
                     if rawBox.width > 0.01, rawBox.height > 0.01,
                        rawBox.minX >= 0, rawBox.minY >= 0, rawBox.maxX <= 1, rawBox.maxY <= 1 {
-                        let ordinaryLimit = max(0.30, SpatialTrackingEngine.shared.maxObservationJump * 2)
                         let isLarge = prediction.map { !$0.isInFront || residual > ordinaryLimit } ?? false
                         if isLarge {
                             // Two consecutive, flow-supported offsets let a live
@@ -436,7 +459,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                   observation.confidence >= 0.70, let prediction else {
                                 pendingLargeInnovation = nil
                                 misses += 1; pendingRecovery = nil
-                                if continuity.reject() { self.tracker = nil; patchFlow.reset() }
+                                if shouldRetireSequence(afterFailureAt: frame.timestamp) {
+                                    self.tracker = nil; patchFlow.reset()
+                                }
                                 return nil
                             }
                             let offset = CGPoint(x: measuredPoint.x - prediction.point.x,
@@ -476,6 +501,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         else { patchFlow.seed(buffer: buffer, box: rawBox, point: measuredPoint) }
                         continuity.accept()
                         misses = 0; pendingRecovery = nil
+                        hasLiveObservation = true
                         return (measuredPoint, Double(observation.confidence), evidence)
                     }
                 }
@@ -483,8 +509,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
             misses += 1
             pendingRecovery = nil; pendingLargeInnovation = nil
             // Withhold the optical correction on a suspect frame, but retain
-            // Vision's identity through one or two bad frames instead of reseeding.
-            guard continuity.reject() else { return nil }
+            // Vision's identity through a short burst of blur instead of reseeding.
+            guard shouldRetireSequence(afterFailureAt: frame.timestamp) else { return nil }
             self.tracker = nil
             patchFlow.reset()
         } else {
@@ -527,6 +553,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     patchFlow.seed(buffer: buffer, box: observation.boundingBox, point: confirmedPoint)
                     continuity.accept()
                     misses = 0; lastAppearanceCheck = frame.timestamp
+                    hasLiveObservation = true
                     pendingRecovery = nil; pendingLargeInnovation = nil
                     return (confirmedPoint, min(recovered.1, Double(observation.confidence)), .reidentified)
                 }
@@ -768,6 +795,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
         // must never accumulate camera-pool buffers at the analysis frame rate.
         let schedule = ingressLock.withLock { () -> Bool in
             guard generation == epoch else { return false }
+            // A transient failed image cannot replace an already queued good
+            // measurement while the main queue is busy. A newer good image can.
+            if pendingTargetDelivery?.0 != nil && point == nil { return false }
             pendingDetectionDelivery = (result, buffer, frame, focus, type, epoch)
             guard !detectionDeliveryScheduled else { return false }
             detectionDeliveryScheduled = true

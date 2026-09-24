@@ -32,7 +32,9 @@ private final class SemanticCropRanker: @unchecked Sendable {
     private var attemptedLoad = false
     private var model: VNCoreMLModel?
     private var prompts: [String: [Double]] = [:]
-    var isAvailable: Bool { model != nil }
+    private(set) var didProduceEvidence = false
+
+    func beginAnalysis() { didProduceEvidence = false }
 
     private func loadIfAvailable() {
         guard !attemptedLoad else { return }
@@ -78,11 +80,13 @@ private final class SemanticCropRanker: @unchecked Sendable {
             case .foregroundObject, .general:
                 keys = ["building", "landscape", "object", "food", "vehicle"]
             }
-            let affinity = keys.compactMap { key -> Double? in
+            let affinities = keys.compactMap { key -> Double? in
                 guard let text = prompts[key], text.count == image.count else { return nil }
-                return zip(image, text).reduce(0) { $0 + $1.0 * $1.1 }
-            }.max() ?? 0
-            guard affinity.isFinite else { return candidate }
+                let score = zip(image, text).reduce(0) { $0 + $1.0 * $1.1 }
+                return score.isFinite ? score : nil
+            }
+            guard let affinity = affinities.max() else { return candidate }
+            didProduceEvidence = true
             let bounded = max(-0.15, min(0.15, (affinity - 0.25) * 0.6))
             return NeuralSubjectCandidate(boundingBox: box, category: candidate.category,
                 confidence: candidate.confidence, label: candidate.label,
@@ -105,13 +109,17 @@ private final class SemanticCropRanker: @unchecked Sendable {
         let image = (0..<array.count).map { Double(truncating: array[$0]) }
         let scores = prompts.compactMap { key, vector -> (String, Double)? in
             guard vector.count == image.count else { return nil }
-            return (key, zip(image, vector).reduce(0) { $0 + $1.0 * $1.1 })
+            let score = zip(image, vector).reduce(0) { $0 + $1.0 * $1.1 }
+            return score.isFinite ? (key, score) : nil
         }.sorted { $0.1 > $1.1 }
+        didProduceEvidence = !scores.isEmpty
         guard scores.count >= 2, scores[0].1 >= 0.25,
               scores[0].1 - scores[1].1 >= 0.03 else { return nil }
         switch scores[0].0 {
         case "building":
-            return candidates.contains { $0.category == .foregroundObject && $0.areaRatio > 0.12 }
+            return candidates.contains {
+                ($0.category == .foregroundObject || $0.category == .general) && $0.areaRatio > 0.12
+            }
                 ? .architecture : nil
         case "landscape": return .landscape
         case "person_scenery":
@@ -229,6 +237,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
 
     private func analyzeCapturedFrame(pixelBuffer: CVPixelBuffer,
                                       orientation: CGImagePropertyOrientation) -> NeuralAnalysisOutput {
+        SemanticCropRanker.shared.beginAnalysis()
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         
         // One unsupported/failed request must not erase evidence from the others.
@@ -346,24 +355,28 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         
-        // 4. Trích xuất Vật thể tiền cảnh thực tế (Objectness Saliency)
+        // 4. Trích xuất Vật thể tiền cảnh thực tế (Objectness Saliency).
+        // Weak Vision rectangles remain suggestions only; their detector
+        // confidence must never be increased to manufacture an auto target.
         if completed.contains(ObjectIdentifier(saliencyObjectRequest)),
-           let saliency = saliencyObjectRequest.results?.first,
-           let salientObjects = saliency.salientObjects {
-            for obj in salientObjects where obj.confidence >= 0.48 {
+           let saliency = saliencyObjectRequest.results?.first {
+            for obj in saliency.salientObjects ?? [] where obj.confidence >= 0.35 {
                 let rect = convertVisionRectToUIRect(obj.boundingBox)
                 if isValidSubjectRect(rect) {
                     // Kiểm tra xem vật thể này có bị trùng lặp với người/mặt/thú cưng đã phát hiện không
                     let overlapsWithExisting = candidates.contains { existing in
                         existing.boundingBox.intersection(rect).width * existing.boundingBox.intersection(rect).height > (rect.width * rect.height * 0.45)
                     }
-                    if !overlapsWithExisting {
-                        let score = calculateProminenceScore(rect: rect, confidence: obj.confidence, category: .foregroundObject, buffer: pixelBuffer)
+                    if !overlapsWithExisting && (obj.confidence >= 0.48 ||
+                        (orientation == .up && hasTrackableDetail(rect: rect, buffer: pixelBuffer))) {
+                        let category: NeuralSubjectCategory = obj.confidence >= 0.48 ? .foregroundObject : .general
+                        let score = calculateProminenceScore(rect: rect, confidence: obj.confidence,
+                            category: category, buffer: orientation == .up ? pixelBuffer : nil)
                         candidates.append(NeuralSubjectCandidate(
                             boundingBox: rect,
-                            category: .foregroundObject,
+                            category: category,
                             confidence: obj.confidence,
-                            label: "Vật thể",
+                            label: category == .general ? "Vùng có thể chọn" : "Vật thể",
                             prominenceScore: score
                         ))
                     }
@@ -374,20 +387,40 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // Attention can find a meaningful region in architecture or scenery
         // where COCO detectors have no class. It supplies a region, not identity.
         if completed.contains(ObjectIdentifier(attentionRequest)),
-           let regions = attentionRequest.results?.first?.salientObjects {
-            for region in regions where region.confidence >= 0.55 {
+           let attention = attentionRequest.results?.first {
+            for region in attention.salientObjects ?? [] where region.confidence >= 0.35 {
                 let rect = convertVisionRectToUIRect(region.boundingBox)
                 guard isValidSubjectRect(rect) else { continue }
                 let overlap = candidates.contains {
                     let intersection = $0.boundingBox.intersection(rect)
                     return intersection.width * intersection.height > rect.width * rect.height * 0.55
                 }
-                if !overlap {
+                if !overlap && (region.confidence >= 0.48 ||
+                    (orientation == .up && hasTrackableDetail(rect: rect, buffer: pixelBuffer))) {
+                    let category: NeuralSubjectCategory = region.confidence >= 0.48 ? .foregroundObject : .general
                     candidates.append(NeuralSubjectCandidate(boundingBox: rect,
-                        category: .foregroundObject, confidence: region.confidence,
-                        label: "Vùng nổi bật", prominenceScore: calculateProminenceScore(
+                        category: category, confidence: region.confidence,
+                        label: category == .general ? "Vùng có thể chọn" : "Vùng nổi bật", prominenceScore: calculateProminenceScore(
                             rect: rect, confidence: region.confidence,
-                            category: .foregroundObject)))
+                            category: category)))
+                }
+            }
+        }
+
+        // Some iOS/Vision versions return a useful saliency heatmap but no
+        // salientObjects. A compact high-contrast component is image evidence
+        // for a tap suggestion, not an object identity or calibrated detector
+        // confidence. Keep its score below the auto-selection gate.
+        if candidates.isEmpty {
+            let observations = [
+                completed.contains(ObjectIdentifier(saliencyObjectRequest)) ? saliencyObjectRequest.results?.first : nil,
+                completed.contains(ObjectIdentifier(attentionRequest)) ? attentionRequest.results?.first : nil
+            ]
+            for observation in observations.compactMap({ $0 }) {
+                if orientation == .up,
+                   let proposal = heatmapProposal(observation, source: pixelBuffer) {
+                    candidates.append(proposal)
+                    break
                 }
             }
         }
@@ -465,7 +498,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             groupBoundingBox: groupBox,
             primaryEyePosition: primaryEye,
             lookingDirection: lookDir,
-            usedSemanticModel: SemanticCropRanker.shared.isAvailable
+            usedSemanticModel: SemanticCropRanker.shared.didProduceEvidence
         )
     }
 
@@ -505,9 +538,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // 4. Lọc bỏ gạch lát sàn / nền đất (Floor Tile & Ground Suppression)
         var floorPenalty: Double = 1.0
         if category == .foregroundObject, let buf = buffer, isFloorTileOrGround(rect: rect, buffer: buf) {
-            floorPenalty = 0.05 // Giảm 95% điểm nếu chỉ là mảng gạch lát sàn / nền đất phẳng
+            floorPenalty = 0.35 // Hạ hạng nền phẳng, không xóa bằng chứng Vision.
         } else if category == .foregroundObject && rect.midY > 0.70 && rect.width > 0.40 {
-            floorPenalty = 0.10
+            floorPenalty = 0.65 // Công trình lớn ở nửa dưới không phải luôn là nền.
         }
         
         // Điểm tổng hợp
@@ -517,21 +550,29 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     
     // MARK: - Phát hiện & Loại Bỏ Gạch Lát Sàn / Mặt Đất (Floor Tile & Ground Rejection)
     private func isFloorTileOrGround(rect: CGRect, buffer: CVPixelBuffer) -> Bool {
-        if rect.midY > 0.65 && rect.width > 0.45 && rect.height < 0.40 {
-            return true
-        }
-        
+        guard let stats = sampledLumaStats(rect: rect, buffer: buffer) else { return false }
+        // Geometry alone cannot identify a floor: a wide building facade or
+        // riverbank can occupy the bottom of the photo.
+        return stats.variance < 40 && rect.midY > 0.55
+    }
+
+    private func hasTrackableDetail(rect: CGRect, buffer: CVPixelBuffer) -> Bool {
+        guard let stats = sampledLumaStats(rect: rect, buffer: buffer) else { return false }
+        return stats.variance >= 64 && stats.mean > 12 && stats.mean < 243
+    }
+
+    private func sampledLumaStats(rect: CGRect, buffer: CVPixelBuffer) -> (mean: Float, variance: Float)? {
         guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA,
               CVPixelBufferGetWidth(buffer) > 0,
-              CVPixelBufferGetHeight(buffer) > 0 else { return false }
-        guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return false }
+              CVPixelBufferGetHeight(buffer) > 0 else { return nil }
+        guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return false }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
         
         let width = CVPixelBufferGetWidth(buffer)
         let height = CVPixelBufferGetHeight(buffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        guard bytesPerRow >= width * 4 else { return false }
+        guard bytesPerRow >= width * 4 else { return nil }
         let data = base.assumingMemoryBound(to: UInt8.self)
         
         let minX = max(0, min(width - 1, Int(rect.origin.x * CGFloat(width))))
@@ -551,34 +592,116 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         
-        guard lums.count > 12 else { return false }
+        guard lums.count > 12 else { return nil }
         let mean = lums.reduce(0, +) / Float(lums.count)
-        let variance = lums.reduce(0) { $0 + pow($1 - mean, 2) } / Float(lums.count)
-        
-        // Gạch men / nền sàn phẳng có variance thấp (< 40) và nằm ở phần dưới màn hình (y > 0.55)
-        if variance < 40.0 && rect.midY > 0.55 {
-            return true
+        let variance = lums.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Float(lums.count)
+        return (mean, variance)
+    }
+
+    /// Derive a tap-only region when Vision found image saliency but emitted
+    /// no rectangle. Its score describes visual contrast, not object identity.
+    private func heatmapProposal(_ observation: VNSaliencyImageObservation,
+                                 source: CVPixelBuffer) -> NeuralSubjectCandidate? {
+        let map = observation.pixelBuffer
+        guard CVPixelBufferGetPixelFormatType(map) == kCVPixelFormatType_OneComponent32Float else { return nil }
+        let width = CVPixelBufferGetWidth(map)
+        let height = CVPixelBufferGetHeight(map)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(map)
+        guard (16...128).contains(width), (16...128).contains(height),
+              bytesPerRow >= width * MemoryLayout<Float>.stride,
+              bytesPerRow % MemoryLayout<Float>.stride == 0,
+              CVPixelBufferLockBaseAddress(map, .readOnly) == kCVReturnSuccess else { return nil }
+        var values = [Float](repeating: 0, count: width * height)
+        guard let base = CVPixelBufferGetBaseAddress(map) else {
+            CVPixelBufferUnlockBaseAddress(map, .readOnly)
+            return nil
         }
-        return false
+        for y in 0..<height {
+            let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: Float.self)
+            for x in 0..<width {
+                let value = row[x]
+                values[y * width + x] = value.isFinite ? value : 0
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(map, .readOnly)
+        guard let low = values.min(), let high = values.max(), high > 0,
+              high - low >= max(0.08, high * 0.15) else { return nil }
+        let threshold = low + (high - low) * 0.67
+        let average = values.reduce(0, +) / Float(values.count)
+        var visited = [Bool](repeating: false, count: values.count)
+        var best: (minX: Int, minY: Int, maxX: Int, maxY: Int, count: Int, strength: Float)?
+        for seed in values.indices where !visited[seed] && values[seed] >= threshold {
+            var queue = [seed]
+            visited[seed] = true
+            var head = 0
+            var minX = width, minY = height, maxX = 0, maxY = 0
+            var strength: Float = 0
+            while head < queue.count {
+                let index = queue[head]
+                head += 1
+                let x = index % width, y = index / width
+                minX = min(minX, x); minY = min(minY, y)
+                maxX = max(maxX, x); maxY = max(maxY, y)
+                strength += max(0, values[index] - average)
+                let neighbors = [x > 0 ? index - 1 : -1,
+                                 x + 1 < width ? index + 1 : -1,
+                                 y > 0 ? index - width : -1,
+                                 y + 1 < height ? index + width : -1]
+                for next in neighbors where next >= 0 && !visited[next] && values[next] >= threshold {
+                    visited[next] = true
+                    queue.append(next)
+                }
+            }
+            guard queue.count >= max(8, values.count / 200),
+                  queue.count <= values.count * 2 / 5 else { continue }
+            if let current = best, strength <= current.strength { continue }
+            if strength > 0 {
+                best = (minX, minY, maxX, maxY, queue.count, strength)
+            }
+        }
+        guard let region = best else { return nil }
+        let padX = max(2, (region.maxX - region.minX + 1) / 5)
+        let padY = max(2, (region.maxY - region.minY + 1) / 5)
+        let x0 = max(0, region.minX - padX), y0 = max(0, region.minY - padY)
+        let x1 = min(width, region.maxX + padX + 1), y1 = min(height, region.maxY + padY + 1)
+        let rect = CGRect(x: CGFloat(x0) / CGFloat(width), y: CGFloat(y0) / CGFloat(height),
+                          width: CGFloat(x1 - x0) / CGFloat(width),
+                          height: CGFloat(y1 - y0) / CGFloat(height))
+        guard isValidSubjectRect(rect), hasTrackableDetail(rect: rect, buffer: source) else { return nil }
+        let contrast = max(0, min(1, region.strength / Float(region.count) / (high - low)))
+        let suggestionStrength = Float(0.35) + Float(0.12) * contrast
+        return NeuralSubjectCandidate(boundingBox: rect, category: .general,
+            confidence: suggestionStrength, label: "Vùng nổi bật (chọn)",
+            prominenceScore: calculateProminenceScore(rect: rect,
+                confidence: suggestionStrength, category: .general))
     }
     
     // MARK: - Helpers
     private func convertVisionRectToUIRect(_ visionRect: CGRect) -> CGRect {
         // Vision: Bottom-Left (0,0) -> UI: Top-Left (0,0)
-        return CGRect(
+        let raw = CGRect(
             x: visionRect.origin.x,
             y: 1.0 - visionRect.origin.y - visionRect.height,
             width: visionRect.width,
             height: visionRect.height
         )
+        guard raw.minX.isFinite, raw.minY.isFinite,
+              raw.width.isFinite, raw.height.isFinite,
+              raw.width > 0, raw.height > 0 else { return .null }
+        let clipped = raw.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !clipped.isNull, !clipped.isEmpty,
+              clipped.width * clipped.height >= raw.width * raw.height * 0.80 else { return .null }
+        return clipped
     }
     
     private func isValidSubjectRect(_ rect: CGRect) -> Bool {
         // Loại bỏ các box rỗng hoặc nằm ngoài màn hình
+        guard rect.minX.isFinite, rect.minY.isFinite,
+              rect.width.isFinite, rect.height.isFinite else { return false }
         guard rect.width >= 0.04, rect.height >= 0.04 else { return false }
         guard rect.width <= 0.99, rect.height <= 0.99 else { return false }
-        guard rect.minX >= -0.05, rect.minY >= -0.05 else { return false }
-        guard rect.maxX <= 1.05, rect.maxY <= 1.05 else { return false }
+        guard rect.minX >= 0, rect.minY >= 0 else { return false }
+        guard rect.maxX <= 1, rect.maxY <= 1 else { return false }
         return true
     }
 }

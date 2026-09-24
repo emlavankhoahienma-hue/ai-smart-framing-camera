@@ -233,7 +233,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             lastProcessed = frame.timestamp
             guard let point, point.x.isFinite, point.y.isFinite,
                   (0...1).contains(point.x), (0...1).contains(point.y), value.isFinite,
-                  value >= max(threshold, lowTexture ? 0.50 : 0.30),
+                  value >= max(threshold,
+                               lowTexture && evidence == .geometryContinuation ? 0.50 : 0.35),
                   let pose = TrackingGeometry.pose(at: frame.timestamp, in: history) else {
                 publish(); return
             }
@@ -288,14 +289,23 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         var quality: TrackingQuality = .reacquiring
         var outputConfidence = 0.0
-        if let worldRay, let sample = history.last, now - sample.timestamp < 0.15 {
+        if let worldRay, let sample = history.last,
+           (-0.05...0.45).contains(now - sample.timestamp) {
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
             if projected.point.x.isFinite, projected.point.y.isFinite {
                 estimated = projected.point
                 let age = now - lastAccepted
+                let motionIsCurrent = now - sample.timestamp <= 0.25
                 let isVerified = (now - lastVerified < 1.20) || (age < 0.80)
-                quality = projected.isInsideImage && isVerified ? .locked :
-                    (projected.isInsideImage ? .reacquiring : .predicting)
+                if projected.isInsideImage && motionIsCurrent && isVerified {
+                    quality = .locked
+                } else if age < 2.0 {
+                    // A brief optical or motion gap is an inertial prediction,
+                    // not an immediate request to choose the subject again.
+                    quality = .predicting
+                } else {
+                    quality = projected.isInsideImage ? .reacquiring : .predicting
+                }
                 outputConfidence = age < 1.20 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
             }
         }
