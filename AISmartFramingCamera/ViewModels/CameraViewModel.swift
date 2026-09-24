@@ -2789,12 +2789,12 @@ public final class CameraViewModel: ObservableObject {
         self.superResolutionProgressText = "Đang chụp 10 frame RAW..."
         cameraService.captureSuperResolutionRAWBurst(
             count: 10,
-            progress: { [weak self] fraction in
+            progress: { [weak self] (fraction: Float) in
                 DispatchQueue.main.async {
                     self?.superResolutionProgressText = "Đang chụp RAW \(Int(fraction * 100))%..."
                 }
             },
-            completion: { [weak self] frames in
+            completion: { [weak self] (frames: [SuperResolutionInputFrame]) in
                 guard let self = self else { return }
                 guard !frames.isEmpty else {
                     CameraLogger.warning("Super-Res: Không nhận được frame RAW nào, fallback chụp tiêu chuẩn", category: .capture)
@@ -2813,7 +2813,7 @@ public final class CameraViewModel: ObservableObject {
                     do {
                         let finalCGImage = try await SuperResolutionRAWEngine.shared.processBurst(
                             frames: frames,
-                            progress: { [weak self] prog, desc in
+                            progress: { [weak self] (prog: Float, desc: String) in
                                 DispatchQueue.main.async {
                                     self?.superResolutionProgressText = desc
                                 }

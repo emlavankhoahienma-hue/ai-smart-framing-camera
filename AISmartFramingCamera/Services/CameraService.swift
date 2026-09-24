@@ -1235,7 +1235,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
 
     // MARK: - Helpers
 
-    private static func parseExif(_ metadata: [String: Any]) -> (iso: Float, shutter: Double) {
+    fileprivate static func parseExif(_ metadata: [String: Any]) -> (iso: Float, shutter: Double) {
         var isoValue: Float = 100.0
         var shutterSpeed: Double = 0.016
         if let exif = metadata["{Exif}"] as? [String: Any] {
@@ -1306,7 +1306,7 @@ final class SuperResolutionBurstCaptureDelegate: NSObject, AVCapturePhotoCapture
             CameraLogger.warning("Super-Res Burst: Bỏ qua 1 frame lỗi: \(error.localizedDescription)", category: .capture)
         } else {
             let index = capturedFrames.count
-            let timestamp = photo.timestamp.seconds
+            let timestamp = CMTimeGetSeconds(photo.timestamp)
             let metadata = photo.metadata
             let (iso, shutter) = CameraService.parseExif(metadata)
             let orientationNum = metadata[kCGImagePropertyOrientation as String] as? UInt32

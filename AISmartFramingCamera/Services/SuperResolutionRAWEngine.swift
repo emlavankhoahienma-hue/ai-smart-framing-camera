@@ -6,6 +6,65 @@ import ImageIO
 import simd
 import UIKit
 
+/// Cấu trúc chứa dữ liệu một khung hình RAW 14-bit kèm con quay hồi chuyển CoreMotion
+public struct SuperResolutionInputFrame: @unchecked Sendable {
+    public let index: Int
+    public let timestamp: TimeInterval
+    public let pixelBuffer: CVPixelBuffer?
+    public let rawData: Data?
+    public let orientation: CGImagePropertyOrientation
+    public let imuPose: simd_quatd?
+    public let iso: Float
+    public let shutterSpeed: Double
+    public let metadata: [String: Any]?
+
+    public init(
+        index: Int,
+        timestamp: TimeInterval,
+        pixelBuffer: CVPixelBuffer?,
+        rawData: Data?,
+        orientation: CGImagePropertyOrientation = .up,
+        imuPose: simd_quatd?,
+        iso: Float = 100,
+        shutterSpeed: Double = 1.0 / 125.0,
+        metadata: [String: Any]? = nil
+    ) {
+        self.index = index
+        self.timestamp = timestamp
+        self.pixelBuffer = pixelBuffer
+        self.rawData = rawData
+        self.orientation = orientation
+        self.imuPose = imuPose
+        self.iso = iso
+        self.shutterSpeed = shutterSpeed
+        self.metadata = metadata
+    }
+}
+
+/// Tham số cân chỉnh màu sắc và dải động cho cảm biến Apple Display P3
+public struct CameraCalibrationParams {
+    public var asShotNeutral: SIMD4<Float>
+    public var levelsAndFactor: SIMD4<Float>
+    public var colorMatrixP3: simd_float4x4
+
+    public init(
+        asShotNeutral: SIMD4<Float> = SIMD4<Float>(2.08, 1.0, 1.61, 1.0),
+        blackLevel: Float = 512.0 / 16383.0,
+        whiteLevel: Float = 1.0,
+        microContrastFactor: Float = 0.22,
+        colorMatrixP3: simd_float4x4 = simd_float4x4(
+            SIMD4<Float>( 1.654, -0.582, -0.072, 0.0),
+            SIMD4<Float>(-0.210,  1.325, -0.115, 0.0),
+            SIMD4<Float>( 0.035, -0.320,  1.285, 0.0),
+            SIMD4<Float>( 0.0,    0.0,    0.0,   1.0)
+        )
+    ) {
+        self.asShotNeutral = asShotNeutral
+        self.levelsAndFactor = SIMD4<Float>(blackLevel, whiteLevel, microContrastFactor, 0.0)
+        self.colorMatrixP3 = colorMatrixP3
+    }
+}
+
 /// Động cơ Siêu Phân Giải Đa Khung RAW 14-bit (Handheld Super-Resolution Multi-Frame RAW Fusion)
 /// Thực thi toàn bộ chuỗi thuật toán 6 tầng hoàn toàn trên Apple Metal GPU:
 /// 1. Tầng Thu Nhận (Ingress): Burst 8-12 frame RAW + IMU CoreMotion 60Hz.
@@ -80,7 +139,7 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         progress(0.25, "Đang chọn Khung Neo nét nhất...")
 
         // TẦNG 2: Chọn Khung Neo (Anchor Selection) dựa trên Gradient Energy kênh Green
-        let anchorIndex = selectAnchorFrame(textures: textures, device: device, commandQueue: commandQueue)
+        let anchorIndex = await selectAnchorFrame(textures: textures, device: device, commandQueue: commandQueue)
         let anchorTexture = textures[anchorIndex]
         let anchorFrame = frames[min(anchorIndex, frames.count - 1)]
 
@@ -95,8 +154,8 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             height: targetHeight,
             mipmapped: false
         )
-        accumDesc.usage = [.shaderRead, .shaderWrite]
-        accumDesc.storageMode = .private
+        accumDesc.usage = [MTLTextureUsage.shaderRead, MTLTextureUsage.shaderWrite]
+        accumDesc.storageMode = MTLStorageMode.private
 
         guard var accumTextureA = device.makeTexture(descriptor: accumDesc),
               var accumTextureB = device.makeTexture(descriptor: accumDesc),
@@ -112,8 +171,8 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             height: baseHeight,
             mipmapped: false
         )
-        mvDesc.usage = [.shaderRead, .shaderWrite]
-        mvDesc.storageMode = .private
+        mvDesc.usage = [MTLTextureUsage.shaderRead, MTLTextureUsage.shaderWrite]
+        mvDesc.storageMode = MTLStorageMode.private
         guard let motionVectorTex = device.makeTexture(descriptor: mvDesc),
               let deghostWeightTex = device.makeTexture(descriptor: mvDesc) else {
             return try extractCGImage(from: anchorFrame)
@@ -190,8 +249,12 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
                 encoder.endEncoding()
             }
 
-            cmdBuffer.commit()
-            cmdBuffer.waitUntilCompleted()
+            await withCheckedContinuation { continuation in
+                cmdBuffer.addCompletedHandler { _ in
+                    continuation.resume()
+                }
+                cmdBuffer.commit()
+            }
 
             // Ping-pong hoán đổi textures
             swap(&accumTextureA, &accumTextureB)
@@ -210,8 +273,8 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             height: targetHeight,
             mipmapped: false
         )
-        outDesc.usage = [.shaderRead, .shaderWrite]
-        outDesc.storageMode = .shared
+        outDesc.usage = [MTLTextureUsage.shaderRead, MTLTextureUsage.shaderWrite]
+        outDesc.storageMode = MTLStorageMode.shared
 
         guard let p3Texture = device.makeTexture(descriptor: outDesc),
               let finalTexture = device.makeTexture(descriptor: outDesc) else {
@@ -259,8 +322,12 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             encoder.endEncoding()
         }
 
-        colorCmd.commit()
-        colorCmd.waitUntilCompleted()
+        await withCheckedContinuation { continuation in
+            colorCmd.addCompletedHandler { _ in
+                continuation.resume()
+            }
+            colorCmd.commit()
+        }
 
         progress(0.98, "Đang tạo ảnh thành phẩm 48MP...")
 
@@ -277,7 +344,7 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         textures: [MTLTexture],
         device: MTLDevice,
         commandQueue: MTLCommandQueue
-    ) -> Int {
+    ) async -> Int {
         guard let pipeline = shaders.gradientEnergyPipeline else { return 0 }
 
         var bestIndex = 0
@@ -308,8 +375,12 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             encoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadsPerThreadgroup)
             encoder.endEncoding()
 
-            cmd.commit()
-            cmd.waitUntilCompleted()
+            await withCheckedContinuation { continuation in
+                cmd.addCompletedHandler { _ in
+                    continuation.resume()
+                }
+                cmd.commit()
+            }
 
             let rawPtr = energyBuffer.contents().bindMemory(to: Float.self, capacity: totalGroups)
             var sum: Float = 0.0
@@ -386,9 +457,7 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
 
         return CameraCalibrationParams(
             asShotNeutral: asShot,
-            blackLevel: blackLevel,
-            whiteLevel: max(whiteLevel, 0.1),
-            microContrastFactor: 0.22,
+            levelsAndFactor: SIMD4<Float>(blackLevel, max(whiteLevel, 0.1), 0.22, 0.0),
             colorMatrixP3: colorMatrix
         )
     }
@@ -411,8 +480,8 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
                 height: height,
                 mipmapped: false
             )
-            desc.usage = [.shaderRead]
-            desc.storageMode = .shared
+            desc.usage = MTLTextureUsage.shaderRead
+            desc.storageMode = MTLStorageMode.shared
 
             guard let texture = device.makeTexture(descriptor: desc) else { return nil }
             texture.replace(
@@ -434,8 +503,8 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
                 height: height,
                 mipmapped: false
             )
-            desc.usage = [.shaderRead]
-            desc.storageMode = .shared
+            desc.usage = MTLTextureUsage.shaderRead
+            desc.storageMode = MTLStorageMode.shared
 
             guard let texture = device.makeTexture(descriptor: desc) else { return nil }
 
