@@ -98,6 +98,9 @@ public struct AIStatusHUDView: View {
         case .alignmentPerfect:
             return "Đã khớp · Giữ máy ổn định"
         case .capturing:
+            if let customProgress = viewModel.superResolutionProgressText {
+                return customProgress
+            }
             return "Đang chụp…"
         case .done:
             return "Đã lưu ảnh"

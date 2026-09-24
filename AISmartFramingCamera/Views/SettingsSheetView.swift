@@ -259,7 +259,7 @@ public struct SettingsSheetView: View {
     private var searchResultsView: some View {
         let q = searchText.lowercased()
         VStack(spacing: 16) {
-            if "định dạng ảnh raw jpeg heic dng live photo lưu ảnh gốc video codec 4k 1080p fps film màu fuji kodak leica horizon focus peaking histogram hiệu chuẩn con quay gyro cân đối xứng".contains(q) {
+            if "định dạng ảnh raw jpeg heic dng siêu nét đa khung drizzle super-res live photo lưu ảnh gốc video codec 4k 1080p fps film màu fuji kodak leica horizon focus peaking histogram hiệu chuẩn con quay gyro cân đối xứng".contains(q) {
                 PhotoCaptureSettingsSection(viewModel: viewModel)
             }
             if "bố cục tỷ lệ vàng 1/3 tam giác xoắn ốc ai zoom bám chủ thể tự chụp tia hướng dẫn openrouter api key gemini model ping latency".contains(q) {
@@ -519,6 +519,16 @@ struct PhotoCaptureSettingsSection: View {
                     icon: "photo.on.rectangle.angled",
                     iconColor: Color(red: 0.35, green: 0.75, blue: 0.85),
                     isOn: $viewModel.isSaveOriginalPhotoEnabled
+                )
+
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsToggleRow(
+                    title: "Chụp Siêu Nét Đa Khung RAW",
+                    subtitle: "Bù rung vi mô bằng thuật toán Drizzle 2x từ 8-12 frame RAW 14-bit, khử bóng ma & giữ trọn màu Apple P3 sắc nét",
+                    icon: "sparkles.rectangle.stack.fill",
+                    iconColor: amberGold,
+                    isOn: $viewModel.isSuperResolutionRAWEnabled
                 )
             }
         }

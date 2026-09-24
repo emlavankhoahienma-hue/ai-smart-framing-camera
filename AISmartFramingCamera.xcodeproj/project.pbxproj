@@ -54,6 +54,8 @@
 		C20000000000000000000043 /* AppLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000043 /* AppLogo.png */; };
 		C20000000000000000000044 /* WindowedZoomOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000044 /* WindowedZoomOverlayView.swift */; };
 		C20000000000000000000045 /* TargetPatchFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000045 /* TargetPatchFlow.swift */; };
+		C20000000000000000000046 /* SuperResolutionMetalShaders.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000046 /* SuperResolutionMetalShaders.swift */; };
+		C20000000000000000000047 /* SuperResolutionRAWEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000047 /* SuperResolutionRAWEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -106,6 +108,8 @@
 		C10000000000000000000043 /* AppLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppLogo.png; sourceTree = "<group>"; };
 		C10000000000000000000044 /* WindowedZoomOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowedZoomOverlayView.swift; sourceTree = "<group>"; };
 		C10000000000000000000045 /* TargetPatchFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetPatchFlow.swift; sourceTree = "<group>"; };
+		C10000000000000000000046 /* SuperResolutionMetalShaders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuperResolutionMetalShaders.swift; sourceTree = "<group>"; };
+		C10000000000000000000047 /* SuperResolutionRAWEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuperResolutionRAWEngine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -173,6 +177,8 @@
 				C10000000000000000000041 /* NeuralTargetTracker.swift */,
 				C10000000000000000000040 /* TrackingGeometry.swift */,
 				C10000000000000000000045 /* TargetPatchFlow.swift */,
+				C10000000000000000000046 /* SuperResolutionMetalShaders.swift */,
+				C10000000000000000000047 /* SuperResolutionRAWEngine.swift */,
 				B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */,
 				B100000000000000000000020 /* YOLODetectionEngine.swift */,
 				B100000000000000000000021 /* VisualOdometryEngine.swift */,
@@ -353,6 +359,8 @@
 				C20000000000000000000042 /* GyroCalibrationSheetView.swift in Sources */,
 				C20000000000000000000044 /* WindowedZoomOverlayView.swift in Sources */,
 				C20000000000000000000045 /* TargetPatchFlow.swift in Sources */,
+				C20000000000000000000046 /* SuperResolutionMetalShaders.swift in Sources */,
+				C20000000000000000000047 /* SuperResolutionRAWEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -119,6 +119,7 @@ public final class CameraService: NSObject {
     private var currentLivePhotoURL: URL?
     private var lastStatsUpdateTime: TimeInterval = 0
     private var isPhotoCaptureInFlight = false
+    private var activeBurstDelegate: SuperResolutionBurstCaptureDelegate?
     private var notificationObservers: [NSObjectProtocol] = []
 
     private override init() {
@@ -1011,6 +1012,64 @@ public final class CameraService: NSObject {
             self.photoOutput.capturePhoto(with: photoSettings, delegate: self)
         }
     }
+
+    // MARK: - Super-Resolution RAW Burst Capture
+    public func captureSuperResolutionRAWBurst(
+        count: Int = 8,
+        progress: @escaping (Float) -> Void,
+        completion: @escaping ([SuperResolutionInputFrame]) -> Void
+    ) {
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            guard !self.isPhotoCaptureInFlight else {
+                CameraLogger.warning("CameraService: Bỏ qua chụp burst vì đang có tác vụ chụp khác", category: .capture)
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
+            self.isPhotoCaptureInFlight = true
+
+            let targetCount = max(2, min(count, 12))
+            let burstDelegate = SuperResolutionBurstCaptureDelegate(
+                targetCount: targetCount,
+                progress: progress,
+                completion: { [weak self] frames in
+                    self?.sessionQueue.async {
+                        self?.isPhotoCaptureInFlight = false
+                        self?.activeBurstDelegate = nil
+                    }
+                    completion(frames)
+                }
+            )
+            self.activeBurstDelegate = burstDelegate
+
+            let rawFormat = self.photoOutput.availableRawPhotoPixelFormatTypes.first
+            CameraLogger.info("🚀 Bắt đầu chụp burst RAW Super-Resolution: \(targetCount) frames liên thanh (Format: \(String(describing: rawFormat)))", category: .capture)
+
+            for _ in 0..<targetCount {
+                let photoSettings: AVCapturePhotoSettings
+                if let rf = rawFormat {
+                    photoSettings = AVCapturePhotoSettings(rawPixelFormatType: rf)
+                    if let previewFormat = photoSettings.availablePreviewPhotoPixelFormatTypes.first {
+                        photoSettings.previewPhotoFormat = [kCVPixelBufferPixelFormatTypeKey as String: previewFormat]
+                    }
+                } else {
+                    photoSettings = AVCapturePhotoSettings()
+                }
+
+                photoSettings.photoQualityPrioritization = .speed
+                if self.activeCamera?.isFlashAvailable == true {
+                    photoSettings.flashMode = self.flashMode
+                }
+
+                self.photoOutput.capturePhoto(with: photoSettings, delegate: burstDelegate)
+            }
+
+            // An toàn: Hủy delegate sau 3.0s nếu phần cứng kẹt frame
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak burstDelegate] in
+                burstDelegate?.cancelOrTimeout()
+            }
+        }
+    }
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
@@ -1214,6 +1273,91 @@ extension CameraService: AVCaptureFileOutputRecordingDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.delegate?.cameraService(self, didFinishRecordingVideoAt: outputFileURL)
+        }
+    }
+}
+
+// MARK: - SuperResolutionBurstCaptureDelegate
+final class SuperResolutionBurstCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
+    private let targetCount: Int
+    private let progress: (Float) -> Void
+    private let completion: ([SuperResolutionInputFrame]) -> Void
+    private var capturedFrames: [SuperResolutionInputFrame] = []
+    private var isFinished = false
+    private let lock = NSLock()
+
+    init(
+        targetCount: Int,
+        progress: @escaping (Float) -> Void,
+        completion: @escaping ([SuperResolutionInputFrame]) -> Void
+    ) {
+        self.targetCount = targetCount
+        self.progress = progress
+        self.completion = completion
+        super.init()
+    }
+
+    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isFinished else { return }
+
+        if let error = error {
+            CameraLogger.warning("Super-Res Burst: Bỏ qua 1 frame lỗi: \(error.localizedDescription)", category: .capture)
+        } else {
+            let index = capturedFrames.count
+            let timestamp = photo.timestamp.seconds
+            let metadata = photo.metadata
+            let (iso, shutter) = CameraService.parseExif(metadata)
+            let orientationNum = metadata[kCGImagePropertyOrientation as String] as? UInt32
+            let orientation = orientationNum.flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
+
+            let pose = SpatialTrackingEngine.shared.latestPose()
+
+            let frame = SuperResolutionInputFrame(
+                index: index,
+                timestamp: timestamp,
+                pixelBuffer: photo.pixelBuffer,
+                rawData: photo.fileDataRepresentation(),
+                orientation: orientation,
+                imuPose: pose,
+                iso: iso,
+                shutterSpeed: shutter,
+                metadata: metadata
+            )
+            capturedFrames.append(frame)
+
+            let p = Float(capturedFrames.count) / Float(targetCount)
+            progress(p)
+        }
+
+        if capturedFrames.count >= targetCount {
+            finish()
+        }
+    }
+
+    func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        lock.lock()
+        defer { lock.unlock() }
+        if capturedFrames.count >= targetCount && !isFinished {
+            finish()
+        }
+    }
+
+    func cancelOrTimeout() {
+        lock.lock()
+        defer { lock.unlock() }
+        if !isFinished {
+            finish()
+        }
+    }
+
+    private func finish() {
+        guard !isFinished else { return }
+        isFinished = true
+        let results = capturedFrames
+        DispatchQueue.main.async {
+            self.completion(results)
         }
     }
 }

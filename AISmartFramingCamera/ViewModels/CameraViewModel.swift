@@ -198,6 +198,10 @@ public final class CameraViewModel: ObservableObject {
     @Published public var selectedPhotoFormat: PhotoSaveFormat = .jpeg {
         didSet { UserDefaults.standard.set(selectedPhotoFormat.rawValue, forKey: "selectedPhotoFormat") }
     }
+    @Published public var isSuperResolutionRAWEnabled: Bool = UserDefaults.standard.bool(forKey: "isSuperResolutionRAWEnabled") {
+        didSet { UserDefaults.standard.set(isSuperResolutionRAWEnabled, forKey: "isSuperResolutionRAWEnabled") }
+    }
+    @Published public var superResolutionProgressText: String? = nil
     @Published public var isStreetTrackingModeEnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(isStreetTrackingModeEnabled, forKey: "isStreetTrackingModeEnabled")
@@ -653,6 +657,9 @@ public final class CameraViewModel: ObservableObject {
         }
         if let photoFormatRaw = defaults.string(forKey: "selectedPhotoFormat"), let photoFormat = PhotoSaveFormat(rawValue: photoFormatRaw) {
             self.selectedPhotoFormat = photoFormat
+        }
+        if defaults.object(forKey: "isSuperResolutionRAWEnabled") != nil {
+            self.isSuperResolutionRAWEnabled = defaults.bool(forKey: "isSuperResolutionRAWEnabled")
         }
         if defaults.object(forKey: "isGuidanceRayEnabled") != nil {
             self.isGuidanceRayEnabled = defaults.bool(forKey: "isGuidanceRayEnabled")
@@ -2212,11 +2219,15 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        cameraService.capturePhoto(
-            isDNG: selectedPhotoFormat == .dng,
-            isHEIF: selectedPhotoFormat == .heif || selectedPhotoFormat == .heic
-        )
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
+        if isSuperResolutionRAWEnabled {
+            executeSuperResolutionCapture()
+        } else {
+            cameraService.capturePhoto(
+                isDNG: selectedPhotoFormat == .dng,
+                isHEIF: selectedPhotoFormat == .heif || selectedPhotoFormat == .heic
+            )
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
+        }
     }
 
     // MARK: - Actions
@@ -2762,11 +2773,77 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        cameraService.capturePhoto(
-            isDNG: selectedPhotoFormat == .dng,
-            isHEIF: selectedPhotoFormat == .heif || selectedPhotoFormat == .heic
+        if isSuperResolutionRAWEnabled {
+            executeSuperResolutionCapture()
+        } else {
+            cameraService.capturePhoto(
+                isDNG: selectedPhotoFormat == .dng,
+                isHEIF: selectedPhotoFormat == .heif || selectedPhotoFormat == .heic
+            )
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
+        }
+    }
+
+    // MARK: - Super-Resolution RAW Capture Coordinator
+    private func executeSuperResolutionCapture() {
+        self.superResolutionProgressText = "Đang chụp 10 frame RAW..."
+        cameraService.captureSuperResolutionRAWBurst(
+            count: 10,
+            progress: { [weak self] fraction in
+                DispatchQueue.main.async {
+                    self?.superResolutionProgressText = "Đang chụp RAW \(Int(fraction * 100))%..."
+                }
+            },
+            completion: { [weak self] frames in
+                guard let self = self else { return }
+                guard !frames.isEmpty else {
+                    CameraLogger.warning("Super-Res: Không nhận được frame RAW nào, fallback chụp tiêu chuẩn", category: .capture)
+                    self.cameraService.capturePhoto(
+                        isDNG: self.selectedPhotoFormat == .dng,
+                        isHEIF: self.selectedPhotoFormat == .heif || self.selectedPhotoFormat == .heic
+                    )
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        self.isShutterPressing = false
+                        self.superResolutionProgressText = nil
+                    }
+                    return
+                }
+
+                Task {
+                    do {
+                        let finalCGImage = try await SuperResolutionRAWEngine.shared.processBurst(
+                            frames: frames,
+                            progress: { [weak self] prog, desc in
+                                DispatchQueue.main.async {
+                                    self?.superResolutionProgressText = desc
+                                }
+                            }
+                        )
+
+                        let anchorFrame = frames[0]
+                        DispatchQueue.main.async {
+                            self.superResolutionProgressText = nil
+                            self.isShutterPressing = false
+                            self.cameraService(
+                                self.cameraService,
+                                didCapturePhoto: finalCGImage,
+                                rawData: anchorFrame.rawData,
+                                livePhotoMovieURL: nil,
+                                iso: anchorFrame.iso,
+                                shutterSpeed: anchorFrame.shutterSpeed
+                            )
+                        }
+                    } catch {
+                        CameraLogger.error("Lỗi xử lý Super-Resolution RAW: \(error)", category: .capture)
+                        DispatchQueue.main.async {
+                            self.superResolutionProgressText = nil
+                            self.isShutterPressing = false
+                            self.aiSessionState = .done
+                        }
+                    }
+                }
+            }
         )
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.isShutterPressing = false }
     }
 
     // MARK: - HEIF Encoding Helper (Embeds Orientation and Full EXIF Metadata)
