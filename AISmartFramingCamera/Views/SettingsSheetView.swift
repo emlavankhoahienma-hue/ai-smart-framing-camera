@@ -525,7 +525,7 @@ struct PhotoCaptureSettingsSection: View {
 
                 SettingsToggleRow(
                     title: "Chụp Siêu Nét Đa Khung RAW",
-                    subtitle: "Bù rung vi mô bằng thuật toán Drizzle 2x từ 8-12 frame RAW 14-bit, khử bóng ma & giữ trọn màu Apple P3 sắc nét",
+                    subtitle: "Ghép 8 ảnh RAW, căn chỉnh rung tay và khử bóng ma. Tối đa 48 MP khi thiết bị đủ bộ nhớ.",
                     icon: "sparkles.rectangle.stack.fill",
                     iconColor: amberGold,
                     isOn: $viewModel.isSuperResolutionRAWEnabled

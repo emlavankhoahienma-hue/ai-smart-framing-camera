@@ -27,8 +27,29 @@ public final class SuperResolutionMetalShaders: @unchecked Sendable {
     #include <metal_stdlib>
     using namespace metal;
 
-    // MARK: - Kernel 1: Luminance Gradient Energy (Anchor Selection)
-    // Tính toán năng lượng độ dốc kênh sáng (Luminance) để chọn Khung Neo nét nhất
+    inline float luma(float3 c) {
+        return dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+    }
+    inline float3 linearize(float3 c) {
+        return select(c / 12.92f, pow((c + 0.055f) / 1.055f, float3(2.4f)),
+                      c > float3(0.04045f));
+    }
+    inline float3 encodeP3(float3 c) {
+        c = max(c, float3(0.0f));
+        return select(c * 12.92f, 1.055f * pow(c, float3(1.0f / 2.4f)) - 0.055f,
+                      c > float3(0.0031308f));
+    }
+    inline float3 bilinear(texture2d<float, access::read> tex, float2 position) {
+        float2 p = clamp(position, float2(0.0f),
+                         float2(tex.get_width() - 1, tex.get_height() - 1));
+        uint2 a = uint2(floor(p));
+        uint2 b = min(a + uint2(1), uint2(tex.get_width() - 1, tex.get_height() - 1));
+        float2 t = p - float2(a);
+        float3 top = mix(tex.read(a).rgb, tex.read(uint2(b.x, a.y)).rgb, t.x);
+        float3 bottom = mix(tex.read(uint2(a.x, b.y)).rgb, tex.read(b).rgb, t.x);
+        return mix(top, bottom, t.y);
+    }
+
     kernel void computeLuminanceGradientEnergy(
         texture2d<float, access::read> inputTexture [[texture(0)]],
         device float* energyOutput [[buffer(0)]],
@@ -38,251 +59,171 @@ public final class SuperResolutionMetalShaders: @unchecked Sendable {
         uint2 tgPos [[threadgroup_position_in_grid]],
         uint2 numGroups [[threadgroups_per_grid]]
     ) {
-        uint width = inputTexture.get_width();
-        uint height = inputTexture.get_height();
-
-        float localEnergy = 0.0f;
-        if (gid.x >= 1 && gid.x < width - 1 && gid.y >= 1 && gid.y < height - 1) {
-            float4 leftC   = inputTexture.read(uint2(gid.x - 1, gid.y));
-            float4 rightC  = inputTexture.read(uint2(gid.x + 1, gid.y));
-            float4 topC    = inputTexture.read(uint2(gid.x, gid.y - 1));
-            float4 bottomC = inputTexture.read(uint2(gid.x, gid.y + 1));
-
-            float left   = dot(leftC.rgb, float3(0.299f, 0.587f, 0.114f));
-            float right  = dot(rightC.rgb, float3(0.299f, 0.587f, 0.114f));
-            float top    = dot(topC.rgb, float3(0.299f, 0.587f, 0.114f));
-            float bottom = dot(bottomC.rgb, float3(0.299f, 0.587f, 0.114f));
-
-            float dx = (right - left) * 0.5f;
-            float dy = (bottom - top) * 0.5f;
-            localEnergy = (dx * dx + dy * dy);
+        float energy = 0.0f;
+        if (gid.x > 0 && gid.y > 0 &&
+            gid.x + 1 < inputTexture.get_width() &&
+            gid.y + 1 < inputTexture.get_height()) {
+            float dx = luma(inputTexture.read(gid + uint2(1, 0)).rgb) -
+                       luma(inputTexture.read(gid - uint2(1, 0)).rgb);
+            float dy = luma(inputTexture.read(gid + uint2(0, 1)).rgb) -
+                       luma(inputTexture.read(gid - uint2(0, 1)).rgb);
+            energy = (dx * dx + dy * dy) * 0.25f;
         }
-
         threadgroup float sharedEnergy[256];
-        uint linearIndex = tid.y * tgSize.x + tid.x;
-        if (linearIndex < 256) {
-            sharedEnergy[linearIndex] = localEnergy;
-        }
+        uint i = tid.y * tgSize.x + tid.x;
+        sharedEnergy[i] = energy;
         threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        for (uint s = 128; s > 0; s >>= 1) {
-            if (linearIndex < s && (linearIndex + s) < 256) {
-                sharedEnergy[linearIndex] += sharedEnergy[linearIndex + s];
-            }
+        for (uint stride = 128; stride > 0; stride >>= 1) {
+            if (i < stride) sharedEnergy[i] += sharedEnergy[i + stride];
             threadgroup_barrier(mem_flags::mem_threadgroup);
         }
-
-        if (linearIndex == 0) {
-            uint linearGroupIndex = tgPos.y * numGroups.x + tgPos.x;
-            energyOutput[linearGroupIndex] = sharedEnergy[0];
+        if (i == 0) {
+            energyOutput[tgPos.y * numGroups.x + tgPos.x] = sharedEnergy[0];
         }
     }
 
-    // MARK: - Kernel 2: Sub-Pixel Luminance Alignment
-    // Tinh chỉnh vector dịch chuyển vi mô giữa Frame phụ và Khung Neo dựa trên IMU Prior
+    inline float patchError(texture2d<float, access::read> anchor,
+                            texture2d<float, access::read> candidate,
+                            float2 center, float2 offset) {
+        float sum = 0.0f;
+        uint samples = 0;
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                float2 p = center + float2(x * 5, y * 5);
+                float2 q = p + offset;
+                if (p.x < 1 || p.y < 1 ||
+                    p.x >= anchor.get_width() - 1 ||
+                    p.y >= anchor.get_height() - 1 ||
+                    q.x < 1 || q.y < 1 ||
+                    q.x >= candidate.get_width() - 1 ||
+                    q.y >= candidate.get_height() - 1) continue;
+                sum += fabs(luma(anchor.read(uint2(p)).rgb) -
+                            luma(bilinear(candidate, q)));
+                samples++;
+            }
+        }
+        return samples > 0 ? sum / float(samples) : 1.0f;
+    }
+
+    // One vector per 16 x 16 image block. A patch, rather than a single
+    // pixel, constrains the search and preserves fractional offsets.
     kernel void subpixelLuminanceAlign(
-        texture2d<float, access::read> anchorTexture [[texture(0)]],
-        texture2d<float, access::read> candidateTexture [[texture(1)]],
-        texture2d<float, access::write> motionVectorTexture [[texture(2)]],
-        constant float2& imuPriorOffset [[buffer(0)]],
+        texture2d<float, access::read> anchor [[texture(0)]],
+        texture2d<float, access::read> candidate [[texture(1)]],
+        texture2d<float, access::write> motion [[texture(2)]],
+        constant float2& prior [[buffer(0)]],
         uint2 gid [[thread_position_in_grid]]
     ) {
-        uint width = anchorTexture.get_width();
-        uint height = anchorTexture.get_height();
-        if (gid.x >= width || gid.y >= height) return;
-
-        float anchorLum = dot(anchorTexture.read(gid).rgb, float3(0.299f, 0.587f, 0.114f));
-
-        // Tìm kiếm vi mô trong phạm vi 3x3 quanh IMU Prior offset
-        int2 baseOffset = int2(round(imuPriorOffset.x), round(imuPriorOffset.y));
-        float bestError = 1e9f;
-        int2 bestOffset = baseOffset;
-
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                int2 curOffset = baseOffset + int2(dx, dy);
-                int2 cPos = int2(gid) + curOffset;
-                if (cPos.x >= 0 && cPos.x < int(width) && cPos.y >= 0 && cPos.y < int(height)) {
-                    float candLum = dot(candidateTexture.read(uint2(cPos)).rgb, float3(0.299f, 0.587f, 0.114f));
-                    float err = abs(anchorLum - candLum);
-                    if (err < bestError) {
-                        bestError = err;
-                        bestOffset = curOffset;
-                    }
-                }
+        if (gid.x >= motion.get_width() || gid.y >= motion.get_height()) return;
+        float2 center = float2(gid * 16 + 8);
+        float2 base = floor(prior + 0.5f);
+        float2 best = base;
+        float error = 1.0f;
+        for (int y = -2; y <= 2; y++) {
+            for (int x = -2; x <= 2; x++) {
+                float2 offset = base + float2(x, y);
+                float e = patchError(anchor, candidate, center, offset);
+                if (e < error) { error = e; best = offset; }
             }
         }
-
-        motionVectorTexture.write(float4(float(bestOffset.x), float(bestOffset.y), bestError, 1.0f), gid);
+        float left = patchError(anchor, candidate, center, best + float2(-1, 0));
+        float right = patchError(anchor, candidate, center, best + float2(1, 0));
+        float up = patchError(anchor, candidate, center, best + float2(0, -1));
+        float down = patchError(anchor, candidate, center, best + float2(0, 1));
+        float curvatureX = left + right - 2.0f * error;
+        float curvatureY = up + down - 2.0f * error;
+        if (curvatureX > 1e-4f)
+            best.x += clamp(0.5f * (left - right) / curvatureX, -0.5f, 0.5f);
+        if (curvatureY > 1e-4f)
+            best.y += clamp(0.5f * (up - down) / curvatureY, -0.5f, 0.5f);
+        float texture = 0.0f;
+        if (center.x > 2 && center.y > 2 &&
+            center.x + 2 < anchor.get_width() &&
+            center.y + 2 < anchor.get_height()) {
+            float centerLuma = luma(anchor.read(uint2(center)).rgb);
+            texture = fabs(centerLuma - luma(anchor.read(uint2(center + float2(2, 0))).rgb)) +
+                      fabs(centerLuma - luma(anchor.read(uint2(center + float2(0, 2))).rgb));
+        }
+        float confidence = clamp((0.16f - error) / 0.12f, 0.0f, 1.0f) *
+                           clamp(texture / 0.025f, 0.0f, 1.0f);
+        // Scalar Kalman measurement update for each axis: the synchronized
+        // CoreMotion pose is the prediction and patch registration is the
+        // measurement. Flat or inconsistent patches receive little weight.
+        float priorVariance = 1.0f;
+        float measurementVariance = 0.02f +
+            20.0f * error * error / max(texture, 0.01f);
+        float kalmanGain = priorVariance / (priorVariance + measurementVariance);
+        best = prior + kalmanGain * (best - prior);
+        motion.write(float4(best, error, confidence), gid);
     }
 
-    // MARK: - Kernel 3: Robust Motion De-Ghosting Weights
-    kernel void computeLuminanceDeghostWeights(
-        texture2d<float, access::read> anchorTexture [[texture(0)]],
-        texture2d<float, access::read> candidateTexture [[texture(1)]],
-        texture2d<float, access::read> motionVectorTexture [[texture(2)]],
-        texture2d<float, access::write> weightTexture [[texture(3)]],
-        uint2 gid [[thread_position_in_grid]]
-    ) {
-        uint width = anchorTexture.get_width();
-        uint height = anchorTexture.get_height();
-        if (gid.x >= width || gid.y >= height) return;
-
-        float4 motion = motionVectorTexture.read(gid);
-        float2 offset = motion.xy;
-
-        int2 cPos = int2(round(float(gid.x) + offset.x), round(float(gid.y) + offset.y));
-        float anchorLum = dot(anchorTexture.read(gid).rgb, float3(0.299f, 0.587f, 0.114f));
-
-        float candLum = anchorLum;
-        if (cPos.x >= 0 && cPos.x < int(width) && cPos.y >= 0 && cPos.y < int(height)) {
-            candLum = dot(candidateTexture.read(uint2(cPos)).rgb, float3(0.299f, 0.587f, 0.114f));
-        }
-
-        float diff = abs(candLum - anchorLum);
-        float deghostW = exp(-pow(diff / 0.15f, 2.0f));
-        if (deghostW < 0.08f) {
-            deghostW = 0.0f;
-        }
-
-        weightTexture.write(float4(deghostW, 0.0f, 0.0f, 1.0f), gid);
-    }
-
-    // MARK: - Kernel 4: Multi-Frame High-Resolution Fusion Gather
+    // Gather real decoded sensor samples at fractional positions. The anchor
+    // supplies a small full-coverage baseline; candidates use nearest source
+    // samples so bilinear interpolation cannot erase their phase information.
     kernel void superResolutionFusionGather(
-        texture2d<float, access::read> anchorTexture [[texture(0)]],
-        texture2d<float, access::read> candidateTexture [[texture(1)]],
-        texture2d<float, access::read> motionVectors [[texture(2)]],
-        texture2d<float, access::read> deghostWeights [[texture(3)]],
-        texture2d<float, access::read> previousAccum [[texture(4)]],
-        texture2d<float, access::write> newAccum [[texture(5)]],
-        constant int& isAnchorFrame [[buffer(0)]],
+        texture2d<float, access::read> anchor [[texture(0)]],
+        texture2d<float, access::read> candidate [[texture(1)]],
+        texture2d<float, access::read> motion [[texture(2)]],
+        texture2d<float, access::read> previous [[texture(3)]],
+        texture2d<float, access::write> result [[texture(4)]],
+        constant int& isAnchor [[buffer(0)]],
         uint2 gid [[thread_position_in_grid]]
     ) {
-        uint targetW = newAccum.get_width();
-        uint targetH = newAccum.get_height();
-        if (gid.x >= targetW || gid.y >= targetH) return;
-
-        uint rawW = anchorTexture.get_width();
-        uint rawH = anchorTexture.get_height();
-
-        float scaleX = float(rawW) / float(targetW);
-        float scaleY = float(rawH) / float(targetH);
-        float sensorX = float(gid.x) * scaleX;
-        float sensorY = float(gid.y) * scaleY;
-
-        uint2 srcCoord = uint2(min(uint(sensorX), rawW - 1), min(uint(sensorY), rawH - 1));
-
-        float4 prevAcc = isAnchorFrame ? float4(0.0f) : previousAccum.read(gid);
-
-        float4 motion = motionVectors.read(srcCoord);
-        float deghostW = isAnchorFrame ? 1.0f : deghostWeights.read(srcCoord).r;
-
-        float2 candCoord = isAnchorFrame ? float2(sensorX, sensorY) : float2(sensorX - motion.x, sensorY - motion.y);
-
-        // Lấy mẫu song tuyến tính (Bilinear sampling)
-        int x0 = max(0, min(int(floor(candCoord.x)), int(rawW) - 1));
-        int y0 = max(0, min(int(floor(candCoord.y)), int(rawH) - 1));
-        int x1 = min(x0 + 1, int(rawW) - 1);
-        int y1 = min(y0 + 1, int(rawH) - 1);
-
-        float fx = candCoord.x - float(x0);
-        float fy = candCoord.y - float(y0);
-
-        float4 c00 = candidateTexture.read(uint2(x0, y0));
-        float4 c10 = candidateTexture.read(uint2(x1, y0));
-        float4 c01 = candidateTexture.read(uint2(x0, y1));
-        float4 c11 = candidateTexture.read(uint2(x1, y1));
-
-        float4 sampledRGB = mix(mix(c00, c10, fx), mix(c01, c11, fx), fy);
-
-        float weight = deghostW;
-        float4 updatedAcc = float4(prevAcc.rgb + sampledRGB.rgb * weight, prevAcc.a + weight);
-
-        newAccum.write(updatedAcc, gid);
+        if (gid.x >= result.get_width() || gid.y >= result.get_height()) return;
+        float2 p = (float2(gid) + 0.5f) *
+                   float2(float(anchor.get_width()) / result.get_width(),
+                          float(anchor.get_height()) / result.get_height()) - 0.5f;
+        float3 anchorRGB = bilinear(anchor, p);
+        float4 old = isAnchor ? float4(0.0f) : previous.read(gid);
+        if (isAnchor) {
+            result.write(float4(linearize(anchorRGB) * 0.55f, 0.55f), gid);
+            return;
+        }
+        uint2 block = min(uint2(max(p, float2(0.0f))) / 16,
+                          uint2(motion.get_width() - 1, motion.get_height() - 1));
+        float4 vector = motion.read(block);
+        float2 source = p + vector.xy;
+        float2 rounded = floor(source + 0.5f);
+        if (rounded.x < 0 || rounded.y < 0 ||
+            rounded.x >= candidate.get_width() ||
+            rounded.y >= candidate.get_height()) {
+            result.write(old, gid);
+            return;
+        }
+        float3 rgb = candidate.read(uint2(rounded)).rgb;
+        float2 residual = source - rounded;
+        float spatial = exp(-dot(residual, residual) / 0.22f);
+        float difference = fabs(luma(rgb) - luma(anchorRGB));
+        float colorDifference = max(max(fabs(rgb.r - anchorRGB.r),
+                                        fabs(rgb.g - anchorRGB.g)),
+                                    fabs(rgb.b - anchorRGB.b));
+        float deghost = exp(-difference * difference / 0.015f -
+                            colorDifference * colorDifference / 0.035f);
+        float weight = spatial * deghost * vector.w;
+        result.write(float4(old.rgb + linearize(rgb) * weight,
+                            old.a + weight), gid);
     }
 
-    // MARK: - Kernel 5: Super-Resolution Normalize & Apple Tone Preservation
-    static inline float applyAppleFilmicTone(float x) {
-        float a = 2.51f;
-        float b = 0.03f;
-        float c = 2.43f;
-        float d = 0.59f;
-        float e = 0.14f;
-        float mapped = clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f, 1.0f);
-        return pow(mapped, 1.0f / 2.2f);
-    }
-
+    // Only the RAW decoder performs exposure/tone mapping. This kernel
+    // normalizes linear P3 samples and applies the P3 transfer function once.
     kernel void superResolutionNormalizeAndTone(
-        texture2d<float, access::read> accumTexture [[texture(0)]],
-        texture2d<float, access::read> anchorTexture [[texture(1)]],
-        texture2d<float, access::write> outputTexture [[texture(2)]],
-        constant float& exposureGain [[buffer(0)]],
-        constant int& applyToneCurve [[buffer(1)]],
+        texture2d<float, access::read> accumulated [[texture(0)]],
+        texture2d<float, access::read> anchor [[texture(1)]],
+        texture2d<float, access::write> output [[texture(2)]],
         uint2 gid [[thread_position_in_grid]]
     ) {
-        uint targetW = outputTexture.get_width();
-        uint targetH = outputTexture.get_height();
-        if (gid.x >= targetW || gid.y >= targetH) return;
-
-        float4 acc = accumTexture.read(gid);
-        float totalW = acc.a;
-        float3 rgb;
-
-        if (totalW > 1e-4f) {
-            rgb = acc.rgb / totalW;
+        if (gid.x >= output.get_width() || gid.y >= output.get_height()) return;
+        float4 a = accumulated.read(gid);
+        float3 linearRGB;
+        if (a.a > 1e-5f) {
+            linearRGB = a.rgb / a.a;
         } else {
-            uint rawW = anchorTexture.get_width();
-            uint rawH = anchorTexture.get_height();
-            uint srcX = min(uint(float(gid.x) * float(rawW) / float(targetW)), rawW - 1);
-            uint srcY = min(uint(float(gid.y) * float(rawH) / float(targetH)), rawH - 1);
-            rgb = anchorTexture.read(uint2(srcX, srcY)).rgb;
+            float2 p = (float2(gid) + 0.5f) *
+                       float2(float(anchor.get_width()) / output.get_width(),
+                              float(anchor.get_height()) / output.get_height()) - 0.5f;
+            linearRGB = linearize(bilinear(anchor, p));
         }
-
-        if (applyToneCurve != 0) {
-            // Áp dụng bù sáng phơi sáng thông minh (Exposure Compensation)
-            rgb *= exposureGain;
-
-            // Đường cong tương phản Film Apple (Reinhard / Filmic Tone Curve + Gamma 2.2)
-            rgb = float3(applyAppleFilmicTone(rgb.r), applyAppleFilmicTone(rgb.g), applyAppleFilmicTone(rgb.b));
-        }
-
-        outputTexture.write(float4(clamp(rgb, 0.0f, 1.0f), 1.0f), gid);
-    }
-
-    // MARK: - Kernel 6: Zero-Mushiness Micro-Contrast Enhancement
-    kernel void zeroMushinessMicroContrast(
-        texture2d<float, access::read> inputTexture [[texture(0)]],
-        texture2d<float, access::write> finalOutputTexture [[texture(1)]],
-        constant float& microContrastFactor [[buffer(0)]],
-        uint2 gid [[thread_position_in_grid]]
-    ) {
-        uint width = inputTexture.get_width();
-        uint height = inputTexture.get_height();
-        if (gid.x >= width || gid.y >= height) return;
-
-        float4 center = inputTexture.read(gid);
-        float centerLum = dot(center.rgb, float3(0.299f, 0.587f, 0.114f));
-
-        float blurLum = 0.0f;
-        float count = 0.0f;
-
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                int2 pos = int2(gid) + int2(dx, dy);
-                if (pos.x >= 0 && pos.x < int(width) && pos.y >= 0 && pos.y < int(height)) {
-                    float4 s = inputTexture.read(uint2(pos));
-                    blurLum += dot(s.rgb, float3(0.299f, 0.587f, 0.114f));
-                    count += 1.0f;
-                }
-            }
-        }
-
-        float localMeanLum = blurLum / count;
-        float detail = centerLum - localMeanLum;
-
-        float3 enhanced = center.rgb + float3(detail * microContrastFactor);
-        finalOutputTexture.write(float4(clamp(enhanced, 0.0f, 1.0f), 1.0f), gid);
+        output.write(float4(clamp(encodeP3(linearRGB), 0.0f, 1.0f), 1.0f), gid);
     }
     """
 
@@ -325,7 +266,7 @@ public final class SuperResolutionMetalShaders: @unchecked Sendable {
             if let f6 = lib.makeFunction(name: "zeroMushinessMicroContrast") {
                 microContrastPipeline = try? defaultDevice.makeComputePipelineState(function: f6)
             }
-            CameraLogger.success("✅ Đã biên dịch thành công 6 Metal Compute Kernels cho Super-Res Fusion", category: .ai)
+            CameraLogger.success("Đã biên dịch Metal kernels cho Super-Res Fusion", category: .ai)
         } catch {
             CameraLogger.error("Lỗi biên dịch Metal Shaders: \(error)", category: .ai)
         }

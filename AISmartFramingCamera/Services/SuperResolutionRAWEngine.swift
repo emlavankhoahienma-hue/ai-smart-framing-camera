@@ -75,14 +75,10 @@ public struct CameraCalibrationParams {
     }
 }
 
-/// Động cơ Siêu Phân Giải Đa Khung RAW 14-bit (Handheld Super-Resolution Multi-Frame Fusion)
-/// Thực thi toàn bộ chuỗi thuật toán 6 tầng hoàn toàn trên Apple Metal GPU:
-/// 1. Tầng Thu Nhận & Giải Mã (Ingress & ISP Decode): Nạp chuỗi burst 8 frame RAW, giải mã trực tiếp bằng phần cứng Apple ISP sang Display P3.
-/// 2. Tầng Khung Neo (Anchor Selection): Luminance Gradient Energy để chọn frame nét nhất làm tham chiếu chuẩn.
-/// 3. Tầng Căn Chỉnh Vi Mô & De-ghosting (Sub-Pixel Align & Motion Weighting): So khớp theo IMU Prior + loại bỏ bóng ma chuyển động.
-/// 4. Tầng Tích Tụ Siêu Phân Giải (High-Resolution Fusion Gather): Tích lũy photon thật từ đa khung hình vào lưới siêu phân giải 27MP - 48MP.
-/// 5. Tầng Bảo Toàn Sắc Thái & Chuẩn Hóa (Normalize & Tone Preservation): Chuẩn hóa trọng số, bảo toàn 100% màu sắc Apple P3 chuẩn mực.
-/// 6. Tầng Tối Ưu Chi Tiết Vi Mô (Zero-Mushiness Micro-Contrast): Khuếch đại vi tương phản tần số cao, triệt tiêu bệt nhòe.
+/// Multi-frame reconstruction from RAW frames rendered by Core Image into
+/// Display P3. Metal registers, rejects moving regions and gathers their
+/// distinct subpixel samples. Actual detail depends on motion diversity,
+/// lens resolution and the device's available memory.
 public final class SuperResolutionRAWEngine: @unchecked Sendable {
     public static let shared = SuperResolutionRAWEngine()
 
@@ -116,12 +112,11 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             }
         }
         if let data = frame.rawData {
-            // 1. Thử decode qua CIRAWFilter với đầy đủ Apple Tone Mapping & Exposure Boost
+            // Decode with the camera's native RAW rendering and no extra EV gain.
             if let rawFilter = CIRAWFilter(imageData: data, identifierHint: nil) {
-                let baseline = rawFilter.baselineExposure
-                rawFilter.exposure = max(1.0, baseline)
-                rawFilter.boostAmount = 1.0
-                rawFilter.localToneMapAmount = 1.0
+                // The RAW filter performs the camera profile, white balance and
+                // its own tone rendering. Exposure is an extra adjustment in EV.
+                rawFilter.exposure = 0
                 if let outCI = rawFilter.outputImage {
                     let orientedCI = outCI.oriented(frame.orientation)
                     if let cg = ciContext.createCGImage(orientedCI, from: orientedCI.extent) {
@@ -157,390 +152,236 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         return nil
     }
 
-    /// Xử lý danh sách frame RAW và trả về ảnh siêu nét 27MP / 48MP Display P3
+    /// Decode a burst with one candidate texture resident at a time. The
+    /// decoded pixels use the camera's P3 rendering; Metal linearizes them
+    /// before fusion and encodes them once on output.
     public func processBurst(
         frames: [SuperResolutionInputFrame],
         progress: @escaping (Float, String) -> Void
     ) async throws -> CGImage {
-        guard !frames.isEmpty else {
-            throw NSError(domain: "SuperResolutionRAWEngine", code: -1, userInfo: [NSLocalizedDescriptionKey: "Không có frame RAW đầu vào"])
+        guard let first = frames.first else {
+            throw NSError(domain: "SuperResolutionRAWEngine", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Không có frame RAW đầu vào"])
+        }
+        guard frames.count > 1, let device, let commandQueue,
+              let alignPipeline = shaders.subpixelAlignPipeline,
+              let gatherPipeline = shaders.fusionGatherPipeline,
+              let normalizePipeline = shaders.normalizeTonePipeline else {
+            return try extractCGImage(from: first)
         }
 
-        // Nếu chỉ có 1 frame hoặc không có Metal, fallback giải mã ngay frame 0
-        guard frames.count > 1, let device = self.device, let commandQueue = self.commandQueue else {
-            CameraLogger.warning("Super-Res: Frame count < 2 hoặc Metal không khả dụng, dùng fallback frame 0", category: .ai)
-            return try extractCGImage(from: frames[0])
-        }
-
-        progress(0.10, "Đang nạp dữ liệu cảm biến...")
-
-        // TẦNG 1: Chuyển đổi Frame sang Metal Texture với chuẩn màu Apple Display P3
-        var textures: [MTLTexture] = []
-        for frame in frames {
-            if let tex = makeTexture(from: frame, device: device) {
-                textures.append(tex)
+        progress(0.08, "Đang giải mã RAW và chọn khung neo...")
+        var anchorIndex = 0
+        var bestEnergy: Float = -.infinity
+        var anchorTexture: MTLTexture?
+        for (index, frame) in frames.enumerated() {
+            guard let texture = makeTexture(from: frame, device: device) else { continue }
+            if let old = anchorTexture,
+               (texture.width != old.width || texture.height != old.height) {
+                continue
+            }
+            let energy = await gradientEnergy(of: texture, device: device,
+                                              commandQueue: commandQueue)
+            if anchorTexture == nil || energy > bestEnergy {
+                anchorIndex = index
+                anchorTexture = texture
+                bestEnergy = energy
             }
         }
+        guard let anchorTexture else { return try extractCGImage(from: first) }
+        let anchorFrame = frames[anchorIndex]
+        let baseWidth = anchorTexture.width
+        let baseHeight = anchorTexture.height
+        let basePixels = baseWidth * baseHeight
 
-        guard textures.count >= 2 else {
-            CameraLogger.warning("Không thể tạo đủ texture từ các frame RAW, fallback frame 0", category: .ai)
-            return try extractCGImage(from: frames[0])
+        // The two 16-bit accumulators dominate memory. Include input, encoded
+        // output, retained DNG data and a Core Image export allowance.
+        let ram = ProcessInfo.processInfo.physicalMemory
+        let ramScale: Double = ram >= 7_000_000_000 ? 2.0 :
+                               (ram >= 5_000_000_000 ? 1.5 :
+                               (ram >= 3_500_000_000 ? 1.25 : 1.0))
+        let nativeLimit = sqrt(48_000_000.0 / Double(basePixels))
+        var scale = max(1.0, min(ramScale, nativeLimit))
+        let rawBytes = frames.reduce(0) { $0 + ($1.rawData?.count ?? 0) }
+        let budget = min(Double(ram) * 0.20, 1_700_000_000)
+        func predictedBytes(_ factor: Double) -> Double {
+            let pixels = Double(basePixels) * factor * factor
+            return pixels * 24 + Double(basePixels) * 12 +
+                   Double(rawBytes) + 150_000_000
         }
-
-        let baseWidth = textures[0].width
-        let baseHeight = textures[0].height
-
-        // Kiểm tra dung lượng RAM thiết bị để tối ưu kích thước lưới
-        // iPhone 15 Pro / 16 Pro (8GB RAM): scale 2.0x (48.8MP)
-        // iPhone 12 / 13 / 14 / 15 thường (4GB - 6GB RAM): scale 1.5x (27.4MP, chi tiết gấp đôi 12MP, an toàn tuyệt đối)
-        // iPhone cũ <= 3GB RAM: scale 1.25x (19.0MP)
-        let totalRAM = ProcessInfo.processInfo.physicalMemory
-        let scale: Float
-        if totalRAM >= 7_000_000_000 {
-            scale = 2.0 // 48.7 MP
-        } else if totalRAM >= 3_500_000_000 {
-            scale = 1.5 // 27.4 MP
-        } else {
-            scale = 1.25 // 19.0 MP
+        while scale > 1.0 && predictedBytes(scale) > budget {
+            scale = scale > 1.5 ? 1.5 : (scale > 1.25 ? 1.25 : 1.0)
         }
-        let targetWidth = Int(Float(baseWidth) * scale)
-        let targetHeight = Int(Float(baseHeight) * scale)
+        if predictedBytes(scale) > budget {
+            CameraLogger.warning("Super-Res: insufficient memory budget; using decoded anchor", category: .ai)
+            return try extractCGImage(from: anchorFrame)
+        }
+        let targetWidth = Int(Double(baseWidth) * scale)
+        let targetHeight = Int(Double(baseHeight) * scale)
+        guard targetWidth <= 8192, targetHeight <= 8192 else {
+            return try extractCGImage(from: anchorFrame)
+        }
+        CameraLogger.info("Super-Res: anchor #\(anchorIndex), output \(targetWidth)x\(targetHeight), RAM estimate \(Int(predictedBytes(scale) / 1_000_000)) MB", category: .ai)
 
-        progress(0.25, "Đang chọn Khung Neo nét nhất...")
-
-        // TẦNG 2: Chọn Khung Neo (Anchor Selection) dựa trên Luminance Gradient Energy
-        let anchorIndex = await selectAnchorFrame(textures: textures, device: device, commandQueue: commandQueue)
-        let anchorTexture = textures[anchorIndex]
-        let anchorFrame = frames[min(anchorIndex, frames.count - 1)]
-
-        CameraLogger.info("Super-Res: Đã chọn Khung Neo #\(anchorIndex) (Độ phân giải đích: \(targetWidth)x\(targetHeight), Scale: \(scale)x)", category: .ai)
-
-        progress(0.40, "Đang căn chỉnh vi mô & khử bóng ma...")
-
-        // TẦNG 3 & 4: Khởi tạo Texture tích tụ nửa độ chính xác .rgba16Float (RGB trong .rgb, trọng số trong .a)
         let accumDesc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba16Float,
-            width: targetWidth,
-            height: targetHeight,
-            mipmapped: false
-        )
+            pixelFormat: .rgba16Float, width: targetWidth,
+            height: targetHeight, mipmapped: false)
         accumDesc.usage = [.shaderRead, .shaderWrite]
         accumDesc.storageMode = .private
-
-        guard var accumTextureA = device.makeTexture(descriptor: accumDesc),
-              var accumTextureB = device.makeTexture(descriptor: accumDesc) else {
+        guard var accumA = device.makeTexture(descriptor: accumDesc),
+              var accumB = device.makeTexture(descriptor: accumDesc) else {
             return try extractCGImage(from: anchorFrame)
         }
 
-        // Texture trung gian cho Motion Vectors & Deghost Weights (kích thước baseWidth x baseHeight)
-        let mvDesc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba16Float,
-            width: baseWidth,
-            height: baseHeight,
-            mipmapped: false
-        )
-        mvDesc.usage = [.shaderRead, .shaderWrite]
-        mvDesc.storageMode = .private
-        guard let motionVectorTex = device.makeTexture(descriptor: mvDesc),
-              let deghostWeightTex = device.makeTexture(descriptor: mvDesc) else {
+        let blockSize = 16
+        let gridWidth = (baseWidth + blockSize - 1) / blockSize
+        let gridHeight = (baseHeight + blockSize - 1) / blockSize
+        let motionDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba16Float, width: gridWidth,
+            height: gridHeight, mipmapped: false)
+        motionDesc.usage = [.shaderRead, .shaderWrite]
+        motionDesc.storageMode = .private
+        guard let motionTexture = device.makeTexture(descriptor: motionDesc) else {
             return try extractCGImage(from: anchorFrame)
         }
 
-        // Tích tụ từng frame vào lưới siêu phân giải (bắt đầu từ Khung Neo để đảm bảo 100% điểm ảnh có mẫu gốc)
-        var orderedIndices = [anchorIndex]
-        for i in 0..<textures.count {
-            if i != anchorIndex { orderedIndices.append(i) }
-        }
-
-        let totalCount = orderedIndices.count
-        for (step, idx) in orderedIndices.enumerated() {
-            let candidateTex = textures[idx]
-            let candidateFrame = frames[min(idx, frames.count - 1)]
-            let isAnchor = (step == 0)
-
-            // Tính toán IMU Prior Offset giữa Anchor Frame và Candidate Frame
-            let imuPrior = computeIMUPriorOffset(
-                anchor: anchorFrame.imuPose,
-                candidate: candidateFrame.imuPose,
-                sensorWidth: baseWidth
-            )
-
-            guard let cmdBuffer = commandQueue.makeCommandBuffer() else { continue }
+        var accepted = 0
+        let order = [anchorIndex] + frames.indices.filter { $0 != anchorIndex }
+        for index in order {
+            let isAnchor = index == anchorIndex
+            guard let candidate = isAnchor ? anchorTexture :
+                    makeTexture(from: frames[index], device: device),
+                  candidate.width == baseWidth, candidate.height == baseHeight,
+                  let command = commandQueue.makeCommandBuffer() else { continue }
 
             if !isAnchor {
-                // 3a. Sub-pixel Alignment theo Luminance
-                if let alignPipeline = shaders.subpixelAlignPipeline,
-                   let encoder = cmdBuffer.makeComputeCommandEncoder() {
-                    encoder.setComputePipelineState(alignPipeline)
-                    encoder.setTexture(anchorTexture, index: 0)
-                    encoder.setTexture(candidateTex, index: 1)
-                    encoder.setTexture(motionVectorTex, index: 2)
-                    var prior = imuPrior
-                    encoder.setBytes(&prior, length: MemoryLayout<SIMD2<Float>>.stride, index: 0)
-
-                    let w = alignPipeline.threadExecutionWidth
-                    let h = alignPipeline.maxTotalThreadsPerThreadgroup / w
-                    let threadsPerThreadgroup = MTLSize(width: w, height: h, depth: 1)
-                    let threadsPerGrid = MTLSize(width: baseWidth, height: baseHeight, depth: 1)
-                    encoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-                    encoder.endEncoding()
-                }
-
-                // 3b. Motion De-Ghosting Weights (khử vùng chuyển động của ô tô, người đi bộ, lá cây)
-                if let deghostPipeline = shaders.deghostWeightsPipeline,
-                   let encoder = cmdBuffer.makeComputeCommandEncoder() {
-                    encoder.setComputePipelineState(deghostPipeline)
-                    encoder.setTexture(anchorTexture, index: 0)
-                    encoder.setTexture(candidateTex, index: 1)
-                    encoder.setTexture(motionVectorTex, index: 2)
-                    encoder.setTexture(deghostWeightTex, index: 3)
-
-                    let w = deghostPipeline.threadExecutionWidth
-                    let h = deghostPipeline.maxTotalThreadsPerThreadgroup / w
-                    let threadsPerThreadgroup = MTLSize(width: w, height: h, depth: 1)
-                    let threadsPerGrid = MTLSize(width: baseWidth, height: baseHeight, depth: 1)
-                    encoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-                    encoder.endEncoding()
-                }
-            }
-
-            // 4. Super-Resolution Fusion Gather
-            if let gatherPipeline = shaders.fusionGatherPipeline,
-               let encoder = cmdBuffer.makeComputeCommandEncoder() {
-                encoder.setComputePipelineState(gatherPipeline)
+                guard let encoder = command.makeComputeCommandEncoder() else { continue }
+                encoder.setComputePipelineState(alignPipeline)
                 encoder.setTexture(anchorTexture, index: 0)
-                encoder.setTexture(candidateTex, index: 1)
-                encoder.setTexture(motionVectorTex, index: 2)
-                encoder.setTexture(deghostWeightTex, index: 3)
-                encoder.setTexture(accumTextureA, index: 4)
-                encoder.setTexture(accumTextureB, index: 5)
-                var isAnchorFlag: Int32 = isAnchor ? 1 : 0
-                encoder.setBytes(&isAnchorFlag, length: MemoryLayout<Int32>.stride, index: 0)
-
-                let w = gatherPipeline.threadExecutionWidth
-                let h = gatherPipeline.maxTotalThreadsPerThreadgroup / w
-                let threadsPerThreadgroup = MTLSize(width: w, height: h, depth: 1)
-                let threadsPerGrid = MTLSize(width: targetWidth, height: targetHeight, depth: 1)
-                encoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
+                encoder.setTexture(candidate, index: 1)
+                encoder.setTexture(motionTexture, index: 2)
+                var prior = computeIMUPriorOffset(
+                    anchor: anchorFrame.imuPose,
+                    candidate: frames[index].imuPose,
+                    sensorWidth: baseWidth, sensorHeight: baseHeight)
+                encoder.setBytes(&prior, length: MemoryLayout<SIMD2<Float>>.stride, index: 0)
+                encoder.dispatchThreads(
+                    MTLSize(width: gridWidth, height: gridHeight, depth: 1),
+                    threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
                 encoder.endEncoding()
             }
-
-            await withCheckedContinuation { continuation in
-                cmdBuffer.addCompletedHandler { _ in
-                    continuation.resume()
-                }
-                cmdBuffer.commit()
+            guard let encoder = command.makeComputeCommandEncoder() else { continue }
+            encoder.setComputePipelineState(gatherPipeline)
+            encoder.setTexture(anchorTexture, index: 0)
+            encoder.setTexture(candidate, index: 1)
+            encoder.setTexture(motionTexture, index: 2)
+            encoder.setTexture(accumA, index: 3)
+            encoder.setTexture(accumB, index: 4)
+            var anchorFlag: Int32 = isAnchor ? 1 : 0
+            encoder.setBytes(&anchorFlag, length: MemoryLayout<Int32>.stride, index: 0)
+            let w = gatherPipeline.threadExecutionWidth
+            let h = max(1, gatherPipeline.maxTotalThreadsPerThreadgroup / w)
+            encoder.dispatchThreads(
+                MTLSize(width: targetWidth, height: targetHeight, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1))
+            encoder.endEncoding()
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                command.addCompletedHandler { _ in continuation.resume() }
+                command.commit()
             }
-
-            // Ping-pong hoán đổi textures
-            swap(&accumTextureA, &accumTextureB)
-
-            let p = 0.40 + Float(step + 1) / Float(totalCount) * 0.35
-            progress(p, "Đang tích tụ hạt photon \(step + 1)/\(totalCount)...")
+            if command.status != .completed {
+                CameraLogger.warning("Super-Res: Metal fusion failed: \(String(describing: command.error))", category: .ai)
+                return try extractCGImage(from: anchorFrame)
+            }
+            swap(&accumA, &accumB)
+            accepted += 1
+            progress(0.30 + Float(accepted) / Float(order.count) * 0.52,
+                     "Đang ghép ảnh \(accepted)/\(order.count)...")
         }
+        guard accepted > 0 else { return try extractCGImage(from: anchorFrame) }
 
-        progress(0.80, "Đang bảo toàn sắc thái Apple Display P3...")
-
-        // TẦNG 5: Super-Resolution Normalize & Tone Preservation
-        let outDesc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba8Unorm,
-            width: targetWidth,
-            height: targetHeight,
-            mipmapped: false
-        )
-        outDesc.usage = [.shaderRead, .shaderWrite]
-        outDesc.storageMode = .shared
-
-        guard let p3Texture = device.makeTexture(descriptor: outDesc),
-              let finalTexture = device.makeTexture(descriptor: outDesc) else {
+        progress(0.86, "Đang hoàn tất màu Display P3...")
+        let outputDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm, width: targetWidth,
+            height: targetHeight, mipmapped: false)
+        outputDesc.usage = [.shaderRead, .shaderWrite]
+        outputDesc.storageMode = .shared
+        guard let output = device.makeTexture(descriptor: outputDesc),
+              let command = commandQueue.makeCommandBuffer(),
+              let encoder = command.makeComputeCommandEncoder() else {
             return try extractCGImage(from: anchorFrame)
         }
-
-        guard let postCmd = commandQueue.makeCommandBuffer() else {
+        encoder.setComputePipelineState(normalizePipeline)
+        encoder.setTexture(accumA, index: 0)
+        encoder.setTexture(anchorTexture, index: 1)
+        encoder.setTexture(output, index: 2)
+        let w = normalizePipeline.threadExecutionWidth
+        let h = max(1, normalizePipeline.maxTotalThreadsPerThreadgroup / w)
+        encoder.dispatchThreads(
+            MTLSize(width: targetWidth, height: targetHeight, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1))
+        encoder.endEncoding()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            command.addCompletedHandler { _ in continuation.resume() }
+            command.commit()
+        }
+        guard command.status == .completed,
+              let result = makeCGImage(from: output) else {
             return try extractCGImage(from: anchorFrame)
         }
-
-        let avgLuma = estimateAverageLuminance(texture: anchorTexture)
-        var applyToneCurve: Int32 = 0
-        var exposureGain: Float = 1.0
-
-        if avgLuma < 0.25 {
-            applyToneCurve = 1
-            let targetEV: Float = 0.48
-            let rawGain = targetEV / max(avgLuma, 0.04)
-            exposureGain = max(1.8, min(rawGain, 4.2))
-            CameraLogger.info("Super-Res: Phát hiện dữ liệu RAW tuyến tính (Luma: \(avgLuma)), kích hoạt bù sáng x\(exposureGain) & Apple Filmic Tone Curve", category: .ai)
-        } else {
-            applyToneCurve = 0
-            exposureGain = 1.0
-        }
-
-        if let normPipeline = shaders.normalizeTonePipeline,
-           let encoder = postCmd.makeComputeCommandEncoder() {
-            encoder.setComputePipelineState(normPipeline)
-            encoder.setTexture(accumTextureA, index: 0)
-            encoder.setTexture(anchorTexture, index: 1)
-            encoder.setTexture(p3Texture, index: 2)
-            encoder.setBytes(&exposureGain, length: MemoryLayout<Float>.stride, index: 0)
-            encoder.setBytes(&applyToneCurve, length: MemoryLayout<Int32>.stride, index: 1)
-
-            let w = normPipeline.threadExecutionWidth
-            let h = normPipeline.maxTotalThreadsPerThreadgroup / w
-            let threadsPerThreadgroup = MTLSize(width: w, height: h, depth: 1)
-            let threadsPerGrid = MTLSize(width: targetWidth, height: targetHeight, depth: 1)
-            encoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-            encoder.endEncoding()
-        }
-
-        progress(0.92, "Đang tối ưu độ sắc nét vi mô (Zero-Mushiness)...")
-
-        // TẦNG 6: Zero-Mushiness Micro-Contrast Enhancement
-        if let microPipeline = shaders.microContrastPipeline,
-           let encoder = postCmd.makeComputeCommandEncoder() {
-            encoder.setComputePipelineState(microPipeline)
-            encoder.setTexture(p3Texture, index: 0)
-            encoder.setTexture(finalTexture, index: 1)
-            var factor: Float = 0.20
-            encoder.setBytes(&factor, length: MemoryLayout<Float>.stride, index: 0)
-
-            let w = microPipeline.threadExecutionWidth
-            let h = microPipeline.maxTotalThreadsPerThreadgroup / w
-            let threadsPerThreadgroup = MTLSize(width: w, height: h, depth: 1)
-            let threadsPerGrid = MTLSize(width: targetWidth, height: targetHeight, depth: 1)
-            encoder.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-            encoder.endEncoding()
-        }
-
-        await withCheckedContinuation { continuation in
-            postCmd.addCompletedHandler { _ in
-                continuation.resume()
-            }
-            postCmd.commit()
-        }
-
-        let resolutionLabel = scale >= 1.9 ? "48MP" : (scale >= 1.4 ? "27MP" : "19MP")
-        progress(0.98, "Đang tạo ảnh thành phẩm \(resolutionLabel)...")
-
-        // Xuất CGImage Display P3
-        let resultCG = makeCGImage(from: finalTexture)
         progress(1.0, "Hoàn tất")
-        if let resultCG = resultCG {
-            return resultCG
-        }
-        return try extractCGImage(from: anchorFrame)
+        return result
     }
 
     // MARK: - Private Helpers
 
-    /// Chọn Frame nét nhất dựa trên tổng năng lượng độ dốc Luminance
-    private func selectAnchorFrame(
-        textures: [MTLTexture],
-        device: MTLDevice,
-        commandQueue: MTLCommandQueue
-    ) async -> Int {
+    private func gradientEnergy(of texture: MTLTexture, device: MTLDevice,
+                                commandQueue: MTLCommandQueue) async -> Float {
         guard let pipeline = shaders.gradientEnergyPipeline else { return 0 }
-
-        var bestIndex = 0
-        var maxEnergy: Float = -1.0
-
-        for (idx, tex) in textures.enumerated() {
-            let width = tex.width
-            let height = tex.height
-
-            let w = 16
-            let h = 16
-            let numGroupsX = (width + w - 1) / w
-            let numGroupsY = (height + h - 1) / h
-            let totalGroups = numGroupsX * numGroupsY
-
-            guard let energyBuffer = device.makeBuffer(length: totalGroups * MemoryLayout<Float>.stride, options: .storageModeShared),
-                  let cmd = commandQueue.makeCommandBuffer(),
-                  let encoder = cmd.makeComputeCommandEncoder() else {
-                continue
-            }
-
-            encoder.setComputePipelineState(pipeline)
-            encoder.setTexture(tex, index: 0)
-            encoder.setBuffer(energyBuffer, offset: 0, index: 0)
-
-            let threadsPerThreadgroup = MTLSize(width: w, height: h, depth: 1)
-            let threadgroups = MTLSize(width: numGroupsX, height: numGroupsY, depth: 1)
-            encoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadsPerThreadgroup)
-            encoder.endEncoding()
-
-            await withCheckedContinuation { continuation in
-                cmd.addCompletedHandler { _ in
-                    continuation.resume()
-                }
-                cmd.commit()
-            }
-
-            let rawPtr = energyBuffer.contents().bindMemory(to: Float.self, capacity: totalGroups)
-            var sum: Float = 0.0
-            for i in 0..<totalGroups {
-                let val = rawPtr[i]
-                if val.isFinite { sum += val }
-            }
-
-            if sum > maxEnergy {
-                maxEnergy = sum
-                bestIndex = idx
-            }
+        let gx = (texture.width + 15) / 16
+        let gy = (texture.height + 15) / 16
+        let count = gx * gy
+        guard let buffer = device.makeBuffer(
+            length: count * MemoryLayout<Float>.stride, options: .storageModeShared),
+              let command = commandQueue.makeCommandBuffer(),
+              let encoder = command.makeComputeCommandEncoder() else { return 0 }
+        encoder.setComputePipelineState(pipeline)
+        encoder.setTexture(texture, index: 0)
+        encoder.setBuffer(buffer, offset: 0, index: 0)
+        encoder.dispatchThreadgroups(
+            MTLSize(width: gx, height: gy, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: 16, height: 16, depth: 1))
+        encoder.endEncoding()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            command.addCompletedHandler { _ in continuation.resume() }
+            command.commit()
         }
-
-        return bestIndex
+        guard command.status == .completed else { return 0 }
+        let values = buffer.contents().bindMemory(to: Float.self, capacity: count)
+        var energy: Float = 0
+        for index in 0..<count where values[index].isFinite {
+            energy += values[index]
+        }
+        return energy
     }
 
-    /// Tính vector dịch chuyển dựa trên con quay hồi chuyển CoreMotion
+    /// The CoreMotion quaternion already fuses gyro and accelerometer data.
+    /// Project the anchor's optical axis into the candidate camera to obtain
+    /// a prior. Optical registration handles translation and residual drift.
     private func computeIMUPriorOffset(
-        anchor: simd_quatd?,
-        candidate: simd_quatd?,
-        sensorWidth: Int
+        anchor: simd_quatd?, candidate: simd_quatd?,
+        sensorWidth: Int, sensorHeight: Int
     ) -> SIMD2<Float> {
-        guard let qAnchor = anchor, let qCand = candidate else {
-            return SIMD2<Float>(0, 0)
-        }
-
-        let deltaQ = simd_mul(simd_inverse(qAnchor), qCand)
-        let pitch = Float(2.0 * (deltaQ.real * deltaQ.imag.x - deltaQ.imag.y * deltaQ.imag.z))
-        let yaw   = Float(2.0 * (deltaQ.real * deltaQ.imag.y + deltaQ.imag.z * deltaQ.imag.x))
-
-        // Hệ số tiêu cự chuẩn cho cảm biến góc rộng iPhone (~3000px)
-        let focal = Float(sensorWidth) * 0.75
-        let dx = -yaw * focal
-        let dy = pitch * focal
-
-        // Giới hạn biên an toàn 12 pixel cho rung lắc tự nhiên của tay
-        let clampedX = max(-12.0, min(12.0, dx))
-        let clampedY = max(-12.0, min(12.0, dy))
-
-        return SIMD2<Float>(clampedX, clampedY)
-    }
-
-    /// Đo độ sáng trung bình của texture để tự động phát hiện và bù sáng dữ liệu RAW tuyến tính
-    private func estimateAverageLuminance(texture: MTLTexture) -> Float {
-        let w = texture.width
-        let h = texture.height
-        let sampleCountX = 8
-        let sampleCountY = 8
-        var sumLum: Float = 0.0
-        var count: Float = 0.0
-
-        var pixel = [UInt8](repeating: 0, count: 4)
-        for sy in 1...sampleCountY {
-            for sx in 1...sampleCountX {
-                let px = (w * sx) / (sampleCountX + 1)
-                let py = (h * sy) / (sampleCountY + 1)
-                texture.getBytes(&pixel, bytesPerRow: 4, from: MTLRegionMake2D(px, py, 1, 1), mipmapLevel: 0)
-                let r = Float(pixel[0]) / 255.0
-                let g = Float(pixel[1]) / 255.0
-                let b = Float(pixel[2]) / 255.0
-                let lum = 0.299 * r + 0.587 * g + 0.114 * b
-                sumLum += lum
-                count += 1.0
-            }
-        }
-        return count > 0 ? (sumLum / count) : 0.5
+        guard let anchor, let candidate else { return .zero }
+        let worldRay = anchor.act(SIMD3<Double>(0, 0, -1))
+        let ray = candidate.inverse.act(worldRay)
+        guard ray.z < -0.1, ray.x.isFinite, ray.y.isFinite else { return .zero }
+        let aspect = Double(sensorWidth) / Double(sensorHeight)
+        let k = TrackingCalibration.fallback(aspect: aspect)
+        let x = k.fx * Double(sensorWidth) * ray.x / -ray.z
+        let y = -k.fy * Double(sensorHeight) * ray.y / -ray.z
+        guard x.isFinite, y.isFinite, abs(x) <= 64, abs(y) <= 64 else { return .zero }
+        return SIMD2<Float>(Float(x), Float(y))
     }
 
     /// Chuyển đổi SuperResolutionInputFrame sang MTLTexture Display P3 thông qua CoreImage / ImageIO
@@ -551,12 +392,11 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         }
 
         if let data = frame.rawData {
-            // 1. Thử giải mã qua CIRAWFilter với đầy đủ Tone Mapping & Exposure Boost của Apple
+            // Decode with the camera's native RAW rendering and no extra EV gain.
             if let rawFilter = CIRAWFilter(imageData: data, identifierHint: nil) {
-                let baseline = rawFilter.baselineExposure
-                rawFilter.exposure = max(1.0, baseline)
-                rawFilter.boostAmount = 1.0
-                rawFilter.localToneMapAmount = 1.0
+                // The RAW filter performs the camera profile, white balance and
+                // its own tone rendering. Exposure is an extra adjustment in EV.
+                rawFilter.exposure = 0
                 if let outCI = rawFilter.outputImage {
                     let orientedCI = outCI.oriented(frame.orientation)
                     if let tex = renderCIImageToTexture(orientedCI, device: device) {
@@ -603,7 +443,8 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         let extent = ciImage.extent
         let width = Int(extent.width)
         let height = Int(extent.height)
-        guard width > 0, height > 0 else { return nil }
+        guard width > 0, height > 0, width <= 8192,
+              height <= 8192 else { return nil }
 
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm,
@@ -617,7 +458,11 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         guard let texture = device.makeTexture(descriptor: desc) else { return nil }
 
         let colorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
-        ciContext.render(ciImage, to: texture, commandBuffer: nil, bounds: extent, colorSpace: colorSpace)
+        let normalized = ciImage.transformed(by: CGAffineTransform(
+            translationX: -extent.origin.x, y: -extent.origin.y))
+        ciContext.render(normalized, to: texture, commandBuffer: nil,
+                         bounds: CGRect(x: 0, y: 0, width: width, height: height),
+                         colorSpace: colorSpace)
         return texture
     }
 

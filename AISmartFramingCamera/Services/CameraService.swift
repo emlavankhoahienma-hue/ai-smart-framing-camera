@@ -1026,8 +1026,14 @@ public final class CameraService: NSObject {
                 DispatchQueue.main.async { completion([]) }
                 return
             }
+            guard !self.photoOutput.availableRawPhotoPixelFormatTypes.isEmpty else {
+                CameraLogger.warning("CameraService: RAW capture is unavailable on the selected camera", category: .capture)
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
             self.isPhotoCaptureInFlight = true
 
+            SpatialTrackingEngine.shared.prepare()
             let targetCount = max(4, min(count, 8))
             let burstDelegate = SuperResolutionBurstCaptureDelegate(
                 targetCount: targetCount,
@@ -1048,8 +1054,9 @@ public final class CameraService: NSObject {
             // Bắn frame đầu tiên vào ống dẫn
             self.dispatchSingleBurstFrame(delegate: burstDelegate)
 
-            // Giới hạn an toàn: Tự động hoàn tất sau 3.5s nếu camera gặp sự cố phần cứng
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak burstDelegate] in
+            // RAW photo capture is serialized by AVFoundation and is not guaranteed
+            // to run at video frame rates. Allow the hardware time to finish.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) { [weak burstDelegate] in
                 burstDelegate?.cancelOrTimeout()
             }
         }
@@ -1067,12 +1074,18 @@ public final class CameraService: NSObject {
             }
 
             photoSettings.photoQualityPrioritization = .speed
-            if self.activeCamera?.isFlashAvailable == true {
-                photoSettings.flashMode = self.flashMode
-            }
+            photoSettings.flashMode = .off
 
             self.photoOutput.capturePhoto(with: photoSettings, delegate: delegate)
         }
+    }
+
+    fileprivate func hostTimestamp(for photoTime: CMTime) -> TimeInterval? {
+        guard let sessionClock = captureSession.synchronizationClock else { return nil }
+        let converted = CMSyncConvertTime(
+            photoTime, from: sessionClock, to: CMClockGetHostTimeClock())
+        let seconds = CMTimeGetSeconds(converted)
+        return seconds.isFinite ? seconds : nil
     }
 }
 
@@ -1312,24 +1325,26 @@ final class SuperResolutionBurstCaptureDelegate: NSObject, AVCapturePhotoCapture
         defer { lock.unlock() }
         guard !isFinished else { return }
 
-        attempts += 1
         if let error = error {
             CameraLogger.warning("Super-Res Burst: Bỏ qua 1 frame lỗi: \(error.localizedDescription)", category: .capture)
-        } else {
+        } else if let payload = photo.fileDataRepresentation() {
             let index = capturedFrames.count
-            let timestamp = CMTimeGetSeconds(photo.timestamp)
+            let timestamp = cameraService?.hostTimestamp(for: photo.timestamp)
+                ?? CMTimeGetSeconds(photo.timestamp)
             let metadata = photo.metadata
             let (iso, shutter) = CameraService.parseExif(metadata)
             let orientationNum = metadata[kCGImagePropertyOrientation as String] as? UInt32
             let orientation = orientationNum.flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
 
-            let pose = SpatialTrackingEngine.shared.latestPose()
+            let pose = SpatialTrackingEngine.shared.pose(at: timestamp)
 
             let frame = SuperResolutionInputFrame(
                 index: index,
                 timestamp: timestamp,
-                pixelBuffer: photo.pixelBuffer,
-                rawData: photo.fileDataRepresentation(),
+                // Keep only one copy of each frame. A retained RAW pixel buffer
+                // plus the DNG payload can exhaust the app before Metal starts.
+                pixelBuffer: nil,
+                rawData: payload,
                 orientation: orientation,
                 imuPose: pose,
                 iso: iso,
@@ -1342,24 +1357,24 @@ final class SuperResolutionBurstCaptureDelegate: NSObject, AVCapturePhotoCapture
             DispatchQueue.main.async { [progress = self.progress] in
                 progress(p)
             }
+        } else {
+            CameraLogger.warning("Super-Res Burst: RAW payload unavailable", category: .capture)
         }
 
-        if capturedFrames.count >= targetCount || attempts >= maxAttempts {
-            finish()
-        } else {
-            // Ngay khi frame này hoàn tất và buffer giải phóng, bắn tiếp frame kế tiếp
-            if let svc = cameraService {
-                svc.dispatchSingleBurstFrame(delegate: self)
-            } else {
-                finish()
-            }
-        }
+        if capturedFrames.count >= targetCount { finish() }
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
         lock.lock()
         defer { lock.unlock() }
-        if (capturedFrames.count >= targetCount || attempts >= maxAttempts) && !isFinished {
+        guard !isFinished else { return }
+        attempts += 1
+        if let error { CameraLogger.warning("Super-Res Burst: capture failed: \(error.localizedDescription)", category: .capture) }
+        if capturedFrames.count >= targetCount || attempts >= maxAttempts {
+            finish()
+        } else if let svc = cameraService {
+            svc.dispatchSingleBurstFrame(delegate: self)
+        } else {
             finish()
         }
     }

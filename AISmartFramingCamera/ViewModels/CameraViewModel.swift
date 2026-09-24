@@ -2927,7 +2927,10 @@ public final class CameraViewModel: ObservableObject {
 
     public func savePhotoToLibrary(_ item: CapturedPhotoItem) {
         CameraLogger.info("Bắt đầu lưu ảnh vào Cuộn Camera (Photo Library)... (Live Photo: \(item.isLivePhoto ? "CÓ" : "KHÔNG"))", category: .photoKit)
-        let photoFormat = selectedPhotoFormat
+        // A fused CGImage is a rendered photo, not a sensor mosaic DNG.
+        // Save it as wide-colour HEIF when the selected format was DNG.
+        let photoFormat: PhotoSaveFormat =
+            selectedPhotoFormat == .dng && item.rawPhotoData == nil ? .heif : selectedPhotoFormat
         let shouldSaveOriginal = isSaveOriginalPhotoEnabled
 
         PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
