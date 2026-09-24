@@ -440,60 +440,47 @@ struct TargetCircleView: View {
     private var ringColor: Color {
         if isAligned { return .green }
         switch trackingQuality {
-        case .locked, .predicting: return Color.yellow
-        case .reacquiring: return Color.orange
+        case .locked, .predicting, .reacquiring: return Color.yellow
         case .lost: return Color.red
         }
     }
 
     var body: some View {
-        VStack(spacing: 6) {
-            ZStack {
-                // Sóng radar mỏng khi đang căn chỉnh
-                if !isAligned {
-                    Circle()
-                        .stroke(ringColor.opacity(radarOpacity * 0.6), lineWidth: 1.2)
-                        .frame(width: 28 * radarPulse, height: 28 * radarPulse)
-                }
-
-                // Vòng tròn bé như Ảnh 2 (Thin Golden Circle)
+        ZStack {
+            if !isAligned {
                 Circle()
-                    .stroke(ringColor, lineWidth: isAligned ? 2.2 : 1.6)
-                    .frame(width: 28, height: 28)
-                    .shadow(color: Color.black.opacity(0.5), radius: 2)
-                    .shadow(color: ringColor.opacity(isAligned ? 0.8 : 0.35), radius: isAligned ? 7 : 3)
-
-                // Dấu cộng (+) ở giữa tâm như Ảnh 2 (Plus Crosshair)
-                PlusCrosshairShape()
-                    .stroke(ringColor, lineWidth: isAligned ? 2.0 : 1.5)
-                    .frame(width: 9, height: 9)
-                    .shadow(color: Color.black.opacity(0.5), radius: 1)
-
-                if isAligned {
-                    Circle()
-                        .stroke(Color.green.opacity(0.4), lineWidth: 3.5)
-                        .frame(width: 36, height: 36)
-                        .scaleEffect(1.05)
-                }
+                    .stroke(ringColor.opacity(radarOpacity * 0.6), lineWidth: 1.2)
+                    .frame(width: 28 * radarPulse, height: 28 * radarPulse)
             }
-            .scaleEffect(isAligned ? 1.15 : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
-
-            if trackingQuality == .reacquiring {
-                Text("Đang tìm lại mục tiêu…")
+            Circle()
+                .stroke(ringColor, lineWidth: isAligned ? 2.2 : 1.6)
+                .frame(width: 28, height: 28)
+                .shadow(color: Color.black.opacity(0.5), radius: 2)
+                .shadow(color: ringColor.opacity(isAligned ? 0.8 : 0.35), radius: isAligned ? 7 : 3)
+            PlusCrosshairShape()
+                .stroke(ringColor, lineWidth: isAligned ? 2.0 : 1.5)
+                .frame(width: 9, height: 9)
+                .shadow(color: Color.black.opacity(0.5), radius: 1)
+            if isAligned {
+                Circle()
+                    .stroke(Color.green.opacity(0.4), lineWidth: 3.5)
+                    .frame(width: 36, height: 36)
+            }
+        }
+        .frame(width: 36, height: 36)
+        .scaleEffect(isAligned ? 1.15 : 1)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
+        // Status is outside layout. A label appearing must never shift the ring
+        // above its projected point by changing the centre of a VStack.
+        .overlay(alignment: .top) {
+            if trackingQuality == .reacquiring || trackingQuality == .lost {
+                Text("Đang khôi phục tín hiệu…")
                     .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundColor(.orange)
+                    .foregroundColor(.yellow)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.black.opacity(0.75)))
-            } else if trackingQuality == .lost {
-                HStack(spacing: 4) {
-                    Image(systemName: "hand.tap.fill").font(.system(size: 9))
-                    Text("Chạm để đặt lại mục tiêu")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(Capsule().fill(Color.red.opacity(0.8)))
+                    .fixedSize()
+                    .offset(y: 42)
             }
         }
     }

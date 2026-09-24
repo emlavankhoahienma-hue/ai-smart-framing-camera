@@ -14,6 +14,7 @@ public final class DeviceMotionService: @unchecked Sendable {
     private var subscribers: [UUID: (TrackingMotionSample) -> Void] = [:]
     private var legacyActive = false
     private var legacyGeneration: UInt64 = 0
+    private var streamGeneration: UInt64 = 0
     private var reference: simd_quatd?
     private var motionCallback: ((CGFloat, CGFloat) -> Void)?
 
@@ -69,11 +70,16 @@ public final class DeviceMotionService: @unchecked Sendable {
     }
 
     private func stopIfUnused() {
-        if subscribers.isEmpty && !legacyActive { manager.stopDeviceMotionUpdates() }
+        if subscribers.isEmpty && !legacyActive {
+            streamGeneration &+= 1
+            manager.stopDeviceMotionUpdates()
+        }
     }
 
     private func startIfNeeded() {
         guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
+        streamGeneration &+= 1
+        let epoch = streamGeneration
         manager.deviceMotionUpdateInterval = 1 / 60.0
         manager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: queue) { [weak self] motion, _ in
             guard let self, let motion else { return }
@@ -85,6 +91,9 @@ public final class DeviceMotionService: @unchecked Sendable {
             let pose = simd_quatd(worldToDevice.transpose)
             let sample = TrackingMotionSample(timestamp: motion.timestamp, deviceToWorld: pose)
             self.lock.lock()
+            // A queued callback from a stopped manager belongs to its old
+            // reference frame and must not enter a newly subscribed session.
+            guard self.streamGeneration == epoch else { self.lock.unlock(); return }
             let handlers = Array(self.subscribers.values)
             let generation = self.legacyGeneration
             var delta: CGPoint?

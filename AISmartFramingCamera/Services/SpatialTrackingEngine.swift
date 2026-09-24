@@ -18,6 +18,51 @@ enum TrackingObservationGate {
     }
 }
 
+/// Reject isolated optical innovations in world coordinates, where camera pans
+/// cancel out. A sustained translation may pass after three distinct images;
+/// a single bad box must never move the anchor, even with high VN confidence.
+struct TrackingInnovationPolicy {
+    private var candidate: SIMD3<Double>?
+    private var timestamp = -Double.infinity
+    private var count = 0
+
+    mutating func reset() { candidate = nil; timestamp = -.infinity; count = 0 }
+
+    mutating func accepts(observed: SIMD3<Double>, predicted: SIMD3<Double>,
+                         timestamp time: TimeInterval, focalScale: Double,
+                         evidence: TrackingOpticalEvidence) -> Bool {
+        let angle = atan2(simd_length(simd_cross(predicted, observed)),
+                          simd_dot(predicted, observed))
+        let immediate = (evidence == .geometryContinuation ? 0.012 : 0.020) / focalScale
+        if evidence == .reidentified || angle <= immediate {
+            reset()
+            return true
+        }
+        let consistent = candidate.map {
+            let difference = atan2(simd_length(simd_cross($0, observed)), simd_dot($0, observed))
+            return time > timestamp && time - timestamp <= 0.20 && difference <= 0.035 / focalScale
+        } ?? false
+        count = consistent ? count + 1 : 1
+        candidate = observed
+        timestamp = time
+        return count >= 3
+    }
+}
+
+/// Limits ONLY changes to the world bearing. Device rotation is applied later,
+/// unfiltered, so the reticle cannot trail the optical centre during a pan.
+enum TrackingBearingSlew {
+    static func advance(from: SIMD3<Double>, to: SIMD3<Double>,
+                        maxAngle: Double) -> SIMD3<Double> {
+        let delta = simd_quatd(from: from, to: to)
+        let angle = abs(delta.angle)
+        guard angle > maxAngle, angle > 1e-9 else { return to }
+        let fraction = max(0, maxAngle) / angle
+        let identity = simd_quatd(angle: 0, axis: SIMD3<Double>(0, 1, 0))
+        return simd_normalize(simd_slerp(identity, delta, fraction).act(from))
+    }
+}
+
 /// A persistent world bearing, NOT a metric 3D position. Pure rotation is
 /// observable from CoreMotion; translation is corrected while Vision sees the
 /// target. Off-screen translation requires a separate 6DoF/depth provider.
@@ -29,6 +74,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var watchdog: DispatchSourceTimer?
     private var history: [TrackingMotionSample] = []
     private var worldRay: SIMD3<Double>?
+    private var displayWorldRay: SIMD3<Double>?
+    private var lastDisplayTime = -Double.infinity
+    private var innovation = TrackingInnovationPolicy()
     private var subjectWorldRay: SIMD3<Double>?
     private var guideFromSubject: simd_quatd?
     private var pendingPin: (CGPoint, TimeInterval, TrackingCalibration)?
@@ -79,6 +127,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         get { lock.withLock { callback } }
         set { lock.withLock { callback = newValue } }
     }
+    // Internal acknowledgement: UI/capture must not treat a rejected frame as a lock.
+    var lastAcceptedOpticalTimestamp: TimeInterval { lock.withLock { lastAccepted } }
+
     public var currentEstimatedScreenPoint: CGPoint { lock.withLock { estimated } }
     public var currentBufferAspect: CGFloat { lock.withLock { CGFloat(calibration.aspect) } }
     public var currentDisplayZoom: Double { lock.withLock { zoom } }
@@ -139,6 +190,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 guideFromSubject = nil
                 pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
             }
+            displayWorldRay = worldRay
+            lastDisplayTime = -.infinity
+            innovation.reset()
             lastAccepted = -Double.infinity; lastVerified = -.infinity
             lastProcessed = -Double.infinity
             confidence = 0; estimated = screenPoint; pendingOutput = nil
@@ -192,6 +246,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         guard let (point, time, k) = pendingPin,
               let pose = TrackingGeometry.pose(at: time, in: history) else { return }
         worldRay = pose.act(k.deviceRay(at: point))
+        displayWorldRay = worldRay
         pendingPin = nil
     }
 
@@ -228,7 +283,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     func updateWithOpticalDetection(point: CGPoint?, confidence value: Double,
                                     frame: TrackingFrameContext, evidence: TrackingOpticalEvidence) {
         lock.withLock {
-            guard active, frame.timestamp >= pinTime,
+            let age = CACurrentMediaTime() - frame.timestamp
+            guard active, frame.timestamp.isFinite, (-0.05...0.75).contains(age),
+                  frame.timestamp >= pinTime,
                   frame.timestamp > lastProcessed, frame.calibration.isValid else { return }
             lastProcessed = frame.timestamp
             guard let point, point.x.isFinite, point.y.isFinite,
@@ -236,6 +293,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                   value >= max(threshold,
                                lowTexture && evidence == .geometryContinuation ? 0.50 : 0.35),
                   let pose = TrackingGeometry.pose(at: frame.timestamp, in: history) else {
+                innovation.reset()
                 publish(); return
             }
             let observed = pose.act(frame.calibration.deviceRay(at: point))
@@ -246,7 +304,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 // the ordinary continuation gate after parallax or a long absence.
                 guard TrackingObservationGate.accepts(isInFront: predicted.isInFront,
                     residual: residual, maximumJump: jump, evidence: evidence) else { publish(); return }
-                let dt = lastAccepted.isFinite ? min(0.1, frame.timestamp - lastAccepted) : 1 / 30.0
+                guard innovation.accepts(observed: observed, predicted: ray,
+                    timestamp: frame.timestamp,
+                    focalScale: max(frame.calibration.fx, frame.calibration.fy),
+                    evidence: evidence) else { publish(); return }
+                let dt = lastAccepted.isFinite ? min(0.05, frame.timestamp - lastAccepted) : 1 / 30.0
                 // Filter ONLY world-bearing innovation. Camera rotation bypasses
                 // this filter completely. A larger residual gets a useful but
                 // bounded correction rather than an abrupt snap or a hard reject.
@@ -255,9 +317,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 let residualWeight = max(0.45, 1 / (1 + pow(Double(residual) / 0.20, 2)))
                 let evidenceWeight = evidence == .geometryContinuation ? 0.70 : 1.0
                 let nominalGain = ordinaryGain * residualWeight * evidenceWeight
-                // Giới hạn bước nhảy quang học tức thời tối đa mỗi khung hình (Slew-rate limit <= 0.032/frame)
-                // Ngăn chặn triệt để hiện tượng tâm bị giật nhảy sang chỗ khác rồi thụt về lại vị trí cũ
-                let maxSafeGain = residual > 1e-5 ? min(1.0, 0.032 / Double(residual)) : 1.0
+                // Rate is per second, not per delivered frame (Vision FPS varies).
+                let speed = evidence == .geometryContinuation ? 0.24 : 0.48
+                let maxSafeGain = residual > 1e-5 ? min(1.0, speed * dt / Double(residual)) : 1.0
                 let gain = min(nominalGain, maxSafeGain)
                 let corrected: SIMD3<Double>
                 if evidence == .reidentified {
@@ -279,7 +341,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             } else {
                 // The first timestamped visual fix can initialize if pinning
                 // happened before the first CoreMotion sample.
-                worldRay = observed; pendingPin = nil
+                worldRay = observed; displayWorldRay = observed; pendingPin = nil
             }
             lastAccepted = frame.timestamp
             if evidence != .geometryContinuation { lastVerified = frame.timestamp }
@@ -295,20 +357,28 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         var outputConfidence = 0.0
         if let worldRay, let sample = history.last,
            (-0.05...0.45).contains(now - sample.timestamp) {
-            let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(worldRay))
+            let dt = lastDisplayTime.isFinite ? min(0.05, max(0, now - lastDisplayTime)) : 0
+            let rendered = displayWorldRay.map {
+                TrackingBearingSlew.advance(from: $0, to: worldRay,
+                    maxAngle: 0.60 * dt / max(calibration.fx, calibration.fy))
+            } ?? worldRay
+            displayWorldRay = rendered
+            lastDisplayTime = now
+            let settlingAngle = atan2(simd_length(simd_cross(rendered, worldRay)),
+                                      simd_dot(rendered, worldRay))
+            let settled = settlingAngle * max(calibration.fx, calibration.fy) < 0.008
+            let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(rendered))
             if projected.point.x.isFinite, projected.point.y.isFinite {
                 estimated = projected.point
                 let age = now - lastAccepted
-                let motionIsCurrent = now - sample.timestamp <= 0.35
-                let isVerified = (now - lastVerified < 2.50) || (age < 1.80)
-                if projected.isInsideImage && motionIsCurrent && isVerified {
+                let motionIsCurrent = now - sample.timestamp <= 0.10
+                let isVerified = now - lastVerified < 1.0 || age < 0.35
+                if projected.isInsideImage && motionIsCurrent && isVerified && age < 0.45 && settled {
                     quality = .locked
-                } else if age < 4.0 {
-                    // A brief optical or motion gap is an inertial prediction,
-                    // not an immediate request to choose the subject again.
-                    quality = .predicting
                 } else {
-                    quality = projected.isInsideImage ? .reacquiring : .predicting
+                    // Optical absence never expires a valid world bearing.
+                    // Keep the yellow guide and recover identity in the background.
+                    quality = .predicting
                 }
                 outputConfidence = age < 1.20 ? confidence : min(0.45, confidence * exp(-max(0, age) / 5))
             }
@@ -333,12 +403,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         lock.withLock {
             generation &+= 1; active = false; worldRay = nil; subjectWorldRay = nil
             guideFromSubject = nil
+            displayWorldRay = nil; lastDisplayTime = -.infinity; innovation.reset()
             pendingPin = nil; pendingOutput = nil
         }
         // Keep the shared pose stream warm for the next selected camera image.
         // suspend() releases it when the camera screen leaves the foreground.
         VisualOdometryEngine.shared.clearReference()
-        NeuralTargetTracker.shared.clearAnchor()
+        // Vision owns appearance lifetime on its serial queue. Clearing it here
+        // can race the seed of a new session while stopTracking is returning.
     }
 
     public func suspend() {

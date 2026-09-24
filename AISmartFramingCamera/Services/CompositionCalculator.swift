@@ -163,7 +163,7 @@ enum LocalFramingGeometry {
                       CGPoint(x: 0.5, y: 0.5)]
         }
         let availableOptions = allowedZooms.isEmpty ? [1.0, 2.0, 3.0] : allowedZooms
-        let zooms = Array(Set(([1.0, 2.0, 3.0, currentZoom] + availableOptions).filter {
+        let zooms = Array(Set(([currentZoom] + availableOptions).filter {
             $0.isFinite && $0 >= 0.5 && $0 <= 5
         })).sorted()
         var best: (LocalFramingPlan, Double)?
@@ -185,8 +185,6 @@ enum LocalFramingGeometry {
                       safe(projected, margin: 0.035) else { continue }
                 var companionsSafe = true
                 for other in companions where valid(other) {
-                    let distToSubject = hypot(other.midX - box.midX, other.midY - box.midY)
-                    guard distToSubject < 0.50 else { continue }
                     guard let expected = project(other, from: k, to: future,
                                                  rotation: rotation),
                           safe(expected, margin: 0.025) else {
@@ -214,6 +212,33 @@ enum LocalFramingGeometry {
             }
         }
         return best?.0
+    }
+
+    /// Plan a direct user pin after rotating its selected ray to the centre.
+    /// Evaluate entire subject/companion rectangles, not just their centroids.
+    static func centeredZoom(subject: CGRect, aim: CGPoint, companions: [CGRect],
+                             scene: DetectedSceneType, frame: TrackingFrameContext,
+                             currentZoom: CGFloat, allowedZooms: [CGFloat]) -> CGFloat {
+        let k = frame.calibration
+        guard valid(subject), k.isValid, currentZoom.isFinite, currentZoom > 0 else { return currentZoom }
+        let rotation = simd_quatd(from: forward, to: k.deviceRay(at: aim))
+        let targetArea = scene == .landscape || scene == .sky || scene == .water ? 0.14 : 0.26
+        var bestZoom = currentZoom
+        var bestScore = -Double.infinity
+        for zoom in Set(allowedZooms + [currentZoom]).sorted() where zoom.isFinite && zoom > 0 {
+            let ratio = Double(zoom / currentZoom)
+            let future = TrackingCalibration(fx: k.fx * ratio, fy: k.fy * ratio,
+                cx: k.cx, cy: k.cy, aspect: k.aspect, isMeasured: false)
+            guard let projected = project(subject, from: k, to: future, rotation: rotation),
+                  safe(projected, margin: 0.035), companions.allSatisfy({ other in
+                      guard valid(other), let p = project(other, from: k, to: future, rotation: rotation) else { return false }
+                      return safe(p, margin: 0.025)
+                  }) else { continue }
+            let area = Double(projected.width * projected.height)
+            let score = -abs(log(max(0.001, area) / targetArea)) - 0.12 * abs(log(ratio))
+            if score > bestScore { bestScore = score; bestZoom = zoom }
+        }
+        return bestZoom
     }
 
     private static func valid(_ r: CGRect) -> Bool {

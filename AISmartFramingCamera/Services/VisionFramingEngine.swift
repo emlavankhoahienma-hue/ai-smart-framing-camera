@@ -407,7 +407,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     // viewfinder with a recurring neural request.
                     let needsIdentity = referencePrint != nil &&
                         (misses > 0 || (residual > 0.24 && flow?.isReliable != true)) &&
-                        frame.timestamp - lastAppearanceCheck >= 1.5
+                        frame.timestamp - lastAppearanceCheck >= 0.35
                     let appearance: AppearanceResult
                     if needsIdentity {
                         lastAppearanceCheck = frame.timestamp
@@ -497,6 +497,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         // Smoothed size belongs to the recovery search only.
                         // NEVER feed a synthesized box back to the live sequence.
                         lastBox = rawBox
+                        // Rebase the box fallback to the point actually followed by
+                        // texture. Otherwise a flow dropout jumps to the old box UV.
+                        let selectedUV = CGPoint(x: (measuredPoint.x - rawBox.minX) / rawBox.width,
+                            y: (1 - measuredPoint.y - rawBox.minY) / rawBox.height)
+                        if flow?.isReliable == true,
+                           (0...1).contains(selectedUV.x), (0...1).contains(selectedUV.y) {
+                            anchorUV = selectedUV
+                        }
                         if let flow { patchFlow.accept(flow, box: rawBox, point: measuredPoint) }
                         else { patchFlow.seed(buffer: buffer, box: rawBox, point: measuredPoint) }
                         continuity.accept()
