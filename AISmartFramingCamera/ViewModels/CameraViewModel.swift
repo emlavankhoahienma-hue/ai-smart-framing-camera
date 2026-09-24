@@ -2786,9 +2786,9 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - Super-Resolution RAW Capture Coordinator
     private func executeSuperResolutionCapture() {
-        self.superResolutionProgressText = "Đang chụp 10 frame RAW..."
+        self.superResolutionProgressText = "Đang chụp 8 frame RAW..."
         cameraService.captureSuperResolutionRAWBurst(
-            count: 10,
+            count: 8,
             progress: { [weak self] (fraction: Float) in
                 DispatchQueue.main.async {
                     self?.superResolutionProgressText = "Đang chụp RAW \(Int(fraction * 100))%..."
@@ -2827,7 +2827,7 @@ public final class CameraViewModel: ObservableObject {
                             self.cameraService(
                                 self.cameraService,
                                 didCapturePhoto: finalCGImage,
-                                rawData: anchorFrame.rawData,
+                                rawData: nil,
                                 livePhotoMovieURL: nil,
                                 iso: anchorFrame.iso,
                                 shutterSpeed: anchorFrame.shutterSpeed

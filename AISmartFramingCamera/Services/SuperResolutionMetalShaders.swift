@@ -185,12 +185,14 @@ public final class SuperResolutionMetalShaders: @unchecked Sendable {
         uint targetH = newAccum.get_height();
         if (gid.x >= targetW || gid.y >= targetH) return;
 
-        // Vị trí thực tương ứng trên cảm biến gốc (tỉ lệ 0.5x)
-        float sensorX = float(gid.x) * 0.5f;
-        float sensorY = float(gid.y) * 0.5f;
-
         uint rawW = anchorRaw.get_width();
         uint rawH = anchorRaw.get_height();
+
+        // Vị trí thực tương ứng trên cảm biến gốc (thích ứng theo tỉ lệ lưới targetW/rawW)
+        float scaleX = float(rawW) / float(targetW);
+        float scaleY = float(rawH) / float(targetH);
+        float sensorX = float(gid.x) * scaleX;
+        float sensorY = float(gid.y) * scaleY;
 
         uint2 srcCoord = uint2(min(uint(sensorX), rawW - 1), min(uint(sensorY), rawH - 1));
 

@@ -1028,9 +1028,10 @@ public final class CameraService: NSObject {
             }
             self.isPhotoCaptureInFlight = true
 
-            let targetCount = max(2, min(count, 12))
+            let targetCount = max(4, min(count, 8))
             let burstDelegate = SuperResolutionBurstCaptureDelegate(
                 targetCount: targetCount,
+                cameraService: self,
                 progress: progress,
                 completion: { [weak self] frames in
                     self?.sessionQueue.async {
@@ -1042,32 +1043,35 @@ public final class CameraService: NSObject {
             )
             self.activeBurstDelegate = burstDelegate
 
-            let rawFormat = self.photoOutput.availableRawPhotoPixelFormatTypes.first
-            CameraLogger.info("🚀 Bắt đầu chụp burst RAW Super-Resolution: \(targetCount) frames liên thanh (Format: \(String(describing: rawFormat)))", category: .capture)
+            CameraLogger.info("🚀 Bắt đầu chụp chuỗi RAW Super-Resolution: \(targetCount) frames tuần hoàn liên tục", category: .capture)
 
-            for _ in 0..<targetCount {
-                let photoSettings: AVCapturePhotoSettings
-                if let rf = rawFormat {
-                    photoSettings = AVCapturePhotoSettings(rawPixelFormatType: rf)
-                    if let previewFormat = photoSettings.availablePreviewPhotoPixelFormatTypes.first {
-                        photoSettings.previewPhotoFormat = [kCVPixelBufferPixelFormatTypeKey as String: previewFormat]
-                    }
-                } else {
-                    photoSettings = AVCapturePhotoSettings()
-                }
+            // Bắn frame đầu tiên vào ống dẫn
+            self.dispatchSingleBurstFrame(delegate: burstDelegate)
 
-                photoSettings.photoQualityPrioritization = .speed
-                if self.activeCamera?.isFlashAvailable == true {
-                    photoSettings.flashMode = self.flashMode
-                }
-
-                self.photoOutput.capturePhoto(with: photoSettings, delegate: burstDelegate)
-            }
-
-            // An toàn: Hủy delegate sau 3.0s nếu phần cứng kẹt frame
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak burstDelegate] in
+            // Giới hạn an toàn: Tự động hoàn tất sau 3.5s nếu camera gặp sự cố phần cứng
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak burstDelegate] in
                 burstDelegate?.cancelOrTimeout()
             }
+        }
+    }
+
+    fileprivate func dispatchSingleBurstFrame(delegate: SuperResolutionBurstCaptureDelegate) {
+        sessionQueue.async { [weak self] in
+            guard let self = self, !delegate.isFinished else { return }
+            let rawFormat = self.photoOutput.availableRawPhotoPixelFormatTypes.first
+            let photoSettings: AVCapturePhotoSettings
+            if let rf = rawFormat {
+                photoSettings = AVCapturePhotoSettings(rawPixelFormatType: rf)
+            } else {
+                photoSettings = AVCapturePhotoSettings()
+            }
+
+            photoSettings.photoQualityPrioritization = .speed
+            if self.activeCamera?.isFlashAvailable == true {
+                photoSettings.flashMode = self.flashMode
+            }
+
+            self.photoOutput.capturePhoto(with: photoSettings, delegate: delegate)
         }
     }
 }
@@ -1279,21 +1283,27 @@ extension CameraService: AVCaptureFileOutputRecordingDelegate {
 
 // MARK: - SuperResolutionBurstCaptureDelegate
 final class SuperResolutionBurstCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
-    private let targetCount: Int
-    private let progress: (Float) -> Void
-    private let completion: ([SuperResolutionInputFrame]) -> Void
-    private var capturedFrames: [SuperResolutionInputFrame] = []
-    private var isFinished = false
-    private let lock = NSLock()
+    let targetCount: Int
+    let progress: (Float) -> Void
+    let completion: ([SuperResolutionInputFrame]) -> Void
+    weak var cameraService: CameraService?
+    var capturedFrames: [SuperResolutionInputFrame] = []
+    var isFinished = false
+    let lock = NSLock()
+    var attempts: Int = 0
+    let maxAttempts: Int
 
     init(
         targetCount: Int,
+        cameraService: CameraService,
         progress: @escaping (Float) -> Void,
         completion: @escaping ([SuperResolutionInputFrame]) -> Void
     ) {
         self.targetCount = targetCount
+        self.cameraService = cameraService
         self.progress = progress
         self.completion = completion
+        self.maxAttempts = targetCount + 3
         super.init()
     }
 
@@ -1302,6 +1312,7 @@ final class SuperResolutionBurstCaptureDelegate: NSObject, AVCapturePhotoCapture
         defer { lock.unlock() }
         guard !isFinished else { return }
 
+        attempts += 1
         if let error = error {
             CameraLogger.warning("Super-Res Burst: Bỏ qua 1 frame lỗi: \(error.localizedDescription)", category: .capture)
         } else {
@@ -1328,18 +1339,27 @@ final class SuperResolutionBurstCaptureDelegate: NSObject, AVCapturePhotoCapture
             capturedFrames.append(frame)
 
             let p = Float(capturedFrames.count) / Float(targetCount)
-            progress(p)
+            DispatchQueue.main.async { [progress = self.progress] in
+                progress(p)
+            }
         }
 
-        if capturedFrames.count >= targetCount {
+        if capturedFrames.count >= targetCount || attempts >= maxAttempts {
             finish()
+        } else {
+            // Ngay khi frame này hoàn tất và buffer giải phóng, bắn tiếp frame kế tiếp
+            if let svc = cameraService {
+                svc.dispatchSingleBurstFrame(delegate: self)
+            } else {
+                finish()
+            }
         }
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
         lock.lock()
         defer { lock.unlock() }
-        if capturedFrames.count >= targetCount && !isFinished {
+        if (capturedFrames.count >= targetCount || attempts >= maxAttempts) && !isFinished {
             finish()
         }
     }

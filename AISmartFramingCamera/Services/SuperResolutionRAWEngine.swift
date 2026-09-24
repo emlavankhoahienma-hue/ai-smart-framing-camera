@@ -140,9 +140,19 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         let baseWidth = textures[0].width
         let baseHeight = textures[0].height
 
-        // Kiểm tra dung lượng RAM thiết bị để tối ưu kích thước lưới (2x cho máy >= 4GB, 1.5x cho máy 2-3GB)
+        // Kiểm tra dung lượng RAM thiết bị để tối ưu kích thước lưới
+        // iPhone 15 Pro / 16 Pro (8GB RAM): scale 2.0x (48.8MP)
+        // iPhone 12 / 13 / 14 / 15 thường (4GB - 6GB RAM): scale 1.5x (27.4MP, chi tiết gấp đôi 12MP, an toàn tuyệt đối)
+        // iPhone cũ <= 3GB RAM: scale 1.25x (19.0MP)
         let totalRAM = ProcessInfo.processInfo.physicalMemory
-        let scale: Float = (totalRAM >= 3_500_000_000) ? 2.0 : 1.5
+        let scale: Float
+        if totalRAM >= 7_000_000_000 {
+            scale = 2.0 // 48.7 MP
+        } else if totalRAM >= 3_500_000_000 {
+            scale = 1.5 // 27.4 MP
+        } else {
+            scale = 1.25 // 19.0 MP
+        }
         let targetWidth = Int(Float(baseWidth) * scale)
         let targetHeight = Int(Float(baseHeight) * scale)
 
@@ -153,13 +163,13 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         let anchorTexture = textures[anchorIndex]
         let anchorFrame = frames[min(anchorIndex, frames.count - 1)]
 
-        CameraLogger.info("Super-Res: Đã chọn Khung Neo #\(anchorIndex) (Độ phân giải nguồn: \(baseWidth)x\(baseHeight))", category: .ai)
+        CameraLogger.info("Super-Res: Đã chọn Khung Neo #\(anchorIndex) (Độ phân giải đích: \(targetWidth)x\(targetHeight), Scale: \(scale)x)", category: .ai)
 
         progress(0.40, "Đang căn chỉnh vi mô & khử bóng ma...")
 
-        // TẦNG 3 & 4: Khởi tạo Texture tích tụ 2x (Ping-Pong Accumulators)
+        // TẦNG 3 & 4: Khởi tạo Texture tích tụ nửa độ chính xác .rgba16Float (tiết kiệm 50% VRAM, chống OOM)
         let accumDesc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba32Float,
+            pixelFormat: .rgba16Float,
             width: targetWidth,
             height: targetHeight,
             mipmapped: false
@@ -339,7 +349,8 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             colorCmd.commit()
         }
 
-        progress(0.98, "Đang tạo ảnh thành phẩm 48MP...")
+        let resolutionLabel = scale >= 1.9 ? "48MP" : (scale >= 1.4 ? "27MP" : "19MP")
+        progress(0.98, "Đang tạo ảnh thành phẩm \(resolutionLabel)...")
 
         // Xuất CGImage Display P3
         let resultCG = makeCGImage(from: finalTexture, orientation: anchorFrame.orientation)
@@ -546,36 +557,14 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         return nil
     }
 
-    /// Xuất MTLTexture thành CGImage có ColorSpace Display P3
+    /// Xuất MTLTexture thành CGImage có ColorSpace Display P3 mà không cấp phát mảng CPU khổng lồ (chống OOM)
     private func makeCGImage(from texture: MTLTexture, orientation: CGImagePropertyOrientation) -> CGImage? {
-        let width = texture.width
-        let height = texture.height
-        let bytesPerRow = width * 4
-        var rawBytes = [UInt8](repeating: 0, count: width * height * 4)
-
-        texture.getBytes(
-            &rawBytes,
-            bytesPerRow: bytesPerRow,
-            from: MTLRegionMake2D(0, 0, width, height),
-            mipmapLevel: 0
-        )
-
         let colorSpace = CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
-
-        guard let ctx = CGContext(
-            data: &rawBytes,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo.rawValue
-        ), let cg = ctx.makeImage() else {
+        guard let ciImage = CIImage(mtlTexture: texture, options: [.colorSpace: colorSpace]) else {
             return nil
         }
-
-        return cg
+        let orientedCI = ciImage.oriented(orientation)
+        return ciContext.createCGImage(orientedCI, from: orientedCI.extent)
     }
 
     /// Trích xuất CGImage từ frame gốc trong trường hợp fallback
