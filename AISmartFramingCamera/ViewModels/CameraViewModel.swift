@@ -262,6 +262,7 @@ public final class CameraViewModel: ObservableObject {
     private var isZoomRampPhase: Bool = false
     private var zoomAwaitingVerification = false
     private var zoomVerified = true
+    private var zoomFallbackAfter = Double.infinity
     private var zoomVerificationTask: Task<Void, Never>?
     private var zoomStartFrameTimestamp = -Double.infinity
     private var postZoomFaceMinimumTimestamp = -Double.infinity
@@ -392,6 +393,7 @@ public final class CameraViewModel: ObservableObject {
         autoCaptureCountdown = 0
         zoomVerified = false
         zoomAwaitingVerification = true
+        zoomFallbackAfter = .infinity
         zoomStartFrameTimestamp = frameProcessor.latestTrackingFrameSnapshot()?.1.timestamp ?? CACurrentMediaTime()
         postZoomFaceMinimumTimestamp = -Double.infinity
         pendingTargetZoomForReveal = targetZoom
@@ -911,6 +913,7 @@ public final class CameraViewModel: ObservableObject {
         isZoomRampPhase = false
         zoomAwaitingVerification = false
         zoomVerified = false
+        zoomFallbackAfter = .infinity
         postZoomFaceMinimumTimestamp = -Double.infinity
         allowsAutoCaptureForCurrentTarget = false
         hasExecutedAutoZoomForSession = true
@@ -1089,6 +1092,7 @@ public final class CameraViewModel: ObservableObject {
         lastAutoZoomExecutionTime = .distantPast
         zoomAwaitingVerification = false
         zoomVerified = true
+        zoomFallbackAfter = .infinity
         postZoomFaceMinimumTimestamp = -Double.infinity
         isRevealingZoomTarget = false
         isZoomRampPhase = false
@@ -1734,6 +1738,7 @@ public final class CameraViewModel: ObservableObject {
         isZoomRampPhase = false
         zoomAwaitingVerification = false
         zoomVerified = true
+        zoomFallbackAfter = .infinity
         postZoomFaceMinimumTimestamp = -Double.infinity
         latestOpticalPoint = nil
         latestOpticalFrameTimestamp = -.infinity
@@ -1757,8 +1762,10 @@ public final class CameraViewModel: ObservableObject {
             if let currentFrame = selectedFrame?.1,
                let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                     ?? SpatialTrackingEngine.shared.latestPose() {
+                // Show the physical subject, not the offset composition aim.
+                let reticleRay = trackedSubjectRay ?? ray
                 let projected = currentFrame.calibration.project(
-                    deviceRay: currentPose.inverse.act(ray)).point
+                    deviceRay: currentPose.inverse.act(reticleRay)).point
                 if projected.x.isFinite, projected.y.isFinite {
                     pinPoint = projected
                     hasCurrentProjection = true
@@ -1909,6 +1916,18 @@ public final class CameraViewModel: ObservableObject {
         latestOpticalPoint = measurement.point
         latestOpticalBox = measurement.subjectBox
         latestOpticalCalibration = measurement.frame.calibration
+        if zoomFallbackAfter.isFinite,
+           measurement.frame.timestamp > zoomFallbackAfter + 0.05,
+           currentSubjectBoxIsSafe {
+            // A failed ramp is not a verified target zoom. A new accepted
+            // image can still validate the actual hardware crop for capture.
+            zoomVerified = true
+            pendingSuggestedZoom = displayZoom
+            aiSuggestedZoom = displayZoom
+            postZoomFaceMinimumTimestamp = zoomFallbackAfter
+            zoomFallbackAfter = .infinity
+            localSelectionMessage = "Đã giữ mức zoom hiện tại để chụp an toàn."
+        }
         if needsFocusOnTrackedSubject, measurement.confidence >= 0.55,
            (0...1).contains(measurement.point.x),
            (0...1).contains(measurement.point.y) {
@@ -1973,9 +1992,31 @@ public final class CameraViewModel: ObservableObject {
             let needsZoom = isAutoZoomEnabled && !hasExecutedAutoZoomForSession &&
                 abs(pendingSuggestedZoom - displayZoom) > 0.12
             if needsZoom {
-                applyAISuggestedZoom(pendingSuggestedZoom)
+                if pendingSuggestedZoom < displayZoom - 0.12,
+                   canZoomCurrentSubject(to: pendingSuggestedZoom) {
+                    applyAISuggestedZoom(pendingSuggestedZoom)
+                    alignmentState = .aligned(score: 1)
+                    return
+                }
+                let safeOptions = Array(Set(cameraService.availableDisplayZoomOptions +
+                    [pendingSuggestedZoom, 1.5])).filter {
+                    $0 > displayZoom + 0.12 && $0 <= pendingSuggestedZoom + 0.01 &&
+                    canZoomCurrentSubject(to: $0)
+                }
+                if let safeZoom = safeOptions.max() {
+                    pendingSuggestedZoom = safeZoom
+                    aiSuggestedZoom = safeZoom
+                    applyAISuggestedZoom(safeZoom)
+                } else {
+                    // An unsafe zoom must not leave the shutter blocked when
+                    // the user has already aligned a verified subject.
+                    pendingSuggestedZoom = displayZoom
+                    aiSuggestedZoom = displayZoom
+                    hasExecutedAutoZoomForSession = true
+                }
             } else if hasExecutedAutoZoomForSession && !zoomVerified &&
-                        !zoomAwaitingVerification && allowsAutoCaptureForCurrentTarget &&
+                        !zoomAwaitingVerification && !zoomFallbackAfter.isFinite &&
+                        allowsAutoCaptureForCurrentTarget &&
                         abs(displayZoom - pendingTargetZoomForReveal) <= 0.08 {
                 // Optical verification may recover after a timeout without
                 // replaying the physical ramp or asking for another pin.
@@ -2074,6 +2115,7 @@ public final class CameraViewModel: ObservableObject {
                     postZoomFaceMinimumTimestamp = reachedAt ?? zoomStartFrameTimestamp
                     zoomVerified = true
                     zoomAwaitingVerification = false
+                    zoomFallbackAfter = .infinity
                     localSelectionMessage = nil
                     withAnimation(.easeOut(duration: 0.45)) {
                         self.isRevealingZoomTarget = false
@@ -2090,7 +2132,8 @@ public final class CameraViewModel: ObservableObject {
         cameraService.cancelZoomRamp()
         zoomVerified = false
         zoomAwaitingVerification = false
-        localSelectionMessage = "Chưa xác nhận được khung hình sau zoom. Giữ máy ổn định hoặc chụp tay."
+        zoomFallbackAfter = CACurrentMediaTime()
+        localSelectionMessage = "Đang kiểm tra khung hình mới để chụp ở mức zoom hiện tại."
         withAnimation(.easeOut(duration: 0.40)) {
             self.isRevealingZoomTarget = false
             self.isZoomRampPhase = false
@@ -2135,6 +2178,9 @@ public final class CameraViewModel: ObservableObject {
 
     private func currentCropSafeForCapture() async -> Bool {
         guard hasFreshOpticalLock, currentSubjectBoxIsSafe else { return false }
+        // Face re-check is only needed after a lens ramp. On a 1x alignment,
+        // a delayed or missed face detection must not veto a live object lock.
+        guard postZoomFaceMinimumTimestamp.isFinite else { return true }
         return await verifyPostZoomFaces(after: postZoomFaceMinimumTimestamp)
     }
 

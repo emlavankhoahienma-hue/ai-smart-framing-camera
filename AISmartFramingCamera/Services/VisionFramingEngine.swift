@@ -173,6 +173,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var misses = 0
     private var lastAppearanceCheck = -Double.infinity
     private var lastSearch = -Double.infinity
+    private var lastInertialSearch = -Double.infinity
     private var searchCursor = 0
     private var previousTime = -Double.infinity
     private var seedTimestamp = -Double.infinity
@@ -186,6 +187,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var pendingSeed = false
     private var pendingRecovery: (point: CGPoint, frame: TrackingFrameContext)?
     private var pendingLargeInnovation: (offset: CGPoint, timestamp: TimeInterval)?
+    private var inertialRecovery: (count: Int, timestamp: TimeInterval)?
 
     public init() {}
 
@@ -252,10 +254,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
         referencePrint = nil; referenceHistogram = nil; lastBox = nil
         misses = 0; lastAppearanceCheck = -.infinity
         lastSearch = -.infinity
+        lastInertialSearch = -.infinity
         searchCursor = 0; previousTime = -.infinity
         seedTimestamp = -.infinity; hasLiveObservation = false
         pendingRecovery = nil; seedBuffer = nil; pendingSeed = false
         pendingLargeInnovation = nil
+        inertialRecovery = nil
         latestBuffer = nil
     }
 
@@ -402,10 +406,37 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     let measuredPoint = (flow?.isReliable == true ? flow?.point : nil) ?? rawPoint
                     let residual = prediction.map { hypot($0.point.x - measuredPoint.x,
                                                            $0.point.y - measuredPoint.y) } ?? 0
+                    var confirmedInertialRecovery = false
+                    if let provisional = inertialRecovery {
+                        guard let prediction, prediction.isInsideImage,
+                              frame.timestamp > provisional.timestamp,
+                              frame.timestamp - provisional.timestamp < 0.20,
+                              observation.confidence >= inertialRecoveryConfidence,
+                              residual <= 0.06,
+                              matchesReferenceColor(buffer, box: rawBox,
+                                                    orientation: orientation) else {
+                            inertialRecovery = nil
+                            self.tracker = nil
+                            patchFlow.reset()
+                            misses += 1
+                            return nil
+                        }
+                        let nextCount = provisional.count + 1
+                        inertialRecovery = (nextCount, frame.timestamp)
+                        if nextCount < inertialRecoveryFrameCount {
+                            lastBox = rawBox
+                            if let flow { patchFlow.accept(flow, box: rawBox, point: measuredPoint) }
+                            else { patchFlow.seed(buffer: buffer, box: rawBox, point: measuredPoint) }
+                            continuity.accept()
+                            return nil
+                        }
+                        inertialRecovery = nil
+                        confirmedInertialRecovery = true
+                    }
                     // Run the expensive fingerprint only when continuity looks
                     // doubtful. A healthy Vision sequence should not hitch the
                     // viewfinder with a recurring neural request.
-                    let needsIdentity = referencePrint != nil &&
+                    let needsIdentity = !confirmedInertialRecovery && referencePrint != nil &&
                         (misses > 0 || (residual > 0.24 && flow?.isReliable != true)) &&
                         frame.timestamp - lastAppearanceCheck >= 0.35
                     let appearance: AppearanceResult
@@ -448,6 +479,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         }
                         evidence = .geometryContinuation
                     }
+                    if confirmedInertialRecovery { evidence = .confirmedContinuation }
                     if rawBox.width > 0.01, rawBox.height > 0.01,
                        rawBox.minX >= 0, rawBox.minY >= 0, rawBox.maxX <= 1, rawBox.maxY <= 1 {
                         let isLarge = prediction.map { !$0.isInFront || residual > ordinaryLimit } ?? false
@@ -514,6 +546,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     }
                 }
             } catch { /* An invalid observation never updates the spatial anchor. */ }
+            if inertialRecovery != nil {
+                inertialRecovery = nil
+                self.tracker = nil
+                patchFlow.reset()
+                misses += 1
+                return nil
+            }
             misses += 1
             pendingRecovery = nil; pendingLargeInnovation = nil
             // Withhold the optical correction on a suspect frame, but retain
@@ -523,6 +562,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
             patchFlow.reset()
         } else {
             misses += 1
+        }
+        if referencePrint == nil || misses >= 20 {
+            // A white or low-texture target may never produce a FeaturePrint.
+            // Re-enter a VN sequence at the gyro projection, then require
+            // several new, colour-compatible camera frames before fusion.
+            if seedInertialRecovery(buffer, orientation: orientation,
+                                    frame: frame, prediction: prediction) { return nil }
+            if referencePrint == nil { return nil }
         }
         // Search near the bearing first, then sweep the visible image after a
         // longer miss. Two distinct captured frames must agree.
@@ -669,6 +716,56 @@ public final class VisionFramingEngine: @unchecked Sendable {
             guard similarity >= (strict ? 0.72 : 0.45) else { return .mismatch }
         }
         return .match(Double(distance))
+    }
+
+    private func matchesReferenceColor(_ buffer: CVPixelBuffer, box: CGRect,
+                                       orientation: CGImagePropertyOrientation) -> Bool {
+        guard let referenceHistogram else { return true }
+        guard let current = histogram(buffer, box: box, orientation: orientation) else { return false }
+        let similarity = zip(referenceHistogram, current).reduce(Float(0)) {
+            $0 + sqrt($1.0 * $1.1)
+        }
+        return similarity >= (referencePrint == nil ? 0.82 : 0.88)
+    }
+
+    private var inertialRecoveryConfidence: Float {
+        if referencePrint != nil { return 0.78 }
+        return referenceHistogram == nil ? 0.82 : 0.70
+    }
+
+    private var inertialRecoveryFrameCount: Int {
+        referencePrint != nil || referenceHistogram == nil ? 4 : 3
+    }
+
+    private func seedInertialRecovery(_ buffer: CVPixelBuffer,
+                                      orientation: CGImagePropertyOrientation,
+                                      frame: TrackingFrameContext,
+                                      prediction: TrackingProjection?) -> Bool {
+        guard let prediction, prediction.isInsideImage,
+              frame.timestamp - lastInertialSearch >= 0.12 else { return false }
+        lastInertialSearch = frame.timestamp
+        guard let candidateBox = box(at: prediction.point, size: boxSize),
+              matchesReferenceColor(buffer, box: candidateBox,
+                                    orientation: orientation) else { return false }
+        let candidate = VisionObjectSequence(box: candidateBox)
+        guard let observation = try? candidate.advance(in: buffer, orientation: orientation),
+              observation.confidence >= inertialRecoveryConfidence else { return false }
+        let observedBox = observation.boundingBox
+        guard observedBox.minX.isFinite, observedBox.minY.isFinite,
+              observedBox.width.isFinite, observedBox.height.isFinite,
+              observedBox.width > 0.01, observedBox.height > 0.01,
+              observedBox.minX >= 0, observedBox.minY >= 0,
+              observedBox.maxX <= 1, observedBox.maxY <= 1 else { return false }
+        let candidatePoint = point(in: observedBox)
+        guard hypot(candidatePoint.x - prediction.point.x,
+                    candidatePoint.y - prediction.point.y) <= 0.06 else { return false }
+        tracker = candidate
+        lastBox = observedBox
+        patchFlow.seed(buffer: buffer, box: observedBox, point: candidatePoint)
+        continuity.accept()
+        misses = 0
+        inertialRecovery = (1, frame.timestamp)
+        return true
     }
 
     private func search(_ buffer: CVPixelBuffer, center: CGPoint,

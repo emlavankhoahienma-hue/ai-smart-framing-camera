@@ -76,6 +76,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var worldRay: SIMD3<Double>?
     private var displayWorldRay: SIMD3<Double>?
     private var lastDisplayTime = -Double.infinity
+    private var presentationIsRecovering = false
     private var innovation = TrackingInnovationPolicy()
     private var subjectWorldRay: SIMD3<Double>?
     private var guideFromSubject: simd_quatd?
@@ -190,8 +191,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 guideFromSubject = nil
                 pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
             }
-            displayWorldRay = worldRay
+            // The yellow reticle represents the physical subject. The
+            // composition guide may have a different bearing.
+            displayWorldRay = subjectWorldRay ?? worldRay
             lastDisplayTime = -.infinity
+            presentationIsRecovering = false
             innovation.reset()
             lastAccepted = -Double.infinity; lastVerified = -.infinity
             lastProcessed = -Double.infinity
@@ -243,8 +247,15 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     }
 
     private func resolvePin() {
-        guard let (point, time, k) = pendingPin,
-              let pose = TrackingGeometry.pose(at: time, in: history) else { return }
+        guard let (point, time, k) = pendingPin else { return }
+        // A tap can precede the first CoreMotion callback. Once that callback
+        // arrives, its pose is a bounded startup approximation; otherwise the
+        // pending pin would remain unresolved and the ring would stay glued to
+        // its original screen coordinate until Vision happened to succeed.
+        let pose = TrackingGeometry.pose(at: time, in: history) ?? history.first.flatMap {
+            $0.timestamp >= time && $0.timestamp - time <= 0.25 ? $0.deviceToWorld : nil
+        }
+        guard let pose else { return }
         worldRay = pose.act(k.deviceRay(at: point))
         displayWorldRay = worldRay
         pendingPin = nil
@@ -316,10 +327,17 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 let ordinaryGain = (1 - exp(-2 * .pi * cutoff * dt)) * min(1, max(0, value))
                 let residualWeight = max(0.45, 1 / (1 + pow(Double(residual) / 0.20, 2)))
                 let evidenceWeight = evidence == .geometryContinuation ? 0.70 : 1.0
-                let nominalGain = ordinaryGain * residualWeight * evidenceWeight
+                // Once the innovation gate has seen the same displacement on
+                // distinct images, follow real subject motion promptly. Small
+                // static jitter still takes the quieter ordinary filter path.
+                let motionGain = residual > 0.015 ?
+                    (evidence == .geometryContinuation ? 0.60 : 0.75) : 0.0
+                let nominalGain = max(ordinaryGain * residualWeight * evidenceWeight,
+                                      motionGain)
                 // Rate is per second, not per delivered frame (Vision FPS varies).
-                let speed = evidence == .geometryContinuation ? 0.24 : 0.48
-                let maxSafeGain = residual > 1e-5 ? min(1.0, speed * dt / Double(residual)) : 1.0
+                let speed = evidence == .geometryContinuation ? 1.1 : 1.6
+                let maxSafeGain = residual > 1e-5 ?
+                    min(1.0, min(speed * dt, 0.035) / Double(residual)) : 1.0
                 let gain = min(nominalGain, maxSafeGain)
                 let corrected: SIMD3<Double>
                 if evidence == .reidentified {
@@ -338,6 +356,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 } else {
                     worldRay = corrected
                 }
+                if evidence == .reidentified {
+                    presentationIsRecovering = true
+                } else if !presentationIsRecovering {
+                    // Accepted live optical motion is already rate limited.
+                    // Do not filter it a second time or the reticle trails a
+                    // moving subject while the image continues to move.
+                    displayWorldRay = subjectWorldRay ?? worldRay
+                }
             } else {
                 // The first timestamped visual fix can initialize if pinning
                 // happened before the first CoreMotion sample.
@@ -355,18 +381,19 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         var quality: TrackingQuality = .reacquiring
         var outputConfidence = 0.0
-        if let worldRay, let sample = history.last,
+        if let reticleRay = subjectWorldRay ?? worldRay, let sample = history.last,
            (-0.05...0.45).contains(now - sample.timestamp) {
             let dt = lastDisplayTime.isFinite ? min(0.05, max(0, now - lastDisplayTime)) : 0
-            let rendered = displayWorldRay.map {
-                TrackingBearingSlew.advance(from: $0, to: worldRay,
-                    maxAngle: 0.60 * dt / max(calibration.fx, calibration.fy))
-            } ?? worldRay
+            let rendered = presentationIsRecovering ? (displayWorldRay.map {
+                TrackingBearingSlew.advance(from: $0, to: reticleRay,
+                    maxAngle: 0.90 * dt / max(calibration.fx, calibration.fy))
+            } ?? reticleRay) : reticleRay
             displayWorldRay = rendered
             lastDisplayTime = now
-            let settlingAngle = atan2(simd_length(simd_cross(rendered, worldRay)),
-                                      simd_dot(rendered, worldRay))
+            let settlingAngle = atan2(simd_length(simd_cross(rendered, reticleRay)),
+                                      simd_dot(rendered, reticleRay))
             let settled = settlingAngle * max(calibration.fx, calibration.fy) < 0.008
+            if settled { presentationIsRecovering = false }
             let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(rendered))
             if projected.point.x.isFinite, projected.point.y.isFinite {
                 estimated = projected.point
@@ -403,7 +430,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         lock.withLock {
             generation &+= 1; active = false; worldRay = nil; subjectWorldRay = nil
             guideFromSubject = nil
-            displayWorldRay = nil; lastDisplayTime = -.infinity; innovation.reset()
+            displayWorldRay = nil; lastDisplayTime = -.infinity
+            presentationIsRecovering = false; innovation.reset()
             pendingPin = nil; pendingOutput = nil
         }
         // Keep the shared pose stream warm for the next selected camera image.

@@ -61,7 +61,7 @@ final class TrackingStabilityRegressionTests: XCTestCase {
         let found = k.deviceRay(at: CGPoint(x: 0.90, y: 0.1))
         XCTAssertTrue(policy.accepts(observed: found, predicted: centre,
             timestamp: 1, focalScale: k.fx, evidence: .reidentified))
-        let step = 0.60 / 60 / k.fx
+        let step = 0.90 / 60 / k.fx
         let rendered = TrackingBearingSlew.advance(from: centre, to: found, maxAngle: step)
         XCTAssertLessThanOrEqual(acos(min(1, simd_dot(rendered, centre))), step + 1e-9)
         XCTAssertGreaterThan(simd_length(rendered - found), 0.1)

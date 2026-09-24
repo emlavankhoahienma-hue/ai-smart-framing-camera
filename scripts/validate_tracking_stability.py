@@ -111,10 +111,11 @@ class StabilityTests(unittest.TestCase):
         progressed = 0
         for _ in range(180):
             old = progressed
-            progressed = min(total, progressed + .60 / 60 / FX)
-            self.assertLessEqual(progressed - old, .60 / 60 / FX + 1e-12)
+            progressed = min(total, progressed + .90 / 60 / FX)
+            self.assertLessEqual(progressed - old, .90 / 60 / FX + 1e-12)
         self.assertEqual(progressed, total)
-        self.assertIn('TrackingBearingSlew.advance(from: $0, to: worldRay', SPATIAL)
+        self.assertIn('let reticleRay = subjectWorldRay ?? worldRay', SPATIAL)
+        self.assertIn('TrackingBearingSlew.advance(from: $0, to: reticleRay', SPATIAL)
         self.assertIn('sample.deviceToWorld.inverse.act(rendered)', SPATIAL)
 
     def test_tremor_and_400_degree_pan_do_not_modify_world_anchor(self):
