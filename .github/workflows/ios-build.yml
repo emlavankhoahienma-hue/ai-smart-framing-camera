@@ -107,6 +107,7 @@ jobs:
       - name: Publish build errors to report branch
         if: failure()
         run: |
+          touch build.log
           {
             echo "# Build errors - run ${{ github.run_id }} - ${{ github.sha }}"
             echo

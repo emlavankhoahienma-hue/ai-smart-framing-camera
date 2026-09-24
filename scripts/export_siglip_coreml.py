@@ -37,7 +37,10 @@ class ImageEncoder(torch.nn.Module):
     def __init__(self, model: SiglipModel):
         super().__init__()
         self.vision_model = model.vision_model
-        self.projection = model.visual_projection
+        if hasattr(model, "visual_projection"):
+            self.projection = model.visual_projection
+        else:
+            self.projection = torch.nn.Identity()
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         pooled = self.vision_model(pixel_values=image, return_dict=False)[1]
