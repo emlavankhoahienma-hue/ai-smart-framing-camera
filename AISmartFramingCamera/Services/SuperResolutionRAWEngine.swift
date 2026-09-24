@@ -116,11 +116,17 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             }
         }
         if let data = frame.rawData {
-            // 1. Thử decode qua CoreImage Camera RAW Engine (chuẩn màu Apple Display P3)
-            if let ci = CIImage(data: data) {
-                let orientedCI = ci.oriented(frame.orientation)
-                if let cg = ciContext.createCGImage(orientedCI, from: orientedCI.extent) {
-                    return cg
+            // 1. Thử decode qua CIRAWFilter với đầy đủ Apple Tone Mapping & Exposure Boost
+            if let rawFilter = CIRAWFilter(imageData: data, identifierHint: nil) {
+                let baseline = rawFilter.baselineExposure
+                rawFilter.exposure = max(1.0, baseline)
+                rawFilter.boostAmount = 1.0
+                rawFilter.localToneMapAmount = 1.0
+                if let outCI = rawFilter.outputImage {
+                    let orientedCI = outCI.oriented(frame.orientation)
+                    if let cg = ciContext.createCGImage(orientedCI, from: orientedCI.extent) {
+                        return cg
+                    }
                 }
             }
             // 2. Thử decode qua ImageIO Camera RAW
@@ -136,7 +142,14 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
                     return cg
                 }
             }
-            // 3. Fallback UIImage cho JPEG/HEIC
+            // 3. Fallback CIImage trực tiếp
+            if let ci = CIImage(data: data) {
+                let orientedCI = ci.oriented(frame.orientation)
+                if let cg = ciContext.createCGImage(orientedCI, from: orientedCI.extent) {
+                    return cg
+                }
+            }
+            // 4. Fallback UIImage cho JPEG/HEIC
             if let ui = UIImage(data: data), let cg = ui.cgImage {
                 return cg
             }
@@ -347,12 +360,29 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
             return try extractCGImage(from: anchorFrame)
         }
 
+        let avgLuma = estimateAverageLuminance(texture: anchorTexture)
+        var applyToneCurve: Int32 = 0
+        var exposureGain: Float = 1.0
+
+        if avgLuma < 0.25 {
+            applyToneCurve = 1
+            let targetEV: Float = 0.48
+            let rawGain = targetEV / max(avgLuma, 0.04)
+            exposureGain = max(1.8, min(rawGain, 4.2))
+            CameraLogger.info("Super-Res: Phát hiện dữ liệu RAW tuyến tính (Luma: \(avgLuma)), kích hoạt bù sáng x\(exposureGain) & Apple Filmic Tone Curve", category: .ai)
+        } else {
+            applyToneCurve = 0
+            exposureGain = 1.0
+        }
+
         if let normPipeline = shaders.normalizeTonePipeline,
            let encoder = postCmd.makeComputeCommandEncoder() {
             encoder.setComputePipelineState(normPipeline)
             encoder.setTexture(accumTextureA, index: 0)
             encoder.setTexture(anchorTexture, index: 1)
             encoder.setTexture(p3Texture, index: 2)
+            encoder.setBytes(&exposureGain, length: MemoryLayout<Float>.stride, index: 0)
+            encoder.setBytes(&applyToneCurve, length: MemoryLayout<Int32>.stride, index: 1)
 
             let w = normPipeline.threadExecutionWidth
             let h = normPipeline.maxTotalThreadsPerThreadgroup / w
@@ -487,6 +517,32 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         return SIMD2<Float>(clampedX, clampedY)
     }
 
+    /// Đo độ sáng trung bình của texture để tự động phát hiện và bù sáng dữ liệu RAW tuyến tính
+    private func estimateAverageLuminance(texture: MTLTexture) -> Float {
+        let w = texture.width
+        let h = texture.height
+        let sampleCountX = 8
+        let sampleCountY = 8
+        var sumLum: Float = 0.0
+        var count: Float = 0.0
+
+        var pixel = [UInt8](repeating: 0, count: 4)
+        for sy in 1...sampleCountY {
+            for sx in 1...sampleCountX {
+                let px = (w * sx) / (sampleCountX + 1)
+                let py = (h * sy) / (sampleCountY + 1)
+                texture.getBytes(&pixel, bytesPerRow: 4, from: MTLRegionMake2D(px, py, 1, 1), mipmapLevel: 0)
+                let r = Float(pixel[0]) / 255.0
+                let g = Float(pixel[1]) / 255.0
+                let b = Float(pixel[2]) / 255.0
+                let lum = 0.299 * r + 0.587 * g + 0.114 * b
+                sumLum += lum
+                count += 1.0
+            }
+        }
+        return count > 0 ? (sumLum / count) : 0.5
+    }
+
     /// Chuyển đổi SuperResolutionInputFrame sang MTLTexture Display P3 thông qua CoreImage / ImageIO
     private func makeTexture(from frame: SuperResolutionInputFrame, device: MTLDevice) -> MTLTexture? {
         if let pb = frame.pixelBuffer {
@@ -495,7 +551,21 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         }
 
         if let data = frame.rawData {
-            // Giải mã DNG RAW hoặc ảnh nén trực tiếp qua CoreImage Camera RAW Engine
+            // 1. Thử giải mã qua CIRAWFilter với đầy đủ Tone Mapping & Exposure Boost của Apple
+            if let rawFilter = CIRAWFilter(imageData: data, identifierHint: nil) {
+                let baseline = rawFilter.baselineExposure
+                rawFilter.exposure = max(1.0, baseline)
+                rawFilter.boostAmount = 1.0
+                rawFilter.localToneMapAmount = 1.0
+                if let outCI = rawFilter.outputImage {
+                    let orientedCI = outCI.oriented(frame.orientation)
+                    if let tex = renderCIImageToTexture(orientedCI, device: device) {
+                        return tex
+                    }
+                }
+            }
+
+            // 2. Thử giải mã qua CIImage trực tiếp
             if let ci = CIImage(data: data) {
                 let orientedCI = ci.oriented(frame.orientation)
                 if let tex = renderCIImageToTexture(orientedCI, device: device) {
@@ -503,7 +573,7 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
                 }
             }
 
-            // Giải mã qua ImageIO
+            // 3. Thử giải mã qua ImageIO
             let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
             if let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) {
                 let thumbOptions = [
@@ -516,6 +586,12 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
                     let ci = CIImage(cgImage: cg)
                     return renderCIImageToTexture(ci, device: device)
                 }
+            }
+
+            // 4. Fallback UIImage cho JPEG/HEIC
+            if let ui = UIImage(data: data), let cg = ui.cgImage {
+                let ci = CIImage(cgImage: cg)
+                return renderCIImageToTexture(ci, device: device)
             }
         }
 

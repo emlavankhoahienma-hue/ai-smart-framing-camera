@@ -202,11 +202,23 @@ public final class SuperResolutionMetalShaders: @unchecked Sendable {
         newAccum.write(updatedAcc, gid);
     }
 
-    // MARK: - Kernel 5: Super-Resolution Normalize & Tone Preservation
+    // MARK: - Kernel 5: Super-Resolution Normalize & Apple Tone Preservation
+    static inline float applyAppleFilmicTone(float x) {
+        float a = 2.51f;
+        float b = 0.03f;
+        float c = 2.43f;
+        float d = 0.59f;
+        float e = 0.14f;
+        float mapped = clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0f, 1.0f);
+        return pow(mapped, 1.0f / 2.2f);
+    }
+
     kernel void superResolutionNormalizeAndTone(
         texture2d<float, access::read> accumTexture [[texture(0)]],
         texture2d<float, access::read> anchorTexture [[texture(1)]],
         texture2d<float, access::write> outputTexture [[texture(2)]],
+        constant float& exposureGain [[buffer(0)]],
+        constant int& applyToneCurve [[buffer(1)]],
         uint2 gid [[thread_position_in_grid]]
     ) {
         uint targetW = outputTexture.get_width();
@@ -215,19 +227,27 @@ public final class SuperResolutionMetalShaders: @unchecked Sendable {
 
         float4 acc = accumTexture.read(gid);
         float totalW = acc.a;
-        float3 finalRGB;
+        float3 rgb;
 
         if (totalW > 1e-4f) {
-            finalRGB = acc.rgb / totalW;
+            rgb = acc.rgb / totalW;
         } else {
             uint rawW = anchorTexture.get_width();
             uint rawH = anchorTexture.get_height();
             uint srcX = min(uint(float(gid.x) * float(rawW) / float(targetW)), rawW - 1);
             uint srcY = min(uint(float(gid.y) * float(rawH) / float(targetH)), rawH - 1);
-            finalRGB = anchorTexture.read(uint2(srcX, srcY)).rgb;
+            rgb = anchorTexture.read(uint2(srcX, srcY)).rgb;
         }
 
-        outputTexture.write(float4(clamp(finalRGB, 0.0f, 1.0f), 1.0f), gid);
+        if (applyToneCurve != 0) {
+            // Áp dụng bù sáng phơi sáng thông minh (Exposure Compensation)
+            rgb *= exposureGain;
+
+            // Đường cong tương phản Film Apple (Reinhard / Filmic Tone Curve + Gamma 2.2)
+            rgb = float3(applyAppleFilmicTone(rgb.r), applyAppleFilmicTone(rgb.g), applyAppleFilmicTone(rgb.b));
+        }
+
+        outputTexture.write(float4(clamp(rgb, 0.0f, 1.0f), 1.0f), gid);
     }
 
     // MARK: - Kernel 6: Zero-Mushiness Micro-Contrast Enhancement
