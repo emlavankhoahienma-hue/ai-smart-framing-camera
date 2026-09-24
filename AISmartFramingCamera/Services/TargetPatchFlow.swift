@@ -125,9 +125,9 @@ final class TargetPatchFlow {
         let dx = median(pairs.map { Double($0.new.x - $0.old.x) })
         let dy = median(pairs.map { Double($0.new.y - $0.old.y) })
         let inliers = pairs.filter {
-            hypot(Double($0.new.x - $0.old.x) - dx, Double($0.new.y - $0.old.y) - dy) <= 2.5
+            hypot(Double($0.new.x - $0.old.x) - dx, Double($0.new.y - $0.old.y) - dy) <= 2.2
         }
-        guard inliers.count >= 5 else {
+        guard inliers.count >= 6 else {
             return Evaluation(image: image, point: fallback, isReliable: false, inliers: inliers.count)
         }
         let oldX = inliers.reduce(0.0) { $0 + Double($1.old.x) } / Double(inliers.count)

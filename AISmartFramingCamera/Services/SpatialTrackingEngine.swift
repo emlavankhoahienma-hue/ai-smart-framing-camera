@@ -254,7 +254,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 let ordinaryGain = (1 - exp(-2 * .pi * cutoff * dt)) * min(1, max(0, value))
                 let residualWeight = max(0.45, 1 / (1 + pow(Double(residual) / 0.20, 2)))
                 let evidenceWeight = evidence == .geometryContinuation ? 0.70 : 1.0
-                let gain = ordinaryGain * residualWeight * evidenceWeight
+                let nominalGain = ordinaryGain * residualWeight * evidenceWeight
+                // Giới hạn bước nhảy quang học tức thời tối đa mỗi khung hình (Slew-rate limit <= 0.032/frame)
+                // Ngăn chặn triệt để hiện tượng tâm bị giật nhảy sang chỗ khác rồi thụt về lại vị trí cũ
+                let maxSafeGain = residual > 1e-5 ? min(1.0, 0.032 / Double(residual)) : 1.0
+                let gain = min(nominalGain, maxSafeGain)
                 let corrected: SIMD3<Double>
                 if evidence == .reidentified {
                     corrected = observed

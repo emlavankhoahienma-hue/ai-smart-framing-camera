@@ -394,17 +394,17 @@ public final class CameraViewModel: ObservableObject {
         let pinGeneration = targetPinGeneration
 
         // Hiệu ứng chuyển động mượt mà điện ảnh (Cinematic Easing)
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.80)) {
+        withAnimation(.spring(response: 0.50, dampingFraction: 0.85)) {
             lockOnProgress = 1.0
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48) { [weak self] in
             guard let self = self, self.targetPinGeneration == pinGeneration else { return }
             self.isZoomRampPhase = true
-            let distance = abs(targetDeviceZoom - self.currentZoom)
-            let duration = min(2.4, max(1.2, Double(distance) / 1.5))
-            self.cameraService.smoothZoomFactor(to: targetDeviceZoom,
-                rate: Float(Double(distance) / duration))
+            let octaveDistance = abs(log2(Double(targetDeviceZoom / max(0.5, self.currentZoom))))
+            let targetDuration = min(1.8, max(1.2, octaveDistance * 1.3))
+            let smoothRate = Float(max(0.65, min(1.4, octaveDistance / targetDuration)))
+            self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: smoothRate)
         }
         zoomVerificationTask?.cancel()
         zoomVerificationTask = Task { [weak self] in
@@ -1809,28 +1809,54 @@ public final class CameraViewModel: ObservableObject {
         allowsAutoCaptureForCurrentTarget = true
 
         let effectiveSubjectRect = subjectRect ?? detectedSubjectRects.first(where: {
-            $0.insetBy(dx: -0.05, dy: -0.05).contains(pinPoint)
-        }) ?? detectedFaceRects.first
+            $0.insetBy(dx: -0.06, dy: -0.06).contains(pinPoint)
+        }) ?? detectedSubjectRects.min(by: {
+            let d1 = hypot($0.midX - pinPoint.x, $0.midY - pinPoint.y)
+            let d2 = hypot($1.midX - pinPoint.x, $1.midY - pinPoint.y)
+            return d1 < d2
+        }).flatMap { rect -> CGRect? in
+            let dist = hypot(rect.midX - pinPoint.x, rect.midY - pinPoint.y)
+            return dist <= 0.22 ? rect : nil
+        } ?? detectedFaceRects.first
+
         if let sRect = effectiveSubjectRect {
             let area = sRect.width * sRect.height
             if area < 0.06 {
                 self.pendingSuggestedZoom = 3.0
                 self.aiSuggestedZoom = 3.0
-            } else if area < 0.18 {
+            } else if area < 0.16 {
                 self.pendingSuggestedZoom = 2.0
                 self.aiSuggestedZoom = 2.0
+            } else if area < 0.28 {
+                self.pendingSuggestedZoom = 1.5
+                self.aiSuggestedZoom = 1.5
             } else {
                 self.pendingSuggestedZoom = 1.0
                 self.aiSuggestedZoom = 1.0
             }
-        } else if self.pendingSuggestedZoom <= 1.05 {
+        } else {
+            // Khi người dùng chỉ định điểm bất kỳ (nhà cửa, kiến trúc, cây, tượng, cảnh quan xa...):
+            // Tính toán mức zoom điện ảnh phù hợp theo ngữ cảnh thị giác
+            let distFromCenter = hypot(pinPoint.x - 0.5, pinPoint.y - 0.5)
             switch detectedScene {
+            case .architecture:
+                // Kiến trúc / Nhà cửa: Zoom 1.5x - 2.0x giúp loại bỏ méo phối cảnh góc siêu rộng 1x
+                let zoom: CGFloat = distFromCenter > 0.08 ? 2.0 : 1.5
+                self.pendingSuggestedZoom = zoom
+                self.aiSuggestedZoom = zoom
+            case .landscape, .sunset, .sky:
+                // Phong cảnh: nếu ghim chủ thể cụ thể (điểm lệch tâm) -> zoom 2.0x để tôn chủ thể
+                let zoom: CGFloat = distFromCenter > 0.10 ? 2.0 : 1.0
+                self.pendingSuggestedZoom = zoom
+                self.aiSuggestedZoom = zoom
             case .portrait, .macro, .food, .pet:
                 self.pendingSuggestedZoom = 2.0
                 self.aiSuggestedZoom = 2.0
             default:
-                self.pendingSuggestedZoom = 1.0
-                self.aiSuggestedZoom = 1.0
+                // Cảnh chung, đường phố, đồ vật: zoom 2.0x khi chọn điểm chi tiết, 1.0x khi nhìn rộng
+                let zoom: CGFloat = distFromCenter > 0.08 ? 2.0 : 1.0
+                self.pendingSuggestedZoom = zoom
+                self.aiSuggestedZoom = zoom
             }
         }
 
@@ -2115,12 +2141,12 @@ public final class CameraViewModel: ObservableObject {
             if reached && fresh && (boxSafe || latestOpticalBox == nil) &&
                latestOpticalCalibration?.isValid == true && (trackingQuality == .locked || trackingValid) {
                 if settledSince == nil { settledSince = CACurrentMediaTime() }
-                if CACurrentMediaTime() - (settledSince ?? 0) >= 0.15 {
+                if CACurrentMediaTime() - (settledSince ?? 0) >= 0.50 {
                     let _ = verifyPostZoomFaces(after: reachedAt ?? zoomStartFrameTimestamp)
                     postZoomFaceMinimumTimestamp = reachedAt ?? zoomStartFrameTimestamp
                     zoomVerified = true
                     zoomAwaitingVerification = false
-                    withAnimation(.easeOut(duration: 0.40)) {
+                    withAnimation(.easeOut(duration: 0.45)) {
                         self.isRevealingZoomTarget = false
                         self.isZoomRampPhase = false
                     }
@@ -2893,11 +2919,24 @@ public final class CameraViewModel: ObservableObject {
             } else {
                 // LƯU ẢNH TĨNH THƯỜNG (RAW DNG / HEIC / JPEG)
                 if photoFormat == .dng, let rawData = item.rawPhotoData {
+                    let tempDir = FileManager.default.temporaryDirectory
+                    let tempURL = tempDir.appendingPathComponent("raw_\(UUID().uuidString).dng")
+                    do {
+                        try rawData.write(to: tempURL)
+                    } catch {
+                        CameraLogger.error("Không thể ghi tệp tạm DNG", error: error, category: .photoKit)
+                        self.saveFallbackStaticPhoto(item)
+                        return
+                    }
+
                     PHPhotoLibrary.shared().performChanges({
                         let creationRequest = PHAssetCreationRequest.forAsset()
                         let options = PHAssetResourceCreationOptions()
-                        creationRequest.addResource(with: .photo, data: rawData, options: options)
+                        options.shouldMoveFile = true
+                        options.uniformTypeIdentifier = UTType.dng.identifier
+                        creationRequest.addResource(with: .photo, fileURL: tempURL, options: options)
                     }) { success, error in
+                        try? FileManager.default.removeItem(at: tempURL)
                         DispatchQueue.main.async {
                             if success {
                                 CameraLogger.success("✅ Đã lưu ảnh RAW DNG gốc vào Cuộn Camera thành công!", category: .photoKit)

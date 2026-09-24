@@ -963,6 +963,9 @@ public final class CameraService: NSObject {
             let photoSettings: AVCapturePhotoSettings
             if isDNG, let rawFormat = self.photoOutput.availableRawPhotoPixelFormatTypes.first {
                 photoSettings = AVCapturePhotoSettings(rawPixelFormatType: rawFormat)
+                if let previewFormat = photoSettings.availablePreviewPhotoPixelFormatTypes.first {
+                    photoSettings.previewPhotoFormat = [kCVPixelBufferPixelFormatTypeKey as String: previewFormat]
+                }
                 CameraLogger.info("📸 Kích hoạt chụp RAW DNG thực thụ (Format: \(rawFormat))", category: .capture)
             } else if isHEIF && self.photoOutput.availablePhotoCodecTypes.contains(.hevc) {
                 photoSettings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.hevc])
@@ -974,10 +977,17 @@ public final class CameraService: NSObject {
             if self.activeCamera?.isFlashAvailable == true {
                 photoSettings.flashMode = self.flashMode
             }
-            photoSettings.photoQualityPrioritization = .quality
-            let maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
-            if maxPhotoDimensions.width > 0, maxPhotoDimensions.height > 0 {
-                photoSettings.maxPhotoDimensions = maxPhotoDimensions
+
+            if isDNG {
+                // Với RAW DNG, Apple yêu cầu photoQualityPrioritization phải tương thích với RAW output
+                let maxPrio = self.photoOutput.maxPhotoQualityPrioritization
+                photoSettings.photoQualityPrioritization = (maxPrio == .quality) ? .balanced : maxPrio
+            } else {
+                photoSettings.photoQualityPrioritization = .quality
+                let maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
+                if maxPhotoDimensions.width > 0, maxPhotoDimensions.height > 0 {
+                    photoSettings.maxPhotoDimensions = maxPhotoDimensions
+                }
             }
 
             if !isDNG && self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {
@@ -1076,6 +1086,23 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 }
 
                 finalCGImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent)
+            }
+
+            if finalCGImage == nil, let previewCG = photo.previewCGImageRepresentation() {
+                finalCGImage = previewCG
+            }
+
+            if finalCGImage == nil, let data = rawData {
+                let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+                if let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) {
+                    let thumbOptions = [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceThumbnailMaxPixelSize: 4032
+                    ] as CFDictionary
+                    finalCGImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions)
+                        ?? CGImageSourceCreateImageAtIndex(source, 0, sourceOptions)
+                }
             }
 
             if finalCGImage == nil, let data = rawData, let uiImage = UIImage(data: data) {
