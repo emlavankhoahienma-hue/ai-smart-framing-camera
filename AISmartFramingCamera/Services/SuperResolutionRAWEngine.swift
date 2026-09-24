@@ -48,6 +48,16 @@ public struct CameraCalibrationParams {
     public var colorMatrixP3: simd_float4x4
 
     public init(
+        asShotNeutral: SIMD4<Float>,
+        levelsAndFactor: SIMD4<Float>,
+        colorMatrixP3: simd_float4x4
+    ) {
+        self.asShotNeutral = asShotNeutral
+        self.levelsAndFactor = levelsAndFactor
+        self.colorMatrixP3 = colorMatrixP3
+    }
+
+    public init(
         asShotNeutral: SIMD4<Float> = SIMD4<Float>(2.08, 1.0, 1.61, 1.0),
         blackLevel: Float = 512.0 / 16383.0,
         whiteLevel: Float = 1.0,
@@ -334,7 +344,10 @@ public final class SuperResolutionRAWEngine: @unchecked Sendable {
         // Xuất CGImage Display P3
         let resultCG = makeCGImage(from: finalTexture, orientation: anchorFrame.orientation)
         progress(1.0, "Hoàn tất")
-        return resultCG ?? (try extractCGImage(from: anchorFrame))
+        if let resultCG = resultCG {
+            return resultCG
+        }
+        return try extractCGImage(from: anchorFrame)
     }
 
     // MARK: - Private Helpers
