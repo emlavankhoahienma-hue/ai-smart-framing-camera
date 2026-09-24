@@ -2925,7 +2925,9 @@ public final class CameraViewModel: ObservableObject {
                         try rawData.write(to: tempURL)
                     } catch {
                         CameraLogger.error("Không thể ghi tệp tạm DNG", error: error, category: .photoKit)
-                        self.saveFallbackStaticPhoto(item)
+                        DispatchQueue.main.async {
+                            self.saveFallbackStaticPhoto(item)
+                        }
                         return
                     }
 
@@ -2933,7 +2935,8 @@ public final class CameraViewModel: ObservableObject {
                         let creationRequest = PHAssetCreationRequest.forAsset()
                         let options = PHAssetResourceCreationOptions()
                         options.shouldMoveFile = true
-                        options.uniformTypeIdentifier = UTType.dng.identifier
+                        let dngUTI = UTType(filenameExtension: "dng")?.identifier ?? "com.adobe.raw-image"
+                        options.uniformTypeIdentifier = dngUTI
                         creationRequest.addResource(with: .photo, fileURL: tempURL, options: options)
                     }) { success, error in
                         try? FileManager.default.removeItem(at: tempURL)
