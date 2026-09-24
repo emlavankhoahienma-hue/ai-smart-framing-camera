@@ -2835,10 +2835,26 @@ public final class CameraViewModel: ObservableObject {
                         }
                     } catch {
                         CameraLogger.error("Lỗi xử lý Super-Resolution RAW: \(error)", category: .capture)
-                        DispatchQueue.main.async {
-                            self.superResolutionProgressText = nil
-                            self.isShutterPressing = false
-                            self.aiSessionState = .done
+                        if let fallbackCG = SuperResolutionRAWEngine.decodeFrameToCGImage(frame: frames[0], ciContext: SuperResolutionRAWEngine.shared.ciContext) {
+                            let anchorFrame = frames[0]
+                            DispatchQueue.main.async {
+                                self.superResolutionProgressText = nil
+                                self.isShutterPressing = false
+                                self.cameraService(
+                                    self.cameraService,
+                                    didCapturePhoto: fallbackCG,
+                                    rawData: nil,
+                                    livePhotoMovieURL: nil,
+                                    iso: anchorFrame.iso,
+                                    shutterSpeed: anchorFrame.shutterSpeed
+                                )
+                            }
+                        } else {
+                            DispatchQueue.main.async {
+                                self.superResolutionProgressText = nil
+                                self.isShutterPressing = false
+                                self.aiSessionState = .done
+                            }
                         }
                     }
                 }
