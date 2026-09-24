@@ -754,7 +754,7 @@ struct ZoomRevealOverlay: View {
                     .position(x: pixelRect.midX, y: max(24, pixelRect.minY - 12))
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .animation(.easeInOut(duration: 0.3), value: isVisible)
+                .animation(.easeInOut(duration: 0.45), value: isVisible)
             }
         }
         .allowsHitTesting(false)

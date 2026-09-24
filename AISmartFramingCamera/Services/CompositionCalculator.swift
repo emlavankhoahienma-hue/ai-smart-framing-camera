@@ -149,16 +149,21 @@ enum LocalFramingGeometry {
         let portrait = subject.category == .human || subject.category == .face
         let preserveScene = portrait && (scene == .landscape || scene == .architecture || scene == .sunset)
         let places: [CGPoint]
-        if scene == .architecture || scene == .landscape || scene == .sky || scene == .water {
-            places = [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.5, y: 0.38),
-                      CGPoint(x: 0.38, y: 0.5), CGPoint(x: 0.62, y: 0.5)]
+        if scene == .architecture {
+            places = [CGPoint(x: 0.5, y: 0.45), CGPoint(x: 0.5, y: 0.38),
+                      CGPoint(x: 0.38, y: 0.45), CGPoint(x: 0.62, y: 0.45),
+                      CGPoint(x: 0.5, y: 0.5)]
+        } else if scene == .landscape || scene == .sky || scene == .water || scene == .sunset {
+            places = [CGPoint(x: 0.38, y: 0.382), CGPoint(x: 0.62, y: 0.382),
+                      CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.5, y: 0.38)]
         } else {
             let preferredX: CGFloat = gaze.dx > 0.12 ? 0.38 : (gaze.dx < -0.12 ? 0.62 : 0.38)
-            places = [CGPoint(x: preferredX, y: portrait ? 0.40 : 0.50),
-                      CGPoint(x: 1 - preferredX, y: portrait ? 0.40 : 0.50),
+            places = [CGPoint(x: preferredX, y: portrait ? 0.38 : 0.45),
+                      CGPoint(x: 1 - preferredX, y: portrait ? 0.38 : 0.45),
                       CGPoint(x: 0.5, y: 0.5)]
         }
-        let zooms = Array(Set(([currentZoom] + allowedZooms).filter {
+        let availableOptions = allowedZooms.isEmpty ? [1.0, 2.0, 3.0] : allowedZooms
+        let zooms = Array(Set(([1.0, 2.0, 3.0, currentZoom] + availableOptions).filter {
             $0.isFinite && $0 >= 0.5 && $0 <= 5
         })).sorted()
         var best: (LocalFramingPlan, Double)?
@@ -180,6 +185,8 @@ enum LocalFramingGeometry {
                       safe(projected, margin: 0.035) else { continue }
                 var companionsSafe = true
                 for other in companions where valid(other) {
+                    let distToSubject = hypot(other.midX - box.midX, other.midY - box.midY)
+                    guard distToSubject < 0.50 else { continue }
                     guard let expected = project(other, from: k, to: future,
                                                  rotation: rotation),
                           safe(expected, margin: 0.025) else {
@@ -187,8 +194,8 @@ enum LocalFramingGeometry {
                     }
                 }
                 guard companionsSafe else { continue }
-                let targetArea = preserveScene ? 0.10 : (portrait ? 0.22 :
-                    (scene == .architecture ? 0.34 : 0.24))
+                let targetArea = preserveScene ? 0.14 : (portrait ? 0.26 :
+                    (scene == .architecture ? 0.38 : (scene == .food || scene == .macro ? 0.32 : 0.25)))
                 let area = Double(projected.width * projected.height)
                 let sizeFit = 1 - min(1, abs(log(max(0.001, area) / targetArea)) / 2.5)
                 let motion = hypot(Double(aim.point.x - 0.5), Double(aim.point.y - 0.5))

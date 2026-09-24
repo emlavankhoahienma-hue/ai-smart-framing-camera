@@ -295,11 +295,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             if projected.point.x.isFinite, projected.point.y.isFinite {
                 estimated = projected.point
                 let age = now - lastAccepted
-                let motionIsCurrent = now - sample.timestamp <= 0.25
-                let isVerified = (now - lastVerified < 1.20) || (age < 0.80)
+                let motionIsCurrent = now - sample.timestamp <= 0.35
+                let isVerified = (now - lastVerified < 2.50) || (age < 1.80)
                 if projected.isInsideImage && motionIsCurrent && isVerified {
                     quality = .locked
-                } else if age < 2.0 {
+                } else if age < 4.0 {
                     // A brief optical or motion gap is an inertial prediction,
                     // not an immediate request to choose the subject again.
                     quality = .predicting

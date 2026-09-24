@@ -268,6 +268,7 @@ public final class CameraViewModel: ObservableObject {
     private var needsFocusOnTrackedSubject = false
     private var targetPinStartedAt = -Double.infinity
     private var lastFailedCaptureOpticalTimestamp = -Double.infinity
+    private var lastFailedCaptureAttemptTime = -Double.infinity
 
     // MARK: - Sun Exposure Slider & Horizon Leveler
     @Published public var isShowingSunSlider: Bool = false
@@ -355,22 +356,22 @@ public final class CameraViewModel: ObservableObject {
         guard targetZoom.isFinite, currentZoom.isFinite else { return }
         guard aiSessionState == .alignmentPerfect else { return }
 
-        // Cooldown: Tối thiểu 2.5s giữa các lần tự động zoom
+        // Cooldown: Tối thiểu 0.8s giữa các lần tự động zoom (tránh spam, nhưng không chặn người dùng khi căn chỉnh)
         let now = Date()
         let timeSinceLast = now.timeIntervalSince(lastAutoZoomExecutionTime)
-        if !force && timeSinceLast < 2.5 {
-            CameraLogger.info("Bỏ qua auto zoom do đang trong thời gian cooldown (\(String(format: "%.1f", timeSinceLast))s < 2.5s)", category: .ai)
+        if !force && timeSinceLast < 0.8 {
+            CameraLogger.info("Bỏ qua auto zoom do đang trong thời gian cooldown (\(String(format: "%.1f", timeSinceLast))s < 0.8s)", category: .ai)
             return
         }
 
-        // Hysteresis: Nếu mức zoom hiện tại đã rất gần mục tiêu (sai số < 0.15), không zoom lại
+        // Hysteresis: Nếu mức zoom hiện tại đã rất gần mục tiêu (sai số < 0.12), không zoom lại
         let diff = targetZoom - displayZoom
-        guard abs(diff) > 0.15 else { return }
+        guard abs(diff) > 0.12 else { return }
 
         lastAutoZoomExecutionTime = now
         hasExecutedAutoZoomForSession = true
 
-        CameraLogger.info("Thực thi AI Auto-Zoom: \(displayZoom)x -> \(targetZoom)x", category: .ai)
+        CameraLogger.info("Thực thi AI Auto-Zoom Điện Ảnh: \(displayZoom)x -> \(targetZoom)x", category: .ai)
 
         triggerZoomRevealAnimation(targetZoom: targetZoom)
     }
@@ -392,15 +393,16 @@ public final class CameraViewModel: ObservableObject {
         isRevealingZoomTarget = true
         let pinGeneration = targetPinGeneration
 
-        withAnimation(.easeInOut(duration: 0.60)) {
+        // Hiệu ứng chuyển động mượt mà điện ảnh (Cinematic Easing)
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.80)) {
             lockOnProgress = 1.0
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.60) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             guard let self = self, self.targetPinGeneration == pinGeneration else { return }
             self.isZoomRampPhase = true
             let distance = abs(targetDeviceZoom - self.currentZoom)
-            let duration = min(3.2, max(1.6, Double(distance) / 1.0))
+            let duration = min(2.4, max(1.2, Double(distance) / 1.5))
             self.cameraService.smoothZoomFactor(to: targetDeviceZoom,
                 rate: Float(Double(distance) / duration))
         }
@@ -1021,9 +1023,9 @@ public final class CameraViewModel: ObservableObject {
             // tear down alignment while the last optical frame is still fresh.
             // The final shutter gate below still checks a real, safe frame.
             let opticalAge = CACurrentMediaTime() - self.latestOpticalFrameTimestamp
-            let briefOpticalGap = quality != .lost && opticalAge >= 0 && opticalAge < 0.45
+            let briefOpticalGap = quality != .lost && opticalAge >= 0 && opticalAge < 1.80
             let seeding = quality == .reacquiring && self.latestOpticalPoint == nil &&
-                CACurrentMediaTime() - self.targetPinStartedAt < 0.8
+                CACurrentMediaTime() - self.targetPinStartedAt < 1.2
             self.trackingQuality = quality == .locked || briefOpticalGap ? .locked :
                 (seeding ? .predicting : quality)
             // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
@@ -1633,10 +1635,13 @@ public final class CameraViewModel: ObservableObject {
             let measuredThreshold = LocalAutoselectCalibration.threshold(
                  scene: output.detectedScene, category: firstCandidate.category) ?? 0.60
             return (best.confidence >= max(0.72, measuredThreshold) ||
-                    best.confidence >= 0.45 ||
+                    best.confidence >= 0.40 ||
                     firstCandidate.category == .human ||
                     firstCandidate.category == .face ||
-                    firstCandidate.category == .animal)
+                    firstCandidate.category == .animal ||
+                    firstCandidate.category == .foregroundObject ||
+                    output.detectedScene == .architecture ||
+                    output.detectedScene == .landscape)
         }()
         if let best = localCandidatePlans.first,
            let firstCandidate = localEvidenceCandidates.first,
@@ -1644,6 +1649,21 @@ public final class CameraViewModel: ObservableObject {
                 scene: output.detectedScene, category: firstCandidate.category),
            (best.confidence >= max(0.72, measuredThreshold) || isStrongCandidate) {
             acceptLocalPlan(best, source: source)
+        } else if let best = localCandidatePlans.first {
+            acceptLocalPlan(best, source: source)
+        } else if let topCandidate = localEvidenceCandidates.first {
+            let area = topCandidate.boundingBox.width * topCandidate.boundingBox.height
+            let zoom: CGFloat = area < 0.06 ? 3.0 : (area < 0.18 ? 2.0 : 1.0)
+            let fallbackPlan = LocalFramingPlan(
+                subjectPoint: topCandidate.center,
+                subjectRect: topCandidate.boundingBox,
+                aimPointInSource: topCandidate.center,
+                aimWorldRay: source.pose.act(source.frame.calibration.deviceRay(at: topCandidate.center)),
+                zoom: zoom,
+                expectedSubjectRect: topCandidate.boundingBox,
+                confidence: Double(topCandidate.confidence)
+            )
+            acceptLocalPlan(fallbackPlan, source: source)
         } else {
             if localEvidenceCandidates.isEmpty {
                 localSelectionMessage = "Chưa xác định được vùng đáng tin cậy. Chạm vùng muốn chụp hoặc chụp tay."
@@ -1784,14 +1804,33 @@ public final class CameraViewModel: ObservableObject {
         currentTargetPoint = pinPoint
         trackingQuality = hasCurrentProjection ? .locked : .reacquiring
         hasExecutedAutoZoomForSession = isManualRePin
-        if let sRect = subjectRect, self.pendingSuggestedZoom <= 1.05 {
+        // Khi đặt lại mục tiêu (manual re-pin), cho phép AI tiếp tục tính toán và quyết định zoom mượt mà
+        hasExecutedAutoZoomForSession = false
+        allowsAutoCaptureForCurrentTarget = true
+
+        let effectiveSubjectRect = subjectRect ?? detectedSubjectRects.first(where: {
+            $0.insetBy(dx: -0.05, dy: -0.05).contains(pinPoint)
+        }) ?? detectedFaceRects.first
+        if let sRect = effectiveSubjectRect {
             let area = sRect.width * sRect.height
-            if area < 0.05 {
+            if area < 0.06 {
                 self.pendingSuggestedZoom = 3.0
-            } else if area < 0.15 {
+                self.aiSuggestedZoom = 3.0
+            } else if area < 0.18 {
                 self.pendingSuggestedZoom = 2.0
+                self.aiSuggestedZoom = 2.0
             } else {
                 self.pendingSuggestedZoom = 1.0
+                self.aiSuggestedZoom = 1.0
+            }
+        } else if self.pendingSuggestedZoom <= 1.05 {
+            switch detectedScene {
+            case .portrait, .macro, .food, .pet:
+                self.pendingSuggestedZoom = 2.0
+                self.aiSuggestedZoom = 2.0
+            default:
+                self.pendingSuggestedZoom = 1.0
+                self.aiSuggestedZoom = 1.0
             }
         }
 
@@ -1965,10 +2004,10 @@ public final class CameraViewModel: ObservableObject {
 
             // KÍCH HOẠT ZOOM ĐÚNG KHI TÂM TRẮNG KHỚP VÀO TÂM VÀNG (nếu chưa zoom)
             let willZoom = zoomAwaitingVerification ||
-                (isAutoZoomEnabled && !hasExecutedAutoZoomForSession &&
-                 abs(pendingSuggestedZoom - displayZoom) > 0.15)
+                (isAutoZoomEnabled &&
+                 abs(pendingSuggestedZoom - displayZoom) > 0.12)
             if willZoom {
-                if !zoomAwaitingVerification { applyAISuggestedZoom(pendingSuggestedZoom) }
+                if !zoomAwaitingVerification { applyAISuggestedZoom(pendingSuggestedZoom, force: true) }
             }
 
             if isAutoCaptureOnAlignEnabled && allowsAutoCaptureForCurrentTarget {
@@ -1986,10 +2025,11 @@ public final class CameraViewModel: ObservableObject {
                 aiSessionState = .targetPlaced(locked: true)
             }
         } else if isPerfect && isPerfectAlignment &&
-                  dist <= tolerance * 1.30 && aiSessionState == .targetPlaced(locked: true) &&
+                  dist <= tolerance * 1.35 && aiSessionState == .targetPlaced(locked: true) &&
                   isAutoCaptureOnAlignEnabled && allowsAutoCaptureForCurrentTarget &&
                   !zoomAwaitingVerification && zoomVerified &&
-                  latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp + 0.03 {
+                  (latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp + 0.03 ||
+                   CACurrentMediaTime() - lastFailedCaptureAttemptTime > 0.40) {
             // A previous countdown may have ended during a brief bad frame.
             // Re-arm without replaying the magnetic snap or zoom animation.
             aiSessionState = .alignmentPerfect
@@ -2013,24 +2053,25 @@ public final class CameraViewModel: ObservableObject {
             guard let self else { return }
             do {
                 if isZooming || self.zoomAwaitingVerification {
-                    let deadline = CACurrentMediaTime() + 5.0
+                    let deadline = CACurrentMediaTime() + 4.0
                     while self.zoomAwaitingVerification && CACurrentMediaTime() < deadline {
-                        try await Task.sleep(nanoseconds: 100_000_000)
+                        try await Task.sleep(nanoseconds: 80_000_000)
                         guard !Task.isCancelled, !self.isPinchingZoom else { return }
                     }
                     guard !self.zoomAwaitingVerification else { return }
                 }
                 self.autoCaptureCountdown = 1
-                try await Task.sleep(nanoseconds: 800_000_000)
+                try await Task.sleep(nanoseconds: 700_000_000)
                 guard !Task.isCancelled else { return }
                 self.autoCaptureCountdown = 0
-                try await Task.sleep(nanoseconds: 200_000_000)
+                try await Task.sleep(nanoseconds: 150_000_000)
             } catch { return }
             guard !Task.isCancelled else { return }
+            let trackingUsable = self.trackingQuality == .locked || self.trackingQuality == .predicting || self.trackingQuality != .lost
             if (self.aiSessionState == .alignmentPerfect || self.isPerfectAlignment) &&
                 !self.isShutterPressing &&
-                (self.trackingQuality == .locked || self.trackingQuality == .predicting) &&
-                self.alignmentDistance <= self.calculator.alignmentTolerance * 1.35 &&
+                trackingUsable &&
+                self.alignmentDistance <= self.calculator.alignmentTolerance * 1.45 &&
                 !self.zoomAwaitingVerification && self.zoomVerified &&
                 !self.isPinchingZoom && self.allowsAutoCaptureForCurrentTarget &&
                 self.currentCropSafeForCapture() {
@@ -2039,38 +2080,50 @@ public final class CameraViewModel: ObservableObject {
                 self.aiSessionState = .targetPlaced(locked: true)
                 self.autoCaptureCountdown = 0
                 self.lastFailedCaptureOpticalTimestamp = self.latestOpticalFrameTimestamp
+                self.lastFailedCaptureAttemptTime = CACurrentMediaTime()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.40) { [weak self] in
+                    guard let self = self, self.isPerfectAlignment,
+                          self.aiSessionState == .targetPlaced(locked: true),
+                          self.isAutoCaptureOnAlignEnabled, self.allowsAutoCaptureForCurrentTarget,
+                          !self.zoomAwaitingVerification, self.zoomVerified else { return }
+                    self.aiSessionState = .alignmentPerfect
+                    self.startAutoCaptureCountdown()
+                }
             }
         }
     }
 
     private func verifyZoomAfterRamp(pinGeneration: UInt64) async {
-        let deadline = CACurrentMediaTime() + 5.0
+        let deadline = CACurrentMediaTime() + 4.0
         var reachedAt: TimeInterval?
         var settledSince: TimeInterval?
         while CACurrentMediaTime() < deadline {
-            do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return }
+            do { try await Task.sleep(nanoseconds: 80_000_000) } catch { return }
             guard !Task.isCancelled, targetPinGeneration == pinGeneration,
                   !isPinchingZoom else { return }
-            let reached = abs(displayZoom - pendingSuggestedZoom) <= 0.06
+            let reached = abs(displayZoom - pendingSuggestedZoom) <= 0.08
             if reached {
                 if reachedAt == nil { reachedAt = CACurrentMediaTime() }
             } else { reachedAt = nil }
             let fresh = latestOpticalFrameTimestamp >
-                max(zoomStartFrameTimestamp + 0.15, (reachedAt ?? .infinity) + 0.05)
+                max(zoomStartFrameTimestamp + 0.10, (reachedAt ?? .infinity) + 0.05)
             let boxSafe = latestOpticalBox.map {
                 $0.minX >= 0.01 && $0.minY >= 0.01 &&
                 $0.maxX <= 0.99 && $0.maxY <= 0.99
             } ?? true
+            let trackingValid = trackingQuality == .locked || trackingQuality == .predicting || trackingQuality != .lost
             if reached && fresh && (boxSafe || latestOpticalBox == nil) &&
-               latestOpticalCalibration?.isValid == true && trackingQuality == .locked {
+               latestOpticalCalibration?.isValid == true && (trackingQuality == .locked || trackingValid) {
                 if settledSince == nil { settledSince = CACurrentMediaTime() }
-                if CACurrentMediaTime() - (settledSince ?? 0) >= 0.20 {
+                if CACurrentMediaTime() - (settledSince ?? 0) >= 0.15 {
                     let _ = verifyPostZoomFaces(after: reachedAt ?? zoomStartFrameTimestamp)
                     postZoomFaceMinimumTimestamp = reachedAt ?? zoomStartFrameTimestamp
                     zoomVerified = true
                     zoomAwaitingVerification = false
-                    isRevealingZoomTarget = false
-                    isZoomRampPhase = false
+                    withAnimation(.easeOut(duration: 0.40)) {
+                        self.isRevealingZoomTarget = false
+                        self.isZoomRampPhase = false
+                    }
                     selectedZoomPreset = displayZoom < 1.5 ? 1.0 :
                         (displayZoom < 2.5 ? 2.0 : 3.0)
                     return
@@ -2079,8 +2132,10 @@ public final class CameraViewModel: ObservableObject {
         }
         zoomVerified = true
         zoomAwaitingVerification = false
-        isRevealingZoomTarget = false
-        isZoomRampPhase = false
+        withAnimation(.easeOut(duration: 0.40)) {
+            self.isRevealingZoomTarget = false
+            self.isZoomRampPhase = false
+        }
     }
 
     private func verifyPostZoomFaces(after minimumTimestamp: TimeInterval) -> Bool {
