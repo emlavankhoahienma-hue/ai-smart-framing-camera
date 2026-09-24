@@ -23,7 +23,7 @@ enum LocalAutoselectCalibration {
     }()
     static func threshold(scene: DetectedSceneType,
                           category: NeuralSubjectCategory) -> Double? {
-        thresholds[scene.rawValue + "|" + category.rawValue]
+        thresholds[scene.rawValue + "|" + category.rawValue] ?? 0.60
     }
 }
 
