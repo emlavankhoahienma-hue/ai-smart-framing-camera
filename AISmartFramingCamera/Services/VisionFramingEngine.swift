@@ -795,9 +795,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         // must never accumulate camera-pool buffers at the analysis frame rate.
         let schedule = ingressLock.withLock { () -> Bool in
             guard generation == epoch else { return false }
-            // A transient failed image cannot replace an already queued good
-            // measurement while the main queue is busy. A newer good image can.
-            if pendingTargetDelivery?.0 != nil && point == nil { return false }
             pendingDetectionDelivery = (result, buffer, frame, focus, type, epoch)
             guard !detectionDeliveryScheduled else { return false }
             detectionDeliveryScheduled = true
