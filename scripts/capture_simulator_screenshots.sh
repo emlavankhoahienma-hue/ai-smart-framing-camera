@@ -23,7 +23,9 @@ echo ""
 
 find_device_udid() {
   local pattern="$1"
-  xcrun simctl list devices available | grep -E "$pattern" | head -n 1 | grep -oE '\([0-9a-fA-F-]{36}\)' | tr -d '()'
+  local match
+  match=$(xcrun simctl list devices available | (grep -E "$pattern" || true) | head -n 1 | (grep -oE '\([0-9a-fA-F-]{36}\)' || true) | tr -d '()')
+  echo "$match"
 }
 
 capture_device() {
@@ -47,10 +49,23 @@ capture_device() {
   xcrun simctl shutdown all 2>/dev/null || true
 
   echo "Booting $label ($udid)..."
-  xcrun simctl boot "$udid"
+  xcrun simctl boot "$udid" 2>/dev/null || true
 
-  echo "Waiting for simulator to reach booted state..."
-  xcrun simctl bootstatus "$udid" -b
+  echo "Waiting for simulator to reach Booted state..."
+  local booted=0
+  for i in $(seq 1 25); do
+    if xcrun simctl list devices | grep "$udid" | grep -q "Booted"; then
+      echo "Simulator reached Booted state in ${i}s."
+      booted=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$booted" -eq 0 ]; then
+    echo "Notice: Simulator status poll ended, proceeding."
+  fi
+  sleep 4
 
   echo "Granting permissions for camera and photos..."
   xcrun simctl privacy "$udid" grant camera "$BUNDLE_ID" 2>/dev/null || true
