@@ -282,7 +282,7 @@ public struct ARFramingOverlayView: View {
             )
             .clipped()
             .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
-            .onChange(of: size) { _, newSize in viewModel.viewfinderSize = newSize }
+            .onChange(of: size) { newSize in viewModel.viewfinderSize = newSize }
             .onAppear {
                 viewModel.viewfinderSize = size
                 SpatialTrackingEngine.shared.prepare()

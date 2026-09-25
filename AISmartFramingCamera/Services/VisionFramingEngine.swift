@@ -201,14 +201,20 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let saliency = VNGenerateObjectnessBasedSaliencyImageRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
         guard (try? handler.perform([people, face, saliency])) != nil else { return nil }
-        let visionPoint = CGPoint(x: point.x, y: 1 - point.y)
-        if let body = (people.results ?? []).map(\.boundingBox)
-            .filter({ $0.contains(visionPoint) && $0.width > 0.03 && $0.height > 0.03 })
-            .min(by: { $0.width * $0.height < $1.width * $1.height }) { return body }
-        let boxes = (face.results ?? []).map(\.boundingBox) +
-            (saliency.results?.first?.salientObjects ?? []).map(\.boundingBox)
-        return boxes.filter { $0.contains(visionPoint) && $0.width > 0.03 && $0.height > 0.03 }
-            .min { $0.width * $0.height < $1.width * $1.height }
+        let personBoxes: [CGRect] = (people.results ?? []).map { $0.boundingBox }
+        let matchingBodies = personBoxes.filter { box in
+            box.contains(visionPoint) && box.width > 0.03 && box.height > 0.03
+        }
+        if let body = matchingBodies.min(by: { $0.width * $0.height < $1.width * $1.height }) {
+            return body
+        }
+        let faceBoxes: [CGRect] = (face.results ?? []).map { $0.boundingBox }
+        let salientBoxes: [CGRect] = (saliency.results?.first?.salientObjects ?? []).map { $0.boundingBox }
+        let boxes: [CGRect] = faceBoxes + salientBoxes
+        let matchingBoxes = boxes.filter { box in
+            box.contains(visionPoint) && box.width > 0.03 && box.height > 0.03
+        }
+        return matchingBoxes.min(by: { $0.width * $0.height < $1.width * $1.height })
     }
 
     public func startTrackingObject(at point: CGPoint, size: CGSize = CGSize(width: 0.12, height: 0.12),
