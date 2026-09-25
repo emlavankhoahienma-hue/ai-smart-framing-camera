@@ -5,7 +5,7 @@
 ![AlignAI Studio Banner](https://img.shields.io/badge/AlignAI_Studio-Pro_AI_Camera_System-D4AF37?style=for-the-badge&logo=apple&logoColor=black)
 
 [![iOS Sideload Build & Release](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/actions/workflows/ios-build.yml/badge.svg)](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/actions/workflows/ios-build.yml)
-[![Latest Release](https://img.shields.io/badge/Release-v1.0.0--build.297-blue.svg?style=flat-square)](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/latest)
+[![Latest Release](https://img.shields.io/badge/Release-v1.0.0--build.298-blue.svg?style=flat-square)](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/latest)
 [![iOS Target](https://img.shields.io/badge/iOS-16.0%2B%20%7C%2017%20%7C%2018-000000.svg?style=flat-square&logo=apple)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B%20%7C%20SwiftUI-FA7343.svg?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![Apple Neural Engine](https://img.shields.io/badge/Neural_Engine-A11_to_A18_Pro-9945FF.svg?style=flat-square&logo=apple)](https://apple.com)
