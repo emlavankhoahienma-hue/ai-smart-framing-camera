@@ -52,19 +52,19 @@ public enum CameraLogger {
     private static let aiLog = OSLog(subsystem: subsystem, category: "AI_Engine")
     
     public enum Category: String {
-        case capture = "📸 CAPTURE"
-        case tracking = "🎯 TRACKING_6DOF"
-        case photoKit = "💾 PHOTOS"
-        case ai = "🧠 AI"
-        case motion = "🧭 MOTION"
-        case general = "⚙️ SYSTEM"
+        case capture = "\u{1f4f8} CAPTURE"
+        case tracking = "\u{1f3af} TRACKING_6DOF"
+        case photoKit = "\u{1f4be} PHOTOS"
+        case ai = "\u{1f9e0} AI"
+        case motion = "\u{1f9ed} MOTION"
+        case general = "\u{2699}\u{fe0f} SYSTEM"
     }
     
     private static let dateFormatter: ISO8601DateFormatter = ISO8601DateFormatter()
     
     public static func info(_ message: String, category: Category = .general) {
         #if DEBUG
-        print("[\(category.rawValue)] ℹ️ \(message)")
+        print("[\(category.rawValue)] ℹ\u{fe0f} \(message)")
         #endif
         
         switch category {
@@ -78,33 +78,33 @@ public enum CameraLogger {
         
         logQueue.async {
             let timestamp = dateFormatter.string(from: Date())
-            let formatted = "[\(timestamp)] [\(category.rawValue)] ℹ️ \(message)"
+            let formatted = "[\(timestamp)] [\(category.rawValue)] ℹ\u{fe0f} \(message)"
             appendToFile(formatted)
         }
     }
     
     public static func success(_ message: String, category: Category = .general) {
         #if DEBUG
-        print("[\(category.rawValue)] ✅ \(message)")
+        print("[\(category.rawValue)] \u{2705} \(message)")
         #endif
         os_log("%{public}@", log: .default, type: .default, message)
         
         logQueue.async {
             let timestamp = dateFormatter.string(from: Date())
-            let formatted = "[\(timestamp)] [\(category.rawValue)] ✅ \(message)"
+            let formatted = "[\(timestamp)] [\(category.rawValue)] \u{2705} \(message)"
             appendToFile(formatted)
         }
     }
     
     public static func warning(_ message: String, category: Category = .general) {
         #if DEBUG
-        print("[\(category.rawValue)] ⚠️ CẢNH BÁO: \(message)")
+        print("[\(category.rawValue)] \u{26a0}\u{fe0f} CẢNH BÁO: \(message)")
         #endif
         os_log("%{public}@", log: .default, type: .error, message)
         
         logQueue.async {
             let timestamp = dateFormatter.string(from: Date())
-            let formatted = "[\(timestamp)] [\(category.rawValue)] ⚠️ CẢNH BÁO: \(message)"
+            let formatted = "[\(timestamp)] [\(category.rawValue)] \u{26a0}\u{fe0f} CẢNH BÁO: \(message)"
             appendToFile(formatted)
         }
     }
@@ -112,13 +112,13 @@ public enum CameraLogger {
     public static func error(_ message: String, error: Error? = nil, category: Category = .general) {
         let errDetail = error.map { " | Chi tiết: \($0.localizedDescription)" } ?? ""
         #if DEBUG
-        print("[\(category.rawValue)] ❌ LỖI: \(message)\(errDetail)")
+        print("[\(category.rawValue)] \u{274c} LỖI: \(message)\(errDetail)")
         #endif
         os_log("%{public}@", log: .default, type: .fault, "\(message)\(errDetail)")
         
         logQueue.async {
             let timestamp = dateFormatter.string(from: Date())
-            let formatted = "[\(timestamp)] [\(category.rawValue)] ❌ LỖI: \(message)\(errDetail)"
+            let formatted = "[\(timestamp)] [\(category.rawValue)] \u{274c} LỖI: \(message)\(errDetail)"
             appendToFile(formatted)
         }
     }

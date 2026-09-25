@@ -103,6 +103,14 @@ public struct TrackingFrameContext: Sendable {
             // portrait image. CameraService must supply matching image geometry.
             if measured.isValid, abs(measured.cx - 0.5) < 0.1, abs(measured.cy - 0.5) < 0.1 {
                 k = measured
+            } else {
+                let rotated = TrackingCalibration(fx: Double(m.columns.1.y) / width,
+                    fy: Double(m.columns.0.x) / height,
+                    cx: (width - Double(m.columns.2.y)) / width,
+                    cy: Double(m.columns.2.x) / height, aspect: width / height)
+                if rotated.isValid, abs(rotated.cx - 0.5) < 0.1, abs(rotated.cy - 0.5) < 0.1 {
+                    k = rotated
+                }
             }
         }
         return Self(timestamp: timestamp, calibration: k, orientation: .up,
@@ -150,5 +158,44 @@ enum TrackingGeometry {
         let dx = point.x - size.width / 2, dy = point.y - size.height / 2
         let factor = max(abs(dx) / halfX, abs(dy) / halfY, 1)
         return CGPoint(x: size.width / 2 + dx / factor, y: size.height / 2 + dy / factor)
+    }
+}
+
+/// Time-based alignment evidence. Small excursions and a brief missed optical
+/// frame pause the dwell instead of repeatedly starting an 850 ms timer again.
+/// This value type has no camera/UI dependencies and is exercised by replay tests.
+struct AlignmentCaptureGate {
+    enum State: Equatable { case outside, holding, ready }
+    private(set) var isAligned = false
+    private var lastTime: TimeInterval?
+    private var lastGoodTime: TimeInterval?
+    private var dwell: TimeInterval = 0
+
+    mutating func reset() {
+        isAligned = false; lastTime = nil; lastGoodTime = nil; dwell = 0
+    }
+
+    mutating func update(time: TimeInterval, distance: Double, radius: Double,
+                         freshEvidence: Bool) -> State {
+        guard time.isFinite, distance.isFinite, radius.isFinite, radius > 0 else {
+            reset(); return .outside
+        }
+        if let lastTime, time < lastTime || time - lastTime > 0.35 { reset() }
+        let dt = lastTime.map { max(0, min(0.05, time - $0)) } ?? 0
+        lastTime = time
+        let inside = distance <= radius * (isAligned ? 1.35 : 1)
+        if freshEvidence && inside {
+            isAligned = true
+            lastGoodTime = time
+            dwell += dt
+            return dwell >= 0.24 ? .ready : .holding
+        }
+        if isAligned, distance <= radius * 1.8,
+           let lastGoodTime, time - lastGoodTime <= 0.14 {
+            return .holding
+        }
+        reset()
+        lastTime = time
+        return .outside
     }
 }

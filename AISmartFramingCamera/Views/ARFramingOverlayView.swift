@@ -119,9 +119,8 @@ public struct ARFramingOverlayView: View {
                     }
                 }
 
-                // 5. TÂM TRẮNG GIỮA MÀN HÌNH — CHỈ HIỆN KHI AI ĐÃ XÁC ĐỊNH ĐƯỢC TARGET
-                // Trước đó (idle/đang phân tích) tâm này ẨN, không hiện gì cả.
-                if viewModel.showTargetCircle {
+                // Optical centre is always fixed in the photo viewfinder.
+                if !viewModel.captureMode.isVideo {
                     CurrentCenterCrosshair(
                         isAligned: viewModel.isPerfectAlignment,
                         sessionState: viewModel.aiSessionState,
@@ -262,18 +261,18 @@ public struct ARFramingOverlayView: View {
                     .onChanged { scale in
                         if !isPinching {
                             isPinching = true
-                            pinchBaseZoom = viewModel.currentZoom
+                            pinchBaseZoom = viewModel.displayZoom
                             viewModel.cancelAIZoomForGesture()
                             viewModel.isPinchingZoom = true
                         }
-                        let minZ = viewModel.cameraService.minZoom
-                        let maxZ = viewModel.cameraService.maxZoom
+                        let minZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.minZoom)
+                        let maxZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.maxZoom)
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
                         viewModel.setZoomContinuous(targetZoom)
                     }
                     .onEnded { scale in
-                        let minZ = viewModel.cameraService.minZoom
-                        let maxZ = viewModel.cameraService.maxZoom
+                        let minZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.minZoom)
+                        let maxZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.maxZoom)
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
                         viewModel.finishZoomGesture(targetZoom)
                         isPinching = false
@@ -283,7 +282,9 @@ public struct ARFramingOverlayView: View {
             )
             .clipped()
             .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
+            .onChange(of: size) { _, newSize in viewModel.viewfinderSize = newSize }
             .onAppear {
+                viewModel.viewfinderSize = size
                 SpatialTrackingEngine.shared.prepare()
                 startAnimations()
             }
@@ -390,27 +391,11 @@ struct CurrentCenterCrosshair: View {
     let distance: CGFloat
 
     var body: some View {
-        let dotColor: Color = isAligned ? .green : .white
-        let proximityScale: CGFloat = distance < 0.15 ? (1.0 + (0.15 - distance) * 0.9) : 1.0
-
-        ZStack {
-            // Chấm trắng đơn thuần, tinh tế đúng như Ảnh 1 (Solid White Dot)
-            Circle()
-                .fill(dotColor)
-                .frame(width: isAligned ? 12 : 11, height: isAligned ? 12 : 11)
-                .shadow(color: Color.black.opacity(0.75), radius: 1.5, x: 0, y: 0.5)
-                .shadow(color: dotColor.opacity(isAligned ? 0.85 : 0.25), radius: isAligned ? 6 : 1)
-
-            // Vòng viền xanh lục nhẹ khi đã khớp hoàn hảo
-            if isAligned {
-                Circle()
-                    .stroke(Color.green.opacity(0.55), lineWidth: 1.5)
-                    .frame(width: 17, height: 17)
-            }
-        }
-        .scaleEffect(proximityScale)
-        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isAligned)
-        .animation(.spring(response: 0.15, dampingFraction: 0.7), value: proximityScale)
+        Circle()
+            .fill(Color.white)
+            .frame(width: 9, height: 9)
+            .shadow(color: .black.opacity(0.7), radius: 1)
+            .allowsHitTesting(false)
     }
 }
 
@@ -468,8 +453,7 @@ struct TargetCircleView: View {
             }
         }
         .frame(width: 36, height: 36)
-        .scaleEffect(isAligned ? 1.15 : 1)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isAligned)
+        .allowsHitTesting(false)
         // Status is outside layout. A label appearing must never shift the ring
         // above its projected point by changing the centre of a VStack.
         .overlay(alignment: .top) {
@@ -956,7 +940,7 @@ struct DirectorHUDCard: View {
                     Circle()
                         .fill(isCompleted ? Color.green : Color.yellow)
                         .frame(width: 6, height: 6)
-                    Text(isCompleted ? "HOÀN TẤT ✓" : "Tâm \(currentIndex + 1)/\(totalCount)")
+                    Text(isCompleted ? "HOÀN TẤT \u{2713}" : "Tâm \(currentIndex + 1)/\(totalCount)")
                         .font(.system(size: 10, weight: .heavy, design: .rounded))
                         .foregroundColor(isCompleted ? .green : .yellow)
                 }
@@ -975,7 +959,7 @@ struct DirectorHUDCard: View {
             // Director Tip
             if !guidance.directorTip.isEmpty {
                 HStack(alignment: .top, spacing: 5) {
-                    Text("💡")
+                    Text("\u{1f4a1}")
                         .font(.system(size: 10))
                     Text(guidance.directorTip)
                         .font(.system(size: 10.5, weight: .regular, design: .rounded))

@@ -209,7 +209,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         guard value.isFinite, value > 0 else { return }
         lock.withLock {
             zoom = Double(value)
-            if !calibration.isMeasured { calibration = .fallback(zoom: zoom, aspect: calibration.aspect) }
+            // KVO precedes the image exposed at that zoom. Keep the last image
+            // calibration until registerFrame delivers its matching geometry.
+            if !lastFrameTime.isFinite {
+                calibration = .fallback(zoom: zoom, aspect: calibration.aspect)
+            }
         }
     }
 
@@ -330,8 +334,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 // Once the innovation gate has seen the same displacement on
                 // distinct images, follow real subject motion promptly. Small
                 // static jitter still takes the quieter ordinary filter path.
-                let motionGain = residual > 0.015 ?
-                    (evidence == .geometryContinuation ? 0.60 : 0.75) : 0.0
+                let motionFraction = min(1, max(0, (Double(residual) - 0.02) / 0.08))
+                let motionGain = motionFraction * motionFraction * (3 - 2 * motionFraction) *
+                    (evidence == .geometryContinuation ? 0.50 : 0.65)
                 let nominalGain = max(ordinaryGain * residualWeight * evidenceWeight,
                                       motionGain)
                 // Rate is per second, not per delivered frame (Vision FPS varies).
@@ -394,7 +399,12 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                                       simd_dot(rendered, reticleRay))
             let settled = settlingAngle * max(calibration.fx, calibration.fy) < 0.008
             if settled { presentationIsRecovering = false }
-            let projected = calibration.project(deviceRay: sample.deviceToWorld.inverse.act(rendered))
+            // Paint onto the latest camera image, using its pose and intrinsics
+            // together. Projecting an older image with the newest IMU pose makes
+            // the ring lead the subject and oscillate during a handheld pan.
+            let imagePose = (now - lastFrameTime <= 0.20 ?
+                TrackingGeometry.pose(at: lastFrameTime, in: history) : nil) ?? sample.deviceToWorld
+            let projected = calibration.project(deviceRay: imagePose.inverse.act(rendered))
             if projected.point.x.isFinite, projected.point.y.isFinite {
                 estimated = projected.point
                 let age = now - lastAccepted

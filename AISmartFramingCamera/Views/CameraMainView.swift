@@ -733,4 +733,3 @@ struct CameraHibernationStandbyView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
-

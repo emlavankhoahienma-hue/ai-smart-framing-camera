@@ -524,8 +524,8 @@ struct PhotoCaptureSettingsSection: View {
                 Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
-                    title: "Chụp Siêu Nét Đa Khung RAW",
-                    subtitle: "Ghép 8 ảnh RAW, căn chỉnh rung tay và khử bóng ma. Tối đa 48 MP khi thiết bị đủ bộ nhớ.",
+                    title: "Độ phân giải gốc cao nhất",
+                    subtitle: "Yêu cầu tối đa 48 MP nếu camera hỗ trợ. Tắt Live Photo cho lần chụp này. DNG luôn lưu file RAW gốc.",
                     icon: "sparkles.rectangle.stack.fill",
                     iconColor: amberGold,
                     isOn: $viewModel.isSuperResolutionRAWEnabled
@@ -1116,14 +1116,14 @@ struct AIFramingSettingsSection: View {
                 if let res = testResult {
                     Text(res)
                         .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(res.contains("❌") ? .red : .green)
+                        .foregroundColor(res.contains("\u{274c}") ? .red : .green)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.black.opacity(0.40))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(res.contains("❌") ? Color.red.opacity(0.3) : Color.green.opacity(0.3), lineWidth: 1)
+                                .stroke(res.contains("\u{274c}") ? Color.red.opacity(0.3) : Color.green.opacity(0.3), lineWidth: 1)
                         )
                 }
 
@@ -1239,7 +1239,7 @@ struct AdvancedSettingsSection: View {
                                 .foregroundColor(.red)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else {
-                            Text("✓ Hệ thống đang chạy ổn định. Không có cảnh báo lỗi.")
+                            Text("\u{2713} Hệ thống đang chạy ổn định. Không có cảnh báo lỗi.")
                                 .font(.system(size: 11))
                                 .foregroundColor(.gray)
                         }
@@ -1279,7 +1279,7 @@ struct AdvancedSettingsSection: View {
                     HStack(spacing: 12) {
                         SettingsRowIcon("cup.and.saucer.fill", color: amberGold)
 
-                        Text("Ủng hộ tác giả ☕")
+                        Text("Ủng hộ tác giả \u{2615}")
                             .font(.system(size: 14.5, weight: .bold, design: .rounded))
                             .foregroundColor(amberGold)
 

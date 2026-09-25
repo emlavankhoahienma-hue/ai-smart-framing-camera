@@ -193,11 +193,18 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     public func refineAnchorBox(around point: CGPoint, in buffer: CVPixelBuffer,
                                 orientation: CGImagePropertyOrientation = .up) -> CGRect? {
+        // Keep the full person in the crop when the user taps a face. These
+        // requests are local to this analysis; they never mutate live tracking.
+        let people = VNDetectHumanRectanglesRequest()
+        people.upperBodyOnly = false
         let face = VNDetectFaceRectanglesRequest()
         let saliency = VNGenerateObjectnessBasedSaliencyImageRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-        guard (try? handler.perform([face, saliency])) != nil else { return nil }
+        guard (try? handler.perform([people, face, saliency])) != nil else { return nil }
         let visionPoint = CGPoint(x: point.x, y: 1 - point.y)
+        if let body = (people.results ?? []).map(\.boundingBox)
+            .filter({ $0.contains(visionPoint) && $0.width > 0.03 && $0.height > 0.03 })
+            .min(by: { $0.width * $0.height < $1.width * $1.height }) { return body }
         let boxes = (face.results ?? []).map(\.boundingBox) +
             (saliency.results?.first?.salientObjects ?? []).map(\.boundingBox)
         return boxes.filter { $0.contains(visionPoint) && $0.width > 0.03 && $0.height > 0.03 }

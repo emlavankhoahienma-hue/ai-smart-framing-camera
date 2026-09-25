@@ -51,10 +51,11 @@ public struct CameraPreviewView: UIViewRepresentable {
                 return
             }
 
-            let normalizedPoint = CGPoint(x: location.x / max(1.0, view.bounds.width), y: location.y / max(1.0, view.bounds.height))
+            let normalizedPoint = TrackingGeometry.bufferPoint(location, size: view.bounds.size,
+                aspect: SpatialTrackingEngine.shared.currentBufferAspect)
             let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location)
             parent.viewModel.userDidTapToFocus(at: normalizedPoint, devicePoint: devicePoint)
-            view.showFocusRing(at: location)
+            if parent.viewModel.captureMode.isVideo { view.showFocusRing(at: location) }
         }
 
         @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
@@ -75,10 +76,8 @@ public struct CameraPreviewView: UIViewRepresentable {
         @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
             guard gesture.state == .began, let view = gesture.view as? PreviewContainerView else { return }
             let location = gesture.location(in: view)
-            let normalizedPoint = CGPoint(
-                x: location.x / max(1.0, view.bounds.width),
-                y: location.y / max(1.0, view.bounds.height)
-            )
+            let normalizedPoint = TrackingGeometry.bufferPoint(location, size: view.bounds.size,
+                aspect: SpatialTrackingEngine.shared.currentBufferAspect)
             guard let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location) else { return }
             parent.viewModel.lockAEAF(at: normalizedPoint, devicePoint: devicePoint)
             view.showFocusRing(at: location, persist: true)

@@ -1,6 +1,9 @@
 import SwiftUI
 import Photos
 import UIKit
+import UniformTypeIdentifiers
+import CoreTransferable
+import Combine
 
 public struct CapturedPhotoPreviewView: View {
     let item: CapturedPhotoItem
@@ -17,10 +20,22 @@ public struct CapturedPhotoPreviewView: View {
     @State private var aiOptimizationSuccessNote: String? = nil
     @State private var aiErrorMessage: String? = nil
     @State private var aiLatency: Int = 0
+    @State private var renderGeneration = 0
     @State private var hasSavedNewEnhancement: Bool = false
     @State private var selectedPreviewPreset: FilmPreset
     @State private var currentAIParams: AIColorParameters?
     @State private var aiRecommendedPreset: FilmPreset? = nil
+
+
+    private var shareButtonLabel: some View {
+        Label("Chia sẻ", systemImage: "square.and.arrow.up")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 11)
+            .background(Color.white.opacity(0.12))
+            .cornerRadius(10)
+    }
 
     // MARK: - Zoom & Pan Inspection States (Modern iPhone Style)
     @State private var zoomScale: CGFloat = 1.0
@@ -216,6 +231,9 @@ public struct CapturedPhotoPreviewView: View {
                                         .font(.system(size: 13))
                                         .foregroundColor(.white.opacity(0.7))
                                 }
+                                Text(item.saveFormat == .dng ? "DNG gốc · Ảnh hiển thị là bản xem trước" : item.resolutionDescription)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.7))
                                 Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
                                     .font(.system(size: 11))
                                     .foregroundColor(.white.opacity(0.5))
@@ -354,27 +372,26 @@ public struct CapturedPhotoPreviewView: View {
                             }
 
                             // Nút Chia sẻ
-                            ShareLink(
-                                item: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up),
-                                preview: SharePreview("AlignAI Photo", image: Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up))
-                            ) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "square.and.arrow.up")
-                                        .font(.system(size: 13, weight: .semibold))
-                                    Text("Chia sẻ")
-                                        .font(.system(size: 13, weight: .semibold))
+                            if item.saveFormat == .dng, let data = item.rawPhotoData {
+                                ShareLink(item: OriginalDNGShare(data: data),
+                                    preview: SharePreview("AlignAI DNG", image: Image(decorative: item.originalImage, scale: 1, orientation: .up))) {
+                                    shareButtonLabel
                                 }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 11)
-                                .background(Color.white.opacity(0.12))
-                                .cornerRadius(10)
+                            } else {
+                                ShareLink(item: Image(decorative: currentProcessedImage, scale: 1, orientation: .up),
+                                    preview: SharePreview("AlignAI Photo", image: Image(decorative: currentProcessedImage, scale: 1, orientation: .up))) {
+                                    shareButtonLabel
+                                }
                             }
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
                 }
+            }
+            .onReceive(viewModel.map { $0.$saveErrorMessage.eraseToAnyPublisher() } ??
+                Just<String?>(nil).eraseToAnyPublisher()) { message in
+                if let message { aiErrorMessage = message }
             }
             .navigationTitle("Chi tiết ảnh")
             .navigationBarTitleDisplayMode(.inline)
@@ -623,6 +640,10 @@ public struct CapturedPhotoPreviewView: View {
 
     // MARK: - Subtle AI Sharpness Action (Làm nét nhẹ AI - Giữ 100% màu sắc & chất ảnh)
     private func toggleAISharpness() {
+        guard item.saveFormat != .dng else {
+            aiOptimizationSuccessNote = "DNG giữ nguyên dữ liệu gốc. Chọn JPEG/HEIF để dùng bộ lọc."
+            return
+        }
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.prepare()
         generator.impactOccurred()
@@ -643,7 +664,7 @@ public struct CapturedPhotoPreviewView: View {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         self.isAISharpnessEnabled = true
                         self.currentProcessedImage = sharpened
-                        self.aiOptimizationSuccessNote = "✨ Đã bật làm nét nhẹ AI (bảo toàn 100% màu sắc)"
+                        self.aiOptimizationSuccessNote = "\u{2728} Đã bật làm nét nhẹ AI (bảo toàn 100% màu sắc)"
                     }
                 }
             }
@@ -652,22 +673,30 @@ public struct CapturedPhotoPreviewView: View {
 
     // MARK: - Preset Switcher Action
     private func applyPresetToPreview(_ preset: FilmPreset) {
+        guard item.saveFormat != .dng else {
+            aiOptimizationSuccessNote = "DNG giữ nguyên dữ liệu gốc. Chọn JPEG/HEIF để dùng bộ lọc."
+            return
+        }
         let generator = UISelectionFeedbackGenerator()
         generator.prepare()
         generator.selectionChanged()
 
+        renderGeneration += 1
+        let generation = renderGeneration
+        let sharpen = isAISharpnessEnabled
         selectedPreviewPreset = preset
         let original = item.originalImage
         let params = currentAIParams
         DispatchQueue.global(qos: .userInitiated).async {
             let rendered = FilmFilterEngine.shared.applyPresetAndAIParameters(to: original, preset: preset, params: params) ?? original
             let finalImage: CGImage
-            if self.isAISharpnessEnabled {
+            if sharpen {
                 finalImage = FilmFilterEngine.shared.applySubtleAISharpness(to: rendered, intensity: 0.50) ?? rendered
             } else {
                 finalImage = rendered
             }
             DispatchQueue.main.async {
+                guard self.renderGeneration == generation else { return }
                 self.baseProcessedImage = rendered
                 withAnimation(.easeInOut(duration: 0.2)) {
                     self.currentProcessedImage = finalImage
@@ -680,6 +709,10 @@ public struct CapturedPhotoPreviewView: View {
     // MARK: - Post-Capture AI Color Optimization (AI Color Director)
 
     private func optimizeWithAIStudio() {
+        guard item.saveFormat != .dng else {
+            aiOptimizationSuccessNote = "DNG giữ nguyên dữ liệu gốc. Chọn JPEG/HEIF để dùng bộ lọc."
+            return
+        }
         guard !isOptimizingWithAI else { return }
         isOptimizingWithAI = true
         aiErrorMessage = nil
@@ -718,7 +751,7 @@ public struct CapturedPhotoPreviewView: View {
                             self.currentProcessedImage = finalImage
                             self.splitOffset = 1.0
                         }
-                        self.aiOptimizationSuccessNote = "✨ AI khuyên dùng \(chosenPreset.displayName): \(explanation) (\(latency)ms)"
+                        self.aiOptimizationSuccessNote = "\u{2728} AI khuyên dùng \(chosenPreset.displayName): \(explanation) (\(latency)ms)"
                         self.saveEnhancedImageToPhotos(finalImage, appliedPreset: chosenPreset, aiParams: aiParams)
                     }
                 case .failure(let error):
@@ -729,6 +762,28 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     private func saveEnhancedImageToPhotos(_ cgImage: CGImage, appliedPreset: FilmPreset? = nil, aiParams: AIColorParameters? = nil) {
+        if item.saveFormat == .dng {
+            if let vm = viewModel {
+                vm.savePhotoToLibrary(item) { success in
+                    self.hasSavedNewEnhancement = success
+                    if !success { self.aiErrorMessage = vm.saveErrorMessage }
+                }
+            } else if let data = item.rawPhotoData, SuperResolutionRAWEngine.isDNGData(data) {
+                let access: PHAccessLevel = Bundle.main.object(forInfoDictionaryKey: "NSPhotoLibraryAddUsageDescription") != nil ? .addOnly : .readWrite
+                PHPhotoLibrary.requestAuthorization(for: access) { status in
+                    guard status == .authorized || status == .limited else { return }
+                    PHPhotoLibrary.shared().performChanges({
+                        let options = PHAssetResourceCreationOptions()
+                        options.uniformTypeIdentifier = "com.adobe.raw-image"
+                        options.originalFilename = "AlignAI.dng"
+                        PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: options)
+                    }) { success, _ in
+                        DispatchQueue.main.async { self.hasSavedNewEnhancement = success }
+                    }
+                }
+            }
+            return
+        }
         let presetToSave = appliedPreset ?? selectedPreviewPreset
         let paramsToSave = aiParams ?? currentAIParams ?? item.aiColorParameters
 
@@ -738,6 +793,8 @@ public struct CapturedPhotoPreviewView: View {
                 originalImage: item.originalImage,
                 processedImage: cgImage,
                 rawPhotoData: item.rawPhotoData,
+                saveFormat: item.saveFormat,
+                preservesOriginalFile: false,
                 livePhotoMovieURL: item.livePhotoMovieURL,
                 sceneType: item.sceneType,
                 appliedPreset: presetToSave,
@@ -748,40 +805,30 @@ public struct CapturedPhotoPreviewView: View {
                 shutterSpeed: item.shutterSpeed,
                 aiColorParameters: paramsToSave
             )
-            vm.savePhotoToLibrary(updatedItem)
-            self.hasSavedNewEnhancement = true
+            vm.savePhotoToLibrary(updatedItem) { success in
+                self.hasSavedNewEnhancement = success
+                if !success { self.aiErrorMessage = vm.saveErrorMessage }
+            }
         } else {
-            // Fallback lưu độc lập: vẫn giữ Live Photo nếu có video movieURL
-            if let liveMovieURL = item.livePhotoMovieURL, FileManager.default.fileExists(atPath: liveMovieURL.path) {
-                PHPhotoLibrary.shared().performChanges({
-                    let creationRequest = PHAssetCreationRequest.forAsset()
-                    let photoOptions = PHAssetResourceCreationOptions()
-                    let uiImage = UIImage(cgImage: cgImage)
-                    if let jpegData = uiImage.jpegData(compressionQuality: 0.95) {
-                        creationRequest.addResource(with: .photo, data: jpegData, options: photoOptions)
-                    }
-                    let videoOptions = PHAssetResourceCreationOptions()
-                    videoOptions.shouldMoveFile = false
-                    creationRequest.addResource(with: .pairedVideo, fileURL: liveMovieURL, options: videoOptions)
-                }) { success, error in
-                    DispatchQueue.main.async {
-                        if success {
-                            self.hasSavedNewEnhancement = true
-                        }
-                    }
-                }
-            } else {
-                let uiImage = UIImage(cgImage: cgImage)
-                PHPhotoLibrary.shared().performChanges({
-                    PHAssetChangeRequest.creationRequestForAsset(from: uiImage)
-                }) { success, error in
-                    DispatchQueue.main.async {
-                        if success {
-                            self.hasSavedNewEnhancement = true
-                        }
-                    }
+            let uiImage = UIImage(cgImage: cgImage)
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetChangeRequest.creationRequestForAsset(from: uiImage)
+            }) { success, error in
+                DispatchQueue.main.async {
+                    self.hasSavedNewEnhancement = success
+                    if !success { self.aiErrorMessage = error?.localizedDescription }
                 }
             }
         }
+    }
+}
+
+private struct OriginalDNGShare: Transferable {
+    let data: Data
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(exportedContentType: UTType(filenameExtension: "dng") ?? .rawImage) { value in
+            value.data
+        }
+        .suggestedFileName("AlignAI.dng")
     }
 }

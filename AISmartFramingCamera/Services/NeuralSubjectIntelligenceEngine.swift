@@ -7,11 +7,11 @@ import CoreML
 
 /// Phân loại danh mục chủ thể đời thực
 public enum NeuralSubjectCategory: String {
-    case human = "👤 Người (Human Body)"
-    case face = "😀 Khuôn mặt (Human Face)"
-    case animal = "🐶🐱 Thú cưng / Động vật"
-    case foregroundObject = "📦 Vật thể tiền cảnh (Object)"
-    case general = "🖼️ Cảnh quan chung"
+    case human = "\u{1f464} Người (Human Body)"
+    case face = "\u{1f600} Khuôn mặt (Human Face)"
+    case animal = "\u{1f436}\u{1f431} Thú cưng / Động vật"
+    case foregroundObject = "\u{1f4e6} Vật thể tiền cảnh (Object)"
+    case general = "\u{1f5bc}\u{fe0f} Cảnh quan chung"
     
     /// Trọng số ưu tiên (Hệ số trí tuệ nhân tạo)
     public var priorityWeight: Double {

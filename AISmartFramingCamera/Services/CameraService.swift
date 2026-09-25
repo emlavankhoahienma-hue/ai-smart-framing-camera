@@ -8,7 +8,7 @@ import ImageIO
 public protocol CameraServiceDelegate: AnyObject {
     func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
     @MainActor
-    func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double)
+    func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double, format: PhotoSaveFormat, requestedHighResolution: Bool)
     @MainActor
     func cameraService(_ service: CameraService, didFailCaptureWithError error: Error)
     @MainActor
@@ -43,11 +43,20 @@ public struct LiveCameraStats {
 public enum CameraServiceError: LocalizedError {
     case captureAlreadyInProgress
     case photoProcessingFailed
+    case rawUnavailable
+    case cameraNotReady
+    case captureTimedOut
 
     public var errorDescription: String? {
         switch self {
         case .captureAlreadyInProgress:
             return "A photo capture is already in progress."
+        case .rawUnavailable:
+            return "Camera hiện tại không hỗ trợ DNG. Chọn camera sau hỗ trợ RAW hoặc đổi định dạng."
+        case .cameraNotReady:
+            return "Camera chưa sẵn sàng chụp ảnh."
+        case .captureTimedOut:
+            return "Camera mất quá nhiều thời gian để trả ảnh."
         case .photoProcessingFailed:
             return "The camera returned photo data that could not be decoded."
         }
@@ -113,13 +122,24 @@ public final class CameraService: NSObject {
     // Callback thông báo độ phân giải và FPS video phần cứng
     public var onActiveVideoFormatChanged: ((String) -> Void)?
 
-    // Live Photo capture coordination state
-    private var isCapturingLivePhotoRequest = false
-    private var currentPhotoCaptured: (cgImage: CGImage, rawData: Data?, iso: Float, shutter: Double)?
-    private var currentLivePhotoURL: URL?
+    // All capture state belongs to sessionQueue. RAW and its processed preview
+    // are delivered separately and may arrive in either order.
+    private struct PhotoRequest {
+        let id: Int64
+        let format: PhotoSaveFormat
+        let highResolution: Bool
+        var fileData: Data?
+        var preview: CGImage?
+        var movieURL: URL?
+        var iso: Float = 100
+        var shutter: Double = 1.0 / 125.0
+        var error: Error?
+        var failureReported = false
+    }
+    private var pendingPhoto: PhotoRequest?
     private var lastStatsUpdateTime: TimeInterval = 0
     private var isPhotoCaptureInFlight = false
-    private var activeBurstDelegate: SuperResolutionBurstCaptureDelegate?
+
     private var notificationObservers: [NSObjectProtocol] = []
 
     private override init() {
@@ -183,6 +203,10 @@ public final class CameraService: NSObject {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
 
+            if self.videoDeviceInput != nil {
+                DispatchQueue.main.async { completion(true) }
+                return
+            }
             self.captureSession.beginConfiguration()
             self.captureSession.sessionPreset = .photo
 
@@ -291,6 +315,9 @@ public final class CameraService: NSObject {
                 if self.captureSession.canAddOutput(self.videoDataOutput) {
                     self.captureSession.addOutput(self.videoDataOutput)
                     self.videoDataOutput.alwaysDiscardsLateVideoFrames = true
+                    // Tracking needs preview pixels, not 48 MP BGRA buffers.
+                    self.videoDataOutput.automaticallyConfiguresOutputBufferDimensions = false
+                    self.videoDataOutput.deliversPreviewSizedOutputBuffers = true
                     self.videoDataOutput.videoSettings = [
                         kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
                     ]
@@ -306,8 +333,11 @@ public final class CameraService: NSObject {
                 // Photo Output
                 if self.captureSession.canAddOutput(self.photoOutput) {
                     self.captureSession.addOutput(self.photoOutput)
-                    self.updateMaxPhotoDimensions(for: camera)
                     self.photoOutput.maxPhotoQualityPrioritization = .quality
+                    if self.photoOutput.isAppleProRAWSupported {
+                        self.photoOutput.isAppleProRAWEnabled = true
+                    }
+                    self.updateMaxPhotoDimensions(for: camera)
 
                     if #available(iOS 17.0, *) {
                         if self.photoOutput.isZeroShutterLagSupported {
@@ -317,10 +347,11 @@ public final class CameraService: NSObject {
                             self.photoOutput.isResponsiveCaptureEnabled = true
                         }
                         if self.photoOutput.isFastCapturePrioritizationSupported {
-                            self.photoOutput.isFastCapturePrioritizationEnabled = true
+                            self.photoOutput.isFastCapturePrioritizationEnabled = false
                         }
                         if self.photoOutput.isAutoDeferredPhotoDeliverySupported {
-                            self.photoOutput.isAutoDeferredPhotoDeliveryEnabled = true
+                            // This app saves full files and does not consume deferred proxies.
+                            self.photoOutput.isAutoDeferredPhotoDeliveryEnabled = false
                         }
                     }
 
@@ -418,7 +449,7 @@ public final class CameraService: NSObject {
     // MARK: - Camera Position (Switch Front / Back)
     public func switchCamera() {
         sessionQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !self.isPhotoCaptureInFlight else { return }
             let targetPosition: AVCaptureDevice.Position = (self.currentCameraPosition == .back) ? .front : .back
             let discovery = AVCaptureDevice.DiscoverySession(
                 deviceTypes: targetPosition == .front ? [.builtInWideAngleCamera] : [.builtInTripleCamera, .builtInDualWideCamera, .builtInWideAngleCamera],
@@ -445,10 +476,19 @@ public final class CameraService: NSObject {
                     self.currentCameraPosition = targetPosition
                     self.minZoom = newCamera.minAvailableVideoZoomFactor
                     self.maxZoom = min(newCamera.maxAvailableVideoZoomFactor, 5.0)
-                    self.displayMultiplier = 1.0
-                    self.hasUltraWideLens = false
-                    self.availableDisplayZoomOptions = [1.0, 2.0]
+                    let factors = newCamera.virtualDeviceSwitchOverVideoZoomFactors
+                    let wideBase = (newCamera.deviceType == .builtInTripleCamera ||
+                                    newCamera.deviceType == .builtInDualWideCamera) ?
+                        CGFloat(factors.first?.doubleValue ?? 1) : 1
+                    self.displayMultiplier = wideBase
+                    self.hasUltraWideLens = wideBase > 1
+                    self.maxZoom = min(newCamera.maxAvailableVideoZoomFactor, wideBase * 5)
+                    self.availableDisplayZoomOptions = (wideBase > 1 ? [0.5, 1, 2, 3, 5] : [1, 2, 3, 5])
+                        .filter { $0 * wideBase <= self.maxZoom }
                     self.defaultDisplayZoom = 1.0
+                    try newCamera.lockForConfiguration()
+                    newCamera.videoZoomFactor = min(self.maxZoom, max(self.minZoom, wideBase))
+                    newCamera.unlockForConfiguration()
 
                     self.zoomObservation?.invalidate()
                     self.zoomObservation = newCamera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
@@ -464,8 +504,15 @@ public final class CameraService: NSObject {
                             connection.videoOrientation = .portrait
                         }
                         if connection.isVideoMirroringSupported {
+                            connection.automaticallyAdjustsVideoMirroring = false
                             connection.isVideoMirrored = (targetPosition == .front)
                         }
+                    }
+                    if let connection = self.photoOutput.connection(with: .video) {
+                        self.configurePhotoConnection(connection)
+                    }
+                    if self.photoOutput.isAppleProRAWSupported {
+                        self.photoOutput.isAppleProRAWEnabled = true
                     }
                     self.updateMaxPhotoDimensions(for: newCamera)
                     let initialZoom = newCamera.videoZoomFactor
@@ -491,7 +538,7 @@ public final class CameraService: NSObject {
     // MARK: - Zoom Control
     public func setZoomFactor(_ factor: CGFloat) {
         sessionQueue.async { [weak self] in
-            guard let self = self, let camera = self.activeCamera else { return }
+            guard let self = self, !self.isPhotoCaptureInFlight, let camera = self.activeCamera else { return }
             guard factor.isFinite else {
                 CameraLogger.warning("CameraService: Bỏ qua zoom không hữu hạn", category: .capture)
                 return
@@ -514,7 +561,7 @@ public final class CameraService: NSObject {
 
     public func smoothZoomFactor(to factor: CGFloat, rate: Float = 2.2) {
         sessionQueue.async { [weak self] in
-            guard let self = self, let camera = self.activeCamera else { return }
+            guard let self = self, !self.isPhotoCaptureInFlight, let camera = self.activeCamera else { return }
             guard factor.isFinite, rate.isFinite, rate > 0 else {
                 CameraLogger.warning("CameraService: Bỏ qua zoom/rate không hợp lệ", category: .capture)
                 return
@@ -846,7 +893,7 @@ public final class CameraService: NSObject {
     // MARK: - Capture Mode & Live Photo Dynamic Control
     public func updateCaptureMode(_ mode: CameraCaptureMode) {
         sessionQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, !self.isPhotoCaptureInFlight else { return }
             self.currentCaptureMode = mode
             self.captureSession.beginConfiguration()
             if mode.isVideo {
@@ -886,6 +933,9 @@ public final class CameraService: NSObject {
                 self.captureSession.commitConfiguration()
                 if let camera = self.activeCamera {
                     self.updateMaxPhotoDimensions(for: camera)
+                }
+                if self.photoOutput.isAppleProRAWSupported {
+                    self.photoOutput.isAppleProRAWEnabled = true
                 }
             }
             let formatStr = self.getActiveVideoResolutionAndFPS()
@@ -932,6 +982,7 @@ public final class CameraService: NSObject {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             self.isLivePhotoMode = enabled
+            guard !self.isPhotoCaptureInFlight, !self.currentCaptureMode.isVideo else { return }
             if self.photoOutput.isLivePhotoCaptureSupported {
                 if self.photoOutput.isLivePhotoCaptureEnabled != enabled {
                     self.captureSession.beginConfiguration()
@@ -945,148 +996,97 @@ public final class CameraService: NSObject {
         }
     }
 
-    // MARK: - Capture Photo
-    public func capturePhoto(isDNG: Bool = false, isHEIF: Bool = false) {
+    private func configurePhotoConnection(_ connection: AVCaptureConnection) {
+        // The app's viewfinder is portrait. Let AVFoundation write EXIF once;
+        // processed preview decoding applies that EXIF once, DNG stays untouched.
+        if connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
+        if connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = currentCameraPosition == .front
+        }
+    }
+
+    // MARK: - Native photo capture
+    public func capturePhoto(isDNG: Bool = false, isHEIF: Bool = false,
+                             highResolution: Bool = false) {
         sessionQueue.async { [weak self] in
-            guard let self = self else { return }
-            guard !self.isPhotoCaptureInFlight else {
-                CameraLogger.warning("CameraService: Bỏ qua thao tác chụp lặp khi capture trước chưa hoàn tất", category: .capture)
+            guard let self else { return }
+            func reject(_ error: Error) {
                 DispatchQueue.main.async {
-                    self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.captureAlreadyInProgress)
-                }
-                return
-            }
-            self.isPhotoCaptureInFlight = true
-            self.currentPhotoCaptured = nil
-            self.currentLivePhotoURL = nil
-            self.isCapturingLivePhotoRequest = false
-
-            let photoSettings: AVCapturePhotoSettings
-            if isDNG, let rawFormat = self.photoOutput.availableRawPhotoPixelFormatTypes.first {
-                photoSettings = AVCapturePhotoSettings(rawPixelFormatType: rawFormat)
-                if let previewFormat = photoSettings.availablePreviewPhotoPixelFormatTypes.first {
-                    photoSettings.previewPhotoFormat = [kCVPixelBufferPixelFormatTypeKey as String: previewFormat]
-                }
-                CameraLogger.info("📸 Kích hoạt chụp RAW DNG thực thụ (Format: \(rawFormat))", category: .capture)
-            } else if isHEIF && self.photoOutput.availablePhotoCodecTypes.contains(.hevc) {
-                photoSettings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.hevc])
-                CameraLogger.info("📸 Kích hoạt chụp phần cứng HEIF/HEVC thực thụ", category: .capture)
-            } else {
-                photoSettings = AVCapturePhotoSettings()
-            }
-
-            if self.activeCamera?.isFlashAvailable == true {
-                photoSettings.flashMode = self.flashMode
-            }
-
-            if isDNG {
-                // Với RAW DNG, Apple yêu cầu photoQualityPrioritization phải tương thích với RAW output
-                let maxPrio = self.photoOutput.maxPhotoQualityPrioritization
-                photoSettings.photoQualityPrioritization = (maxPrio == .quality) ? .balanced : maxPrio
-            } else {
-                photoSettings.photoQualityPrioritization = .quality
-                let maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
-                if maxPhotoDimensions.width > 0, maxPhotoDimensions.height > 0 {
-                    photoSettings.maxPhotoDimensions = maxPhotoDimensions
+                    self.delegate?.cameraService(self, didFailCaptureWithError: error)
                 }
             }
-
-            if !isDNG && self.isLivePhotoMode && self.photoOutput.isLivePhotoCaptureSupported {
-                if !self.photoOutput.isLivePhotoCaptureEnabled {
-                    self.captureSession.beginConfiguration()
-                    self.photoOutput.isLivePhotoCaptureEnabled = true
-                    self.captureSession.commitConfiguration()
-                }
-                let tempDir = FileManager.default.temporaryDirectory
-                let movieURL = tempDir.appendingPathComponent("livephoto_\(UUID().uuidString).mov")
-                try? FileManager.default.removeItem(at: movieURL)
-                photoSettings.livePhotoMovieFileURL = movieURL
-                self.isCapturingLivePhotoRequest = true
-                CameraLogger.info("📸 Kích hoạt chụp LIVE PHOTO (Movie URL: \(movieURL.lastPathComponent))", category: .capture)
-            } else {
-                if !isDNG {
-                    CameraLogger.info("📸 Chụp ẢNH TĨNH tiêu chuẩn", category: .capture)
-                }
-            }
-
-            self.photoOutput.capturePhoto(with: photoSettings, delegate: self)
-        }
-    }
-
-    // MARK: - Super-Resolution RAW Burst Capture
-    public func captureSuperResolutionRAWBurst(
-        count: Int = 8,
-        progress: @escaping (Float) -> Void,
-        completion: @escaping ([SuperResolutionInputFrame]) -> Void
-    ) {
-        sessionQueue.async { [weak self] in
-            guard let self = self else { return }
             guard !self.isPhotoCaptureInFlight else {
-                CameraLogger.warning("CameraService: Bỏ qua chụp burst vì đang có tác vụ chụp khác", category: .capture)
-                DispatchQueue.main.async { completion([]) }
-                return
+                reject(CameraServiceError.captureAlreadyInProgress); return
             }
-            guard !self.photoOutput.availableRawPhotoPixelFormatTypes.isEmpty else {
-                CameraLogger.warning("CameraService: RAW capture is unavailable on the selected camera", category: .capture)
-                DispatchQueue.main.async { completion([]) }
-                return
+            guard self.captureSession.isRunning, !self.captureSession.isInterrupted,
+                  !self.currentCaptureMode.isVideo, let camera = self.activeCamera,
+                  let connection = self.photoOutput.connection(with: .video),
+                  connection.isActive else {
+                reject(CameraServiceError.cameraNotReady); return
             }
-            self.isPhotoCaptureInFlight = true
-
-            SpatialTrackingEngine.shared.prepare()
-            let targetCount = max(4, min(count, 8))
-            let burstDelegate = SuperResolutionBurstCaptureDelegate(
-                targetCount: targetCount,
-                cameraService: self,
-                progress: progress,
-                completion: { [weak self] frames in
-                    self?.sessionQueue.async {
-                        self?.isPhotoCaptureInFlight = false
-                        self?.activeBurstDelegate = nil
-                    }
-                    completion(frames)
+            self.configurePhotoConnection(connection)
+            let codec: AVVideoCodecType = isHEIF && self.photoOutput.availablePhotoCodecTypes.contains(.hevc)
+                ? .hevc : .jpeg
+            let settings: AVCapturePhotoSettings
+            let actualFormat: PhotoSaveFormat
+            if isDNG {
+                let formats = self.photoOutput.availableRawPhotoPixelFormatTypes
+                let bayer = formats.first(where: { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) })
+                let proRAW = formats.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) })
+                guard let raw = (highResolution ? proRAW ?? bayer : bayer ?? proRAW) else {
+                    reject(CameraServiceError.rawUnavailable); return
                 }
-            )
-            self.activeBurstDelegate = burstDelegate
-
-            CameraLogger.info("🚀 Bắt đầu chụp chuỗi RAW Super-Resolution: \(targetCount) frames tuần hoàn liên tục", category: .capture)
-
-            // Bắn frame đầu tiên vào ống dẫn
-            self.dispatchSingleBurstFrame(delegate: burstDelegate)
-
-            // RAW photo capture is serialized by AVFoundation and is not guaranteed
-            // to run at video frame rates. Allow the hardware time to finish.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 12.0) { [weak burstDelegate] in
-                burstDelegate?.cancelOrTimeout()
-            }
-        }
-    }
-
-    fileprivate func dispatchSingleBurstFrame(delegate: SuperResolutionBurstCaptureDelegate) {
-        sessionQueue.async { [weak self] in
-            guard let self = self, !delegate.isFinished else { return }
-            let rawFormat = self.photoOutput.availableRawPhotoPixelFormatTypes.first
-            let photoSettings: AVCapturePhotoSettings
-            if let rf = rawFormat {
-                photoSettings = AVCapturePhotoSettings(rawPixelFormatType: rf)
+                // Apple supplies a processed companion solely for display. The
+                // RAW callback's original fileDataRepresentation is what we save.
+                settings = AVCapturePhotoSettings(rawPixelFormatType: raw,
+                    processedFormat: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+                let isProRAW = AVCapturePhotoOutput.isAppleProRAWPixelFormat(raw)
+                settings.photoQualityPrioritization = isProRAW ? .quality : .speed
+                if !isProRAW { settings.isAutoStillImageStabilizationEnabled = false }
+                actualFormat = .dng
             } else {
-                photoSettings = AVCapturePhotoSettings()
+                settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
+                settings.photoQualityPrioritization = .quality
+                actualFormat = codec == .hevc ? .heif : .jpeg
             }
-
-            photoSettings.photoQualityPrioritization = .speed
-            photoSettings.flashMode = .off
-
-            self.photoOutput.capturePhoto(with: photoSettings, delegate: delegate)
+            let supported = camera.activeFormat.supportedMaxPhotoDimensions.sorted {
+                Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+            }
+            // maxPhotoDimensions is a ceiling, not a promise of 48 MP. Never
+            // upscale a smaller result or build a coloured image from a RAW buffer.
+            if let dimensions = highResolution ? supported.last : supported.first {
+                settings.maxPhotoDimensions = dimensions
+            }
+            if camera.isFlashAvailable && self.photoOutput.supportedFlashModes.contains(self.flashMode) {
+                settings.flashMode = self.flashMode
+            }
+            // Maximum resolution and RAW deliberately use a still capture.
+            if !isDNG && !highResolution && self.isLivePhotoMode &&
+               self.photoOutput.isLivePhotoCaptureSupported && self.photoOutput.isLivePhotoCaptureEnabled {
+                settings.livePhotoMovieFileURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("livephoto_\(UUID().uuidString).mov")
+            }
+            self.pendingPhoto = PhotoRequest(id: settings.uniqueID, format: actualFormat,
+                                            highResolution: highResolution)
+            self.isPhotoCaptureInFlight = true
+            self.photoOutput.capturePhoto(with: settings, delegate: self)
+            let requestID = settings.uniqueID
+            self.sessionQueue.asyncAfter(deadline: .now() + 30) { [weak self] in
+                guard let self, var request = self.pendingPhoto,
+                      request.id == requestID, !request.failureReported else { return }
+                request.failureReported = true
+                request.fileData = nil; request.preview = nil
+                self.pendingPhoto = request
+                // Keep the hardware busy flag until didFinishCaptureFor. A UI
+                // timeout does not mean AVFoundation has finished the request.
+                reject(CameraServiceError.captureTimedOut)
+            }
         }
     }
 
-    fileprivate func hostTimestamp(for photoTime: CMTime) -> TimeInterval? {
-        guard let sessionClock = captureSession.synchronizationClock else { return nil }
-        let converted = CMSyncConvertTime(
-            photoTime, from: sessionClock, to: CMClockGetHostTimeClock())
-        let seconds = CMTimeGetSeconds(converted)
-        return seconds.isFinite ? seconds : nil
-    }
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
@@ -1096,7 +1096,8 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
         let now = CACurrentMediaTime()
         if now - lastStatsUpdateTime >= 0.20 {
             lastStatsUpdateTime = now
-            if let camera = self.activeCamera {
+            sessionQueue.async { [weak self] in
+                guard let self, let camera = self.activeCamera else { return }
                 let iso = camera.iso
                 let duration = camera.exposureDuration
                 let rawSeconds = CMTimeGetSeconds(duration)
@@ -1131,121 +1132,71 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
 
 // MARK: - AVCapturePhotoCaptureDelegate
 extension CameraService: AVCapturePhotoCaptureDelegate {
-    public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        if let error = error {
-            CameraLogger.error("Lỗi chụp ảnh từ phần cứng AVFoundation", error: error, category: .capture)
-            self.currentPhotoCaptured = nil
-            self.currentLivePhotoURL = nil
-            self.isCapturingLivePhotoRequest = false
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.delegate?.cameraService(self, didFailCaptureWithError: error)
-            }
-            return
-        }
-
-        CameraLogger.info("Đã nhận buffer ảnh từ cảm biến camera", category: .capture)
-        let metadata = photo.metadata
-        let (iso, shutter) = Self.parseExif(metadata)
-        let rawData = photo.fileDataRepresentation()
-
-        autoreleasepool {
-            var finalCGImage: CGImage? = nil
-
-            if let pixelBuffer = photo.pixelBuffer {
-                var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-                if let orientationNum = metadata[kCGImagePropertyOrientation as String] as? UInt32,
-                   let cgOrientation = CGImagePropertyOrientation(rawValue: orientationNum) {
-                    ciImage = ciImage.oriented(cgOrientation)
+    public func photoOutput(_ output: AVCapturePhotoOutput,
+                            didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        sessionQueue.async { [weak self] in
+            guard let self, var request = self.pendingPhoto,
+                  request.id == photo.resolvedSettings.uniqueID, !request.failureReported else { return }
+            if let error { request.error = error }
+            else if let data = photo.fileDataRepresentation() {
+                if photo.isRawPhoto {
+                    // No CIRAWFilter, tone map, crop, orientation rewrite or re-encode.
+                    request.fileData = data
+                    (request.iso, request.shutter) = Self.parseExif(photo.metadata)
                 } else {
-                    ciImage = ciImage.oriented(.right)
+                    request.preview = autoreleasepool {
+                        SuperResolutionRAWEngine.decodeProcessedPhoto(data, context: self.sharedPhotoContext)
+                    }
+                    if request.format != .dng {
+                        request.fileData = data
+                        (request.iso, request.shutter) = Self.parseExif(photo.metadata)
+                    }
                 }
+            } else { request.error = CameraServiceError.photoProcessingFailed }
+            self.pendingPhoto = request
+        }
+    }
 
-                finalCGImage = self.sharedPhotoContext.createCGImage(ciImage, from: ciImage.extent)
-            }
+    public func photoOutput(_ output: AVCapturePhotoOutput,
+                            didFinishProcessingLivePhotoToMovieFileAt outputFileURL: URL,
+                            duration: CMTime, photoDisplayTime: CMTime,
+                            resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
+        sessionQueue.async { [weak self] in
+            guard let self, var request = self.pendingPhoto,
+                  request.id == resolvedSettings.uniqueID else { return }
+            if error == nil { request.movieURL = outputFileURL }
+            else { CameraLogger.warning("Live Photo movie unavailable; keeping the still", category: .capture) }
+            self.pendingPhoto = request
+        }
+    }
 
-            if finalCGImage == nil, let previewCG = photo.previewCGImageRepresentation() {
-                finalCGImage = previewCG
-            }
-
-            if finalCGImage == nil, let data = rawData {
-                let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
-                if let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) {
-                    let thumbOptions = [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: 4032
-                    ] as CFDictionary
-                    finalCGImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions)
-                        ?? CGImageSourceCreateImageAtIndex(source, 0, sourceOptions)
+    public func photoOutput(_ output: AVCapturePhotoOutput,
+                            didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings,
+                            error: Error?) {
+        sessionQueue.async { [weak self] in
+            guard let self, let request = self.pendingPhoto,
+                  request.id == resolvedSettings.uniqueID else { return }
+            self.pendingPhoto = nil
+            self.isPhotoCaptureInFlight = false
+            self.setLivePhotoCaptureEnabled(self.isLivePhotoMode)
+            guard !request.failureReported else { return }
+            if let failure = error ?? request.error {
+                DispatchQueue.main.async {
+                    self.delegate?.cameraService(self, didFailCaptureWithError: failure)
                 }
+                return
             }
-
-            if finalCGImage == nil, let data = rawData, let uiImage = UIImage(data: data) {
-                let uprightImage = Self.fixOrientation(uiImage)
-                finalCGImage = uprightImage.cgImage
-            }
-
-            guard let cgImage = finalCGImage else {
-                CameraLogger.error("Không thể tạo CGImage từ AVCapturePhoto", category: .capture)
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
+            guard let image = request.preview, let data = request.fileData else {
+                DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.photoProcessingFailed)
                 }
                 return
             }
-
-            CameraLogger.info("Đã render CGImage thành công (\(cgImage.width)x\(cgImage.height))", category: .capture)
-
-            if self.isCapturingLivePhotoRequest {
-                // Tạm lưu lại và chờ file video Live Photo hoàn tất
-                self.currentPhotoCaptured = (cgImage, rawData, iso, shutter)
-            } else {
-                // Ảnh tĩnh thường: Dispatch ngay
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.delegate?.cameraService(self, didCapturePhoto: cgImage, rawData: rawData, livePhotoMovieURL: nil, iso: iso, shutterSpeed: shutter)
-                }
-            }
-        }
-    }
-
-    public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingLivePhotoToMovieFileAt outputFileURL: URL, duration: CMTime, photoDisplayTime: CMTime, resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
-        if let error = error {
-            CameraLogger.error("Lỗi ghi file video Live Photo: \(error.localizedDescription)", error: error, category: .capture)
-            self.currentLivePhotoURL = nil
-        } else {
-            CameraLogger.success("✅ Đã ghi xong file video Live Photo (\(outputFileURL.lastPathComponent))", category: .capture)
-            self.currentLivePhotoURL = outputFileURL
-        }
-    }
-
-    public func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
-        sessionQueue.async { [weak self] in
-            self?.isPhotoCaptureInFlight = false
-        }
-        if let error = error {
-            CameraLogger.error("Phiên chụp kết thúc với lỗi", error: error, category: .capture)
-            currentPhotoCaptured = nil
-            currentLivePhotoURL = nil
-            isCapturingLivePhotoRequest = false
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.delegate?.cameraService(self, didFailCaptureWithError: error)
-            }
-            return
-        }
-        if self.isCapturingLivePhotoRequest {
-            guard let captured = self.currentPhotoCaptured else { return }
-            let movieURL = self.currentLivePhotoURL
-            self.currentPhotoCaptured = nil
-            self.currentLivePhotoURL = nil
-            self.isCapturingLivePhotoRequest = false
-
-            CameraLogger.info("Hoàn tất phiên Live Photo -> Gửi ảnh + movie (\(movieURL?.lastPathComponent ?? "không có"))", category: .capture)
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.delegate?.cameraService(self, didCapturePhoto: captured.cgImage, rawData: captured.rawData, livePhotoMovieURL: movieURL, iso: captured.iso, shutterSpeed: captured.shutter)
+            CameraLogger.info("Native photo: \(image.width)x\(image.height), \(request.format.rawValue)", category: .capture)
+            DispatchQueue.main.async {
+                self.delegate?.cameraService(self, didCapturePhoto: image, rawData: data,
+                    livePhotoMovieURL: request.movieURL, iso: request.iso, shutterSpeed: request.shutter,
+                    format: request.format, requestedHighResolution: request.highResolution)
             }
         }
     }
@@ -1290,109 +1241,6 @@ extension CameraService: AVCaptureFileOutputRecordingDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.delegate?.cameraService(self, didFinishRecordingVideoAt: outputFileURL)
-        }
-    }
-}
-
-// MARK: - SuperResolutionBurstCaptureDelegate
-final class SuperResolutionBurstCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
-    let targetCount: Int
-    let progress: (Float) -> Void
-    let completion: ([SuperResolutionInputFrame]) -> Void
-    weak var cameraService: CameraService?
-    var capturedFrames: [SuperResolutionInputFrame] = []
-    var isFinished = false
-    let lock = NSLock()
-    var attempts: Int = 0
-    let maxAttempts: Int
-
-    init(
-        targetCount: Int,
-        cameraService: CameraService,
-        progress: @escaping (Float) -> Void,
-        completion: @escaping ([SuperResolutionInputFrame]) -> Void
-    ) {
-        self.targetCount = targetCount
-        self.cameraService = cameraService
-        self.progress = progress
-        self.completion = completion
-        self.maxAttempts = targetCount + 3
-        super.init()
-    }
-
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !isFinished else { return }
-
-        if let error = error {
-            CameraLogger.warning("Super-Res Burst: Bỏ qua 1 frame lỗi: \(error.localizedDescription)", category: .capture)
-        } else if let payload = photo.fileDataRepresentation() {
-            let index = capturedFrames.count
-            let timestamp = cameraService?.hostTimestamp(for: photo.timestamp)
-                ?? CMTimeGetSeconds(photo.timestamp)
-            let metadata = photo.metadata
-            let (iso, shutter) = CameraService.parseExif(metadata)
-            let orientationNum = metadata[kCGImagePropertyOrientation as String] as? UInt32
-            let orientation = orientationNum.flatMap { CGImagePropertyOrientation(rawValue: $0) } ?? .up
-
-            let pose = SpatialTrackingEngine.shared.pose(at: timestamp)
-
-            let frame = SuperResolutionInputFrame(
-                index: index,
-                timestamp: timestamp,
-                // Keep only one copy of each frame. A retained RAW pixel buffer
-                // plus the DNG payload can exhaust the app before Metal starts.
-                pixelBuffer: nil,
-                rawData: payload,
-                orientation: orientation,
-                imuPose: pose,
-                iso: iso,
-                shutterSpeed: shutter,
-                metadata: metadata
-            )
-            capturedFrames.append(frame)
-
-            let p = Float(capturedFrames.count) / Float(targetCount)
-            DispatchQueue.main.async { [progress = self.progress] in
-                progress(p)
-            }
-        } else {
-            CameraLogger.warning("Super-Res Burst: RAW payload unavailable", category: .capture)
-        }
-
-        if capturedFrames.count >= targetCount { finish() }
-    }
-
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !isFinished else { return }
-        attempts += 1
-        if let error { CameraLogger.warning("Super-Res Burst: capture failed: \(error.localizedDescription)", category: .capture) }
-        if capturedFrames.count >= targetCount || attempts >= maxAttempts {
-            finish()
-        } else if let svc = cameraService {
-            svc.dispatchSingleBurstFrame(delegate: self)
-        } else {
-            finish()
-        }
-    }
-
-    func cancelOrTimeout() {
-        lock.lock()
-        defer { lock.unlock() }
-        if !isFinished {
-            finish()
-        }
-    }
-
-    private func finish() {
-        guard !isFinished else { return }
-        isFinished = true
-        let results = capturedFrames
-        DispatchQueue.main.async {
-            self.completion(results)
         }
     }
 }

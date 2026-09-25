@@ -5,6 +5,7 @@ import SwiftUI
 public final class PresetThumbnailProvider {
     public static let shared = PresetThumbnailProvider()
     
+    private let cacheLock = NSLock()
     private var thumbnailCache: [FilmPreset: UIImage] = [:]
     
     private init() {
@@ -17,11 +18,11 @@ public final class PresetThumbnailProvider {
     }
 
     public func thumbnail(for preset: FilmPreset) -> UIImage {
-        if let cached = thumbnailCache[preset] {
+        if let cached = cacheLock.withLock({ thumbnailCache[preset] }) {
             return cached
         }
         let generated = generateThumbnail(for: preset)
-        thumbnailCache[preset] = generated
+        cacheLock.withLock { thumbnailCache[preset] = generated }
         return generated
     }
     

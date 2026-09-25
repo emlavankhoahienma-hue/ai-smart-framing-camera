@@ -36,7 +36,8 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
     private init() {}
     
     public func computeHistogram(from pixelBuffer: CVPixelBuffer) -> [HistogramBarData] {
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA,
+              CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return fallbackBars() }
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         
         let width = CVPixelBufferGetWidth(pixelBuffer)
@@ -46,6 +47,7 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
             return fallbackBars()
         }
         
+        guard width > 0, height > 0, bytesPerRow >= width * 4 else { return fallbackBars() }
         let data = baseAddress.assumingMemoryBound(to: UInt8.self)
         var bins = Array(repeating: Float(0), count: 32)
         var maxBin: Float = 1.0

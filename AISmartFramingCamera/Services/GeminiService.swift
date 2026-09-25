@@ -70,29 +70,29 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .autoStrongest:
-            return "⚡ Tự động (Gemini 3.5 Flash)"
+            return "\u{26a1} Tự động (Gemini 3.5 Flash)"
         case .gemini35Flash:
-            return "🎯 Gemini 3.5 Flash (Khuyên dùng)"
+            return "\u{1f3af} Gemini 3.5 Flash (Khuyên dùng)"
         case .gemini25Flash:
-            return "✨ Gemini 2.5 Flash (Tốc độ cao)"
+            return "\u{2728} Gemini 2.5 Flash (Tốc độ cao)"
         case .gemini36Flash:
-            return "⚡ Gemini 3.6 Flash (Tốc độ cao)"
+            return "\u{26a1} Gemini 3.6 Flash (Tốc độ cao)"
         case .gemini37Flash:
-            return "🚀 Gemini 3.7 Flash (Mới nhất)"
+            return "\u{1f680} Gemini 3.7 Flash (Mới nhất)"
         case .gemini25Pro:
-            return "💎 Gemini 2.5 Pro (Chi tiết)"
+            return "\u{1f48e} Gemini 2.5 Pro (Chi tiết)"
         case .gemini20Flash:
-            return "🔥 Gemini 2.0 Flash (Siêu tốc)"
+            return "\u{1f525} Gemini 2.0 Flash (Siêu tốc)"
         case .geminiFlash15:
-            return "🌟 Gemini 1.5 Flash (Ổn định)"
+            return "\u{1f31f} Gemini 1.5 Flash (Ổn định)"
         case .geminiPro15:
-            return "🔮 Gemini 1.5 Pro (Deep Reasoning)"
+            return "\u{1f52e} Gemini 1.5 Pro (Deep Reasoning)"
         case .gpt4oMini:
-            return "🟢 GPT-4o Mini (OpenAI)"
+            return "\u{1f7e2} GPT-4o Mini (OpenAI)"
         case .claude35Haiku:
-            return "🟣 Claude 3.5 Haiku (Anthropic)"
+            return "\u{1f7e3} Claude 3.5 Haiku (Anthropic)"
         case .llamaVision:
-            return "🦙 Llama 3.2 Vision (Meta)"
+            return "\u{1f999} Llama 3.2 Vision (Meta)"
         }
     }
 
@@ -348,7 +348,7 @@ public final class GeminiService {
         completion: @escaping (Bool, String) -> Void
     ) {
         guard index < candidates.count else {
-            completion(false, "❌ Đã thử tất cả model OpenRouter nhưng key bị giới hạn quota hoặc hết credits. Hãy kiểm tra số dư trên openrouter.ai.")
+            completion(false, "\u{274c} Đã thử tất cả model OpenRouter nhưng key bị giới hạn quota hoặc hết credits. Hãy kiểm tra số dư trên openrouter.ai.")
             return
         }
 
@@ -393,13 +393,13 @@ public final class GeminiService {
                 DispatchQueue.main.async {
                     self.lastModelUsed = testModel
                     self.lastLatencyMs = latency
-                    completion(true, "✅ Kết nối thành công! [OpenRouter] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
+                    completion(true, "\u{2705} Kết nối thành công! [OpenRouter] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
                 }
             } else if http.statusCode == 404 || http.statusCode == 429 || http.statusCode == 503 || http.statusCode == 502 {
                 self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
             } else {
                 let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
-                DispatchQueue.main.async { completion(false, "❌ Lỗi OpenRouter (\(http.statusCode)): \(msg)") }
+                DispatchQueue.main.async { completion(false, "\u{274c} Lỗi OpenRouter (\(http.statusCode)): \(msg)") }
             }
         }.resume()
     }

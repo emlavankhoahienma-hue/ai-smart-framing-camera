@@ -134,7 +134,7 @@ public enum AISessionState: Equatable {
         case .targetPlaced(let locked):
             return locked ? "Mục tiêu đã khóa — Di chuyển tâm trắng vào vòng vàng" : "Di chuyển máy để căn chỉnh bố cục"
         case .alignmentPerfect:
-            return "✓ Khớp hoàn hảo! Chuẩn bị chụp..."
+            return "\u{2713} Khớp hoàn hảo! Chuẩn bị chụp..."
         case .capturing:
             return "Đang chụp ảnh..."
         case .done:
@@ -200,15 +200,15 @@ public enum AIEngineSource: Equatable {
                 .replacingOccurrences(of: "openai/", with: "")
                 .replacingOccurrences(of: "anthropic/", with: "")
                 .replacingOccurrences(of: "meta-llama/", with: "")
-            return "✨ OpenRouter: \(clean)"
+            return "\u{2728} OpenRouter: \(clean)"
         case .localTrained114MB(let cat):
-            return "🧠 AI Local 114MB (\(cat))"
+            return "\u{1f9e0} AI Local 114MB (\(cat))"
         case .semanticLocal(let label):
-            return "🧠 SigLIP + Vision/YOLO (\(label))"
+            return "\u{1f9e0} SigLIP + Vision/YOLO (\(label))"
         case .yoloNeural(let label):
-            return "⚡ YOLOv11 Neural (\(label))"
+            return "\u{26a1} YOLOv11 Neural (\(label))"
         case .appleNeuralEngine(let scene):
-            return "⚡ Apple Neural Engine (\(scene))"
+            return "\u{26a1} Apple Neural Engine (\(scene))"
         }
     }
 
@@ -1254,7 +1254,15 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
     public let id: UUID = UUID()
     public let originalImage: CGImage
     public let processedImage: CGImage
+    /// Original camera file. DNG for RAW; JPEG/HEIF for processed captures.
     public let rawPhotoData: Data?
+    public let saveFormat: PhotoSaveFormat
+    public let preservesOriginalFile: Bool
+    public var resolutionDescription: String {
+        let pixels = Double(originalImage.width) * Double(originalImage.height)
+        return String(format: "%.1f MP · %d × %d", pixels / 1_000_000,
+                      originalImage.width, originalImage.height)
+    }
     public let livePhotoMovieURL: URL?
     public let sceneType: DetectedSceneType
     public let appliedPreset: FilmPreset
@@ -1273,6 +1281,8 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         originalImage: CGImage,
         processedImage: CGImage,
         rawPhotoData: Data? = nil,
+        saveFormat: PhotoSaveFormat = .jpeg,
+        preservesOriginalFile: Bool = false,
         livePhotoMovieURL: URL? = nil,
         sceneType: DetectedSceneType,
         appliedPreset: FilmPreset,
@@ -1286,6 +1296,8 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         self.originalImage = originalImage
         self.processedImage = processedImage
         self.rawPhotoData = rawPhotoData
+        self.saveFormat = saveFormat
+        self.preservesOriginalFile = preservesOriginalFile
         self.livePhotoMovieURL = livePhotoMovieURL
         self.sceneType = sceneType
         self.appliedPreset = appliedPreset
@@ -1397,4 +1409,3 @@ public struct WindowedFocalLengthPreset: Identifiable, Equatable, Sendable {
         WindowedFocalLengthPreset(focalLength: 85.0, label: "85mm", sceneRecommendation: "Chân Dung Hoàng Kim")
     ]
 }
-

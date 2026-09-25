@@ -1,4 +1,5 @@
 import Foundation
+import Metal
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import UIKit
@@ -27,7 +28,7 @@ public final class FilmFilterEngine {
         guard preset != .aiFullAuto && preset != .standard else { return image }
         let ciImage = CIImage(cgImage: image)
         guard let filteredCI = applyPreset(to: ciImage, preset: preset) else { return image }
-        return context.createCGImage(filteredCI, from: filteredCI.extent)
+        return context.createCGImage(filteredCI, from: filteredCI.extent, format: .RGBA8, colorSpace: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!)
     }
 
     public func applyPreset(to inputImage: CIImage, preset: FilmPreset) -> CIImage? {
@@ -138,30 +139,29 @@ public final class FilmFilterEngine {
         filter.setValue(ciImage, forKey: kCIInputImageKey)
         filter.setValue(intensity, forKey: kCIInputSharpnessKey)
         guard let output = filter.outputImage else { return image }
-        return context.createCGImage(output, from: output.extent)
+        return context.createCGImage(output, from: output.extent, format: .RGBA8, colorSpace: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!)
     }
 
     // MARK: - Combined Preset & AI Tone Mapping Pipeline
     public func applyPresetAndAIParameters(to image: CGImage, preset: FilmPreset, params: AIColorParameters?) -> CGImage? {
-        var currentImage = image
+        // Build one lazy graph and render once, avoiding two full 48 MP RGBA
+        // intermediates and an unnecessary 8-bit colour round trip.
+        var output = CIImage(cgImage: image)
         if preset != .standard && preset != .aiFullAuto {
-            if let presetFiltered = applyPreset(to: currentImage, preset: preset) {
-                currentImage = presetFiltered
-            }
+            output = applyPreset(to: output, preset: preset) ?? output
         }
-        if let p = params {
-            if let paramFiltered = applyAIColorParameters(to: currentImage, params: p) {
-                currentImage = paramFiltered
-            }
+        if let params {
+            output = applyAIColorParameters(to: output, params: params) ?? output
         }
-        return currentImage
+        return context.createCGImage(output, from: output.extent, format: .RGBA8,
+            colorSpace: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!)
     }
 
     // MARK: - AI Full Color Mode
     public func applyAIColorParameters(to image: CGImage, params: AIColorParameters) -> CGImage? {
         let ciImage = CIImage(cgImage: image)
         guard let result = applyAIColorParameters(to: ciImage, params: params) else { return image }
-        return context.createCGImage(result, from: result.extent)
+        return context.createCGImage(result, from: result.extent, format: .RGBA8, colorSpace: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!)
     }
 
     public func applyAIColorParameters(to inputImage: CIImage, params: AIColorParameters) -> CIImage? {

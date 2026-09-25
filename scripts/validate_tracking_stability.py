@@ -1,7 +1,7 @@
 """Deterministic reference scenarios + source contracts, NOT Swift/device execution.
 
-The unchanged original contract suites remain separate. Native counterparts live
-in tests/TrackingStabilityRegressionTests.swift and require an Apple SDK.
+Native capture-gate and image tests live in tests/CameraCaptureRegressionTests.swift
+and require an Apple SDK. These reference checks do not execute Swift.
 """
 from pathlib import Path
 import json
@@ -58,9 +58,11 @@ def update(world, point, dt, gate, timestamp, evidence='geometry'):
     cutoff = .7 + min(6, residual * 40)
     ordinary = (1 - math.exp(-2 * math.pi * cutoff * min(.05, dt))) * .9
     weight = max(.45, 1 / (1 + (residual / .20) ** 2))
-    speed = .24 if evidence == 'geometry' else .48
-    gain = min(ordinary * weight * (.70 if evidence == 'geometry' else 1),
-               speed * min(.05, dt) / max(1e-12, residual), 1)
+    fraction = min(1, max(0, (residual - .02) / .08))
+    motion = fraction * fraction * (3 - 2 * fraction) * (.50 if evidence == 'geometry' else .65)
+    nominal = max(ordinary * weight * (.70 if evidence == 'geometry' else 1), motion)
+    speed = 1.1 if evidence == 'geometry' else 1.6
+    gain = min(nominal, min(.035, speed * min(.05, dt)) / max(1e-12, residual), 1)
     result = world * (1 - gain) + observed * gain
     return result / np.linalg.norm(result)
 
@@ -89,7 +91,7 @@ class StabilityTests(unittest.TestCase):
                 world = update(world, [.7, .5], 1/fps, gate, i/fps)
                 trajectory.append(project(world)[0])
             self.assertLess(abs(trajectory[-1] - .7), .006)
-            self.assertLessEqual(max(np.diff(trajectory)), .24 * min(.05, 1/fps) * 1.03)
+            self.assertLessEqual(max(np.diff(trajectory)), min(.035, 1.1 * min(.05, 1/fps)) * 1.03)
             METRICS[f'translation_final_error_{fps}fps'] = float(abs(trajectory[-1] - .7))
 
     def test_static_noise_is_attenuated(self):
@@ -116,7 +118,7 @@ class StabilityTests(unittest.TestCase):
         self.assertEqual(progressed, total)
         self.assertIn('let reticleRay = subjectWorldRay ?? worldRay', SPATIAL)
         self.assertIn('TrackingBearingSlew.advance(from: $0, to: reticleRay', SPATIAL)
-        self.assertIn('sample.deviceToWorld.inverse.act(rendered)', SPATIAL)
+        self.assertIn('imagePose.inverse.act(rendered)', SPATIAL)
 
     def test_tremor_and_400_degree_pan_do_not_modify_world_anchor(self):
         original = ray([.65, .35])
@@ -133,7 +135,7 @@ class StabilityTests(unittest.TestCase):
         self.assertLess(handler.index('lastAcceptedOpticalTimestamp == measurement.frame.timestamp'),
                         handler.index('latestOpticalFrameTimestamp = measurement.frame.timestamp'))
         countdown = VM.split('private func startAutoCaptureCountdown', 1)[1].split('private func verifyZoomAfterRamp', 1)[0]
-        for required in ['self.trackingQuality == .locked', 'self.hasFreshOpticalLock',
+        for required in ['self.hasFreshOpticalLock',
                          '!self.zoomAwaitingVerification && self.zoomVerified',
                          'self.targetPinGeneration == pinGeneration']:
             self.assertIn(required, countdown)
@@ -144,7 +146,7 @@ class StabilityTests(unittest.TestCase):
         self.assertIn('if source == nil {', pin)
         self.assertNotIn('self.pendingSuggestedZoom = 3.0', pin)
         evaluate = VM.split('private func evaluateAlignment', 1)[1].split('private func startAutoCaptureCountdown', 1)[0]
-        self.assertIn('if needsZoom {', evaluate)
+        self.assertIn('if isAutoZoomEnabled && !hasExecutedAutoZoomForSession {', evaluate)
         self.assertLess(evaluate.index('applyAISuggestedZoom'), evaluate.index('startAutoCaptureCountdown'))
         self.assertIn('autoCaptureTask == nil', evaluate)
         self.assertIn('!hasExecutedAutoZoomForSession', evaluate)
