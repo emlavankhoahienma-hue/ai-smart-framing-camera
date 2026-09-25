@@ -201,11 +201,15 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let saliency = VNGenerateObjectnessBasedSaliencyImageRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
         guard (try? handler.perform([people, face, saliency])) != nil else { return nil }
+        let visionPoint = CGPoint(x: point.x, y: 1 - point.y)
+        func boxArea(_ r: CGRect) -> CGFloat {
+            return r.width * r.height
+        }
         let personBoxes: [CGRect] = (people.results ?? []).map { $0.boundingBox }
         let matchingBodies = personBoxes.filter { box in
             box.contains(visionPoint) && box.width > 0.03 && box.height > 0.03
         }
-        if let body = matchingBodies.min(by: { $0.width * $0.height < $1.width * $1.height }) {
+        if let body = matchingBodies.min(by: { boxArea($0) < boxArea($1) }) {
             return body
         }
         let faceBoxes: [CGRect] = (face.results ?? []).map { $0.boundingBox }
@@ -214,7 +218,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let matchingBoxes = boxes.filter { box in
             box.contains(visionPoint) && box.width > 0.03 && box.height > 0.03
         }
-        return matchingBoxes.min(by: { $0.width * $0.height < $1.width * $1.height })
+        return matchingBoxes.min(by: { boxArea($0) < boxArea($1) })
     }
 
     public func startTrackingObject(at point: CGPoint, size: CGSize = CGSize(width: 0.12, height: 0.12),
