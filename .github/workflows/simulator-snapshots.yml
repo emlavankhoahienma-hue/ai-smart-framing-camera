@@ -49,6 +49,13 @@ jobs:
             GCC_TREAT_WARNINGS_AS_ERRORS=YES \
             BUILD_DIR=${{ github.workspace }}/build-sim 2>&1 | tee build-sim.log
 
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-build-log
+          path: build-sim.log
+
       - name: Run Simulator Snapshot Suite
         run: |
           chmod +x scripts/capture_simulator_screenshots.sh
