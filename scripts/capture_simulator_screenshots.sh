@@ -67,9 +67,10 @@ capture_device() {
   fi
   sleep 4
 
-  echo "Granting permissions for camera and photos..."
+  echo "Granting permissions for camera, photos and microphone..."
   xcrun simctl privacy "$udid" grant camera "$BUNDLE_ID" 2>/dev/null || true
   xcrun simctl privacy "$udid" grant photos "$BUNDLE_ID" 2>/dev/null || true
+  xcrun simctl privacy "$udid" grant microphone "$BUNDLE_ID" 2>/dev/null || true
 
   echo "Installing application bundle..."
   xcrun simctl install "$udid" "$APP_PATH"
