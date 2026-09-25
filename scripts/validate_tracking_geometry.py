@@ -224,7 +224,10 @@ class GeometryTests(unittest.TestCase):
         self.assertIn('zoomAwaitingVerification = true', zoom_method)
         self.assertIn('latestOpticalFrameTimestamp >', vm)
         self.assertIn('(reachedAt ?? .infinity) + 0.05', vm)
-        self.assertEqual(vm.count('        prioritizeManualZoom()'), 4)
+        self.assertIn('public func beginManualZoomGesture()', vm)
+        continuous = vm.split('public func setZoomContinuous', 1)[1].split('public func finishZoomGesture', 1)[0]
+        self.assertNotIn('cancelAIZoomForGesture()', continuous)
+        self.assertIn('finishManualZoomIfSettled(zoom)', vm)
         camera = (root / 'Services/CameraService.swift').read_text(encoding='utf-8')
         self.assertNotIn('didChangeZoomFactor: clampedZoom', camera)
         self.assertEqual(camera.count('didChangeZoomFactor: actualZoom'), 2)

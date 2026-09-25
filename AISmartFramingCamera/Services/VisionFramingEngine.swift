@@ -175,6 +175,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var lastSearch = -Double.infinity
     private var lastInertialSearch = -Double.infinity
     private var searchCursor = 0
+    private var fullFrameSearchCursor = 0
     private var previousTime = -Double.infinity
     private var seedTimestamp = -Double.infinity
     private var hasLiveObservation = false
@@ -272,7 +273,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         misses = 0; lastAppearanceCheck = -.infinity
         lastSearch = -.infinity
         lastInertialSearch = -.infinity
-        searchCursor = 0; previousTime = -.infinity
+        searchCursor = 0; fullFrameSearchCursor = 0; previousTime = -.infinity
         seedTimestamp = -.infinity; hasLiveObservation = false
         pendingRecovery = nil; seedBuffer = nil; pendingSeed = false
         pendingLargeInnovation = nil
@@ -814,16 +815,18 @@ public final class VisionFramingEngine: @unchecked Sendable {
             // Sweep a 5x5 image grid over successive searches. The fixed
             // budget avoids blocking 30 Hz tracking with a full-frame scan.
             for index in 0..<8 {
-                let cell = (searchCursor + index) % 25
+                let cell = (fullFrameSearchCursor + index) % 25
                 proposals.append(CGPoint(x: (CGFloat(cell % 5) + 0.5) / 5,
                                          y: (CGFloat(cell / 5) + 0.5) / 5))
             }
-            searchCursor = (searchCursor + 8) % 25
+            // Move by two, matching the two expensive checks below. A single
+            // cursor shared with nearby search previously revisited five cells.
+            fullFrameSearchCursor = (fullFrameSearchCursor + 2) % 25
         }
         // Spread the neural checks over time so recovery cannot monopolize the
         // same queue that feeds the live camera preview.
         var checksByRegion = [0, 0, 0]
-        let budgets = misses >= 20 ? [1, 0, 1] : (misses >= 6 ? [1, 1, 0] : [2, 0, 0])
+        let budgets = misses >= 20 ? [1, 0, 2] : (misses >= 6 ? [1, 1, 0] : [2, 0, 0])
         for (index, p) in proposals.prefix(25).enumerated() {
             let region = index < 9 ? 0 : (index < 17 ? 1 : 2)
             guard checksByRegion[region] < budgets[region] else { continue }

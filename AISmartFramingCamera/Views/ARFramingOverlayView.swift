@@ -40,7 +40,7 @@ public struct ARFramingOverlayView: View {
                         FaceDetectionBox(rect: convertBufferRectToScreen(rect, in: size))
                     }
 
-                    if viewModel.isAISessionActive {
+                    if viewModel.isAISessionActive && viewModel.localSuggestionRects.isEmpty {
                         ForEach(0..<viewModel.detectedSubjectRects.count, id: \.self) { i in
                             let rect = viewModel.detectedSubjectRects[i]
                             SubjectHighlightBox(rect: convertBufferRectToScreen(rect, in: size))
@@ -55,24 +55,26 @@ public struct ARFramingOverlayView: View {
                            sourceRect.minX < 1, sourceRect.minY < 1 {
                             let rect = convertBufferRectToScreen(sourceRect, in: size)
                             RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.yellow, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+                                .stroke(Color.yellow.opacity(0.78), style: StrokeStyle(lineWidth: 1.2, dash: [7, 5]))
                                 .frame(width: rect.width, height: rect.height)
                                 .position(x: rect.midX, y: rect.midY)
                                 .allowsHitTesting(false)
                         }
                     }
                 }
-                if let message = viewModel.localSelectionMessage {
+                if case .analyzing = viewModel.aiSessionState,
+                   let message = viewModel.localSelectionMessage,
+                   viewModel.localSuggestionRects.isEmpty {
                     VStack {
-                        Spacer()
                         Text(message)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.white)
                             .multilineTextAlignment(.center)
-                            .padding(12)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.78)))
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 145)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.black.opacity(0.60)))
+                            .padding(.top, 42)
+                        Spacer()
                     }
                     .allowsHitTesting(false)
                 }
@@ -224,7 +226,7 @@ public struct ARFramingOverlayView: View {
                 ZoomRevealOverlay(
                     rect: viewModel.zoomRevealRect,
                     isVisible: viewModel.isRevealingZoomTarget,
-                    displayZoom: viewModel.displayZoom
+                    displayZoom: viewModel.zoomRevealTargetZoom
                 )
             }
             .contentShape(Rectangle())
@@ -262,8 +264,7 @@ public struct ARFramingOverlayView: View {
                         if !isPinching {
                             isPinching = true
                             pinchBaseZoom = viewModel.displayZoom
-                            viewModel.cancelAIZoomForGesture()
-                            viewModel.isPinchingZoom = true
+                            viewModel.beginManualZoomGesture()
                         }
                         let minZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.minZoom)
                         let maxZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.maxZoom)
@@ -276,7 +277,6 @@ public struct ARFramingOverlayView: View {
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
                         viewModel.finishZoomGesture(targetZoom)
                         isPinching = false
-                        viewModel.isPinchingZoom = false
                         pinchBaseZoom = targetZoom
                     }
             )
@@ -656,7 +656,7 @@ struct HorizonLevelerView: View {
     }
 }
 
-// MARK: - AI Zoom Reveal Overlay (Bố Cục Điện Ảnh Mượt Mà, Không Làm Tối Màn Hình)
+// MARK: - AI Zoom Reveal Overlay
 struct ZoomRevealOverlay: View {
     let rect: CGRect
     let isVisible: Bool
@@ -673,10 +673,10 @@ struct ZoomRevealOverlay: View {
 
             if isVisible {
                 ZStack {
-                    // 1. Lớp làm mờ nhẹ điện ảnh vùng ngoài khung ngắm (Subtle Cinematic Focus Blur)
+                    // Show the actual centre crop the camera will zoom into.
                     Rectangle()
                         .fill(.ultraThinMaterial)
-                        .opacity(0.42)
+                        .overlay(Color.black.opacity(0.68))
                         .mask(
                             Path { path in
                                 path.addRect(CGRect(origin: .zero, size: geo.size))
@@ -693,7 +693,7 @@ struct ZoomRevealOverlay: View {
                         .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
                         .position(x: pixelRect.midX, y: pixelRect.midY)
 
-                    // 3. Viền khung ngắm vàng mỏng nhẹ 1.8px (giữ màn hình sáng tự nhiên)
+                    // 3. Future zoom region.
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(
                             LinearGradient(
@@ -725,7 +725,7 @@ struct ZoomRevealOverlay: View {
                     .position(x: pixelRect.midX, y: max(24, pixelRect.minY - 12))
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .animation(.easeInOut(duration: 0.45), value: isVisible)
+                .animation(.easeInOut(duration: 0.20), value: isVisible)
             }
         }
         .allowsHitTesting(false)

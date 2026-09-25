@@ -161,12 +161,25 @@ class StabilityTests(unittest.TestCase):
         self.assertIn('guard await verifyPostZoomFaces', verify)
 
     def test_manual_zoom_cancels_both_delayed_ramp_and_shutter(self):
-        manual = VM.split('private func prioritizeManualZoom()', 1)[1].split('public func setZoom', 1)[0]
+        manual = VM.split('public func beginManualZoomGesture()', 1)[1].split('private func requestManualZoom', 1)[0]
         self.assertIn('cancelAIZoomForGesture()', manual)
-        cancel = VM.split('public func cancelAIZoomForGesture()', 1)[1].split('private func setupCallbacks', 1)[0]
+        cancel = VM.split('public func cancelAIZoomForGesture()', 1)[1].split('private func finishManualZoomIfSettled', 1)[0]
         for required in ['targetPinGeneration &+= 1', 'autoCaptureTask?.cancel()',
                          'zoomVerificationTask?.cancel()', 'cameraService.cancelZoomRamp()']:
             self.assertIn(required, cancel)
+        finish = VM.split('public func finishZoomGesture', 1)[1].split('public func setZoomFromButton', 1)[0]
+        self.assertNotIn('cancelAIZoomForGesture()', finish)
+        self.assertIn('requestManualZoom(finalDisplayZoom)', finish)
+
+    def test_full_frame_reidentification_sweeps_every_cell(self):
+        self.assertIn('fullFrameSearchCursor = (fullFrameSearchCursor + 2) % 25', VISION)
+        self.assertIn('let budgets = misses >= 20 ? [1, 0, 2]', VISION)
+        cursor = 0
+        checked = set()
+        for _ in range(13):
+            checked.update(((cursor + offset) % 25) for offset in range(2))
+            cursor = (cursor + 2) % 25
+        self.assertEqual(checked, set(range(25)))
 
     def test_status_label_cannot_shift_reticle(self):
         ring = OVERLAY.split('struct TargetCircleView:', 1)[1].split('// MARK: - Guidance Ray', 1)[0]

@@ -13,6 +13,7 @@ import Vision
 private struct CameraFrameProcessingConfiguration: Sendable {
     var isHibernating = false
     var isSettingsVisible = false
+    var tracksSuggestions = false
     var isFocusPeakingEnabled = false
     var focusPeakingColor: FocusPeakingColor = .green
 }
@@ -28,6 +29,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     private var latestFrameContext: TrackingFrameContext?
     private var lastHistogramComputeTime: CFTimeInterval = 0
     private var lastFocusPeakingComputeTime: CFTimeInterval = 0
+    private var lastSuggestionUpdateTime: CFTimeInterval = 0
 
     @MainActor
     func attach(to owner: CameraViewModel) {
@@ -87,6 +89,13 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         guard !snapshot.isSettingsVisible else { return }
 
         let now = CACurrentMediaTime()
+        if snapshot.tracksSuggestions, let frame,
+           now - lastSuggestionUpdateTime >= 1.0 / 30.0 {
+            lastSuggestionUpdateTime = now
+            DispatchQueue.main.async { [weak self] in
+                self?.owner?.refreshSuggestionProjection(frame: frame)
+            }
+        }
         if now - lastHistogramComputeTime >= 0.05 {
             lastHistogramComputeTime = now
             let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
@@ -149,6 +158,7 @@ public final class CameraViewModel: ObservableObject {
             default:
                 visionEngine.isIdlePreviewMode = false
             }
+            updateFrameProcessingConfiguration()
         }
     }
 
@@ -263,6 +273,8 @@ public final class CameraViewModel: ObservableObject {
     private var isZoomRampPhase: Bool = false
     private var zoomAwaitingVerification = false
     private var zoomVerified = true
+    private var pendingManualZoomTarget: CGFloat?
+    private var manualZoomSettledAt = -Double.infinity
     private var zoomFallbackAfter = Double.infinity
     private var zoomVerificationTask: Task<Void, Never>?
     private var zoomStartFrameTimestamp = -Double.infinity
@@ -323,29 +335,24 @@ public final class CameraViewModel: ObservableObject {
             return CGRect(x: 0, y: 0, width: 1.0, height: 1.0)
         }
         let targetSize = min(1.0, max(0.20,
-            zoomRevealStartsIn ? zoomRevealStartDisplayZoom / pendingTargetZoomForReveal :
-                pendingTargetZoomForReveal / zoomRevealStartDisplayZoom))
-
-        // Tiêu điểm của chủ thể / target (thay vì cố định 0.5, 0.5)
-        let focalPoint = currentTargetPoint ?? initialTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
+            zoomRevealStartDisplayZoom / pendingTargetZoomForReveal))
 
         if !isZoomRampPhase {
             // Giai đoạn 1: khung lướt nhẹ từ toàn cảnh (1.0) về vùng crop dự kiến bao quanh chủ thể
             let p = max(0.0, min(1.0, lockOnProgress))
             let size = 1.0 - (1.0 - targetSize) * p
-            let minX = max(0.0, min(1.0 - size, focalPoint.x - size / 2.0))
-            let minY = max(0.0, min(1.0 - size, focalPoint.y - size / 2.0))
-            return CGRect(x: minX, y: minY, width: size, height: size)
+            return CGRect(x: (1 - size) / 2, y: (1 - size) / 2,
+                          width: size, height: size)
         } else {
             // Giai đoạn 2: khi camera phần cứng đang ramp zoom, khung đồng bộ mở rộng ra mép màn hình
             let ratio = min(1.0, max(0.20,
-                zoomRevealStartsIn ? liveZoomFactorForReveal / pendingTargetZoomForReveal :
-                    pendingTargetZoomForReveal / liveZoomFactorForReveal))
-            let minX = max(0.0, min(1.0 - ratio, focalPoint.x - ratio / 2.0))
-            let minY = max(0.0, min(1.0 - ratio, focalPoint.y - ratio / 2.0))
-            return CGRect(x: minX, y: minY, width: ratio, height: ratio)
+                liveZoomFactorForReveal / pendingTargetZoomForReveal))
+            return CGRect(x: (1 - ratio) / 2, y: (1 - ratio) / 2,
+                          width: ratio, height: ratio)
         }
     }
+
+    public var zoomRevealTargetZoom: CGFloat { pendingTargetZoomForReveal }
 
     @Published public var exposureBias: Float = 0.0
     @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto {
@@ -409,11 +416,12 @@ public final class CameraViewModel: ObservableObject {
         let pinGeneration = targetPinGeneration
 
         // Hiệu ứng chuyển động mượt mà điện ảnh (Cinematic Easing)
-        withAnimation(.spring(response: 0.50, dampingFraction: 0.85)) {
+        withAnimation(.easeOut(duration: 0.24)) {
             lockOnProgress = 1.0
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48) { [weak self] in
+        // Hold the outlined, dimmed crop before the optical ramp begins.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) { [weak self] in
             guard let self = self, self.targetPinGeneration == pinGeneration,
                   self.zoomAwaitingVerification, !self.isPinchingZoom else { return }
             self.isZoomRampPhase = true
@@ -790,6 +798,7 @@ public final class CameraViewModel: ObservableObject {
             CameraFrameProcessingConfiguration(
                 isHibernating: isCameraHibernating,
                 isSettingsVisible: isShowingSettings,
+                tracksSuggestions: aiSessionState == .analyzing,
                 isFocusPeakingEnabled: isFocusPeakingEnabled,
                 focusPeakingColor: focusPeakingColor
             )
@@ -878,16 +887,31 @@ public final class CameraViewModel: ObservableObject {
     private func handleVisionDetectionWithSource(_ detection: SubjectDetectionResult,
                                                    frame: TrackingFrameContext?) {
         guard !isShowingSettings else { return }
-        // Suggestions need only the frame geometry; do not retain a live pool buffer.
-        if localAnalysisFinished, !localEvidenceCandidates.isEmpty,
-           let source = localTrackingSource, let frame,
-           let pose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) {
-            localSuggestionRects = localEvidenceCandidates.map {
-                reprojectSuggestion($0.boundingBox, from: source,
-                                    to: frame.calibration, pose: pose)
-            }
-        }
+        if let frame { refreshSuggestionProjection(frame: frame) }
         handleVisionDetection(detection)
+    }
+
+    fileprivate func refreshSuggestionProjection(frame: TrackingFrameContext) {
+        guard aiSessionState == .analyzing, localAnalysisFinished,
+              !localEvidenceCandidates.isEmpty, let source = localTrackingSource,
+              let pose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) else { return }
+        let viewport = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let projected = localEvidenceCandidates.map {
+            reprojectSuggestion($0.boundingBox, from: source,
+                                to: frame.calibration, pose: pose).intersection(viewport)
+        }
+        localSuggestionRects = projected.enumerated().map { index, rect in
+            guard !rect.isNull, !rect.isEmpty else { return .zero }
+            guard index < localSuggestionRects.count,
+                  !localSuggestionRects[index].isEmpty else { return rect }
+            let old = localSuggestionRects[index]
+            // Camera motion is reprojected every frame; damp only small detector jitter.
+            let a: CGFloat = hypot(rect.midX - old.midX, rect.midY - old.midY) > 0.12 ? 1 : 0.72
+            return CGRect(x: old.minX + (rect.minX - old.minX) * a,
+                          y: old.minY + (rect.minY - old.minY) * a,
+                          width: old.width + (rect.width - old.width) * a,
+                          height: old.height + (rect.height - old.height) * a)
+        }
     }
 
     private func reprojectSuggestion(_ rect: CGRect, from source: AITrackingSource,
@@ -915,6 +939,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func cancelAIZoomForGesture() {
+        if aiSessionState == .analyzing { cancelAISession() }
         targetPinGeneration &+= 1
         alignmentGate.reset()
         pinZoomPlanTask?.cancel()
@@ -930,11 +955,22 @@ public final class CameraViewModel: ObservableObject {
         isZoomRampPhase = false
         zoomAwaitingVerification = false
         zoomVerified = false
+        pendingManualZoomTarget = nil
+        manualZoomSettledAt = CACurrentMediaTime()
         zoomFallbackAfter = .infinity
         postZoomFaceMinimumTimestamp = -Double.infinity
-        allowsAutoCaptureForCurrentTarget = false
         hasExecutedAutoZoomForSession = true
-        localSelectionMessage = "Bạn đã đổi zoom; kiểm tra bố cục và chụp tay."
+        localSelectionMessage = nil
+    }
+
+    private func finishManualZoomIfSettled(_ deviceZoom: CGFloat) {
+        guard let target = pendingManualZoomTarget,
+              abs(deviceZoom - target) <= 0.03 else { return }
+        pendingManualZoomTarget = nil
+        manualZoomSettledAt = CACurrentMediaTime()
+        // A fresh optical observation after this timestamp is still mandatory.
+        zoomVerified = true
+        alignmentGate.reset()
     }
 
     private func setupCallbacks() {
@@ -983,6 +1019,7 @@ public final class CameraViewModel: ObservableObject {
                 self.selectedZoomPreset = disp < 1.5 ? 1.0 : (disp < 2.5 ? 2.0 : 3.0)
             }
             SpatialTrackingEngine.shared.updateZoomFactor(disp)
+            self.finishManualZoomIfSettled(zoom)
         }
 
         // Realtime Exposure Stats Listener (ISO & Shutter Speed)
@@ -1248,6 +1285,10 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.onFrameCapturedForAIWithSource = nil
         cloudTrackingSource = nil
         localTrackingSource = nil
+        localEvidenceCandidates = []
+        localCandidatePlans = []
+        localSuggestionRects = []
+        localSelectionMessage = nil
         isGeminiAnalyzing = false
         trackingQuality = .locked
 
@@ -2015,17 +2056,23 @@ public final class CameraViewModel: ObservableObject {
         latestOpticalPoint = measurement.point
         latestOpticalBox = measurement.subjectBox
         latestOpticalCalibration = measurement.frame.calibration
+        if measurement.evidence == .reidentified {
+            alignmentGate.reset()
+            lastFailedCaptureOpticalTimestamp = -.infinity
+            lastFailedCaptureAttemptTime = -.infinity
+        }
         if zoomFallbackAfter.isFinite,
            measurement.frame.timestamp > zoomFallbackAfter + 0.05,
-           currentSubjectBoxIsSafe {
+           (currentSubjectBoxIsSafe ||
+            abs(displayZoom - zoomRevealStartDisplayZoom) <= 0.08) {
             // A failed ramp is not a verified target zoom. A new accepted
             // image can still validate the actual hardware crop for capture.
             zoomVerified = true
             pendingSuggestedZoom = displayZoom
             aiSuggestedZoom = displayZoom
-            postZoomFaceMinimumTimestamp = zoomFallbackAfter
+            postZoomFaceMinimumTimestamp = currentSubjectBoxIsSafe ? zoomFallbackAfter : -.infinity
             zoomFallbackAfter = .infinity
-            localSelectionMessage = "Đã giữ mức zoom hiện tại để chụp an toàn."
+            localSelectionMessage = nil
         }
         if needsFocusOnTrackedSubject, measurement.confidence >= 0.55,
            (0...1).contains(measurement.point.x),
@@ -2045,8 +2092,13 @@ public final class CameraViewModel: ObservableObject {
 
     private var hasFreshOpticalLock: Bool {
         let age = CACurrentMediaTime() - latestOpticalFrameTimestamp
-        return trackingQuality == .locked && (0...0.45).contains(age) &&
-            latestOpticalCalibration?.isValid == true && latestOpticalBox != nil
+        guard pendingManualZoomTarget == nil, !zoomAwaitingVerification,
+              latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05,
+              (0...0.35).contains(age),
+              latestOpticalCalibration?.isValid == true,
+              latestOpticalBox != nil,
+              let point = latestOpticalPoint else { return false }
+        return (0...1).contains(point.x) && (0...1).contains(point.y)
     }
 
     private func canZoomCurrentSubject(to target: CGFloat) -> Bool {
@@ -2154,14 +2206,14 @@ public final class CameraViewModel: ObservableObject {
                 $0.minX >= 0.01 && $0.minY >= 0.01 &&
                 $0.maxX <= 0.99 && $0.maxY <= 0.99
             } ?? false
-            if reached && fresh && boxSafe && hasFreshOpticalLock &&
-               latestOpticalCalibration?.isValid == true && trackingQuality == .locked {
+            if reached && fresh && boxSafe &&
+               latestOpticalCalibration?.isValid == true && latestOpticalBox != nil {
                 if settledSince == nil { settledSince = CACurrentMediaTime() }
                 if CACurrentMediaTime() - (settledSince ?? 0) >= 0.20 {
                     guard await verifyPostZoomFaces(after: reachedAt ?? zoomStartFrameTimestamp) else { continue }
                     guard !Task.isCancelled, targetPinGeneration == pinGeneration,
                           !isPinchingZoom else { return }
-                    guard hasFreshOpticalLock, currentSubjectBoxIsSafe,
+                    guard latestOpticalBox != nil, currentSubjectBoxIsSafe,
                           abs(displayZoom - pendingTargetZoomForReveal) <= 0.08 else {
                         settledSince = nil
                         continue
@@ -2192,7 +2244,7 @@ public final class CameraViewModel: ObservableObject {
         zoomVerified = false
         zoomAwaitingVerification = false
         zoomFallbackAfter = CACurrentMediaTime()
-        localSelectionMessage = "Đang kiểm tra khung hình mới để chụp ở mức zoom hiện tại."
+        localSelectionMessage = nil
         withAnimation(.easeOut(duration: 0.40)) {
             self.isRevealingZoomTarget = false
             self.isZoomRampPhase = false
@@ -2278,22 +2330,30 @@ public final class CameraViewModel: ObservableObject {
     private var lastContinuousZoomTime: CFTimeInterval = 0
     private var lastContinuousAppliedZoom: CGFloat = 1.0
 
-    private func prioritizeManualZoom() {
+    public func beginManualZoomGesture() {
+        guard !isPinchingZoom else { return }
         cancelAIZoomForGesture()
+        isPinchingZoom = true
+    }
+
+    private func requestManualZoom(_ displayZoomVal: CGFloat) {
+        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        pendingManualZoomTarget = deviceZoom
+        manualZoomSettledAt = CACurrentMediaTime()
+        cameraService.setZoomFactor(deviceZoom)
     }
 
     public func setZoom(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite else { return }
-        prioritizeManualZoom()
-        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
-        cameraService.setZoomFactor(deviceZoom)
+        cancelAIZoomForGesture()
+        requestManualZoom(displayZoomVal)
     }
 
     /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
     /// Tự động throttle AVFoundation calls (25ms) để chống nghẽn hàng đợi camera phần cứng
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite else { return }
-        prioritizeManualZoom()
+        if !isPinchingZoom { beginManualZoomGesture() }
         selectedZoomPreset = displayZoomVal < 1.5 ? 1.0 : (displayZoomVal < 2.5 ? 2.0 : 3.0)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         let now = CACurrentMediaTime()
@@ -2307,21 +2367,21 @@ public final class CameraViewModel: ObservableObject {
     /// Chốt zoom cuối cùng khi người dùng nhấc ngón tay kết thúc pinch
     public func finishZoomGesture(_ finalDisplayZoom: CGFloat) {
         guard finalDisplayZoom.isFinite else { return }
-        prioritizeManualZoom()
+        if !isPinchingZoom { beginManualZoomGesture() }
         selectedZoomPreset = finalDisplayZoom < 1.5 ? 1.0 : (finalDisplayZoom < 2.5 ? 2.0 : 3.0)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(finalDisplayZoom)
         lastContinuousAppliedZoom = deviceZoom
-        cameraService.setZoomFactor(deviceZoom)
+        isPinchingZoom = false
+        requestManualZoom(finalDisplayZoom)
         haptics.triggerSelectionChange()
     }
 
     public func setZoomFromButton(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite else { return }
-        prioritizeManualZoom()
+        cancelAIZoomForGesture()
         haptics.triggerSelectionChange()
         selectedZoomPreset = displayZoomVal
-        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
-        cameraService.setZoomFactor(deviceZoom)
+        requestManualZoom(displayZoomVal)
     }
 
     public func setExposure(_ bias: Float) {
@@ -2944,6 +3004,12 @@ public final class CameraViewModel: ObservableObject {
                     options.originalFilename = filename
                     // DNG bytes are passed directly, without creating a UIImage.
                     request.addResource(with: .photo, data: mainData, options: options)
+                    if item.saveFormat == .dng, let companion = item.processedCompanionData {
+                        let previewOptions = PHAssetResourceCreationOptions()
+                        previewOptions.uniformTypeIdentifier = UTType.jpeg.identifier
+                        previewOptions.originalFilename = "AlignAI_\(item.id.uuidString)_preview.jpg"
+                        request.addResource(with: .alternatePhoto, data: companion, options: previewOptions)
+                    }
                     if item.saveFormat != .dng, let movie = item.livePhotoMovieURL,
                        FileManager.default.fileExists(atPath: movie.path) {
                         let movieOptions = PHAssetResourceCreationOptions()
@@ -3005,7 +3071,7 @@ extension CameraViewModel: CameraServiceDelegate {
         self.haptics.triggerSuccess()
     }
 
-    public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double, format: PhotoSaveFormat, requestedHighResolution: Bool) {
+    public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, processedCompanionData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double, format: PhotoSaveFormat, requestedHighResolution: Bool) {
         superResolutionProgressText = nil
         CameraLogger.info("Bắt đầu xử lý bộ lọc ảnh màu AI (Kích thước: \(photo.width)x\(photo.height), LivePhoto: \(livePhotoMovieURL != nil ? "CÓ" : "KHÔNG"))", category: .capture)
 
@@ -3055,6 +3121,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 originalImage: effectiveSourcePhoto,
                 processedImage: processedImageResult,
                 rawPhotoData: rawData,
+                processedCompanionData: processedCompanionData,
                 saveFormat: format,
                 preservesOriginalFile: format == .dng || (!isWindowed && !hasColorEdits),
                 livePhotoMovieURL: livePhotoMovieURL,
@@ -3119,5 +3186,6 @@ extension CameraViewModel: CameraServiceDelegate {
         self.currentZoom = zoom
         self.displayZoom = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
         SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
+        finishManualZoomIfSettled(zoom)
     }
 }

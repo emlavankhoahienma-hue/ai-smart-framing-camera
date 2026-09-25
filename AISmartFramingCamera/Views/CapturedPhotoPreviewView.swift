@@ -776,7 +776,14 @@ public struct CapturedPhotoPreviewView: View {
                         let options = PHAssetResourceCreationOptions()
                         options.uniformTypeIdentifier = "com.adobe.raw-image"
                         options.originalFilename = "AlignAI.dng"
-                        PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: options)
+                        let request = PHAssetCreationRequest.forAsset()
+                        request.addResource(with: .photo, data: data, options: options)
+                        if let companion = item.processedCompanionData {
+                            let previewOptions = PHAssetResourceCreationOptions()
+                            previewOptions.uniformTypeIdentifier = UTType.jpeg.identifier
+                            previewOptions.originalFilename = "AlignAI_preview.jpg"
+                            request.addResource(with: .alternatePhoto, data: companion, options: previewOptions)
+                        }
                     }) { success, _ in
                         DispatchQueue.main.async { self.hasSavedNewEnhancement = success }
                     }
@@ -793,6 +800,7 @@ public struct CapturedPhotoPreviewView: View {
                 originalImage: item.originalImage,
                 processedImage: cgImage,
                 rawPhotoData: item.rawPhotoData,
+                processedCompanionData: item.processedCompanionData,
                 saveFormat: item.saveFormat,
                 preservesOriginalFile: false,
                 livePhotoMovieURL: item.livePhotoMovieURL,

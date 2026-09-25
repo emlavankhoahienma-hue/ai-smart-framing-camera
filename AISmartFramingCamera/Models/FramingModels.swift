@@ -1256,6 +1256,8 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
     public let processedImage: CGImage
     /// Original camera file. DNG for RAW; JPEG/HEIF for processed captures.
     public let rawPhotoData: Data?
+    /// The original JPEG captured alongside a DNG for Photos display.
+    public let processedCompanionData: Data?
     public let saveFormat: PhotoSaveFormat
     public let preservesOriginalFile: Bool
     public var resolutionDescription: String {
@@ -1281,6 +1283,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         originalImage: CGImage,
         processedImage: CGImage,
         rawPhotoData: Data? = nil,
+        processedCompanionData: Data? = nil,
         saveFormat: PhotoSaveFormat = .jpeg,
         preservesOriginalFile: Bool = false,
         livePhotoMovieURL: URL? = nil,
@@ -1296,6 +1299,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         self.originalImage = originalImage
         self.processedImage = processedImage
         self.rawPhotoData = rawPhotoData
+        self.processedCompanionData = processedCompanionData
         self.saveFormat = saveFormat
         self.preservesOriginalFile = preservesOriginalFile
         self.livePhotoMovieURL = livePhotoMovieURL

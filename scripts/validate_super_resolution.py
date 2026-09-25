@@ -23,6 +23,14 @@ class NativeCaptureContracts(unittest.TestCase):
         self.assertIn('processedFormat: [AVVideoCodecKey: AVVideoCodecType.jpeg]', C)
         self.assertIn('request.id == photo.resolvedSettings.uniqueID', C)
         self.assertIn('request.id == resolvedSettings.uniqueID', C)
+    def test_raw_asset_keeps_dng_and_colour_companion_together(self):
+        self.assertIn('rawFileType: .dng', C)
+        self.assertIn('processedFileType: .jpg', C)
+        self.assertIn('settings.rawEmbeddedThumbnailPhotoFormat', C)
+        self.assertIn('request.processedData = data', C)
+        save = V.split('public func savePhotoToLibrary', 1)[1].split('// MARK: - Computed helpers', 1)[0]
+        self.assertIn('request.addResource(with: .photo, data: mainData', save)
+        self.assertIn('request.addResource(with: .alternatePhoto, data: companion', save)
     def test_raw_unavailable_is_an_error(self):
         self.assertIn('reject(CameraServiceError.rawUnavailable); return', C)
         self.assertIn('actualFormat = .dng', C)

@@ -8,20 +8,6 @@ public struct CameraPreviewView: UIViewRepresentable {
     public func makeUIView(context: Context) -> PreviewContainerView {
         let view = PreviewContainerView()
         view.setupLayer(session: viewModel.cameraService.captureSession)
-
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
-        tapGesture.delegate = context.coordinator
-        view.addGestureRecognizer(tapGesture)
-
-        let pinchGesture = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
-        pinchGesture.delegate = context.coordinator
-        view.addGestureRecognizer(pinchGesture)
-
-        let longPressGesture = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
-        longPressGesture.minimumPressDuration = 0.5
-        longPressGesture.delegate = context.coordinator
-        view.addGestureRecognizer(longPressGesture)
-
         return view
     }
 

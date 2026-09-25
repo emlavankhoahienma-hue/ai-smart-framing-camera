@@ -8,7 +8,7 @@ import ImageIO
 public protocol CameraServiceDelegate: AnyObject {
     func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
     @MainActor
-    func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double, format: PhotoSaveFormat, requestedHighResolution: Bool)
+    func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, processedCompanionData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double, format: PhotoSaveFormat, requestedHighResolution: Bool)
     @MainActor
     func cameraService(_ service: CameraService, didFailCaptureWithError error: Error)
     @MainActor
@@ -129,6 +129,7 @@ public final class CameraService: NSObject {
         let format: PhotoSaveFormat
         let highResolution: Bool
         var fileData: Data?
+        var processedData: Data?
         var preview: CGImage?
         var movieURL: URL?
         var iso: Float = 100
@@ -1048,7 +1049,9 @@ public final class CameraService: NSObject {
                 // Apple supplies a processed companion solely for display. The
                 // RAW callback's original fileDataRepresentation is what we save.
                 settings = AVCapturePhotoSettings(rawPixelFormatType: raw,
-                    processedFormat: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+                    rawFileType: .dng,
+                    processedFormat: [AVVideoCodecKey: AVVideoCodecType.jpeg],
+                    processedFileType: .jpg)
                 let isProRAW = AVCapturePhotoOutput.isAppleProRAWPixelFormat(raw)
                 settings.photoQualityPrioritization = isProRAW ? .quality : .speed
                 actualFormat = .dng
@@ -1064,6 +1067,15 @@ public final class CameraService: NSObject {
             // upscale a smaller result or build a coloured image from a RAW buffer.
             if let dimensions = highResolution ? supported.last : supported.first {
                 settings.maxPhotoDimensions = dimensions
+            }
+            if isDNG, let thumbnailCodec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first(where: { $0 == .jpeg }) {
+                // Add a camera-generated colour preview inside the original DNG.
+                let dimensions = settings.maxPhotoDimensions
+                settings.rawEmbeddedThumbnailPhotoFormat = [
+                    AVVideoCodecKey: thumbnailCodec,
+                    AVVideoWidthKey: dimensions.width,
+                    AVVideoHeightKey: dimensions.height
+                ]
             }
             if camera.isFlashAvailable && self.photoOutput.supportedFlashModes.contains(self.flashMode) {
                 settings.flashMode = self.flashMode
@@ -1083,7 +1095,7 @@ public final class CameraService: NSObject {
                 guard let self, var request = self.pendingPhoto,
                       request.id == requestID, !request.failureReported else { return }
                 request.failureReported = true
-                request.fileData = nil; request.preview = nil
+                request.fileData = nil; request.processedData = nil; request.preview = nil
                 self.pendingPhoto = request
                 // Keep the hardware busy flag until didFinishCaptureFor. A UI
                 // timeout does not mean AVFoundation has finished the request.
@@ -1149,6 +1161,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                     request.fileData = data
                     (request.iso, request.shutter) = Self.parseExif(photo.metadata)
                 } else {
+                    if request.format == .dng { request.processedData = data }
                     request.preview = autoreleasepool {
                         SuperResolutionRAWEngine.decodeProcessedPhoto(data, context: self.sharedPhotoContext)
                     }
@@ -1191,7 +1204,8 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 }
                 return
             }
-            guard let image = request.preview, let data = request.fileData else {
+            guard let image = request.preview, let data = request.fileData,
+                  request.format != .dng || request.processedData != nil else {
                 DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.photoProcessingFailed)
                 }
@@ -1200,6 +1214,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             CameraLogger.info("Native photo: \(image.width)x\(image.height), \(request.format.rawValue)", category: .capture)
             DispatchQueue.main.async {
                 self.delegate?.cameraService(self, didCapturePhoto: image, rawData: data,
+                    processedCompanionData: request.processedData,
                     livePhotoMovieURL: request.movieURL, iso: request.iso, shutterSpeed: request.shutter,
                     format: request.format, requestedHighResolution: request.highResolution)
             }

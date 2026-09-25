@@ -91,7 +91,8 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("autoCaptureTask?.cancel()", VM)
         self.assertIn("cameraService.cancelZoomRamp()", VM)
         self.assertIn("!self.zoomAwaitingVerification && self.zoomVerified", VM)
-        self.assertIn("trackingQuality == .locked", VM)
+        self.assertIn("latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05", VM)
+        self.assertIn("(0...0.35).contains(age)", VM)
 
     def test_stronger_detector_has_matching_old_device_fallback_assets(self):
         if WORKFLOW is None or BUNDLE_CHECK is None:
