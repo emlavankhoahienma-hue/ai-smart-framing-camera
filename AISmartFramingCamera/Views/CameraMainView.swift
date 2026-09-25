@@ -1,6 +1,49 @@
 import SwiftUI
 import AVFoundation
 
+/// Works in the space SwiftUI has already inset away from the status bar and
+/// Home Indicator. The live preview and every overlay receive one exact size.
+struct CameraFormFactorLayout {
+    let availableSize: CGSize
+    let safeAreaInsets: EdgeInsets
+
+    var isCompact: Bool { availableSize.height < 700 || availableSize.width < 375 }
+    var topHorizontalPadding: CGFloat { availableSize.width < 375 ? 8 : 14 }
+    var topVerticalPadding: CGFloat {
+        isCompact ? 2 : min(18, max(4, (availableSize.height - 700) * 0.12))
+    }
+    var topBottomPadding: CGFloat { isCompact ? 4 : 6 }
+    var controlDeckHeight: CGFloat { isCompact ? 148 : 156 }
+    var minimumGap: CGFloat { isCompact ? 4 : 8 }
+    var bottomComfort: CGFloat {
+        safeAreaInsets.bottom >= 20 ? (isCompact ? 8 : 14) : (isCompact ? 6 : 10)
+    }
+    var viewfinderSize: CGSize {
+        let widthLimit = max(1, availableSize.width - 12)
+        let heightLimit = max(1, availableSize.height - 44 - topVerticalPadding -
+                              topBottomPadding - controlDeckHeight - bottomComfort - minimumGap)
+        let height = min(widthLimit * 4 / 3, heightLimit)
+        return CGSize(width: height * 3 / 4, height: height)
+    }
+    var histogramWidth: CGFloat {
+        max(100, min(140, availableSize.width - 2 * topHorizontalPadding - 184 - 12))
+    }
+    var viewfinderTopInset: CGFloat { max(6, min(12, viewfinderSize.height * 0.02)) }
+    var viewfinderBottomInset: CGFloat { max(8, min(14, viewfinderSize.height * 0.025)) }
+}
+
+extension View {
+    @ViewBuilder
+    func onChangeCompatible<Value: Equatable>(of value: Value,
+                                              perform action: @escaping (Value) -> Void) -> some View {
+        if #available(iOS 17.0, *) {
+            self.onChange(of: value, initial: false) { _, newValue in action(newValue) }
+        } else {
+            self.onChange(of: value, perform: action)
+        }
+    }
+}
+
 // MARK: - Camera Main View (Dark Luxury Pro Cinema Edition)
 public struct CameraMainView: View {
     @StateObject private var viewModel = CameraViewModel()
@@ -12,7 +55,10 @@ public struct CameraMainView: View {
     private let canvasBackground = Color(red: 0.031, green: 0.035, blue: 0.043) // #08090B
 
     public var body: some View {
-        ZStack {
+        GeometryReader { geometry in
+            let layout = CameraFormFactorLayout(availableSize: geometry.size,
+                                                safeAreaInsets: geometry.safeAreaInsets)
+            ZStack {
             // 1. Deep Charcoal Canvas with Subtle Radial Depth
             canvasBackground
                 .ignoresSafeArea()
@@ -20,12 +66,13 @@ public struct CameraMainView: View {
             if viewModel.hasCameraPermission {
                 VStack(spacing: 0) {
                     // 2. Floating Top Pro Toolbar
-                    TopCameraBar(viewModel: viewModel)
-                        .padding(.horizontal, 14)
-                        .padding(.top, 4)
-                        .padding(.bottom, 6)
+                    TopCameraBar(viewModel: viewModel, histogramWidth: layout.histogramWidth)
+                        .frame(height: 44)
+                        .padding(.horizontal, layout.topHorizontalPadding)
+                        .padding(.top, layout.topVerticalPadding)
+                        .padding(.bottom, layout.topBottomPadding)
 
-                    Spacer(minLength: 2)
+                    Spacer(minLength: layout.minimumGap / 2)
 
                     // 3. Fixed 3:4 High-End Viewfinder (Live View)
                     ZStack {
@@ -55,7 +102,8 @@ public struct CameraMainView: View {
                                 .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                         }
                     }
-                    .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                    .frame(width: layout.viewfinderSize.width,
+                           height: layout.viewfinderSize.height)
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -72,7 +120,7 @@ public struct CameraMainView: View {
 
                             AIStatusHUDView(viewModel: viewModel)
                         }
-                        .padding(.top, 10)
+                        .padding(.top, layout.viewfinderTopInset)
                     }
                     // Bottom In-Viewfinder Pro Floating Controls
                     .overlay(alignment: .bottom) {
@@ -80,29 +128,33 @@ public struct CameraMainView: View {
                             // Left: AI Compose Floating Trigger (Ai)
                             AIViewfinderButton(viewModel: viewModel)
 
-                            Spacer(minLength: 8)
+                            Spacer(minLength: layout.viewfinderSize.width < 300 ? 0 : 8)
 
                             // Center: Optical Zoom Selector Pill (khi tắt Windowed Zoom)
                             if !viewModel.isWindowedZoomActive {
-                                ViewfinderZoomSelectorPill(viewModel: viewModel)
-                                Spacer(minLength: 8)
+                                ViewfinderZoomSelectorPill(viewModel: viewModel,
+                                                           compact: layout.viewfinderSize.width < 300)
+                                Spacer(minLength: layout.viewfinderSize.width < 300 ? 0 : 8)
                             }
 
                             // Right: Framing Tool (nuticonbocucAI)
                             ViewfinderFramingButton(viewModel: viewModel)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 12)
+                        .padding(.horizontal, max(8, min(14, layout.viewfinderSize.width * 0.04)))
+                        .padding(.bottom, layout.viewfinderBottomInset)
                     }
                     .padding(.horizontal, 6)
 
-                    Spacer(minLength: 4)
+                    Spacer(minLength: layout.minimumGap / 2)
 
                     // 4. Bottom Control Deck (Mechanical Shutter + Album + Camera Flip + Mode Switcher)
-                    CameraControlsView(viewModel: viewModel)
+                    CameraControlsView(viewModel: viewModel, compact: layout.isCompact)
+                        .frame(height: layout.controlDeckHeight)
+                        .padding(.bottom, layout.bottomComfort)
                 }
             } else {
                 CameraPermissionPlaceholderView(viewModel: viewModel)
+            }
             }
         }
         .sheet(isPresented: $viewModel.isShowingSettings) {
@@ -130,7 +182,7 @@ public struct CameraMainView: View {
             }
             viewModel.requestPermissionsAndStart()
         }
-        .onChange(of: viewModel.isRecordingVideo) { isRecording in
+        .onChangeCompatible(of: viewModel.isRecordingVideo) { isRecording in
             if isRecording {
                 withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
                     isBlinkingRed = true
@@ -139,7 +191,7 @@ public struct CameraMainView: View {
                 isBlinkingRed = false
             }
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onChangeCompatible(of: scenePhase) { newPhase in
             viewModel.handleScenePhaseChange(newPhase)
         }
     }
@@ -172,13 +224,14 @@ public struct CameraMainView: View {
 // MARK: - Top Camera Bar (Live Color Histogram HUD + Pro Tools Capsule)
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
+    let histogramWidth: CGFloat
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             // Left: Live Color Histogram HUD (Histogram, ISO, EV, Format)
             if viewModel.showHistogramInViewfinder {
-                LiveColorHistogramHUDView(viewModel: viewModel)
+                LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             } else {
                 HStack(spacing: 8) {
@@ -188,7 +241,9 @@ struct TopCameraBar: View {
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundColor(.white.opacity(0.65))
                 .padding(.horizontal, 10)
-                .frame(height: 38)
+                .frame(width: histogramWidth, height: 44)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             }
 
             Spacer(minLength: 8)
@@ -204,7 +259,7 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: "camera.rotate.fill")
                         .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 38, height: 38)
+                        .frame(width: 44, height: 44)
                 }
                 .luxuryGoldInteractive(baseColor: Color.white.opacity(0.85))
                 .accessibilityLabel("Đổi camera trước và sau")
@@ -215,7 +270,7 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: flashIconName)
                         .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 38, height: 38)
+                        .frame(width: 44, height: 44)
                 }
                 .luxuryGoldInteractive(
                     baseColor: viewModel.activeFlashMode == .off ? Color.white.opacity(0.72) : amberGold
@@ -233,7 +288,7 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
                         .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 40, height: 40)
+                        .frame(width: 44, height: 44)
                 }
                 .luxuryGoldInteractive(
                     baseColor: viewModel.isWindowedZoomActive ? amberGold : Color.white.opacity(0.72)
@@ -246,7 +301,7 @@ struct TopCameraBar: View {
                 }) {
                     Image(systemName: "circle.grid.3x3.fill")
                         .font(.system(size: 14, weight: .medium))
-                        .frame(width: 40, height: 40)
+                        .frame(width: 44, height: 44)
                 }
                 .luxuryGoldInteractive(
                     baseColor: Color.white.opacity(0.75)
@@ -254,7 +309,7 @@ struct TopCameraBar: View {
                 .accessibilityLabel("Cài đặt hệ thống")
             }
             .padding(.horizontal, 4)
-            .frame(height: 42)
+            .frame(height: 44)
             .background(
                 Capsule()
                     .fill(Color(red: 0.10, green: 0.11, blue: 0.14).opacity(0.94))
@@ -339,6 +394,7 @@ struct AIViewfinderButton: View {
 // 2. Optical Zoom Selector (Strictly 1x, 2x, 3x - Minimalist Text with Stroke Ring)
 struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
+    var compact = false
     @Namespace private var zoomPillNamespace
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
 
@@ -381,7 +437,7 @@ struct ViewfinderZoomSelectorPill: View {
     }
 
     private var optionsRow: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: compact ? 0 : 4) {
             ForEach(zoomOptions, id: \.self) { zoom in
                 zoomButton(for: zoom)
             }

@@ -4,19 +4,17 @@ import UIKit
 // MARK: - Camera Controls View (Dark Luxury Pro Cinema Edition)
 public struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
+    let compact: Bool
 
-    public init(viewModel: CameraViewModel) {
+    public init(viewModel: CameraViewModel, compact: Bool = false) {
         self.viewModel = viewModel
+        self.compact = compact
     }
 
-    public var body: some View {
-        VStack(spacing: 12) {
-            // Film Preset Drawer (Floating Overlay above Controls)
-            if viewModel.isShowingFilmDrawer {
-                FilmPresetDrawer(viewModel: viewModel)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+    private var deckHeight: CGFloat { compact ? 148 : 156 }
 
+    public var body: some View {
+        VStack(spacing: compact ? 6 : 10) {
             // Row 1: Balanced 3-Column Shutter Control Deck with Live Camera Badge
             HStack(alignment: .center, spacing: 0) {
                 // Left Column: Recent Photo Thumbnail
@@ -45,13 +43,23 @@ public struct CameraControlsView: View {
             CameraModeSegmentedSwitcher(viewModel: viewModel)
                 .padding(.bottom, 6)
         }
-        .padding(.top, 4)
-        .padding(.bottom, 8)
+        .padding(.top, compact ? 2 : 4)
+        .padding(.bottom, compact ? 4 : 6)
+        .frame(height: deckHeight)
         .frame(maxWidth: .infinity)
         .background(
             Color(red: 0.031, green: 0.035, blue: 0.043) // Match Canvas Background
                 .ignoresSafeArea(edges: .bottom)
         )
+        .overlay(alignment: .bottom) {
+            if viewModel.isShowingFilmDrawer {
+                VStack(spacing: 0) {
+                    FilmPresetDrawer(viewModel: viewModel)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    Color.clear.frame(height: deckHeight).allowsHitTesting(false)
+                }
+            }
+        }
     }
 }
 
@@ -124,7 +132,7 @@ struct CameraModeSegmentedSwitcher: View {
                             .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
                     }
                     .foregroundColor(isSelected ? amberGold : .white.opacity(0.55))
-                    .frame(width: 82, height: 32)
+                    .frame(width: 82, height: 44)
                     .background(
                         ZStack {
                             if isSelected {

@@ -99,10 +99,10 @@ public class PreviewContainerView: UIView {
 
     private func configureView() {
         backgroundColor = .black
-        contentScaleFactor = UIScreen.main.scale
+        contentScaleFactor = currentDisplayScale
 
-        previewLayer?.contentsScale = UIScreen.main.scale
-        previewLayer?.rasterizationScale = UIScreen.main.scale
+        previewLayer?.contentsScale = currentDisplayScale
+        previewLayer?.rasterizationScale = currentDisplayScale
         previewLayer?.videoGravity = .resizeAspectFill
 
         focusRingView.layer.borderColor = UIColor.systemYellow.cgColor
@@ -114,14 +114,19 @@ public class PreviewContainerView: UIView {
 
     public func setupLayer(session: AVCaptureSession) {
         previewLayer?.session = session
-        previewLayer?.contentsScale = UIScreen.main.scale
-        previewLayer?.rasterizationScale = UIScreen.main.scale
+        previewLayer?.contentsScale = currentDisplayScale
+        previewLayer?.rasterizationScale = currentDisplayScale
+    }
+
+    private var currentDisplayScale: CGFloat {
+        let scale = window?.windowScene?.screen.scale ?? traitCollection.displayScale
+        return scale > 0 ? scale : 1
     }
 
     override public func layoutSubviews() {
         super.layoutSubviews()
-        previewLayer?.contentsScale = UIScreen.main.scale
-        previewLayer?.rasterizationScale = UIScreen.main.scale
+        previewLayer?.contentsScale = currentDisplayScale
+        previewLayer?.rasterizationScale = currentDisplayScale
         updateOrientation()
     }
 

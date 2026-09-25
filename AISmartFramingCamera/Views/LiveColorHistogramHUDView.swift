@@ -4,30 +4,35 @@ import QuartzCore
 
 public struct LiveColorHistogramHUDView: View {
     @ObservedObject var viewModel: CameraViewModel
+    let width: CGFloat
 
     @State private var smoothedHeights: [CGFloat] = Array(repeating: 0.08, count: 32)
     @State private var lastUpdateTime: Double = 0
     private let haptic = UISelectionFeedbackGenerator()
 
-    public init(viewModel: CameraViewModel) {
+    public init(viewModel: CameraViewModel, width: CGFloat = 140) {
         self.viewModel = viewModel
+        self.width = width
     }
 
     public var body: some View {
-        VStack(spacing: 3) {
-            rgbWaveformCanvas
-                .frame(width: 140, height: 26)
+        Button(action: toggleActiveFormat) {
+            VStack(spacing: 3) {
+                rgbWaveformCanvas
+                    .frame(width: width, height: 26)
 
-            infoRow
-                .frame(width: 140, height: 14)
+                infoRow
+                    .frame(width: width, height: 14)
+            }
+            .frame(width: width, height: 44)
+            .background(Color.black.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
-        .frame(width: 140, height: 44)
-        .background(Color.black.opacity(0.15))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .buttonStyle(.plain)
         .onAppear {
             initializeHeights()
         }
-        .onChange(of: viewModel.histogramBars) { newBars in
+        .onChangeCompatible(of: viewModel.histogramBars) { newBars in
             handleHistogramUpdate(newBars)
         }
         .accessibilityElement(children: .contain)
@@ -217,14 +222,10 @@ public struct LiveColorHistogramHUDView: View {
                 .contentTransition(.numericText())
                 .animation(.easeInOut(duration: 0.22), value: viewModel.exposureBias)
 
-            Button(action: toggleActiveFormat) {
-                Text(activeFormatTitle)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Đổi định dạng \(activeFormatTitle)")
+            Text(activeFormatTitle)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .font(.system(size: 9.0, weight: .medium, design: .monospaced))
         .foregroundColor(.white.opacity(0.70))

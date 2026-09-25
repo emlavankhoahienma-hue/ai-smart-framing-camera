@@ -200,7 +200,7 @@ public struct FeedbackView: View {
                     .foregroundColor(.white)
                     .padding(10)
                     .frame(minHeight: 150)
-                    .onChange(of: feedbackText) { newValue in
+                    .onChangeCompatible(of: feedbackText) { newValue in
                         if newValue.count > maxCharLimit {
                             feedbackText = String(newValue.prefix(maxCharLimit))
                         }
@@ -280,7 +280,7 @@ public struct FeedbackView: View {
                     )
             )
         }
-        .onChange(of: selectedPhotoItems) { newItems in
+        .onChangeCompatible(of: selectedPhotoItems) { newItems in
             handlePickedPhotos(newItems)
         }
     }
@@ -386,7 +386,12 @@ public struct FeedbackView: View {
 
     // MARK: - Helpers
     private func buildEmailBody() -> String {
-        """
+        let screen = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?.screen
+        let bounds = screen?.bounds ?? .zero
+        let scale = screen?.scale ?? 1
+        return """
         --- GÓP Ý TỪ NGƯỜI DÙNG (\(selectedCategory.rawValue.uppercased())) ---
         \(feedbackText)
 
@@ -394,7 +399,7 @@ public struct FeedbackView: View {
         Thời gian: \(timestampString)
         Phiên bản app: \(appVersionString)
         Thiết bị: \(UIDevice.current.model), iOS \(UIDevice.current.systemVersion)
-        Màn hình: \(Int(UIScreen.main.bounds.width))x\(Int(UIScreen.main.bounds.height)) @\(Int(UIScreen.main.scale))x
+        Màn hình: \(Int(bounds.width))x\(Int(bounds.height)) @\(Int(scale))x
         Số ảnh đính kèm: \(selectedImagesData.count)
 
         --- TRÍCH XUẤT NHẬT KÝ KỸ THUẬT GẦN NHẤT ---

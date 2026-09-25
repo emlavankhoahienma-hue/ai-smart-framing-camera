@@ -46,7 +46,7 @@ private struct LuxuryInteractiveGoldButtonContainer: View {
             .scaleEffect(configuration.isPressed ? pressedScale : 1.0)
             .animation(.spring(response: 0.32, dampingFraction: 0.70), value: configuration.isPressed)
             .animation(.easeOut(duration: 0.28), value: isAmberActive)
-            .onChange(of: configuration.isPressed) { isPressed in
+            .onChangeCompatible(of: configuration.isPressed) { isPressed in
                 if isPressed {
                     // Khi chạm ngón tay: Lập tức hủy timer decay trước đó, chuyển sang màu vàng tức thời
                     releaseWorkItem?.cancel()

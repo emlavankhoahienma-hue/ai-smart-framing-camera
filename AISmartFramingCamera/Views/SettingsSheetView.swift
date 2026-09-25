@@ -619,7 +619,7 @@ struct PhotoCaptureSettingsSection: View {
                     }
                     .pickerStyle(.menu)
                     .tint(Color.white.opacity(0.70))
-                    .onChange(of: viewModel.selectedFilmPreset) { newPreset in
+                    .onChangeCompatible(of: viewModel.selectedFilmPreset) { newPreset in
                         viewModel.selectPreset(newPreset)
                     }
                 }
@@ -996,7 +996,7 @@ struct AIFramingSettingsSection: View {
                     }
                     .pickerStyle(.menu)
                     .tint(Color.white.opacity(0.70))
-                    .onChange(of: selectedModel) { newModel in
+                    .onChangeCompatible(of: selectedModel) { newModel in
                         viewModel.geminiService.selectedModel = newModel
                     }
                 }

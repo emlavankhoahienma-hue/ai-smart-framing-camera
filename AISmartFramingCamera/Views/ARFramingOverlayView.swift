@@ -13,6 +13,10 @@ public struct ARFramingOverlayView: View {
         GeometryReader { proxy in
             let size = proxy.size
             let screenCenter = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+            let topChromeInset = viewModel.isRecordingVideo ?
+                max(82, min(104, size.height * 0.22)) :
+                max(52, min(74, size.height * 0.14))
+            let bottomChromeInset = max(70, min(96, size.height * 0.18))
 
             ZStack {
                 // 0. Focus Peaking Neon Edges (Báo nét điện ảnh)
@@ -73,7 +77,7 @@ public struct ARFramingOverlayView: View {
                             .padding(.horizontal, 9)
                             .padding(.vertical, 5)
                             .background(Capsule().fill(Color.black.opacity(0.60)))
-                            .padding(.top, 42)
+                            .padding(.top, topChromeInset)
                         Spacer()
                     }
                     .allowsHitTesting(false)
@@ -134,7 +138,8 @@ public struct ARFramingOverlayView: View {
 
                 // 6. Countdown Overlay khi 2 tâm đã trùng khớp
                 if case .alignmentPerfect = viewModel.aiSessionState {
-                    CountdownOverlayView(countdown: viewModel.autoCaptureCountdown)
+                    CountdownOverlayView(countdown: viewModel.autoCaptureCountdown,
+                                         bottomInset: max(80, min(118, size.height * 0.22)))
                 }
 
                 // 7. Success Flash
@@ -152,7 +157,7 @@ public struct ARFramingOverlayView: View {
 
                 // 8. Gemini analyzing toast
                 if viewModel.isGeminiAnalyzing {
-                    GeminiAnalyzingBadge()
+                    GeminiAnalyzingBadge(topInset: topChromeInset)
                 }
 
                 // 8c. Save error toast — hiện khi lưu ảnh thất bại hoặc thiếu quyền Photos
@@ -166,7 +171,7 @@ public struct ARFramingOverlayView: View {
                             .padding(12)
                             .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.85)))
                             .padding(.horizontal, 24)
-                            .padding(.bottom, 140)
+                            .padding(.bottom, bottomChromeInset)
                     }
                     .transition(.opacity)
                     .onAppear {
@@ -188,7 +193,7 @@ public struct ARFramingOverlayView: View {
                         .foregroundColor(.black)
                         .padding(.horizontal, 14).padding(.vertical, 5)
                         .background(Capsule().fill(Color.yellow))
-                        .padding(.top, 46)
+                        .padding(.top, topChromeInset)
                         .transition(.move(edge: .top).combined(with: .opacity))
 
                         Spacer()
@@ -230,7 +235,8 @@ public struct ARFramingOverlayView: View {
                 )
             }
             .contentShape(Rectangle())
-            .onTapGesture { location in
+            .gesture(SpatialTapGesture().onEnded { event in
+                let location = event.location
                 let norm = convertScreenPointToBuffer(location, in: size)
                 if viewModel.isAEAFLocked {
                     viewModel.unlockAEAF()
@@ -242,7 +248,7 @@ public struct ARFramingOverlayView: View {
                 } else {
                     viewModel.userDidTapToFocus(at: norm)
                 }
-            }
+            })
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.45)
                     .sequenced(before: DragGesture(minimumDistance: 0))
@@ -282,7 +288,7 @@ public struct ARFramingOverlayView: View {
             )
             .clipped()
             .animation(.easeOut(duration: 0.25), value: viewModel.showTargetCircle)
-            .onChange(of: size) { newSize in viewModel.viewfinderSize = newSize }
+            .onChangeCompatible(of: size) { newSize in viewModel.viewfinderSize = newSize }
             .onAppear {
                 viewModel.viewfinderSize = size
                 SpatialTrackingEngine.shared.prepare()
@@ -494,6 +500,7 @@ struct GuidanceRayLine: View {
 
 struct CountdownOverlayView: View {
     let countdown: Int
+    let bottomInset: CGFloat
     var body: some View {
         VStack {
             Spacer()
@@ -506,7 +513,7 @@ struct CountdownOverlayView: View {
             .padding(.horizontal, 18).padding(.vertical, 9)
             .background(Capsule().fill(Color.green))
             .shadow(color: Color.green.opacity(0.4), radius: 10)
-            Spacer().frame(height: 200)
+            Spacer().frame(height: bottomInset)
         }
     }
 }
@@ -514,6 +521,7 @@ struct CountdownOverlayView: View {
 // MARK: - Gemini Analyzing Badge
 
 struct GeminiAnalyzingBadge: View {
+    let topInset: CGFloat
     var body: some View {
         VStack {
             HStack(spacing: 8) {
@@ -533,7 +541,7 @@ struct GeminiAnalyzingBadge: View {
             )
             Spacer()
         }
-        .padding(.top, 50)
+        .padding(.top, topInset)
         .transition(.opacity)
     }
 }
@@ -812,7 +820,7 @@ public struct AIVideoDirectorOverlayView: View {
                             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.yellow.opacity(0.4), lineWidth: 1.2))
                     )
                     .shadow(color: Color.black.opacity(0.5), radius: 8)
-                    .padding(.top, 56)
+                    .padding(.top, max(52, min(74, screenSize.height * 0.14)))
 
                     Spacer()
                 }
@@ -865,7 +873,7 @@ public struct AIVideoDirectorOverlayView: View {
                         }
                     )
                     .padding(.horizontal, 16)
-                    .padding(.top, 52)
+                    .padding(.top, max(52, min(74, screenSize.height * 0.14)))
 
                     Spacer()
                 }
