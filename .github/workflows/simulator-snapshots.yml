@@ -1,0 +1,78 @@
+name: iPhone Simulator Visual Snapshot
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/simulator-snapshots.yml'
+      - 'scripts/capture_simulator_screenshots.sh'
+
+jobs:
+  snapshot:
+    name: Simulator UI Visual Snapshot
+    runs-on: macos-15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          latest=$(ls -d /Applications/Xcode_16*.app /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then
+            echo "Selecting Xcode: $latest"
+            sudo xcode-select -s "$latest/Contents/Developer"
+          else
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          xcodebuild -version
+
+      - name: Build for iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project AISmartFramingCamera.xcodeproj \
+            -scheme AISmartFramingCamera \
+            -destination 'generic/platform=iOS Simulator' \
+            -sdk iphonesimulator \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=NO \
+            ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS=NO \
+            ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+            BUILD_DIR=${{ github.workspace }}/build-sim 2>&1 | tee build-sim.log
+
+      - name: Run Simulator Snapshot Suite
+        run: |
+          chmod +x scripts/capture_simulator_screenshots.sh
+          ./scripts/capture_simulator_screenshots.sh "${{ github.workspace }}/build-sim/Release-iphonesimulator/AISmartFramingCamera.app"
+
+      - name: Upload Screenshots Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iPhone-Screenshots
+          path: screenshots/*.png
+          if-no-files-found: error
+
+      - name: Publish Step Summary
+        if: always()
+        run: |
+          echo "## iPhone Simulator Visual Snapshot Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| File | Size | Resolution |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          for img in screenshots/*.png; do
+            if [ -f "$img" ]; then
+              fname=$(basename "$img")
+              fsize=$(ls -lh "$img" | awk '{print $5}')
+              res=$(sips -g pixelWidth -g pixelHeight "$img" 2>/dev/null | awk '/pixel/ {printf "%s ", $2}' || echo "N/A")
+              echo "| $fname | $fsize | $res |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
