@@ -3,6 +3,10 @@ name: iOS Sideload Build & Release
 on:
   push:
     branches: [ main, 'arena/01a067b3-ai-smart-framing-camera' ]
+    paths-ignore:
+      - 'web/**'
+      - 'README.md'
+      - 'docs/**'
   workflow_dispatch:
 
 jobs:

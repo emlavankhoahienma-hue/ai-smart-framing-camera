@@ -10,6 +10,7 @@
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B%20%7C%20SwiftUI-FA7343.svg?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![Apple Neural Engine](https://img.shields.io/badge/Neural_Engine-A11_to_A18_Pro-9945FF.svg?style=flat-square&logo=apple)](https://apple.com)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash_%2F_Pro-4285F4.svg?style=flat-square&logo=google)](https://ai.google.dev)
+[![Official Website](https://img.shields.io/badge/Official_Website-Live_Product_Page-FFB029.svg?style=flat-square&logo=safari)](https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 
 <p align="center">
@@ -17,7 +18,7 @@
   Định vị điểm vàng bố cục theo tỷ lệ điện ảnh, bám dính chủ thể bằng thuật toán lai quang học kết hợp con quay hồi chuyển 6-DoF EKF, cơ chế căn tâm chống rung tự động (Alignment Dwell Gate), chụp ảnh 48MP ISP gốc, bảo toàn tệp RAW DNG đa tài nguyên cùng JPEG xem trước chuẩn Display P3, và tái hiện 9 phong cách màu phim kinh điển.
 </p>
 
-[Tải File IPA](#huong-dan-cai-dat-sideload) • [Tính Năng Nổi Bật](#tinh-nang-noi-bat) • [Kiến Trúc & Thuật Toán](#kien-truc--thuat-toan-cot-loi) • [Bộ Quy Tắc Bố Cục](#bo-quy-tac-bo-cuc-dien-anh) • [Màu Phim Nghệ Thuật](#bo-suu-tap-9-mau-phim-nghe-thuat) • [Hướng Dẫn Sử Dụng](#huong-dan-su-dung) • [Yêu Cầu Hệ Thống](#yeu-cau-he-thong)
+[Trang Web Chính Thức](https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/) • [Tải File IPA](#huong-dan-cai-dat-sideload) • [Tính Năng Nổi Bật](#tinh-nang-noi-bat) • [Kiến Trúc & Thuật Toán](#kien-truc--thuat-toan-cot-loi) • [Bộ Quy Tắc Bố Cục](#bo-quy-tac-bo-cuc-dien-anh) • [Màu Phim Nghệ Thuật](#bo-suu-tap-9-mau-phim-nghe-thuat) • [Hướng Dẫn Sử Dụng](#huong-dan-su-dung) • [Yêu Cầu Hệ Thống](#yeu-cau-he-thong)
 
 ---
 
