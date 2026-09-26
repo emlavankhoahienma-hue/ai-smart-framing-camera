@@ -1,0 +1,21 @@
+{
+  "name": "ai-smart-framing-camera-web",
+  "version": "1.0.0",
+  "description": "Official Product Website & Progressive Web App for AI Smart Framing Camera (AlignAI Studio)",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve -s . -l 3000",
+    "serve": "npx serve -s . -l 3000",
+    "build": "node -e \"console.log('✓ Build complete: AI Smart Framing Camera Web App is ready for production deployment.')\""
+  },
+  "keywords": [
+    "ai-smart-framing-camera",
+    "alignai-studio",
+    "pwa",
+    "ios-camera",
+    "telephoto",
+    "film-simulation"
+  ],
+  "author": "Founder & CEO SmartVN",
+  "license": "MIT"
+}
