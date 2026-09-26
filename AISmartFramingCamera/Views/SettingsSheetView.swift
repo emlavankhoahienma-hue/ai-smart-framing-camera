@@ -1015,7 +1015,6 @@ struct AIFramingSettingsSection: View {
                     .tint(Color.white.opacity(0.70))
                     .onChangeCompatible(of: selectedModel) { newModel in
                         viewModel.geminiService.customModelName = ""
-                        customModelInput = ""
                         viewModel.geminiService.selectedModel = newModel
                     }
                 }

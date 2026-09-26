@@ -46,7 +46,7 @@ public struct AIStatusHUDView: View {
                         )
                 )
 
-                if viewModel.aiSessionState == .targetPlaced,
+                if case .targetPlaced = viewModel.aiSessionState,
                    viewModel.activeAIIndicatorType == .cloud,
                    !viewModel.geminiExplanation.isEmpty {
                     Text(viewModel.geminiExplanation)
