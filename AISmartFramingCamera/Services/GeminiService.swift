@@ -52,7 +52,9 @@ public struct KeychainHelper {
 // MARK: - Supported AI Vision Models
 
 public enum AIVisionModel: String, CaseIterable, Identifiable {
+    case freeVision = "google/gemma-4-31b-it:free"
     case autoStrongest = "auto"
+    case gemini31Pro = "google/gemini-3.1-pro-preview"
     case gemini37Flash = "google/gemini-3.7-flash"
     case gemini36Flash = "google/gemini-3.6-flash"
     case gemini35Flash = "google/gemini-3.5-flash"
@@ -69,53 +71,70 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
+        case .freeVision:
+            return "\u{1f193} Gemma 4 31B (Miễn phí, nhận ảnh)"
         case .autoStrongest:
-            return "\u{26a1} Tự động (Gemini 3.5 Flash)"
+            return "\u{26a1} Gemini 3.7 Flash (Trả phí)"
+        case .gemini31Pro:
+            return "\u{1f9e0} Gemini 3.1 Pro (Trả phí, phân tích sâu)"
         case .gemini35Flash:
-            return "\u{1f3af} Gemini 3.5 Flash (Khuyên dùng)"
+            return "\u{1f3af} Gemini 3.5 Flash (Trả phí)"
         case .gemini25Flash:
-            return "\u{2728} Gemini 2.5 Flash (Tốc độ cao)"
+            return "\u{2728} Gemini 2.5 Flash (Trả phí)"
         case .gemini36Flash:
-            return "\u{26a1} Gemini 3.6 Flash (Tốc độ cao)"
+            return "\u{26a1} Gemini 3.6 Flash (Trả phí)"
         case .gemini37Flash:
-            return "\u{1f680} Gemini 3.7 Flash (Mới nhất)"
+            return "\u{1f680} Gemini 3.7 Flash (Trả phí)"
         case .gemini25Pro:
-            return "\u{1f48e} Gemini 2.5 Pro (Chi tiết)"
+            return "\u{1f48e} Gemini 2.5 Pro (Trả phí)"
         case .gemini20Flash:
-            return "\u{1f525} Gemini 2.0 Flash (Siêu tốc)"
+            return "\u{1f525} Gemini 2.0 Flash (Trả phí)"
         case .geminiFlash15:
-            return "\u{1f31f} Gemini 1.5 Flash (Ổn định)"
+            return "\u{1f31f} Gemini 1.5 Flash (Trả phí)"
         case .geminiPro15:
-            return "\u{1f52e} Gemini 1.5 Pro (Deep Reasoning)"
+            return "\u{1f52e} Gemini 1.5 Pro (Trả phí)"
         case .gpt4oMini:
-            return "\u{1f7e2} GPT-4o Mini (OpenAI)"
+            return "\u{1f7e2} GPT-4o Mini (Trả phí)"
         case .claude35Haiku:
-            return "\u{1f7e3} Claude 3.5 Haiku (Anthropic)"
+            return "\u{1f7e3} Claude 3.5 Haiku (Trả phí)"
         case .llamaVision:
-            return "\u{1f999} Llama 3.2 Vision (Meta)"
+            return "\u{1f999} Llama 3.2 Vision (Trả phí)"
         }
     }
 
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "google/gemini-3.5-flash"
+            return "google/gemini-3.7-flash"
         default:
             return rawValue
         }
     }
 
-    /// Sequence of standard verified models to try in auto mode on OpenRouter
+    /// Prefer a responsive vision model for the live camera; keep a lower-cost fallback.
     public static var autoFallbackChain: [String] {
         [
-            "google/gemini-3.5-flash",
-            "google/gemini-2.5-flash",
-            "google/gemini-2.0-flash-001"
+            "google/gemini-3.7-flash",
+            "google/gemini-2.5-flash"
         ]
     }
 
-    public static func fallbackChain(for key: String) -> [String] {
-        return autoFallbackChain
+    public static var freeFallbackChain: [String] {
+        [
+            "google/gemma-4-31b-it:free",
+            "google/gemma-4-26b-a4b-it:free",
+            "openrouter/free"
+        ]
+    }
+
+    public static func fallbackChain(selected: AIVisionModel, customModelName: String) -> [String] {
+        let custom = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The free selection is a strict cost boundary, including migrated installations
+        // that may still have a hidden custom paid model saved in UserDefaults.
+        let preferred = (selected == .freeVision || custom.isEmpty) ? selected.technicalModelID : custom
+        let freeOnly = preferred.hasSuffix(":free") || preferred == "openrouter/free"
+        let fallback = freeOnly ? freeFallbackChain : autoFallbackChain
+        return [preferred] + fallback.filter { $0 != preferred }
     }
 }
 
@@ -196,6 +215,8 @@ public struct GeminiFramingResponse {
 public enum GeminiError: LocalizedError {
     case noAPIKey
     case invalidAPIKey(String)
+    case insufficientCredits
+    case freeQuotaReached
     case rateLimited(String)
     case imageConversionFailed
     case invalidURL
@@ -210,6 +231,10 @@ public enum GeminiError: LocalizedError {
             return "Chưa cài OpenRouter API Key. Mở Cài đặt để dán key (sk-or-...)."
         case .invalidAPIKey(let msg):
             return "OpenRouter API Key không hợp lệ: \(msg)."
+        case .insufficientCredits:
+            return "Model đã chọn cần credits OpenRouter. Đã tắt cloud và chuyển sang AI cục bộ; chọn model :free nếu muốn dùng lượt miễn phí."
+        case .freeQuotaReached:
+            return "OpenRouter đang giới hạn lượt miễn phí. AI cục bộ vẫn dùng được, không cần chờ cloud."
         case .rateLimited(let msg):
             return "Model OpenRouter tạm thời bận hoặc hết hạn mức/credits: \(msg)."
         case .imageConversionFailed:
@@ -273,15 +298,29 @@ public final class GeminiService {
 
     public var hasAPIKey: Bool { !apiKey.isEmpty }
 
+    public var cloudAnalysisDeadline: TimeInterval {
+        let custom = customModelName
+        if custom.hasSuffix(":free") || custom == "openrouter/free" { return 52 }
+        switch selectedModel {
+        case .freeVision:
+            return 52
+        case .gemini31Pro, .gemini25Pro:
+            return 38
+        default:
+            return customModelName.isEmpty ? 26 : 38
+        }
+    }
+
     // Selected Model Setting
     public var selectedModel: AIVisionModel {
         get {
             guard let saved = UserDefaults.standard.string(forKey: "gemini_selected_model") else {
-                return .autoStrongest
+                return .freeVision
             }
             if let model = AIVisionModel(rawValue: saved) {
                 return model
             }
+            if saved.contains("3.1") && saved.contains("pro") { return .gemini31Pro }
             if saved.contains("3.7") { return .gemini37Flash }
             if saved.contains("3.6") { return .gemini36Flash }
             if saved.contains("3.5") { return .gemini35Flash }
@@ -309,8 +348,8 @@ public final class GeminiService {
 
     private let urlSession: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 20
-        config.timeoutIntervalForResource = 40
+        config.timeoutIntervalForRequest = 24
+        config.timeoutIntervalForResource = 50
         return URLSession(configuration: config)
     }()
 
@@ -333,10 +372,7 @@ public final class GeminiService {
             return
         }
 
-        var testCandidates = AIVisionModel.fallbackChain(for: key)
-        if !customModelName.isEmpty {
-            testCandidates.insert(customModelName, at: 0)
-        }
+        let testCandidates = AIVisionModel.fallbackChain(selected: selectedModel, customModelName: customModelName)
 
         testModelCandidate(candidates: testCandidates, index: 0, key: key, completion: completion)
     }
@@ -360,6 +396,9 @@ public final class GeminiService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        if testModel.hasSuffix(":free") || testModel == "openrouter/free" {
+            request.timeoutInterval = 45
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
@@ -394,6 +433,11 @@ public final class GeminiService {
                     self.lastModelUsed = testModel
                     self.lastLatencyMs = latency
                     completion(true, "\u{2705} Kết nối thành công! [OpenRouter] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
+                }
+            } else if http.statusCode == 429,
+                      testModel.hasSuffix(":free") || testModel == "openrouter/free" {
+                DispatchQueue.main.async {
+                    completion(false, "\u{274c} OpenRouter đang giới hạn lượt miễn phí. Kiểm tra này cũng tính là một yêu cầu API.")
                 }
             } else if http.statusCode == 404 || http.statusCode == 429 || http.statusCode == 503 || http.statusCode == 502 {
                 self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
@@ -481,7 +525,11 @@ public final class GeminiService {
     }
 
     // MARK: - Image Downscaling & Optimization for AI Vision Analysis
-    public static func prepareImageForAnalysis(_ image: CGImage, maxDimension: CGFloat = 1280) -> Data? {
+    public static func prepareImageForAnalysis(
+        _ image: CGImage,
+        maxDimension: CGFloat = 1280,
+        compressionQuality: CGFloat = 0.60
+    ) -> Data? {
         let originalWidth = CGFloat(image.width)
         let originalHeight = CGFloat(image.height)
         let maxOrig = max(originalWidth, originalHeight)
@@ -512,12 +560,12 @@ public final class GeminiService {
             context.draw(image, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
             if let scaledCG = context.makeImage() {
                 let uiImage = UIImage(cgImage: scaledCG)
-                return uiImage.jpegData(compressionQuality: 0.60)
+                return uiImage.jpegData(compressionQuality: compressionQuality)
             }
         }
 
         let uiImage = UIImage(cgImage: image)
-        return uiImage.jpegData(compressionQuality: 0.50)
+        return uiImage.jpegData(compressionQuality: compressionQuality)
     }
 
     // MARK: - Local Neural/Hardware Color Recipe Fallback (Offline & Zero-Quota Safety)
@@ -598,9 +646,8 @@ public final class GeminiService {
             return
         }
 
-        // Tối ưu hóa dung lượng ảnh gửi AI: Downscale về chuẩn phân tích thị giác (max 1280px)
-        // Tránh lỗi 413 Payload Too Large / Request Entity Too Large trên ảnh chụp gốc 12MP-48MP
-        guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1280) else {
+        // Keep enough detail for scene-wide analysis without uploading a full-resolution photo.
+        guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1600, compressionQuality: 0.75) else {
             completion(.failure(.imageConversionFailed))
             return
         }
@@ -608,13 +655,7 @@ public final class GeminiService {
         let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
         let prompt = buildPrompt(sceneContext: sceneContext, colorMetrics: metrics, subjectRect: subjectRect, faceRects: faceRects)
 
-        var chain = AIVisionModel.fallbackChain(for: key)
-        if !customModelName.isEmpty {
-            chain.insert(customModelName, at: 0)
-        } else if selectedModel != .autoStrongest {
-            chain.removeAll(where: { $0 == selectedModel.technicalModelID })
-            chain.insert(selectedModel.technicalModelID, at: 0)
-        }
+        let chain = AIVisionModel.fallbackChain(selected: selectedModel, customModelName: customModelName)
 
         let startTime = CACurrentMediaTime()
 
@@ -652,13 +693,14 @@ public final class GeminiService {
         image: CGImage,
         sceneContext: DetectedSceneType? = nil,
         colorMetrics: ImageColorMetrics? = nil,
+        allowCloud: Bool = true,
         completion: @escaping (Result<(preset: FilmPreset, recipe: GeminiColorRecipe, explanation: String, latencyMs: Int), GeminiError>) -> Void
     ) {
         let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
         let effectiveScene = sceneContext ?? .general
 
-        guard hasAPIKey else {
-            // Offline / No API Key: use local engine & scene intelligence
+        guard allowCloud && hasAPIKey else {
+            // Offline mode or no API key: use local engine and scene intelligence.
             let localPreset = effectiveScene.recommendedFilter
             let localRecipe = Self.generateLocalColorRecipe(from: metrics, sceneType: effectiveScene)
             let explanation = "\(localPreset.displayName): Phù hợp bối cảnh \(effectiveScene.localizedName) (AI Cục bộ)"
@@ -723,13 +765,7 @@ public final class GeminiService {
             lookingDirection: lookingDirection
         )
 
-        var chain = AIVisionModel.fallbackChain(for: key)
-        if !customModelName.isEmpty {
-            chain.insert(customModelName, at: 0)
-        } else if selectedModel != .autoStrongest {
-            chain.removeAll(where: { $0 == selectedModel.technicalModelID })
-            chain.insert(selectedModel.technicalModelID, at: 0)
-        }
+        let chain = AIVisionModel.fallbackChain(selected: selectedModel, customModelName: customModelName)
 
         let startTime = CACurrentMediaTime()
         tryVideoCinematographyChain(
@@ -789,6 +825,9 @@ public final class GeminiService {
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
         request.setValue("AlignAI Video Director", forHTTPHeaderField: "X-Title")
+        if currentModelID.hasSuffix(":free") || currentModelID == "openrouter/free" {
+            request.timeoutInterval = 45
+        }
 
         let requestBody: [String: Any] = [
             "model": currentModelID,
@@ -856,6 +895,23 @@ public final class GeminiService {
                     lookingDirection: lookingDirection
                 )
                 completion(.success(fallback))
+                return
+            }
+
+            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+                let details = Self.extractErrorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)"
+                DispatchQueue.main.async { completion(.failure(.invalidAPIKey(details))) }
+                return
+            }
+
+            if httpResponse.statusCode == 402 {
+                DispatchQueue.main.async { completion(.failure(.insufficientCredits)) }
+                return
+            }
+
+            if httpResponse.statusCode == 429,
+               currentModelID.hasSuffix(":free") || currentModelID == "openrouter/free" {
+                DispatchQueue.main.async { completion(.failure(.freeQuotaReached)) }
                 return
             }
 
@@ -950,6 +1006,10 @@ public final class GeminiService {
                     completion(.failure(error))
                     return
                 }
+                if case .insufficientCredits = error {
+                    completion(.failure(error))
+                    return
+                }
 
                 // ONLY rotate to the next model on genuine quota exhaustion (429) or transient network errors
                 // DO NOT rotate on parse errors or completed requests (prevents costly cascading requests!)
@@ -987,6 +1047,9 @@ public final class GeminiService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        if modelID.hasSuffix(":free") || modelID == "openrouter/free" {
+            request.timeoutInterval = 45
+        }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
@@ -1015,7 +1078,7 @@ public final class GeminiService {
             "reasoning": ["exclude": true],
             "temperature": 0.20,
             "top_p": 0.90,
-            "max_tokens": 1024
+            "max_tokens": modelID == AIVisionModel.gemini31Pro.rawValue ? 4096 : 2048
         ]
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
@@ -1046,11 +1109,13 @@ public final class GeminiService {
                     return
                 }
                 if httpResponse.statusCode == 402 {
-                    DispatchQueue.main.async { completion(.failure(.rateLimited("Tài khoản OpenRouter hết credits (402)"))) }
+                    DispatchQueue.main.async { completion(.failure(.insufficientCredits)) }
                     return
                 }
                 if httpResponse.statusCode == 429 {
-                    DispatchQueue.main.async { completion(.failure(.rateLimited("\(modelID) hết quota (429)"))) }
+                    let error: GeminiError = (modelID.hasSuffix(":free") || modelID == "openrouter/free")
+                        ? .freeQuotaReached : .rateLimited("\(modelID) hết quota (429)")
+                    DispatchQueue.main.async { completion(.failure(error)) }
                     return
                 }
                 if httpResponse.statusCode == 404 || httpResponse.statusCode >= 500 {
@@ -1080,7 +1145,7 @@ public final class GeminiService {
             }
 
             // Attempt 1: Self-healing JSON parsing
-            if let parsed = Self.cleanAndParseJSON(from: text) {
+            if let parsed = Self.cleanAndParseJSON(from: text), Self.hasUsableFraming(parsed) {
                 let result = Self.parseGeminiResponse(parsed, modelUsed: modelID, latencyMs: latency)
                 DispatchQueue.main.async {
                     self.lastLatencyMs = latency
@@ -1102,25 +1167,9 @@ public final class GeminiService {
                 return
             }
 
-            // Attempt 3: Safe fallback using model latency - never fail and cascade when HTTP 200 was billed!
-            let fallbackResult = GeminiFramingResponse(
-                targetX: 0.50,
-                targetY: 0.45,
-                suggestedZoom: 1.2,
-                sceneType: .general,
-                colorRecipe: .defaultRecipe,
-                compositionRule: .goldenRatio,
-                explanation: "Đã phân tích bố cục hình ảnh thành công",
-                modelUsed: modelID,
-                latencyMs: latency,
-                recommendedPreset: .classicChrome,
-                presetExplanation: "Classic Chrome — Màu phim phóng sự tài liệu trung thực"
-            )
+            // Do not present a fabricated centre point as a successful cloud analysis.
             DispatchQueue.main.async {
-                self.lastLatencyMs = latency
-                self.lastModelUsed = modelID
-                self.lastExplanation = fallbackResult.explanation
-                completion(.success(fallbackResult))
+                completion(.failure(.parseError("Model không trả về tọa độ chủ thể và zoom hợp lệ")))
             }
         }.resume()
     }
@@ -1141,6 +1190,14 @@ public final class GeminiService {
             return msg
         }
         return nil
+    }
+
+    public static func hasUsableFraming(_ json: [String: Any]) -> Bool {
+        let x = parseCGFloat(json["target_x"], defaultVal: .nan)
+        let y = parseCGFloat(json["target_y"], defaultVal: .nan)
+        let zoom = parseCGFloat(json["suggested_zoom"], defaultVal: .nan)
+        return x.isFinite && y.isFinite && zoom.isFinite &&
+            (0...1).contains(x) && (0...1).contains(y) && (1...5).contains(zoom)
     }
 
     // MARK: - Self-Healing JSON Cleaner & Fallback Extractor
@@ -1201,9 +1258,15 @@ public final class GeminiService {
             return String(text[r])
         }
 
-        let targetX = CGFloat(extractNumber(forKey: "target_x") ?? 0.50)
-        let targetY = CGFloat(extractNumber(forKey: "target_y") ?? 0.45)
-        let zoom = CGFloat(extractNumber(forKey: "suggested_zoom") ?? 1.2)
+        guard let rawX = extractNumber(forKey: "target_x"),
+              let rawY = extractNumber(forKey: "target_y"),
+              let rawZoom = extractNumber(forKey: "suggested_zoom"),
+              rawX.isFinite, rawY.isFinite, rawZoom.isFinite,
+              (0...1).contains(rawX), (0...1).contains(rawY),
+              (1...5).contains(rawZoom) else { return nil }
+        let targetX = CGFloat(rawX)
+        let targetY = CGFloat(rawY)
+        let zoom = CGFloat(rawZoom)
         let explanation = extractString(forKey: "explanation") ?? "Đã căn chỉnh tiêu điểm và bố cục ảnh"
         let sceneTypeStr = extractString(forKey: "scene_type") ?? "general"
         let compRuleStr = extractString(forKey: "composition_rule") ?? "golden_ratio"
@@ -1217,12 +1280,6 @@ public final class GeminiService {
         let warmth = Float(extractNumber(forKey: "warmth_shift") ?? 0.0)
         let tint = Float(extractNumber(forKey: "tint_shift") ?? 0.0)
         let diag = extractString(forKey: "diagnosis") ?? "Cân bằng màu sắc tự nhiên"
-
-        let hasAnyUsefulData = extractNumber(forKey: "target_x") != nil ||
-                               extractNumber(forKey: "suggested_zoom") != nil ||
-                               extractString(forKey: "explanation") != nil
-
-        guard hasAnyUsefulData else { return nil }
 
         let colorRecipe = GeminiColorRecipe(
             temperatureK: tempK,
@@ -1282,21 +1339,21 @@ public final class GeminiService {
         }
 
         return """
-        Phân tích bố cục và chỉ định bộ màu film điện ảnh tối ưu cho bức ảnh (Trả về duy nhất JSON object):
-        \(context)
+        Bạn là trợ lý nhiếp ảnh phân tích MỘT khung hình camera. Hãy quan sát toàn bộ ảnh, không chỉ vật thể được nhận diện. Trả về duy nhất một JSON object.
+        Gợi ý từ cảm biến (có thể cũ hoặc sai; ảnh là nguồn sự thật): \(context)
 
         \(FilmPreset.aiCatalogDescription)
 
-        Yêu cầu bắt buộc:
-        1. target_x, target_y (0.05-0.95): Tiêu điểm khóa vào chủ thể chính. Không để mặc định (0.5, 0.5) nếu chủ thể lệch tâm.
-        2. suggested_zoom (1.0-3.0): Zoom đặc tả chủ thể (chân dung 1.4-1.8x, chủ thể xa 1.8-2.5x, cảnh rộng 1.0-1.2x).
-        3. recommended_film_preset: Chọn CHÍNH XÁC 1 preset từ danh mục 18 bộ màu trên phù hợp nhất với ánh sáng, chủ thể và cảm xúc bức ảnh.
-        4. preset_explanation: Giải thích ngắn gọn (1 câu tiếng Việt) lý do chọn preset này cho cảnh ảnh.
-        5. Cân bằng sáng tối (exposure_bias, shadow_lift, highlight_roll) và bảo vệ màu da người tự nhiên.
-        6. color_grade chọn 1 trong: ["softwarm", "vibrant", "coolnatural", "golden", "tealOrange", "moody", "classic", "cinematic"].
-        7. explanation & diagnosis: Tiếng Việt súc tích (1 câu).
+        Trước khi chọn bố cục, xét: (a) chủ thể chính và quan hệ với người/vật khác; (b) tiền cảnh, hậu cảnh, đường dẫn, đường chân trời, đối xứng và khoảng trống; (c) hướng nhìn/chuyển động, khoảng đầu, các vật chạm mép hoặc gây rối; (d) ánh sáng và màu thực tế. Đừng áp đặt tỷ lệ vàng cho mọi cảnh. Nếu ảnh là phong cảnh hoặc nhiều người, giữ toàn cảnh và các chủ thể quan trọng.
 
-        JSON Schema:
+        Quy tắc xuất:
+        1. target_x, target_y trong [0.05, 0.95] là vị trí điểm CÓ THẬT trên chủ thể chính ở KHUNG HÌNH HIỆN TẠI để máy bám. Gốc (0,0) ở góc trên trái. Không xuất tọa độ nơi muốn di chuyển chủ thể đến. Với chân dung ưu tiên mắt/khuôn mặt; với cảnh rộng chọn mốc thị giác cụ thể. Không đoán vật thể không nhìn thấy.
+        2. suggested_zoom trong [1.0, 3.0]. Chỉ zoom khi cải thiện bố cục và không cắt mặt, tay chân, nhóm người, đường dẫn hay bối cảnh cần thiết. Khi không chắc hoặc cảnh rộng, chọn 1.0.
+        3. composition_rule chọn theo cấu trúc thật của ảnh: rule_of_thirds, golden_ratio, golden_spiral, center_symmetry. explanation gồm 1-2 câu tiếng Việt nêu chủ thể, quan hệ với toàn cảnh và hành động căn máy cụ thể.
+        4. recommended_film_preset phải khớp CHÍNH XÁC một tên trong danh mục trên; preset_explanation một câu tiếng Việt.
+        5. Cân sáng và màu vừa phải, giữ màu da tự nhiên; color_grade là một trong softwarm, vibrant, coolnatural, golden, tealOrange, moody, classic, cinematic. Không suy diễn các chi tiết không rõ trong ảnh.
+
+        Định dạng JSON bắt buộc (ví dụ cấu trúc, KHÔNG sao chép tọa độ, zoom hay cảnh; số là JSON number):
         {
           "target_x": 0.40,
           "target_y": 0.38,

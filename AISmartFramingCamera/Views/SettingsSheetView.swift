@@ -30,7 +30,7 @@ public struct SettingsSheetView: View {
     // OpenRouter API Key State
     @State private var geminiKeyInput: String = ""
     @State private var isKeyVisible: Bool = false
-    @State private var selectedModel: AIVisionModel = .autoStrongest
+    @State private var selectedModel: AIVisionModel = .freeVision
     @State private var customModelInput: String = ""
     @State private var isTestingKey: Bool = false
     @State private var testResult: String? = nil
@@ -940,15 +940,32 @@ struct AIFramingSettingsSection: View {
 
     @ViewBuilder
     private var aiCloudCard: some View {
-        SettingsSectionCard(title: "AI CLOUD & BẢO MẬT API KEY", icon: "lock.shield.fill", iconColor: Color(red: 0.25, green: 0.85, blue: 0.45)) {
+        SettingsSectionCard(title: "AI TRÊN MÁY & CLOUD TÙY CHỌN", icon: "lock.shield.fill", iconColor: Color(red: 0.25, green: 0.85, blue: 0.45)) {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggleRow(
-                    title: "Phân tích trực tuyến (OpenRouter AI)",
-                    subtitle: "Gửi 1 khung hình chất lượng cao lên OpenRouter để AI phân tích bố cục & màu sắc",
+                    title: "Dùng OpenRouter (tùy chọn)",
+                    subtitle: "Tắt để dùng AI cục bộ, không cần mạng hoặc API Key",
                     icon: "network",
                     iconColor: Color(red: 0.35, green: 0.55, blue: 1.0),
                     isOn: $viewModel.useGeminiForAnalysis
                 )
+
+                Text("Chế độ miễn phí chỉ áp dụng model :free. Gemini 3.7 Flash và 3.1 Pro cần credits OpenRouter.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.62))
+
+                if !viewModel.useGeminiForAnalysis {
+                    Label("AI trên máy đang hoạt động, không cần cloud", systemImage: "iphone")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.green)
+                }
+
+                if let cloudError = viewModel.geminiError {
+                    Text(cloudError)
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Divider().background(Color.white.opacity(0.06))
 
@@ -984,7 +1001,7 @@ struct AIFramingSettingsSection: View {
 
                 SettingsPickerRow(
                     title: "Mô hình AI",
-                    subtitle: "Lựa chọn model thị giác máy tính",
+                    subtitle: "Gemma 4 31B miễn phí · Gemini trả phí",
                     icon: "cpu",
                     iconColor: Color(red: 0.72, green: 0.45, blue: 1.0),
                     selectedValueString: selectedModel.displayName
@@ -997,6 +1014,8 @@ struct AIFramingSettingsSection: View {
                     .pickerStyle(.menu)
                     .tint(Color.white.opacity(0.70))
                     .onChangeCompatible(of: selectedModel) { newModel in
+                        viewModel.geminiService.customModelName = ""
+                        customModelInput = ""
                         viewModel.geminiService.selectedModel = newModel
                     }
                 }
@@ -1106,7 +1125,7 @@ struct AIFramingSettingsSection: View {
                         } else {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                         }
-                        Text(isTestingKey ? "Đang gửi ping kiểm tra..." : "Kiểm tra kết nối OpenRouter")
+                        Text(isTestingKey ? "Đang gửi yêu cầu kiểm tra..." : "Kiểm tra kết nối (tính 1 lượt API)")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
                     .foregroundColor(amberGold)

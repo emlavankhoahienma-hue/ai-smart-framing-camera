@@ -461,7 +461,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var geminiError: String? = nil
     @Published public var geminiExplanation: String = ""
     @Published public var geminiColorRecipe: GeminiColorRecipe? = nil
-    @Published public var useGeminiForAnalysis: Bool = true {
+    @Published public var useGeminiForAnalysis: Bool = false {
         didSet { UserDefaults.standard.set(useGeminiForAnalysis, forKey: "useGeminiForAnalysis") }
     }
     @Published public var activeModelUsedName: String = ""
@@ -706,8 +706,17 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "isLivePhotoEnabled") != nil {
             self.isLivePhotoEnabled = defaults.bool(forKey: "isLivePhotoEnabled")
         }
-        if defaults.object(forKey: "useGeminiForAnalysis") != nil {
+        // Older builds enabled paid cloud models by default. Require an explicit opt-in once.
+        if defaults.bool(forKey: "cloudModeOptInV2"),
+           defaults.object(forKey: "useGeminiForAnalysis") != nil {
             self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
+        } else {
+            self.useGeminiForAnalysis = false
+            if defaults.string(forKey: "gemini_selected_model") == "auto" {
+                geminiService.selectedModel = .freeVision
+                geminiService.customModelName = ""
+            }
+            defaults.set(true, forKey: "cloudModeOptInV2")
         }
         if defaults.object(forKey: "isStreetTrackingModeEnabled") != nil {
             self.isStreetTrackingModeEnabled = defaults.bool(forKey: "isStreetTrackingModeEnabled")
@@ -1212,7 +1221,7 @@ public final class CameraViewModel: ObservableObject {
                 }
             }
             // A captured frame can still be followed by a stalled cloud call.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + geminiService.cloudAnalysisDeadline) { [weak self] in
                 guard let self, self.aiSessionGeneration == requestGeneration,
                       self.aiSessionState == .analyzing, self.isGeminiAnalyzing else { return }
                 self.isGeminiAnalyzing = false
@@ -1466,6 +1475,11 @@ public final class CameraViewModel: ObservableObject {
                     self.handleGeminiResponse(response)
                 case .failure(let error):
                     self.geminiError = error.localizedDescription
+                    if case .insufficientCredits = error {
+                        self.useGeminiForAnalysis = false
+                    } else if case .invalidAPIKey = error {
+                        self.useGeminiForAnalysis = false
+                    }
                     self.analyzeCloudCaptureLocally()
                 }
             }
@@ -2576,6 +2590,17 @@ public final class CameraViewModel: ObservableObject {
         let faceRects = detectedFaceRects
         let lookDir = latestSubjectDetectionResult?.lookingDirection ?? .zero
 
+        guard useGeminiForAnalysis && geminiService.hasAPIKey else {
+            let guidance = GeminiService.generateLocalVideoGuidance(
+                sceneContext: detectedScene,
+                subjectRect: subjectRect,
+                faceRects: faceRects,
+                lookingDirection: lookDir
+            )
+            applyVideoGuidance(guidance)
+            return
+        }
+
         visionEngine.captureImmediateFrame { [weak self] cgImg in
             guard let self = self else { return }
             guard let image = cgImg else {
@@ -2605,6 +2630,11 @@ public final class CameraViewModel: ObservableObject {
                         self.applyVideoGuidance(guidance)
                     case .failure(let err):
                         self.videoDirectorError = err.localizedDescription
+                        if case .insufficientCredits = err {
+                            self.useGeminiForAnalysis = false
+                        } else if case .invalidAPIKey = err {
+                            self.useGeminiForAnalysis = false
+                        }
                         let fallback = GeminiService.generateLocalVideoGuidance(
                             sceneContext: self.detectedScene,
                             subjectRect: subjectRect,

@@ -723,7 +723,8 @@ public struct CapturedPhotoPreviewView: View {
         GeminiService.shared.analyzeAndSelectBestFilmPreset(
             image: item.originalImage,
             sceneContext: item.sceneType,
-            colorMetrics: metrics
+            colorMetrics: metrics,
+            allowCloud: viewModel?.useGeminiForAnalysis ?? false
         ) { result in
             DispatchQueue.main.async {
                 self.isOptimizingWithAI = false

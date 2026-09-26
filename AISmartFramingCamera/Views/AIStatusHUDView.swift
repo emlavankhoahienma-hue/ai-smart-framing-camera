@@ -6,44 +6,60 @@ public struct AIStatusHUDView: View {
     public var body: some View {
         // Chỉ hiện thanh trạng thái khi phiên căn bố cục đang hoạt động hoặc vừa chụp xong
         if viewModel.aiSessionState != .idle {
-            HStack(spacing: 6) {
-                // Status icon
-                Image(systemName: statusIconName)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(statusAccentColor)
+            VStack(spacing: 5) {
+                HStack(spacing: 6) {
+                    // Status icon
+                    Image(systemName: statusIconName)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(statusAccentColor)
 
-                // Single clear status text
-                Text(statusText)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.95))
-                    .lineLimit(1)
+                    // Single clear status text
+                    Text(statusText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.95))
+                        .lineLimit(1)
 
-                // Huy hiệu nhận biết AI Cloud / Local
-                if viewModel.activeAIIndicatorType == .cloud {
-                    Text("CLOUD")
-                        .font(.system(size: 8, weight: .heavy, design: .rounded))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(Color.yellow))
-                } else if viewModel.activeAIIndicatorType == .local {
-                    Text("LOCAL")
-                        .font(.system(size: 8, weight: .heavy, design: .rounded))
+                    // Huy hiệu nhận biết AI Cloud / Local
+                    if viewModel.activeAIIndicatorType == .cloud {
+                        Text("CLOUD")
+                            .font(.system(size: 8, weight: .heavy, design: .rounded))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Capsule().fill(Color.yellow))
+                    } else if viewModel.activeAIIndicatorType == .local {
+                        Text("LOCAL")
+                            .font(.system(size: 8, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Capsule().fill(Color.red))
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1)
+                        )
+                )
+
+                if viewModel.aiSessionState == .targetPlaced,
+                   viewModel.activeAIIndicatorType == .cloud,
+                   !viewModel.geminiExplanation.isEmpty {
+                    Text(viewModel.geminiExplanation)
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(Color.red))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: 310)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(.ultraThinMaterial))
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1)
-                    )
-            )
             .transition(.opacity.combined(with: .scale(scale: 0.95)))
             .animation(.easeInOut(duration: 0.25), value: viewModel.aiSessionState)
         }
