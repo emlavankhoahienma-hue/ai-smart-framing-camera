@@ -197,7 +197,7 @@ public struct PhotoGallerySheetView: View {
                   let source = CGImageSourceCreateWithData(data as CFData, nil),
                   let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                       kCGImageSourceCreateThumbnailWithTransform as String: true,
-                      kCGImageSourceCreateThumbnailFromImageIfAboveLimit as String: true,
+                      kCGImageSourceCreateThumbnailFromImageAlways as String: true,
                       kCGImageSourceThumbnailMaxPixelSize as String: 2048
                   ] as CFDictionary) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
 
@@ -325,7 +325,7 @@ struct RawFileThumbnailCell: View {
                let source = CGImageSourceCreateWithData(data as CFData, nil),
                let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                    kCGImageSourceCreateThumbnailWithTransform as String: true,
-                   kCGImageSourceCreateThumbnailFromImageIfAboveLimit as String: true,
+                   kCGImageSourceCreateThumbnailFromImageAlways as String: true,
                    kCGImageSourceThumbnailMaxPixelSize as String: 240
                ] as CFDictionary) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) {
                 let uiImage = UIImage(cgImage: cgImage)

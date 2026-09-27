@@ -2997,7 +2997,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     @discardableResult
-    public static func saveRawFileToAppSandbox(data: Data, filename: String) -> URL? {
+    public nonisolated static func saveRawFileToAppSandbox(data: Data, filename: String) -> URL? {
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
         let rawDirectory = documentsURL.appendingPathComponent("RAW", isDirectory: true)
         do {

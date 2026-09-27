@@ -1225,7 +1225,7 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                     // No CIRAWFilter, tone map, crop, orientation rewrite or re-encode.
                     request.fileData = data
                     (request.iso, request.shutter) = Self.parseExif(photo.metadata)
-                    if request.preview == nil, let cg = photo.previewCGImageRepresentation()?.takeUnretainedValue() {
+                    if request.preview == nil, let cg = photo.previewCGImageRepresentation() {
                         request.preview = cg
                     }
                 } else {
