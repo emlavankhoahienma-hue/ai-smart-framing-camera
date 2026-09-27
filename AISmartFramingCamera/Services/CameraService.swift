@@ -1115,9 +1115,8 @@ public final class CameraService: NSObject {
                     rawFileType: .dng,
                     processedFormat: [AVVideoCodecKey: AVVideoCodecType.jpeg],
                     processedFileType: .jpg)
-                let isProRAW = AVCapturePhotoOutput.isAppleProRAWPixelFormat(raw)
-                let maxPrioritization = self.photoOutput.maxPhotoQualityPrioritization
-                settings.photoQualityPrioritization = isProRAW ? maxPrioritization : (maxPrioritization == .speed ? .speed : .balanced)
+                // Tuyet doi khong goi setPhotoQualityPrioritization tren settings khi chup RAW
+                // vi AVFoundation se nem NSInvalidArgumentException: Unsupported when capturing RAW
                 actualFormat = .dng
             } else {
                 settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
