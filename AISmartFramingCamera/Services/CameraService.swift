@@ -336,7 +336,8 @@ public final class CameraService: NSObject {
                     self.captureSession.addOutput(self.photoOutput)
                     self.photoOutput.maxPhotoQualityPrioritization = .quality
                     if self.photoOutput.isAppleProRAWSupported {
-                        self.photoOutput.isAppleProRAWEnabled = true
+                        // Pure RAW: Mac dinh tat isAppleProRAWEnabled de sensor xuat Pure Bayer RAW thuan tuy
+                        self.photoOutput.isAppleProRAWEnabled = false
                     }
                     self.updateMaxPhotoDimensions(for: camera)
 
@@ -515,7 +516,8 @@ public final class CameraService: NSObject {
                         self.configurePhotoConnection(connection)
                     }
                     if self.photoOutput.isAppleProRAWSupported {
-                        self.photoOutput.isAppleProRAWEnabled = true
+                        // Pure RAW: Mac dinh tat isAppleProRAWEnabled de sensor xuat Pure Bayer RAW thuan tuy
+                        self.photoOutput.isAppleProRAWEnabled = false
                     }
                     self.updateMaxPhotoDimensions(for: newCamera)
                     if self.currentCaptureMode.isVideo {
@@ -998,7 +1000,8 @@ public final class CameraService: NSObject {
                     self.updateMaxPhotoDimensions(for: camera)
                 }
                 if self.photoOutput.isAppleProRAWSupported {
-                    self.photoOutput.isAppleProRAWEnabled = true
+                    // Pure RAW: Mac dinh tat isAppleProRAWEnabled de sensor xuat Pure Bayer RAW thuan tuy
+                    self.photoOutput.isAppleProRAWEnabled = false
                 }
             }
             let formatStr = self.getActiveVideoResolutionAndFPS()
@@ -1103,10 +1106,10 @@ public final class CameraService: NSObject {
             let actualFormat: PhotoSaveFormat
             if isDNG {
                 let formats = self.photoOutput.availableRawPhotoPixelFormatTypes
-                let proRAW = formats.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) })
                 let bayer = formats.first(where: { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) })
-                // Uu tien ProRAW neu isAppleProRAWEnabled duoc bat de dam bao tuong thich 100%, fallback Bayer RAW
-                guard let raw = (self.photoOutput.isAppleProRAWEnabled ? (proRAW ?? bayer) : (bayer ?? proRAW)) ?? formats.first else {
+                let proRAW = formats.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) })
+                // Uu tien Pure Bayer RAW (100% du lieu tho goc tu cam bien, khong computational tone mapping, khong HDR GainTableMap)
+                guard let raw = (bayer ?? proRAW) ?? formats.first else {
                     reject(CameraServiceError.rawUnavailable); return
                 }
                 // Apple supplies a processed companion solely for display. The
@@ -1146,11 +1149,10 @@ public final class CameraService: NSObject {
             settings.maxPhotoDimensions = dimensions
 
             if isDNG, let thumbnailCodec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first(where: { $0 == .jpeg }) {
-                // Kích thước thumbnail nhúng trong tệp RAW DNG phải nhỏ hơn kích thước ảnh gốc và trong giới hạn hỗ trợ (<= 512px)
-                // Đặt kích thước đầy đủ cảm biến (như 4032) vào thumbnail sẽ khiến AVFoundation ném NSInvalidArgumentException
+                // Kích thước thumbnail nhúng trong tệp RAW DNG chuẩn sắc nét (512x384)
                 let isLandscape = dimensions.width >= dimensions.height
-                let thumbW = isLandscape ? 320 : 240
-                let thumbH = isLandscape ? 240 : 320
+                let thumbW = isLandscape ? 512 : 384
+                let thumbH = isLandscape ? 384 : 512
                 settings.rawEmbeddedThumbnailPhotoFormat = [
                     AVVideoCodecKey: thumbnailCodec,
                     AVVideoWidthKey: thumbW,

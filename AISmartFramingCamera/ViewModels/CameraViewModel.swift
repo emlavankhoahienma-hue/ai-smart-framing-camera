@@ -988,6 +988,7 @@ public final class CameraViewModel: ObservableObject {
 
     public func cancelAIZoomForGesture() {
         // Tuyet doi khong xoa AI session, targetPoint hoac mang bounding box khi zoom 1x <-> 2x
+        targetPinGeneration &+= 1
         alignmentGate.reset()
         pinZoomPlanTask?.cancel()
         pinZoomPlanTask = nil
@@ -3093,11 +3094,17 @@ public final class CameraViewModel: ObservableObject {
                     options.originalFilename = filename
                     // DNG bytes are passed directly, without creating a UIImage.
                     request.addResource(with: .photo, data: mainData, options: options)
-                    if item.saveFormat == .dng, let companion = item.processedCompanionData, item.saveFormat != .dng {
-                        let previewOptions = PHAssetResourceCreationOptions()
-                        previewOptions.uniformTypeIdentifier = UTType.jpeg.identifier
-                        previewOptions.originalFilename = "AlignAI_\(item.id.uuidString)_preview.jpg"
-                        request.addResource(with: .alternatePhoto, data: companion, options: previewOptions)
+                    if item.saveFormat == .dng {
+                        // Dinh kem .alternatePhoto (full-resolution JPEG companion) cho anh RAW trong Apple Photos.
+                        // Giup Apple Photos hien thi net ngay lap tuc (0s delay, khong bi mang mo) ma van giu nguyen DNG tho goc.
+                        let companionData = item.processedCompanionData ??
+                            Self.encodeRenderedPhoto(item.originalImage, sourceData: nil, format: .jpeg)
+                        if let companion = companionData {
+                            let previewOptions = PHAssetResourceCreationOptions()
+                            previewOptions.uniformTypeIdentifier = UTType.jpeg.identifier
+                            previewOptions.originalFilename = "AlignAI_\(item.id.uuidString)_preview.jpg"
+                            request.addResource(with: .alternatePhoto, data: companion, options: previewOptions)
+                        }
                     }
                     if item.saveFormat != .dng, let movie = item.livePhotoMovieURL,
                        FileManager.default.fileExists(atPath: movie.path) {
