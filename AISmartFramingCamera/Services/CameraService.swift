@@ -1101,10 +1101,10 @@ public final class CameraService: NSObject {
             let actualFormat: PhotoSaveFormat
             if isDNG {
                 let formats = self.photoOutput.availableRawPhotoPixelFormatTypes
-                let bayer = formats.first(where: { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) })
                 let proRAW = formats.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) })
-                // Uu tien true Bayer RAW cam bien thuc khong de-raw truoc, fallback ProRAW
-                guard let raw = (bayer ?? proRAW ?? formats.first) else {
+                let bayer = formats.first(where: { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) })
+                // Uu tien ProRAW neu isAppleProRAWEnabled duoc bat de dam bao tuong thich 100%, fallback Bayer RAW
+                guard let raw = (self.photoOutput.isAppleProRAWEnabled ? (proRAW ?? bayer) : (bayer ?? proRAW)) ?? formats.first else {
                     reject(CameraServiceError.rawUnavailable); return
                 }
                 // Apple supplies a processed companion solely for display. The
@@ -1113,31 +1113,32 @@ public final class CameraService: NSObject {
                     rawFileType: .dng,
                     processedFormat: [AVVideoCodecKey: AVVideoCodecType.jpeg],
                     processedFileType: .jpg)
-                settings.photoQualityPrioritization = .quality
+                let isProRAW = AVCapturePhotoOutput.isAppleProRAWPixelFormat(raw)
+                let maxPrioritization = self.photoOutput.maxPhotoQualityPrioritization
+                settings.photoQualityPrioritization = isProRAW ? maxPrioritization : min(maxPrioritization, .balanced)
                 actualFormat = .dng
             } else {
                 settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
-                settings.photoQualityPrioritization = .quality
+                settings.photoQualityPrioritization = self.photoOutput.maxPhotoQualityPrioritization
                 actualFormat = codec == .hevc ? .heif : .jpeg
             }
+
             let supported = camera.activeFormat.supportedMaxPhotoDimensions.sorted {
                 Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
             }
-            // For RAW (DNG) or highResolution: ALWAYS select maximum dimensions (supported.last)
-            // This guarantees FULL native sensor resolution (e.g. 48MP) unbinned!
-            if let dimensions = (isDNG || highResolution) ? supported.last : supported.first {
-                settings.maxPhotoDimensions = dimensions
-            }
+            let isProRAW = isDNG && AVCapturePhotoOutput.isAppleProRAWPixelFormat(settings.rawPhotoPixelFormatType)
+            let dimensions = (isProRAW && highResolution) ? (supported.last ?? supported.first!) : (supported.first ?? supported.last!)
+            settings.maxPhotoDimensions = dimensions
             if isDNG, let thumbnailCodec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first(where: { $0 == .jpeg }) {
-                // Add a camera-generated colour preview thumbnail inside the original DNG header
-                let dimensions = settings.maxPhotoDimensions
-                let thumbW = min(dimensions.width, 1920)
-                let thumbH = min(dimensions.height, 1440)
-                settings.rawEmbeddedThumbnailPhotoFormat = [
-                    AVVideoCodecKey: thumbnailCodec,
-                    AVVideoWidthKey: thumbW,
-                    AVVideoHeightKey: thumbH
-                ]
+                // Add a camera-generated colour preview inside the original DNG.
+                let maxOutputDim = self.photoOutput.maxPhotoDimensions
+                if dimensions.width <= maxOutputDim.width && dimensions.height <= maxOutputDim.height {
+                    settings.rawEmbeddedThumbnailPhotoFormat = [
+                        AVVideoCodecKey: thumbnailCodec,
+                        AVVideoWidthKey: dimensions.width,
+                        AVVideoHeightKey: dimensions.height
+                    ]
+                }
             }
             if camera.isFlashAvailable && self.photoOutput.supportedFlashModes.contains(self.flashMode) {
                 settings.flashMode = self.flashMode
@@ -1272,9 +1273,25 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 }
                 return
             }
-            let previewImage = request.preview ?? (request.fileData != nil ? SuperResolutionRAWEngine.decodeProcessedPhoto(request.fileData!, context: self.sharedPhotoContext) : nil)
-            guard let image = previewImage, let data = request.fileData,
-                  request.format != .dng || request.processedData != nil || request.preview != nil else {
+            var previewImage = request.preview
+            if previewImage == nil, let proc = request.processedData {
+                previewImage = SuperResolutionRAWEngine.decodeProcessedPhoto(proc, context: self.sharedPhotoContext)
+            }
+            if previewImage == nil, let fileData = request.fileData {
+                if let source = CGImageSourceCreateWithData(fileData as CFData, nil) {
+                    let thumbOptions = [
+                        kCGImageSourceCreateThumbnailWithTransform as String: true,
+                        kCGImageSourceCreateThumbnailFromImageAlways as String: true,
+                        kCGImageSourceThumbnailMaxPixelSize as String: 2048,
+                        kCGImageSourceShouldCacheImmediately as String: false
+                    ] as CFDictionary
+                    previewImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions)
+                }
+                if previewImage == nil {
+                    previewImage = SuperResolutionRAWEngine.decodeProcessedPhoto(fileData, context: self.sharedPhotoContext)
+                }
+            }
+            guard let image = previewImage, let data = request.fileData else {
                 DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.photoProcessingFailed)
                 }

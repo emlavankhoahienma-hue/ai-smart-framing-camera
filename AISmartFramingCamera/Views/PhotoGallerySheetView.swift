@@ -194,12 +194,15 @@ public struct PhotoGallerySheetView: View {
     private func loadRawFileAndPreview(url: URL) {
         DispatchQueue.global(qos: .userInitiated).async {
             guard let data = try? Data(contentsOf: url),
-                  let source = CGImageSourceCreateWithData(data as CFData, nil),
-                  let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                      kCGImageSourceCreateThumbnailWithTransform as String: true,
-                      kCGImageSourceCreateThumbnailFromImageAlways as String: true,
-                      kCGImageSourceThumbnailMaxPixelSize as String: 2048
-                  ] as CFDictionary) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+                  let source = CGImageSourceCreateWithData(data as CFData, nil) else { return }
+            let previewOptions = [
+                kCGImageSourceCreateThumbnailWithTransform as String: true,
+                kCGImageSourceCreateThumbnailFromImageAlways as String: true,
+                kCGImageSourceThumbnailMaxPixelSize as String: 2048,
+                kCGImageSourceShouldCacheImmediately as String: false
+            ] as CFDictionary
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, previewOptions)
+                    ?? CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
 
             let item = CapturedPhotoItem(
                 originalImage: cgImage,
@@ -321,13 +324,15 @@ struct RawFileThumbnailCell: View {
                     self.fileSizeString = String(format: "%.1fMB", mb)
                 }
             }
-            if let data = try? Data(contentsOf: url),
-               let source = CGImageSourceCreateWithData(data as CFData, nil),
-               let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                   kCGImageSourceCreateThumbnailWithTransform as String: true,
-                   kCGImageSourceCreateThumbnailFromImageAlways as String: true,
-                   kCGImageSourceThumbnailMaxPixelSize as String: 240
-               ] as CFDictionary) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            guard let data = try? Data(contentsOf: url),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil) else { return }
+            let thumbOptions = [
+                kCGImageSourceCreateThumbnailWithTransform as String: true,
+                kCGImageSourceCreateThumbnailFromImageAlways as String: true,
+                kCGImageSourceThumbnailMaxPixelSize as String: 240,
+                kCGImageSourceShouldCacheImmediately as String: false
+            ] as CFDictionary
+            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions) {
                 let uiImage = UIImage(cgImage: cgImage)
                 DispatchQueue.main.async {
                     self.thumbnail = uiImage
