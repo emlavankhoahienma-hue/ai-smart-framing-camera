@@ -342,10 +342,12 @@ public final class CameraService: NSObject {
 
                     if #available(iOS 17.0, *) {
                         if self.photoOutput.isZeroShutterLagSupported {
-                            self.photoOutput.isZeroShutterLagEnabled = true
+                            // Zero Shutter Lag khong tuong thich voi RAW capture tren AVFoundation.
+                            // Dat true se khien AVFoundation nem NSInvalidArgumentException va vang app ngay lap tuc.
+                            self.photoOutput.isZeroShutterLagEnabled = false
                         }
                         if self.photoOutput.isResponsiveCaptureSupported {
-                            self.photoOutput.isResponsiveCaptureEnabled = true
+                            self.photoOutput.isResponsiveCaptureEnabled = false
                         }
                         if self.photoOutput.isFastCapturePrioritizationSupported {
                             self.photoOutput.isFastCapturePrioritizationEnabled = false
@@ -1127,18 +1129,34 @@ public final class CameraService: NSObject {
                 Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
             }
             let isProRAW = isDNG && AVCapturePhotoOutput.isAppleProRAWPixelFormat(settings.rawPhotoPixelFormatType)
-            let dimensions = (isProRAW && highResolution) ? (supported.last ?? supported.first!) : (supported.first ?? supported.last!)
+            let maxOutputDim = self.photoOutput.maxPhotoDimensions
+            let chosenDim: CMVideoDimensions
+            if let last = supported.last, let first = supported.first {
+                chosenDim = (isProRAW && highResolution) ? last : first
+            } else if maxOutputDim.width > 0 && maxOutputDim.height > 0 {
+                chosenDim = maxOutputDim
+            } else {
+                chosenDim = CMVideoDimensions(width: 4032, height: 3024)
+            }
+            let dimensions: CMVideoDimensions
+            if maxOutputDim.width > 0 && maxOutputDim.height > 0 && (chosenDim.width > maxOutputDim.width || chosenDim.height > maxOutputDim.height) {
+                dimensions = maxOutputDim
+            } else {
+                dimensions = chosenDim
+            }
             settings.maxPhotoDimensions = dimensions
+
             if isDNG, let thumbnailCodec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first(where: { $0 == .jpeg }) {
-                // Add a camera-generated colour preview inside the original DNG.
-                let maxOutputDim = self.photoOutput.maxPhotoDimensions
-                if dimensions.width <= maxOutputDim.width && dimensions.height <= maxOutputDim.height {
-                    settings.rawEmbeddedThumbnailPhotoFormat = [
-                        AVVideoCodecKey: thumbnailCodec,
-                        AVVideoWidthKey: dimensions.width,
-                        AVVideoHeightKey: dimensions.height
-                    ]
-                }
+                // Kích thước thumbnail nhúng trong tệp RAW DNG phải nhỏ hơn kích thước ảnh gốc và trong giới hạn hỗ trợ (<= 512px)
+                // Đặt kích thước đầy đủ cảm biến (như 4032) vào thumbnail sẽ khiến AVFoundation ném NSInvalidArgumentException
+                let isLandscape = dimensions.width >= dimensions.height
+                let thumbW = isLandscape ? 320 : 240
+                let thumbH = isLandscape ? 240 : 320
+                settings.rawEmbeddedThumbnailPhotoFormat = [
+                    AVVideoCodecKey: thumbnailCodec,
+                    AVVideoWidthKey: thumbW,
+                    AVVideoHeightKey: thumbH
+                ]
             }
             if camera.isFlashAvailable && self.photoOutput.supportedFlashModes.contains(self.flashMode) {
                 settings.flashMode = self.flashMode

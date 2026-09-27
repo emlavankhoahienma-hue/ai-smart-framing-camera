@@ -3060,7 +3060,7 @@ public final class CameraViewModel: ObservableObject {
                     options.originalFilename = filename
                     // DNG bytes are passed directly, without creating a UIImage.
                     request.addResource(with: .photo, data: mainData, options: options)
-                    if item.saveFormat == .dng, let companion = item.processedCompanionData {
+                    if item.saveFormat == .dng, let companion = item.processedCompanionData, item.saveFormat != .dng {
                         let previewOptions = PHAssetResourceCreationOptions()
                         previewOptions.uniformTypeIdentifier = UTType.jpeg.identifier
                         previewOptions.originalFilename = "AlignAI_\(item.id.uuidString)_preview.jpg"

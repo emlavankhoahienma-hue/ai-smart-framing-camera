@@ -1194,25 +1194,91 @@ struct AdvancedSettingsSection: View {
 
                 Divider().background(Color.white.opacity(0.06))
 
-                DisclosureGroup("Nhật ký kỹ thuật (Debug Console)", isExpanded: $showDevConsole) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if let err = viewModel.geminiError {
-                            Text("Lỗi ghi nhận: \(err)")
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(.red)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(.green)
-                                Text("Hệ thống đang chạy ổn định. Không có cảnh báo lỗi.")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.gray)
+                DisclosureGroup("Nhật ký kỹ thuật & Chẩn đoán lỗi", isExpanded: $showDevConsole) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let crashReport = CameraLogger.readRecentCrashReport() {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Báo cáo sự cố gần nhất (Crash Report):")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundColor(.red)
+                                Text(crashReport)
+                                    .font(.system(size: 9.5, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.red.opacity(0.15))
+                                    .cornerRadius(6)
                             }
                         }
+
+                        if let err = viewModel.geminiError {
+                            Text("Lỗi AI ghi nhận: \(err)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Nhật ký hệ thống gần nhất:")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(amberGold)
+                            ScrollView(.vertical) {
+                                Text(CameraLogger.readRecentLogText(maxChars: 3000))
+                                    .font(.system(size: 9, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.75))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 160)
+                            .padding(8)
+                            .background(Color.black.opacity(0.4))
+                            .cornerRadius(6)
+                        }
+
+                        HStack(spacing: 8) {
+                            Button(action: {
+                                var fullText = ""
+                                if let crash = CameraLogger.readRecentCrashReport() {
+                                    fullText += crash + "\n\n"
+                                }
+                                fullText += CameraLogger.readRecentLogText(maxChars: 5000)
+                                UIPasteboard.general.string = fullText
+                                toastMessage = "Đã sao chép toàn bộ nhật ký vào bộ nhớ tạm"
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.on.doc")
+                                    Text("Sao chép nhật ký")
+                                }
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.white.opacity(0.12))
+                                .cornerRadius(6)
+                            }
+
+                            Button(action: {
+                                CameraLogger.clearAllLogs()
+                                toastMessage = "Đã xóa sạch nhật ký"
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "trash")
+                                    Text("Xóa nhật ký")
+                                }
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.red.opacity(0.85))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.red.opacity(0.12))
+                                .cornerRadius(6)
+                            }
+                        }
+
+                        Text("Ghi chú: Bạn có thể vào ứng dụng Tệp (Files) > Trên iPhone > AlignAI Studio để xem trực tiếp tệp alignai_crash_log.txt và alignai_debug_log.txt.")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.white.opacity(0.45))
+                            .padding(.top, 2)
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 6)
                 }
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundColor(Color.white.opacity(0.75))

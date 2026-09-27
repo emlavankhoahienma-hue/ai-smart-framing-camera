@@ -29,6 +29,8 @@ struct AlignAICameraShortcuts: AppShortcutsProvider {
 @main
 struct AISmartFramingCameraApp: App {
     init() {
+        // Install global crash handlers for unhandled exceptions and signals
+        CameraLogger.installCrashHandlers()
         // Keep screen awake while using the AI camera
         UIApplication.shared.isIdleTimerDisabled = true
     }
