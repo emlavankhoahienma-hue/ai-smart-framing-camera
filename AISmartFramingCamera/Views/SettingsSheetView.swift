@@ -99,6 +99,7 @@ public struct SettingsSheetView: View {
                                         geminiKeyInput: $geminiKeyInput,
                                         isKeyVisible: $isKeyVisible,
                                         selectedModel: $selectedModel,
+                                        customModelInput: $customModelInput,
                                         isTestingKey: $isTestingKey,
                                         testResult: $testResult,
                                         showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
@@ -245,6 +246,7 @@ public struct SettingsSheetView: View {
                     geminiKeyInput: $geminiKeyInput,
                     isKeyVisible: $isKeyVisible,
                     selectedModel: $selectedModel,
+                    customModelInput: $customModelInput,
                     isTestingKey: $isTestingKey,
                     testResult: $testResult,
                     showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
@@ -752,6 +754,7 @@ struct AIFramingSettingsSection: View {
     @Binding var geminiKeyInput: String
     @Binding var isKeyVisible: Bool
     @Binding var selectedModel: AIVisionModel
+    @Binding var customModelInput: String
     @Binding var isTestingKey: Bool
     @Binding var testResult: String?
     @Binding var showDeleteKeyConfirmation: Bool
@@ -1036,14 +1039,19 @@ struct AIFramingSettingsSection: View {
                     }
                 }
 
-                if selectedModel == .custom {
+                // Optional Custom OpenRouter Model ID Input
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        TextField("Nhập tên model OpenRouter", text: $customModelInput)
+                        TextField("Model OpenRouter tùy chỉnh (tùy chọn)", text: $customModelInput)
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundColor(.white)
                             .padding(8)
                             .background(Color(red: 0.05, green: 0.05, blue: 0.07))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
 
                         Button("Lưu") {
                             viewModel.geminiService.customModelName = customModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1051,6 +1059,12 @@ struct AIFramingSettingsSection: View {
                         }
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(amberGold)
+                    }
+
+                    if !viewModel.geminiService.customModelName.isEmpty {
+                        Text("Đang ưu tiên model tùy chỉnh: \(viewModel.geminiService.customModelName)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(amberGold.opacity(0.85))
                     }
                 }
 
