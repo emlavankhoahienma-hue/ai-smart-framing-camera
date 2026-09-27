@@ -1115,7 +1115,7 @@ public final class CameraService: NSObject {
                     processedFileType: .jpg)
                 let isProRAW = AVCapturePhotoOutput.isAppleProRAWPixelFormat(raw)
                 let maxPrioritization = self.photoOutput.maxPhotoQualityPrioritization
-                settings.photoQualityPrioritization = isProRAW ? maxPrioritization : min(maxPrioritization, .balanced)
+                settings.photoQualityPrioritization = isProRAW ? maxPrioritization : (maxPrioritization == .speed ? .speed : .balanced)
                 actualFormat = .dng
             } else {
                 settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
