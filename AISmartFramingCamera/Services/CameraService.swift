@@ -516,6 +516,9 @@ public final class CameraService: NSObject {
                         self.photoOutput.isAppleProRAWEnabled = true
                     }
                     self.updateMaxPhotoDimensions(for: newCamera)
+                    if self.currentCaptureMode.isVideo {
+                        self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
+                    }
                     let initialZoom = newCamera.videoZoomFactor
                     self.currentZoom = initialZoom
                     DispatchQueue.main.async {
@@ -768,14 +771,38 @@ public final class CameraService: NSObject {
                 self.selectedVideoCodec = chosenCodec
             }
 
-            let targetFPS = self.selectedVideoFormatOption.fps
-            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
+            // 1. Re-assert locked hardware frame rate on the camera device
+            if let camera = self.activeCamera {
+                do {
+                    try camera.lockForConfiguration()
+                    let targetFPS = self.selectedVideoFormatOption.fps
+                    if let range = camera.activeFormat.videoSupportedFrameRateRanges.first(where: {
+                        $0.maxFrameRate >= targetFPS - 0.5 && $0.minFrameRate <= targetFPS + 0.5
+                    }) {
+                        camera.activeVideoMinFrameDuration = range.minFrameDuration
+                        camera.activeVideoMaxFrameDuration = range.minFrameDuration
+                    } else {
+                        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
+                        camera.activeVideoMinFrameDuration = frameDuration
+                        camera.activeVideoMaxFrameDuration = frameDuration
+                    }
+                    if camera.isLowLightBoostSupported {
+                        camera.automaticallyEnablesLowLightBoostWhenAvailable = false
+                    }
+                    if camera.activeFormat.isVideoHDRSupported {
+                        camera.automaticallyAdjustsVideoHDREnabled = false
+                    }
+                    camera.unlockForConfiguration()
+                } catch {
+                    CameraLogger.error("CameraService: Lỗi khóa frame rate khi bắt đầu quay", error: error, category: .capture)
+                }
+            }
 
+            // 2. Configure video connection WITHOUT setting videoMaxFrameDuration
+            // Leaving connection.videoMaxFrameDuration unconstrained allows all frames to be captured without drops.
             if let connection = self.movieFileOutput.connection(with: .video) {
                 if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
-                if connection.isVideoMinFrameDurationSupported { connection.videoMinFrameDuration = frameDuration }
-                if connection.isVideoMaxFrameDurationSupported { connection.videoMaxFrameDuration = frameDuration }
-                if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .standard }
+                if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
                 let availableCodecs = self.movieFileOutput.availableVideoCodecTypes
                 let targetCodec: AVVideoCodecType = (self.selectedVideoCodec == .hevc && availableCodecs.contains(.hevc)) ? .hevc : .h264
                 if availableCodecs.contains(targetCodec) {
@@ -783,10 +810,7 @@ public final class CameraService: NSObject {
                 }
             }
 
-            // CRITICAL FOR ROCK-SOLID 60.0 FPS:
-            // Disable videoDataOutput connection while recording video.
-            // This frees 100% of memory bandwidth and prevents concurrent frame conversion/processing
-            // from dropping movie frames down to 58-59 FPS.
+            // 3. Temporarily disable videoDataOutput while recording to free 100% of memory bandwidth
             self.videoDataOutput.connection(with: .video)?.isEnabled = false
 
             let tempDir = FileManager.default.temporaryDirectory
@@ -845,14 +869,13 @@ public final class CameraService: NSObject {
                              (minDim >= targetHeight && maxDim >= targetWidth && targetWidth >= 3840)
             guard matchesRes else { return false }
             return format.videoSupportedFrameRateRanges.contains { range in
-                range.minFrameRate <= targetFPS && targetFPS <= range.maxFrameRate
+                range.minFrameRate <= targetFPS + 0.5 && targetFPS - 0.5 <= range.maxFrameRate
             }
         }
 
         // Pick optimal format for sustained, jitter-free 60.0 FPS:
         // 1. Exact resolution match
-        // 2. Standard 8-bit YUV 420v/420f for direct hardware encoder pass-through without color conversion overhead
-        // 3. Prefer video-binned for 60fps to minimize sensor read latency & heat
+        // 2. Hardware YUV 420
         let selectedFormat = candidates.sorted { f1, f2 in
             let dims1 = CMVideoFormatDescriptionGetDimensions(f1.formatDescription)
             let dims2 = CMVideoFormatDescriptionGetDimensions(f2.formatDescription)
@@ -860,15 +883,18 @@ public final class CameraService: NSObject {
             let exact2 = (min(dims2.width, dims2.height) == targetHeight && max(dims2.width, dims2.height) == targetWidth)
             if exact1 != exact2 { return exact1 }
 
+            let maxFPS1 = f1.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0
+            let maxFPS2 = f2.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0
+            if (maxFPS1 >= targetFPS) != (maxFPS2 >= targetFPS) {
+                return maxFPS1 >= targetFPS
+            }
+
             let sub1 = CMFormatDescriptionGetMediaSubType(f1.formatDescription)
             let sub2 = CMFormatDescriptionGetMediaSubType(f2.formatDescription)
             let isYUV1 = sub1 == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || sub1 == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             let isYUV2 = sub2 == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || sub2 == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             if isYUV1 != isYUV2 { return isYUV1 }
 
-            if f1.isVideoBinned != f2.isVideoBinned {
-                return f1.isVideoBinned
-            }
             return false
         }.first
 
@@ -882,14 +908,25 @@ public final class CameraService: NSObject {
             self.captureSession.beginConfiguration()
             self.captureSession.sessionPreset = .inputPriority
             camera.activeFormat = targetFormat
-            self.updateMaxPhotoDimensions(for: camera)
 
-            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
-            camera.activeVideoMinFrameDuration = frameDuration
-            camera.activeVideoMaxFrameDuration = frameDuration
+            // In Video mode: do NOT set photoOutput.maxPhotoDimensions to 48MP!
+            // Limit photoOutput max dimensions to video dimensions to avoid stealing 4K 60fps ISP memory
+            if let videoMaxPhotoDim = targetFormat.supportedMaxPhotoDimensions.first {
+                self.photoOutput.maxPhotoDimensions = videoMaxPhotoDim
+            }
 
-            // CRITICAL: Disable auto HDR adjustments and low-light frame rate drops
-            // Native Apple Camera locks frame rate strictly without dynamic rate drops
+            if let range = targetFormat.videoSupportedFrameRateRanges.first(where: {
+                $0.maxFrameRate >= targetFPS - 0.5 && $0.minFrameRate <= targetFPS + 0.5
+            }) {
+                camera.activeVideoMinFrameDuration = range.minFrameDuration
+                camera.activeVideoMaxFrameDuration = range.minFrameDuration
+            } else {
+                let frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
+                camera.activeVideoMinFrameDuration = frameDuration
+                camera.activeVideoMaxFrameDuration = frameDuration
+            }
+
+            // Disable auto HDR adjustments and low-light frame rate drops
             if camera.isLowLightBoostSupported {
                 camera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
@@ -1066,7 +1103,8 @@ public final class CameraService: NSObject {
                 let formats = self.photoOutput.availableRawPhotoPixelFormatTypes
                 let bayer = formats.first(where: { AVCapturePhotoOutput.isBayerRAWPixelFormat($0) })
                 let proRAW = formats.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) })
-                guard let raw = (proRAW ?? bayer) else {
+                // Uu tien true Bayer RAW cam bien thuc khong de-raw truoc, fallback ProRAW
+                guard let raw = (bayer ?? proRAW ?? formats.first) else {
                     reject(CameraServiceError.rawUnavailable); return
                 }
                 // Apple supplies a processed companion solely for display. The
@@ -1091,12 +1129,14 @@ public final class CameraService: NSObject {
                 settings.maxPhotoDimensions = dimensions
             }
             if isDNG, let thumbnailCodec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first(where: { $0 == .jpeg }) {
-                // Add a camera-generated colour preview inside the original DNG.
+                // Add a camera-generated colour preview thumbnail inside the original DNG header
                 let dimensions = settings.maxPhotoDimensions
+                let thumbW = min(dimensions.width, 1920)
+                let thumbH = min(dimensions.height, 1440)
                 settings.rawEmbeddedThumbnailPhotoFormat = [
                     AVVideoCodecKey: thumbnailCodec,
-                    AVVideoWidthKey: dimensions.width,
-                    AVVideoHeightKey: dimensions.height
+                    AVVideoWidthKey: thumbW,
+                    AVVideoHeightKey: thumbH
                 ]
             }
             if camera.isFlashAvailable && self.photoOutput.supportedFlashModes.contains(self.flashMode) {
@@ -1185,6 +1225,9 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                     // No CIRAWFilter, tone map, crop, orientation rewrite or re-encode.
                     request.fileData = data
                     (request.iso, request.shutter) = Self.parseExif(photo.metadata)
+                    if request.preview == nil, let cg = photo.previewCGImageRepresentation()?.takeUnretainedValue() {
+                        request.preview = cg
+                    }
                 } else {
                     if request.format == .dng { request.processedData = data }
                     request.preview = autoreleasepool {
@@ -1229,8 +1272,9 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 }
                 return
             }
-            guard let image = request.preview, let data = request.fileData,
-                  request.format != .dng || request.processedData != nil else {
+            let previewImage = request.preview ?? (request.fileData != nil ? SuperResolutionRAWEngine.decodeProcessedPhoto(request.fileData!, context: self.sharedPhotoContext) : nil)
+            guard let image = previewImage, let data = request.fileData,
+                  request.format != .dng || request.processedData != nil || request.preview != nil else {
                 DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.photoProcessingFailed)
                 }

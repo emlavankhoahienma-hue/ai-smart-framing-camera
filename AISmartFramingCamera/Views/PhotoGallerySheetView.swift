@@ -15,6 +15,7 @@ public struct PhotoGallerySheetView: View {
 
     @State private var selectedTab: GalleryTab = .recent
     @State private var recentAssets: [PHAsset] = []
+    @State private var savedRawURLs: [URL] = []
     @State private var isLoadingAssets: Bool = true
     @State private var selectedPreviewItem: CapturedPhotoItem? = nil
 
@@ -79,6 +80,7 @@ public struct PhotoGallerySheetView: View {
             }
             .onAppear {
                 fetchRecentPhotos()
+                fetchSavedRawFiles()
             }
         }
     }
@@ -113,20 +115,28 @@ public struct PhotoGallerySheetView: View {
         }
     }
 
-    // MARK: - Tab 2: App Album Grid
+    // MARK: - Tab 2: App Album & RAW Storage Grid
     private var appAlbumGrid: some View {
         Group {
-            if let latest = viewModel.latestCapturedPhoto {
+            if viewModel.latestCapturedPhoto != nil || !savedRawURLs.isEmpty {
                 LazyVGrid(columns: columns, spacing: 2) {
-                    Button(action: {
-                        selectedPreviewItem = latest
-                    }) {
-                        Image(decorative: latest.processedImage, scale: 1.0, orientation: .up)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(minWidth: 0, maxWidth: .infinity)
-                            .frame(height: 124)
-                            .clipped()
+                    if let latest = viewModel.latestCapturedPhoto {
+                        Button(action: {
+                            selectedPreviewItem = latest
+                        }) {
+                            Image(decorative: latest.processedImage, scale: 1.0, orientation: .up)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(minWidth: 0, maxWidth: .infinity)
+                                .frame(height: 124)
+                                .clipped()
+                        }
+                    }
+
+                    ForEach(savedRawURLs, id: \.self) { url in
+                        RawFileThumbnailCell(url: url) {
+                            loadRawFileAndPreview(url: url)
+                        }
                     }
                 }
                 .padding(.horizontal, 2)
@@ -138,7 +148,7 @@ public struct PhotoGallerySheetView: View {
                     Text("Chưa có ảnh trong album AlignAI Studio")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.white.opacity(0.85))
-                    Text("Chụp ảnh bằng camera điện ảnh để lưu vào album này.")
+                    Text("Chụp ảnh RAW hoặc ảnh màu để lưu an toàn vào ứng dụng.")
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.50))
                         .multilineTextAlignment(.center)
@@ -167,6 +177,49 @@ public struct PhotoGallerySheetView: View {
         }
     }
 
+    private func fetchSavedRawFiles() {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let rawDirectory = documentsURL.appendingPathComponent("RAW", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: rawDirectory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey], options: .skipsHiddenFiles) else {
+            return
+        }
+        self.savedRawURLs = files.filter { $0.pathExtension.lowercased() == "dng" }
+            .sorted {
+                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
+                return d1 > d2
+            }
+    }
+
+    private func loadRawFileAndPreview(url: URL) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let data = try? Data(contentsOf: url),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                      kCGImageSourceCreateThumbnailWithTransform as String: true,
+                      kCGImageSourceCreateThumbnailFromImageIfAboveLimit as String: true,
+                      kCGImageSourceThumbnailMaxPixelSize as String: 2048
+                  ] as CFDictionary) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+
+            let item = CapturedPhotoItem(
+                originalImage: cgImage,
+                processedImage: cgImage,
+                rawPhotoData: data,
+                saveFormat: .dng,
+                preservesOriginalFile: true,
+                rawLocalFileURL: url,
+                sceneType: .general,
+                appliedPreset: .standard,
+                compositionRule: .ruleOfThirds,
+                alignmentScore: 1.0,
+                timestamp: (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
+            )
+            DispatchQueue.main.async {
+                self.selectedPreviewItem = item
+            }
+        }
+    }
+
     private func loadFullPhotoAndPreview(asset: PHAsset) {
         let manager = PHImageManager.default()
         let options = PHImageRequestOptions()
@@ -187,6 +240,98 @@ public struct PhotoGallerySheetView: View {
             )
             DispatchQueue.main.async {
                 self.selectedPreviewItem = item
+            }
+        }
+    }
+}
+
+// MARK: - RAW File Thumbnail Cell
+struct RawFileThumbnailCell: View {
+    let url: URL
+    let onTap: () -> Void
+
+    @State private var thumbnail: UIImage? = nil
+    @State private var fileSizeString: String = ""
+
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
+
+    var body: some View {
+        Button(action: onTap) {
+            ZStack(alignment: .bottomLeading) {
+                Color(red: 0.10, green: 0.11, blue: 0.14)
+
+                if let thumb = thumbnail {
+                    Image(uiImage: thumb)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(minWidth: 0, maxWidth: .infinity)
+                        .frame(height: 124)
+                        .clipped()
+                } else {
+                    VStack(spacing: 6) {
+                        Image(systemName: "doc.text.fill")
+                            .font(.system(size: 26))
+                            .foregroundColor(amberGold)
+                        Text("RAW DNG")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+
+                // Bottom badge
+                HStack(spacing: 4) {
+                    Text("RAW")
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1.5)
+                        .background(amberGold)
+                        .foregroundColor(.black)
+                        .cornerRadius(3)
+
+                    if !fileSizeString.isEmpty {
+                        Text(fileSizeString)
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.85))
+                    }
+                }
+                .padding(5)
+                .background(Color.black.opacity(0.65))
+                .cornerRadius(4)
+                .padding(4)
+            }
+            .frame(height: 124)
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            loadThumbnailAndSize()
+        }
+    }
+
+    private func loadThumbnailAndSize() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                let mb = Double(size) / (1024.0 * 1024.0)
+                DispatchQueue.main.async {
+                    self.fileSizeString = String(format: "%.1fMB", mb)
+                }
+            }
+            if let data = try? Data(contentsOf: url),
+               let source = CGImageSourceCreateWithData(data as CFData, nil),
+               let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                   kCGImageSourceCreateThumbnailWithTransform as String: true,
+                   kCGImageSourceCreateThumbnailFromImageIfAboveLimit as String: true,
+                   kCGImageSourceThumbnailMaxPixelSize as String: 240
+               ] as CFDictionary) ?? CGImageSourceCreateImageAtIndex(source, 0, nil) {
+                let uiImage = UIImage(cgImage: cgImage)
+                DispatchQueue.main.async {
+                    self.thumbnail = uiImage
+                }
             }
         }
     }
