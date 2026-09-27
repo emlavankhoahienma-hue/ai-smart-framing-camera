@@ -8,11 +8,15 @@ public struct CameraPreviewView: UIViewRepresentable {
     public func makeUIView(context: Context) -> PreviewContainerView {
         let view = PreviewContainerView()
         view.setupLayer(session: viewModel.cameraService.captureSession)
+        viewModel.previewLayer = view.previewLayer
         return view
     }
 
     public func updateUIView(_ uiView: PreviewContainerView, context: Context) {
         uiView.updateOrientation()
+        if viewModel.previewLayer !== uiView.previewLayer {
+            viewModel.previewLayer = uiView.previewLayer
+        }
     }
 
     public func makeCoordinator() -> Coordinator {

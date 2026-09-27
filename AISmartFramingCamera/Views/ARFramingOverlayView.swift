@@ -41,13 +41,13 @@ public struct ARFramingOverlayView: View {
                 if viewModel.showDetectionBoxes {
                     ForEach(0..<viewModel.detectedFaceRects.count, id: \.self) { i in
                         let rect = viewModel.detectedFaceRects[i]
-                        FaceDetectionBox(rect: convertBufferRectToScreen(rect, in: size))
+                        FaceDetectionBox(rect: viewModel.convertMetadataRectToLayerRect(rect, in: size))
                     }
 
                     if viewModel.isAISessionActive && viewModel.localSuggestionRects.isEmpty {
                         ForEach(0..<viewModel.detectedSubjectRects.count, id: \.self) { i in
                             let rect = viewModel.detectedSubjectRects[i]
-                            SubjectHighlightBox(rect: convertBufferRectToScreen(rect, in: size))
+                            SubjectHighlightBox(rect: viewModel.convertMetadataRectToLayerRect(rect, in: size))
                         }
                     }
                 }
@@ -57,7 +57,7 @@ public struct ARFramingOverlayView: View {
                         let sourceRect = viewModel.localSuggestionRects[index]
                         if !sourceRect.isEmpty, sourceRect.maxX > 0, sourceRect.maxY > 0,
                            sourceRect.minX < 1, sourceRect.minY < 1 {
-                            let rect = convertBufferRectToScreen(sourceRect, in: size)
+                            let rect = viewModel.convertMetadataRectToLayerRect(sourceRect, in: size)
                             RoundedRectangle(cornerRadius: 12)
                                 .stroke(Color.yellow.opacity(0.78), style: StrokeStyle(lineWidth: 1.2, dash: [7, 5]))
                                 .frame(width: rect.width, height: rect.height)
@@ -240,15 +240,25 @@ public struct ARFramingOverlayView: View {
                 let norm = convertScreenPointToBuffer(location, in: size)
                 if viewModel.isAEAFLocked {
                     viewModel.unlockAEAF()
-                } else if case .targetPlaced = viewModel.aiSessionState {
-                    viewModel.pinTargetAndStartMotion(at: norm)
                 } else if case .analyzing = viewModel.aiSessionState,
-                          viewModel.localSelectionMessage != nil {
+                          !viewModel.localSuggestionRects.isEmpty {
                     viewModel.chooseLocalSuggestion(at: norm)
                 } else {
                     viewModel.userDidTapToFocus(at: norm)
                 }
             })
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { val in
+                        guard viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint else { return }
+                        let currentScreen = convertBufferPointToScreen(targetPoint, in: size)
+                        let dist = hypot(val.startLocation.x - currentScreen.x, val.startLocation.y - currentScreen.y)
+                        if dist <= 44 {
+                            let newNorm = convertScreenPointToBuffer(val.location, in: size)
+                            viewModel.adjustTargetPoint(to: newNorm)
+                        }
+                    }
+            )
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.45)
                     .sequenced(before: DragGesture(minimumDistance: 0))

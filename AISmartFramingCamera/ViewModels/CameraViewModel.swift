@@ -140,6 +140,7 @@ public final class CameraViewModel: ObservableObject {
     private var allowsAutoCaptureForCurrentTarget = true
     // MARK: - Services
     public let cameraService = CameraService.shared
+    public weak var previewLayer: AVCaptureVideoPreviewLayer?
     public let visionEngine = VisionFramingEngine.shared
     public let calculator = CompositionCalculator.shared
     public let filterEngine = FilmFilterEngine.shared
@@ -951,9 +952,42 @@ public final class CameraViewModel: ObservableObject {
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
+    // MARK: - AVCaptureVideoPreviewLayer Coordinate Mapping
+    /// Chuyen doi bounding box chuan hoa [0...1] so voi sensor bounds sang toa do hien thi tren preview layer
+    public func convertMetadataRectToLayerRect(_ normalizedSensorRect: CGRect, in screenSize: CGSize) -> CGRect {
+        guard !normalizedSensorRect.isEmpty, !normalizedSensorRect.isNull else { return .zero }
+        let metaX = max(0, min(1, normalizedSensorRect.minY))
+        let metaY = max(0, min(1, 1.0 - normalizedSensorRect.maxX))
+        let metaW = max(0, min(1 - metaX, normalizedSensorRect.height))
+        let metaH = max(0, min(1 - metaY, normalizedSensorRect.width))
+        let metadataOutputRect = CGRect(x: metaX, y: metaY, width: metaW, height: metaH)
+
+        if let previewLayer = self.previewLayer, previewLayer.bounds.width > 0 && previewLayer.bounds.height > 0 {
+            let converted = previewLayer.layerRectConverted(fromMetadataOutputRect: metadataOutputRect)
+            if converted.width > 0 && converted.height > 0 && !converted.origin.x.isNaN && !converted.origin.y.isNaN {
+                return converted
+            }
+        }
+
+        let zoom = max(1.0, displayZoom)
+        let aspect = SpatialTrackingEngine.shared.currentBufferAspect
+        let scale = max(screenSize.width / aspect, screenSize.height)
+        let midX = screenSize.width / 2.0
+        let midY = screenSize.height / 2.0
+
+        let zoomedX = ((normalizedSensorRect.midX - 0.5) * zoom) * scale * aspect + midX
+        let zoomedY = ((normalizedSensorRect.midY - 0.5) * zoom) * scale + midY
+        let zoomedW = normalizedSensorRect.width * zoom * scale * aspect
+        let zoomedH = normalizedSensorRect.height * zoom * scale
+
+        return CGRect(x: zoomedX - zoomedW / 2.0,
+                      y: zoomedY - zoomedH / 2.0,
+                      width: max(0, zoomedW),
+                      height: max(0, zoomedH))
+    }
+
     public func cancelAIZoomForGesture() {
-        if aiSessionState == .analyzing { cancelAISession() }
-        targetPinGeneration &+= 1
+        // Tuyet doi khong xoa AI session, targetPoint hoac mang bounding box khi zoom 1x <-> 2x
         alignmentGate.reset()
         pinZoomPlanTask?.cancel()
         pinZoomPlanTask = nil
@@ -973,7 +1007,6 @@ public final class CameraViewModel: ObservableObject {
         zoomFallbackAfter = .infinity
         postZoomFaceMinimumTimestamp = -Double.infinity
         hasExecutedAutoZoomForSession = true
-        localSelectionMessage = nil
     }
 
     private func finishManualZoomIfSettled(_ deviceZoom: CGFloat) {
@@ -1643,6 +1676,14 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: target, subjectRect: subjectRect, source: nil)
     }
 
+    /// Tinh chinh tam target khi da ghim (Target Placed) ma khong tao target moi
+    public func adjustTargetPoint(to newPoint: CGPoint) {
+        guard case .targetPlaced = aiSessionState else { return }
+        let clamped = CGPoint(x: max(0.05, min(0.95, newPoint.x)),
+                              y: max(0.05, min(0.95, newPoint.y)))
+        pinTargetAndStartMotion(at: clamped)
+    }
+
     private func finishLocalAnalysis(_ output: NeuralAnalysisOutput, source: AITrackingSource) {
         localAnalysisFinished = true
         guard source.frame.displayZoom.isFinite, source.frame.displayZoom > 0,
@@ -1763,15 +1804,10 @@ public final class CameraViewModel: ObservableObject {
                 localSelectionMessage = nil
             }
         } else {
-            allowsAutoCaptureForCurrentTarget = true
-            localTrackingSource = nil
-            localCandidatePlans = []
-            localEvidenceCandidates = []
-            localSuggestionRects = []
-            detectedSubjectRects = []
-            localSelectionMessage = nil
-            pendingSuggestedZoom = displayZoom
-            pinTargetAndStartMotion(at: point)
+            // Khi nguoi dung cham ra ngoai cac box goi y:
+            // Tuyet doi KHONG tu y pin them target moi.
+            // Chuyen ve lay net/do sang camera thong thuong tai vi tri cham, giu nguyen danh sach goi y.
+            userDidTapToFocus(at: point)
         }
     }
 
@@ -2788,12 +2824,9 @@ public final class CameraViewModel: ObservableObject {
             unlockAEAF()
             return
         }
-        if captureMode == .photo {
-            if aiSessionState == .analyzing { cancelAISession() }
-            pinTargetAndStartMotion(at: normalizedPoint)
-            return
-        }
 
+        // Che do Camera thuong: Cham vao man hinh CHI goi co che lay net/do sang native
+        // Tuyet doi KHONG gan toa do, khong ve them hoac pin target tai day.
         haptics.triggerSelectionChange()
         if captureMode == .proVideo && !proVideoService.isAutoFocus {
             proVideoService.setAutoFocus(true)
