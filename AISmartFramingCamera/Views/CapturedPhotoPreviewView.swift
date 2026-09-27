@@ -131,8 +131,8 @@ public struct CapturedPhotoPreviewView: View {
                                     }
                             )
 
-                            // 1.2 Split Comparison Divider & Handle (Chỉ hiện khi ở mức 1.0x để không cản trở lúc zoom)
-                            if !isShowingOriginalOnly && effectiveScale <= 1.05 {
+                            // 1.2 Split Comparison Divider & Handle (Chỉ hiện khi ở mức 1.0x và không phải ảnh RAW nguyên bản)
+                            if !isShowingOriginalOnly && effectiveScale <= 1.05 && item.saveFormat != .dng {
                                 splitComparisonControls(size: size)
                             }
 
@@ -140,8 +140,8 @@ public struct CapturedPhotoPreviewView: View {
                             zoomRegionMiniMap(viewportSize: size)
                                 .padding(10)
 
-                            // 1.4 Nút Chuyển nhanh Ảnh Gốc / Đã chỉnh khi đang zoom chi tiết
-                            if effectiveScale > 1.05 {
+                            // 1.4 Nút Chuyển nhanh Ảnh Gốc / Đã chỉnh khi đang zoom chi tiết (chỉ cho ảnh đã qua xử lý màu)
+                            if effectiveScale > 1.05 && item.saveFormat != .dng {
                                 VStack {
                                     Spacer()
                                     HStack {
@@ -207,36 +207,55 @@ public struct CapturedPhotoPreviewView: View {
                     }
 
                     // 3. Metadata Dashboard (Quiet Pro style)
+                    // 3. Metadata Dashboard (Quiet Pro style)
                     VStack(spacing: 6) {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    if item.isLivePhoto {
-                                        HStack(spacing: 3) {
-                                             Image(systemName: "livephoto")
-                                                 .font(.system(size: 10, weight: .bold))
-                                             Text("LIVE PHOTO")
-                                                 .font(.system(size: 9, weight: .heavy, design: .rounded))
-                                        }
-                                        .foregroundColor(.yellow)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 3)
-                                        .background(Capsule().fill(Color.yellow.opacity(0.18)))
+                                if item.saveFormat == .dng {
+                                    HStack(spacing: 6) {
+                                        Text("RAW (DNG)")
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundColor(champagne)
+                                        Text("•").foregroundColor(.white.opacity(0.3))
+                                        Text("Cảm biến gốc")
+                                            .font(.system(size: 13))
+                                            .foregroundColor(.yellow)
                                     }
-                                    Text(selectedPreviewPreset.displayName)
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
-                                    Text("•").foregroundColor(.white.opacity(0.3))
-                                    Text(item.sceneType.rawValue)
-                                        .font(.system(size: 13))
+                                    Text(item.resolutionDescription)
+                                        .font(.system(size: 11))
                                         .foregroundColor(.white.opacity(0.7))
+                                    Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.5))
+                                } else {
+                                    HStack(spacing: 6) {
+                                        if item.isLivePhoto {
+                                            HStack(spacing: 3) {
+                                                 Image(systemName: "livephoto")
+                                                     .font(.system(size: 10, weight: .bold))
+                                                 Text("LIVE PHOTO")
+                                                     .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                            }
+                                            .foregroundColor(.yellow)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3)
+                                            .background(Capsule().fill(Color.yellow.opacity(0.18)))
+                                        }
+                                        Text(selectedPreviewPreset.displayName)
+                                            .font(.system(size: 14, weight: .semibold))
+                                            .foregroundColor(.white)
+                                        Text("•").foregroundColor(.white.opacity(0.3))
+                                        Text(item.sceneType.rawValue)
+                                            .font(.system(size: 13))
+                                            .foregroundColor(.white.opacity(0.7))
+                                    }
+                                    Text(item.resolutionDescription)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.7))
+                                    Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.5))
                                 }
-                                Text(item.saveFormat == .dng ? "DNG gốc · Ảnh hiển thị là bản xem trước" : item.resolutionDescription)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.7))
-                                Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.5))
                             }
 
                             Spacer()
@@ -256,99 +275,156 @@ public struct CapturedPhotoPreviewView: View {
                         .padding(.horizontal, 20)
                     }
 
-                    // 4. Horizontal Film Preset Selector (Thử trực quan 18 bộ màu điện ảnh)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(FilmPreset.selectablePresets) { preset in
-                                let isCurrent = selectedPreviewPreset == preset
-                                let isAIChosen = aiRecommendedPreset == preset
+                    // 4. Horizontal Film Preset Selector (Ẩn khi xem ảnh RAW nguyên bản)
+                    if item.saveFormat != .dng {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(FilmPreset.selectablePresets) { preset in
+                                    let isCurrent = selectedPreviewPreset == preset
+                                    let isAIChosen = aiRecommendedPreset == preset
 
-                                Button(action: {
-                                    applyPresetToPreview(preset)
-                                }) {
-                                    HStack(spacing: 5) {
-                                        if isAIChosen {
-                                            Image(systemName: "wand.and.stars")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundColor(isCurrent ? .black : champagne)
-                                        } else if isCurrent {
-                                            Image(systemName: "checkmark")
-                                                .font(.system(size: 9, weight: .bold))
+                                    Button(action: {
+                                        applyPresetToPreview(preset)
+                                    }) {
+                                        HStack(spacing: 5) {
+                                            if isAIChosen {
+                                                Image(systemName: "wand.and.stars")
+                                                    .font(.system(size: 10, weight: .bold))
+                                                    .foregroundColor(isCurrent ? .black : champagne)
+                                            } else if isCurrent {
+                                                Image(systemName: "checkmark")
+                                                    .font(.system(size: 9, weight: .bold))
+                                            }
+                                            Text(preset.displayName)
+                                                .font(.system(size: 12, weight: isCurrent ? .bold : .medium, design: .rounded))
                                         }
-                                        Text(preset.displayName)
-                                            .font(.system(size: 12, weight: isCurrent ? .bold : .medium, design: .rounded))
+                                        .foregroundColor(isCurrent ? .black : .white.opacity(0.85))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(
+                                            Capsule()
+                                                .fill(isCurrent ? champagne : (isAIChosen ? Color.yellow.opacity(0.18) : Color.white.opacity(0.08)))
+                                        )
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(isAIChosen ? champagne : (isCurrent ? champagne : Color.white.opacity(0.12)), lineWidth: isAIChosen ? 1.5 : 1)
+                                        )
                                     }
-                                    .foregroundColor(isCurrent ? .black : .white.opacity(0.85))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(
-                                        Capsule()
-                                            .fill(isCurrent ? champagne : (isAIChosen ? Color.yellow.opacity(0.18) : Color.white.opacity(0.08)))
-                                    )
-                                    .overlay(
-                                        Capsule()
-                                            .stroke(isAIChosen ? champagne : (isCurrent ? champagne : Color.white.opacity(0.12)), lineWidth: isAIChosen ? 1.5 : 1)
-                                    )
+                                    .buttonStyle(PlainButtonStyle())
                                 }
-                                .buttonStyle(PlainButtonStyle())
                             }
+                            .padding(.horizontal, 16)
                         }
-                        .padding(.horizontal, 16)
                     }
 
                     // 5. Tool & Action Buttons
                     VStack(spacing: 10) {
-                        // 5.1 AI Enhancement Row: [AI Chỉnh màu] & [Làm nét]
-                        HStack(spacing: 10) {
-                            // Nút AI Chỉnh màu
-                            Button(action: optimizeWithAIStudio) {
-                                HStack(spacing: 6) {
-                                    if isOptimizingWithAI {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                            .scaleEffect(0.8)
-                                    } else {
-                                        Image(systemName: "wand.and.stars")
-                                            .font(.system(size: 13, weight: .semibold))
-                                    }
-                                    Text(isOptimizingWithAI ? "Đang chọn màu…" : "AI Chỉnh màu")
-                                        .font(.system(size: 13, weight: .semibold))
+                        if item.saveFormat == .dng {
+                            // Pro RAW Information Banner (Không cho phép sửa bất kỳ thứ gì trên RAW gốc)
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "camera.metering.matrix")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundColor(champagne)
+                                    Text("FILE RAW NGUYÊN BẢN (DNG)")
+                                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                                        .foregroundColor(champagne)
+                                    Spacer()
+                                    Text("CHẤT LƯỢNG FULL")
+                                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2.5)
+                                        .background(champagne.opacity(0.2))
+                                        .foregroundColor(champagne)
+                                        .cornerRadius(4)
+                                    Text("KHÔNG SỬA ĐỔI")
+                                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2.5)
+                                        .background(Color.yellow.opacity(0.18))
+                                        .foregroundColor(.yellow)
+                                        .cornerRadius(4)
                                 }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 11)
-                                .background(Color.white.opacity(0.12))
-                                .cornerRadius(10)
-                            }
-                            .disabled(isOptimizingWithAI)
 
-                            // Nút Làm nét AI (Bật / Tắt - Bảo toàn 100% màu & chất ảnh)
-                            Button(action: toggleAISharpness) {
-                                HStack(spacing: 6) {
-                                    if isSharpeningProcessing {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: isAISharpnessEnabled ? .black : .white))
-                                            .scaleEffect(0.8)
-                                    } else {
-                                        Image(systemName: isAISharpnessEnabled ? "sparkle.magnifyingglass" : "sparkles")
+                                Text("Tệp DNG lưu trực tiếp từ cảm biến camera, không qua khử nhiễu làm bết màu, không áp bộ lọc và không nén dữ liệu. Đã lưu an toàn vào ứng dụng & Thư viện ảnh.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.70))
+                                    .lineLimit(2)
+
+                                if let data = item.rawPhotoData {
+                                    HStack(spacing: 12) {
+                                        Label(String(format: "%.1f MB", Double(data.count) / (1024 * 1024)), systemImage: "internaldrive")
+                                        Label("Adobe DNG / ProRAW", systemImage: "doc.text")
+                                        if item.rawLocalFileURL != nil {
+                                            Label("Đã lưu App", systemImage: "checkmark.circle.fill")
+                                                .foregroundColor(.green.opacity(0.9))
+                                        }
+                                    }
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.60))
+                                    .padding(.top, 2)
+                                }
+                            }
+                            .padding(12)
+                            .background(Color.white.opacity(0.06))
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(champagne.opacity(0.25), lineWidth: 1)
+                            )
+                        } else {
+                            // 5.1 AI Enhancement Row: [AI Chỉnh màu] & [Làm nét] (Chỉ cho ảnh JPEG / HEIF)
+                            HStack(spacing: 10) {
+                                // Nút AI Chỉnh màu
+                                Button(action: optimizeWithAIStudio) {
+                                    HStack(spacing: 6) {
+                                        if isOptimizingWithAI {
+                                            ProgressView()
+                                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                .scaleEffect(0.8)
+                                        } else {
+                                            Image(systemName: "wand.and.stars")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        Text(isOptimizingWithAI ? "Đang chọn màu…" : "AI Chỉnh màu")
                                             .font(.system(size: 13, weight: .semibold))
                                     }
-                                    Text(isAISharpnessEnabled ? "Đang làm nét" : "Làm nét")
-                                        .font(.system(size: 13, weight: .semibold))
-                                    if isAISharpnessEnabled && !isSharpeningProcessing {
-                                        Image(systemName: "checkmark")
-                                            .font(.system(size: 10, weight: .bold))
-                                    }
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 11)
+                                    .background(Color.white.opacity(0.12))
+                                    .cornerRadius(10)
                                 }
-                                .foregroundColor(isAISharpnessEnabled ? .black : .white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 11)
-                                .background(isAISharpnessEnabled ? champagne : Color.white.opacity(0.12))
-                                .cornerRadius(10)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(isAISharpnessEnabled ? champagne : Color.white.opacity(0.15), lineWidth: 1)
-                                )
+                                .disabled(isOptimizingWithAI)
+
+                                // Nút Làm nét AI (Bật / Tắt - Bảo toàn 100% màu & chất ảnh)
+                                Button(action: toggleAISharpness) {
+                                    HStack(spacing: 6) {
+                                        if isSharpeningProcessing {
+                                            ProgressView()
+                                                .progressViewStyle(CircularProgressViewStyle(tint: isAISharpnessEnabled ? .black : .white))
+                                                .scaleEffect(0.8)
+                                        } else {
+                                            Image(systemName: isAISharpnessEnabled ? "sparkle.magnifyingglass" : "sparkles")
+                                                .font(.system(size: 13, weight: .semibold))
+                                        }
+                                        Text(isAISharpnessEnabled ? "Đang làm nét" : "Làm nét")
+                                            .font(.system(size: 13, weight: .semibold))
+                                        if isAISharpnessEnabled && !isSharpeningProcessing {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 10, weight: .bold))
+                                        }
+                                    }
+                                    .foregroundColor(isAISharpnessEnabled ? .black : .white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 11)
+                                    .background(isAISharpnessEnabled ? champagne : Color.white.opacity(0.12))
+                                    .cornerRadius(10)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(isAISharpnessEnabled ? champagne : Color.white.opacity(0.15), lineWidth: 1)
+                                    )
+                                }
                             }
                         }
 
@@ -356,12 +432,18 @@ public struct CapturedPhotoPreviewView: View {
                         HStack(spacing: 10) {
                             // Nút Lưu ảnh
                             Button(action: {
-                                saveEnhancedImageToPhotos(currentProcessedImage)
+                                if item.saveFormat == .dng {
+                                    viewModel?.savePhotoToLibrary(item) { success in
+                                        hasSavedNewEnhancement = success
+                                    }
+                                } else {
+                                    saveEnhancedImageToPhotos(currentProcessedImage)
+                                }
                             }) {
                                 HStack(spacing: 6) {
                                     Image(systemName: hasSavedNewEnhancement ? "checkmark" : "arrow.down")
                                         .font(.system(size: 13, weight: .semibold))
-                                    Text(hasSavedNewEnhancement ? "Đã lưu" : "Lưu ảnh")
+                                    Text(hasSavedNewEnhancement ? "Đã lưu vào Photos" : "Lưu vào Photos")
                                         .font(.system(size: 13, weight: .semibold))
                                 }
                                 .foregroundColor(.black)
@@ -374,8 +456,18 @@ public struct CapturedPhotoPreviewView: View {
                             // Nút Chia sẻ
                             if item.saveFormat == .dng, let data = item.rawPhotoData {
                                 ShareLink(item: OriginalDNGShare(data: data),
-                                    preview: SharePreview("AlignAI DNG", image: Image(decorative: item.originalImage, scale: 1, orientation: .up))) {
-                                    shareButtonLabel
+                                    preview: SharePreview("AlignAI_RAW.dng", image: Image(decorative: item.originalImage, scale: 1, orientation: .up))) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "square.and.arrow.up")
+                                            .font(.system(size: 13, weight: .semibold))
+                                        Text("Chia sẻ tệp RAW")
+                                            .font(.system(size: 13, weight: .semibold))
+                                    }
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 11)
+                                    .background(Color.white.opacity(0.12))
+                                    .cornerRadius(10)
                                 }
                             } else {
                                 ShareLink(item: Image(decorative: currentProcessedImage, scale: 1, orientation: .up),

@@ -1260,6 +1260,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
     public let processedCompanionData: Data?
     public let saveFormat: PhotoSaveFormat
     public let preservesOriginalFile: Bool
+    public let rawLocalFileURL: URL?
     public var resolutionDescription: String {
         let pixels = Double(originalImage.width) * Double(originalImage.height)
         return String(format: "%.1f MP · %d × %d", pixels / 1_000_000,
@@ -1286,6 +1287,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         processedCompanionData: Data? = nil,
         saveFormat: PhotoSaveFormat = .jpeg,
         preservesOriginalFile: Bool = false,
+        rawLocalFileURL: URL? = nil,
         livePhotoMovieURL: URL? = nil,
         sceneType: DetectedSceneType,
         appliedPreset: FilmPreset,
@@ -1302,6 +1304,7 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         self.processedCompanionData = processedCompanionData
         self.saveFormat = saveFormat
         self.preservesOriginalFile = preservesOriginalFile
+        self.rawLocalFileURL = rawLocalFileURL
         self.livePhotoMovieURL = livePhotoMovieURL
         self.sceneType = sceneType
         self.appliedPreset = appliedPreset

@@ -16,6 +16,7 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var tracksSuggestions = false
     var isFocusPeakingEnabled = false
     var focusPeakingColor: FocusPeakingColor = .green
+    var isRecordingVideo = false
 }
 
 /// Owns frame-rate work on AVFoundation's serial sample-buffer queue. UI state is
@@ -67,9 +68,9 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         let snapshot = configuration
         stateLock.unlock()
 
-        // Zero-Cost Gate: Khi đang ngủ đông (mở Cài đặt, Bố cục, Thư viện, Chi tiết ảnh, Xem video, hoặc ẩn nền),
+        // Zero-Cost Gate: Khi đang ngủ đông hoặc đang quay video,
         // lập tức thoát ngay mà không chạy bất kỳ tác vụ AI Vision, YOLO, Optical Flow, Histogram hay Peaking nào!
-        guard !snapshot.isHibernating else { return }
+        guard !snapshot.isHibernating && !snapshot.isRecordingVideo else { return }
 
         let frame = TrackingFrameContext.read(sampleBuffer,
             zoom: SpatialTrackingEngine.shared.currentDisplayZoom)
@@ -226,7 +227,9 @@ public final class CameraViewModel: ObservableObject {
         let col = t < 0.28 ? Color(red: 0.15, green: 0.45, blue: 0.95) : (t < 0.72 ? Color(red: 0.40, green: 0.90, blue: 0.60) : Color(red: 0.95, green: 0.45, blue: 0.20))
         return HistogramBarData(id: $0, height: 0.10, color: col)
     }
-    @Published public var isRecordingVideo: Bool = false
+    @Published public var isRecordingVideo: Bool = false {
+        didSet { updateFrameProcessingConfiguration() }
+    }
     @Published public var recordedVideoURL: URL? = nil
     @Published public var isShowingVideoPreview: Bool = false {
         didSet { updateCameraHibernationState() }
@@ -809,7 +812,8 @@ public final class CameraViewModel: ObservableObject {
                 isSettingsVisible: isShowingSettings,
                 tracksSuggestions: aiSessionState == .analyzing,
                 isFocusPeakingEnabled: isFocusPeakingEnabled,
-                focusPeakingColor: focusPeakingColor
+                focusPeakingColor: focusPeakingColor,
+                isRecordingVideo: isRecordingVideo
             )
         )
     }
@@ -2992,6 +2996,24 @@ public final class CameraViewModel: ObservableObject {
         return CGImageDestinationFinalize(destination) ? result as Data : nil
     }
 
+    @discardableResult
+    public static func saveRawFileToAppSandbox(data: Data, filename: String) -> URL? {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let rawDirectory = documentsURL.appendingPathComponent("RAW", isDirectory: true)
+        do {
+            if !FileManager.default.fileExists(atPath: rawDirectory.path) {
+                try FileManager.default.createDirectory(at: rawDirectory, withIntermediateDirectories: true, attributes: nil)
+            }
+            let destinationURL = rawDirectory.appendingPathComponent(filename)
+            try data.write(to: destinationURL, options: .atomic)
+            CameraLogger.success("Lưu tệp RAW DNG nguyên bản vào ứng dụng: \(destinationURL.path)", category: .capture)
+            return destinationURL
+        } catch {
+            CameraLogger.error("Lỗi lưu tệp RAW vào sandbox ứng dụng: \(error.localizedDescription)", category: .capture)
+            return nil
+        }
+    }
+
     public func savePhotoToLibrary(_ item: CapturedPhotoItem, completion: ((Bool) -> Void)? = nil) {
         let saveOriginal = isSaveOriginalPhotoEnabled && !item.preservesOriginalFile && item.saveFormat != .dng
         let access: PHAccessLevel = Bundle.main.object(forInfoDictionaryKey: "NSPhotoLibraryAddUsageDescription") != nil ? .addOnly : .readWrite
@@ -3007,6 +3029,10 @@ public final class CameraViewModel: ObservableObject {
                     if item.saveFormat == .dng {
                         guard let data = item.rawPhotoData, SuperResolutionRAWEngine.isDNGData(data)
                         else { return nil }
+                        if item.rawLocalFileURL == nil {
+                            let filename = "AlignAI_RAW_\(item.id.uuidString).dng"
+                            _ = Self.saveRawFileToAppSandbox(data: data, filename: filename)
+                        }
                         return (data, nil)
                     }
                     let mainData = item.preservesOriginalFile ? item.rawPhotoData :
@@ -3147,6 +3173,16 @@ extension CameraViewModel: CameraServiceDelegate {
                 }
             }
 
+            // Nếu là RAW DNG: Lưu trực tiếp tệp nguyên bản vào thư mục Documents/RAW của App ngay lập tức
+            var localRawURL: URL? = nil
+            if format == .dng, let rawData = rawData {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyyMMdd_HHmmss"
+                let dateStr = formatter.string(from: Date())
+                let rawFilename = "AlignAI_RAW_\(dateStr).dng"
+                localRawURL = Self.saveRawFileToAppSandbox(data: rawData, filename: rawFilename)
+            }
+
             let item = CapturedPhotoItem(
                 originalImage: effectiveSourcePhoto,
                 processedImage: processedImageResult,
@@ -3154,6 +3190,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 processedCompanionData: processedCompanionData,
                 saveFormat: format,
                 preservesOriginalFile: format == .dng || (!isWindowed && !hasColorEdits),
+                rawLocalFileURL: localRawURL,
                 livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
                 appliedPreset: isFilmActive ? effectivePreset : .standard,

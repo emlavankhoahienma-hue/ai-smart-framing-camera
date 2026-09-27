@@ -249,9 +249,36 @@ struct TopCameraBar: View {
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundColor(.white.opacity(0.85))
 
-                Text(currentFormatLabel)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(amberGold)
+                Button(action: {
+                    let generator = UISelectionFeedbackGenerator()
+                    generator.prepare()
+                    generator.selectionChanged()
+                    if viewModel.captureMode.isVideo {
+                        viewModel.toggleVideoFormat()
+                    } else {
+                        viewModel.togglePhotoFormat()
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        if viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo {
+                            Circle()
+                                .fill(amberGold)
+                                .frame(width: 4, height: 4)
+                        }
+                        Text(currentFormatLabel)
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo ? .black : amberGold)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(
+                        viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo
+                            ? RoundedRectangle(cornerRadius: 4).fill(amberGold)
+                            : RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08))
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityLabel("Định dạng: \(currentFormatLabel). Chạm để thay đổi.")
 
                 Text("4:3")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -307,9 +334,18 @@ struct TopCameraBar: View {
 
     private var currentFormatLabel: String {
         if viewModel.captureMode.isVideo {
-            return viewModel.selectedVideoFormatOption.rawValue.contains("4K") ? "4K" : "HD"
+            switch viewModel.selectedVideoFormatOption {
+            case .uhd60: return "4K 60"
+            case .uhd30: return "4K 30"
+            case .hd60: return "1080 60"
+            case .hd30: return "1080 30"
+            }
         }
-        return viewModel.selectedPhotoFormat.rawValue
+        switch viewModel.selectedPhotoFormat {
+        case .dng: return "RAW"
+        case .heif, .heic: return "HEIF"
+        case .jpeg: return "JPEG"
+        }
     }
 }
 
