@@ -205,5 +205,5 @@ jobs:
           4. On iPhone: Settings > General > VPN & Device Management > Trust Developer Profile
 
           ## System Requirements
-          - iPhone with A11 Bionic to A18 Pro (iPhone 8 / X or later)
-          - iOS 16.0 or later"
+          - iPhone compatible with iOS 17 or later
+          - iOS 17.0 or later"
