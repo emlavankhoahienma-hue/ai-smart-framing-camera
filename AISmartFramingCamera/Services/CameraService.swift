@@ -391,8 +391,8 @@ public final class CameraService: NSObject {
                     ]
                     if let connection = self.videoDataOutput.connection(with: .video) {
                         self.configureTrackingConnection(connection)
-                        if connection.isVideoOrientationSupported {
-                            connection.videoOrientation = .portrait
+                        if connection.isVideoRotationAngleSupported(90) {
+                            connection.videoRotationAngle = 90
                         }
                     }
                     self.videoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataQueue)
@@ -433,8 +433,8 @@ public final class CameraService: NSObject {
                         CameraLogger.warning("CameraService: isLivePhotoCaptureSupported = false", category: .capture)
                     }
                     if let connection = self.photoOutput.connection(with: .video) {
-                        if connection.isVideoOrientationSupported {
-                            connection.videoOrientation = .portrait
+                        if connection.isVideoRotationAngleSupported(90) {
+                            connection.videoRotationAngle = 90
                         }
                     }
                 }
@@ -625,8 +625,8 @@ public final class CameraService: NSObject {
 
                     if let connection = self.videoDataOutput.connection(with: .video) {
                         self.configureTrackingConnection(connection)
-                        if connection.isVideoOrientationSupported {
-                            connection.videoOrientation = .portrait
+                        if connection.isVideoRotationAngleSupported(90) {
+                            connection.videoRotationAngle = 90
                         }
                         if connection.isVideoMirroringSupported {
                             connection.automaticallyAdjustsVideoMirroring = false
@@ -965,7 +965,7 @@ public final class CameraService: NSObject {
             return
         }
 
-        if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
+        if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
         if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
         let availableCodecs = movieFileOutput.availableVideoCodecTypes
         let targetCodec: AVVideoCodecType = selectedVideoCodec == .hevc && availableCodecs.contains(.hevc) ? .hevc : .h264
@@ -1172,7 +1172,7 @@ public final class CameraService: NSObject {
                 }
                 captureSession.addOutput(movieFileOutput)
                 if let connection = movieFileOutput.connection(with: .video) {
-                    if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
+                    if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
                     if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .standard }
                 }
             }
@@ -1267,14 +1267,8 @@ public final class CameraService: NSObject {
     private func configurePhotoConnection(_ connection: AVCaptureConnection) {
         // The app's viewfinder is portrait. Let AVFoundation write EXIF once;
         // processed preview decoding applies that EXIF once, DNG stays untouched.
-        if #available(iOS 17.0, *) {
-            if connection.isVideoRotationAngleSupported(90) {
-                connection.videoRotationAngle = 90
-            }
-        } else {
-            if connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
-            }
+        if connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
         }
         if connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
