@@ -12,7 +12,7 @@
 
 ### View-model layer
 
-`CameraViewModel` is `@MainActor` and is the only object that composes engine output into screen state. The deployment target remains iOS 16, so it deliberately uses `ObservableObject`/`@Published`; Observation's `@Observable` would require raising the minimum OS to iOS 17.
+`CameraViewModel` is `@MainActor` and is the only object that composes engine output into screen state. The deployment target is iOS 17. Existing SwiftUI views use `@StateObject`/`@ObservedObject`, so the view model retains `ObservableObject`/`@Published` while camera transitions are serialized on the session queue and acknowledged on the main actor.
 
 The AI capture lifecycle is explicit:
 
@@ -64,4 +64,4 @@ Zebra/false-color monitoring, waveform scopes, ProRes/Log recording, audio meter
 
 ## Build and release gate
 
-The repository targets a generic iOS device with code signing disabled in GitHub Actions on macOS/Xcode. A change is releasable only after the `iOS Sideload Build & Release` workflow succeeds for the exact commit. The Windows development host cannot run `xcodebuild`; remote macOS CI is therefore the authoritative compiler and linker gate.
+This source snapshot contains the Xcode project but no Git metadata or CI workflow. Run `xcodebuild` with Xcode on macOS, then verify camera, photo, RAW and movie transitions on an iOS 17+ device before release. The Windows development host cannot compile or link against the iOS SDK.

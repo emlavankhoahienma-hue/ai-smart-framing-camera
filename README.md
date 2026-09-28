@@ -6,7 +6,7 @@
 
 [![iOS Sideload Build & Release](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/actions/workflows/ios-build.yml/badge.svg)](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/actions/workflows/ios-build.yml)
 [![Latest Release](https://img.shields.io/badge/Release-v1.0.0--build.298-blue.svg?style=flat-square)](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/latest)
-[![iOS Target](https://img.shields.io/badge/iOS-16.0%2B%20%7C%2017%20%7C%2018-000000.svg?style=flat-square&logo=apple)](https://developer.apple.com/ios/)
+[![iOS Target](https://img.shields.io/badge/iOS-17.0%2B%20%7C%2018-000000.svg?style=flat-square&logo=apple)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B%20%7C%20SwiftUI-FA7343.svg?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![Apple Neural Engine](https://img.shields.io/badge/Neural_Engine-A11_to_A18_Pro-9945FF.svg?style=flat-square&logo=apple)](https://apple.com)
 [![Google Gemini](https://img.shields.io/badge/Google_Gemini-2.5_Flash_%2F_Pro-4285F4.svg?style=flat-square&logo=google)](https://ai.google.dev)
@@ -46,7 +46,7 @@
 
 ## Tổng Quan Dự Án
 
-**AlignAI Studio** là ứng dụng camera nhiếp ảnh nghệ thuật mã nguồn mở dành cho hệ điều hành iOS (hỗ trợ từ iOS 16.0 đến iOS 18+). Ứng dụng giải quyết bài toán: **Làm thế nào để người chụp không chuyên luôn bắt trọn những góc máy chuẩn tỷ lệ vàng như nhiếp ảnh gia kỳ cựu.**
+**AlignAI Studio** là ứng dụng camera nhiếp ảnh nghệ thuật mã nguồn mở dành cho hệ điều hành iOS (hỗ trợ từ iOS 17.0 đến iOS 18+). Ứng dụng giải quyết bài toán: **Làm thế nào để người chụp không chuyên luôn bắt trọn những góc máy chuẩn tỷ lệ vàng như nhiếp ảnh gia kỳ cựu.**
 
 Không dừng lại ở việc áp bộ lọc màu, **AlignAI Studio** kết hợp trực tiếp giữa phần cứng **Apple Neural Engine (ANE)**, cảm biến chuyển động **CoreMotion**, bộ xử lý tín hiệu hình ảnh **Apple ISP** và trí tuệ nhân tạo thị giác để tạo nên một hệ thống đồng bộ khép kín:
 
@@ -298,7 +298,7 @@ AISmartFramingCamera/
 
 | Tiêu Chí | Yêu Cầu Tối Thiểu | Yêu Cầu Khuyến Nghị |
 | :--- | :--- | :--- |
-| **Hệ Điều Hành** | iOS 16.0 trở lên | iOS 17.0 hoặc iOS 18.0+ |
+| **Hệ Điều Hành** | iOS 17.0 trở lên | iOS 17.0 hoặc iOS 18.0+ |
 | **Vi Xử Lý** | Apple A11 Bionic (iPhone 8 / X) | Apple A16 Bionic đến A18 Pro (iPhone 14 Pro - 16 Pro Max) |
 | **Khả Năng Chụp 48MP** | Camera 12MP (ảnh tối đa 12MP) | Cảm biến 48MP Quad-Bayer (iPhone 14 Pro trở lên) |
 | **Hỗ Trợ RAW DNG** | Thiết bị hỗ trợ Apple ProRAW hoặc Bayer RAW | iPhone dòng Pro / Pro Max |

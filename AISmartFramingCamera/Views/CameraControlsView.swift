@@ -136,12 +136,11 @@ struct CameraModeSegmentedSwitcher: View {
             ForEach(modes) { item in
                 let isSelected = (viewModel.captureMode == item.mode) || (item.mode == .video && viewModel.captureMode == .proVideo)
                 Button(action: {
-                    guard viewModel.captureMode != item.mode else { return }
                     let generator = UISelectionFeedbackGenerator()
                     generator.prepare()
                     generator.selectionChanged()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-                        viewModel.captureMode = item.mode
+                        viewModel.selectCaptureMode(item.mode)
                     }
                 }) {
                     Text(item.title)
@@ -523,14 +522,16 @@ struct CameraFlipButton: View {
 
     var body: some View {
         Button(action: {
-            let haptic = UISelectionFeedbackGenerator()
-            haptic.prepare()
-            haptic.selectionChanged()
-
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
-                flipDegrees += 180
+            guard viewModel.canSwitchCamera else { return }
+            viewModel.switchCamera { didSwitch in
+                guard didSwitch else { return }
+                let haptic = UISelectionFeedbackGenerator()
+                haptic.prepare()
+                haptic.selectionChanged()
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                    flipDegrees += 180
+                }
             }
-            viewModel.switchCamera()
         }) {
             ZStack {
                 Circle()
@@ -549,6 +550,7 @@ struct CameraFlipButton: View {
             .contentShape(Circle())
         }
         .buttonStyle(PlainButtonStyle())
+        .disabled(!viewModel.canSwitchCamera)
         .accessibilityLabel("Đổi camera trước và sau")
     }
 }
@@ -564,7 +566,13 @@ struct AIViewfinderButton: View {
             haptic.prepare()
             haptic.impactOccurred()
 
-            if viewModel.isWindowedZoomActive {
+            if viewModel.captureMode.isVideo {
+                if viewModel.isAIVideoDirectorActive {
+                    viewModel.dismissAIVideoDirector()
+                } else {
+                    viewModel.requestAIVideoCinematographyGuidance()
+                }
+            } else if viewModel.isWindowedZoomActive {
                 viewModel.applyAIWindowedFocalLengthRecommendation()
             } else {
                 if viewModel.aiSessionState.isSessionActive {
@@ -601,10 +609,13 @@ struct AIViewfinderButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel("Nút AI Bố cục")
+        .accessibilityLabel(viewModel.captureMode.isVideo ? "AI Đạo diễn video" : "Nút AI Bố cục")
     }
 
     private var isPulsing: Bool {
+        if viewModel.captureMode.isVideo {
+            return viewModel.isAIVideoDirectorActive
+        }
         if viewModel.isWindowedZoomActive {
             return viewModel.isAIWindowedFocalRecommended
         }

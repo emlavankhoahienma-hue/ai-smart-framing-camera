@@ -261,6 +261,52 @@ public enum GeminiError: LocalizedError {
 public final class GeminiService {
     public static let shared = GeminiService()
 
+    public final class VideoCinematographyRequest {
+        private let lock = NSLock()
+        private var currentTask: URLSessionDataTask?
+        private var isCancelled = false
+        private var hasCompleted = false
+
+        public func cancel() {
+            lock.lock()
+            isCancelled = true
+            let task = currentTask
+            currentTask = nil
+            lock.unlock()
+            task?.cancel()
+        }
+
+        fileprivate var isActive: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return !isCancelled && !hasCompleted
+        }
+
+        fileprivate func start(_ task: URLSessionDataTask) {
+            lock.lock()
+            if !isCancelled && !hasCompleted {
+                currentTask = task
+                task.resume()
+                lock.unlock()
+            } else {
+                lock.unlock()
+                task.cancel()
+            }
+        }
+
+        fileprivate func finish(_ deliver: () -> Void) {
+            lock.lock()
+            guard !isCancelled && !hasCompleted else {
+                lock.unlock()
+                return
+            }
+            hasCompleted = true
+            currentTask = nil
+            lock.unlock()
+            deliver()
+        }
+    }
+
     // Persistent API Key (Secure Keychain with UserDefaults migration fallback)
     public var apiKey: String {
         get {
@@ -726,6 +772,7 @@ public final class GeminiService {
 
     // MARK: - AI Video Cinematography Director (OpenRouter Cloud)
 
+    @discardableResult
     public func analyzeVideoCinematography(
         image: CGImage,
         sceneContext: DetectedSceneType? = nil,
@@ -733,8 +780,18 @@ public final class GeminiService {
         faceRects: [CGRect] = [],
         lookingDirection: CGVector = .zero,
         completion: @escaping (Result<AIVideoDirectorGuidance, GeminiError>) -> Void
-    ) {
+    ) -> VideoCinematographyRequest {
+        let request = VideoCinematographyRequest()
         let key = apiKey
+        let chain = AIVisionModel.fallbackChain(selected: selectedModel, customModelName: customModelName)
+        let completeOnMain: (Result<AIVideoDirectorGuidance, GeminiError>) -> Void = { result in
+            if Thread.isMainThread {
+                request.finish { completion(result) }
+            } else {
+                DispatchQueue.main.async { request.finish { completion(result) } }
+            }
+        }
+
         guard !key.isEmpty else {
             let fallback = Self.generateLocalVideoGuidance(
                 sceneContext: sceneContext,
@@ -742,45 +799,50 @@ public final class GeminiService {
                 faceRects: faceRects,
                 lookingDirection: lookingDirection
             )
-            completion(.success(fallback))
-            return
+            completeOnMain(.success(fallback))
+            return request
         }
 
-        guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1280) else {
-            let fallback = Self.generateLocalVideoGuidance(
+        // Scaling, JPEG encoding, base64 conversion and request JSON are all
+        // performed off the UI thread. Key and model choices belong to this
+        // request even if the user changes settings before encoding finishes.
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard request.isActive else { return }
+            guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1280) else {
+                let fallback = Self.generateLocalVideoGuidance(
+                    sceneContext: sceneContext,
+                    subjectRect: subjectRect,
+                    faceRects: faceRects,
+                    lookingDirection: lookingDirection
+                )
+                completeOnMain(.success(fallback))
+                return
+            }
+
+            guard request.isActive else { return }
+            let base64Image = jpegData.base64EncodedString()
+            let prompt = Self.buildVideoCinematographyPrompt(
                 sceneContext: sceneContext,
                 subjectRect: subjectRect,
                 faceRects: faceRects,
                 lookingDirection: lookingDirection
             )
-            completion(.success(fallback))
-            return
+
+            self.tryVideoCinematographyChain(
+                chain: chain,
+                index: 0,
+                base64Image: base64Image,
+                prompt: prompt,
+                key: key,
+                sceneContext: sceneContext,
+                subjectRect: subjectRect,
+                faceRects: faceRects,
+                lookingDirection: lookingDirection,
+                request: request,
+                completion: completeOnMain
+            )
         }
-
-        let base64Image = jpegData.base64EncodedString()
-        let prompt = buildVideoCinematographyPrompt(
-            sceneContext: sceneContext,
-            subjectRect: subjectRect,
-            faceRects: faceRects,
-            lookingDirection: lookingDirection
-        )
-
-        let chain = AIVisionModel.fallbackChain(selected: selectedModel, customModelName: customModelName)
-
-        let startTime = CACurrentMediaTime()
-        tryVideoCinematographyChain(
-            chain: chain,
-            index: 0,
-            base64Image: base64Image,
-            prompt: prompt,
-            key: key,
-            startTime: startTime,
-            sceneContext: sceneContext,
-            subjectRect: subjectRect,
-            faceRects: faceRects,
-            lookingDirection: lookingDirection,
-            completion: completion
-        )
+        return request
     }
 
     private func tryVideoCinematographyChain(
@@ -789,13 +851,14 @@ public final class GeminiService {
         base64Image: String,
         prompt: String,
         key: String,
-        startTime: Double,
         sceneContext: DetectedSceneType?,
         subjectRect: CGRect?,
         faceRects: [CGRect],
         lookingDirection: CGVector,
+        request requestHandle: VideoCinematographyRequest,
         completion: @escaping (Result<AIVideoDirectorGuidance, GeminiError>) -> Void
     ) {
+        guard requestHandle.isActive else { return }
         guard index < chain.count else {
             let fallback = Self.generateLocalVideoGuidance(
                 sceneContext: sceneContext,
@@ -867,8 +930,9 @@ public final class GeminiService {
         }
         request.httpBody = bodyData
 
-        urlSession.dataTask(with: request) { [weak self] data, response, error in
+        let task = urlSession.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
+            guard requestHandle.isActive else { return }
 
             if error != nil {
                 self.tryVideoCinematographyChain(
@@ -877,11 +941,11 @@ public final class GeminiService {
                     base64Image: base64Image,
                     prompt: prompt,
                     key: key,
-                    startTime: startTime,
                     sceneContext: sceneContext,
                     subjectRect: subjectRect,
                     faceRects: faceRects,
                     lookingDirection: lookingDirection,
+                    request: requestHandle,
                     completion: completion
                 )
                 return
@@ -923,11 +987,11 @@ public final class GeminiService {
                     base64Image: base64Image,
                     prompt: prompt,
                     key: key,
-                    startTime: startTime,
                     sceneContext: sceneContext,
                     subjectRect: subjectRect,
                     faceRects: faceRects,
                     lookingDirection: lookingDirection,
+                    request: requestHandle,
                     completion: completion
                 )
                 return
@@ -969,7 +1033,8 @@ public final class GeminiService {
 
             let guidance = Self.parseVideoDirectorResponse(parsed, modelUsed: currentModelID)
             DispatchQueue.main.async { completion(.success(guidance)) }
-        }.resume()
+        }
+        requestHandle.start(task)
     }
 
     private func tryModelChain(
@@ -1516,7 +1581,7 @@ public final class GeminiService {
 
     // MARK: - Video Cinematography Director Helpers
 
-    private func buildVideoCinematographyPrompt(
+    private static func buildVideoCinematographyPrompt(
         sceneContext: DetectedSceneType? = nil,
         subjectRect: CGRect? = nil,
         faceRects: [CGRect] = [],

@@ -98,10 +98,25 @@ public struct CameraMainView: View {
                                 .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                             }
 
-                            // Standby View when hibernating
-                            if viewModel.isCameraHibernating {
+                            // Keep the viewfinder responsive when AVFoundation is
+                            // configuring or temporarily unavailable.
+                            if viewModel.isCameraHibernating || !viewModel.isCameraReady {
                                 CameraHibernationStandbyView()
                                     .transition(.opacity.animation(.easeInOut(duration: 0.25)))
+                                if !viewModel.isCameraHibernating {
+                                    VStack(spacing: 8) {
+                                        Spacer()
+                                        Text("Đang kết nối camera")
+                                            .font(.caption.weight(.medium))
+                                            .foregroundColor(.white.opacity(0.8))
+                                        Button("Thử lại") {
+                                            viewModel.requestPermissionsAndStart()
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .tint(.white)
+                                        .padding(.bottom, 32)
+                                    }
+                                }
                             }
                         }
                         .frame(width: layout.viewfinderSize.width,
@@ -166,9 +181,6 @@ public struct CameraMainView: View {
             }
         }
         .onAppear {
-            if viewModel.captureMode == .proVideo {
-                viewModel.captureMode = .video
-            }
             viewModel.requestPermissionsAndStart()
         }
         .onChangeCompatible(of: viewModel.isRecordingVideo) { isRecording in
@@ -334,12 +346,7 @@ struct TopCameraBar: View {
 
     private var currentFormatLabel: String {
         if viewModel.captureMode.isVideo {
-            switch viewModel.selectedVideoFormatOption {
-            case .uhd60: return "4K 60"
-            case .uhd30: return "4K 30"
-            case .hd60: return "1080 60"
-            case .hd30: return "1080 30"
-            }
+            return viewModel.activeVideoResolutionString
         }
         switch viewModel.selectedPhotoFormat {
         case .dng: return "RAW"

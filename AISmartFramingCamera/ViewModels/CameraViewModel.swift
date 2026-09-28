@@ -190,11 +190,9 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // Camera Mode & Live Photo
-    @Published public var captureMode: CameraCaptureMode = .photo {
+    @Published public private(set) var captureMode: CameraCaptureMode = .photo {
         didSet {
-            guard !isShutterPressing else { captureMode = oldValue; return }
             UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode")
-            cameraService.updateCaptureMode(captureMode)
             if oldValue == .proVideo && captureMode != .proVideo {
                 proVideoService.resetToFullAuto()
             } else if captureMode == .proVideo {
@@ -228,10 +226,18 @@ public final class CameraViewModel: ObservableObject {
         let col = t < 0.28 ? Color(red: 0.15, green: 0.45, blue: 0.95) : (t < 0.72 ? Color(red: 0.40, green: 0.90, blue: 0.60) : Color(red: 0.95, green: 0.45, blue: 0.20))
         return HistogramBarData(id: $0, height: 0.10, color: col)
     }
-    @Published public var isRecordingVideo: Bool = false {
+    @Published public private(set) var isRecordingVideo: Bool = false {
         didSet { updateFrameProcessingConfiguration() }
     }
+    @Published public private(set) var recordingState: CameraRecordingState = .idle
+    private var wantsVideoRecording = false
+    private var pendingCaptureMode: CameraCaptureMode?
+    private var modeTransitionGeneration: UInt64 = 0
+    private var isModeTransitionInFlight = false
+    @Published private var isSwitchingCamera = false
     @Published public var recordedVideoURL: URL? = nil
+    private var pendingRecordedVideoURLs: [URL] = []
+    private var pendingPhotoPreview = false
     @Published public var isShowingVideoPreview: Bool = false {
         didSet { updateCameraHibernationState() }
     }
@@ -243,7 +249,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var selectedVideoCodec: VideoCodec = .hevc {
         didSet {
             UserDefaults.standard.set(selectedVideoCodec.rawValue, forKey: "selectedVideoCodec")
-            cameraService.selectedVideoCodec = selectedVideoCodec
+            cameraService.setVideoCodec(selectedVideoCodec)
         }
     }
     @Published public var selectedVideoFormatOption: VideoFormatOption = .hd60 {
@@ -360,7 +366,10 @@ public final class CameraViewModel: ObservableObject {
 
     @Published public var exposureBias: Float = 0.0
     @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto {
-        didSet { UserDefaults.standard.set(activeFlashMode.rawValue, forKey: "activeFlashMode") }
+        didSet {
+            UserDefaults.standard.set(activeFlashMode.rawValue, forKey: "activeFlashMode")
+            cameraService.setFlashMode(activeFlashMode)
+        }
     }
     @Published public var isPinchingZoom: Bool = false
 
@@ -476,6 +485,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isAIVideoDirectorActive: Bool = false
     @Published public var isAIVideoDirectorAnalyzing: Bool = false
     @Published public var activeVideoGuidance: AIVideoDirectorGuidance? = nil
+    private var videoDirectorGeneration: UInt64 = 0
+    private var videoDirectorTimeoutTask: Task<Void, Never>?
+    private var videoGuidanceRequest: GeminiService.VideoCinematographyRequest?
     @Published public var currentActiveWaypointIndex: Int = 0
     @Published public var videoDirectorError: String? = nil
     @Published public var hasCompletedAllWaypoints: Bool = false
@@ -550,6 +562,10 @@ public final class CameraViewModel: ObservableObject {
         isCameraHibernating = shouldHibernate
 
         if shouldHibernate {
+            if wantsVideoRecording || recordingState != .idle {
+                wantsVideoRecording = false
+                cameraService.stopRecordingVideo()
+            }
             // 1. Khi mở màn hình che khuất camera, hủy phiên tracking hiện tại theo yêu cầu
             if aiSessionState != .capturing && (isAISessionActive || currentTargetPoint != nil) {
                 cancelAISession()
@@ -563,14 +579,47 @@ public final class CameraViewModel: ObservableObject {
             // Waking up
             updateFrameProcessingConfiguration()
             CameraLogger.info("Camera thức dậy, khôi phục pipeline 60fps tức thì", category: .general)
+            Task { @MainActor [weak self] in
+                await Task.yield()
+                self?.presentPendingMediaPreviewIfPossible()
+            }
+        }
+    }
+
+    private func presentPendingMediaPreviewIfPossible() {
+        guard !isCameraHibernating, !isAppInBackground,
+              recordingState == .idle, !wantsVideoRecording,
+              !isShutterPressing,
+              !isModeTransitionInFlight else { return }
+        if !pendingRecordedVideoURLs.isEmpty {
+            recordedVideoURL = pendingRecordedVideoURLs.removeFirst()
+            isShowingVideoPreview = true
+        } else if pendingPhotoPreview, latestCapturedPhoto != nil {
+            pendingPhotoPreview = false
+            isShowingPhotoDetail = true
         }
     }
 
     public func handleScenePhaseChange(_ phase: ScenePhase) {
         isAppInBackground = phase != .active
         updateCameraHibernationState()
-        if phase != .active { suspendSpatialTracking() }
-        else { SpatialTrackingEngine.shared.prepare() }
+        if phase != .active {
+            isCameraReady = false
+            if wantsVideoRecording || recordingState != .idle {
+                wantsVideoRecording = false
+                cameraService.stopRecordingVideo()
+            }
+            if isAIVideoDirectorActive { dismissAIVideoDirector() }
+            suspendSpatialTracking()
+            cameraService.stop()
+        } else {
+            SpatialTrackingEngine.shared.prepare()
+            guard hasCameraPermission else { return }
+            cameraService.start { [weak self] running in
+                self?.isCameraReady = running
+                if running { self?.applyPendingCaptureModeIfPossible() }
+            }
+        }
     }
 
     // MARK: - Quiet Pro Camera User Settings
@@ -687,7 +736,7 @@ public final class CameraViewModel: ObservableObject {
             self.selectedFilmCategory = cat
         }
         if let modeRaw = defaults.string(forKey: "captureMode"), let mode = CameraCaptureMode(rawValue: modeRaw) {
-            self.captureMode = mode
+            self.captureMode = mode == .proVideo ? .video : mode
         }
         if let photoFormatRaw = defaults.string(forKey: "selectedPhotoFormat"), let photoFormat = PhotoSaveFormat(rawValue: photoFormatRaw) {
             self.selectedPhotoFormat = photoFormat
@@ -793,8 +842,9 @@ public final class CameraViewModel: ObservableObject {
         DispatchQueue.main.async {
             UIApplication.shared.isIdleTimerDisabled = self.isKeepScreenAwakeEnabled
         }
-        self.cameraService.selectedVideoCodec = self.selectedVideoCodec
-        self.cameraService.selectedVideoFormatOption = self.selectedVideoFormatOption
+        self.cameraService.setVideoCodec(self.selectedVideoCodec)
+        self.cameraService.setVideoFormatOption(self.selectedVideoFormatOption)
+        self.cameraService.setFlashMode(self.activeFlashMode)
 
         // didSet không fire khi gán trong init -> gọi trực tiếp để engine nhận đúng ngưỡng
         applyTrackingSensitivityToEngines()
@@ -886,15 +936,22 @@ public final class CameraViewModel: ObservableObject {
     private func startCamera() {
         cameraService.delegate = self
         cameraService.setupSession { [weak self] success in
-            guard let self = self, success else { return }
+            guard let self = self else { return }
+            guard success else {
+                self.isCameraReady = false
+                self.saveErrorMessage = "Không thể cấu hình camera. Hãy thử mở lại ứng dụng."
+                return
+            }
             self.cameraService.updateCaptureMode(self.captureMode)
             self.cameraService.setLivePhotoCaptureEnabled(self.isLivePhotoEnabled)
-            self.activeVideoResolutionString = self.cameraService.getActiveVideoResolutionAndFPS()
             self.displayZoom = self.cameraService.defaultDisplayZoom
             self.currentZoom = self.cameraService.currentZoom
             SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
-            self.cameraService.start()
-            self.isCameraReady = true
+            guard !self.isAppInBackground else { return }
+            self.cameraService.start { [weak self] running in
+                self?.isCameraReady = running
+                if running { self?.applyPendingCaptureModeIfPossible() }
+            }
         }
     }
 
@@ -1096,25 +1153,76 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    public func switchCamera() {
-        targetPinGeneration &+= 1
-        alignmentGate.reset()
-        pinZoomPlanTask?.cancel()
-        pinZoomPlanTask = nil
-        isPreparingPinZoom = false
-        visionEngine.stopTrackingObject()
-        SpatialTrackingEngine.shared.stopTracking()
-        currentTargetPoint = nil
-        isPerfectAlignment = false
-        autoCaptureTask?.cancel()
-        autoCaptureTask = nil
-        autoCaptureCountdown = 0
-        aiSessionState = .idle
-        haptics.triggerSelectionChange()
-        cameraService.switchCamera()
+    public func selectCaptureMode(_ mode: CameraCaptureMode) {
+        guard mode != captureMode || pendingCaptureMode != nil else { return }
+        modeTransitionGeneration &+= 1
+        let generation = modeTransitionGeneration
+        pendingCaptureMode = mode
+        if isShutterPressing || recordingState != .idle || wantsVideoRecording {
+            if wantsVideoRecording || recordingState != .idle {
+                wantsVideoRecording = false
+                cameraService.stopRecordingVideo()
+            }
+            return
+        }
+        if !isCameraReady {
+            return
+        }
+        if aiSessionState != .idle {
+            cancelAISession()
+        }
+        if isAIVideoDirectorActive {
+            dismissAIVideoDirector()
+        }
+        isModeTransitionInFlight = true
+        cameraService.updateCaptureMode(mode) { [weak self] success in
+            Task { @MainActor [weak self] in
+                guard let self, self.modeTransitionGeneration == generation else { return }
+                self.isModeTransitionInFlight = false
+                self.pendingCaptureMode = nil
+                if success {
+                    self.captureMode = mode
+                } else {
+                    self.saveErrorMessage = "Không thể chuyển chế độ camera. Vui lòng thử lại."
+                }
+                self.presentPendingMediaPreviewIfPossible()
+            }
+        }
+    }
+
+    private func applyPendingCaptureModeIfPossible() {
+        guard isCameraReady, !isShutterPressing, recordingState == .idle, !wantsVideoRecording,
+              !isModeTransitionInFlight, let mode = pendingCaptureMode else { return }
+        selectCaptureMode(mode)
+    }
+
+    public var canSwitchCamera: Bool {
+        isCameraReady && !isCameraHibernating && !isShutterPressing &&
+        recordingState == .idle && !wantsVideoRecording &&
+        pendingCaptureMode == nil && !isSwitchingCamera
+    }
+
+    public func switchCamera(completion: @escaping (Bool) -> Void = { _ in }) {
+        guard canSwitchCamera else { completion(false); return }
+        isSwitchingCamera = true
+        if aiSessionState != .idle {
+            cancelAISession()
+        }
+        cameraService.switchCamera { [weak self] success in
+            Task { @MainActor [weak self] in
+                guard let self else { completion(false); return }
+                self.isSwitchingCamera = false
+                if success {
+                    self.proVideoService.syncHardwareCapabilities()
+                    self.haptics.triggerSelectionChange()
+                }
+                completion(success)
+            }
+        }
     }
 
     public func toggleVideoCodec() {
+        guard recordingState == .idle, !wantsVideoRecording else { return }
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut(duration: 0.2)) {
             selectedVideoCodec = (selectedVideoCodec == .hevc) ? .h264 : .hevc
@@ -1122,7 +1230,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func toggleVideoFormat() {
-        guard !isRecordingVideo else { return }
+        guard recordingState == .idle, !wantsVideoRecording else { return }
         haptics.triggerSelectionChange()
         let allCases = VideoFormatOption.allCases
         if let idx = allCases.firstIndex(of: selectedVideoFormatOption) {
@@ -1166,7 +1274,10 @@ public final class CameraViewModel: ObservableObject {
 
     /// Bắt đầu phiên AI khi người dùng bấm nút AI — chỉ phân tích ĐÚNG 1 LẦN duy nhất
     public func startAISession() {
-        guard aiSessionState == .idle || aiSessionState == .done else { return }
+        guard captureMode == .photo, pendingCaptureMode == nil,
+              isCameraReady, !isCameraHibernating,
+              !isShutterPressing, recordingState == .idle,
+              (aiSessionState == .idle || aiSessionState == .done) else { return }
         targetPinGeneration &+= 1
         alignmentGate.reset()
         pinZoomPlanTask?.cancel()
@@ -2220,7 +2331,7 @@ public final class CameraViewModel: ObservableObject {
         startAutoCaptureCountdown()
     }
 
-    private func startAutoCaptureCountdown(isZooming: Bool = false) {
+    private func startAutoCaptureCountdown() {
         guard autoCaptureTask == nil else { return }
         let pinGeneration = targetPinGeneration
         autoCaptureTask = Task { [weak self] in
@@ -2360,7 +2471,9 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func executeCapture() {
-        guard aiSessionState == .alignmentPerfect, !isShutterPressing else { return }
+        guard captureMode == .photo, pendingCaptureMode == nil,
+              isCameraReady, !isCameraHibernating,
+              aiSessionState == .alignmentPerfect, !isShutterPressing else { return }
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         stateBeforeCapture = aiSessionState
@@ -2479,7 +2592,6 @@ public final class CameraViewModel: ObservableObject {
         case .off: activeFlashMode = .auto
         @unknown default: activeFlashMode = .auto
         }
-        cameraService.flashMode = activeFlashMode
     }
 
     public func selectRule(_ rule: CompositionRule) {
@@ -2561,35 +2673,24 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func toggleLivePhoto() {
+        guard captureMode == .photo, pendingCaptureMode == nil,
+              !isShutterPressing else { return }
         haptics.triggerSelectionChange()
         isLivePhotoEnabled.toggle()
-        cameraService.setLivePhotoCaptureEnabled(isLivePhotoEnabled)
         CameraLogger.info("Người dùng chuyển chế độ Live Photo: \(isLivePhotoEnabled ? "BẬT" : "TẮT")", category: .capture)
     }
 
     public func toggleVideoRecording() {
-        if isRecordingVideo {
+        if wantsVideoRecording {
+            wantsVideoRecording = false
             haptics.triggerShutterClick()
             cameraService.stopRecordingVideo()
-            isRecordingVideo = false
-            videoRecordingTimer?.invalidate()
-            videoRecordingTimer = nil
-            videoRecordingStartTime = nil
-            videoRecordedDurationSeconds = 0
-            videoRecordingTimeString = "00:00:00"
         } else {
+            guard captureMode.isVideo, pendingCaptureMode == nil, isCameraReady,
+                  !isCameraHibernating, !isShutterPressing else { return }
+            wantsVideoRecording = true
             haptics.triggerShutterClick()
-            videoRecordingStartTime = Date()
-            videoRecordedDurationSeconds = 0
-            videoRecordingTimeString = "00:00:00"
-            videoRecordingTimer?.invalidate()
-            videoRecordingTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.updateVideoRecordingClock()
-                }
-            }
             cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
-            isRecordingVideo = true
         }
     }
 
@@ -2618,6 +2719,14 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - AI Video Cinematography Director Actions
 
     public func requestAIVideoCinematographyGuidance() {
+        guard captureMode.isVideo, pendingCaptureMode == nil,
+              isCameraReady, !isCameraHibernating else { return }
+        videoDirectorGeneration &+= 1
+        let generation = videoDirectorGeneration
+        videoDirectorTimeoutTask?.cancel()
+        videoDirectorTimeoutTask = nil
+        videoGuidanceRequest?.cancel()
+        videoGuidanceRequest = nil
         haptics.triggerSelectionChange()
         isAIVideoDirectorActive = true
         isAIVideoDirectorAnalyzing = true
@@ -2630,42 +2739,48 @@ public final class CameraViewModel: ObservableObject {
         let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
         let faceRects = detectedFaceRects
         let lookDir = latestSubjectDetectionResult?.lookingDirection ?? .zero
+        let scene = detectedScene
+        let fallback = GeminiService.generateLocalVideoGuidance(
+            sceneContext: scene,
+            subjectRect: subjectRect,
+            faceRects: faceRects,
+            lookingDirection: lookDir
+        )
 
-        guard useGeminiForAnalysis && geminiService.hasAPIKey else {
-            let guidance = GeminiService.generateLocalVideoGuidance(
-                sceneContext: detectedScene,
-                subjectRect: subjectRect,
-                faceRects: faceRects,
-                lookingDirection: lookDir
-            )
-            applyVideoGuidance(guidance)
+        // Video data delivery is disabled during movie recording, so use the
+        // last measured scene instead of waiting for a frame that cannot arrive.
+        guard recordingState == .idle, !wantsVideoRecording,
+              useGeminiForAnalysis, geminiService.hasAPIKey else {
+            applyVideoGuidance(fallback)
             return
         }
 
+        videoDirectorTimeoutTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
+            guard let self, self.videoDirectorGeneration == generation,
+                  self.isAIVideoDirectorActive, self.isAIVideoDirectorAnalyzing else { return }
+            self.videoDirectorError = "Phân tích video quá thời gian; dùng hướng dẫn trên máy."
+            self.applyVideoGuidance(fallback)
+        }
+
         visionEngine.captureImmediateFrame { [weak self] cgImg in
-            guard let self = self else { return }
+            guard let self, self.videoDirectorGeneration == generation,
+                  self.isAIVideoDirectorActive, self.isAIVideoDirectorAnalyzing else { return }
             guard let image = cgImg else {
-                let fallback = GeminiService.generateLocalVideoGuidance(
-                    sceneContext: self.detectedScene,
-                    subjectRect: subjectRect,
-                    faceRects: faceRects,
-                    lookingDirection: lookDir
-                )
-                DispatchQueue.main.async {
-                    self.applyVideoGuidance(fallback)
-                }
+                self.applyVideoGuidance(fallback)
                 return
             }
 
-            self.geminiService.analyzeVideoCinematography(
+            self.videoGuidanceRequest = self.geminiService.analyzeVideoCinematography(
                 image: image,
-                sceneContext: self.detectedScene,
+                sceneContext: scene,
                 subjectRect: subjectRect,
                 faceRects: faceRects,
                 lookingDirection: lookDir
             ) { [weak self] result in
-                guard let self = self else { return }
-                DispatchQueue.main.async {
+                Task { @MainActor [weak self] in
+                    guard let self, self.videoDirectorGeneration == generation,
+                          self.isAIVideoDirectorActive, self.isAIVideoDirectorAnalyzing else { return }
                     switch result {
                     case .success(let guidance):
                         self.applyVideoGuidance(guidance)
@@ -2676,12 +2791,6 @@ public final class CameraViewModel: ObservableObject {
                         } else if case .invalidAPIKey = err {
                             self.useGeminiForAnalysis = false
                         }
-                        let fallback = GeminiService.generateLocalVideoGuidance(
-                            sceneContext: self.detectedScene,
-                            subjectRect: subjectRect,
-                            faceRects: faceRects,
-                            lookingDirection: lookDir
-                        )
                         self.applyVideoGuidance(fallback)
                     }
                 }
@@ -2690,6 +2799,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func applyVideoGuidance(_ guidance: AIVideoDirectorGuidance) {
+        videoDirectorTimeoutTask?.cancel()
+        videoDirectorTimeoutTask = nil
+        videoGuidanceRequest?.cancel()
+        videoGuidanceRequest = nil
         withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
             self.activeVideoGuidance = guidance
             self.isAIVideoDirectorAnalyzing = false
@@ -2731,6 +2844,11 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func dismissAIVideoDirector() {
+        videoDirectorGeneration &+= 1
+        videoDirectorTimeoutTask?.cancel()
+        videoDirectorTimeoutTask = nil
+        videoGuidanceRequest?.cancel()
+        videoGuidanceRequest = nil
         haptics.triggerLight()
         withAnimation(.easeInOut(duration: 0.25)) {
             isAIVideoDirectorActive = false
@@ -2928,7 +3046,9 @@ public final class CameraViewModel: ObservableObject {
             toggleVideoRecording()
             return
         }
-        guard !isShutterPressing, aiSessionState != .capturing else { return }
+        guard isCameraReady, !isCameraHibernating, pendingCaptureMode == nil,
+              recordingState == .idle,
+              !isShutterPressing, aiSessionState != .capturing else { return }
         if aiSessionState == .analyzing { cancelAISession() }
         pinZoomPlanTask?.cancel()
         isPreparingPinZoom = false
@@ -3162,9 +3282,56 @@ extension CameraViewModel: CameraServiceDelegate {
     }
 
     public func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL) {
-        self.recordedVideoURL = url
-        self.isShowingVideoPreview = true
-        self.haptics.triggerSuccess()
+        pendingRecordedVideoURLs.append(url)
+        haptics.triggerSuccess()
+        presentPendingMediaPreviewIfPossible()
+    }
+
+    public func cameraService(_ service: CameraService, didChangeRecordingState state: CameraRecordingState) {
+        recordingState = state
+        switch state {
+        case .starting:
+            isRecordingVideo = false
+        case .recording:
+            isRecordingVideo = true
+            if videoRecordingStartTime == nil {
+                videoRecordingStartTime = Date()
+                videoRecordedDurationSeconds = 0
+                videoRecordingTimeString = "00:00:00"
+                videoRecordingTimer?.invalidate()
+                videoRecordingTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        self?.updateVideoRecordingClock()
+                    }
+                }
+            }
+        case .stopping:
+            isRecordingVideo = true
+        case .idle:
+            isRecordingVideo = false
+            videoRecordingTimer?.invalidate()
+            videoRecordingTimer = nil
+            videoRecordingStartTime = nil
+            videoRecordedDurationSeconds = 0
+            videoRecordingTimeString = "00:00:00"
+            applyPendingCaptureModeIfPossible()
+            presentPendingMediaPreviewIfPossible()
+        }
+    }
+
+    public func cameraService(_ service: CameraService, didFailRecordingWithError error: Error) {
+        wantsVideoRecording = false
+        saveErrorMessage = "Quay video thất bại: \(error.localizedDescription). Vui lòng thử lại."
+        applyPendingCaptureModeIfPossible()
+    }
+
+    public func cameraService(_ service: CameraService, didChangeSessionRunning running: Bool) {
+        isCameraReady = running && !isAppInBackground
+        if isCameraReady { applyPendingCaptureModeIfPossible() }
+        if !running && wantsVideoRecording {
+            wantsVideoRecording = false
+            cameraService.stopRecordingVideo()
+        }
     }
 
     public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, processedCompanionData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double, format: PhotoSaveFormat, requestedHighResolution: Bool) {
@@ -3247,9 +3414,11 @@ extension CameraViewModel: CameraServiceDelegate {
                 self.haptics.triggerShutterClick()
                 withAnimation {
                     self.latestCapturedPhoto = item
-                    self.isShowingPhotoDetail = true
                     self.aiSessionState = .done
                 }
+                self.pendingPhotoPreview = true
+                self.applyPendingCaptureModeIfPossible()
+                self.presentPendingMediaPreviewIfPossible()
                 self.savePhotoToLibrary(item)
             }
         }
@@ -3287,6 +3456,7 @@ extension CameraViewModel: CameraServiceDelegate {
         hasExecutedAutoZoomForSession = true
         pendingSuggestedZoom = displayZoom
         saveErrorMessage = "Chụp ảnh thất bại: \(error.localizedDescription). Vui lòng thử lại."
+        applyPendingCaptureModeIfPossible()
     }
 
     public func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {
