@@ -1,6 +1,7 @@
 """Reference geometry and source-contract checks for the local AI path.
 
-These tests do not execute Swift or replace an Xcode/device build.
+These legacy checks do not execute Swift or replace an Xcode/device build.
+Production composition geometry/rendering is exercised by CompositionPlanningRegression.swift.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "AISmartFramingCamera"
 COMPOSITION = (ROOT / "Services/CompositionCalculator.swift").read_text(encoding="utf-8")
+PLANNER = (ROOT / "Services/CompositionPlanning.swift").read_text(encoding="utf-8")
 SPATIAL = (ROOT / "Services/SpatialTrackingEngine.swift").read_text(encoding="utf-8")
 NEURAL = (ROOT / "Services/NeuralSubjectIntelligenceEngine.swift").read_text(encoding="utf-8")
 VM = (ROOT / "ViewModels/CameraViewModel.swift").read_text(encoding="utf-8")
@@ -37,7 +39,7 @@ class LocalFramingTests(unittest.TestCase):
         final_subject = 0.5 + fx * ratio * math.tan(
             math.atan((subject - 0.5) / fx) - camera_turn)
         self.assertAlmostEqual(final_subject, desired, places=9)
-        self.assertIn("simd_quatd(from: future.deviceRay(at: d), to: subjectRay)", COMPOSITION)
+        self.assertIn("simd_quatd(from: future.deviceRay(at: destination)", PLANNER)
         self.assertIn("trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay", VM)
 
     def test_pan_right_moves_guide_left(self):
@@ -58,7 +60,7 @@ class LocalFramingTests(unittest.TestCase):
         self.assertGreaterEqual(subject[0], 0.035)
         self.assertLessEqual(subject[1], 0.965)
         self.assertGreater(face[1], 0.975)
-        self.assertIn("guard companionsSafe else { continue }", COMPOSITION)
+        self.assertIn("protectedRects.allSatisfy", PLANNER)
         self.assertIn("safe(projected, margin: 0.035)", COMPOSITION)
 
     def test_lens_change_requires_real_frame_and_calibration(self):
@@ -69,14 +71,14 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("subjectBox: box", VISION)
 
     def test_missing_model_uses_native_detector(self):
-        self.assertIn("guard let model, !prompts.isEmpty else { return candidates }", NEURAL)
+        self.assertIn("guard let model, !prompts.isEmpty, !cancellation.isCancelled else { return [:] }", NEURAL)
         self.assertIn("physicalMemory >= 4_000_000_000", NEURAL)
         self.assertIn("VNGenerateAttentionBasedSaliencyImageRequest", NEURAL)
         self.assertIn("YOLODetectionEngine.shared.detectObjects", NEURAL)
 
     def test_ambiguous_result_requires_selection(self):
-        self.assertIn("if distinct.count == 12 { break }", VM)
-        self.assertIn("best.confidence >= max(0.72, measuredThreshold)", VM)
+        self.assertIn("if result.count == 12 { break }", NEURAL)
+        self.assertIn("first.plan.confidence >= first.plan.minimumAutoselectConfidence", VM)
         self.assertIn("localSuggestionRects = localEvidenceCandidates.map", VM)
         self.assertIn("reprojectSuggestion($0.boundingBox, from: source", VM)
         self.assertIn("allowsAutoCaptureForCurrentTarget = false", VM)
@@ -93,6 +95,11 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("!self.zoomAwaitingVerification && self.zoomVerified", VM)
         self.assertIn("latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05", VM)
         self.assertIn("(0...0.35).contains(age)", VM)
+
+    def test_pinning_cannot_override_manual_only_evidence(self):
+        pin = VM.split("private func pinTargetAndStartMotion", 1)[1].split(
+            "private func ", 1)[0]
+        self.assertNotIn("allowsAutoCaptureForCurrentTarget = true", pin)
 
     def test_stronger_detector_has_matching_old_device_fallback_assets(self):
         if WORKFLOW is None or BUNDLE_CHECK is None:

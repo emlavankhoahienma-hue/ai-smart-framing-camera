@@ -50,9 +50,12 @@ final class CompositionImageRenderer {
             return true
         }
         guard drawn else { return nil }
-        let luma = (0..<side * side).map { i in
-            (0.2126 * Double(bytes[i * 4]) + 0.7152 * Double(bytes[i * 4 + 1]) +
-             0.0722 * Double(bytes[i * 4 + 2])) / 255
+        var luma = [Double](repeating: 0, count: side * side)
+        for i in luma.indices {
+            let red = Double(bytes[i * 4]) * 0.2126
+            let green = Double(bytes[i * 4 + 1]) * 0.7152
+            let blue = Double(bytes[i * 4 + 2]) * 0.0722
+            luma[i] = (red + green + blue) / 255.0
         }
         var edges = [Double](repeating: 0, count: side * side)
         for y in 0..<side {

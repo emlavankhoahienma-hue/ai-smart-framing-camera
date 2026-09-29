@@ -2037,7 +2037,6 @@ public final class CameraViewModel: ObservableObject {
         currentTargetPoint = pinPoint
         trackingQuality = hasCurrentProjection ? .locked : .reacquiring
         hasExecutedAutoZoomForSession = false
-        allowsAutoCaptureForCurrentTarget = true
 
         // Local/cloud plans already use the source image and intended composition.
         // Replacing their zoom by a bbox-area heuristic invalidates the guide ray.
