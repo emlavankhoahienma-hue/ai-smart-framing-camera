@@ -18,6 +18,7 @@ jobs:
   snapshot:
     name: Simulator UI Visual Snapshot
     runs-on: macos-15
+    timeout-minutes: 20
     permissions:
       contents: write
 
@@ -68,16 +69,18 @@ jobs:
           path: build-sim.log
 
       - name: Run Simulator Snapshot Suite
+        timeout-minutes: 10
         run: |
           chmod +x scripts/capture_simulator_screenshots.sh
           ./scripts/capture_simulator_screenshots.sh "${{ github.workspace }}/build-sim/Release-iphonesimulator/AISmartFramingCamera.app"
 
       - name: Upload Screenshots Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: iPhone-Screenshots
           path: screenshots/*.png
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Publish Step Summary
         if: always()

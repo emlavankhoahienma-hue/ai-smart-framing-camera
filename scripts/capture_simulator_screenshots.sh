@@ -11,6 +11,30 @@ BUNDLE_ID="com.aismartframing.camera"
 SCREENSHOT_DIR="screenshots"
 mkdir -p "$SCREENSHOT_DIR"
 
+# Preserve diagnostics and prevent an unresponsive simulator service from
+# holding the CI job indefinitely.
+run_bounded() {
+  python3 - "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout = float(sys.argv[1])
+command = sys.argv[2:]
+print("Running:", " ".join(command), flush=True)
+process = subprocess.Popen(command, start_new_session=True)
+try:
+    status = process.wait(timeout=timeout)
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+    print(f"Timed out after {timeout}s: {command}", flush=True)
+    status = 124
+raise SystemExit(status)
+PY
+}
+
 echo "=== iOS Simulator Screenshot Tool ==="
 echo "App bundle: $APP_PATH"
 echo "Bundle ID: $BUNDLE_ID"
@@ -46,44 +70,31 @@ capture_device() {
   echo "Found UDID: $udid"
 
   echo "Shutting down existing booted simulators..."
-  xcrun simctl shutdown all 2>/dev/null || true
+  run_bounded 30 xcrun simctl shutdown all || true
 
   echo "Booting $label ($udid)..."
-  xcrun simctl boot "$udid" 2>/dev/null || true
+  run_bounded 45 xcrun simctl boot "$udid"
 
-  echo "Waiting for simulator to reach Booted state..."
-  local booted=0
-  for i in $(seq 1 25); do
-    if xcrun simctl list devices | grep "$udid" | grep -q "Booted"; then
-      echo "Simulator reached Booted state in ${i}s."
-      booted=1
-      break
-    fi
-    sleep 1
-  done
-
-  if [ "$booted" -eq 0 ]; then
-    echo "Notice: Simulator status poll ended, proceeding."
-  fi
-  sleep 4
-
-  echo "Granting permissions for camera, photos and microphone..."
-  xcrun simctl privacy "$udid" grant camera "$BUNDLE_ID" 2>/dev/null || true
-  xcrun simctl privacy "$udid" grant photos "$BUNDLE_ID" 2>/dev/null || true
-  xcrun simctl privacy "$udid" grant microphone "$BUNDLE_ID" 2>/dev/null || true
+  echo "Waiting for simulator services..."
+  run_bounded 120 xcrun simctl bootstatus "$udid" -b
 
   echo "Installing application bundle..."
-  xcrun simctl install "$udid" "$APP_PATH"
+  run_bounded 60 xcrun simctl install "$udid" "$APP_PATH"
+
+  echo "Granting permissions for camera, photos and microphone..."
+  run_bounded 15 xcrun simctl privacy "$udid" grant camera "$BUNDLE_ID" || true
+  run_bounded 15 xcrun simctl privacy "$udid" grant photos "$BUNDLE_ID" || true
+  run_bounded 15 xcrun simctl privacy "$udid" grant microphone "$BUNDLE_ID" || true
 
   echo "Launching application ($BUNDLE_ID)..."
-  xcrun simctl launch "$udid" "$BUNDLE_ID"
+  run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID"
 
   echo "Waiting 7 seconds for SwiftUI render and animations..."
   sleep 7
 
   local target_image="${SCREENSHOT_DIR}/${filename}.png"
   echo "Capturing screenshot to: $target_image"
-  xcrun simctl io "$udid" screenshot "$target_image"
+  run_bounded 30 xcrun simctl io "$udid" screenshot "$target_image"
 
   if [ -f "$target_image" ]; then
     echo "Screenshot saved successfully: $(ls -lh "$target_image" | awk '{print $5, $9}')"
@@ -95,7 +106,7 @@ capture_device() {
   fi
 
   echo "Shutting down simulator ($udid)..."
-  xcrun simctl shutdown "$udid" 2>/dev/null || true
+  run_bounded 30 xcrun simctl shutdown "$udid" || true
   echo "Completed: $label"
 }
 
