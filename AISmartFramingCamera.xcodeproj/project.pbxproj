@@ -58,6 +58,7 @@
 		C20000000000000000000047 /* SuperResolutionRAWEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000047 /* SuperResolutionRAWEngine.swift */; };
 		C20000000000000000000048 /* CompositionPlanning.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000048 /* CompositionPlanning.swift */; };
 		C20000000000000000000049 /* CompositionImageEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000049 /* CompositionImageEvidence.swift */; };
+		C20000000000000000000050 /* CompositionPreviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000050 /* CompositionPreviewSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -114,6 +115,7 @@
 		C10000000000000000000047 /* SuperResolutionRAWEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuperResolutionRAWEngine.swift; sourceTree = "<group>"; };
 		C10000000000000000000048 /* CompositionPlanning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionPlanning.swift; sourceTree = "<group>"; };
 		C10000000000000000000049 /* CompositionImageEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionImageEvidence.swift; sourceTree = "<group>"; };
+		C10000000000000000000050 /* CompositionPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionPreviewSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -227,6 +229,7 @@
 				B1000000000000000000000B /* CameraPreviewView.swift */,
 				B1000000000000000000000C /* ARFramingOverlayView.swift */,
 				B1000000000000000000000D /* AIStatusHUDView.swift */,
+				C10000000000000000000050 /* CompositionPreviewSheet.swift */,
 				B1000000000000000000000E /* CameraControlsView.swift */,
 				B1000000000000000000000F /* CapturedPhotoPreviewView.swift */,
 				B100000000000000000000010 /* SettingsSheetView.swift */,
@@ -341,6 +344,7 @@
 				B2000000000000000000000B /* CameraPreviewView.swift in Sources */,
 				B2000000000000000000000C /* ARFramingOverlayView.swift in Sources */,
 				B2000000000000000000000D /* AIStatusHUDView.swift in Sources */,
+				C20000000000000000000050 /* CompositionPreviewSheet.swift in Sources */,
 				B2000000000000000000000E /* CameraControlsView.swift in Sources */,
 				B2000000000000000000000F /* CapturedPhotoPreviewView.swift in Sources */,
 				B20000000000000000000010 /* SettingsSheetView.swift in Sources */,

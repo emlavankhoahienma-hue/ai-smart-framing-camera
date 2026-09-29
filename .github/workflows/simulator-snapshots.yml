@@ -2,7 +2,14 @@ name: iPhone Simulator Visual Snapshot
 
 on:
   workflow_dispatch:
+    inputs:
+      screen:
+        description: 'Screen to inspect'
+        type: choice
+        options: [camera, composition]
+        default: camera
   push:
+    branches: [main]
     paths:
       - '.github/workflows/simulator-snapshots.yml'
       - 'scripts/capture_simulator_screenshots.sh'
@@ -28,6 +35,10 @@ jobs:
             sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           fi
           xcodebuild -version
+
+      - name: Install composition preview snapshot host
+        if: inputs.screen == 'composition'
+        run: cp tests/CompositionPreviewSnapshotApp.swift AISmartFramingCamera/App/AISmartFramingCameraApp.swift
 
       - name: Build for iOS Simulator
         run: |

@@ -48,7 +48,14 @@ public struct AIStatusHUDView: View {
 
                 if case .analyzing = viewModel.aiSessionState,
                    !viewModel.localCompositionChoices.isEmpty {
-                    compositionChoices
+                    Button(action: viewModel.showCompositionPreviews) {
+                        Label("Xem \(viewModel.localCompositionChoices.count) khung gợi ý", systemImage: "rectangle.stack")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 44)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .tint(.yellow)
                 }
 
                 if showsExplanation, !explanation.isEmpty {
@@ -78,46 +85,6 @@ public struct AIStatusHUDView: View {
     private var explanation: String {
         viewModel.activeAIIndicatorType == .cloud ?
             viewModel.geminiExplanation : viewModel.localCompositionExplanation
-    }
-
-    private var compositionChoices: some View {
-        VStack(spacing: 5) {
-            Text("Chọn khung để căn máy")
-                .font(.system(size: 11, weight: .semibold))
-            HStack(alignment: .top, spacing: 6) {
-                ForEach(viewModel.localCompositionChoices) { choice in
-                    Button {
-                        viewModel.chooseLocalComposition(id: choice.id)
-                    } label: {
-                        VStack(spacing: 4) {
-                            Image(decorative: choice.preview, scale: 1)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 82, height: 104)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                            Text(choice.plan.intent.title)
-                                .font(.system(size: 10, weight: .semibold))
-                                .lineLimit(2)
-                                .frame(height: 26)
-                            Text(String(format: "%.1f×", Double(choice.plan.zoom)))
-                                .font(.system(size: 10, design: .monospaced))
-                        }
-                        .frame(width: 88)
-                        .padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.black.opacity(0.55)))
-                        .overlay(RoundedRectangle(cornerRadius: 10)
-                            .stroke(Color.yellow.opacity(choice.id == viewModel.localCompositionChoices.first?.id ? 0.9 : 0.3)))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(choice.plan.intent.title + ". " + choice.plan.explanation)
-                    .accessibilityHint("Chọn phương án và bắt đầu căn máy")
-                }
-            }
-        }
-        .foregroundColor(.white)
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
     }
 
     private var statusIconName: String {
@@ -167,6 +134,7 @@ public struct AIStatusHUDView: View {
             }
             return "Đã khóa chủ thể · Di chuyển máy đến vòng tròn"
         case .alignmentPerfect:
+            if viewModel.needsManualShutter { return "Đã căn khung · Bấm nút chụp" }
             if viewModel.localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
             return "Đã khớp · Giữ máy ổn định"
         case .capturing:

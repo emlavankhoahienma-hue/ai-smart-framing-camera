@@ -164,6 +164,12 @@ public struct CameraMainView: View {
         .sheet(isPresented: $viewModel.isShowingSettings) {
             SettingsSheetView(viewModel: viewModel)
         }
+        .sheet(item: $viewModel.compositionPreviewPresentation) { presentation in
+            CompositionPreviewSheet(choices: viewModel.localCompositionChoices,
+                onSelect: viewModel.selectCompositionPreview,
+                onCancel: viewModel.cancelAISession)
+                .onDisappear { viewModel.compositionPreviewDidDismiss(id: presentation.id) }
+        }
         .sheet(isPresented: $viewModel.isCompositionRuleSheetPresented) {
             CompositionRuleSheet(viewModel: viewModel)
         }

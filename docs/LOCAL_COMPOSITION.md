@@ -2,7 +2,9 @@
 
 ## Luồng sử dụng
 
-Bấm AI trong chế độ Photo. Ứng dụng phân tích một ảnh nguồn, tìm các bố cục khả thi và hiện tối đa ba ảnh xem trước. Chạm một phương án để căn máy theo vòng hướng dẫn. Một phương án rõ ràng, đủ tin cậy có thể được chọn tự động. Vùng có bằng chứng yếu chỉ hỗ trợ căn và chụp tay.
+Bấm AI trong chế độ Photo. Ứng dụng phân tích một ảnh nguồn, tìm các bố cục khả thi và hiện bảng chọn với một ảnh lớn, tối đa ba thumbnail cùng kích thước, tiêu đề, lý do và mức zoom. Chạm thumbnail để so sánh; bấm **Dùng khung này** để đóng bảng rồi căn máy theo vòng hướng dẫn. Một phương án rõ ràng, đủ tin cậy có thể được chọn tự động. Vùng có bằng chứng yếu chỉ hỗ trợ căn và chụp tay.
+
+Ảnh gợi ý là CGImage tạm trong RAM, không gọi chụp ảnh, không ghi file và không lưu vào Photos. Chọn xong sẽ giải phóng mảng preview/ảnh nguồn sau khi bảng đóng; Hủy, vuốt đóng, đổi phiên hoặc background cũng dọn phiên gợi ý. Callback đóng bảng được kiểm tra ID để không hủy nhầm phiên mới. Các buffer riêng phục vụ camera/tracking tiếp tục sống theo vòng đời của luồng đó. Ảnh thật do người dùng chụp vẫn được lưu theo thiết lập hiện có.
 
 Phần này chạy trên thiết bị. Tùy chọn Gemini có sẵn vẫn là luồng cloud riêng, do người dùng bật. Không có dịch vụ mới, khóa API mới hoặc upload ảnh phục vụ học sở thích.
 
@@ -40,6 +42,8 @@ Chọn khung kiểm tra lại zoom và tuổi ảnh nguồn (tối đa 30 giây)
 Workflow `.github/workflows/ios-build.yml` biên dịch và chạy `tests/CompositionPlanningRegression.swift` trên macOS bằng chính các file production, sau đó build iOS Release với warnings-as-errors.
 
 Các ca Swift kiểm tra vùng ảnh quan sát được, phép chiếu anchor, bảo vệ người đi cùng, phân biệt ảnh nhóm, giữ bối cảnh, mốc cảnh thật, đường viền hoa/vật thể, ảnh hưởng của nền, NaN/cancellation, zoom hiện tại trên 5×, độ tin cậy dự phòng, chiều preview/raster và hủy VNRequest. Các bài Python cũ tiếp tục kiểm tra tham chiếu tracking, hợp đồng source và RAW; chúng không thay thế build Swift hoặc thử camera thật.
+
+Workflow `simulator-snapshots.yml`, input `screen=composition`, dùng test host trong `tests/CompositionPreviewSnapshotApp.swift` để chụp giao diện production với ảnh hình học tổng hợp trên các kích thước iPhone. Host này chỉ thay entry point trong checkout của job simulator, không có trong IPA phát hành. Screenshot chỉ xác minh cách bố trí giao diện, không đánh giá chất lượng ảnh hay camera.
 
 ## Giới hạn được giữ rõ
 

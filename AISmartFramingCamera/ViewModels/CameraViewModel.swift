@@ -131,6 +131,9 @@ public final class CameraViewModel: ObservableObject {
     private var cloudTrackingSource: AITrackingSource?
     private var localTrackingSource: AITrackingSource?
     @Published private(set) var localCompositionChoices: [LocalCompositionChoice] = []
+    @Published var compositionPreviewPresentation: CompositionPreviewPresentation?
+    private var activeCompositionPreviewID: UUID?
+    private var selectedCompositionPreviewID: UUID?
     @Published private(set) var localCompositionExplanation = ""
     private var localCompositionIntent: LocalCompositionIntent?
     private var localAnalysisTask: Task<Void, Never>?
@@ -161,6 +164,9 @@ public final class CameraViewModel: ObservableObject {
             localAnalysisTask?.cancel()
             localAnalysisTask = nil
             localCompositionChoices = []
+            activeCompositionPreviewID = nil
+            selectedCompositionPreviewID = nil
+            compositionPreviewPresentation = nil
             localCompositionExplanation = ""
             localCompositionIntent = nil
         }
@@ -1870,11 +1876,38 @@ public final class CameraViewModel: ObservableObject {
             acceptLocalPlan(first.plan, source: source)
         } else if !localCompositionChoices.isEmpty {
             localSelectionMessage = "Chọn khung bạn muốn chụp."
+            showCompositionPreviews()
         } else if !localEvidenceCandidates.isEmpty {
             localSelectionMessage = "Chưa đủ dữ liệu để chọn khung. Chạm vùng đánh dấu để căn và chụp tay."
         } else {
             localSelectionMessage = "Chưa có mốc rõ để căn máy. Thử hướng máy sang vùng có chi tiết hoặc chụp tay."
         }
+    }
+
+    func showCompositionPreviews() {
+        guard aiSessionState == .analyzing, !localCompositionChoices.isEmpty,
+              compositionPreviewPresentation == nil else { return }
+        let presentation = CompositionPreviewPresentation()
+        activeCompositionPreviewID = presentation.id
+        selectedCompositionPreviewID = nil
+        compositionPreviewPresentation = presentation
+    }
+
+    func selectCompositionPreview(id: UUID) {
+        guard activeCompositionPreviewID != nil,
+              localCompositionChoices.contains(where: { $0.id == id }) else { return }
+        selectedCompositionPreviewID = id
+        compositionPreviewPresentation = nil
+    }
+
+    func compositionPreviewDidDismiss(id: UUID) {
+        // A dismissed sheet from an older session must not cancel a newer one.
+        guard activeCompositionPreviewID == id else { return }
+        activeCompositionPreviewID = nil
+        let selection = selectedCompositionPreviewID
+        selectedCompositionPreviewID = nil
+        if let selection { chooseLocalComposition(id: selection) }
+        else { cancelAISession() }
     }
 
     func chooseLocalComposition(id: UUID) {
@@ -1957,6 +1990,10 @@ public final class CameraViewModel: ObservableObject {
          localCompositionIntent == .environmentalPortrait) && abs(currentRollDegrees) > 3
     }
 
+    var needsManualShutter: Bool {
+        !isAutoCaptureOnAlignEnabled || !allowsAutoCaptureForCurrentTarget
+    }
+
     private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,
                                           source: AITrackingSource?,
                                           trackedPoint: CGPoint? = nil,
@@ -1968,6 +2005,9 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisCancellation = nil
         localAnalysisTask?.cancel()
         localAnalysisTask = nil
+        activeCompositionPreviewID = nil
+        selectedCompositionPreviewID = nil
+        compositionPreviewPresentation = nil
         localCompositionChoices = []
         localEvidenceCandidates = []
         localSuggestionRects = []
