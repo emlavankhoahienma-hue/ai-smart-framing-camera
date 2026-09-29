@@ -761,6 +761,7 @@ struct AIFramingSettingsSection: View {
     @Binding var toastMessage: String?
     @State private var showDeleteFeedbackConfirmation = false
     @State private var feedbackRevision = 0
+    @State private var feedbackExportURL: URL?
 
     private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
@@ -775,10 +776,10 @@ struct AIFramingSettingsSection: View {
     private var compositionFeedbackCard: some View {
         SettingsSectionCard(title: "Học thói quen bố cục", icon: "square.and.pencil") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("AI học từ vùng bạn chọn. File chỉ chứa loại cảnh, đặc trưng bố cục và mức zoom thực tế; không chứa ảnh, GPS hoặc đặc trưng khuôn mặt.")
+                Text("AI ghi nhớ kiểu khung bạn chọn để điều chỉnh nhẹ các gợi ý sau. File chỉ chứa ý đồ bố cục, vị trí và kích thước tương đối; không chứa ảnh, GPS hoặc đặc trưng khuôn mặt.")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.72))
-                if let url = CompositionPreferenceStore.shared.exportURL {
+                if let url = feedbackExportURL {
                     ShareLink(item: url) {
                         Label("Xuất dữ liệu lựa chọn", systemImage: "square.and.arrow.up")
                     }
@@ -794,11 +795,15 @@ struct AIFramingSettingsSection: View {
             .confirmationDialog("Xóa toàn bộ lựa chọn đã lưu?",
                                 isPresented: $showDeleteFeedbackConfirmation) {
                 Button("Xóa dữ liệu", role: .destructive) {
-                    CompositionPreferenceStore.shared.deleteAll()
-                    feedbackRevision += 1
-                    toastMessage = "Đã xóa dữ liệu học bố cục."
+                    Task {
+                        let deleted = await CompositionPreferenceStore.shared.deleteAll()
+                        feedbackExportURL = await CompositionPreferenceStore.shared.exportURL()
+                        feedbackRevision += 1
+                        toastMessage = deleted ? "Đã xóa dữ liệu học bố cục." : "Không xóa được file dữ liệu."
+                    }
                 }
             }
+            .task { feedbackExportURL = await CompositionPreferenceStore.shared.exportURL() }
         }
     }
 

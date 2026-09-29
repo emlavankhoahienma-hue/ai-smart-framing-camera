@@ -39,6 +39,16 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Run native composition regressions
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/TrackingGeometry.swift \
+            AISmartFramingCamera/Services/CompositionPlanning.swift \
+            AISmartFramingCamera/Services/CompositionImageEvidence.swift \
+            tests/CompositionPlanningRegression.swift \
+            -o "$RUNNER_TEMP/composition-regressions"
+          "$RUNNER_TEMP/composition-regressions"
+
       - name: Export & Compile pinned YOLO11 CoreML models
         env:
           # Ultralytics/CoreMLTools currently emit upstream torch tracing and

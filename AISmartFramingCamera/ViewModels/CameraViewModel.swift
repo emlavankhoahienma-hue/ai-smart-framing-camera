@@ -130,7 +130,11 @@ public final class CameraViewModel: ObservableObject {
 
     private var cloudTrackingSource: AITrackingSource?
     private var localTrackingSource: AITrackingSource?
-    private var localCandidatePlans: [LocalFramingPlan] = []
+    @Published private(set) var localCompositionChoices: [LocalCompositionChoice] = []
+    @Published private(set) var localCompositionExplanation = ""
+    private var localCompositionIntent: LocalCompositionIntent?
+    private var localAnalysisTask: Task<Void, Never>?
+    private var localAnalysisCancellation: CompositionAnalysisCancellation?
     private var localEvidenceCandidates: [NeuralSubjectCandidate] = []
     private var postZoomFaceCount = 0
     private var localAnalysisExpired = false
@@ -150,7 +154,17 @@ public final class CameraViewModel: ObservableObject {
     private nonisolated let frameProcessor = CameraFrameProcessor()
 
     // MARK: - AI Session State Machine
-    private var aiSessionGeneration: Int = 0
+    private var aiSessionGeneration: Int = 0 {
+        didSet {
+            localAnalysisCancellation?.cancel()
+            localAnalysisCancellation = nil
+            localAnalysisTask?.cancel()
+            localAnalysisTask = nil
+            localCompositionChoices = []
+            localCompositionExplanation = ""
+            localCompositionIntent = nil
+        }
+    }
     private var targetPinGeneration: UInt64 = 0
     @Published public var aiSessionState: AISessionState = .idle {
         didSet {
@@ -1301,7 +1315,7 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.capturedGeminiFrame = nil
         cloudTrackingSource = nil
         localTrackingSource = nil
-        localCandidatePlans = []
+        localCompositionChoices = []
         localEvidenceCandidates = []
         postZoomFaceCount = 0
         localAnalysisExpired = false
@@ -1392,17 +1406,7 @@ public final class CameraViewModel: ObservableObject {
                     }
                     let source = AITrackingSource(buffer: buffer, frame: context, pose: pose,
                                                   subjectRect: nil, faceRects: [])
-                    self.localTrackingSource = source
-                    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                        let output = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
-                            pixelBuffer: buffer, orientation: context.orientation)
-                        DispatchQueue.main.async { [weak self] in
-                            guard let self, self.aiSessionGeneration == requestGeneration,
-                                  self.aiSessionState == .analyzing,
-                                  !self.localAnalysisExpired else { return }
-                            self.finishLocalAnalysis(output, source: source)
-                        }
-                    }
+                    self.beginLocalCompositionAnalysis(source: source)
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
@@ -1410,8 +1414,10 @@ public final class CameraViewModel: ObservableObject {
                       self.aiSessionState == .analyzing,
                       !self.localAnalysisFinished else { return }
                 self.localAnalysisExpired = true
+                self.localAnalysisCancellation?.cancel()
+                self.localAnalysisTask?.cancel()
                 self.localTrackingSource = nil
-                self.localCandidatePlans = []
+                self.localCompositionChoices = []
                 self.localSuggestionRects = []
                 self.localSelectionMessage = "AI quá thời gian. Chạm vùng muốn chụp hoặc chụp tay."
             }
@@ -1444,7 +1450,7 @@ public final class CameraViewModel: ObservableObject {
         cloudTrackingSource = nil
         localTrackingSource = nil
         localEvidenceCandidates = []
-        localCandidatePlans = []
+        localCompositionChoices = []
         localSuggestionRects = []
         localSelectionMessage = nil
         isGeminiAnalyzing = false
@@ -1693,24 +1699,15 @@ public final class CameraViewModel: ObservableObject {
             return
         }
         cloudTrackingSource = nil
-        localTrackingSource = source
-        localAnalysisFinished = false
+        beginLocalCompositionAnalysis(source: source)
         let generation = aiSessionGeneration
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let output = NeuralSubjectIntelligenceEngine.shared.analyzeFrame(
-                pixelBuffer: source.buffer, orientation: source.frame.orientation)
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.aiSessionGeneration == generation,
-                      self.aiSessionState == .analyzing,
-                      !self.localAnalysisExpired else { return }
-                self.finishLocalAnalysis(output, source: source)
-            }
-        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
             guard let self, self.aiSessionGeneration == generation,
                   self.aiSessionState == .analyzing,
                   !self.localAnalysisFinished else { return }
             self.localAnalysisExpired = true
+            self.localAnalysisCancellation?.cancel()
+            self.localAnalysisTask?.cancel()
             self.localTrackingSource = nil
             self.localSelectionMessage = "AI trên máy quá thời gian. Chạm vùng muốn chụp hoặc chụp tay."
         }
@@ -1796,7 +1793,38 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: clamped)
     }
 
-    private func finishLocalAnalysis(_ output: NeuralAnalysisOutput, source: AITrackingSource) {
+    private func beginLocalCompositionAnalysis(source: AITrackingSource) {
+        localAnalysisCancellation?.cancel()
+        localAnalysisTask?.cancel()
+        let cancellation = CompositionAnalysisCancellation()
+        localAnalysisCancellation = cancellation
+        localTrackingSource = source
+        localAnalysisExpired = false
+        localAnalysisFinished = false
+        let generation = aiSessionGeneration
+        let zooms = cameraService.availableDisplayZoomOptions
+        localAnalysisTask = Task { [weak self] in
+            let preferences = await CompositionPreferenceStore.shared.bonuses()
+            guard !Task.isCancelled, !cancellation.isCancelled else { return }
+            let result = await withTaskCancellationHandler {
+                await Task.detached(priority: .userInitiated) {
+                    NeuralSubjectIntelligenceEngine.shared.analyzeComposition(
+                        pixelBuffer: source.buffer, frame: source.frame, pose: source.pose,
+                        allowedZooms: zooms, preferences: preferences, cancellation: cancellation)
+                }.value
+            } onCancel: {
+                cancellation.cancel()
+            }
+            guard let self, !Task.isCancelled, !cancellation.isCancelled,
+                  self.aiSessionGeneration == generation, self.aiSessionState == .analyzing,
+                  !self.localAnalysisExpired, let result else { return }
+            self.localAnalysisTask = nil
+            self.localAnalysisCancellation = nil
+            self.finishLocalAnalysis(result, source: source)
+        }
+    }
+
+    private func finishLocalAnalysis(_ analysis: LocalCompositionAnalysis, source: AITrackingSource) {
         localAnalysisFinished = true
         guard source.frame.displayZoom.isFinite, source.frame.displayZoom > 0,
               abs(displayZoom - CGFloat(source.frame.displayZoom)) <= 0.08 else {
@@ -1804,53 +1832,17 @@ public final class CameraViewModel: ObservableObject {
             localSelectionMessage = "Ống kính đã đổi trong lúc AI phân tích. Chạm vùng muốn chụp hoặc chạy AI lại."
             return
         }
+        let output = analysis.detection
         detectedScene = output.detectedScene
         detectedFaceRects = output.allFaceRects
         postZoomFaceCount = output.allFaceRects.count
         let localPreset = output.detectedScene.recommendedFilter
         aiRecommendedPreset = localPreset
-        aiPresetMatchReason = "\(localPreset.displayName) — Tối ưu cho bối cảnh \(output.detectedScene.localizedName)"
+        aiPresetMatchReason = "\(localPreset.displayName) — Gợi ý theo bối cảnh \(output.detectedScene.localizedName)"
         if selectedFilmPreset.isAIFullAuto { selectedFilmPreset = localPreset }
         if isAIFullColorEnabled { currentAIColorParams = output.detectedScene.aiFullColorParameters }
-        let candidates = output.allCandidates.sorted {
-            $0.prominenceScore * (1 + CompositionPreferenceStore.shared.bonus(
-                scene: output.detectedScene, candidate: $0)) >
-            $1.prominenceScore * (1 + CompositionPreferenceStore.shared.bonus(
-                scene: output.detectedScene, candidate: $1))
-        }.filter { candidate in
-            guard candidate.boundingBox.minX >= 0, candidate.boundingBox.minY >= 0,
-                  candidate.boundingBox.maxX <= 1, candidate.boundingBox.maxY <= 1 else { return false }
-            // A weaker but localized Vision region may still be useful as a
-            // tap suggestion. It never bypasses the calibrated auto-choice gate.
-            return candidate.confidence >= 0.35
-        }
-        var distinct: [NeuralSubjectCandidate] = []
-        for candidate in candidates {
-            let duplicate = distinct.contains { existing in
-                let intersection = existing.boundingBox.intersection(candidate.boundingBox)
-                let smaller = min(existing.areaRatio, candidate.areaRatio)
-                return Double(intersection.width * intersection.height) > smaller * 0.65
-            }
-            if !duplicate { distinct.append(candidate) }
-            if distinct.count == 12 { break }
-        }
-        let feasible = distinct.compactMap { candidate -> (NeuralSubjectCandidate, LocalFramingPlan)? in
-            let otherPeople = distinct.filter {
-                $0.id != candidate.id && $0.category == .human
-            }.map(\.boundingBox)
-            // Even a face inside the chosen person's box can be cut by zoom.
-            let companions = output.allFaceRects + otherPeople
-            guard let plan = LocalFramingGeometry.plan(subject: candidate, companions: companions,
-                scene: output.detectedScene, gaze: output.lookingDirection,
-                frame: source.frame, pose: source.pose,
-                currentZoom: CGFloat(source.frame.displayZoom),
-                allowedZooms: cameraService.availableDisplayZoomOptions) else { return nil }
-            return (candidate, plan)
-        }.prefix(3)
-        localCandidatePlans = feasible.map(\.1)
-        // If no zoom/crop plan survives, still show up to three localized
-        // regions for an explicit tap. Those taps remain manual capture only.
-        localEvidenceCandidates = feasible.isEmpty ? Array(distinct.prefix(3)) : feasible.map(\.0)
+        localCompositionChoices = analysis.choices
+        localEvidenceCandidates = analysis.choices.isEmpty ? analysis.fallbackCandidates : analysis.choices.map(\.candidate)
         if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
            let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                 ?? SpatialTrackingEngine.shared.latestPose() {
@@ -1859,11 +1851,7 @@ public final class CameraViewModel: ObservableObject {
                                     to: currentFrame.calibration, pose: currentPose)
             }
         } else {
-            // A delayed analysis cannot paint source-frame boxes at stale
-            // screen coordinates. The next synchronized preview will reproject.
-            localSuggestionRects = localEvidenceCandidates.map { _ in
-                CGRect(x: -1, y: -1, width: 0, height: 0)
-            }
+            localSuggestionRects = localEvidenceCandidates.map { _ in CGRect.zero }
         }
         detectedSubjectRects = localSuggestionRects
         if output.usedSemanticModel {
@@ -1873,52 +1861,62 @@ public final class CameraViewModel: ObservableObject {
         } else {
             activeEngineSource = .appleNeuralEngine(scene: output.detectedScene.localizedName)
         }
-        if let best = localCandidatePlans.first,
-           let firstCandidate = localEvidenceCandidates.first,
-           let measuredThreshold = LocalAutoselectCalibration.threshold(
-                scene: output.detectedScene, category: firstCandidate.category),
-           best.confidence >= max(0.72, measuredThreshold) {
-            acceptLocalPlan(best, source: source)
+        // Detector certainty and layout ranking are separate. Close alternatives
+        // require an explicit choice; a high semantic score cannot authorize a shot.
+        if let first = localCompositionChoices.first,
+           first.plan.confidence >= first.plan.minimumAutoselectConfidence, first.plan.score >= 0.6,
+           localCompositionChoices.count == 1 ||
+                first.plan.score - localCompositionChoices[1].plan.score >= 0.06 {
+            acceptLocalPlan(first.plan, source: source)
+        } else if !localCompositionChoices.isEmpty {
+            localSelectionMessage = "Chọn khung bạn muốn chụp."
+        } else if !localEvidenceCandidates.isEmpty {
+            localSelectionMessage = "Chưa đủ dữ liệu để chọn khung. Chạm vùng đánh dấu để căn và chụp tay."
         } else {
-            if localEvidenceCandidates.isEmpty {
-                localSelectionMessage = "Chưa xác định được vùng đáng tin cậy. Chạm vùng muốn chụp hoặc chụp tay."
-            } else if localCandidatePlans.isEmpty {
-                localSelectionMessage = "AI thấy vùng có thể chọn nhưng chưa kiểm định được bố cục. Chạm vùng đánh dấu để ghim và chụp tay."
-            } else {
-                localSelectionMessage = "Chọn một vùng được đánh dấu, hoặc chạm vùng khác để chụp tay."
-            }
+            localSelectionMessage = "Chưa có mốc rõ để căn máy. Thử hướng máy sang vùng có chi tiết hoặc chụp tay."
         }
+    }
+
+    func chooseLocalComposition(id: UUID) {
+        guard aiSessionState == .analyzing,
+              let choice = localCompositionChoices.first(where: { $0.id == id }),
+              let source = localTrackingSource else { return }
+        guard abs(displayZoom - CGFloat(source.frame.displayZoom)) <= 0.08,
+              CACurrentMediaTime() - source.frame.timestamp <= 30 else {
+            localCompositionChoices = []
+            localEvidenceCandidates = []
+            localSuggestionRects = []
+            localTrackingSource = nil
+            localSelectionMessage = "Khung gợi ý đã cũ hoặc ống kính đã đổi. Bấm AI để phân tích lại."
+            return
+        }
+        let keys = localCompositionChoices.map(\.plan.preferenceKey)
+        let selected = choice.plan.preferenceKey
+        Task { await CompositionPreferenceStore.shared.record(keys: keys, selected: selected) }
+        acceptLocalPlan(choice.plan, source: source)
     }
 
     public func chooseLocalSuggestion(at point: CGPoint) {
         guard case .analyzing = aiSessionState else { return }
         if let index = localSuggestionRects.firstIndex(where: {
             !$0.isEmpty && $0.insetBy(dx: -0.025, dy: -0.025).contains(point)
-        }), index < localEvidenceCandidates.count,
-           let source = localTrackingSource {
-            if index < localCandidatePlans.count {
-                CompositionPreferenceStore.shared.record(scene: detectedScene,
-                    candidates: localEvidenceCandidates, selectedIndex: index,
-                    actualZoom: displayZoom)
-                acceptLocalPlan(localCandidatePlans[index], source: source)
+        }), index < localEvidenceCandidates.count, let source = localTrackingSource {
+            if localCompositionChoices.indices.contains(index) {
+                chooseLocalComposition(id: localCompositionChoices[index].id)
             } else {
                 let candidate = localEvidenceCandidates[index]
-                localCandidatePlans = []
+                localCompositionChoices = []
                 localEvidenceCandidates = []
                 localSuggestionRects = []
                 detectedSubjectRects = []
-                allowsAutoCaptureForCurrentTarget = true
-                let area = candidate.boundingBox.width * candidate.boundingBox.height
-                pendingSuggestedZoom = area < 0.05 ? 3.0 : (area < 0.15 ? 2.0 : 1.0)
-                pinTargetAndStartMotion(at: candidate.center,
-                    subjectRect: candidate.boundingBox, source: source)
+                // A manually selected weak region has no verified composition/zoom.
+                allowsAutoCaptureForCurrentTarget = false
+                pendingSuggestedZoom = displayZoom
+                pinTargetAndStartMotion(at: candidate.center, subjectRect: candidate.boundingBox, source: source)
                 localTrackingSource = nil
                 localSelectionMessage = nil
             }
         } else {
-            // Khi nguoi dung cham ra ngoai cac box goi y:
-            // Tuyet doi KHONG tu y pin them target moi.
-            // Chuyen ve lay net/do sang camera thong thuong tai vi tri cham, giu nguyen danh sach goi y.
             userDidTapToFocus(at: point)
         }
     }
@@ -1928,6 +1926,9 @@ public final class CameraViewModel: ObservableObject {
         let dy = plan.aimPointInSource.y - 0.5
         let distance = hypot(dx, dy)
         let angle = atan2(dy, dx) * 180 / .pi
+        activeCompositionRule = plan.usesCenter ? .centerSymmetry : .ruleOfThirds
+        localCompositionIntent = plan.intent
+        localCompositionExplanation = plan.explanation
         framingResult = FramingTargetResult(targetPoint: plan.aimPointInSource,
             currentCenter: CGPoint(x: 0.5, y: 0.5),
             offsetVector: CGVector(dx: dx, dy: dy), distance: distance,
@@ -1935,12 +1936,12 @@ public final class CameraViewModel: ObservableObject {
             alignmentScore: max(0, min(1, 1 - Double(distance / 0.40))),
             isAligned: distance <= calculator.alignmentTolerance,
             recommendedZoomFactor: plan.zoom, optimalRule: activeCompositionRule,
-            guideDescription: "Đưa tâm trắng vào vòng vàng, sau đó AI sẽ zoom an toàn.")
+            guideDescription: plan.explanation)
         pendingSuggestedZoom = plan.zoom
         aiSuggestedZoom = plan.zoom
         hasExecutedAutoZoomForSession = false
-        allowsAutoCaptureForCurrentTarget = true
-        localCandidatePlans = []
+        allowsAutoCaptureForCurrentTarget = plan.confidence >= plan.minimumAutoselectConfidence
+        localCompositionChoices = []
         localEvidenceCandidates = []
         localSuggestionRects = []
         detectedSubjectRects = []
@@ -1951,6 +1952,11 @@ public final class CameraViewModel: ObservableObject {
         localTrackingSource = nil
     }
 
+    var localCompositionNeedsLevel: Bool {
+        (localCompositionIntent == .landscape || localCompositionIntent == .architecture ||
+         localCompositionIntent == .environmentalPortrait) && abs(currentRollDegrees) > 3
+    }
+
     private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,
                                           source: AITrackingSource?,
                                           trackedPoint: CGPoint? = nil,
@@ -1958,6 +1964,10 @@ public final class CameraViewModel: ObservableObject {
         guard target.x.isFinite, target.y.isFinite,
               (0...1).contains(target.x), (0...1).contains(target.y) else { return }
         guard !captureMode.isVideo, aiSessionState != .capturing, !isCameraHibernating else { return }
+        if pinnedGuideRay == nil {
+            localCompositionExplanation = ""
+            localCompositionIntent = nil
+        }
         isWindowedZoomActive = false
         let subjectRect = normalizedSubjectRect(subjectRect)
         let isManualRePin: Bool
@@ -2324,7 +2334,7 @@ public final class CameraViewModel: ObservableObject {
             // Mark the decision once; never race the shutter against a pending plan.
             hasExecutedAutoZoomForSession = true
         }
-        guard zoomVerified, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
+        guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
               autoCaptureTask == nil,
               latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp,
               CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.40 else { return }
@@ -2345,7 +2355,8 @@ public final class CameraViewModel: ObservableObject {
                 self.alignmentDistance <= self.alignmentRadius * 1.35 &&
                 !self.zoomAwaitingVerification && self.zoomVerified &&
                 !self.isPinchingZoom && !self.isPreparingPinZoom &&
-                self.allowsAutoCaptureForCurrentTarget && self.isAutoCaptureOnAlignEnabled && cropSafe {
+                self.allowsAutoCaptureForCurrentTarget && self.isAutoCaptureOnAlignEnabled &&
+                !self.localCompositionNeedsLevel && cropSafe {
                 self.executeCapture()
             } else {
                 self.lastFailedCaptureOpticalTimestamp = self.latestOpticalFrameTimestamp

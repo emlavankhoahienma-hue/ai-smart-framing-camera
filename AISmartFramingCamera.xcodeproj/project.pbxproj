@@ -56,6 +56,8 @@
 		C20000000000000000000045 /* TargetPatchFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000045 /* TargetPatchFlow.swift */; };
 		C20000000000000000000046 /* SuperResolutionMetalShaders.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000046 /* SuperResolutionMetalShaders.swift */; };
 		C20000000000000000000047 /* SuperResolutionRAWEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000047 /* SuperResolutionRAWEngine.swift */; };
+		C20000000000000000000048 /* CompositionPlanning.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000048 /* CompositionPlanning.swift */; };
+		C20000000000000000000049 /* CompositionImageEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000049 /* CompositionImageEvidence.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -110,6 +112,8 @@
 		C10000000000000000000045 /* TargetPatchFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetPatchFlow.swift; sourceTree = "<group>"; };
 		C10000000000000000000046 /* SuperResolutionMetalShaders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuperResolutionMetalShaders.swift; sourceTree = "<group>"; };
 		C10000000000000000000047 /* SuperResolutionRAWEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuperResolutionRAWEngine.swift; sourceTree = "<group>"; };
+		C10000000000000000000048 /* CompositionPlanning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionPlanning.swift; sourceTree = "<group>"; };
+		C10000000000000000000049 /* CompositionImageEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionImageEvidence.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -168,6 +172,8 @@
 				B10000000000000000000003 /* CameraService.swift */,
 				B10000000000000000000004 /* VisionFramingEngine.swift */,
 				B10000000000000000000005 /* CompositionCalculator.swift */,
+				C10000000000000000000049 /* CompositionImageEvidence.swift */,
+				C10000000000000000000048 /* CompositionPlanning.swift */,
 				B10000000000000000000006 /* FilmFilterEngine.swift */,
 				B10000000000000000000007 /* HapticFeedbackService.swift */,
 				B100000000000000000000014 /* GeminiService.swift */,
@@ -326,6 +332,8 @@
 				B20000000000000000000003 /* CameraService.swift in Sources */,
 				B20000000000000000000004 /* VisionFramingEngine.swift in Sources */,
 				B20000000000000000000005 /* CompositionCalculator.swift in Sources */,
+				C20000000000000000000049 /* CompositionImageEvidence.swift in Sources */,
+				C20000000000000000000048 /* CompositionPlanning.swift in Sources */,
 				B20000000000000000000006 /* FilmFilterEngine.swift in Sources */,
 				B20000000000000000000007 /* HapticFeedbackService.swift in Sources */,
 				B20000000000000000000009 /* CameraViewModel.swift in Sources */,

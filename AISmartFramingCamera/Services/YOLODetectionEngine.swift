@@ -57,9 +57,10 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     }
     
     /// Chạy nhận diện 80 lớp COCO trên một ảnh nguồn.
-    public func detectObjects(
+    func detectObjects(
         pixelBuffer: CVPixelBuffer,
-        orientation: CGImagePropertyOrientation = .up
+        orientation: CGImagePropertyOrientation = .up,
+        cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
         guard let vnModel = modelLock.withLock({ yoloCoreMLModel }) else { return [] }
         
@@ -106,8 +107,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
-            try handler.perform([request])
+            try cancellation.perform(request, with: handler)
         } catch {
+            if cancellation.isCancelled { return [] }
             CameraLogger.error("Lỗi thực thi YOLO Request", error: error, category: .ai)
             detectedCandidates.removeAll()
             let failedSmall = modelLock.withLock { loadedModelName == "yolo11s" }

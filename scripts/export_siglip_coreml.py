@@ -1,4 +1,4 @@
-"""Export the pinned Apache-2.0 SigLIP image encoder for iOS 16.
+"""Export the pinned Apache-2.0 SigLIP encoder and composition prompts for iOS 17.
 
 Runs on the macOS IPA builder. Conversion is rejected unless Core ML and
 PyTorch embeddings agree on deterministic fixtures. No camera data is used.
@@ -30,6 +30,13 @@ PROMPTS = {
     "object": "a photo of an interesting everyday object",
     "food": "a photo of food",
     "vehicle": "a photo of a vehicle",
+    "flower": "a close-up photo of a flower with its petals visible",
+    "foliage": "a photo of leaves, plants and natural greenery",
+    "macro": "a close-up photo showing small natural details and textures",
+    "sky": "a wide photo of a sky filled with clouds",
+    "water": "a wide photo of the sea, a lake or a river",
+    "sunset": "a landscape photo at sunset or sunrise",
+    "street": "a street photograph of people and their surroundings",
 }
 
 
@@ -74,7 +81,7 @@ def main() -> None:
     example = torch.zeros(1, 3, 224, 224)
     traced = torch.jit.trace(encoder, example, strict=False)
     converted = ct.convert(
-        traced, convert_to="mlprogram", minimum_deployment_target=ct.target.iOS16,
+        traced, convert_to="mlprogram", minimum_deployment_target=ct.target.iOS17,
         compute_precision=ct.precision.FLOAT16,
         inputs=[ct.ImageType(name="image", shape=example.shape,
                              color_layout=ct.colorlayout.RGB,
@@ -108,6 +115,8 @@ def main() -> None:
         "weightsSHA256": WEIGHTS_SHA256,
         "license": "Apache-2.0",
         "parityMinimumCosine": 0.98,
+        "promptSchemaVersion": 2,
+        "promptKeys": sorted(PROMPTS),
     }, indent=2), encoding="utf-8")
     print("SigLIP Core ML export and parity checks passed")
 

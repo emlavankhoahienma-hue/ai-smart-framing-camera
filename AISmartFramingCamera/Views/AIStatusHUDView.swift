@@ -46,14 +46,17 @@ public struct AIStatusHUDView: View {
                         )
                 )
 
-                if case .targetPlaced = viewModel.aiSessionState,
-                   viewModel.activeAIIndicatorType == .cloud,
-                   !viewModel.geminiExplanation.isEmpty {
-                    Text(viewModel.geminiExplanation)
+                if case .analyzing = viewModel.aiSessionState,
+                   !viewModel.localCompositionChoices.isEmpty {
+                    compositionChoices
+                }
+
+                if showsExplanation, !explanation.isEmpty {
+                    Text(explanation)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
-                        .lineLimit(2)
+                        .lineLimit(3)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .frame(maxWidth: 310)
@@ -63,6 +66,58 @@ public struct AIStatusHUDView: View {
             .transition(.opacity.combined(with: .scale(scale: 0.95)))
             .animation(.easeInOut(duration: 0.25), value: viewModel.aiSessionState)
         }
+    }
+
+    private var showsExplanation: Bool {
+        switch viewModel.aiSessionState {
+        case .targetPlaced, .alignmentPerfect: return true
+        default: return false
+        }
+    }
+
+    private var explanation: String {
+        viewModel.activeAIIndicatorType == .cloud ?
+            viewModel.geminiExplanation : viewModel.localCompositionExplanation
+    }
+
+    private var compositionChoices: some View {
+        VStack(spacing: 5) {
+            Text("Chọn khung để căn máy")
+                .font(.system(size: 11, weight: .semibold))
+            HStack(alignment: .top, spacing: 6) {
+                ForEach(viewModel.localCompositionChoices) { choice in
+                    Button {
+                        viewModel.chooseLocalComposition(id: choice.id)
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(decorative: choice.preview, scale: 1)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 82, height: 104)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            Text(choice.plan.intent.title)
+                                .font(.system(size: 10, weight: .semibold))
+                                .lineLimit(2)
+                                .frame(height: 26)
+                            Text(String(format: "%.1f×", Double(choice.plan.zoom)))
+                                .font(.system(size: 10, design: .monospaced))
+                        }
+                        .frame(width: 88)
+                        .padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black.opacity(0.55)))
+                        .overlay(RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.yellow.opacity(choice.id == viewModel.localCompositionChoices.first?.id ? 0.9 : 0.3)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(choice.plan.intent.title + ". " + choice.plan.explanation)
+                    .accessibilityHint("Chọn phương án và bắt đầu căn máy")
+                }
+            }
+        }
+        .foregroundColor(.white)
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.ultraThinMaterial))
     }
 
     private var statusIconName: String {
@@ -105,13 +160,14 @@ public struct AIStatusHUDView: View {
         case .idle:
             return "Bố cục thông minh"
         case .analyzing:
-            return "Đang tìm chủ thể…"
+            return viewModel.localCompositionChoices.isEmpty ? "Đang so sánh bố cục…" : "Chọn phương án bố cục"
         case .targetPlaced:
             if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {
                 return "Đang tìm lại chủ thể…"
             }
             return "Đã khóa chủ thể · Di chuyển máy đến vòng tròn"
         case .alignmentPerfect:
+            if viewModel.localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
             return "Đã khớp · Giữ máy ổn định"
         case .capturing:
             if let customProgress = viewModel.superResolutionProgressText {

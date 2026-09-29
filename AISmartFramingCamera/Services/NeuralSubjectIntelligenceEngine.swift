@@ -4,9 +4,10 @@ import CoreGraphics
 import CoreImage
 import UIKit
 import CoreML
+import simd
 
 /// Phân loại danh mục chủ thể đời thực
-public enum NeuralSubjectCategory: String {
+public enum NeuralSubjectCategory: String, Sendable {
     case human = "\u{1f464} Người (Human Body)"
     case face = "\u{1f600} Khuôn mặt (Human Face)"
     case animal = "\u{1f436}\u{1f431} Thú cưng / Động vật"
@@ -25,8 +26,8 @@ public enum NeuralSubjectCategory: String {
     }
 }
 
-/// Optional semantic evidence. The model receives only detected image regions;
-/// it never invents a box or overrides crop/tracking safety.
+/// Optional semantic evidence from the original frame and feasible composition previews.
+/// It never invents a box or overrides crop/tracking safety. Access is serialized by the engine.
 private final class SemanticCropRanker: @unchecked Sendable {
     static let shared = SemanticCropRanker()
     private var attemptedLoad = false
@@ -57,75 +58,57 @@ private final class SemanticCropRanker: @unchecked Sendable {
         }
     }
 
-    func rerank(candidates: [NeuralSubjectCandidate], pixelBuffer: CVPixelBuffer,
-                orientation: CGImagePropertyOrientation) -> [NeuralSubjectCandidate] {
+    func sceneEvidence(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+                       cancellation: CompositionAnalysisCancellation) -> [String: Double] {
         loadIfAvailable()
-        guard let model, !prompts.isEmpty else { return candidates }
-        return candidates.prefix(6).map { candidate in
-            let box = candidate.boundingBox
-            let request = VNCoreMLRequest(model: model)
-            request.imageCropAndScaleOption = .scaleFill
-            request.regionOfInterest = CGRect(x: box.minX, y: 1 - box.maxY,
-                                              width: box.width, height: box.height)
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
-                                                orientation: orientation, options: [:])
-            guard (try? handler.perform([request])) != nil,
-                  let observation = request.results?.first as? VNCoreMLFeatureValueObservation,
-                  let array = observation.featureValue.multiArrayValue else { return candidate }
-            let image = (0..<array.count).map { Double(truncating: array[$0]) }
-            let keys: [String]
-            switch candidate.category {
-            case .human, .face: keys = ["person", "person_scenery", "group"]
-            case .animal: keys = ["animal"]
-            case .foregroundObject, .general:
-                keys = ["building", "landscape", "object", "food", "vehicle"]
-            }
-            let affinities = keys.compactMap { key -> Double? in
-                guard let text = prompts[key], text.count == image.count else { return nil }
-                let score = zip(image, text).reduce(0) { $0 + $1.0 * $1.1 }
-                return score.isFinite ? score : nil
-            }
-            guard let affinity = affinities.max() else { return candidate }
-            didProduceEvidence = true
-            let bounded = max(-0.15, min(0.15, (affinity - 0.25) * 0.6))
-            return NeuralSubjectCandidate(boundingBox: box, category: candidate.category,
-                confidence: candidate.confidence, label: candidate.label,
-                prominenceScore: candidate.prominenceScore * (1 + bounded))
-        } + Array(candidates.dropFirst(6))
+        guard let model, !prompts.isEmpty, !cancellation.isCancelled else { return [:] }
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
+        return affinities(model: model, handler: handler, cancellation: cancellation)
     }
 
-    func sceneHint(pixelBuffer: CVPixelBuffer,
-                   orientation: CGImagePropertyOrientation,
-                   candidates: [NeuralSubjectCandidate]) -> DetectedSceneType? {
-        loadIfAvailable()
-        guard let model, !prompts.isEmpty else { return nil }
+    func affinity(image: CGImage, intent: LocalCompositionIntent,
+                  cancellation: CompositionAnalysisCancellation) -> Double? {
+        guard let model, !prompts.isEmpty, !cancellation.isCancelled else { return nil }
+        let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
+        let scores = affinities(model: model, handler: handler, cancellation: cancellation)
+        let keys = intent == .closeUp ? ["flower", "foliage", "macro"] : [intent.promptKey]
+        return keys.compactMap { scores[$0] }.max()
+    }
+
+    private func affinities(model: VNCoreMLModel, handler: VNImageRequestHandler,
+                            cancellation: CompositionAnalysisCancellation) -> [String: Double] {
         let request = VNCoreMLRequest(model: model)
-        request.imageCropAndScaleOption = .scaleFill
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
-                                            orientation: orientation, options: [:])
-        guard (try? handler.perform([request])) != nil,
+        // Preserve relative spacing when comparing complete portrait frames.
+        request.imageCropAndScaleOption = .scaleFit
+        guard (try? cancellation.perform(request, with: handler)) != nil,
               let observation = request.results?.first as? VNCoreMLFeatureValueObservation,
-              let array = observation.featureValue.multiArrayValue else { return nil }
+              let array = observation.featureValue.multiArrayValue else { return [:] }
         let image = (0..<array.count).map { Double(truncating: array[$0]) }
-        let scores = prompts.compactMap { key, vector -> (String, Double)? in
-            guard vector.count == image.count else { return nil }
-            let score = zip(image, vector).reduce(0) { $0 + $1.0 * $1.1 }
-            return score.isFinite ? (key, score) : nil
-        }.sorted { $0.1 > $1.1 }
-        didProduceEvidence = !scores.isEmpty
-        guard scores.count >= 2, scores[0].1 >= 0.25,
-              scores[0].1 - scores[1].1 >= 0.03 else { return nil }
-        switch scores[0].0 {
-        case "building":
-            return candidates.contains {
-                ($0.category == .foregroundObject || $0.category == .general) && $0.areaRatio > 0.12
-            }
-                ? .architecture : nil
-        case "landscape": return .landscape
-        case "person_scenery":
-            return candidates.contains { $0.category == .human } ? .landscape : nil
-        case "group", "person":
-            return candidates.contains { $0.category == .human } ? .portrait : nil
+        let norm = sqrt(image.reduce(0) { $0 + $1 * $1 })
+        guard norm.isFinite, norm > 0.001 else { return [:] }
+        var scores: [String: Double] = [:]
+        for (key, text) in prompts where text.count == image.count {
+            let score = zip(image, text).reduce(0) { $0 + $1.0 * $1.1 } / norm
+            if score.isFinite { scores[key] = score }
+        }
+        didProduceEvidence = didProduceEvidence || !scores.isEmpty
+        return scores
+    }
+
+    func sceneHint(scores: [String: Double], candidates: [NeuralSubjectCandidate]) -> DetectedSceneType? {
+        let ordered = scores.sorted { $0.value > $1.value }
+        guard let best = ordered.first, best.value >= 0.25,
+              ordered.count < 2 || best.value - ordered[1].value >= 0.025 else { return nil }
+        switch best.key {
+        case "building": return .architecture
+        case "landscape", "person_scenery": return .landscape
+        case "group", "person": return candidates.contains { $0.category == .human || $0.category == .face } ? .portrait : nil
+        case "flower", "macro": return .macro
+        case "foliage": return .foliage
+        case "sky": return .sky
+        case "water": return .water
+        case "sunset": return .sunset
+        case "street": return .street
         case "food": return .food
         case "animal": return .pet
         default: return nil
@@ -134,7 +117,7 @@ private final class SemanticCropRanker: @unchecked Sendable {
 }
 
 /// Ứng viên chủ thể được AI phát hiện và xếp hạng
-public struct NeuralSubjectCandidate: Identifiable {
+public struct NeuralSubjectCandidate: Identifiable, Sendable {
     public let id = UUID()
     public let boundingBox: CGRect // Toạ độ chuẩn hóa UI (Top-Left 0..1)
     public let category: NeuralSubjectCategory
@@ -152,7 +135,7 @@ public struct NeuralSubjectCandidate: Identifiable {
 }
 
 /// Kết quả phân tích thị giác ANE nâng cao
-public struct NeuralAnalysisOutput {
+public struct NeuralAnalysisOutput: Sendable {
     public let primaryCandidate: NeuralSubjectCandidate?
     public let allCandidates: [NeuralSubjectCandidate]
     public let detectedScene: DetectedSceneType
@@ -161,6 +144,8 @@ public struct NeuralAnalysisOutput {
     public let primaryEyePosition: CGPoint?
     public let lookingDirection: CGVector
     public let usedSemanticModel: Bool
+    var compositionRaster: CompositionRaster?
+    var semanticAffinities: [String: Double] = [:]
 
     public init(
         primaryCandidate: NeuralSubjectCandidate?,
@@ -183,61 +168,176 @@ public struct NeuralAnalysisOutput {
     }
 }
 
+// CGImage is immutable; choices cross the worker/MainActor boundary without mutation.
+struct LocalCompositionChoice: Identifiable, @unchecked Sendable {
+    let id = UUID()
+    let candidate: NeuralSubjectCandidate
+    let plan: LocalFramingPlan
+    let preview: CGImage
+}
+
+struct LocalCompositionAnalysis: Sendable {
+    let detection: NeuralAnalysisOutput
+    let choices: [LocalCompositionChoice]
+    let fallbackCandidates: [NeuralSubjectCandidate]
+}
+
 /// Bộ Não Phân Tích Chủ Thể Nơ-ron Đa Tầng (Neural Subject Intelligence Engine)
 /// Tận dụng tối đa chip xử lý trí tuệ nhân tạo Apple Neural Engine (ANE) của Apple
 public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public static let shared = NeuralSubjectIntelligenceEngine()
     private let analysisLock = NSLock()
     
-    // MARK: - Vision Deep Learning Requests
-    private lazy var animalRequest: VNRecognizeAnimalsRequest = {
-        let req = VNRecognizeAnimalsRequest()
-        req.revision = VNRecognizeAnimalsRequestRevision2
-        return req
-    }()
-    
-    private lazy var humanBodyRequest: VNDetectHumanRectanglesRequest = {
-        let req = VNDetectHumanRectanglesRequest()
-        req.upperBodyOnly = false
-        req.revision = VNDetectHumanRectanglesRequestRevision2
-        return req
-    }()
-    
-    private lazy var faceLandmarksRequest: VNDetectFaceLandmarksRequest = {
-        let req = VNDetectFaceLandmarksRequest()
-        req.revision = VNDetectFaceLandmarksRequestRevision3
-        return req
-    }()
-    
-    private lazy var saliencyObjectRequest: VNGenerateObjectnessBasedSaliencyImageRequest = {
-        let req = VNGenerateObjectnessBasedSaliencyImageRequest()
-        req.revision = VNGenerateObjectnessBasedSaliencyImageRequestRevision1
-        return req
-    }()
-
-    private lazy var attentionRequest = VNGenerateAttentionBasedSaliencyImageRequest()
-    
-    private lazy var sceneClassifierRequest: VNClassifyImageRequest = {
-        let req = VNClassifyImageRequest()
-        req.revision = VNClassifyImageRequestRevision1
-        return req
-    }()
-    
+    private let renderer = CompositionImageRenderer()
     public init() {}
-    
-    // MARK: - Phân tích Khung Hình Đa Tầng (Multi-Modal Neural Scan)
-    public func analyzeFrame(
-        pixelBuffer: CVPixelBuffer,
-        orientation: CGImagePropertyOrientation = .up
-    ) -> NeuralAnalysisOutput {
+
+    func analyzeComposition(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
+                            pose: simd_quatd, allowedZooms: [CGFloat],
+                            preferences: [String: Double],
+                            cancellation: CompositionAnalysisCancellation) -> LocalCompositionAnalysis? {
+        guard !cancellation.isCancelled else { return nil }
         analysisLock.lock()
         defer { analysisLock.unlock() }
-        return analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: orientation)
+        guard !cancellation.isCancelled,
+              let output = analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
+                                                 cancellation: cancellation) else { return nil }
+        let distinct = distinctCandidates(output.allCandidates)
+        guard let raster = output.compositionRaster else {
+            return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: Array(distinct.prefix(3)))
+        }
+        var candidates = distinct
+        let intents = compositionIntents(output)
+        if output.allFaceRects.count > 1, let first = output.allFaceRects.first {
+            let union = (output.allFaceRects + distinct.filter { $0.category == .human }.map(\.boundingBox))
+                .reduce(first) { $0.union($1) }
+            let confidence = distinct.filter { $0.category == .human || $0.category == .face }
+                .map(\.confidence).min() ?? 0.35
+            candidates.insert(NeuralSubjectCandidate(boundingBox: union, category: .human,
+                confidence: confidence, label: "Nhóm người", prominenceScore: 1), at: 0)
+        }
+        let sceneryIndex: Int?
+        if intents.contains(where: { $0.preservesContext }) || candidates.isEmpty,
+           let anchor = raster.sceneryAnchor {
+            sceneryIndex = candidates.count
+            candidates.append(NeuralSubjectCandidate(
+                boundingBox: CGRect(x: anchor.x - 0.045, y: anchor.y - 0.045, width: 0.09, height: 0.09),
+                category: .general, confidence: 0.45, label: "Mốc chi tiết trong cảnh", prominenceScore: 0.5))
+        } else { sceneryIndex = nil }
+        let peak = max(0.001, candidates.map(\.prominenceScore).max() ?? 1)
+        let subjects = candidates.enumerated().map { index, candidate -> CompositionSubject in
+            let kind: CompositionSubjectKind
+            if index == sceneryIndex { kind = .scenery }
+            else {
+                switch candidate.category {
+                case .human: kind = .person
+                case .face: kind = .face
+                case .animal: kind = .animal
+                case .foregroundObject, .general: kind = .object
+                }
+            }
+            let eye = output.primaryEyePosition.flatMap { candidate.boundingBox.contains($0) ? $0 : nil }
+            let anchor = candidate.label == "Nhóm người" ?
+                output.allFaceRects.first.map { CGPoint(x: $0.midX, y: $0.midY) } : eye
+            return CompositionSubject(index: index, bounds: candidate.boundingBox,
+                anchor: anchor ?? candidate.center, kind: kind, confidence: Double(candidate.confidence),
+                importance: candidate.prominenceScore / peak,
+                gaze: eye == nil ? 0 : output.lookingDirection.dx)
+        }
+        let proposals = CompositionPlanner.proposals(subjects: subjects, intents: intents,
+            raster: raster, calibration: frame.calibration, currentZoom: CGFloat(frame.displayZoom),
+            allowedZooms: allowedZooms,
+            protectedBounds: output.allFaceRects + output.allCandidates.filter { $0.category == .human }.map(\.boundingBox),
+            isCancelled: { cancellation.isCancelled })
+        let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
+        var rendered: [(CompositionProposal, CGImage)] = []
+        for var proposal in proposals {
+            if cancellation.isCancelled { return nil }
+            guard let preview = renderer.preview(image: image, corners: proposal.sourceCorners,
+                                                  aspect: frame.calibration.aspect) else { continue }
+            if let affinity = SemanticCropRanker.shared.affinity(image: preview, intent: proposal.intent,
+                                                               cancellation: cancellation) {
+                // Semantic similarity is supporting evidence, not an aesthetic probability.
+                let baseline = output.semanticAffinities[proposal.intent.promptKey] ?? affinity
+                proposal.score += min(0.035, max(-0.035, (affinity - baseline) * 0.4))
+            }
+            proposal.score += min(0.025, max(-0.025, preferences[proposal.preferenceKey] ?? 0))
+            rendered.append((proposal, preview))
+        }
+        guard !cancellation.isCancelled else { return nil }
+        let choices = CompositionPlanner.diverse(rendered.map(\.0), limit: 3).compactMap { proposal -> LocalCompositionChoice? in
+            guard candidates.indices.contains(proposal.subjectIndex),
+                  let preview = rendered.first(where: {
+                      $0.0.subjectIndex == proposal.subjectIndex && $0.0.zoom == proposal.zoom &&
+                      $0.0.intent == proposal.intent && $0.0.sourceCorners == proposal.sourceCorners
+                  })?.1 else { return nil }
+            let candidate = candidates[proposal.subjectIndex]
+            let plan = LocalFramingPlan(subjectPoint: proposal.subjectPoint, subjectRect: candidate.boundingBox,
+                aimPointInSource: proposal.aimPoint, aimWorldRay: pose.act(proposal.rotation.act(SIMD3(0, 0, -1))),
+                zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
+                minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
+                    scene: output.detectedScene, category: candidate.category) ?? 1),
+                intent: proposal.intent, score: proposal.score,
+                explanation: proposal.explanation, usesCenter: proposal.usesCenter,
+                preferenceKey: proposal.preferenceKey)
+            return LocalCompositionChoice(candidate: candidate, plan: plan, preview: preview)
+        }
+        return LocalCompositionAnalysis(detection: output, choices: choices,
+                                        fallbackCandidates: Array(distinct.prefix(3)))
     }
 
-    private func analyzeCapturedFrame(pixelBuffer: CVPixelBuffer,
-                                      orientation: CGImagePropertyOrientation) -> NeuralAnalysisOutput {
+    private func distinctCandidates(_ candidates: [NeuralSubjectCandidate]) -> [NeuralSubjectCandidate] {
+        var result: [NeuralSubjectCandidate] = []
+        for candidate in candidates where candidate.confidence >= 0.35 {
+            let box = candidate.boundingBox
+            guard box.minX >= 0, box.minY >= 0, box.maxX <= 1, box.maxY <= 1 else { continue }
+            let duplicate = result.contains {
+                let overlap = $0.boundingBox.intersection(box)
+                return !overlap.isNull && overlap.width * overlap.height >
+                    min($0.boundingBox.width * $0.boundingBox.height, box.width * box.height) * 0.65
+            }
+            if !duplicate { result.append(candidate) }
+            if result.count == 12 { break }
+        }
+        return result
+    }
+
+    private func compositionIntents(_ output: NeuralAnalysisOutput) -> [LocalCompositionIntent] {
+        let sceneIntent: LocalCompositionIntent
+        switch output.detectedScene {
+        case .portrait: sceneIntent = .portrait
+        case .pet: sceneIntent = .animal
+        case .landscape, .sky, .water, .sunset: sceneIntent = .landscape
+        case .foliage, .macro: sceneIntent = .closeUp
+        case .architecture: sceneIntent = .architecture
+        case .food: sceneIntent = .food
+        case .street, .night: sceneIntent = .street
+        case .general: sceneIntent = .object
+        }
+        var result = [sceneIntent]
+        let mapping: [String: LocalCompositionIntent] = [
+            "person": .portrait, "person_scenery": .environmentalPortrait, "group": .group,
+            "landscape": .landscape, "building": .architecture, "flower": .closeUp,
+            "foliage": .closeUp, "macro": .closeUp, "food": .food, "animal": .animal,
+            "street": .street, "sky": .landscape, "water": .landscape, "sunset": .landscape]
+        if let peak = output.semanticAffinities.values.max() {
+            for (key, score) in output.semanticAffinities.sorted(by: { $0.value > $1.value })
+                where score >= max(0.25, peak - 0.035) {
+                if let intent = mapping[key], !result.contains(intent) { result.append(intent) }
+            }
+        }
+        return result
+    }
+
+    private func analyzeCapturedFrame(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+                                      cancellation: CompositionAnalysisCancellation) -> NeuralAnalysisOutput? {
         SemanticCropRanker.shared.beginAnalysis()
+        let humanBodyRequest = VNDetectHumanRectanglesRequest()
+        humanBodyRequest.upperBodyOnly = false
+        let faceLandmarksRequest = VNDetectFaceLandmarksRequest()
+        let animalRequest = VNRecognizeAnimalsRequest()
+        let saliencyObjectRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
+        let attentionRequest = VNGenerateAttentionBasedSaliencyImageRequest()
+        let sceneClassifierRequest = VNClassifyImageRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         
         // One unsupported/failed request must not erase evidence from the others.
@@ -246,8 +346,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                                      attentionRequest, sceneClassifierRequest]
         var completed = Set<ObjectIdentifier>()
         for request in requests {
+            if cancellation.isCancelled { return nil }
             do {
-                try handler.perform([request])
+                try cancellation.perform(request, with: handler)
                 completed.insert(ObjectIdentifier(request))
             }
             catch { CameraLogger.warning("Vision bỏ qua một bộ phân tích: \(error)", category: .ai) }
@@ -260,7 +361,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         
         // 0. Nhận diện vật thể bằng YOLOv11 CoreML (nếu có model)
         if YOLODetectionEngine.shared.hasYOLOModel {
-            let yoloCandidates = YOLODetectionEngine.shared.detectObjects(pixelBuffer: pixelBuffer, orientation: orientation)
+            let yoloCandidates = YOLODetectionEngine.shared.detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
             candidates.append(contentsOf: yoloCandidates)
         }
         
@@ -452,8 +553,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 scene = .architecture
             }
         }
-        if let hint = SemanticCropRanker.shared.sceneHint(pixelBuffer: pixelBuffer,
-                orientation: orientation, candidates: candidates),
+        let semanticAffinities = SemanticCropRanker.shared.sceneEvidence(pixelBuffer: pixelBuffer,
+            orientation: orientation, cancellation: cancellation)
+        if let hint = SemanticCropRanker.shared.sceneHint(scores: semanticAffinities, candidates: candidates),
            scene == .general || (scene == .portrait && hint == .landscape) {
             scene = hint
         }
@@ -477,9 +579,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         
         // 7. Xếp hạng và chọn ra VẬT THỂ CHÍNH NỔI BẬT NHẤT (True Primary Subject)
         let visualCandidates = candidates.sorted { $0.prominenceScore > $1.prominenceScore }
-        let semanticCandidates = SemanticCropRanker.shared.rerank(candidates: visualCandidates,
-            pixelBuffer: pixelBuffer, orientation: orientation)
-        let sortedCandidates = semanticCandidates.sorted {
+        let sortedCandidates = visualCandidates.sorted {
             let left = contextualScore($0, scene: scene)
             let right = contextualScore($1, scene: scene)
             return left > right
@@ -490,7 +590,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             CameraLogger.info("Đã chọn Vật thể chính: \(p.category.rawValue) - \(p.label) (Điểm: \(String(format: "%.2f", p.prominenceScore)), Độ tin cậy: \(Int(p.confidence * 100))%)", category: .ai)
         }
         
-        return NeuralAnalysisOutput(
+        var output = NeuralAnalysisOutput(
             primaryCandidate: primary,
             allCandidates: sortedCandidates,
             detectedScene: scene,
@@ -500,6 +600,12 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             lookingDirection: lookDir,
             usedSemanticModel: SemanticCropRanker.shared.didProduceEvidence
         )
+        guard !cancellation.isCancelled else { return nil }
+        let saliency = completed.contains(ObjectIdentifier(attentionRequest)) ? attentionRequest.results?.first?.pixelBuffer : nil
+        output.compositionRaster = renderer.raster(image: CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation),
+                                                   saliency: saliency)
+        output.semanticAffinities = semanticAffinities
+        return output
     }
 
     private func contextualScore(_ candidate: NeuralSubjectCandidate,

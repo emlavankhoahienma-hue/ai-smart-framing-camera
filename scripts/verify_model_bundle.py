@@ -41,6 +41,10 @@ def main() -> None:
         "2c63cb7d1f2e95ba501893cbb8faeb4ea9a3af295498d35097126228659c2af8"
     ):
         raise RuntimeError("Invalid SigLIP prompt/model provenance")
+    required = {"person", "person_scenery", "group", "building", "landscape", "animal",
+                "object", "food", "flower", "foliage", "macro", "sky", "water", "sunset", "street"}
+    if not required.issubset(prompts) or manifest.get("promptSchemaVersion") != 2:
+        raise RuntimeError("Composition prompt bank missing or out of date")
     manifest["compiledSHA256"] = siglip
     source_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (bundle / "YOLOModelManifest.json").write_text(json.dumps({

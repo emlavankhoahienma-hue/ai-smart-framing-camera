@@ -4,15 +4,21 @@ import simd
 
 /// The optical tracker follows subjectPoint. The yellow guide follows aimWorldRay.
 /// These are different bearings whenever the requested composition is off centre.
-struct LocalFramingPlan {
+struct LocalFramingPlan: Sendable {
     let subjectPoint: CGPoint
     let subjectRect: CGRect
     let aimPointInSource: CGPoint
     let aimWorldRay: SIMD3<Double>
     let zoom: CGFloat
-    let expectedSubjectRect: CGRect
     let confidence: Double
+    let minimumAutoselectConfidence: Double
+    let intent: LocalCompositionIntent
+    let score: Double
+    let explanation: String
+    let usesCenter: Bool
+    let preferenceKey: String
 }
+
 
 enum LocalAutoselectCalibration {
     private static let thresholds: [String: Double] = {
@@ -27,192 +33,79 @@ enum LocalAutoselectCalibration {
     }
 }
 
-/// Only coarse composition features are written. No image, location, or face
-/// landmarks leave memory. The learned term can move ranking by at most 15%.
-final class CompositionPreferenceStore {
+/// Small local preference counts. All persistence runs on this actor, off MainActor.
+/// No training claim is made: this only nudges otherwise safe layout rankings.
+actor CompositionPreferenceStore {
     static let shared = CompositionPreferenceStore()
-    private struct Feature: Codable {
-        let category: String
-        let x: Int
-        let y: Int
-        let area: Int
-    }
     private struct Choice: Codable {
-        let scene: String
-        let candidates: [Feature]
-        let selectedIndex: Int
-        let actualZoomTenths: Int
+        let keys: [String]
+        let selected: String
     }
-    private let url: URL
-    private var selected: [String: Int] = [:]
-    private var considered: [String: Int] = [:]
+    private var loaded = false
+    private var choices: [Choice] = []
+    private let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("AlignAI Camera", isDirectory: true) ?? FileManager.default.temporaryDirectory
+    private var url: URL { directory.appendingPathComponent("composition_layout_feedback.json") }
 
-    private init() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory,
-                                                in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
-        let directory = support.appendingPathComponent("AlignAI Camera", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory,
-            withIntermediateDirectories: true)
-        url = directory.appendingPathComponent("composition_feedback.jsonl")
-        if let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) {
-            for line in text.split(separator: "\n").suffix(1000) {
-                if let choice = try? JSONDecoder().decode(Choice.self, from: Data(line.utf8)) {
-                    learn(choice)
-                }
-            }
-        }
+    private func load() {
+        guard !loaded else { return }
+        loaded = true
+        guard let data = try? Data(contentsOf: url),
+              let saved = try? JSONDecoder().decode([Choice].self, from: data) else { return }
+        choices = Array(saved.suffix(500))
     }
 
-    private func feature(_ candidate: NeuralSubjectCandidate) -> Feature {
-        let r = candidate.boundingBox
-        if candidate.category == .face {
-            return Feature(category: NeuralSubjectCategory.human.rawValue,
-                           x: 0, y: 0, area: 0)
-        }
-        return Feature(category: candidate.category.rawValue,
-            x: Int((r.midX * 10).rounded()), y: Int((r.midY * 10).rounded()),
-            area: Int((candidate.areaRatio * 20).rounded()))
-    }
-    private func keys(scene: String, feature: Feature) -> [String] {
-        let base = scene + "|" + feature.category
-        // Face candidates are reduced to a generic human label; never infer
-        // a position or size preference from their omitted coordinates.
-        guard feature.x != 0 || feature.y != 0 || feature.area != 0 else {
-            return [base]
-        }
-        return [base, base + "|horizontal:" + String(feature.x / 3),
-                base + "|size:" + String(feature.area / 4)]
-    }
-    private func learn(_ choice: Choice) {
-        for (index, candidate) in choice.candidates.enumerated() {
-            for key in keys(scene: choice.scene, feature: candidate) {
-                considered[key, default: 0] += 1
-                if index == choice.selectedIndex { selected[key, default: 0] += 1 }
+    func bonuses() -> [String: Double] {
+        load()
+        var wins: [String: Int] = [:], counts: [String: Int] = [:]
+        for choice in choices {
+            for opponent in Set(choice.keys) where opponent != choice.selected {
+                wins[choice.selected, default: 0] += 1
+                counts[choice.selected, default: 0] += 1
+                counts[opponent, default: 0] += 1
             }
         }
-    }
-    func bonus(scene: DetectedSceneType, candidate: NeuralSubjectCandidate) -> Double {
-        let candidateKeys = keys(scene: scene.rawValue, feature: feature(candidate))
-        let weights = candidateKeys.count == 1 ? [1.0] : [0.50, 0.30, 0.20]
-        var learned = 0.0
-        for (key, weight) in zip(candidateKeys, weights) {
-            let n = considered[key, default: 0]
-            guard n >= 3 else { continue }
-            let wins = selected[key, default: 0]
-            learned += weight * (Double(wins + 1) / Double(n + 2) - 0.5)
-        }
-        return max(-0.15, min(0.15, learned * 0.3))
-    }
-    func record(scene: DetectedSceneType, candidates: [NeuralSubjectCandidate],
-                selectedIndex: Int, actualZoom: CGFloat) {
-        guard candidates.indices.contains(selectedIndex), actualZoom.isFinite else { return }
-        let choice = Choice(scene: scene.rawValue, candidates: candidates.map(feature),
-            selectedIndex: selectedIndex,
-            actualZoomTenths: Int((actualZoom * 10).rounded()))
-        guard let encoded = try? JSONEncoder().encode(choice) else { return }
-        var line = encoded; line.append(0x0A)
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try? line.write(to: url, options: .atomic)
-        } else if let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            do { _ = try handle.seekToEnd(); try handle.write(contentsOf: line) } catch { return }
-        }
-        learn(choice)
-        if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-           let size = attributes[.size] as? Int, size > 1_000_000,
-           let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) {
-            let recent = text.split(separator: "\n").suffix(1000).joined(separator: "\n") + "\n"
-            try? Data(recent.utf8).write(to: url, options: .atomic)
+        return counts.reduce(into: [:]) { result, item in
+            guard item.value >= 3 else { return }
+            let preference = Double(wins[item.key, default: 0] + 1) / Double(item.value + 2)
+            result[item.key] = (preference - 0.5) * 0.05
         }
     }
-    var exportURL: URL? { FileManager.default.fileExists(atPath: url.path) ? url : nil }
-    func deleteAll() {
-        try? FileManager.default.removeItem(at: url)
-        selected.removeAll(); considered.removeAll()
+
+    func record(keys: [String], selected: String) {
+        load()
+        let distinct = Array(Set(keys)).sorted()
+        guard distinct.count > 1, distinct.contains(selected) else { return }
+        choices.append(Choice(keys: distinct, selected: selected))
+        choices = Array(choices.suffix(500))
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try JSONEncoder().encode(choices).write(to: url, options: .atomic)
+        } catch {
+            CameraLogger.error("Không lưu được lựa chọn bố cục", error: error, category: .ai)
+        }
+    }
+
+    func exportURL() -> URL? {
+        load()
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    func deleteAll() -> Bool {
+        choices = []
+        loaded = true
+        let files = [url, directory.appendingPathComponent("composition_feedback.jsonl")]
+        for file in files
+            where FileManager.default.fileExists(atPath: file.path) {
+            do { try FileManager.default.removeItem(at: file) }
+            catch { CameraLogger.error("Không xóa được lựa chọn bố cục", error: error, category: .ai) }
+        }
+        return files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
     }
 }
 
 enum LocalFramingGeometry {
     private static let forward = SIMD3<Double>(0, 0, -1)
-
-    /// Simulates a camera rotation and digital crop against the exact source calibration.
-    /// A physical lens handoff is still provisional and must be checked on a new frame.
-    static func plan(subject: NeuralSubjectCandidate, companions: [CGRect],
-                     scene: DetectedSceneType, gaze: CGVector,
-                     frame: TrackingFrameContext, pose: simd_quatd,
-                     currentZoom: CGFloat, allowedZooms: [CGFloat]) -> LocalFramingPlan? {
-        let k = frame.calibration
-        let box = subject.boundingBox
-        guard k.isValid, valid(box), currentZoom.isFinite, currentZoom > 0 else { return nil }
-        let s = subject.center
-        let subjectRay = k.deviceRay(at: s)
-        let portrait = subject.category == .human || subject.category == .face
-        let preserveScene = portrait && (scene == .landscape || scene == .architecture || scene == .sunset)
-        let places: [CGPoint]
-        if scene == .architecture {
-            places = [CGPoint(x: 0.5, y: 0.45), CGPoint(x: 0.5, y: 0.38),
-                      CGPoint(x: 0.38, y: 0.45), CGPoint(x: 0.62, y: 0.45),
-                      CGPoint(x: 0.5, y: 0.5)]
-        } else if scene == .landscape || scene == .sky || scene == .water || scene == .sunset {
-            places = [CGPoint(x: 0.38, y: 0.382), CGPoint(x: 0.62, y: 0.382),
-                      CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.5, y: 0.38)]
-        } else {
-            let preferredX: CGFloat = gaze.dx > 0.12 ? 0.38 : (gaze.dx < -0.12 ? 0.62 : 0.38)
-            places = [CGPoint(x: preferredX, y: portrait ? 0.38 : 0.45),
-                      CGPoint(x: 1 - preferredX, y: portrait ? 0.38 : 0.45),
-                      CGPoint(x: 0.5, y: 0.5)]
-        }
-        let availableOptions = allowedZooms.isEmpty ? [1.0, 2.0, 3.0] : allowedZooms
-        let zooms = Array(Set(([currentZoom] + availableOptions).filter {
-            $0.isFinite && $0 >= 0.5 && $0 <= 5
-        })).sorted()
-        var best: (LocalFramingPlan, Double)?
-        for zoom in zooms {
-            let ratio = Double(zoom / currentZoom)
-            guard ratio.isFinite, ratio > 0 else { continue }
-            let future = TrackingCalibration(fx: k.fx * ratio, fy: k.fy * ratio,
-                                             cx: k.cx, cy: k.cy, aspect: k.aspect,
-                                             isMeasured: false)
-            for d in places {
-                // R maps the desired final subject ray into the current subject ray.
-                // The future optical axis is R * forward, expressed in source axes.
-                let rotation = simd_quatd(from: future.deviceRay(at: d), to: subjectRay)
-                let aimDeviceRay = rotation.act(forward)
-                let aim = k.project(deviceRay: aimDeviceRay)
-                guard aim.isInFront, aim.point.x.isFinite, aim.point.y.isFinite,
-                      (0...1).contains(aim.point.x), (0...1).contains(aim.point.y),
-                      let projected = project(box, from: k, to: future, rotation: rotation),
-                      safe(projected, margin: 0.035) else { continue }
-                var companionsSafe = true
-                for other in companions where valid(other) {
-                    guard let expected = project(other, from: k, to: future,
-                                                 rotation: rotation),
-                          safe(expected, margin: 0.025) else {
-                        companionsSafe = false; break
-                    }
-                }
-                guard companionsSafe else { continue }
-                let targetArea = preserveScene ? 0.14 : (portrait ? 0.26 :
-                    (scene == .architecture ? 0.38 : (scene == .food || scene == .macro ? 0.32 : 0.25)))
-                let area = Double(projected.width * projected.height)
-                let sizeFit = 1 - min(1, abs(log(max(0.001, area) / targetArea)) / 2.5)
-                let motion = hypot(Double(aim.point.x - 0.5), Double(aim.point.y - 0.5))
-                let zoomCost = abs(log(ratio))
-                let spaceBonus = gaze.dx > 0.12 ? Double(0.5 - d.x) * 0.16 :
-                    (gaze.dx < -0.12 ? Double(d.x - 0.5) * 0.16 : 0)
-                let score = 0.65 * sizeFit - 0.10 * motion - 0.08 * zoomCost + spaceBonus
-                let ray = pose.act(aimDeviceRay)
-                let plan = LocalFramingPlan(subjectPoint: s, subjectRect: box,
-                    aimPointInSource: aim.point, aimWorldRay: ray, zoom: zoom,
-                    expectedSubjectRect: projected,
-                    confidence: min(1, max(0, Double(subject.confidence) * (0.55 + 0.45 * sizeFit))))
-                if let previous = best {
-                    if score > previous.1 { best = (plan, score) }
-                } else { best = (plan, score) }
-            }
-        }
-        return best?.0
-    }
 
     /// Plan a direct user pin after rotating its selected ray to the centre.
     /// Evaluate entire subject/companion rectangles, not just their centroids.
