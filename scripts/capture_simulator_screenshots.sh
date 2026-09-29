@@ -79,7 +79,7 @@ capture_device() {
   run_bounded 120 xcrun simctl bootstatus "$udid" -b
 
   echo "Installing application bundle..."
-  run_bounded 60 xcrun simctl install "$udid" "$APP_PATH"
+  run_bounded 180 xcrun simctl install "$udid" "$APP_PATH"
 
   echo "Granting permissions for camera, photos and microphone..."
   run_bounded 15 xcrun simctl privacy "$udid" grant camera "$BUNDLE_ID" || true
