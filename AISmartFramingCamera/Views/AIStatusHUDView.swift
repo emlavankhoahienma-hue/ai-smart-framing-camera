@@ -58,6 +58,18 @@ public struct AIStatusHUDView: View {
                     .tint(.yellow)
                 }
 
+                if case .analyzing = viewModel.aiSessionState,
+                   viewModel.localCompositionChoices.isEmpty,
+                   viewModel.localSelectionMessage != nil {
+                    Button("Phân tích lại") {
+                        viewModel.cancelAISession()
+                        viewModel.startAISession()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.yellow)
+                    .foregroundStyle(.black)
+                }
+
                 if showsExplanation, !explanation.isEmpty {
                     Text(explanation)
                         .font(.system(size: 11, weight: .medium))
@@ -127,6 +139,9 @@ public struct AIStatusHUDView: View {
         case .idle:
             return "Bố cục thông minh"
         case .analyzing:
+            if viewModel.localCompositionChoices.isEmpty, viewModel.localSelectionMessage != nil {
+                return "Chưa có khung để chọn"
+            }
             return viewModel.localCompositionChoices.isEmpty ? "Đang so sánh bố cục…" : "Chọn phương án bố cục"
         case .targetPlaced:
             if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {

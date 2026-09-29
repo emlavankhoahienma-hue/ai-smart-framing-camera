@@ -167,7 +167,7 @@ public struct CameraMainView: View {
         .sheet(item: $viewModel.compositionPreviewPresentation) { presentation in
             CompositionPreviewSheet(choices: viewModel.localCompositionChoices,
                 onSelect: viewModel.selectCompositionPreview,
-                onCancel: viewModel.cancelAISession)
+                onCancel: { viewModel.cancelCompositionPreview(id: presentation.id) })
                 .onDisappear { viewModel.compositionPreviewDidDismiss(id: presentation.id) }
         }
         .sheet(isPresented: $viewModel.isCompositionRuleSheetPresented) {

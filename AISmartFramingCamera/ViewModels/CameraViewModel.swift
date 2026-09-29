@@ -1900,6 +1900,11 @@ public final class CameraViewModel: ObservableObject {
         compositionPreviewPresentation = nil
     }
 
+    func cancelCompositionPreview(id: UUID) {
+        guard activeCompositionPreviewID == id else { return }
+        cancelAISession()
+    }
+
     func compositionPreviewDidDismiss(id: UUID) {
         // A dismissed sheet from an older session must not cancel a newer one.
         guard activeCompositionPreviewID == id else { return }
