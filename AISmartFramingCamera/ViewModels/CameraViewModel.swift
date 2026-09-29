@@ -1964,6 +1964,14 @@ public final class CameraViewModel: ObservableObject {
         guard target.x.isFinite, target.y.isFinite,
               (0...1).contains(target.x), (0...1).contains(target.y) else { return }
         guard !captureMode.isVideo, aiSessionState != .capturing, !isCameraHibernating else { return }
+        localAnalysisCancellation?.cancel()
+        localAnalysisCancellation = nil
+        localAnalysisTask?.cancel()
+        localAnalysisTask = nil
+        localCompositionChoices = []
+        localEvidenceCandidates = []
+        localSuggestionRects = []
+        localTrackingSource = nil
         if pinnedGuideRay == nil {
             localCompositionExplanation = ""
             localCompositionIntent = nil

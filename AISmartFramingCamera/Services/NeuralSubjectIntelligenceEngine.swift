@@ -136,11 +136,9 @@ public struct NeuralSubjectCandidate: Identifiable, Sendable {
 
 /// Kết quả phân tích thị giác ANE nâng cao
 public struct NeuralAnalysisOutput: Sendable {
-    public let primaryCandidate: NeuralSubjectCandidate?
     public let allCandidates: [NeuralSubjectCandidate]
     public let detectedScene: DetectedSceneType
     public let allFaceRects: [CGRect]
-    public let groupBoundingBox: CGRect?
     public let primaryEyePosition: CGPoint?
     public let lookingDirection: CGVector
     public let usedSemanticModel: Bool
@@ -148,20 +146,16 @@ public struct NeuralAnalysisOutput: Sendable {
     var semanticAffinities: [String: Double] = [:]
 
     public init(
-        primaryCandidate: NeuralSubjectCandidate?,
         allCandidates: [NeuralSubjectCandidate],
         detectedScene: DetectedSceneType,
         allFaceRects: [CGRect] = [],
-        groupBoundingBox: CGRect? = nil,
         primaryEyePosition: CGPoint? = nil,
         lookingDirection: CGVector = CGVector(dx: 0, dy: 0),
         usedSemanticModel: Bool = false
     ) {
-        self.primaryCandidate = primaryCandidate
         self.allCandidates = allCandidates
         self.detectedScene = detectedScene
         self.allFaceRects = allFaceRects
-        self.groupBoundingBox = groupBoundingBox
         self.primaryEyePosition = primaryEyePosition
         self.lookingDirection = lookingDirection
         self.usedSemanticModel = usedSemanticModel
@@ -207,6 +201,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         var candidates = distinct
         let intents = compositionIntents(output)
+        let groupIndex: Int?
         if output.allFaceRects.count > 1, let first = output.allFaceRects.first {
             let union = (output.allFaceRects + distinct.filter { $0.category == .human }.map(\.boundingBox))
                 .reduce(first) { $0.union($1) }
@@ -214,7 +209,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 .map(\.confidence).min() ?? 0.35
             candidates.insert(NeuralSubjectCandidate(boundingBox: union, category: .human,
                 confidence: confidence, label: "Nhóm người", prominenceScore: 1), at: 0)
-        }
+            groupIndex = 0
+        } else { groupIndex = nil }
         let sceneryIndex: Int?
         if intents.contains(where: { $0.preservesContext }) || candidates.isEmpty,
            let anchor = raster.sceneryAnchor {
@@ -227,6 +223,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let subjects = candidates.enumerated().map { index, candidate -> CompositionSubject in
             let kind: CompositionSubjectKind
             if index == sceneryIndex { kind = .scenery }
+            else if index == groupIndex { kind = .group }
             else {
                 switch candidate.category {
                 case .human: kind = .person
@@ -235,8 +232,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 case .foregroundObject, .general: kind = .object
                 }
             }
-            let eye = output.primaryEyePosition.flatMap { candidate.boundingBox.contains($0) ? $0 : nil }
-            let anchor = candidate.label == "Nhóm người" ?
+            let eye = kind == .person || kind == .face ?
+                output.primaryEyePosition.flatMap { candidate.boundingBox.contains($0) ? $0 : nil } : nil
+            let anchor = kind == .group ?
                 output.allFaceRects.first.map { CGPoint(x: $0.midX, y: $0.midY) } : eye
             return CompositionSubject(index: index, bounds: candidate.boundingBox,
                 anchor: anchor ?? candidate.center, kind: kind, confidence: Double(candidate.confidence),
@@ -560,42 +558,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             scene = hint
         }
         
-        // 6. Tính toán Bounding Box cho ảnh nhóm (Group Framing)
-        var groupBox: CGRect? = nil
-        if detectedFaces.count > 1 {
-            let minX = detectedFaces.map { $0.minX }.min() ?? 0
-            let maxX = detectedFaces.map { $0.maxX }.max() ?? 1
-            let minY = detectedFaces.map { $0.minY }.min() ?? 0
-            let maxY = detectedFaces.map { $0.maxY }.max() ?? 1
-            let padX = (maxX - minX) * 0.12
-            let padY = (maxY - minY) * 0.12
-            groupBox = CGRect(
-                x: max(0.02, minX - padX),
-                y: max(0.02, minY - padY),
-                width: min(0.96, (maxX - minX) + padX * 2),
-                height: min(0.96, (maxY - minY) + padY * 2)
-            )
-        }
-        
-        // 7. Xếp hạng và chọn ra VẬT THỂ CHÍNH NỔI BẬT NHẤT (True Primary Subject)
+        // Rank detection candidates before searching complete frame layouts.
         let visualCandidates = candidates.sorted { $0.prominenceScore > $1.prominenceScore }
         let sortedCandidates = visualCandidates.sorted {
             let left = contextualScore($0, scene: scene)
             let right = contextualScore($1, scene: scene)
             return left > right
         }
-        let primary = sortedCandidates.first
-        
-        if let p = primary {
-            CameraLogger.info("Đã chọn Vật thể chính: \(p.category.rawValue) - \(p.label) (Điểm: \(String(format: "%.2f", p.prominenceScore)), Độ tin cậy: \(Int(p.confidence * 100))%)", category: .ai)
-        }
-        
         var output = NeuralAnalysisOutput(
-            primaryCandidate: primary,
             allCandidates: sortedCandidates,
             detectedScene: scene,
             allFaceRects: detectedFaces,
-            groupBoundingBox: groupBox,
             primaryEyePosition: primaryEye,
             lookingDirection: lookDir,
             usedSemanticModel: SemanticCropRanker.shared.didProduceEvidence

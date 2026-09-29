@@ -94,6 +94,12 @@ enum CompositionPlanningRegression {
             try require(e.intent == .environmentalPortrait, "scene intent lost")
             try require(e.zoom <= p.zoom, "environmental plan crops more than portrait")
         }
+        try run("a detected group cannot inherit a single-person portrait intent") {
+            let group = subject(rect: CGRect(x: 0.12, y: 0.18, width: 0.76, height: 0.67), kind: .group)
+            let plans = proposals([group, subject(index: 1)], [.portrait])
+                .filter { $0.subjectIndex == group.index }
+            try require(!plans.isEmpty && plans.allSatisfy { $0.intent == .group }, "group treated as a portrait")
+        }
         try run("scenery needs a real texture anchor and preserves the wide frame") {
             guard let anchor = raster().sceneryAnchor else { throw Failure(description: "texture anchor missing") }
             let scene = subject(rect: CGRect(x: anchor.x - 0.04, y: anchor.y - 0.04, width: 0.08, height: 0.08),

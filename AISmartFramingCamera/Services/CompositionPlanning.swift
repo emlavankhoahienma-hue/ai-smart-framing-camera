@@ -42,7 +42,7 @@ enum LocalCompositionIntent: String, Codable, Sendable {
     }
 }
 
-enum CompositionSubjectKind: Sendable { case person, face, animal, object, scenery }
+enum CompositionSubjectKind: Sendable { case person, face, group, animal, object, scenery }
 
 struct CompositionSubject: Sendable {
     let index: Int
@@ -129,7 +129,7 @@ enum CompositionPlanner {
             valid($0.bounds) && $0.anchor.x.isFinite && $0.anchor.y.isFinite &&
             $0.bounds.contains($0.anchor) && $0.confidence.isFinite && $0.importance.isFinite
         }
-        let protectedPeople = validSubjects.filter { $0.kind == .person || $0.kind == .face }
+        let protectedPeople = validSubjects.filter { $0.kind == .person || $0.kind == .face || $0.kind == .group }
         let protectedRects = protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) }
         let maxZoom = max(currentZoom, min(5, allowedZooms.filter { $0.isFinite }.max() ?? currentZoom))
         let zooms = Array(Set(([currentZoom, currentZoom * 1.15, currentZoom * 1.35,
@@ -146,7 +146,7 @@ enum CompositionPlanner {
                     let ratio = Double(zoom / currentZoom)
                     let future = TrackingCalibration(fx: calibration.fx * ratio, fy: calibration.fy * ratio,
                         cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect, isMeasured: false)
-                    let y: CGFloat = subject.kind == .face || subject.kind == .person ? 0.36 : 0.5
+                    let y: CGFloat = subject.kind == .face || subject.kind == .person || subject.kind == .group ? 0.36 : 0.5
                     let placements = [subject.anchor, CGPoint(x: 0.5, y: 0.5),
                         CGPoint(x: 0.5, y: y), CGPoint(x: 1 / 3, y: y), CGPoint(x: 2 / 3, y: y),
                         CGPoint(x: 1 / 3, y: 2 / 3), CGPoint(x: 2 / 3, y: 2 / 3)]
@@ -229,6 +229,7 @@ enum CompositionPlanner {
                                          preferred: [LocalCompositionIntent],
                                          people: [CompositionSubject]) -> [LocalCompositionIntent] {
         if subject.kind == .scenery { return [.landscape] }
+        if subject.kind == .group { return [.group] }
         if subject.kind == .person || subject.kind == .face {
             let others = people.filter { $0.index != subject.index &&
                 !subject.bounds.insetBy(dx: -0.02, dy: -0.02).contains($0.bounds) &&
@@ -301,7 +302,8 @@ enum CompositionPlanner {
                                    weightedY / max(weightSum, 0.001) - 0.5)
         let room = subject.gaze >= 0 ? Double(1 - box.maxX) : Double(box.minX)
         let opposite = subject.gaze >= 0 ? Double(box.minX) : Double(1 - box.maxX)
-        let separation = abs(subjectLight / max(1, subjectCount) - surroundLight / max(1, surroundCount))
+        let separation = subjectCount > 0 && surroundCount > 0 ?
+            abs(subjectLight / subjectCount - surroundLight / surroundCount) : 0
         return Metrics(retention: total > 0.001 ? retained / total : 1,
             cleanEdges: 1 - min(1, border / max(1, borderCount)),
             balance: 1 - min(1, centerDistance * 2),

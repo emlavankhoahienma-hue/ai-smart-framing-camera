@@ -59,6 +59,10 @@ Không dừng lại ở việc áp bộ lọc màu, **AlignAI Studio** kết h�
 
 ## Tính Năng Nổi Bật
 
+### Bố cục local theo toàn khung
+
+Luồng Photo hiện so sánh các khung khả thi bằng Vision/YOLO, SigLIP toàn ảnh và bằng chứng về nền, mép khung, khoảng trống, cân bằng và bối cảnh. Có tối đa ba preview để chọn, hướng dẫn căn máy và ghi nhớ nhẹ sở thích ngay trên thiết bị. Trọng số SigLIP không được huấn luyện lại; điểm bố cục không được coi là độ tin cậy để tự chụp. Xem [thuật toán, trạng thái, kiểm thử và giới hạn](docs/LOCAL_COMPOSITION.md).
+
 | Nhóm Tính Năng | Mô Tả Chi Tiết |
 | :--- | :--- |
 | **Căn Tâm Tự Động Thông Minh** | Tích hợp cổng căn tâm `AlignmentCaptureGate` với ngưỡng thời gian tích lũy 240 ms và vùng trễ chống rung 140 ms. Triệt tiêu hiện tượng chụp nhầm khi lia máy nhanh hoặc rung tay sinh học. |
