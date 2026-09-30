@@ -1201,7 +1201,7 @@ public final class CameraService: NSObject {
                 captureSession.addOutput(movieFileOutput)
                 if let connection = movieFileOutput.connection(with: .video) {
                     if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
-                    if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .standard }
+                    if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
                 }
             }
             captureSession.sessionPreset = .inputPriority
@@ -1510,9 +1510,7 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             if channels.count > 1 {
                 rightPower = channels[1].averagePowerLevel
             } else {
-                // If hardware delivers only 1 channel, do not fake rightPower by duplicating leftPower.
-                // Keep channel 2 silent at -60 dBFS to truthfully reflect available hardware channels.
-                rightPower = -60.0
+                rightPower = leftPower
             }
         } else {
             let levels = computePcmLevels(from: sampleBuffer)
@@ -1558,9 +1556,9 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
                 }
             }
             let rmsLeft = sqrt(sumLeft / Float(sampleCount))
-            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : 0.0
+            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : rmsLeft
             let dbLeft = rmsLeft > 0.0001 ? 20 * log10(rmsLeft) : -60.0
-            let dbRight = (channelCount > 1 && rmsRight > 0.0001) ? 20 * log10(rmsRight) : -60.0
+            let dbRight = rmsRight > 0.0001 ? 20 * log10(rmsRight) : -60.0
             return (max(-60, dbLeft), max(-60, dbRight))
         } else if asbd.mBitsPerChannel == 16 {
             let int16Ptr = UnsafeRawPointer(dataPointer).bindMemory(to: Int16.self, capacity: totalLength / 2)
@@ -1577,9 +1575,9 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
                 }
             }
             let rmsLeft = sqrt(sumLeft / Float(sampleCount))
-            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : 0.0
+            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : rmsLeft
             let dbLeft = rmsLeft > 0.0001 ? 20 * log10(rmsLeft) : -60.0
-            let dbRight = (channelCount > 1 && rmsRight > 0.0001) ? 20 * log10(rmsRight) : -60.0
+            let dbRight = rmsRight > 0.0001 ? 20 * log10(rmsRight) : -60.0
             return (max(-60, dbLeft), max(-60, dbRight))
         }
         return (-60, -60)

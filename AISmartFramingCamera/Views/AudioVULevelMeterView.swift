@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Horizontal Stereo Audio VU Level Meter matching pro-grade camera monitor specs.
-/// Renders two parallel level bars for Channel 1 (Mic 1 - Bottom) and Channel 2 (Mic 2 - Back/Camera)
-/// with dark tracks, smoothed dynamic response, and standard audio safety zones (green / yellow / red).
+/// Renders two sleek parallel level bars with dark tracks,
+/// smoothed dynamic response, and standard audio safety zones (green / yellow / red).
 public struct AudioVULevelMeterView: View {
     public let levels: (left: Float, right: Float)
 
@@ -10,14 +10,14 @@ public struct AudioVULevelMeterView: View {
         self.levels = levels
     }
 
-    private let barWidth: CGFloat = 46
+    private let barWidth: CGFloat = 48
     private let barHeight: CGFloat = 3.5
     private let spacing: CGFloat = 2.5
 
     public var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
-            channelRow(channel: "1", level: CGFloat(levels.left))
-            channelRow(channel: "2", level: CGFloat(levels.right))
+            channelBar(level: CGFloat(levels.left))
+            channelBar(level: CGFloat(levels.right))
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 4)
@@ -30,18 +30,7 @@ public struct AudioVULevelMeterView: View {
                 .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Mức âm thanh: Mic 1 \(Int(levels.left * 100))%, Mic 2 \(Int(levels.right * 100))%")
-    }
-
-    @ViewBuilder
-    private func channelRow(channel: String, level: CGFloat) -> some View {
-        HStack(spacing: 3.5) {
-            Text(channel)
-                .font(.system(size: 7, weight: .bold, design: .monospaced))
-                .foregroundColor(Color.white.opacity(0.70))
-                .frame(width: 6, alignment: .trailing)
-            channelBar(level: level)
-        }
+        .accessibilityLabel("Mức âm thanh: Trái \(Int(levels.left * 100))%, Phải \(Int(levels.right * 100))%")
     }
 
     @ViewBuilder

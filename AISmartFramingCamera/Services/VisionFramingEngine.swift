@@ -337,7 +337,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let admission = ingressLock.withLock { () -> (UInt64, Bool, Bool)? in
             // Full scene analysis runs once on the detached AI capture. Preview
             // needs only a lightweight face pass; tracking retains its own FPS.
-            guard !busy, now - lastAdmission >= (active ? 1 / 32.0 : 0.2) else { return nil }
+            guard !busy, now - lastAdmission >= (active ? 1 / 32.0 : 1 / 18.0) else { return nil }
             busy = true; lastAdmission = now
             let capture = captureNext; captureNext = false
             return (generation, active, capture)
@@ -903,23 +903,119 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private func detect(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                         frame: TrackingFrameContext?, epoch: UInt64) {
         var result = SubjectDetectionResult()
+        var candidates: [LiveDetectedEntity] = []
+
+        // 1. YOLO 80 COCO Classes (if CoreML model is available)
+        if YOLODetectionEngine.shared.hasYOLOModel {
+            let yoloCandidates = YOLODetectionEngine.shared.detectObjects(
+                pixelBuffer: buffer,
+                orientation: orientation,
+                cancellation: CompositionAnalysisCancellation()
+            )
+            for c in yoloCandidates where c.confidence >= 0.35 {
+                candidates.append(LiveDetectedEntity(
+                    rect: c.boundingBox,
+                    label: c.label,
+                    confidence: c.confidence,
+                    category: c.category
+                ))
+            }
+        }
+
+        // 2. Apple Vision Multi-Request Suite (Faces, Humans, Animals, Foreground Objects)
         let faceRequest = VNDetectFaceRectanglesRequest()
+        let humanRequest = VNDetectHumanRectanglesRequest()
+        humanRequest.upperBodyOnly = false
+        let animalRequest = VNRecognizeAnimalsRequest()
+        let saliencyRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
+
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-        if (try? handler.perform([faceRequest])) != nil {
-            result.faceRectangles = (faceRequest.results ?? []).filter { $0.confidence >= 0.45 }.map {
+        let visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest, saliencyRequest]
+        if (try? handler.perform(visionRequests)) != nil {
+            let faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.40 }
+            result.faceRectangles = faces.map {
                 CGRect(x: $0.boundingBox.minX, y: 1 - $0.boundingBox.maxY,
                        width: $0.boundingBox.width, height: $0.boundingBox.height)
             }
-            result.dominantSubjectRect = result.faceRectangles.first
-            result.confidence = faceRequest.results?.first?.confidence ?? 0
+            for face in faces {
+                let rect = CGRect(x: face.boundingBox.minX, y: 1 - face.boundingBox.maxY,
+                                  width: face.boundingBox.width, height: face.boundingBox.height)
+                candidates.append(LiveDetectedEntity(
+                    rect: rect,
+                    label: "Khuôn mặt",
+                    confidence: face.confidence,
+                    category: .face
+                ))
+            }
+
+            if let animals = animalRequest.results {
+                for obs in animals where obs.confidence >= 0.40 {
+                    let topLabel = obs.labels.first?.identifier.lowercased() ?? ""
+                    let name = topLabel.contains("cat") ? "Mèo" : (topLabel.contains("dog") ? "Chó" : "Thú cưng")
+                    let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
+                                      width: obs.boundingBox.width, height: obs.boundingBox.height)
+                    candidates.append(LiveDetectedEntity(
+                        rect: rect,
+                        label: name,
+                        confidence: obs.confidence,
+                        category: .animal
+                    ))
+                }
+            }
+
+            if let humans = humanRequest.results {
+                for obs in humans where obs.confidence >= 0.45 {
+                    let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
+                                      width: obs.boundingBox.width, height: obs.boundingBox.height)
+                    candidates.append(LiveDetectedEntity(
+                        rect: rect,
+                        label: "Người",
+                        confidence: obs.confidence,
+                        category: .human
+                    ))
+                }
+            }
+
+            if let saliency = saliencyRequest.results?.first?.salientObjects {
+                for obs in saliency where obs.confidence >= 0.40 {
+                    let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
+                                      width: obs.boundingBox.width, height: obs.boundingBox.height)
+                    let overlaps = candidates.contains { c in
+                        let inter = c.rect.intersection(rect)
+                        guard !inter.isNull, !inter.isEmpty else { return false }
+                        return (inter.width * inter.height) / (rect.width * rect.height) > 0.40
+                    }
+                    if !overlaps && rect.width >= 0.05 && rect.height >= 0.05 {
+                        candidates.append(LiveDetectedEntity(
+                            rect: rect,
+                            label: "Vật thể",
+                            confidence: obs.confidence,
+                            category: .foregroundObject
+                        ))
+                    }
+                }
+            }
         }
+
+        candidates = deduplicateCandidates(candidates)
+        result.detectedEntities = candidates
+        result.dominantSubjectRect = candidates.first?.rect ?? result.faceRectangles.first
+        result.confidence = candidates.first?.confidence ?? (faceRequest.results?.first?.confidence ?? 0)
+
         let focus: CGPoint
         let type: SmartFocusType
-        if let face = result.faceRectangles.first {
-            focus = CGPoint(x: face.midX, y: face.midY); type = .face
-        } else { focus = CGPoint(x: 0.5, y: 0.5); type = .center }
+        if let first = candidates.first {
+            focus = CGPoint(x: first.rect.midX, y: first.rect.midY)
+            type = first.category == .face ? .face : .saliency
+        } else {
+            focus = CGPoint(x: 0.5, y: 0.5)
+            type = .center
+        }
+
         let luma = luminance(buffer)
-        result.averageLuminance = luma.0; result.estimatedColorTemp = luma.1
+        result.averageLuminance = luma.0
+        result.estimatedColorTemp = luma.1
+
         // Keep only the newest undelivered detection. A blocked main queue
         // must never accumulate camera-pool buffers at the analysis frame rate.
         let schedule = ingressLock.withLock { () -> Bool in
@@ -945,6 +1041,42 @@ public final class VisionFramingEngine: @unchecked Sendable {
             self.onDetectionCompleted?(result)
             self.onSmartFocusPointCalculated?(focus, type)
         }
+    }
+
+    private func deduplicateCandidates(_ list: [LiveDetectedEntity]) -> [LiveDetectedEntity] {
+        var valid: [LiveDetectedEntity] = []
+        let sorted = list.sorted {
+            if $0.category.priorityWeight != $1.category.priorityWeight {
+                return $0.category.priorityWeight > $1.category.priorityWeight
+            }
+            return $0.confidence > $1.confidence
+        }
+        for item in sorted {
+            let clampedRect = CGRect(
+                x: max(0, min(1, item.rect.minX)),
+                y: max(0, min(1, item.rect.minY)),
+                width: max(0, min(1 - max(0, item.rect.minX), item.rect.width)),
+                height: max(0, min(1 - max(0, item.rect.minY), item.rect.height))
+            )
+            guard clampedRect.width >= 0.04, clampedRect.height >= 0.04 else { continue }
+            let duplicate = valid.contains { existing in
+                let inter = existing.rect.intersection(clampedRect)
+                guard !inter.isNull, !inter.isEmpty else { return false }
+                let interArea = inter.width * inter.height
+                let smallerArea = min(existing.rect.width * existing.rect.height, clampedRect.width * clampedRect.height)
+                return (interArea / smallerArea) > 0.60 && (existing.category == item.category || existing.category == .face)
+            }
+            if !duplicate {
+                valid.append(LiveDetectedEntity(
+                    id: item.id,
+                    rect: clampedRect,
+                    label: item.label,
+                    confidence: item.confidence,
+                    category: item.category
+                ))
+            }
+        }
+        return Array(valid.prefix(8))
     }
 
     private func luminance(_ buffer: CVPixelBuffer) -> (Float, Float) {
@@ -1021,5 +1153,90 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 DispatchQueue.main.async { completion(nil) }
             }
         }
+    }
+}
+
+// MARK: - Live Detected Entity Smoother (Zero-Jitter EMA & Multi-Object Tracking)
+
+/// Real-time Exponential Moving Average (EMA) smoother and multi-object tracker.
+/// Eliminates bounding box jitter, suppresses frame drops with grace period,
+/// and stabilizes onscreen entity rendering at 60/120Hz.
+public final class LiveDetectedEntitySmoother: @unchecked Sendable {
+    private var trackedEntities: [LiveDetectedEntity] = []
+    private let alpha: CGFloat = 0.65
+    private let maxGracePeriod: TimeInterval = 0.25
+
+    public init() {}
+
+    public func update(with incoming: [LiveDetectedEntity], timestamp: TimeInterval = CACurrentMediaTime()) -> [LiveDetectedEntity] {
+        var updated: [LiveDetectedEntity] = []
+        var unmatchedIncoming = incoming
+
+        for entity in trackedEntities {
+            var matchedIndex: Int?
+            var bestScore: CGFloat = 0.0
+
+            for (idx, cand) in unmatchedIncoming.enumerated() {
+                let iou = computeIoU(entity.rect, cand.rect)
+                let centerDist = hypot(entity.rect.midX - cand.rect.midX, entity.rect.midY - cand.rect.midY)
+                let score = iou > 0.3 ? iou : (centerDist < 0.12 ? (1.0 - centerDist / 0.12) * 0.5 : 0.0)
+
+                if score > bestScore && score > 0.25 {
+                    bestScore = score
+                    matchedIndex = idx
+                }
+            }
+
+            if let idx = matchedIndex {
+                let cand = unmatchedIncoming.remove(at: idx)
+                let smoothX = alpha * cand.rect.minX + (1.0 - alpha) * entity.rect.minX
+                let smoothY = alpha * cand.rect.minY + (1.0 - alpha) * entity.rect.minY
+                let smoothW = alpha * cand.rect.width + (1.0 - alpha) * entity.rect.width
+                let smoothH = alpha * cand.rect.height + (1.0 - alpha) * entity.rect.height
+                let smoothConf = Float(alpha) * cand.confidence + Float(1.0 - alpha) * entity.confidence
+                let newRect = CGRect(x: smoothX, y: smoothY, width: smoothW, height: smoothH)
+
+                updated.append(LiveDetectedEntity(
+                    id: entity.id,
+                    rect: newRect,
+                    label: cand.label,
+                    confidence: smoothConf,
+                    category: cand.category,
+                    lastSeen: timestamp
+                ))
+            } else if timestamp - entity.lastSeen < maxGracePeriod {
+                updated.append(entity)
+            }
+        }
+
+        for cand in unmatchedIncoming {
+            if cand.confidence >= 0.38 {
+                updated.append(LiveDetectedEntity(
+                    id: UUID(),
+                    rect: cand.rect,
+                    label: cand.label,
+                    confidence: cand.confidence,
+                    category: cand.category,
+                    lastSeen: timestamp
+                ))
+            }
+        }
+
+        updated.sort { ($0.rect.width * $0.rect.height) > ($1.rect.width * $1.rect.height) }
+        let result = Array(updated.prefix(6))
+        trackedEntities = result
+        return result
+    }
+
+    public func reset() {
+        trackedEntities.removeAll()
+    }
+
+    private func computeIoU(_ r1: CGRect, _ r2: CGRect) -> CGFloat {
+        let intersection = r1.intersection(r2)
+        guard !intersection.isNull, !intersection.isEmpty else { return 0 }
+        let interArea = intersection.width * intersection.height
+        let unionArea = (r1.width * r1.height) + (r2.width * r2.height) - interArea
+        return unionArea > 0 ? interArea / unionArea : 0
     }
 }

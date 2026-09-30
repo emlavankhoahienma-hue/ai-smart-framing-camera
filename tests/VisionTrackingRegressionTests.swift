@@ -86,6 +86,57 @@ final class VisionTrackingRegressionTests: XCTestCase {
         XCTAssertFalse(result.isReliable)
     }
 
+    func testLiveDetectedEntitySmootherSmoothsJitterAndPreservesIdentity() {
+        let smoother = LiveDetectedEntitySmoother()
+        let initial = [
+            LiveDetectedEntity(
+                rect: CGRect(x: 0.20, y: 0.30, width: 0.20, height: 0.30),
+                label: "Khuon mat",
+                confidence: 0.90,
+                category: .face,
+                lastSeen: 1.0
+            )
+        ]
+        let first = smoother.update(with: initial, timestamp: 1.0)
+        XCTAssertEqual(first.count, 1)
+        let initialId = first[0].id
+
+        let jittered = [
+            LiveDetectedEntity(
+                rect: CGRect(x: 0.22, y: 0.31, width: 0.20, height: 0.30),
+                label: "Khuon mat",
+                confidence: 0.92,
+                category: .face,
+                lastSeen: 1.05
+            )
+        ]
+        let smoothed = smoother.update(with: jittered, timestamp: 1.05)
+        XCTAssertEqual(smoothed.count, 1)
+        XCTAssertEqual(smoothed[0].id, initialId)
+        XCTAssertGreaterThan(smoothed[0].rect.minX, 0.20)
+        XCTAssertLessThan(smoothed[0].rect.minX, 0.22)
+    }
+
+    func testLiveDetectedEntitySmootherGracePeriodPreventsFlicker() {
+        let smoother = LiveDetectedEntitySmoother()
+        let initial = [
+            LiveDetectedEntity(
+                rect: CGRect(x: 0.40, y: 0.40, width: 0.20, height: 0.20),
+                label: "Meo",
+                confidence: 0.88,
+                category: .animal,
+                lastSeen: 10.0
+            )
+        ]
+        _ = smoother.update(with: initial, timestamp: 10.0)
+
+        let frameWithMiss = smoother.update(with: [], timestamp: 10.05)
+        XCTAssertEqual(frameWithMiss.count, 1)
+
+        let frameAfterGrace = smoother.update(with: [], timestamp: 10.35)
+        XCTAssertEqual(frameAfterGrace.count, 0)
+    }
+
     private func flatImage() throws -> CVPixelBuffer {
         var created: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 320, 480,

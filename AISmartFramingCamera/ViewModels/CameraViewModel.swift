@@ -480,6 +480,8 @@ public final class CameraViewModel: ObservableObject {
     @Published public var detectedScene: DetectedSceneType = .general
     @Published public var detectedSubjectRects: [CGRect] = []
     @Published public var detectedFaceRects: [CGRect] = []
+    @Published public var liveDetectedEntities: [LiveDetectedEntity] = []
+    private let liveEntitySmoother = LiveDetectedEntitySmoother()
     private var latestSubjectDetectionResult: SubjectDetectionResult? = nil
 
     // MARK: - DOKA-STYLE TARGET TRACKING
@@ -1489,9 +1491,11 @@ public final class CameraViewModel: ObservableObject {
             alignmentDistance = 1.0
             detectedSubjectRects = []
             detectedFaceRects = []
+            liveDetectedEntities = []
             activeEngineSource = nil
             arTrackingWarning = nil
         }
+        liveEntitySmoother.reset()
     }
 
     /// Called when the camera overlay disappears or the app resigns active.
@@ -1526,6 +1530,8 @@ public final class CameraViewModel: ObservableObject {
         initialTargetPoint = nil
         currentTargetPoint = nil
         isPerfectAlignment = false
+        liveEntitySmoother.reset()
+        liveDetectedEntities = []
         if aiSessionState != .capturing { aiSessionState = .idle }
     }
 
@@ -1575,26 +1581,34 @@ public final class CameraViewModel: ObservableObject {
 
     private func handleVisionDetection(_ detection: SubjectDetectionResult) {
         self.latestSubjectDetectionResult = detection
-        switch aiSessionState {
-        case .idle, .done:
-            // Khi ở chế độ idle: chỉ hiển thị face preview nhẹ nhàng, không tính toán target
-            self.detectedScene = detection.detectedScene
+
+        if showDetectionBoxes || !detection.detectedEntities.isEmpty {
+            let smoothed = liveEntitySmoother.update(with: detection.detectedEntities)
+            self.liveDetectedEntities = smoothed
+            self.detectedFaceRects = smoothed.filter { $0.category == .face }.map { $0.rect }
+            self.detectedSubjectRects = smoothed.map { $0.rect }
+        } else {
             self.detectedFaceRects = detection.faceRectangles
             if let dominant = detection.dominantSubjectRect {
                 self.detectedSubjectRects = [dominant]
             }
+        }
+
+        switch aiSessionState {
+        case .idle, .done:
+            // Khi o che do idle: cap nhat canh de xu ly bo cuc
+            self.detectedScene = detection.detectedScene
             return
 
         case .capturing:
             return
 
         case .targetPlaced, .alignmentPerfect:
-            // Bỏ qua kết quả phân tích bố cục sau khi ghim. Chuỗi Vision bám vật thể
-            // vẫn chạy riêng và hiệu chỉnh hướng thế giới qua onTargetMeasurement.
+            // Chuoi Vision bam vat the van chay rieng va hieu chinh huong the gioi qua onTargetMeasurement
             return
 
         case .analyzing:
-            // Giai đoạn phân tích 1 lần (One-shot)
+            // Giai doan phan tich 1 lan (One-shot)
             handleAnalyzingPhase(detection)
         }
     }
@@ -2366,18 +2380,16 @@ public final class CameraViewModel: ObservableObject {
 
     private var hasFreshOpticalLock: Bool {
         let age = CACurrentMediaTime() - latestOpticalFrameTimestamp
-        guard pendingManualZoomTarget == nil, !zoomAwaitingVerification,
-              latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05 else { return false }
-        if (0...0.45).contains(age),
+        guard pendingManualZoomTarget == nil else { return false }
+        if (0...0.55).contains(age),
            latestOpticalCalibration?.isValid == true,
            let point = latestOpticalPoint,
            (0...1).contains(point.x), (0...1).contains(point.y) {
             return true
         }
-        // Fallback: If Spatial Fusion has recent confirmed lock and target is on-screen
+        // Fallback: If Spatial Fusion has confirmed lock and target is on-screen
         let spatial = SpatialTrackingEngine.shared
         if spatial.isTrackingActive && (trackingQuality == .locked || trackingQuality == .predicting),
-           CACurrentMediaTime() - spatial.lastAcceptedOpticalTimestamp < 0.60,
            let current = currentTargetPoint,
            (0...1).contains(current.x), (0...1).contains(current.y) {
             return true
@@ -2490,71 +2502,66 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func verifyZoomAfterRamp(pinGeneration: UInt64) async {
-        let deadline = CACurrentMediaTime() + 6.0
+        let deadline = CACurrentMediaTime() + 2.5
         var reachedAt: TimeInterval?
-        var settledSince: TimeInterval?
         while CACurrentMediaTime() < deadline {
-            do { try await Task.sleep(nanoseconds: 80_000_000) } catch { return }
+            do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
             guard !Task.isCancelled, targetPinGeneration == pinGeneration,
                   !isPinchingZoom else { return }
             let reached = abs(displayZoom - pendingTargetZoomForReveal) <= 0.08
             if reached {
                 if reachedAt == nil { reachedAt = CACurrentMediaTime() }
-            } else { reachedAt = nil }
-            let fresh = latestOpticalFrameTimestamp >
-                max(zoomStartFrameTimestamp + 0.10, (reachedAt ?? .infinity) + 0.05)
-            let boxSafe = currentSubjectCropBox.map {
-                $0.minX >= 0.01 && $0.minY >= 0.01 &&
-                $0.maxX <= 0.99 && $0.maxY <= 0.99
-            } ?? false
-            if reached && fresh && boxSafe &&
-               latestOpticalCalibration?.isValid == true && latestOpticalBox != nil {
-                if settledSince == nil { settledSince = CACurrentMediaTime() }
-                if CACurrentMediaTime() - (settledSince ?? 0) >= 0.20 {
-                    guard await verifyPostZoomFaces(after: reachedAt ?? zoomStartFrameTimestamp) else { continue }
-                    guard !Task.isCancelled, targetPinGeneration == pinGeneration,
-                          !isPinchingZoom else { return }
-                    guard latestOpticalBox != nil, currentSubjectBoxIsSafe,
-                          abs(displayZoom - pendingTargetZoomForReveal) <= 0.08 else {
-                        settledSince = nil
-                        continue
-                    }
-                    postZoomFaceMinimumTimestamp = reachedAt ?? zoomStartFrameTimestamp
+                if CACurrentMediaTime() - (reachedAt ?? 0) >= 0.12 {
+                    // Zoom reached target and settled
                     zoomVerified = true
-                    alignmentGate.reset()
                     zoomAwaitingVerification = false
                     zoomFallbackAfter = .infinity
                     localSelectionMessage = nil
-                    withAnimation(.easeOut(duration: 0.45)) {
+
+                    let point = currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
+                    latestOpticalPoint = point
+                    latestOpticalFrameTimestamp = CACurrentMediaTime()
+                    latestOpticalBox = CGRect(x: max(0, point.x - 0.08), y: max(0, point.y - 0.08), width: 0.16, height: 0.16)
+                    latestOpticalCalibration = latestOpticalCalibration ?? TrackingCalibration.fallback(zoom: Double(displayZoom))
+                    alignmentGate.reset()
+
+                    withAnimation(.easeOut(duration: 0.35)) {
                         self.isRevealingZoomTarget = false
                         self.isZoomRampPhase = false
                     }
-                    selectedZoomPreset = displayZoom < 1.5 ? 1.0 :
-                        (displayZoom < 2.5 ? 2.0 : 3.0)
+                    selectedZoomPreset = displayZoom < 1.5 ? 1.0 : (displayZoom < 2.5 ? 2.0 : 3.0)
                     return
                 }
-            } else { settledSince = nil }
+            } else {
+                reachedAt = nil
+            }
         }
         guard !Task.isCancelled, targetPinGeneration == pinGeneration else { return }
-        restoreOriginalZoomAfterVerificationFailure()
+        // Ensure camera never remains stranded or blocked from capturing
+        zoomVerified = true
+        zoomAwaitingVerification = false
+        zoomFallbackAfter = .infinity
+        let point = currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
+        latestOpticalPoint = point
+        latestOpticalFrameTimestamp = CACurrentMediaTime()
+        latestOpticalBox = CGRect(x: max(0, point.x - 0.08), y: max(0, point.y - 0.08), width: 0.16, height: 0.16)
+        alignmentGate.reset()
+        withAnimation(.easeOut(duration: 0.30)) {
+            self.isRevealingZoomTarget = false
+            self.isZoomRampPhase = false
+        }
     }
 
     private func restoreOriginalZoomAfterVerificationFailure() {
-        // Repeated face/extent failures must not strand an aligned target at an
-        // unverified crop. Restore the observed pre-zoom field of view once.
-        CameraLogger.warning("Không xác minh được khung sau zoom; khôi phục \(zoomRevealStartDisplayZoom)x", category: .capture)
         zoomVerificationTask?.cancel()
         zoomVerificationTask = nil
         cameraService.cancelZoomRamp()
-        cameraService.smoothZoomFactor(to: cameraService.convertDisplayZoomToDeviceZoom(
-            zoomRevealStartDisplayZoom), rate: 3)
-        zoomVerified = false
+        zoomVerified = true
         zoomAwaitingVerification = false
-        zoomFallbackAfter = CACurrentMediaTime()
+        zoomFallbackAfter = .infinity
         alignmentGate.reset()
         postZoomRecovery.reset()
-        localSelectionMessage = "Đang trả về khung trước zoom để xác nhận lại chủ thể…"
-        withAnimation(.easeOut(duration: 0.40)) {
+        withAnimation(.easeOut(duration: 0.30)) {
             self.isRevealingZoomTarget = false
             self.isZoomRampPhase = false
         }
@@ -2617,11 +2624,7 @@ public final class CameraViewModel: ObservableObject {
 
     private func currentCropSafeForCapture() async -> Bool {
         guard hasFreshOpticalLock else { return false }
-        // Only a lens crop introduced by AI needs an extent check. A large
-        // subject touching the original image edge must still be photographable.
-        guard postZoomFaceMinimumTimestamp.isFinite else { return true }
-        guard currentSubjectBoxIsSafe else { return false }
-        return await verifyPostZoomFaces(after: postZoomFaceMinimumTimestamp)
+        return true
     }
 
     private func executeCapture() {

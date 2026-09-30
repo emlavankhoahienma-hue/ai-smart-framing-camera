@@ -17,6 +17,13 @@ public struct CameraPreviewView: UIViewRepresentable {
         if viewModel.previewLayer !== uiView.previewLayer {
             viewModel.previewLayer = uiView.previewLayer
         }
+        let targetGravity: AVLayerVideoGravity = viewModel.captureMode.isVideo ? .resizeAspect : .resizeAspectFill
+        if uiView.previewLayer?.videoGravity != targetGravity {
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(0.20)
+            uiView.previewLayer?.videoGravity = targetGravity
+            CATransaction.commit()
+        }
     }
 
     public func makeCoordinator() -> Coordinator {

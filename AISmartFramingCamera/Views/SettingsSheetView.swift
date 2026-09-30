@@ -691,8 +691,8 @@ struct PhotoCaptureSettingsSection: View {
                 Divider().background(Color.white.opacity(0.06))
 
                 SettingsToggleRow(
-                    title: "Thước đo âm thanh Stereo (Mic 1 & Mic 2)",
-                    subtitle: "Hiển thị 2 thanh mức tín hiệu độc lập: Mic 1 (Dưới đáy) và Mic 2 (Mặt sau/Camera)",
+                    title: "Thước đo âm thanh (Audio VU Meter)",
+                    subtitle: "Hiển thị 2 thanh đo mức tín hiệu âm thanh trực tiếp trong khung ngắm",
                     icon: "waveform",
                     isOn: $viewModel.showAudioLevelMeter
                 )

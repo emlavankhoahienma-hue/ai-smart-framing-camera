@@ -37,17 +37,19 @@ public struct ARFramingOverlayView: View {
                         .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive)
                 }
 
-                // 2. Detected Faces & Subject preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm)
+                // 2. Detected Faces & Multi-Object Preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm)
                 if viewModel.showDetectionBoxes {
-                    ForEach(0..<viewModel.detectedFaceRects.count, id: \.self) { i in
-                        let rect = viewModel.detectedFaceRects[i]
-                        FaceDetectionBox(rect: viewModel.convertMetadataRectToLayerRect(rect, in: size))
+                    let unpinnedEntities = viewModel.liveDetectedEntities.filter { entity in
+                        guard let target = viewModel.currentTargetPoint else { return true }
+                        return !entity.rect.insetBy(dx: -0.04, dy: -0.04).contains(target)
                     }
-
-                    if viewModel.isAISessionActive && viewModel.localSuggestionRects.isEmpty {
-                        ForEach(0..<viewModel.detectedSubjectRects.count, id: \.self) { i in
-                            let rect = viewModel.detectedSubjectRects[i]
-                            SubjectHighlightBox(rect: viewModel.convertMetadataRectToLayerRect(rect, in: size))
+                    ForEach(unpinnedEntities) { entity in
+                        let layerRect = viewModel.convertMetadataRectToLayerRect(entity.rect, in: size)
+                        LiveEntityBoxView(entity: entity, layerRect: layerRect) {
+                            viewModel.pinTargetAndStartMotion(
+                                at: CGPoint(x: entity.rect.midX, y: entity.rect.midY),
+                                subjectRect: entity.rect
+                            )
                         }
                     }
                 }
@@ -516,7 +518,96 @@ struct GeminiAnalyzingBadge: View {
     }
 }
 
-// MARK: - Boxes
+// MARK: - Live Entity Detection Box & Pro Corner Brackets
+
+struct CornerBracketsShape: Shape {
+    var bracketLength: CGFloat = 12
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let len = min(bracketLength, min(rect.width, rect.height) * 0.35)
+
+        // Top-Left
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + len))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + len, y: rect.minY))
+
+        // Top-Right
+        path.move(to: CGPoint(x: rect.maxX - len, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + len))
+
+        // Bottom-Right
+        path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - len))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - len, y: rect.maxY))
+
+        // Bottom-Left
+        path.move(to: CGPoint(x: rect.minX + len, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - len))
+
+        return path
+    }
+}
+
+struct LiveEntityBoxView: View {
+    let entity: LiveDetectedEntity
+    let layerRect: CGRect
+    let onTap: () -> Void
+
+    var body: some View {
+        let color: Color = {
+            switch entity.category {
+            case .face, .human:
+                return Color(red: 0.20, green: 0.85, blue: 1.0)
+            case .animal:
+                return Color(red: 0.25, green: 0.92, blue: 0.55)
+            case .foregroundObject, .general:
+                return Color(red: 1.0, green: 0.82, blue: 0.25)
+            }
+        }()
+
+        ZStack(alignment: .topLeading) {
+            CornerBracketsShape(bracketLength: min(16, min(layerRect.width, layerRect.height) * 0.35))
+                .stroke(color, lineWidth: 1.5)
+                .frame(width: max(24, layerRect.width), height: max(24, layerRect.height))
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(color.opacity(0.04))
+                )
+
+            HStack(spacing: 3) {
+                Text(entity.label)
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+
+                Text("\(Int(entity.confidence * 100))%")
+                    .font(.system(size: 8, weight: .regular, design: .monospaced))
+                    .foregroundColor(color)
+            }
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(Color.black.opacity(0.72))
+                    .overlay(
+                        Capsule()
+                            .stroke(color.opacity(0.4), lineWidth: 0.6)
+                    )
+            )
+            .offset(x: 2, y: -16)
+        }
+        .position(x: layerRect.midX, y: layerRect.midY)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onTap()
+        }
+        .animation(.easeOut(duration: 0.08), value: layerRect)
+    }
+}
+
+// MARK: - Legacy Boxes
 
 struct FaceDetectionBox: View {
     let rect: CGRect

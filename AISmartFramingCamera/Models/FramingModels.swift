@@ -1317,6 +1317,32 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
     }
 }
 
+// MARK: - Live Detected Entity
+public struct LiveDetectedEntity: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public var rect: CGRect
+    public var label: String
+    public var confidence: Float
+    public var category: NeuralSubjectCategory
+    public var lastSeen: TimeInterval
+
+    public init(
+        id: UUID = UUID(),
+        rect: CGRect,
+        label: String,
+        confidence: Float,
+        category: NeuralSubjectCategory,
+        lastSeen: TimeInterval = 0
+    ) {
+        self.id = id
+        self.rect = rect
+        self.label = label
+        self.confidence = confidence
+        self.category = category
+        self.lastSeen = lastSeen
+    }
+}
+
 // MARK: - Subject AI Data Model
 public struct SubjectDetectionResult {
     public var faceRectangles: [CGRect] = []
@@ -1332,6 +1358,7 @@ public struct SubjectDetectionResult {
     public var averageLuminance: Float = 0.5
     /// Estimated color temperature (K): 2700 warm ~ 8000 cool
     public var estimatedColorTemp: Float = 5500
+    public var detectedEntities: [LiveDetectedEntity] = []
 
     public init() {}
 }
