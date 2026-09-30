@@ -237,7 +237,7 @@ public struct SettingsSheetView: View {
     private var searchResultsView: some View {
         let q = searchText.lowercased()
         VStack(spacing: 16) {
-            if "định dạng ảnh raw jpeg heic dng siêu nét đa khung drizzle super-res live photo lưu ảnh gốc video codec 4k 1080p fps film màu fuji kodak leica horizon focus peaking histogram hiệu chuẩn con quay gyro cân đối xứng".contains(q) {
+            if "định dạng ảnh raw jpeg heic dng siêu nét đa khung drizzle super-res live photo lưu ảnh gốc video codec 4k 1080p fps film màu fuji kodak leica horizon focus peaking histogram hiệu chuẩn con quay gyro cân đối xứng âm thanh audio vu meter micro".contains(q) {
                 PhotoCaptureSettingsSection(viewModel: viewModel)
             }
             if "bố cục tỷ lệ vàng 1/3 tam giác xoắn ốc ai zoom bám chủ thể tự chụp tia hướng dẫn openrouter api key gemini model ping latency".contains(q) {
@@ -687,6 +687,15 @@ struct PhotoCaptureSettingsSection: View {
                     )
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
+
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsToggleRow(
+                    title: "Thước đo âm thanh Stereo (Audio VU Meter)",
+                    subtitle: "Hiển thị 2 thanh đo mức tín hiệu âm thanh trực tiếp trong khung ngắm",
+                    icon: "waveform",
+                    isOn: $viewModel.showAudioLevelMeter
+                )
             }
         }
     }

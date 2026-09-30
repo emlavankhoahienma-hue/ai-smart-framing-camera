@@ -59,6 +59,7 @@
 		C20000000000000000000048 /* CompositionPlanning.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000048 /* CompositionPlanning.swift */; };
 		C20000000000000000000049 /* CompositionImageEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000049 /* CompositionImageEvidence.swift */; };
 		C20000000000000000000050 /* CompositionPreviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000050 /* CompositionPreviewSheet.swift */; };
+		C20000000000000000000051 /* AudioVULevelMeterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000051 /* AudioVULevelMeterView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -116,6 +117,7 @@
 		C10000000000000000000048 /* CompositionPlanning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionPlanning.swift; sourceTree = "<group>"; };
 		C10000000000000000000049 /* CompositionImageEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionImageEvidence.swift; sourceTree = "<group>"; };
 		C10000000000000000000050 /* CompositionPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionPreviewSheet.swift; sourceTree = "<group>"; };
+		C10000000000000000000051 /* AudioVULevelMeterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioVULevelMeterView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -241,6 +243,7 @@
 				B100000000000000000000038 /* LuxuryInteractiveGoldButtonStyle.swift */,
 				C10000000000000000000042 /* GyroCalibrationSheetView.swift */,
 				C10000000000000000000044 /* WindowedZoomOverlayView.swift */,
+				C10000000000000000000051 /* AudioVULevelMeterView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -373,6 +376,7 @@
 				C20000000000000000000045 /* TargetPatchFlow.swift in Sources */,
 				C20000000000000000000046 /* SuperResolutionMetalShaders.swift in Sources */,
 				C20000000000000000000047 /* SuperResolutionRAWEngine.swift in Sources */,
+				C20000000000000000000051 /* AudioVULevelMeterView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

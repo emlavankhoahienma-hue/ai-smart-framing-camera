@@ -99,11 +99,13 @@ public final class CameraService: NSObject {
 
     public weak var delegate: CameraServiceDelegate?
     public var onLiveCameraStatsUpdated: ((LiveCameraStats) -> Void)?
+    public var onAudioLevelsUpdated: ((Float, Float) -> Void)?
 
     // Core AVFoundation objects
     public let captureSession = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "com.alignai.camera.sessionQueue", qos: .userInteractive)
     private let videoDataQueue = DispatchQueue(label: "com.alignai.camera.videoDataQueue", qos: .userInteractive)
+    private let audioDataQueue = DispatchQueue(label: "com.alignai.camera.audioDataQueue", qos: .userInitiated)
     private let photoProcessingQueue = DispatchQueue(label: "com.alignai.camera.photoProcessingQueue", qos: .userInitiated)
 
     private var activeCamera: AVCaptureDevice?
@@ -111,9 +113,11 @@ public final class CameraService: NSObject {
     public var onLiveZoomFactorChanged: ((CGFloat) -> Void)?
     private var videoDeviceInput: AVCaptureDeviceInput?
     private let videoDataOutput = AVCaptureVideoDataOutput()
+    private let audioDataOutput = AVCaptureAudioDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
     private let movieFileOutput = AVCaptureMovieFileOutput()
     private let sharedPhotoContext = CIContext(options: [.useSoftwareRenderer: false])
+    private var lastAudioMeterUpdateTime: CFTimeInterval = 0
 
     // State
     public private(set) var isSessionRunning = false
@@ -383,6 +387,12 @@ public final class CameraService: NSObject {
                        self.captureSession.canAddInput(audioInput) {
                         self.captureSession.addInput(audioInput)
                     }
+                }
+
+                // Audio Data Output for Real-time VU Meter
+                if self.captureSession.canAddOutput(self.audioDataOutput) {
+                    self.captureSession.addOutput(self.audioDataOutput)
+                    self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataQueue)
                 }
 
                 // Video Data Output for Real-time Vision
@@ -1395,9 +1405,14 @@ public final class CameraService: NSObject {
 
 }
 
-// MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
-extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
+// MARK: - AVCaptureVideoDataOutputSampleBufferDelegate & AVCaptureAudioDataOutputSampleBufferDelegate
+extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if output == self.audioDataOutput {
+            handleAudioSampleBuffer(sampleBuffer, from: connection)
+            return
+        }
+
         // Giới hạn tần số dispatch stats lên UI tối đa 5Hz (0.2s) để tránh lag main thread
         let now = CACurrentMediaTime()
         if now - lastStatsUpdateTime >= 0.20 {
@@ -1433,6 +1448,93 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         // Deliver sampleBuffer directly to delegate on background queue (prevents main thread stutter)
         self.delegate?.cameraService(self, didOutputSampleBuffer: sampleBuffer)
+    }
+
+    private func handleAudioSampleBuffer(_ sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        let now = CACurrentMediaTime()
+        guard now - lastAudioMeterUpdateTime >= 0.04 else { return }
+        lastAudioMeterUpdateTime = now
+
+        var leftPower: Float = -60.0
+        var rightPower: Float = -60.0
+
+        let channels = connection.audioChannels
+        if !channels.isEmpty {
+            leftPower = channels[0].averagePowerLevel
+            if channels.count > 1 {
+                rightPower = channels[1].averagePowerLevel
+            } else {
+                rightPower = leftPower
+            }
+        } else {
+            let levels = computePcmLevels(from: sampleBuffer)
+            leftPower = levels.0
+            rightPower = levels.1
+        }
+
+        let minDb: Float = -60.0
+        let leftNorm = max(0.0, min(1.0, (leftPower - minDb) / (-minDb)))
+        let rightNorm = max(0.0, min(1.0, (rightPower - minDb) / (-minDb)))
+
+        DispatchQueue.main.async { [weak self] in
+            self?.onAudioLevelsUpdated?(leftNorm, rightNorm)
+        }
+    }
+
+    private func computePcmLevels(from sampleBuffer: CMSampleBuffer) -> (Float, Float) {
+        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return (-60, -60) }
+        var lengthAtOffset: Int = 0
+        var totalLength: Int = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        guard CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: &lengthAtOffset, totalLengthOut: &totalLength, dataPointerOut: &dataPointer) == noErr,
+              let dataPointer = dataPointer, totalLength > 0 else {
+            return (-60, -60)
+        }
+        guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee else {
+            return (-60, -60)
+        }
+        let channelCount = Int(asbd.mChannelsPerFrame)
+        if asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+            let floatPtr = UnsafeRawPointer(dataPointer).bindMemory(to: Float.self, capacity: totalLength / 4)
+            let sampleCount = totalLength / (4 * max(1, channelCount))
+            guard sampleCount > 0 else { return (-60, -60) }
+            var sumLeft: Float = 0
+            var sumRight: Float = 0
+            for i in 0..<sampleCount {
+                let leftSample = floatPtr[i * channelCount]
+                sumLeft += leftSample * leftSample
+                if channelCount > 1 {
+                    let rightSample = floatPtr[i * channelCount + 1]
+                    sumRight += rightSample * rightSample
+                }
+            }
+            let rmsLeft = sqrt(sumLeft / Float(sampleCount))
+            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : rmsLeft
+            let dbLeft = rmsLeft > 0.0001 ? 20 * log10(rmsLeft) : -60.0
+            let dbRight = rmsRight > 0.0001 ? 20 * log10(rmsRight) : -60.0
+            return (max(-60, dbLeft), max(-60, dbRight))
+        } else if asbd.mBitsPerChannel == 16 {
+            let int16Ptr = UnsafeRawPointer(dataPointer).bindMemory(to: Int16.self, capacity: totalLength / 2)
+            let sampleCount = totalLength / (2 * max(1, channelCount))
+            guard sampleCount > 0 else { return (-60, -60) }
+            var sumLeft: Float = 0
+            var sumRight: Float = 0
+            for i in 0..<sampleCount {
+                let leftSample = Float(int16Ptr[i * channelCount]) / 32768.0
+                sumLeft += leftSample * leftSample
+                if channelCount > 1 {
+                    let rightSample = Float(int16Ptr[i * channelCount + 1]) / 32768.0
+                    sumRight += rightSample * rightSample
+                }
+            }
+            let rmsLeft = sqrt(sumLeft / Float(sampleCount))
+            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : rmsLeft
+            let dbLeft = rmsLeft > 0.0001 ? 20 * log10(rmsLeft) : -60.0
+            let dbRight = rmsRight > 0.0001 ? 20 * log10(rmsRight) : -60.0
+            return (max(-60, dbLeft), max(-60, dbRight))
+        }
+        return (-60, -60)
     }
 }
 

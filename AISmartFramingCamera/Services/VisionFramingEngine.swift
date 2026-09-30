@@ -430,7 +430,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                               frame.timestamp > provisional.timestamp,
                               frame.timestamp - provisional.timestamp < 0.20,
                               observation.confidence >= inertialRecoveryConfidence,
-                              residual <= 0.06,
+                              residual <= 0.10,
                               matchesReferenceColor(buffer, box: rawBox,
                                                     orientation: orientation) else {
                             inertialRecovery = nil
@@ -590,45 +590,49 @@ public final class VisionFramingEngine: @unchecked Sendable {
             if referencePrint == nil { return nil }
         }
         // Search near the bearing first, then sweep the visible image after a
-        // longer miss. Two distinct captured frames must agree.
-        guard frame.timestamp - lastSearch >= 0.30,
+        // longer miss. A verified appearance matching spatial prediction locks immediately.
+        let searchInterval: TimeInterval = (prediction?.isInsideImage == true) ? 0.15 : 0.30
+        guard frame.timestamp - lastSearch >= searchInterval,
               referencePrint != nil else { return nil }
         lastSearch = frame.timestamp
         let center = prediction?.point ?? lastBox.map({ point(in: $0) }) ?? seedPoint
         var searchCenter = center
         if let previous = pendingRecovery,
            let oldProjection = SpatialTrackingEngine.shared.projection(
-               at: previous.frame.timestamp, calibration: previous.frame.calibration) {
+            at: previous.frame.timestamp, calibration: previous.frame.calibration) {
             searchCenter = CGPoint(x: center.x + previous.point.x - oldProjection.point.x,
                                    y: center.y + previous.point.y - oldProjection.point.y)
         }
         if let recovered = search(buffer, center: searchCenter, orientation: orientation) {
-            if let previous = pendingRecovery, frame.timestamp > previous.frame.timestamp,
-               frame.timestamp - previous.frame.timestamp < 0.5 {
-                // Each candidate uses its own capture calibration. Reusing the
-                // current zoom for an older frame can reject a real match.
-                let previousPrediction = SpatialTrackingEngine.shared.projection(
-                    at: previous.frame.timestamp, calibration: previous.frame.calibration)
-                let oldError = CGPoint(x: previous.point.x - (previousPrediction?.point.x ?? center.x),
-                                       y: previous.point.y - (previousPrediction?.point.y ?? center.y))
-                let newError = CGPoint(x: recovered.0.x - center.x, y: recovered.0.y - center.y)
-                if hypot(newError.x - oldError.x, newError.y - oldError.y) < 0.025 {
-                    let recoveredTracker = VisionObjectSequence(box: recovered.2)
-                    // A failed Vision seed is not a successful reacquisition.
-                    guard let observation = try? recoveredTracker.advance(in: buffer, orientation: orientation),
-                          observation.confidence >= 0.40 else { pendingRecovery = nil; return nil }
-                    let confirmedPoint = point(in: observation.boundingBox)
-                    guard hypot(confirmedPoint.x - recovered.0.x, confirmedPoint.y - recovered.0.y) < 0.025 else {
-                        pendingRecovery = nil; return nil
+            let recoveredTracker = VisionObjectSequence(box: recovered.2)
+            if let observation = try? recoveredTracker.advance(in: buffer, orientation: orientation),
+               observation.confidence >= 0.40 {
+                let confirmedPoint = point(in: observation.boundingBox)
+                if hypot(confirmedPoint.x - recovered.0.x, confirmedPoint.y - recovered.0.y) < 0.05 {
+                    let distanceToBearing = hypot(recovered.0.x - center.x, recovered.0.y - center.y)
+                    let matchesBearing = prediction?.isInsideImage == true && distanceToBearing <= 0.08
+                    let previousAgrees: Bool
+                    if let previous = pendingRecovery, frame.timestamp > previous.frame.timestamp,
+                       frame.timestamp - previous.frame.timestamp < 0.5 {
+                        let previousPrediction = SpatialTrackingEngine.shared.projection(
+                            at: previous.frame.timestamp, calibration: previous.frame.calibration)
+                        let oldError = CGPoint(x: previous.point.x - (previousPrediction?.point.x ?? center.x),
+                                               y: previous.point.y - (previousPrediction?.point.y ?? center.y))
+                        let newError = CGPoint(x: recovered.0.x - center.x, y: recovered.0.y - center.y)
+                        previousAgrees = hypot(newError.x - oldError.x, newError.y - oldError.y) < 0.06
+                    } else {
+                        previousAgrees = false
                     }
-                    tracker = recoveredTracker
-                    lastBox = observation.boundingBox; boxSize = recovered.2.size
-                    patchFlow.seed(buffer: buffer, box: observation.boundingBox, point: confirmedPoint)
-                    continuity.accept()
-                    misses = 0; lastAppearanceCheck = frame.timestamp
-                    hasLiveObservation = true
-                    pendingRecovery = nil; pendingLargeInnovation = nil
-                    return (confirmedPoint, min(recovered.1, Double(observation.confidence)), .reidentified)
+                    if matchesBearing || previousAgrees {
+                        tracker = recoveredTracker
+                        lastBox = observation.boundingBox; boxSize = recovered.2.size
+                        patchFlow.seed(buffer: buffer, box: observation.boundingBox, point: confirmedPoint)
+                        continuity.accept()
+                        misses = 0; lastAppearanceCheck = frame.timestamp
+                        hasLiveObservation = true
+                        pendingRecovery = nil; pendingLargeInnovation = nil
+                        return (confirmedPoint, min(recovered.1, Double(observation.confidence)), .reidentified)
+                    }
                 }
             }
             pendingRecovery = (recovered.0, frame)
@@ -752,7 +756,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
 
     private var inertialRecoveryFrameCount: Int {
-        referencePrint != nil || referenceHistogram == nil ? 4 : 3
+        2
     }
 
     private func seedInertialRecovery(_ buffer: CVPixelBuffer,
@@ -776,7 +780,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
               observedBox.maxX <= 1, observedBox.maxY <= 1 else { return false }
         let candidatePoint = point(in: observedBox)
         guard hypot(candidatePoint.x - prediction.point.x,
-                    candidatePoint.y - prediction.point.y) <= 0.06 else { return false }
+                    candidatePoint.y - prediction.point.y) <= 0.08 else { return false }
         tracker = candidate
         lastBox = observedBox
         patchFlow.seed(buffer: buffer, box: observedBox, point: candidatePoint)

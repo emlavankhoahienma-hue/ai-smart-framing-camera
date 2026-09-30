@@ -128,6 +128,15 @@ public struct CameraMainView: View {
                                 .stroke(Color(red: 0.15, green: 0.16, blue: 0.20), lineWidth: 1.0)
                         }
                         .shadow(color: Color.black.opacity(0.60), radius: 12, y: 4)
+                        // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
+                        .overlay(alignment: .topLeading) {
+                            if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating {
+                                AudioVULevelMeterView(levels: viewModel.audioLevels)
+                                    .padding(.top, layout.viewfinderTopInset)
+                                    .padding(.leading, 10)
+                                    .transition(.opacity)
+                            }
+                        }
                         // Top Viewfinder Overlays (Video Timer / AI Status)
                         .overlay(alignment: .top) {
                             VStack(spacing: 6) {

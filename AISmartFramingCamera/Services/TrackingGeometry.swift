@@ -183,15 +183,15 @@ struct AlignmentCaptureGate {
         if let lastTime, time < lastTime || time - lastTime > 0.35 { reset() }
         let dt = lastTime.map { max(0, min(0.05, time - $0)) } ?? 0
         lastTime = time
-        let inside = distance <= radius * (isAligned ? 1.35 : 1)
+        let inside = distance <= radius * (isAligned ? 1.45 : 1)
         if freshEvidence && inside {
             isAligned = true
             lastGoodTime = time
             dwell += dt
-            return dwell >= 0.24 ? .ready : .holding
+            return dwell >= 0.22 ? .ready : .holding
         }
         if isAligned, distance <= radius * 1.8,
-           let lastGoodTime, time - lastGoodTime <= 0.14 {
+           let lastGoodTime, time - lastGoodTime <= 0.18 {
             return .holding
         }
         reset()

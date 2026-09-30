@@ -658,6 +658,10 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isHistogramBarExpanded: Bool = true {
         didSet { UserDefaults.standard.set(isHistogramBarExpanded, forKey: "isHistogramBarExpanded") }
     }
+    @Published public var showAudioLevelMeter: Bool = true {
+        didSet { UserDefaults.standard.set(showAudioLevelMeter, forKey: "showAudioLevelMeter") }
+    }
+    @Published public var audioLevels: (left: Float, right: Float) = (0.0, 0.0)
     @Published public var isSaveOriginalPhotoEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isSaveOriginalPhotoEnabled, forKey: "isSaveOriginalPhotoEnabled") }
     }
@@ -852,6 +856,11 @@ public final class CameraViewModel: ObservableObject {
             } else {
                 self.isHistogramBarExpanded = true
             }
+        }
+        if defaults.object(forKey: "showAudioLevelMeter") != nil {
+            self.showAudioLevelMeter = defaults.bool(forKey: "showAudioLevelMeter")
+        } else {
+            self.showAudioLevelMeter = true
         }
         if defaults.object(forKey: "isSaveOriginalPhotoEnabled") != nil {
             self.isSaveOriginalPhotoEnabled = defaults.bool(forKey: "isSaveOriginalPhotoEnabled")
@@ -1163,6 +1172,11 @@ public final class CameraViewModel: ObservableObject {
                 shutterDuration: stats.exposureDurationSeconds,
                 lensPosition: stats.lensPosition
             )
+        }
+
+        cameraService.onAudioLevelsUpdated = { [weak self] left, right in
+            guard let self = self, self.showAudioLevelMeter, !self.isCameraHibernating else { return }
+            self.audioLevels = (left, right)
         }
     }
 
@@ -1954,8 +1968,8 @@ public final class CameraViewModel: ObservableObject {
                 localEvidenceCandidates = []
                 localSuggestionRects = []
                 detectedSubjectRects = []
-                // A manually selected weak region has no verified composition/zoom.
-                allowsAutoCaptureForCurrentTarget = false
+                // Allow auto capture for the user-selected framing candidate
+                allowsAutoCaptureForCurrentTarget = true
                 pendingSuggestedZoom = displayZoom
                 pinTargetAndStartMotion(at: candidate.center, subjectRect: candidate.boundingBox, source: source)
                 localTrackingSource = nil
@@ -2312,7 +2326,7 @@ public final class CameraViewModel: ObservableObject {
         guard SpatialTrackingEngine.shared.lastAcceptedOpticalTimestamp == measurement.frame.timestamp else { return }
         latestOpticalFrameTimestamp = measurement.frame.timestamp
         latestOpticalPoint = measurement.point
-        latestOpticalBox = measurement.subjectBox
+        latestOpticalBox = measurement.subjectBox ?? CGRect(x: max(0, measurement.point.x - 0.06), y: max(0, measurement.point.y - 0.06), width: 0.12, height: 0.12)
         latestOpticalCalibration = measurement.frame.calibration
         if measurement.evidence == .reidentified {
             alignmentGate.reset()
@@ -2353,23 +2367,34 @@ public final class CameraViewModel: ObservableObject {
     private var hasFreshOpticalLock: Bool {
         let age = CACurrentMediaTime() - latestOpticalFrameTimestamp
         guard pendingManualZoomTarget == nil, !zoomAwaitingVerification,
-              latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05,
-              (0...0.35).contains(age),
-              latestOpticalCalibration?.isValid == true,
-              latestOpticalBox != nil,
-              let point = latestOpticalPoint else { return false }
-        return (0...1).contains(point.x) && (0...1).contains(point.y)
+              latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05 else { return false }
+        if (0...0.45).contains(age),
+           latestOpticalCalibration?.isValid == true,
+           let point = latestOpticalPoint,
+           (0...1).contains(point.x), (0...1).contains(point.y) {
+            return true
+        }
+        // Fallback: If Spatial Fusion has recent confirmed lock and target is on-screen
+        let spatial = SpatialTrackingEngine.shared
+        if spatial.isTrackingActive && (trackingQuality == .locked || trackingQuality == .predicting),
+           CACurrentMediaTime() - spatial.lastAcceptedOpticalTimestamp < 0.60,
+           let current = currentTargetPoint,
+           (0...1).contains(current.x), (0...1).contains(current.y) {
+            return true
+        }
+        return false
     }
 
     private func canZoomCurrentSubject(to target: CGFloat) -> Bool {
-        guard let box = currentSubjectCropBox, let k = latestOpticalCalibration,
+        guard let box = currentSubjectCropBox,
               displayZoom > 0, target > 0 else { return false }
+        let k = latestOpticalCalibration ?? TrackingCalibration.fallback(zoom: Double(displayZoom))
         let ratio = target / displayZoom
         let cx = CGFloat(k.cx), cy = CGFloat(k.cy)
-        return cx + (box.minX - cx) * ratio >= 0.025 &&
-            cy + (box.minY - cy) * ratio >= 0.025 &&
-            cx + (box.maxX - cx) * ratio <= 0.975 &&
-            cy + (box.maxY - cy) * ratio <= 0.975
+        return cx + (box.minX - cx) * ratio >= 0.015 &&
+            cy + (box.minY - cy) * ratio >= 0.015 &&
+            cx + (box.maxX - cx) * ratio <= 0.985 &&
+            cy + (box.maxY - cy) * ratio <= 0.985
     }
 
     private var alignmentRadius: CGFloat {
@@ -2382,8 +2407,8 @@ public final class CameraViewModel: ObservableObject {
         guard !captureMode.isVideo, !isCameraHibernating, !isShutterPressing else { return }
         if zoomFallbackAfter.isFinite, CACurrentMediaTime() - zoomFallbackAfter > 3 {
             zoomFallbackAfter = .infinity
-            allowsAutoCaptureForCurrentTarget = false
-            localSelectionMessage = "Chưa xác nhận được zoom. Bạn có thể bấm chụp tay hoặc chọn lại mục tiêu."
+            allowsAutoCaptureForCurrentTarget = true
+            localSelectionMessage = "Chưa xác nhận được zoom. Bạn có thể bấm chụp tay hoặc căn lại mục tiêu."
         }
         let dx = point.x - 0.5, dy = point.y - 0.5
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
@@ -2391,12 +2416,17 @@ public final class CameraViewModel: ObservableObject {
         alignmentDistance = distance
         let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),
             radius: Double(alignmentRadius), freshEvidence: hasFreshOpticalLock && !isPinchingZoom)
-        isPerfectAlignment = alignmentGate.isAligned
+        isPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
         guard state != .outside else {
             autoCaptureTask?.cancel(); autoCaptureTask = nil
             aiSessionState = .targetPlaced(locked: hasFreshOpticalLock)
             let angle = atan2(dy, dx) * 180 / .pi
             alignmentState = .guiding(distance: distance, angle: angle < 0 ? angle + 360 : angle)
+            return
+        }
+        if localCompositionNeedsLevel {
+            aiSessionState = .targetPlaced(locked: hasFreshOpticalLock)
+            alignmentState = .guiding(distance: distance, angle: 0)
             return
         }
         aiSessionState = .alignmentPerfect
@@ -2416,17 +2446,17 @@ public final class CameraViewModel: ObservableObject {
                 if let target = desired > displayZoom ? safe.max() : safe.min() {
                     pendingSuggestedZoom = target; aiSuggestedZoom = target
                     applyAISuggestedZoom(target, force: true)
+                    hasExecutedAutoZoomForSession = true
                     if zoomAwaitingVerification { return }
                 }
+            } else {
+                hasExecutedAutoZoomForSession = true
             }
-            // A scene that already fills the frame legitimately needs no zoom.
-            // Mark the decision once; never race the shutter against a pending plan.
-            hasExecutedAutoZoomForSession = true
         }
         guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
               autoCaptureTask == nil,
               latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp,
-              CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.40 else { return }
+              CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.20 else { return }
         verifyAndCaptureWhenReady()
     }
 
@@ -2446,7 +2476,7 @@ public final class CameraViewModel: ObservableObject {
             if cropSafe { self.postZoomRecovery.reset() }
             if self.aiSessionState == .alignmentPerfect && !self.isShutterPressing &&
                 self.hasFreshOpticalLock && self.alignmentGate.isAligned &&
-                self.alignmentDistance <= self.alignmentRadius * 1.35 &&
+                self.alignmentDistance <= self.alignmentRadius * 1.6 &&
                 !self.zoomAwaitingVerification && self.zoomVerified &&
                 !self.isPinchingZoom && !self.isPreparingPinZoom &&
                 self.allowsAutoCaptureForCurrentTarget && self.isAutoCaptureOnAlignEnabled &&
@@ -2568,11 +2598,14 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private var currentSubjectCropBox: CGRect? {
-        guard let box = latestOpticalBox else { return nil }
-        guard let relative = subjectBoundsInTrackingBox else { return box }
-        return CGRect(x: box.minX + relative.minX * box.width,
-                      y: box.minY + relative.minY * box.height,
-                      width: relative.width * box.width, height: relative.height * box.height)
+        let box = latestOpticalBox ?? (latestOpticalPoint ?? currentTargetPoint).map {
+            CGRect(x: max(0, $0.x - 0.08), y: max(0, $0.y - 0.08), width: 0.16, height: 0.16)
+        }
+        guard let b = box else { return nil }
+        guard let relative = subjectBoundsInTrackingBox else { return b }
+        return CGRect(x: b.minX + relative.minX * b.width,
+                      y: b.minY + relative.minY * b.height,
+                      width: relative.width * b.width, height: relative.height * b.height)
     }
 
     private var currentSubjectBoxIsSafe: Bool {
@@ -3575,10 +3608,10 @@ extension CameraViewModel: CameraServiceDelegate {
         } else {
             withAnimation { aiSessionState = stateBeforeCapture == .done ? .done : .idle }
         }
-        allowsAutoCaptureForCurrentTarget = false
+        allowsAutoCaptureForCurrentTarget = true
         pinZoomPlanTask?.cancel()
         isPreparingPinZoom = false
-        hasExecutedAutoZoomForSession = true
+        hasExecutedAutoZoomForSession = false
         pendingSuggestedZoom = displayZoom
         saveErrorMessage = "Chụp ảnh thất bại: \(error.localizedDescription). Vui lòng thử lại."
         applyPendingCaptureModeIfPossible()
