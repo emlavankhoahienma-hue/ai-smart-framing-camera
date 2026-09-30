@@ -26,9 +26,6 @@ public final class FilmFilterEngine {
     // MARK: - Memory Management & Cache Eviction (Giai phong GPU & RAM khi doi preset)
     public func clearCache() {
         context.clearCaches()
-        if #available(iOS 16.0, *) {
-            context.reclaimResources()
-        }
     }
 
     // MARK: - Manual Film Presets (62 Tones Chuyen Nghiep)

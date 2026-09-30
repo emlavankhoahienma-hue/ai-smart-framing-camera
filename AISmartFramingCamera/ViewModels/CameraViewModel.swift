@@ -3518,6 +3518,7 @@ extension CameraViewModel: CameraServiceDelegate {
         let windowFocal = settings.focalLength
         let windowAspect = settings.aspect
         let hasColorEdits = isFilmActive && (effectivePreset != .standard || finalColorParams != nil)
+        let appliedIntensity = Float(self.filmSimulationIntensity)
 
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -3543,9 +3544,8 @@ extension CameraViewModel: CameraServiceDelegate {
             var processedImageResult: CGImage = effectiveSourcePhoto
             autoreleasepool {
                 if hasColorEdits {
-                    let intensityVal = Float(self.filmSimulationIntensity)
                     processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(
-                        to: effectiveSourcePhoto, preset: effectivePreset, params: finalColorParams, intensity: intensityVal) ?? effectiveSourcePhoto
+                        to: effectiveSourcePhoto, preset: effectivePreset, params: finalColorParams, intensity: appliedIntensity) ?? effectiveSourcePhoto
                     FilmFilterEngine.shared.clearCache()
                 }
             }
