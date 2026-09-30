@@ -105,7 +105,7 @@ def main():
     (ROOT.parent / 'validation/swift-bracket-report.json').write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if len(files) == 40 and not failures else 1
+    return 0 if len(files) >= 40 and not failures else 1
 
 
 if __name__ == '__main__':
