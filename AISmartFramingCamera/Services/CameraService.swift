@@ -381,6 +381,9 @@ public final class CameraService: NSObject {
                     self.videoDeviceInput = videoInput
                 }
 
+                // Configure AVAudioSession for true multi-microphone stereo capture
+                self.configureAudioSessionForStereoCapture()
+
                 // Add Audio Input for Video Recording
                 if let audioDevice = AVCaptureDevice.default(for: .audio) {
                     if let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
@@ -559,6 +562,7 @@ public final class CameraService: NSObject {
                 return
             }
             self.wantsSessionRunning = true
+            self.configureAudioSessionForStereoCapture()
             if self.videoDeviceInput != nil && !self.captureSession.isRunning && !self.captureSession.isInterrupted {
                 self.captureSession.startRunning()
             }
@@ -673,6 +677,9 @@ public final class CameraService: NSObject {
                 }
             }
             self.captureSession.commitConfiguration()
+            if didSwitch {
+                self.configureAudioSessionForStereoCapture()
+            }
             if didSwitch && self.currentCaptureMode.isVideo {
                 self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
             }
@@ -1403,6 +1410,45 @@ public final class CameraService: NSObject {
         }
     }
 
+    // MARK: - Audio Session Configuration for Stereo Multi-Mic Capture
+    public func configureAudioSessionForStereoCapture() {
+        let audioSession = AVAudioSession.sharedInstance()
+        do {
+            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetooth])
+
+            if let builtInMic = audioSession.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try audioSession.setPreferredInput(builtInMic)
+
+                if let dataSources = builtInMic.dataSources {
+                    let targetOrientation: AVAudioSession.Orientation = (self.currentCameraPosition == .front) ? .front : .back
+                    let stereoDataSource = dataSources.first(where: {
+                        $0.orientation == targetOrientation && ($0.supportedPolarPatterns?.contains(.stereo) == true)
+                    }) ?? dataSources.first(where: {
+                        $0.supportedPolarPatterns?.contains(.stereo) == true
+                    })
+
+                    if let stereoDataSource = stereoDataSource {
+                        try stereoDataSource.setPreferredPolarPattern(.stereo)
+                        try builtInMic.setPreferredDataSource(stereoDataSource)
+                    }
+                }
+            }
+
+            let maxChannels = audioSession.maximumInputNumberOfChannels
+            if maxChannels >= 2 {
+                try audioSession.setPreferredInputNumberOfChannels(2)
+            }
+
+            if #available(iOS 14.0, *) {
+                try audioSession.setPreferredInputOrientation(.portrait)
+            }
+
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            CameraLogger.info("CameraService: AudioSession configured for stereo capture with \(audioSession.inputNumberOfChannels) channels", category: .capture)
+        } catch {
+            CameraLogger.error("CameraService: Failed to configure stereo audio session", error: error, category: .capture)
+        }
+    }
 }
 
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate & AVCaptureAudioDataOutputSampleBufferDelegate
@@ -1464,7 +1510,9 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             if channels.count > 1 {
                 rightPower = channels[1].averagePowerLevel
             } else {
-                rightPower = leftPower
+                // If hardware delivers only 1 channel, do not fake rightPower by duplicating leftPower.
+                // Keep channel 2 silent at -60 dBFS to truthfully reflect available hardware channels.
+                rightPower = -60.0
             }
         } else {
             let levels = computePcmLevels(from: sampleBuffer)
@@ -1510,9 +1558,9 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
                 }
             }
             let rmsLeft = sqrt(sumLeft / Float(sampleCount))
-            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : rmsLeft
+            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : 0.0
             let dbLeft = rmsLeft > 0.0001 ? 20 * log10(rmsLeft) : -60.0
-            let dbRight = rmsRight > 0.0001 ? 20 * log10(rmsRight) : -60.0
+            let dbRight = (channelCount > 1 && rmsRight > 0.0001) ? 20 * log10(rmsRight) : -60.0
             return (max(-60, dbLeft), max(-60, dbRight))
         } else if asbd.mBitsPerChannel == 16 {
             let int16Ptr = UnsafeRawPointer(dataPointer).bindMemory(to: Int16.self, capacity: totalLength / 2)
@@ -1529,9 +1577,9 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
                 }
             }
             let rmsLeft = sqrt(sumLeft / Float(sampleCount))
-            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : rmsLeft
+            let rmsRight = channelCount > 1 ? sqrt(sumRight / Float(sampleCount)) : 0.0
             let dbLeft = rmsLeft > 0.0001 ? 20 * log10(rmsLeft) : -60.0
-            let dbRight = rmsRight > 0.0001 ? 20 * log10(rmsRight) : -60.0
+            let dbRight = (channelCount > 1 && rmsRight > 0.0001) ? 20 * log10(rmsRight) : -60.0
             return (max(-60, dbLeft), max(-60, dbRight))
         }
         return (-60, -60)
