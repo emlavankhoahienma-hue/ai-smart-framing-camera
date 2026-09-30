@@ -1414,7 +1414,7 @@ public final class CameraService: NSObject {
     public func configureAudioSessionForStereoCapture() {
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetooth])
+            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
 
             if let builtInMic = audioSession.availableInputs?.first(where: { $0.portType == .builtInMic }) {
                 try audioSession.setPreferredInput(builtInMic)
