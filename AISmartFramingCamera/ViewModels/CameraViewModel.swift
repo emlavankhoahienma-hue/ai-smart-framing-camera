@@ -1910,11 +1910,14 @@ public final class CameraViewModel: ObservableObject {
                 first.plan.score - localCompositionChoices[1].plan.score >= 0.06 {
             acceptLocalPlan(first.plan, source: source)
         } else if !localCompositionChoices.isEmpty {
+            allowsAutoCaptureForCurrentTarget = false
             localSelectionMessage = "Chọn khung bạn muốn chụp."
             showCompositionPreviews()
         } else if !localEvidenceCandidates.isEmpty {
+            allowsAutoCaptureForCurrentTarget = false
             localSelectionMessage = "Chưa đủ dữ liệu để chọn khung. Chạm vùng đánh dấu để căn và chụp tay."
         } else {
+            allowsAutoCaptureForCurrentTarget = false
             localSelectionMessage = "Chưa có mốc rõ để căn máy. Thử hướng máy sang vùng có chi tiết hoặc chụp tay."
         }
     }
@@ -2380,8 +2383,9 @@ public final class CameraViewModel: ObservableObject {
 
     private var hasFreshOpticalLock: Bool {
         let age = CACurrentMediaTime() - latestOpticalFrameTimestamp
-        guard pendingManualZoomTarget == nil else { return false }
-        if (0...0.55).contains(age),
+        guard pendingManualZoomTarget == nil,
+              latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05 else { return false }
+        if ((0...0.35).contains(age) || (0...0.55).contains(age)),
            latestOpticalCalibration?.isValid == true,
            let point = latestOpticalPoint,
            (0...1).contains(point.x), (0...1).contains(point.y) {
@@ -2511,7 +2515,11 @@ public final class CameraViewModel: ObservableObject {
             let reached = abs(displayZoom - pendingTargetZoomForReveal) <= 0.08
             if reached {
                 if reachedAt == nil { reachedAt = CACurrentMediaTime() }
-                if CACurrentMediaTime() - (reachedAt ?? 0) >= 0.12 {
+                if latestOpticalFrameTimestamp > (reachedAt ?? .infinity) + 0.05 || CACurrentMediaTime() - (reachedAt ?? 0) >= 0.12 {
+                    guard await verifyPostZoomFaces(after: (reachedAt ?? CACurrentMediaTime())) else {
+                        restoreOriginalZoomAfterVerificationFailure()
+                        return
+                    }
                     // Zoom reached target and settled
                     zoomVerified = true
                     zoomAwaitingVerification = false
@@ -2537,26 +2545,14 @@ public final class CameraViewModel: ObservableObject {
             }
         }
         guard !Task.isCancelled, targetPinGeneration == pinGeneration else { return }
-        // Ensure camera never remains stranded or blocked from capturing
-        zoomVerified = true
-        zoomAwaitingVerification = false
-        zoomFallbackAfter = .infinity
-        let point = currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
-        latestOpticalPoint = point
-        latestOpticalFrameTimestamp = CACurrentMediaTime()
-        latestOpticalBox = CGRect(x: max(0, point.x - 0.08), y: max(0, point.y - 0.08), width: 0.16, height: 0.16)
-        alignmentGate.reset()
-        withAnimation(.easeOut(duration: 0.30)) {
-            self.isRevealingZoomTarget = false
-            self.isZoomRampPhase = false
-        }
+        restoreOriginalZoomAfterVerificationFailure()
     }
 
     private func restoreOriginalZoomAfterVerificationFailure() {
         zoomVerificationTask?.cancel()
         zoomVerificationTask = nil
         cameraService.cancelZoomRamp()
-        zoomVerified = true
+        zoomVerified = false
         zoomAwaitingVerification = false
         zoomFallbackAfter = .infinity
         alignmentGate.reset()

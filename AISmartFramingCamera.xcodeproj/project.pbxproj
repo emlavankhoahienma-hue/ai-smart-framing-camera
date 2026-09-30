@@ -60,6 +60,17 @@
 		C20000000000000000000049 /* CompositionImageEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000049 /* CompositionImageEvidence.swift */; };
 		C20000000000000000000050 /* CompositionPreviewSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000050 /* CompositionPreviewSheet.swift */; };
 		C20000000000000000000051 /* AudioVULevelMeterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000051 /* AudioVULevelMeterView.swift */; };
+		C20000000000000000000052 /* FilmSimulationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000052 /* FilmSimulationCore.swift */; };
+		C20000000000000000000053 /* FujiFilmSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000053 /* FujiFilmSimulations.swift */; };
+		C20000000000000000000054 /* KodakFilmSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000054 /* KodakFilmSimulations.swift */; };
+		C20000000000000000000055 /* RicohGRSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000055 /* RicohGRSimulations.swift */; };
+		C20000000000000000000056 /* CanonCCDSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000056 /* CanonCCDSimulations.swift */; };
+		C20000000000000000000057 /* CCDDigicamSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000057 /* CCDDigicamSimulations.swift */; };
+		C20000000000000000000058 /* VintagePhoneSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000058 /* VintagePhoneSimulations.swift */; };
+		C20000000000000000000059 /* InstantPolaroidSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000059 /* InstantPolaroidSimulations.swift */; };
+		C2000000000000000000005A /* VintageCamSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005A /* VintageCamSimulations.swift */; };
+		C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005B /* AnalogDVSimulations.swift */; };
+		C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005C /* CinemaAndStudioSimulations.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -118,6 +129,17 @@
 		C10000000000000000000049 /* CompositionImageEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionImageEvidence.swift; sourceTree = "<group>"; };
 		C10000000000000000000050 /* CompositionPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionPreviewSheet.swift; sourceTree = "<group>"; };
 		C10000000000000000000051 /* AudioVULevelMeterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioVULevelMeterView.swift; sourceTree = "<group>"; };
+		C10000000000000000000052 /* FilmSimulationCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmSimulationCore.swift; sourceTree = "<group>"; };
+		C10000000000000000000053 /* FujiFilmSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FujiFilmSimulations.swift; sourceTree = "<group>"; };
+		C10000000000000000000054 /* KodakFilmSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KodakFilmSimulations.swift; sourceTree = "<group>"; };
+		C10000000000000000000055 /* RicohGRSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RicohGRSimulations.swift; sourceTree = "<group>"; };
+		C10000000000000000000056 /* CanonCCDSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonCCDSimulations.swift; sourceTree = "<group>"; };
+		C10000000000000000000057 /* CCDDigicamSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CCDDigicamSimulations.swift; sourceTree = "<group>"; };
+		C10000000000000000000058 /* VintagePhoneSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VintagePhoneSimulations.swift; sourceTree = "<group>"; };
+		C10000000000000000000059 /* InstantPolaroidSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstantPolaroidSimulations.swift; sourceTree = "<group>"; };
+		C1000000000000000000005A /* VintageCamSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VintageCamSimulations.swift; sourceTree = "<group>"; };
+		C1000000000000000000005B /* AnalogDVSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalogDVSimulations.swift; sourceTree = "<group>"; };
+		C1000000000000000000005C /* CinemaAndStudioSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CinemaAndStudioSimulations.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -198,8 +220,27 @@
 				B100000000000000000000027 /* FocusPeakingEngine.swift */,
 				B100000000000000000000028 /* ProVideoManualControlsService.swift */,
 				B100000000000000000000031 /* RobustTargetEmbedder.bin */,
+				C30000000000000000000001 /* FilmSimulations */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		C30000000000000000000001 /* FilmSimulations */ = {
+			isa = PBXGroup;
+			children = (
+				C10000000000000000000052 /* FilmSimulationCore.swift */,
+				C10000000000000000000053 /* FujiFilmSimulations.swift */,
+				C10000000000000000000054 /* KodakFilmSimulations.swift */,
+				C10000000000000000000055 /* RicohGRSimulations.swift */,
+				C10000000000000000000056 /* CanonCCDSimulations.swift */,
+				C10000000000000000000057 /* CCDDigicamSimulations.swift */,
+				C10000000000000000000058 /* VintagePhoneSimulations.swift */,
+				C10000000000000000000059 /* InstantPolaroidSimulations.swift */,
+				C1000000000000000000005A /* VintageCamSimulations.swift */,
+				C1000000000000000000005B /* AnalogDVSimulations.swift */,
+				C1000000000000000000005C /* CinemaAndStudioSimulations.swift */,
+			);
+			path = FilmSimulations;
 			sourceTree = "<group>";
 		};
 		B30000000000000000000008 /* Resources */ = {
@@ -377,6 +418,17 @@
 				C20000000000000000000046 /* SuperResolutionMetalShaders.swift in Sources */,
 				C20000000000000000000047 /* SuperResolutionRAWEngine.swift in Sources */,
 				C20000000000000000000051 /* AudioVULevelMeterView.swift in Sources */,
+				C20000000000000000000052 /* FilmSimulationCore.swift in Sources */,
+				C20000000000000000000053 /* FujiFilmSimulations.swift in Sources */,
+				C20000000000000000000054 /* KodakFilmSimulations.swift in Sources */,
+				C20000000000000000000055 /* RicohGRSimulations.swift in Sources */,
+				C20000000000000000000056 /* CanonCCDSimulations.swift in Sources */,
+				C20000000000000000000057 /* CCDDigicamSimulations.swift in Sources */,
+				C20000000000000000000058 /* VintagePhoneSimulations.swift in Sources */,
+				C20000000000000000000059 /* InstantPolaroidSimulations.swift in Sources */,
+				C2000000000000000000005A /* VintageCamSimulations.swift in Sources */,
+				C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */,
+				C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
