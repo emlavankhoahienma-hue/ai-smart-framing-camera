@@ -49,6 +49,14 @@ jobs:
             -o "$RUNNER_TEMP/composition-regressions"
           "$RUNNER_TEMP/composition-regressions"
 
+      - name: Run native capture transition regressions
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/TrackingGeometry.swift \
+            tests/CaptureTransitionRegression.swift \
+            -o "$RUNNER_TEMP/capture-transition-regressions"
+          "$RUNNER_TEMP/capture-transition-regressions"
+
       - name: Export & Compile pinned YOLO11 CoreML models
         env:
           # Ultralytics/CoreMLTools currently emit upstream torch tracing and

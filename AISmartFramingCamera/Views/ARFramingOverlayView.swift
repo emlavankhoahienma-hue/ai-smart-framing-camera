@@ -104,10 +104,8 @@ public struct ARFramingOverlayView: View {
                     // Target Vàng
                     TargetCircleView(
                         isAligned: viewModel.isPerfectAlignment,
-                        alignmentDistance: viewModel.alignmentDistance,
                         radarPulse: radarPulse,
                         radarOpacity: radarOpacity,
-                        countdown: viewModel.autoCaptureCountdown,
                         trackingQuality: viewModel.trackingQuality
                     )
                     .position(targetScreen)
@@ -127,19 +125,9 @@ public struct ARFramingOverlayView: View {
 
                 // Optical centre is always fixed in the photo viewfinder.
                 if !viewModel.captureMode.isVideo {
-                    CurrentCenterCrosshair(
-                        isAligned: viewModel.isPerfectAlignment,
-                        sessionState: viewModel.aiSessionState,
-                        distance: viewModel.alignmentDistance
-                    )
+                    CurrentCenterCrosshair()
                     .position(screenCenter)
                     .transition(.opacity.combined(with: .scale(scale: 0.7)))
-                }
-
-                // 6. Countdown Overlay khi 2 tâm đã trùng khớp
-                if case .alignmentPerfect = viewModel.aiSessionState {
-                    CountdownOverlayView(countdown: viewModel.autoCaptureCountdown,
-                                         bottomInset: max(80, min(118, size.height * 0.22)))
                 }
 
                 // 7. Success Flash
@@ -402,10 +390,6 @@ struct CompositionGridLines: View {
 // MARK: - Center Dot (Chấm Trắng Cố Định Ở Chính Giữa Màn Hình - Chuẩn Ảnh 1)
 
 struct CurrentCenterCrosshair: View {
-    let isAligned: Bool
-    let sessionState: AISessionState
-    let distance: CGFloat
-
     var body: some View {
         Circle()
             .fill(Color.white)
@@ -432,10 +416,8 @@ struct PlusCrosshairShape: Shape {
 
 struct TargetCircleView: View {
     let isAligned: Bool
-    let alignmentDistance: CGFloat
     let radarPulse: CGFloat
     let radarOpacity: Double
-    let countdown: Int
     let trackingQuality: TrackingQuality
 
     private var ringColor: Color {
@@ -503,28 +485,6 @@ struct GuidanceRayLine: View {
             Color.yellow.opacity(0.65 * Double(min(1.0, distance / 0.1 + 0.4))),
             style: StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [5, 5], dashPhase: dashOffset)
         )
-    }
-}
-
-// MARK: - Countdown Overlay
-
-struct CountdownOverlayView: View {
-    let countdown: Int
-    let bottomInset: CGFloat
-    var body: some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 8) {
-                Image(systemName: "camera.fill").font(.system(size: 15, weight: .bold))
-                Text(countdown > 0 ? "Chụp trong \(countdown)..." : "Đang chụp...")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-            }
-            .foregroundColor(.black)
-            .padding(.horizontal, 18).padding(.vertical, 9)
-            .background(Capsule().fill(Color.green))
-            .shadow(color: Color.green.opacity(0.4), radius: 10)
-            Spacer().frame(height: bottomInset)
-        }
     }
 }
 

@@ -199,3 +199,32 @@ struct AlignmentCaptureGate {
         return .outside
     }
 }
+
+/// Bound repeated post-zoom validation failures without weakening crop safety.
+/// Recovery requires a new frame at the restored hardware zoom, never just a command.
+struct PostZoomRecoveryPolicy {
+    private var firstFailure: TimeInterval?
+    private var failureCount = 0
+
+    mutating func reset() { firstFailure = nil; failureCount = 0 }
+
+    mutating func shouldRestoreOriginal(afterFailedCheckAt time: TimeInterval) -> Bool {
+        guard time.isFinite else { return false }
+        if firstFailure == nil || time < (firstFailure ?? time) {
+            firstFailure = time
+            failureCount = 0
+        }
+        failureCount += 1
+        return failureCount >= 3 && time - (firstFailure ?? time) >= 1.2
+    }
+
+    static func hasRestoredFrame(originalZoom: Double, hardwareZoom: Double,
+                                 frameZoom: Double, frameTime: TimeInterval,
+                                 recoveryBegan: TimeInterval, now: TimeInterval) -> Bool {
+        guard [originalZoom, hardwareZoom, frameZoom, frameTime, recoveryBegan, now]
+            .allSatisfy(\.isFinite), originalZoom > 0 else { return false }
+        return abs(hardwareZoom - originalZoom) <= 0.08 &&
+            abs(frameZoom - originalZoom) <= 0.08 &&
+            frameTime > recoveryBegan + 0.10 && (0...0.35).contains(now - frameTime)
+    }
+}

@@ -134,7 +134,7 @@ class StabilityTests(unittest.TestCase):
         handler = VM.split('private func handleVisualTargetTracked', 1)[1].split('private var hasFreshOpticalLock', 1)[0]
         self.assertLess(handler.index('lastAcceptedOpticalTimestamp == measurement.frame.timestamp'),
                         handler.index('latestOpticalFrameTimestamp = measurement.frame.timestamp'))
-        countdown = VM.split('private func startAutoCaptureCountdown', 1)[1].split('private func verifyZoomAfterRamp', 1)[0]
+        countdown = VM.split('private func verifyAndCaptureWhenReady', 1)[1].split('private func verifyZoomAfterRamp', 1)[0]
         for required in ['self.hasFreshOpticalLock',
                          '!self.zoomAwaitingVerification && self.zoomVerified',
                          'self.targetPinGeneration == pinGeneration']:
@@ -145,16 +145,16 @@ class StabilityTests(unittest.TestCase):
         pin = VM.split('private func pinTargetAndStartMotion', 1)[1].split('private func handleVisualTargetTracked', 1)[0]
         self.assertIn('if source == nil {', pin)
         self.assertNotIn('self.pendingSuggestedZoom = 3.0', pin)
-        evaluate = VM.split('private func evaluateAlignment', 1)[1].split('private func startAutoCaptureCountdown', 1)[0]
+        evaluate = VM.split('private func evaluateAlignment', 1)[1].split('private func verifyAndCaptureWhenReady', 1)[0]
         self.assertIn('if isAutoZoomEnabled && !hasExecutedAutoZoomForSession {', evaluate)
-        self.assertLess(evaluate.index('applyAISuggestedZoom'), evaluate.index('startAutoCaptureCountdown'))
+        self.assertLess(evaluate.index('applyAISuggestedZoom'), evaluate.index('verifyAndCaptureWhenReady'))
         self.assertIn('autoCaptureTask == nil', evaluate)
         self.assertIn('!hasExecutedAutoZoomForSession', evaluate)
         self.assertNotIn('([1.0, 2.0, 3.0, currentZoom] + availableOptions)', COMPOSITION)
 
     def test_zoom_timeout_cannot_become_verified(self):
         verify = VM.split('private func verifyZoomAfterRamp', 1)[1].split('private func verifyPostZoomFaces', 1)[0]
-        timeout = verify.split('// A timeout is not proof', 1)[1]
+        timeout = verify.split('private func restoreOriginalZoomAfterVerificationFailure()', 1)[1]
         self.assertIn('zoomVerified = false', timeout)
         self.assertNotIn('zoomVerified = true', timeout)
         self.assertIn('pendingTargetZoomForReveal', verify)

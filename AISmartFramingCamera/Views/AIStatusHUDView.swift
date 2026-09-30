@@ -17,7 +17,8 @@ public struct AIStatusHUDView: View {
                     Text(statusText)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.white.opacity(0.95))
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
 
                     // Huy hiệu nhận biết AI Cloud / Local
                     if viewModel.activeAIIndicatorType == .cloud {
@@ -143,22 +144,12 @@ public struct AIStatusHUDView: View {
                 return "Chưa có khung để chọn"
             }
             return viewModel.localCompositionChoices.isEmpty ? "Đang so sánh bố cục…" : "Chọn phương án bố cục"
-        case .targetPlaced:
-            if viewModel.trackingQuality == .reacquiring || viewModel.trackingQuality == .lost {
-                return "Đang tìm lại chủ thể…"
-            }
-            return "Đã khóa chủ thể · Di chuyển máy đến vòng tròn"
-        case .alignmentPerfect:
-            if viewModel.needsManualShutter { return "Đã căn khung · Bấm nút chụp" }
-            if viewModel.localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
-            return "Đã khớp · Giữ máy ổn định"
+        case .targetPlaced, .alignmentPerfect:
+            return viewModel.alignmentStatusText
         case .capturing:
-            if let customProgress = viewModel.superResolutionProgressText {
-                return customProgress
-            }
-            return "Đang chụp…"
+            return viewModel.captureStatusText
         case .done:
-            return "Đã lưu ảnh"
+            return "Đã chụp ảnh"
         }
     }
 }

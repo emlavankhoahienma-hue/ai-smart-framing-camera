@@ -171,7 +171,9 @@ public final class CameraViewModel: ObservableObject {
             localCompositionIntent = nil
         }
     }
-    private var targetPinGeneration: UInt64 = 0
+    private var targetPinGeneration: UInt64 = 0 {
+        didSet { postZoomRecovery.reset() }
+    }
     @Published public var aiSessionState: AISessionState = .idle {
         didSet {
             switch aiSessionState {
@@ -232,7 +234,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isSuperResolutionRAWEnabled: Bool = UserDefaults.standard.bool(forKey: "isSuperResolutionRAWEnabled") {
         didSet { UserDefaults.standard.set(isSuperResolutionRAWEnabled, forKey: "isSuperResolutionRAWEnabled") }
     }
-    @Published public var superResolutionProgressText: String? = nil
+    @Published public private(set) var photoCapturePhase: PhotoCapturePhase = .preparing
     @Published public var isStreetTrackingModeEnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(isStreetTrackingModeEnabled, forKey: "isStreetTrackingModeEnabled")
@@ -304,8 +306,10 @@ public final class CameraViewModel: ObservableObject {
     private var zoomAwaitingVerification = false
     private var zoomVerified = true
     private var pendingManualZoomTarget: CGFloat?
+    private var manualZoomRequestID: UUID?
     private var manualZoomSettledAt = -Double.infinity
     private var zoomFallbackAfter = Double.infinity
+    private var postZoomRecovery = PostZoomRecoveryPolicy()
     private var zoomVerificationTask: Task<Void, Never>?
     private var zoomStartFrameTimestamp = -Double.infinity
     private var postZoomFaceMinimumTimestamp = -Double.infinity
@@ -430,9 +434,9 @@ public final class CameraViewModel: ObservableObject {
         let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetZoom)
         guard abs(targetDeviceZoom - currentZoom) > 0.05 else { return }
         hasExecutedAutoZoomForSession = true
+        postZoomRecovery.reset()
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
-        autoCaptureCountdown = 0
         zoomVerified = false
         zoomAwaitingVerification = true
         zoomFallbackAfter = .infinity
@@ -562,7 +566,6 @@ public final class CameraViewModel: ObservableObject {
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
     @Published public var activeFlashMode2: Bool = false
-    @Published public var autoCaptureCountdown: Int = 0
     @Published public var currentAIColorParams: AIColorParameters? = nil
 
     // MARK: - Smart Camera Hibernation (Ngủ đông thông minh tiết kiệm CPU/GPU/RAM)
@@ -1064,6 +1067,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func cancelAIZoomForGesture() {
+        manualZoomRequestID = nil
         // Tuyet doi khong xoa AI session, targetPoint hoac mang bounding box khi zoom 1x <-> 2x
         targetPinGeneration &+= 1
         alignmentGate.reset()
@@ -1074,7 +1078,6 @@ public final class CameraViewModel: ObservableObject {
         autoCaptureTask = nil
         zoomVerificationTask?.cancel()
         zoomVerificationTask = nil
-        autoCaptureCountdown = 0
         cameraService.cancelZoomRamp()
         isRevealingZoomTarget = false
         isZoomRampPhase = false
@@ -1083,6 +1086,7 @@ public final class CameraViewModel: ObservableObject {
         pendingManualZoomTarget = nil
         manualZoomSettledAt = CACurrentMediaTime()
         zoomFallbackAfter = .infinity
+        postZoomRecovery.reset()
         postZoomFaceMinimumTimestamp = -Double.infinity
         hasExecutedAutoZoomForSession = true
     }
@@ -1303,12 +1307,11 @@ public final class CameraViewModel: ObservableObject {
         pinZoomPlanTask?.cancel()
         pinZoomPlanTask = nil
         isPreparingPinZoom = false
-        if zoomAwaitingVerification { cameraService.cancelZoomRamp() }
+        if zoomAwaitingVerification || zoomFallbackAfter.isFinite { cameraService.cancelZoomRamp() }
         zoomVerificationTask?.cancel()
         zoomVerificationTask = nil
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
-        autoCaptureCountdown = 0
         haptics.triggerSelectionChange()
         self.aiSessionGeneration += 1
         let requestGeneration = self.aiSessionGeneration
@@ -1439,10 +1442,11 @@ public final class CameraViewModel: ObservableObject {
         pinZoomPlanTask = nil
         isPreparingPinZoom = false
         self.aiSessionGeneration += 1
-        if zoomAwaitingVerification { cameraService.cancelZoomRamp() }
+        if zoomAwaitingVerification || zoomFallbackAfter.isFinite { cameraService.cancelZoomRamp() }
         zoomVerificationTask?.cancel()
         zoomVerificationTask = nil
         zoomAwaitingVerification = false
+        zoomFallbackAfter = .infinity
         isRevealingZoomTarget = false
         isZoomRampPhase = false
         autoCaptureTask?.cancel()
@@ -1479,21 +1483,24 @@ public final class CameraViewModel: ObservableObject {
     /// Called when the camera overlay disappears or the app resigns active.
     /// A resumed CoreMotion reference frame must not inherit the old world ray.
     public func suspendSpatialTracking() {
+        isPinchingZoom = false
+        pendingManualZoomTarget = nil
+        manualZoomRequestID = nil
         targetPinGeneration &+= 1
         alignmentGate.reset()
         pinZoomPlanTask?.cancel()
         pinZoomPlanTask = nil
         isPreparingPinZoom = false
         aiSessionGeneration += 1
-        if zoomAwaitingVerification { cameraService.cancelZoomRamp() }
+        if zoomAwaitingVerification || zoomFallbackAfter.isFinite { cameraService.cancelZoomRamp() }
         zoomVerificationTask?.cancel()
         zoomVerificationTask = nil
         zoomAwaitingVerification = false
+        zoomFallbackAfter = .infinity
         isRevealingZoomTarget = false
         isZoomRampPhase = false
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
-        autoCaptureCountdown = 0
         visionEngine.stopTrackingObject()
         visionEngine.captureNextFrameForGemini = false
         visionEngine.onFrameCapturedForAI = nil
@@ -1999,6 +2006,30 @@ public final class CameraViewModel: ObservableObject {
         !isAutoCaptureOnAlignEnabled || !allowsAutoCaptureForCurrentTarget
     }
 
+    var alignmentStatusText: String {
+        if !isCameraReady { return "Đang chờ camera sẵn sàng…" }
+        if isPinchingZoom || pendingManualZoomTarget != nil { return "Đang điều chỉnh zoom…" }
+        if isPreparingPinZoom { return "Đang chọn mức zoom phù hợp…" }
+        if zoomAwaitingVerification { return "Đang zoom và xác nhận lại chủ thể…" }
+        if zoomFallbackAfter.isFinite { return "Đang khôi phục khung trước zoom…" }
+        if needsManualShutter {
+            return localSelectionMessage ?? "Chế độ chụp tay · Bấm nút chụp khi vừa ý"
+        }
+        if !zoomVerified { return "Chưa xác nhận được zoom · Có thể bấm chụp tay" }
+        if !hasFreshOpticalLock { return "Đang xác nhận lại chủ thể trong ảnh…" }
+        if localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
+        if autoCaptureTask != nil { return "Đang kiểm tra khung trước khi chụp…" }
+        return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" : "Di chuyển tâm trắng vào vòng mục tiêu"
+    }
+
+    var captureStatusText: String {
+        switch photoCapturePhase {
+        case .preparing: return "Đang chuẩn bị camera…"
+        case .exposing: return "Đang chụp…"
+        case .processing: return "Đang xử lý ảnh…"
+        }
+    }
+
     private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,
                                           source: AITrackingSource?,
                                           trackedPoint: CGPoint? = nil,
@@ -2040,9 +2071,8 @@ public final class CameraViewModel: ObservableObject {
         zoomVerificationTask = nil
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
-        autoCaptureCountdown = 0
         isPerfectAlignment = false
-        let hadZoomRamp = zoomAwaitingVerification
+        let hadZoomRamp = zoomAwaitingVerification || zoomFallbackAfter.isFinite
         isRevealingZoomTarget = false
         isZoomRampPhase = false
         zoomAwaitingVerification = false
@@ -2290,16 +2320,18 @@ public final class CameraViewModel: ObservableObject {
             lastFailedCaptureAttemptTime = -.infinity
         }
         if zoomFallbackAfter.isFinite,
-           measurement.frame.timestamp > zoomFallbackAfter + 0.05,
-           (currentSubjectBoxIsSafe ||
-            abs(displayZoom - zoomRevealStartDisplayZoom) <= 0.08) {
-            // A failed ramp is not a verified target zoom. A new accepted
-            // image can still validate the actual hardware crop for capture.
+           PostZoomRecoveryPolicy.hasRestoredFrame(
+               originalZoom: Double(zoomRevealStartDisplayZoom), hardwareZoom: Double(displayZoom),
+               frameZoom: measurement.frame.displayZoom, frameTime: measurement.frame.timestamp,
+               recoveryBegan: zoomFallbackAfter, now: CACurrentMediaTime()) {
             zoomVerified = true
             pendingSuggestedZoom = displayZoom
             aiSuggestedZoom = displayZoom
-            postZoomFaceMinimumTimestamp = currentSubjectBoxIsSafe ? zoomFallbackAfter : -.infinity
+            // The original field of view has not introduced an AI crop.
+            postZoomFaceMinimumTimestamp = -.infinity
             zoomFallbackAfter = .infinity
+            postZoomRecovery.reset()
+            alignmentGate.reset()
             localSelectionMessage = nil
         }
         if needsFocusOnTrackedSubject, measurement.confidence >= 0.55,
@@ -2348,6 +2380,11 @@ public final class CameraViewModel: ObservableObject {
 
     private func evaluateAlignment(at point: CGPoint) {
         guard !captureMode.isVideo, !isCameraHibernating, !isShutterPressing else { return }
+        if zoomFallbackAfter.isFinite, CACurrentMediaTime() - zoomFallbackAfter > 3 {
+            zoomFallbackAfter = .infinity
+            allowsAutoCaptureForCurrentTarget = false
+            localSelectionMessage = "Chưa xác nhận được zoom. Bạn có thể bấm chụp tay hoặc chọn lại mục tiêu."
+        }
         let dx = point.x - 0.5, dy = point.y - 0.5
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
         let distance = hypot(dx, dy / aspect)
@@ -2356,7 +2393,7 @@ public final class CameraViewModel: ObservableObject {
             radius: Double(alignmentRadius), freshEvidence: hasFreshOpticalLock && !isPinchingZoom)
         isPerfectAlignment = alignmentGate.isAligned
         guard state != .outside else {
-            autoCaptureTask?.cancel(); autoCaptureTask = nil; autoCaptureCountdown = 0
+            autoCaptureTask?.cancel(); autoCaptureTask = nil
             aiSessionState = .targetPlaced(locked: hasFreshOpticalLock)
             let angle = atan2(dy, dx) * 180 / .pi
             alignmentState = .guiding(distance: distance, angle: angle < 0 ? angle + 360 : angle)
@@ -2390,10 +2427,10 @@ public final class CameraViewModel: ObservableObject {
               autoCaptureTask == nil,
               latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp,
               CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.40 else { return }
-        startAutoCaptureCountdown()
+        verifyAndCaptureWhenReady()
     }
 
-    private func startAutoCaptureCountdown() {
+    private func verifyAndCaptureWhenReady() {
         guard autoCaptureTask == nil else { return }
         let pinGeneration = targetPinGeneration
         autoCaptureTask = Task { [weak self] in
@@ -2401,7 +2438,12 @@ public final class CameraViewModel: ObservableObject {
             let cropSafe = await self.currentCropSafeForCapture()
             guard !Task.isCancelled, self.targetPinGeneration == pinGeneration else { return }
             self.autoCaptureTask = nil
-            self.autoCaptureCountdown = 0
+            if !cropSafe, self.postZoomFaceMinimumTimestamp.isFinite,
+               self.postZoomRecovery.shouldRestoreOriginal(afterFailedCheckAt: CACurrentMediaTime()) {
+                self.restoreOriginalZoomAfterVerificationFailure()
+                return
+            }
+            if cropSafe { self.postZoomRecovery.reset() }
             if self.aiSessionState == .alignmentPerfect && !self.isShutterPressing &&
                 self.hasFreshOpticalLock && self.alignmentGate.isAligned &&
                 self.alignmentDistance <= self.alignmentRadius * 1.35 &&
@@ -2463,17 +2505,25 @@ public final class CameraViewModel: ObservableObject {
                 }
             } else { settledSince = nil }
         }
-        // A timeout is not proof that the lens reached the requested crop.
         guard !Task.isCancelled, targetPinGeneration == pinGeneration else { return }
+        restoreOriginalZoomAfterVerificationFailure()
+    }
+
+    private func restoreOriginalZoomAfterVerificationFailure() {
+        // Repeated face/extent failures must not strand an aligned target at an
+        // unverified crop. Restore the observed pre-zoom field of view once.
+        CameraLogger.warning("Không xác minh được khung sau zoom; khôi phục \(zoomRevealStartDisplayZoom)x", category: .capture)
+        zoomVerificationTask?.cancel()
+        zoomVerificationTask = nil
         cameraService.cancelZoomRamp()
-        if !currentSubjectBoxIsSafe {
-            cameraService.smoothZoomFactor(to: cameraService.convertDisplayZoomToDeviceZoom(
-                zoomRevealStartDisplayZoom), rate: 3)
-        }
+        cameraService.smoothZoomFactor(to: cameraService.convertDisplayZoomToDeviceZoom(
+            zoomRevealStartDisplayZoom), rate: 3)
         zoomVerified = false
         zoomAwaitingVerification = false
         zoomFallbackAfter = CACurrentMediaTime()
-        localSelectionMessage = nil
+        alignmentGate.reset()
+        postZoomRecovery.reset()
+        localSelectionMessage = "Đang trả về khung trước zoom để xác nhận lại chủ thể…"
         withAnimation(.easeOut(duration: 0.40)) {
             self.isRevealingZoomTarget = false
             self.isZoomRampPhase = false
@@ -2492,14 +2542,22 @@ public final class CameraViewModel: ObservableObject {
             return false
         }
         let frame = FaceVerificationFrame(buffer: snapshot.0)
-        let rectangles = await Task.detached(priority: .userInitiated) { () -> [CGRect]? in
-            let request = VNDetectFaceRectanglesRequest()
-            let handler = VNImageRequestHandler(cvPixelBuffer: frame.buffer,
-                                                orientation: .up, options: [:])
-            guard (try? handler.perform([request])) != nil,
-                  let results = request.results else { return nil }
-            return results.filter { $0.confidence >= 0.35 }.map(\.boundingBox)
-        }.value
+        let cancellation = CompositionAnalysisCancellation()
+        let timeout = Task {
+            do { try await Task.sleep(nanoseconds: 750_000_000) } catch { return }
+            cancellation.cancel()
+        }
+        defer { timeout.cancel() }
+        let rectangles = await withTaskCancellationHandler {
+            await Task.detached(priority: .userInitiated) { () -> [CGRect]? in
+                let request = VNDetectFaceRectanglesRequest()
+                let handler = VNImageRequestHandler(cvPixelBuffer: frame.buffer,
+                                                    orientation: .up, options: [:])
+                guard (try? cancellation.perform(request, with: handler)) != nil,
+                      let results = request.results else { return nil }
+                return results.filter { $0.confidence >= 0.35 }.map(\.boundingBox)
+            }.value
+        } onCancel: { cancellation.cancel() }
         guard !Task.isCancelled, let faces = rectangles,
               CACurrentMediaTime() - snapshot.1.timestamp <= 0.50 else { return false }
         return faces.count >= postZoomFaceCount && faces.allSatisfy {
@@ -2550,11 +2608,7 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        if isSuperResolutionRAWEnabled {
-            executeSuperResolutionCapture()
-        } else {
-            captureNativePhoto(highResolution: false)
-        }
+        captureNativePhoto(highResolution: isSuperResolutionRAWEnabled)
     }
 
     // MARK: - Actions
@@ -2562,20 +2616,29 @@ public final class CameraViewModel: ObservableObject {
     private var lastContinuousAppliedZoom: CGFloat = 1.0
 
     public func beginManualZoomGesture() {
-        guard !isPinchingZoom else { return }
+        guard !isPinchingZoom, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         cancelAIZoomForGesture()
         isPinchingZoom = true
     }
 
     private func requestManualZoom(_ displayZoomVal: CGFloat) {
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        let requestID = UUID()
+        manualZoomRequestID = requestID
         pendingManualZoomTarget = deviceZoom
         manualZoomSettledAt = CACurrentMediaTime()
-        cameraService.setZoomFactor(deviceZoom)
+        cameraService.setZoomFactor(deviceZoom) { [weak self] actualZoom in
+            guard let self, self.manualZoomRequestID == requestID else { return }
+            self.manualZoomRequestID = nil
+            self.pendingManualZoomTarget = nil
+            self.manualZoomSettledAt = CACurrentMediaTime()
+            self.zoomVerified = actualZoom != nil
+            self.alignmentGate.reset()
+        }
     }
 
     public func setZoom(_ displayZoomVal: CGFloat) {
-        guard displayZoomVal.isFinite else { return }
+        guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         cancelAIZoomForGesture()
         requestManualZoom(displayZoomVal)
     }
@@ -2583,7 +2646,7 @@ public final class CameraViewModel: ObservableObject {
     /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
     /// Tự động throttle AVFoundation calls (25ms) để chống nghẽn hàng đợi camera phần cứng
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
-        guard displayZoomVal.isFinite else { return }
+        guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
         selectedZoomPreset = displayZoomVal < 1.5 ? 1.0 : (displayZoomVal < 2.5 ? 2.0 : 3.0)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
@@ -2597,6 +2660,10 @@ public final class CameraViewModel: ObservableObject {
 
     /// Chốt zoom cuối cùng khi người dùng nhấc ngón tay kết thúc pinch
     public func finishZoomGesture(_ finalDisplayZoom: CGFloat) {
+        guard isCameraReady, !isShutterPressing, !isCameraHibernating else {
+            isPinchingZoom = false
+            return
+        }
         guard finalDisplayZoom.isFinite else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
         selectedZoomPreset = finalDisplayZoom < 1.5 ? 1.0 : (finalDisplayZoom < 2.5 ? 2.0 : 3.0)
@@ -2608,7 +2675,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func setZoomFromButton(_ displayZoomVal: CGFloat) {
-        guard displayZoomVal.isFinite else { return }
+        guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         cancelAIZoomForGesture()
         haptics.triggerSelectionChange()
         selectedZoomPreset = displayZoomVal
@@ -3039,7 +3106,8 @@ public final class CameraViewModel: ObservableObject {
         guard horizonMotionManager.isDeviceMotionAvailable else { return }
         horizonMotionManager.deviceMotionUpdateInterval = 1.0 / 30.0
         horizonMotionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: OperationQueue.main) { [weak self] (motion: CMDeviceMotion?, error: Error?) in
-            guard let self = self, let motion = motion, self.isHorizonLevelerEnabled, !self.isCameraHibernating else { return }
+            // Auto capture needs current gravity even when its overlay is hidden.
+            guard let self = self, let motion = motion, !self.isCameraHibernating else { return }
             let gx = Double(motion.gravity.x)
             let gy = Double(motion.gravity.y)
             let rawRoll = atan2(gx, -gy) * 180.0 / .pi
@@ -3049,7 +3117,7 @@ public final class CameraViewModel: ObservableObject {
             let level = abs(calibratedRoll) <= (self.isDeviceLevel ? 1.3 : 0.8)
             let now = CACurrentMediaTime()
             if level && !self.isDeviceLevel && !self.hasTriggeredLevelHaptic {
-                if self.isProximityHapticsEnabled && !self.isAISessionActive &&
+                if self.isHorizonLevelerEnabled && self.isProximityHapticsEnabled && !self.isAISessionActive &&
                    !self.isShutterPressing && now - self.lastLevelHapticTime >= 2 {
                     self.haptics.triggerSelectionChange()
                     self.lastLevelHapticTime = now
@@ -3116,12 +3184,11 @@ public final class CameraViewModel: ObservableObject {
         pinZoomPlanTask?.cancel()
         isPreparingPinZoom = false
         zoomVerificationTask?.cancel()
-        if zoomAwaitingVerification { cameraService.cancelZoomRamp() }
+        if zoomAwaitingVerification || zoomFallbackAfter.isFinite { cameraService.cancelZoomRamp() }
         zoomAwaitingVerification = false
         isRevealingZoomTarget = false
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
-        autoCaptureCountdown = 0
         isPerfectAlignment = false
         stateBeforeCapture = aiSessionState
         visionEngine.stopTrackingObject()
@@ -3134,17 +3201,7 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        if isSuperResolutionRAWEnabled {
-            executeSuperResolutionCapture()
-        } else {
-            captureNativePhoto(highResolution: false)
-        }
-    }
-
-    // MARK: - Native maximum-resolution capture
-    private func executeSuperResolutionCapture() {
-        superResolutionProgressText = "Đang chụp ở độ phân giải gốc cao nhất..."
-        captureNativePhoto(highResolution: true)
+        captureNativePhoto(highResolution: isSuperResolutionRAWEnabled)
     }
 
     private struct PhotoProcessingSettings {
@@ -3178,6 +3235,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func captureNativePhoto(highResolution: Bool) {
+        photoCapturePhase = .preparing
         captureProcessingSettings = currentPhotoProcessingSettings()
         cameraService.capturePhoto(isDNG: selectedPhotoFormat == .dng,
             isHEIF: selectedPhotoFormat == .heif || selectedPhotoFormat == .heic,
@@ -3397,8 +3455,13 @@ extension CameraViewModel: CameraServiceDelegate {
         }
     }
 
+    public func cameraService(_ service: CameraService, didChangePhotoPhase phase: PhotoCapturePhase) {
+        guard aiSessionState == .capturing, isShutterPressing else { return }
+        photoCapturePhase = phase
+    }
+
     public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, processedCompanionData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double, format: PhotoSaveFormat, requestedHighResolution: Bool) {
-        superResolutionProgressText = nil
+        photoCapturePhase = .processing
         CameraLogger.info("Bắt đầu xử lý bộ lọc ảnh màu AI (Kích thước: \(photo.width)x\(photo.height), LivePhoto: \(livePhotoMovieURL != nil ? "CÓ" : "KHÔNG"))", category: .capture)
 
         let settings = captureProcessingSettings ?? currentPhotoProcessingSettings()
@@ -3492,7 +3555,6 @@ extension CameraViewModel: CameraServiceDelegate {
         // finishing. Restore this request's UI state instead of stranding it
         // in .capturing; repeated failure callbacks are ignored below.
         guard aiSessionState == .capturing else { return }
-        superResolutionProgressText = nil
         captureProcessingSettings = nil
         isShutterPressing = false
         let hadLiveTarget: Bool

@@ -12,6 +12,8 @@ public protocol CameraServiceDelegate: AnyObject {
     @MainActor
     func cameraService(_ service: CameraService, didFailCaptureWithError error: Error)
     @MainActor
+    func cameraService(_ service: CameraService, didChangePhotoPhase phase: PhotoCapturePhase)
+    @MainActor
     func cameraService(_ service: CameraService, didFinishRecordingVideoAt url: URL)
     @MainActor
     func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat)
@@ -43,6 +45,10 @@ public enum CameraRecordingState: Equatable {
     case starting
     case recording
     case stopping
+}
+
+public enum PhotoCapturePhase: Sendable {
+    case preparing, exposing, processing
 }
 
 public struct LiveCameraStats {
@@ -668,12 +674,15 @@ public final class CameraService: NSObject {
     }
 
     // MARK: - Zoom Control
-    public func setZoomFactor(_ factor: CGFloat) {
+    public func setZoomFactor(_ factor: CGFloat, completion: (@MainActor (CGFloat?) -> Void)? = nil) {
         sessionQueue.async { [weak self] in
-            guard let self = self, !self.isPhotoCaptureInFlight, let camera = self.activeCamera else { return }
+            func rejected() { DispatchQueue.main.async { completion?(nil) } }
+            guard let self = self, !self.isPhotoCaptureInFlight, let camera = self.activeCamera else {
+                rejected(); return
+            }
             guard factor.isFinite else {
                 CameraLogger.warning("CameraService: Bỏ qua zoom không hữu hạn", category: .capture)
-                return
+                rejected(); return
             }
             let clampedZoom = max(self.minZoom, min(factor, self.maxZoom))
             do {
@@ -684,9 +693,11 @@ public final class CameraService: NSObject {
                 self.currentZoom = actualZoom
                 DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
+                    completion?(actualZoom)
                 }
             } catch {
                 CameraLogger.error("CameraService: Error setting zoom", error: error, category: .capture)
+                rejected()
             }
         }
     }
@@ -1427,6 +1438,26 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
 
 // MARK: - AVCapturePhotoCaptureDelegate
 extension CameraService: AVCapturePhotoCaptureDelegate {
+    public func photoOutput(_ output: AVCapturePhotoOutput,
+                            willCapturePhotoFor resolvedSettings: AVCaptureResolvedPhotoSettings) {
+        publishPhotoPhase(.exposing, requestID: resolvedSettings.uniqueID)
+    }
+
+    public func photoOutput(_ output: AVCapturePhotoOutput,
+                            didCapturePhotoFor resolvedSettings: AVCaptureResolvedPhotoSettings) {
+        publishPhotoPhase(.processing, requestID: resolvedSettings.uniqueID)
+    }
+
+    private func publishPhotoPhase(_ phase: PhotoCapturePhase, requestID: Int64) {
+        sessionQueue.async { [weak self] in
+            guard let self, let request = self.pendingPhoto,
+                  request.id == requestID, !request.failureReported else { return }
+            DispatchQueue.main.async {
+                self.delegate?.cameraService(self, didChangePhotoPhase: phase)
+            }
+        }
+    }
+
     public func photoOutput(_ output: AVCapturePhotoOutput,
                             didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         sessionQueue.async { [weak self] in
