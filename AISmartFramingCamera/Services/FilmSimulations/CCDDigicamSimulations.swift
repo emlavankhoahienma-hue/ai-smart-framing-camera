@@ -44,7 +44,7 @@ public enum CCDDigicamSimulations {
             p4: CGPoint(x: 1.00, y: 0.98)
         )
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.25, radius: 7.5)
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.10, grainSize: 1.1)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
         return out
     }
 
@@ -68,11 +68,11 @@ public enum CCDDigicamSimulations {
             p4: CGPoint(x: 1.00, y: 0.97)
         )
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.22, radius: 8.0)
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.2)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.14)
         return out
     }
 
-    // MARK: - 3. BlueSK Cool (Ton CCD ngả lanh xanh ngoc, bau troi trong vat Y2K)
+    // MARK: - 3. BlueSK Cool (Ton CCD nga lanh xanh ngoc, bau troi trong vat Y2K)
     private static func applyBlueSKCool(_ input: CIImage) -> CIImage {
         var out = FilmSimulationCore.applyColorMatrix(
             input,
@@ -92,6 +92,7 @@ public enum CCDDigicamSimulations {
             p4: CGPoint(x: 1.00, y: 0.98)
         )
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.26, radius: 8.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.10)
         return out
     }
 
@@ -114,6 +115,7 @@ public enum CCDDigicamSimulations {
             p4: CGPoint(x: 1.00, y: 0.99)
         )
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.20, radius: 6.5)
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.12, radius: 8.0)
         return out
     }
 
@@ -130,13 +132,12 @@ public enum CCDDigicamSimulations {
             p4: CGPoint(x: 1.00, y: 0.97)
         )
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.28, radius: 9.0)
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.14, grainSize: 1.3)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.14)
         return FilmSimulationCore.applyVignette(out, intensity: 0.20, radius: 2.1)
     }
 
     // MARK: - 6. InstaLite Flash (Gia lap den flash truc dien cua may anh compact Y2K)
     private static func applyInstaLiteFlash(_ input: CIImage) -> CIImage {
-        // Tang manh tuong phan o chu the tien canh giong nhu bi den flash roi vao
         var out = FilmSimulationCore.applyTempTint(input, neutralTemp: 6500, targetTemp: 6700, targetTint: 1.5)
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.22, saturation: 1.18, brightness: 0.02)
         out = FilmSimulationCore.applyToneCurve(
@@ -147,9 +148,8 @@ public enum CCDDigicamSimulations {
             p3: CGPoint(x: 0.75, y: 0.84),
             p4: CGPoint(x: 1.00, y: 0.99)
         )
-        // Loa flash manh va toi dan ve bon goc (flashlight falloff)
-        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.32, radius: 10.0)
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.16, grainSize: 1.4)
+        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.35, radius: 10.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.16)
         return FilmSimulationCore.applyVignette(out, intensity: 0.40, radius: 1.6)
     }
 }

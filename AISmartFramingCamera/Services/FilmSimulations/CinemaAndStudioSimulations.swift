@@ -51,7 +51,6 @@ public enum CinemaAndStudioSimulations {
 
     // MARK: - 2. Cinema Teal & Orange (Tone mau dien anh kinh dien, vung toi cyan/teal va mau da cam vang)
     private static func applyCinemaTealOrange(_ input: CIImage) -> CIImage {
-        // Tach vung mau: Day da cam len vung sang do va day cyan teal vao vung toi
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 1.08, y: 0.02, z: -0.05, w: 0),
@@ -95,7 +94,6 @@ public enum CinemaAndStudioSimulations {
 
     // MARK: - 4. Leica Monochrom (Cam bien trang den chuyen dung khong dung bo loc Bayer, chi tiet toi da)
     private static func applyLeicaMonochrom(_ input: CIImage) -> CIImage {
-        // Tinh toan do sang xam quang hoc chuan Rec.709 ti le mat nguoi: 0.2126 R + 0.7152 G + 0.0722 B
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 0.2126, y: 0.7152, z: 0.0722, w: 0),
@@ -104,8 +102,7 @@ public enum CinemaAndStudioSimulations {
             bias: CIVector(x: 0, y: 0, z: 0, w: 0)
         )
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.15, saturation: 0.0)
-        // Duong cong chuyen tiep muot ma giu tron ven chi tiet vung toi va vung sang
-        out = FilmSimulationCore.applyToneCurve(
+        return FilmSimulationCore.applyToneCurve(
             out,
             p0: CGPoint(x: 0.00, y: 0.02),
             p1: CGPoint(x: 0.25, y: 0.23),
@@ -113,7 +110,6 @@ public enum CinemaAndStudioSimulations {
             p3: CGPoint(x: 0.75, y: 0.77),
             p4: CGPoint(x: 1.00, y: 0.98)
         )
-        return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.2)
     }
 
     // MARK: - 5. Noir High Contrast (Trang den dien anh co dien thap nien 40, tuong phan kich tinh)
@@ -126,7 +122,6 @@ public enum CinemaAndStudioSimulations {
             bias: CIVector(x: 0, y: 0, z: 0, w: 0)
         )
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.35, saturation: 0.0)
-        // Duong cong tuong phan cuc gat: den tuyet doi va sang ruc
         out = FilmSimulationCore.applyToneCurve(
             out,
             p0: CGPoint(x: 0.00, y: 0.01),
@@ -157,7 +152,7 @@ public enum CinemaAndStudioSimulations {
             p3: CGPoint(x: 0.75, y: 0.75),
             p4: CGPoint(x: 1.00, y: 0.96)
         )
-        return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.2)
+        return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.10, grainSize: 1.1)
     }
 
     // MARK: - 7. Cyberpunk Night (Tone thanh pho dem neon, xanh lam dien tu va tim magenta)
@@ -178,8 +173,8 @@ public enum CinemaAndStudioSimulations {
             p3: CGPoint(x: 0.75, y: 0.79),
             p4: CGPoint(x: 1.00, y: 0.98)
         )
-        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.22, radius: 9.0)
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.18, grainSize: 1.4)
+        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.25, radius: 9.0)
+        out = FilmSimulationCore.applyHalationGlow(out, intensity: 0.20, radius: 14.0)
         return FilmSimulationCore.applyVignette(out, intensity: 0.32, radius: 1.8)
     }
 }

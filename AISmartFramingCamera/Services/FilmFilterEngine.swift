@@ -23,11 +23,20 @@ public final class FilmFilterEngine {
         }
     }
 
+    // MARK: - Memory Management & Cache Eviction (Giai phong GPU & RAM khi doi preset)
+    public func clearCache() {
+        context.clearCaches()
+        if #available(iOS 16.0, *) {
+            context.reclaimResources()
+        }
+    }
+
     // MARK: - Manual Film Presets (62 Tones Chuyen Nghiep)
-    public func applyPreset(to image: CGImage, preset: FilmPreset) -> CGImage? {
+    public func applyPreset(to image: CGImage, preset: FilmPreset, intensity: Float = 1.0) -> CGImage? {
         guard preset != .aiFullAuto && preset != .standard else { return image }
+        guard intensity > 0.001 else { return image }
         let ciImage = CIImage(cgImage: image)
-        guard let filteredCI = applyPreset(to: ciImage, preset: preset) else { return image }
+        guard let filteredCI = applyPreset(to: ciImage, preset: preset, intensity: intensity) else { return image }
         return context.createCGImage(
             filteredCI,
             from: filteredCI.extent,
@@ -36,77 +45,87 @@ public final class FilmFilterEngine {
         )
     }
 
-    public func applyPreset(to inputImage: CIImage, preset: FilmPreset) -> CIImage? {
+    public func applyPreset(to inputImage: CIImage, preset: FilmPreset, intensity: Float = 1.0) -> CIImage? {
+        guard preset != .standard && preset != .aiFullAuto else { return inputImage }
+        guard intensity > 0.001 else { return inputImage }
+
+        let fullSimulated: CIImage?
         switch preset {
         case .standard, .aiFullAuto:
-            return inputImage
+            fullSimulated = inputImage
 
         // 1. Trending
         case .fujiX:
-            return FujiFilmSimulations.apply(inputImage, preset: preset)
+            fullSimulated = FujiFilmSimulations.apply(inputImage, preset: preset)
         case .cam1998:
-            return VintageCamSimulations.apply(inputImage, preset: preset)
+            fullSimulated = VintageCamSimulations.apply(inputImage, preset: preset)
         case .nokia3310:
-            return VintagePhoneSimulations.apply(inputImage, preset: preset)
+            fullSimulated = VintagePhoneSimulations.apply(inputImage, preset: preset)
         case .luxury8800:
-            return VintagePhoneSimulations.apply(inputImage, preset: preset)
+            fullSimulated = VintagePhoneSimulations.apply(inputImage, preset: preset)
         case .kambo:
-            return VintageCamSimulations.apply(inputImage, preset: preset)
+            fullSimulated = VintageCamSimulations.apply(inputImage, preset: preset)
         case .cpm35:
-            return VintageCamSimulations.apply(inputImage, preset: preset)
+            fullSimulated = VintageCamSimulations.apply(inputImage, preset: preset)
 
         // 2. Vintage Phone
         case .nokiaSymbian, .motorolaV3, .iphone3GS, .blackberryQ10, .keitai88, .sonyK800i:
-            return VintagePhoneSimulations.apply(inputImage, preset: preset)
+            fullSimulated = VintagePhoneSimulations.apply(inputImage, preset: preset)
 
         // 3. Fuji
         case .classicChrome, .fujiPro400H, .velvia50, .classicNeg, .astia100F, .acrosBW:
-            return FujiFilmSimulations.apply(inputImage, preset: preset)
+            fullSimulated = FujiFilmSimulations.apply(inputImage, preset: preset)
 
         // 4. Vintage Cam
         case .lomoLCA, .medium120LG, .fxn35, .toyK, .cinestill800T, .cam1998Street:
-            return VintageCamSimulations.apply(inputImage, preset: preset)
+            fullSimulated = VintageCamSimulations.apply(inputImage, preset: preset)
 
         // 5. CCD
         case .ccd1Cyber, .dCcdWarm, .blueSKCool, .mangaCam, .gCcdGold, .instaLiteFlash:
-            return CCDDigicamSimulations.apply(inputImage, preset: preset)
+            fullSimulated = CCDDigicamSimulations.apply(inputImage, preset: preset)
 
         // 6. Kodak
         case .kodakPortra400, .gold200, .colorPlus200, .ektar100, .triX400, .vision3500D:
-            return KodakFilmSimulations.apply(inputImage, preset: preset)
+            fullSimulated = KodakFilmSimulations.apply(inputImage, preset: preset)
 
         // 7. Ricoh
         case .grPositive, .grHighBW, .grFFilm, .grStreetSnap, .caplioR, .thetaDoc:
-            return RicohGRSimulations.apply(inputImage, preset: preset)
+            fullSimulated = RicohGRSimulations.apply(inputImage, preset: preset)
 
         // 8. Canon
         case .powershotG, .ixusY2K, .eos5DClassic, .sureShot35, .canonF1, .powershotPro1:
-            return CanonCCDSimulations.apply(inputImage, preset: preset)
+            fullSimulated = CanonCCDSimulations.apply(inputImage, preset: preset)
 
         // 9. DV
         case .miniDV43, .hi8Analog, .dcrDVD, .dvx10024p, .vhscHome, .hdv1080i:
-            return AnalogDVSimulations.apply(inputImage, preset: preset)
+            fullSimulated = AnalogDVSimulations.apply(inputImage, preset: preset)
 
         // 10. Instant
         case .polaroid600, .sx70TimeZero, .instaxMini, .instaxWide, .instaxSquare, .polaroidSpectra:
-            return InstantPolaroidSimulations.apply(inputImage, preset: preset)
+            fullSimulated = InstantPolaroidSimulations.apply(inputImage, preset: preset)
 
         // 11. Studio & Cinema Presets
         case .studioNatural:
-            return CinemaAndStudioSimulations.apply(inputImage, preset: preset)
+            fullSimulated = CinemaAndStudioSimulations.apply(inputImage, preset: preset)
 
         // Legacy Compatibility Presets
         case .cinemaTealOrange, .sunsetGlow, .leicaMonochrom, .monochromeNoir, .nordicCold, .neonCyberpunk:
-            return CinemaAndStudioSimulations.apply(inputImage, preset: preset)
+            fullSimulated = CinemaAndStudioSimulations.apply(inputImage, preset: preset)
         case .tokyoAiry:
-            return FujiFilmSimulations.apply(inputImage, preset: preset)
+            fullSimulated = FujiFilmSimulations.apply(inputImage, preset: preset)
         case .hkCinema90s:
-            return AnalogDVSimulations.apply(inputImage, preset: preset)
+            fullSimulated = AnalogDVSimulations.apply(inputImage, preset: preset)
         case .vintageWarm:
-            return VintageCamSimulations.apply(inputImage, preset: preset)
+            fullSimulated = VintageCamSimulations.apply(inputImage, preset: preset)
         case .streetClassic:
-            return RicohGRSimulations.apply(inputImage, preset: preset)
+            fullSimulated = RicohGRSimulations.apply(inputImage, preset: preset)
         }
+
+        guard let output = fullSimulated else { return inputImage }
+        if intensity < 0.999 {
+            return FilmSimulationCore.applyIntensityBlend(original: inputImage, filtered: output, intensity: intensity)
+        }
+        return output
     }
 
     // MARK: - Subtle AI Sharpness
@@ -127,12 +146,12 @@ public final class FilmFilterEngine {
     }
 
     // MARK: - Combined Preset & AI Tone Mapping Pipeline
-    public func applyPresetAndAIParameters(to image: CGImage, preset: FilmPreset, params: AIColorParameters?) -> CGImage? {
+    public func applyPresetAndAIParameters(to image: CGImage, preset: FilmPreset, params: AIColorParameters?, intensity: Float = 1.0) -> CGImage? {
         // Build one lazy graph and render once, avoiding two full 48 MP RGBA
         // intermediates and an unnecessary 8-bit colour round trip.
         var output = CIImage(cgImage: image)
         if preset != .standard && preset != .aiFullAuto {
-            output = applyPreset(to: output, preset: preset) ?? output
+            output = applyPreset(to: output, preset: preset, intensity: intensity) ?? output
         }
         if let params {
             output = applyAIColorParameters(to: output, params: params) ?? output

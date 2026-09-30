@@ -31,25 +31,7 @@ public enum VintagePhoneSimulations {
 
     // MARK: - 1. Nokia 3310 (Man hinh LCD xanh reu don sac, hoai niem tuoi tho)
     private static func applyNokia3310(_ input: CIImage) -> CIImage {
-        // Chuyen sang trang den
-        var out = FilmSimulationCore.applyColorControls(input, contrast: 1.25, saturation: 0.0)
-        // Nhuom sac xanh reu dac trung cua man hinh monochrome Nokia
-        out = FilmSimulationCore.applyColorMatrix(
-            out,
-            red: CIVector(x: 0.35, y: 0.0, z: 0.0, w: 0),
-            green: CIVector(x: 0.0, y: 0.65, z: 0.0, w: 0),
-            blue: CIVector(x: 0.0, y: 0.0, z: 0.25, w: 0),
-            bias: CIVector(x: 0.08, y: 0.16, z: 0.06, w: 0)
-        )
-        out = FilmSimulationCore.applyToneCurve(
-            out,
-            p0: CGPoint(x: 0.00, y: 0.10),
-            p1: CGPoint(x: 0.25, y: 0.30),
-            p2: CGPoint(x: 0.50, y: 0.52),
-            p3: CGPoint(x: 0.75, y: 0.72),
-            p4: CGPoint(x: 1.00, y: 0.90)
-        )
-        return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.25, grainSize: 2.0)
+        return FilmSimulationCore.applyDitherLCD(input)
     }
 
     // MARK: - 2. Nokia Symbian (Camera Carl Zeiss N73/N95, mau sac song dong thoi dau smartphone)
@@ -64,7 +46,7 @@ public enum VintagePhoneSimulations {
             p3: CGPoint(x: 0.75, y: 0.78),
             p4: CGPoint(x: 1.00, y: 0.97)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.18, grainSize: 1.5)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.18)
         return out
     }
 
@@ -80,7 +62,8 @@ public enum VintagePhoneSimulations {
             p3: CGPoint(x: 0.75, y: 0.75),
             p4: CGPoint(x: 1.00, y: 0.94)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.20, grainSize: 1.7)
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.20, radius: 10.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.16)
         return FilmSimulationCore.applyVignette(out, intensity: 0.22, radius: 2.0)
     }
 
@@ -103,7 +86,7 @@ public enum VintagePhoneSimulations {
             p3: CGPoint(x: 0.75, y: 0.77),
             p4: CGPoint(x: 1.00, y: 0.96)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.14, grainSize: 1.3)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
         return out
     }
 
@@ -118,7 +101,7 @@ public enum VintagePhoneSimulations {
             p3: CGPoint(x: 0.75, y: 0.77),
             p4: CGPoint(x: 1.00, y: 0.97)
         )
-        return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.10, grainSize: 1.1)
+        return FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.08)
     }
 
     // MARK: - 6. Keitai 88 (Dien thoai nap gap Nhat Ban Garakei, mau tuoi sang, da min)
@@ -134,6 +117,7 @@ public enum VintagePhoneSimulations {
             p4: CGPoint(x: 1.00, y: 0.98)
         )
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.20, radius: 7.0)
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.15, radius: 8.0)
         return out
     }
 
@@ -154,23 +138,24 @@ public enum VintagePhoneSimulations {
             p3: CGPoint(x: 0.75, y: 0.80),
             p4: CGPoint(x: 1.00, y: 0.98)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.16, grainSize: 1.4)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.14)
         return FilmSimulationCore.applyVignette(out, intensity: 0.18, radius: 2.2)
     }
 
-    // MARK: - 8. Nokia 8800 (Dien thoai kim loai quy phai, ton mau kim khi sang trong)
+    // MARK: - 8. Nokia 8800 (Sang trong hoai niem, mau vang kim loai am, do mo nghe thuat)
     private static func applyLuxury8800(_ input: CIImage) -> CIImage {
-        var out = FilmSimulationCore.applyTempTint(input, neutralTemp: 6500, targetTemp: 6750, targetTint: 1.2)
-        out = FilmSimulationCore.applyColorControls(out, contrast: 1.09, saturation: 0.94)
+        var out = FilmSimulationCore.applyTempTint(input, neutralTemp: 6500, targetTemp: 7000, targetTint: 2.8)
+        out = FilmSimulationCore.applyColorControls(out, contrast: 1.08, saturation: 1.06)
         out = FilmSimulationCore.applyToneCurve(
             out,
-            p0: CGPoint(x: 0.00, y: 0.04),
+            p0: CGPoint(x: 0.00, y: 0.05),
             p1: CGPoint(x: 0.25, y: 0.24),
             p2: CGPoint(x: 0.50, y: 0.50),
-            p3: CGPoint(x: 0.75, y: 0.78),
-            p4: CGPoint(x: 1.00, y: 0.97)
+            p3: CGPoint(x: 0.75, y: 0.76),
+            p4: CGPoint(x: 1.00, y: 0.96)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.2)
-        return FilmSimulationCore.applyVignette(out, intensity: 0.20, radius: 2.2)
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.16, radius: 8.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
+        return FilmSimulationCore.applyVignette(out, intensity: 0.24, radius: 2.0)
     }
 }

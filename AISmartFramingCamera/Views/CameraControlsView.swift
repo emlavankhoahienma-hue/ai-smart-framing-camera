@@ -830,6 +830,9 @@ public struct FilmPresetDrawer: View {
     public var body: some View {
         VStack(spacing: 4) {
             headerBar
+            if viewModel.isFilmSimulationActive {
+                intensitySliderBar
+            }
             filmstripTrack
         }
         .padding(.vertical, 4)
@@ -840,6 +843,39 @@ public struct FilmPresetDrawer: View {
     }
 
     // MARK: - Subviews
+
+    @ViewBuilder
+    private var intensitySliderBar: some View {
+        HStack(spacing: 8) {
+            Text("CƯỜNG ĐỘ")
+                .font(.system(size: 9.0, weight: .bold, design: .rounded))
+                .foregroundColor(.white.opacity(0.60))
+
+            Slider(value: $viewModel.filmSimulationIntensity, in: 0.1...1.0, step: 0.05)
+                .accentColor(amberGold)
+
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    viewModel.filmSimulationIntensity = 1.0
+                }
+            }) {
+                Text("\(Int(round(viewModel.filmSimulationIntensity * 100)))%")
+                    .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(amberGold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(amberGold.opacity(0.15))
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel("Đặt lại cường độ 100%")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 1)
+        .transition(.opacity)
+    }
 
     @ViewBuilder
     private var headerBar: some View {

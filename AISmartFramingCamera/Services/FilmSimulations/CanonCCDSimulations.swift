@@ -27,7 +27,6 @@ public enum CanonCCDSimulations {
 
     // MARK: - 1. PowerShot G (Cam bien CCD kinh dien, mau da am ap Canon Colors, bau troi xanh trong)
     private static func applyPowerShotG(_ input: CIImage) -> CIImage {
-        // Dac trung mau da hong hao am ap cua Canon va sac troi xanh trong
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 1.06, y: -0.01, z: -0.01, w: 0),
@@ -45,9 +44,8 @@ public enum CanonCCDSimulations {
             p3: CGPoint(x: 0.75, y: 0.78),
             p4: CGPoint(x: 1.00, y: 0.97)
         )
-        // Loa sang nhe dac trung cam bien CCD
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.20, radius: 7.0)
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.10, grainSize: 1.1)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
         return out
     }
 
@@ -69,9 +67,8 @@ public enum CanonCCDSimulations {
             p3: CGPoint(x: 0.75, y: 0.80),
             p4: CGPoint(x: 1.00, y: 0.98)
         )
-        // Hieu ung bloom dac trung anh chup compact Y2K
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.28, radius: 8.5)
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.2)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.15)
         return FilmSimulationCore.applyVignette(out, intensity: 0.16, radius: 2.2)
     }
 
@@ -86,7 +83,6 @@ public enum CanonCCDSimulations {
         )
         out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6600, targetTint: 1.0)
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.06, saturation: 1.03)
-        // Duong cong chuyen tiep vo cung muot ma cua cam bien full-frame 12.8MP
         out = FilmSimulationCore.applyToneCurve(
             out,
             p0: CGPoint(x: 0.00, y: 0.04),
@@ -95,7 +91,6 @@ public enum CanonCCDSimulations {
             p3: CGPoint(x: 0.75, y: 0.77),
             p4: CGPoint(x: 1.00, y: 0.97)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.08, grainSize: 1.0)
         return out
     }
 
@@ -143,6 +138,7 @@ public enum CanonCCDSimulations {
             p4: CGPoint(x: 1.00, y: 0.98)
         )
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.15, radius: 6.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.10)
         return out
     }
 }

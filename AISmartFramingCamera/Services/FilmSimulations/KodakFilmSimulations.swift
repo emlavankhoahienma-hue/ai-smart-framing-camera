@@ -27,7 +27,6 @@ public enum KodakFilmSimulations {
 
     // MARK: - 1. Kodak Portra 400 (Vang am mat ong, mau da chan dung dinh cao, highlight mem mai)
     private static func applyPortra400(_ input: CIImage) -> CIImage {
-        // Pha tron pho mau giu am sac da, giam do gat cua mau xanh
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 1.05, y: -0.01, z: -0.01, w: 0),
@@ -35,10 +34,8 @@ public enum KodakFilmSimulations {
             blue: CIVector(x: -0.02, y: 0.02, z: 0.96, w: 0),
             bias: CIVector(x: 0.02, y: 0.01, z: -0.01, w: 0)
         )
-        // Can bang trang am tu nhien 6800K
         out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6850, targetTint: 1.8)
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.05, saturation: 1.02)
-        // Duong cong toe lift nhe nhang giu chi tiet vung toi
         out = FilmSimulationCore.applyToneCurve(
             out,
             p0: CGPoint(x: 0.00, y: 0.05),
@@ -47,6 +44,7 @@ public enum KodakFilmSimulations {
             p3: CGPoint(x: 0.75, y: 0.76),
             p4: CGPoint(x: 1.00, y: 0.96)
         )
+        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.10, radius: 5.0)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.16, grainSize: 1.3)
         return FilmSimulationCore.applyVignette(out, intensity: 0.15, radius: 2.4)
     }
@@ -116,12 +114,11 @@ public enum KodakFilmSimulations {
             p3: CGPoint(x: 0.75, y: 0.80),
             p4: CGPoint(x: 1.00, y: 0.98)
         )
-        // Ektar co hat cuc ky min
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.06, grainSize: 0.9)
         return out
     }
 
-    // MARK: - 5. Kodak Tri-X 400 (Den trang phong su kinh dien, hat thô gai goc, tuong phan kich tinh)
+    // MARK: - 5. Kodak Tri-X 400 (Den trang phong su kinh dien, hat tho gai goc, tuong phan kich tinh)
     private static func applyTriX400(_ input: CIImage) -> CIImage {
         var out = FilmSimulationCore.applyColorMatrix(
             input,
@@ -158,10 +155,11 @@ public enum KodakFilmSimulations {
             p0: CGPoint(x: 0.00, y: 0.05),
             p1: CGPoint(x: 0.25, y: 0.26),
             p2: CGPoint(x: 0.50, y: 0.51),
-            p3: CGPoint(x: 0.75, y: 0.76),
-            p4: CGPoint(x: 1.00, y: 0.95)
+            p3: CGPoint(x: 0.75, y: 0.77),
+            p4: CGPoint(x: 1.00, y: 0.96)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.14, grainSize: 1.2)
+        out = FilmSimulationCore.applyHalationGlow(out, intensity: 0.16, radius: 10.0)
+        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.16, grainSize: 1.3)
         return out
     }
 }

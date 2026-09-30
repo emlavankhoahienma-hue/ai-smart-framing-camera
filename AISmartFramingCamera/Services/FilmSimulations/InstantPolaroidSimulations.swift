@@ -25,9 +25,8 @@ public enum InstantPolaroidSimulations {
         }
     }
 
-    // MARK: - 1. Polaroid 600 (Vung toi ngả lam luc hoa hoc, vung den sua duc D-min, sang mau kem)
+    // MARK: - 1. Polaroid 600 (Vung toi nga lam luc hoa hoc, vung den sua duc D-min, sang mau kem)
     private static func applyPolaroid600(_ input: CIImage) -> CIImage {
-        // Pha tron thuoc nhuom hoa hoc dac trung: vung toi am cyan-blue, sang am kem
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 0.98, y: 0.02, z: 0.00, w: 0),
@@ -36,7 +35,6 @@ public enum InstantPolaroidSimulations {
             bias: CIVector(x: 0.02, y: 0.03, z: 0.06, w: 0)
         )
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.08, saturation: 0.95)
-        // Nang manh chan duong cong toe lift tao chat den duc sua (milky chemical blacks)
         out = FilmSimulationCore.applyToneCurve(
             out,
             p0: CGPoint(x: 0.00, y: 0.09),
@@ -45,6 +43,7 @@ public enum InstantPolaroidSimulations {
             p3: CGPoint(x: 0.75, y: 0.75),
             p4: CGPoint(x: 1.00, y: 0.94)
         )
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.16, radius: 9.0)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.24, grainSize: 1.6)
         return FilmSimulationCore.applyVignette(out, intensity: 0.32, radius: 1.8)
     }
@@ -68,6 +67,7 @@ public enum InstantPolaroidSimulations {
             p3: CGPoint(x: 0.75, y: 0.75),
             p4: CGPoint(x: 1.00, y: 0.95)
         )
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.14, radius: 8.0)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.20, grainSize: 1.5)
         return FilmSimulationCore.applyVignette(out, intensity: 0.28, radius: 1.9)
     }
@@ -90,6 +90,7 @@ public enum InstantPolaroidSimulations {
             p3: CGPoint(x: 0.75, y: 0.80),
             p4: CGPoint(x: 1.00, y: 0.98)
         )
+        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.14, radius: 5.5)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.2)
         return FilmSimulationCore.applyVignette(out, intensity: 0.20, radius: 2.1)
     }
@@ -124,7 +125,7 @@ public enum InstantPolaroidSimulations {
         return FilmSimulationCore.applyVignette(out, intensity: 0.22, radius: 2.0)
     }
 
-    // MARK: - 6. Polaroid Spectra (Khổ phim rong chuyen nghiep, sac do trung tinh, giau chi tiet)
+    // MARK: - 6. Polaroid Spectra (Kho phim rong chuyen nghiep, sac do trung tinh, giau chi tiet)
     private static func applyPolaroidSpectra(_ input: CIImage) -> CIImage {
         var out = FilmSimulationCore.applyTempTint(input, neutralTemp: 6500, targetTemp: 6650, targetTint: 1.2)
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.07, saturation: 0.98)

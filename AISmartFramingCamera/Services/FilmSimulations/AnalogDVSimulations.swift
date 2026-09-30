@@ -45,9 +45,9 @@ public enum AnalogDVSimulations {
             p3: CGPoint(x: 0.75, y: 0.73),
             p4: CGPoint(x: 1.00, y: 0.93)
         )
-        // Tran sang nhe dac trung 3CCD MiniDV
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.16, radius: 6.0)
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.18, grainSize: 1.3)
+        out = FilmSimulationCore.applyChromaBleed(out, shiftX: 2.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.14)
         return FilmSimulationCore.applyVignette(out, intensity: 0.22, radius: 2.0)
     }
 
@@ -69,7 +69,8 @@ public enum AnalogDVSimulations {
             p3: CGPoint(x: 0.75, y: 0.73),
             p4: CGPoint(x: 1.00, y: 0.93)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.26, grainSize: 1.7)
+        out = FilmSimulationCore.applyChromaBleed(out, shiftX: 3.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.20)
         return FilmSimulationCore.applyVignette(out, intensity: 0.26, radius: 1.9)
     }
 
@@ -92,7 +93,7 @@ public enum AnalogDVSimulations {
             p4: CGPoint(x: 1.00, y: 0.96)
         )
         out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.14, radius: 5.0)
-        return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.14, grainSize: 1.2)
+        return FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
     }
 
     // MARK: - 4. DVX100 24p (May quay phim doc lap huyen thoai cua Panasonic, CineGamma dam da)
@@ -104,7 +105,6 @@ public enum AnalogDVSimulations {
             blue: CIVector(x: -0.03, y: 0.02, z: 0.98, w: 0),
             bias: CIVector(x: 0.01, y: 0.01, z: 0.00, w: 0)
         )
-        // CineGamma curve: nen highlight muot, tuong phan vung trung tinh dep
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.14, saturation: 0.96)
         out = FilmSimulationCore.applyToneCurve(
             out,
@@ -136,7 +136,8 @@ public enum AnalogDVSimulations {
             p3: CGPoint(x: 0.75, y: 0.72),
             p4: CGPoint(x: 1.00, y: 0.91)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.32, grainSize: 2.0)
+        out = FilmSimulationCore.applyChromaBleed(out, shiftX: 4.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.24)
         return FilmSimulationCore.applyVignette(out, intensity: 0.32, radius: 1.8)
     }
 
@@ -158,12 +159,11 @@ public enum AnalogDVSimulations {
             p3: CGPoint(x: 0.75, y: 0.76),
             p4: CGPoint(x: 1.00, y: 0.97)
         )
-        return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.1)
+        return FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.10)
     }
 
     // MARK: - 7. HK Cinema 90s (Dien anh Hong Kong thap nien 90, Vuong Gia Ve, xanh ngoc luc bao va vang am)
     private static func applyHKCinema90s(_ input: CIImage) -> CIImage {
-        // Pho mau dac trung: vung toi nga luc bao (emerald green), vung sang am vang den neon
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 1.04, y: 0.02, z: -0.04, w: 0),

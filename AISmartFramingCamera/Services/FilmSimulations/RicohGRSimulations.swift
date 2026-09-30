@@ -29,7 +29,6 @@ public enum RicohGRSimulations {
 
     // MARK: - 1. GR3 Positive Film (Duong ban GR3, xanh bien tham dam, tuong phan duong pho sac sao)
     private static func applyGRPositive(_ input: CIImage) -> CIImage {
-        // Day manh sac do va xanh duong, tang do trong treo
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 1.08, y: -0.03, z: -0.03, w: 0),
@@ -59,7 +58,6 @@ public enum RicohGRSimulations {
             green: CIVector(x: 0.35, y: 0.55, z: 0.10, w: 0),
             blue: CIVector(x: 0.35, y: 0.55, z: 0.10, w: 0)
         )
-        // Tuong phan cuc cao, ep den vung toi
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.35, saturation: 0.0)
         out = FilmSimulationCore.applyToneCurve(
             out,
@@ -69,7 +67,6 @@ public enum RicohGRSimulations {
             p3: CGPoint(x: 0.75, y: 0.88),
             p4: CGPoint(x: 1.00, y: 1.00)
         )
-        // Hat tho sac net dac trung anh duong pho Nhat Ban
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.32, grainSize: 1.8)
         return FilmSimulationCore.applyVignette(out, intensity: 0.28, radius: 1.8)
     }
@@ -122,7 +119,7 @@ public enum RicohGRSimulations {
             p3: CGPoint(x: 0.75, y: 0.76),
             p4: CGPoint(x: 1.00, y: 0.96)
         )
-        return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.10, grainSize: 1.1)
+        return FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
     }
 
     // MARK: - 6. Ricoh Theta Doc (Tai lieu trung thuc, sac do phang, han che sai mau)

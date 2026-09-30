@@ -74,6 +74,8 @@ public enum VintageCamSimulations {
             p4: CGPoint(x: 1.00, y: 0.95)
         )
         out = FilmSimulationCore.applyHalationGlow(out, intensity: 0.16, radius: 12.0)
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.15, radius: 12.0)
+        out = FilmSimulationCore.applyLightLeak(out, intensity: 0.24)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.14, grainSize: 1.2)
         return FilmSimulationCore.applyVignette(out, intensity: 0.28, radius: 2.0)
     }
@@ -118,13 +120,14 @@ public enum VintageCamSimulations {
             p3: CGPoint(x: 0.75, y: 0.76),
             p4: CGPoint(x: 1.00, y: 0.94)
         )
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.18, radius: 10.0)
+        out = FilmSimulationCore.applyLightLeak(out, intensity: 0.22)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.30, grainSize: 1.8)
         return FilmSimulationCore.applyVignette(out, intensity: 0.48, radius: 1.5)
     }
 
     // MARK: - 5. CineStill 800T (Phim dien anh quay dem, bong toi am cyan, halation do ruc ro quanh anh sang)
     private static func applyCineStill800T(_ input: CIImage) -> CIImage {
-        // Can bang nhiet do mau von Tungsten 3200K dua vao anh sang ban ngay
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 0.94, y: 0.02, z: 0.00, w: 0),
@@ -141,7 +144,6 @@ public enum VintageCamSimulations {
             p3: CGPoint(x: 0.75, y: 0.78),
             p4: CGPoint(x: 1.00, y: 0.98)
         )
-        // Quang do Halation do ruc dac trung CineStill vi khong co lop than chong quang phan xa remjet
         out = FilmSimulationCore.applyHalationGlow(out, intensity: 0.45, radius: 18.0)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.28, grainSize: 1.6)
         return FilmSimulationCore.applyVignette(out, intensity: 0.24, radius: 2.0)
@@ -165,6 +167,7 @@ public enum VintageCamSimulations {
             p3: CGPoint(x: 0.75, y: 0.76),
             p4: CGPoint(x: 1.00, y: 0.95)
         )
+        out = FilmSimulationCore.applyLightLeak(out, intensity: 0.20)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.32, grainSize: 1.8)
         return FilmSimulationCore.applyVignette(out, intensity: 0.36, radius: 1.7)
     }
@@ -209,6 +212,7 @@ public enum VintageCamSimulations {
             p3: CGPoint(x: 0.75, y: 0.77),
             p4: CGPoint(x: 1.00, y: 0.97)
         )
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.12, radius: 8.0)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.18, grainSize: 1.4)
         return FilmSimulationCore.applyVignette(out, intensity: 0.22, radius: 2.1)
     }

@@ -202,6 +202,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var selectedFilmCategory: FilmPresetCategory = .trending {
         didSet { UserDefaults.standard.set(selectedFilmCategory.rawValue, forKey: "selectedFilmCategory") }
     }
+    @Published public var filmSimulationIntensity: Double = 1.0 {
+        didSet { UserDefaults.standard.set(filmSimulationIntensity, forKey: "filmSimulationIntensity") }
+    }
     @Published public var isAIFullColorEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isAIFullColorEnabled, forKey: "isAIFullColorEnabled") }
     }
@@ -763,6 +766,10 @@ public final class CameraViewModel: ObservableObject {
         }
         if let categoryRaw = defaults.string(forKey: "selectedFilmCategory"), let cat = FilmPresetCategory(rawValue: categoryRaw) {
             self.selectedFilmCategory = cat
+        }
+        if defaults.object(forKey: "filmSimulationIntensity") != nil {
+            let savedIntensity = defaults.double(forKey: "filmSimulationIntensity")
+            self.filmSimulationIntensity = max(0.1, min(1.0, savedIntensity))
         }
         if let modeRaw = defaults.string(forKey: "captureMode"), let mode = CameraCaptureMode(rawValue: modeRaw) {
             self.captureMode = mode == .proVideo ? .video : mode
@@ -2763,6 +2770,7 @@ public final class CameraViewModel: ObservableObject {
 
     public func selectPreset(_ preset: FilmPreset) {
         haptics.triggerSelectionChange()
+        FilmFilterEngine.shared.clearCache()
         withAnimation(.easeInOut) {
             if preset == .standard {
                 isFilmSimulationActive = false
@@ -2785,6 +2793,7 @@ public final class CameraViewModel: ObservableObject {
 
     public func toggleFilmSimulation() {
         haptics.triggerSelectionChange()
+        FilmFilterEngine.shared.clearCache()
         withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
             isFilmSimulationActive.toggle()
             if !isFilmSimulationActive {
@@ -2795,6 +2804,7 @@ public final class CameraViewModel: ObservableObject {
 
     public func disableFilmSimulation() {
         haptics.triggerSelectionChange()
+        FilmFilterEngine.shared.clearCache()
         withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
             isFilmSimulationActive = false
             isAIFullColorEnabled = false
@@ -3533,8 +3543,10 @@ extension CameraViewModel: CameraServiceDelegate {
             var processedImageResult: CGImage = effectiveSourcePhoto
             autoreleasepool {
                 if hasColorEdits {
+                    let intensityVal = Float(self.filmSimulationIntensity)
                     processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(
-                        to: effectiveSourcePhoto, preset: effectivePreset, params: finalColorParams) ?? effectiveSourcePhoto
+                        to: effectiveSourcePhoto, preset: effectivePreset, params: finalColorParams, intensity: intensityVal) ?? effectiveSourcePhoto
+                    FilmFilterEngine.shared.clearCache()
                 }
             }
 

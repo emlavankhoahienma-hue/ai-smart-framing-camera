@@ -773,6 +773,7 @@ public struct CapturedPhotoPreviewView: View {
         generator.prepare()
         generator.selectionChanged()
 
+        FilmFilterEngine.shared.clearCache()
         renderGeneration += 1
         let generation = renderGeneration
         let sharpen = isAISharpnessEnabled
@@ -787,6 +788,7 @@ public struct CapturedPhotoPreviewView: View {
             } else {
                 finalImage = rendered
             }
+            FilmFilterEngine.shared.clearCache()
             DispatchQueue.main.async {
                 guard self.renderGeneration == generation else { return }
                 self.baseProcessedImage = rendered

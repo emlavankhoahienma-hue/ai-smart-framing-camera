@@ -78,13 +78,14 @@ public struct CameraMainView: View {
                         ZStack {
                             CameraPreviewView(viewModel: viewModel)
                                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
-                                .saturation(viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.liveSaturation : 1.0)
-                                .contrast(viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.liveContrast : 1.0)
-                                .brightness(viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.liveBrightness : 0.0)
+                                .saturation(viewModel.isFilmSimulationActive ? 1.0 + (viewModel.selectedFilmPreset.liveSaturation - 1.0) * viewModel.filmSimulationIntensity : 1.0)
+                                .contrast(viewModel.isFilmSimulationActive ? 1.0 + (viewModel.selectedFilmPreset.liveContrast - 1.0) * viewModel.filmSimulationIntensity : 1.0)
+                                .brightness(viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.liveBrightness * viewModel.filmSimulationIntensity : 0.0)
 
                             // Realtime Film Atmosphere Overlay
                             if viewModel.isFilmSimulationActive {
                                 FilmViewfinderAtmosphereOverlay(preset: viewModel.selectedFilmPreset)
+                                    .opacity(viewModel.filmSimulationIntensity)
                             }
 
                             // AR AI Framing Lines & Reticle

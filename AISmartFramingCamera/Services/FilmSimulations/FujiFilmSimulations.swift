@@ -31,7 +31,6 @@ public enum FujiFilmSimulations {
 
     // MARK: - 1. Classic Chrome (Tuong phan bong toi cung, mau sac tram am, bau troi ngoc lam)
     private static func applyClassicChrome(_ input: CIImage) -> CIImage {
-        // Ma tran pho mau giam do bao hoa ruc ro, chuyen sac troi sang teal
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 0.92, y: 0.05, z: 0.03, w: 0),
@@ -39,10 +38,8 @@ public enum FujiFilmSimulations {
             blue: CIVector(x: -0.05, y: 0.08, z: 0.97, w: 0),
             bias: CIVector(x: -0.01, y: 0.01, z: 0.02, w: 0)
         )
-        // Can bang trang hoi lanh nhe o highlight
         out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6350, targetTint: -1.8)
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.12, saturation: 0.88)
-        // S-curve giu chi tiet highlight, siet nhe vung shadow
         out = FilmSimulationCore.applyToneCurve(
             out,
             p0: CGPoint(x: 0.00, y: 0.03),
@@ -66,7 +63,6 @@ public enum FujiFilmSimulations {
         )
         out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6420, targetTint: 1.2)
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.04, saturation: 0.95)
-        // Nang sang vung toi tao do min mang nhu nhung
         out = FilmSimulationCore.applyToneCurve(
             out,
             p0: CGPoint(x: 0.00, y: 0.06),
@@ -75,6 +71,7 @@ public enum FujiFilmSimulations {
             p3: CGPoint(x: 0.75, y: 0.76),
             p4: CGPoint(x: 1.00, y: 0.96)
         )
+        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.12, radius: 6.0)
         out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.14, grainSize: 1.2)
         return out
     }
@@ -142,7 +139,6 @@ public enum FujiFilmSimulations {
 
     // MARK: - 6. Neopan Acros (Den trang do phan giai cao, hat min, do sau chi tiet)
     private static func applyAcrosBW(_ input: CIImage) -> CIImage {
-        // Chuyen sang den trang theo trong so quang hoc cua mat nguoi
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 0.30, y: 0.59, z: 0.11, w: 0),
@@ -190,6 +186,7 @@ public enum FujiFilmSimulations {
             p3: CGPoint(x: 0.75, y: 0.76),
             p4: CGPoint(x: 1.00, y: 0.95)
         )
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.15, radius: 8.0)
         return FilmSimulationCore.applyOrganicGrain(out, intensity: 0.08, grainSize: 1.0)
     }
 }
