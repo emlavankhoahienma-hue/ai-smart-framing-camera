@@ -31,7 +31,7 @@ public struct CameraPreviewView: UIViewRepresentable {
         uiView.updateMetalPreviewState(
             isActive: viewModel.isFilmSimulationActive,
             preset: viewModel.selectedFilmPreset,
-            intensity: viewModel.filmSimulationIntensity
+            intensity: Float(viewModel.filmSimulationIntensity)
         )
     }
 
