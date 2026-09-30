@@ -1977,6 +1977,7 @@ public final class CameraViewModel: ObservableObject {
         let selected = choice.plan.preferenceKey
         Task { await CompositionPreferenceStore.shared.record(keys: keys, selected: selected) }
         acceptLocalPlan(choice.plan, source: source)
+        allowsAutoCaptureForCurrentTarget = true
     }
 
     public func chooseLocalSuggestion(at point: CGPoint) {
@@ -2023,7 +2024,7 @@ public final class CameraViewModel: ObservableObject {
         pendingSuggestedZoom = plan.zoom
         aiSuggestedZoom = plan.zoom
         hasExecutedAutoZoomForSession = false
-        allowsAutoCaptureForCurrentTarget = plan.confidence >= plan.minimumAutoselectConfidence
+        allowsAutoCaptureForCurrentTarget = plan.confidence >= plan.minimumAutoselectConfidence || plan.score >= 0.50
         localCompositionChoices = []
         localEvidenceCandidates = []
         localSuggestionRects = []
@@ -2428,10 +2429,11 @@ public final class CameraViewModel: ObservableObject {
 
     private func evaluateAlignment(at point: CGPoint) {
         guard !captureMode.isVideo, !isCameraHibernating, !isShutterPressing else { return }
-        if zoomFallbackAfter.isFinite, CACurrentMediaTime() - zoomFallbackAfter > 3 {
+        if zoomFallbackAfter.isFinite, CACurrentMediaTime() - zoomFallbackAfter > 1.8 {
             zoomFallbackAfter = .infinity
+            zoomVerified = true
             allowsAutoCaptureForCurrentTarget = true
-            localSelectionMessage = "Chưa xác nhận được zoom. Bạn có thể bấm chụp tay hoặc căn lại mục tiêu."
+            localSelectionMessage = nil
         }
         let dx = point.x - 0.5, dy = point.y - 0.5
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
@@ -2442,6 +2444,11 @@ public final class CameraViewModel: ObservableObject {
         isPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
         guard state != .outside else {
             autoCaptureTask?.cancel(); autoCaptureTask = nil
+            lastFailedCaptureOpticalTimestamp = -.infinity
+            lastFailedCaptureAttemptTime = -.infinity
+            if !zoomAwaitingVerification && pendingManualZoomTarget == nil {
+                zoomVerified = true
+            }
             aiSessionState = .targetPlaced(locked: hasFreshOpticalLock)
             let angle = atan2(dy, dx) * 180 / .pi
             alignmentState = .guiding(distance: distance, angle: angle < 0 ? angle + 360 : angle)
@@ -2471,6 +2478,8 @@ public final class CameraViewModel: ObservableObject {
                     applyAISuggestedZoom(target, force: true)
                     hasExecutedAutoZoomForSession = true
                     if zoomAwaitingVerification { return }
+                } else {
+                    hasExecutedAutoZoomForSession = true
                 }
             } else {
                 hasExecutedAutoZoomForSession = true
@@ -2478,8 +2487,7 @@ public final class CameraViewModel: ObservableObject {
         }
         guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
               autoCaptureTask == nil,
-              latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp,
-              CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.20 else { return }
+              (latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp || CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.20) else { return }
         verifyAndCaptureWhenReady()
     }
 
@@ -2513,7 +2521,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func verifyZoomAfterRamp(pinGeneration: UInt64) async {
-        let deadline = CACurrentMediaTime() + 2.5
+        let deadline = CACurrentMediaTime() + 3.8
         var reachedAt: TimeInterval?
         while CACurrentMediaTime() < deadline {
             do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
@@ -2539,6 +2547,8 @@ public final class CameraViewModel: ObservableObject {
                     latestOpticalBox = CGRect(x: max(0, point.x - 0.08), y: max(0, point.y - 0.08), width: 0.16, height: 0.16)
                     latestOpticalCalibration = latestOpticalCalibration ?? TrackingCalibration.fallback(zoom: Double(displayZoom))
                     alignmentGate.reset()
+                    lastFailedCaptureOpticalTimestamp = -.infinity
+                    lastFailedCaptureAttemptTime = -.infinity
 
                     withAnimation(.easeOut(duration: 0.35)) {
                         self.isRevealingZoomTarget = false
@@ -2561,9 +2571,14 @@ public final class CameraViewModel: ObservableObject {
         cameraService.cancelZoomRamp()
         zoomVerified = false
         zoomAwaitingVerification = false
-        zoomFallbackAfter = .infinity
+        zoomFallbackAfter = CACurrentMediaTime()
         alignmentGate.reset()
         postZoomRecovery.reset()
+        lastFailedCaptureOpticalTimestamp = -.infinity
+        lastFailedCaptureAttemptTime = -.infinity
+        let originalDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(zoomRevealStartDisplayZoom)
+        cameraService.setZoomFactor(originalDeviceZoom)
+        hasExecutedAutoZoomForSession = true
         withAnimation(.easeOut(duration: 0.30)) {
             self.isRevealingZoomTarget = false
             self.isZoomRampPhase = false
@@ -2578,7 +2593,7 @@ public final class CameraViewModel: ObservableObject {
     private func verifyPostZoomFaces(after minimumTimestamp: TimeInterval) async -> Bool {
         guard postZoomFaceCount > 0 else { return true }
         guard let snapshot = frameProcessor.latestTrackingFrameSnapshot(),
-              snapshot.1.timestamp > max(minimumTimestamp, latestOpticalFrameTimestamp - 0.5) else {
+              snapshot.1.timestamp > max(minimumTimestamp - 0.25, latestOpticalFrameTimestamp - 0.5) else {
             return false
         }
         let frame = FaceVerificationFrame(buffer: snapshot.0)
@@ -2593,17 +2608,23 @@ public final class CameraViewModel: ObservableObject {
                 let request = VNDetectFaceRectanglesRequest()
                 let handler = VNImageRequestHandler(cvPixelBuffer: frame.buffer,
                                                     orientation: .up, options: [:])
-                guard (try? cancellation.perform(request, with: handler)) != nil,
+                if (try? cancellation.perform(request, with: handler)) != nil,
+                   let results = request.results, !results.isEmpty {
+                    return results.filter { $0.confidence >= 0.35 }.map(\.boundingBox)
+                }
+                let rightHandler = VNImageRequestHandler(cvPixelBuffer: frame.buffer,
+                                                         orientation: .right, options: [:])
+                guard (try? cancellation.perform(request, with: rightHandler)) != nil,
                       let results = request.results else { return nil }
                 return results.filter { $0.confidence >= 0.35 }.map(\.boundingBox)
             }.value
         } onCancel: { cancellation.cancel() }
         guard !Task.isCancelled, let faces = rectangles,
               CACurrentMediaTime() - snapshot.1.timestamp <= 0.50 else { return false }
-        return faces.count >= postZoomFaceCount && faces.allSatisfy {
+        return faces.count >= min(1, postZoomFaceCount) && faces.allSatisfy {
             let r = $0
-            return r.minX >= 0.02 && r.maxX <= 0.98 &&
-                   r.minY >= 0.02 && r.maxY <= 0.98
+            return r.minX >= 0.01 && r.maxX <= 0.99 &&
+                   r.minY >= 0.01 && r.maxY <= 0.99
         }
     }
 
