@@ -1,6 +1,9 @@
 import SwiftUI
 import AVFoundation
 import QuartzCore
+import Metal
+import MetalKit
+import CoreImage
 
 public struct CameraPreviewView: UIViewRepresentable {
     @ObservedObject var viewModel: CameraViewModel
@@ -8,6 +11,7 @@ public struct CameraPreviewView: UIViewRepresentable {
     public func makeUIView(context: Context) -> PreviewContainerView {
         let view = PreviewContainerView()
         view.setupLayer(session: viewModel.cameraService.captureSession)
+        view.setupMetalPreview(viewModel: viewModel)
         viewModel.previewLayer = view.previewLayer
         return view
     }
@@ -24,6 +28,11 @@ public struct CameraPreviewView: UIViewRepresentable {
             uiView.previewLayer?.videoGravity = targetGravity
             CATransaction.commit()
         }
+        uiView.updateMetalPreviewState(
+            isActive: viewModel.isFilmSimulationActive,
+            preset: viewModel.selectedFilmPreset,
+            intensity: viewModel.filmSimulationIntensity
+        )
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -86,6 +95,93 @@ public struct CameraPreviewView: UIViewRepresentable {
     }
 }
 
+// MARK: - Metal Film Simulation Realtime Renderer (Zero-Lag Core Image to Metal)
+final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
+    private let device: MTLDevice
+    private let commandQueue: MTLCommandQueue
+    private let ciContext: CIContext
+    private weak var viewModel: CameraViewModel?
+    private let stateLock = NSLock()
+    private var isRenderingActive: Bool = false
+    private var currentPreset: FilmPreset = .standard
+    private var currentIntensity: Float = 1.0
+
+    init?(device: MTLDevice, viewModel: CameraViewModel) {
+        self.device = device
+        guard let queue = device.makeCommandQueue() else { return nil }
+        self.commandQueue = queue
+        self.ciContext = CIContext(mtlDevice: device, options: [
+            .useSoftwareRenderer: false,
+            .priorityRequestLow: false
+        ])
+        self.viewModel = viewModel
+        super.init()
+    }
+
+    func updateState(isActive: Bool, preset: FilmPreset, intensity: Float) {
+        stateLock.lock()
+        self.isRenderingActive = isActive && preset != .standard
+        self.currentPreset = preset
+        self.currentIntensity = intensity
+        stateLock.unlock()
+    }
+
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+    func draw(in view: MTKView) {
+        stateLock.lock()
+        let active = isRenderingActive
+        let preset = currentPreset
+        let intensity = currentIntensity
+        stateLock.unlock()
+
+        guard active, preset != .standard else { return }
+        guard let vm = self.viewModel, let pixelBuffer = vm.latestCameraPixelBuffer() else { return }
+
+        guard let currentDrawable = view.currentDrawable,
+              let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+
+        let drawableSize = view.drawableSize
+        guard drawableSize.width > 0, drawableSize.height > 0 else { return }
+
+        let inputCI = CIImage(cvPixelBuffer: pixelBuffer)
+        let filteredCI = FilmFilterEngine.shared.applyPreset(to: inputCI, preset: preset, intensity: intensity) ?? inputCI
+
+        let extent = filteredCI.extent
+        guard extent.width > 0, extent.height > 0 else { return }
+
+        let scaleX = drawableSize.width / extent.width
+        let scaleY = drawableSize.height / extent.height
+        let scale = max(scaleX, scaleY)
+
+        let scaledW = extent.width * scale
+        let scaledH = extent.height * scale
+        let ox = (drawableSize.width - scaledW) / 2.0
+        let oy = (drawableSize.height - scaledH) / 2.0
+
+        var transformed = filteredCI
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            .transformed(by: CGAffineTransform(translationX: ox, y: oy))
+
+        transformed = transformed
+            .transformed(by: CGAffineTransform(scaleX: 1, y: -1))
+            .transformed(by: CGAffineTransform(translationX: 0, y: drawableSize.height))
+
+        let destinationBounds = CGRect(origin: .zero, size: drawableSize)
+
+        ciContext.render(
+            transformed,
+            to: currentDrawable.texture,
+            commandBuffer: commandBuffer,
+            bounds: destinationBounds,
+            colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!
+        )
+
+        commandBuffer.present(currentDrawable)
+        commandBuffer.commit()
+    }
+}
+
 @MainActor
 public class PreviewContainerView: UIView {
     public override class var layerClass: AnyClass {
@@ -97,6 +193,8 @@ public class PreviewContainerView: UIView {
     }
 
     private let focusRingView = UIView(frame: CGRect(x: 0, y: 0, width: 70, height: 70))
+    private var metalView: MTKView?
+    private var metalRenderer: MetalFilmSimulationRenderer?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -129,6 +227,39 @@ public class PreviewContainerView: UIView {
         previewLayer?.rasterizationScale = currentDisplayScale
     }
 
+    public func setupMetalPreview(viewModel: CameraViewModel) {
+        guard metalView == nil, let metalDevice = MTLCreateSystemDefaultDevice() else { return }
+        let mtk = MTKView(frame: bounds, device: metalDevice)
+        mtk.framebufferOnly = false
+        mtk.colorPixelFormat = .bgra8Unorm
+        mtk.preferredFramesPerSecond = 60
+        mtk.isPaused = true
+        mtk.enableSetNeedsDisplay = false
+        mtk.isUserInteractionEnabled = false
+        mtk.isHidden = true
+        mtk.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+
+        let renderer = MetalFilmSimulationRenderer(device: metalDevice, viewModel: viewModel)
+        mtk.delegate = renderer
+
+        self.metalRenderer = renderer
+        self.metalView = mtk
+
+        insertSubview(mtk, belowSubview: focusRingView)
+    }
+
+    public func updateMetalPreviewState(isActive: Bool, preset: FilmPreset, intensity: Float) {
+        let shouldRender = isActive && preset != .standard
+        metalRenderer?.updateState(isActive: shouldRender, preset: preset, intensity: intensity)
+
+        if metalView?.isHidden != !shouldRender {
+            metalView?.isHidden = !shouldRender
+        }
+        if metalView?.isPaused != !shouldRender {
+            metalView?.isPaused = !shouldRender
+        }
+    }
+
     private var currentDisplayScale: CGFloat {
         let scale = window?.windowScene?.screen.scale ?? traitCollection.displayScale
         return scale > 0 ? scale : 1
@@ -138,6 +269,7 @@ public class PreviewContainerView: UIView {
         super.layoutSubviews()
         previewLayer?.contentsScale = currentDisplayScale
         previewLayer?.rasterizationScale = currentDisplayScale
+        metalView?.frame = bounds
         updateOrientation()
     }
 

@@ -913,6 +913,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 cancellation: CompositionAnalysisCancellation()
             )
             for c in yoloCandidates where c.confidence >= 0.35 {
+                guard c.category == .human || c.category == .animal else { continue }
                 candidates.append(LiveDetectedEntity(
                     rect: c.boundingBox,
                     label: c.label,
@@ -922,15 +923,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
 
-        // 2. Apple Vision Multi-Request Suite (Faces, Humans, Animals, Foreground Objects)
+        // 2. Apple Vision Multi-Request Suite (People, Faces, Pets/Animals Only - Zero Clutter)
         let faceRequest = VNDetectFaceRectanglesRequest()
         let humanRequest = VNDetectHumanRectanglesRequest()
         humanRequest.upperBodyOnly = false
         let animalRequest = VNRecognizeAnimalsRequest()
-        let saliencyRequest = VNGenerateObjectnessBasedSaliencyImageRequest()
 
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-        let visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest, saliencyRequest]
+        let visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest]
         if (try? handler.perform(visionRequests)) != nil {
             let faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.40 }
             result.faceRectangles = faces.map {
@@ -973,26 +973,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         confidence: obs.confidence,
                         category: .human
                     ))
-                }
-            }
-
-            if let saliency = saliencyRequest.results?.first?.salientObjects {
-                for obs in saliency where obs.confidence >= 0.40 {
-                    let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
-                                      width: obs.boundingBox.width, height: obs.boundingBox.height)
-                    let overlaps = candidates.contains { c in
-                        let inter = c.rect.intersection(rect)
-                        guard !inter.isNull, !inter.isEmpty else { return false }
-                        return (inter.width * inter.height) / (rect.width * rect.height) > 0.40
-                    }
-                    if !overlaps && rect.width >= 0.05 && rect.height >= 0.05 {
-                        candidates.append(LiveDetectedEntity(
-                            rect: rect,
-                            label: "Vật thể",
-                            confidence: obs.confidence,
-                            category: .foregroundObject
-                        ))
-                    }
                 }
             }
         }

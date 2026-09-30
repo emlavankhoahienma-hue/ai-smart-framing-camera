@@ -175,6 +175,7 @@ public struct CapturedPhotoPreviewView: View {
                             }
                         }
                         .frame(width: size.width, height: size.height)
+                        .coordinateSpace(name: "PhotoViewport")
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                     .frame(maxHeight: .infinity)
@@ -578,28 +579,74 @@ public struct CapturedPhotoPreviewView: View {
     // MARK: - Split Comparison Controls (Active only at 1.0x)
     @ViewBuilder
     private func splitComparisonControls(size: CGSize) -> some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.8))
-            .frame(width: 1.5, height: size.height)
-            .position(x: size.width * splitOffset, y: size.height / 2)
-            .shadow(color: .black.opacity(0.6), radius: 3)
+        let dividerX = min(max(0, size.width * splitOffset), size.width)
+        ZStack(alignment: .topLeading) {
+            // 1. Vertical Split Line
+            Rectangle()
+                .fill(Color.white.opacity(0.92))
+                .frame(width: 2, height: size.height)
+                .shadow(color: Color.black.opacity(0.70), radius: 3, x: 0, y: 0)
+                .position(x: dividerX, y: size.height / 2)
 
-        Circle()
-            .fill(Color.white)
-            .frame(width: 28, height: 28)
-            .overlay(
-                Image(systemName: "arrow.left.and.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.black)
-            )
-            .position(x: size.width * splitOffset, y: size.height / 2)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        let newSplit = value.location.x / size.width
-                        splitOffset = max(0.05, min(0.95, newSplit))
-                    }
-            )
+            // 2. Subtle Before / After Badges
+            HStack {
+                Text("ĐÃ LỌC")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.black.opacity(0.45)))
+                    .padding(.leading, 8)
+                Spacer()
+                Text("ẢNH GỐC")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.black.opacity(0.45)))
+                    .padding(.trailing, 8)
+            }
+            .frame(width: size.width)
+            .padding(.top, 10)
+            .allowsHitTesting(false)
+
+            // 3. Center Draggable Knob with Left/Right Indicator Arrows
+            ZStack {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 32, height: 32)
+                    .shadow(color: Color.black.opacity(0.60), radius: 4, x: 0, y: 1)
+
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(Color.black.opacity(0.80))
+                    .offset(x: -7)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(Color.black.opacity(0.80))
+                    .offset(x: 7)
+
+                Circle()
+                    .fill(Color.black.opacity(0.35))
+                    .frame(width: 3.5, height: 3.5)
+            }
+            .position(x: dividerX, y: size.height / 2)
+
+            // 4. Full-Height 56pt Wide Hit-Target Area with High Priority Gesture
+            Rectangle()
+                .fill(Color.white.opacity(0.001))
+                .frame(width: 56, height: size.height)
+                .contentShape(Rectangle())
+                .position(x: dividerX, y: size.height / 2)
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .named("PhotoViewport"))
+                        .onChanged { val in
+                            let rawSplit = val.location.x / max(1, size.width)
+                            splitOffset = max(0.01, min(0.99, rawSplit))
+                        }
+                )
+        }
     }
 
     // MARK: - Modern iPhone Style Mini-Map (Vùng đang zoom)
@@ -794,7 +841,9 @@ public struct CapturedPhotoPreviewView: View {
                 self.baseProcessedImage = rendered
                 withAnimation(.easeInOut(duration: 0.2)) {
                     self.currentProcessedImage = finalImage
-                    self.splitOffset = 1.0
+                    if self.splitOffset >= 0.98 || self.splitOffset <= 0.02 {
+                        self.splitOffset = 0.5
+                    }
                 }
             }
         }
@@ -844,9 +893,11 @@ public struct CapturedPhotoPreviewView: View {
                         }
                         withAnimation(.easeInOut(duration: 0.3)) {
                             self.currentProcessedImage = finalImage
-                            self.splitOffset = 1.0
+                            if self.splitOffset >= 0.98 || self.splitOffset <= 0.02 {
+                                self.splitOffset = 0.5
+                            }
                         }
-                        self.aiOptimizationSuccessNote = "\u{2728} AI khuyên dùng \(chosenPreset.displayName): \(explanation) (\(latency)ms)"
+                        self.aiOptimizationSuccessNote = "AI khuyen dung \(chosenPreset.displayName): \(explanation) (\(latency)ms)"
                         self.saveEnhancedImageToPhotos(finalImage, appliedPreset: chosenPreset, aiParams: aiParams)
                     }
                 case .failure(let error):

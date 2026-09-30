@@ -532,7 +532,8 @@ public final class CameraViewModel: ObservableObject {
             return source.isCloud ? .cloud : .local
         }
         if aiSessionState == .analyzing {
-            return (useGeminiForAnalysis && geminiService.hasAPIKey) ? .cloud : .local
+            let isConnected = NetworkMonitor.shared.checkConnection().isConnected
+            return (useGeminiForAnalysis && geminiService.hasAPIKey && isConnected) ? .cloud : .local
         }
         return .none
     }
@@ -800,12 +801,11 @@ public final class CameraViewModel: ObservableObject {
            defaults.object(forKey: "useGeminiForAnalysis") != nil {
             self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
         } else {
-            self.useGeminiForAnalysis = false
-            if defaults.string(forKey: "gemini_selected_model") == "auto" {
-                geminiService.selectedModel = .freeVision
-                geminiService.customModelName = ""
-            }
+            self.useGeminiForAnalysis = true
+            geminiService.selectedModel = .freeVision
+            geminiService.customModelName = ""
             defaults.set(true, forKey: "cloudModeOptInV2")
+            defaults.set(true, forKey: "useGeminiForAnalysis")
         }
         if defaults.object(forKey: "isStreetTrackingModeEnabled") != nil {
             self.isStreetTrackingModeEnabled = defaults.bool(forKey: "isStreetTrackingModeEnabled")
@@ -1379,7 +1379,11 @@ public final class CameraViewModel: ObservableObject {
             aiSessionState = .analyzing
         }
 
-        if useGeminiForAnalysis && geminiService.hasAPIKey {
+        let isOnline = NetworkMonitor.shared.checkConnection().isConnected
+        let shouldUseCloud = useGeminiForAnalysis && geminiService.hasAPIKey && isOnline
+
+        if shouldUseCloud {
+            activeModelUsedName = "Gemma 4 31B"
             // Keep the exact camera frame and CoreMotion pose used by Gemini.
             visionEngine.onFrameCapturedForAIWithSource = { [weak self] frame, buffer, context in
                 DispatchQueue.main.async { [weak self] in
@@ -1389,8 +1393,8 @@ public final class CameraViewModel: ObservableObject {
                         self.isOneShotCaptured = true
                         guard let buffer, let context,
                               let pose = SpatialTrackingEngine.shared.pose(at: context.timestamp) else {
-                            self.geminiError = "Không đồng bộ được khung hình AI với chuyển động camera"
-                            self.localSelectionMessage = "Không có ảnh đồng bộ. Chạm vùng muốn chụp hoặc chụp tay."
+                            self.geminiError = "Khong dong bo duoc khung hinh AI voi chuyen dong camera"
+                            self.localSelectionMessage = "Khong co anh dong bo. Cham vung muon chup hoac chup tay."
                             return
                         }
                         let nearbyDetection = self.latestSubjectDetectionResult
@@ -1412,7 +1416,7 @@ public final class CameraViewModel: ObservableObject {
                 guard let self = self else { return }
                 if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
                     self.isOneShotCaptured = true
-                    self.localSelectionMessage = "Camera chưa gửi ảnh AI. Chạm vùng muốn chụp hoặc chụp tay."
+                    self.localSelectionMessage = "Camera chua gui anh AI. Cham vung muon chup hoac chup tay."
                 }
             }
             // A captured frame can still be followed by a stalled cloud call.
@@ -1420,10 +1424,13 @@ public final class CameraViewModel: ObservableObject {
                 guard let self, self.aiSessionGeneration == requestGeneration,
                       self.aiSessionState == .analyzing, self.isGeminiAnalyzing else { return }
                 self.isGeminiAnalyzing = false
-                self.geminiError = "Phân tích cloud quá thời gian, đã chuyển sang AI trên máy"
+                self.geminiError = "Cloud AI phan hoi cham, da tu dong chuyen sang AI tren may"
                 self.analyzeCloudCaptureLocally()
             }
         } else {
+            if !isOnline {
+                self.localSelectionMessage = "Ngoai tuyen (khong co mang/4G) - Su dung AI tren may"
+            }
             visionEngine.onFrameCapturedForAIWithSource = { [weak self] _, buffer, context in
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.aiSessionGeneration == requestGeneration,
@@ -1678,11 +1685,6 @@ public final class CameraViewModel: ObservableObject {
                     self.handleGeminiResponse(response)
                 case .failure(let error):
                     self.geminiError = error.localizedDescription
-                    if case .insufficientCredits = error {
-                        self.useGeminiForAnalysis = false
-                    } else if case .invalidAPIKey = error {
-                        self.useGeminiForAnalysis = false
-                    }
                     self.analyzeCloudCaptureLocally()
                 }
             }
@@ -2823,6 +2825,10 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    public func latestCameraPixelBuffer() -> CVPixelBuffer? {
+        return frameProcessor.latestPixelBufferSnapshot()
+    }
+
     public func disableFilmSimulation() {
         haptics.triggerSelectionChange()
         FilmFilterEngine.shared.clearCache()
@@ -2979,11 +2985,6 @@ public final class CameraViewModel: ObservableObject {
                         self.applyVideoGuidance(guidance)
                     case .failure(let err):
                         self.videoDirectorError = err.localizedDescription
-                        if case .insufficientCredits = err {
-                            self.useGeminiForAnalysis = false
-                        } else if case .invalidAPIKey = err {
-                            self.useGeminiForAnalysis = false
-                        }
                         self.applyVideoGuidance(fallback)
                     }
                 }

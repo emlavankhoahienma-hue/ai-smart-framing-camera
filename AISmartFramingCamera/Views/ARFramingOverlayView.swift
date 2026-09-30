@@ -556,47 +556,36 @@ struct LiveEntityBoxView: View {
     let layerRect: CGRect
     let onTap: () -> Void
 
+    // Apple Camera signature golden yellow #FFD60A
+    private let appleGold = Color(red: 255/255, green: 214/255, blue: 10/255)
+
     var body: some View {
-        let color: Color = {
-            switch entity.category {
-            case .face, .human:
-                return Color(red: 0.20, green: 0.85, blue: 1.0)
-            case .animal:
-                return Color(red: 0.25, green: 0.92, blue: 0.55)
-            case .foregroundObject, .general:
-                return Color(red: 1.0, green: 0.82, blue: 0.25)
-            }
-        }()
-
         ZStack(alignment: .topLeading) {
-            CornerBracketsShape(bracketLength: min(16, min(layerRect.width, layerRect.height) * 0.35))
-                .stroke(color, lineWidth: 1.5)
-                .frame(width: max(24, layerRect.width), height: max(24, layerRect.height))
+            // Apple Camera Minimalist Rounded Focus Square Box
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .stroke(appleGold.opacity(0.88), lineWidth: 1.2)
                 .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(color.opacity(0.04))
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(appleGold.opacity(0.04))
                 )
+                .frame(width: max(24, layerRect.width), height: max(24, layerRect.height))
 
-            HStack(spacing: 3) {
+            // For pets (dog/cat), show subtle micro-badge
+            if entity.category == .animal {
                 Text(entity.label)
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-
-                Text("\(Int(entity.confidence * 100))%")
-                    .font(.system(size: 8, weight: .regular, design: .monospaced))
-                    .foregroundColor(color)
-            }
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                Capsule()
-                    .fill(Color.black.opacity(0.72))
-                    .overlay(
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundColor(appleGold)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(
                         Capsule()
-                            .stroke(color.opacity(0.4), lineWidth: 0.6)
+                            .fill(Color.black.opacity(0.65))
+                            .overlay(
+                                Capsule().stroke(appleGold.opacity(0.4), lineWidth: 0.6)
+                            )
                     )
-            )
-            .offset(x: 2, y: -16)
+                    .offset(x: 2, y: -14)
+            }
         }
         .position(x: layerRect.midX, y: layerRect.midY)
         .contentShape(Rectangle())

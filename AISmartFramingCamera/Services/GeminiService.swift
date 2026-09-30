@@ -3,6 +3,42 @@ import UIKit
 import CoreGraphics
 import QuartzCore
 import Security
+import Network
+
+// MARK: - Real-time Network Connectivity Monitor (Wifi / 4G / Offline Auto-Routing)
+public final class NetworkMonitor: @unchecked Sendable {
+    public static let shared = NetworkMonitor()
+
+    public private(set) var isConnected: Bool = true
+    public private(set) var isCellular: Bool = false
+    public private(set) var isWiFi: Bool = false
+
+    private let monitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "com.alignai.networkMonitor", qos: .utility)
+    private let lock = NSLock()
+
+    private init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self else { return }
+            self.lock.lock()
+            self.isConnected = (path.status == .satisfied)
+            self.isCellular = path.isExpensive || path.usesInterfaceType(.cellular)
+            self.isWiFi = path.usesInterfaceType(.wifi)
+            self.lock.unlock()
+        }
+        monitor.start(queue: monitorQueue)
+    }
+
+    public func checkConnection() -> (isConnected: Bool, isCellular: Bool, isWiFi: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (isConnected, isCellular, isWiFi)
+    }
+
+    deinit {
+        monitor.cancel()
+    }
+}
 
 // MARK: - Keychain Security Helper
 public struct KeychainHelper {
@@ -72,33 +108,33 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .freeVision:
-            return "\u{1f193} Gemma 4 31B (Miễn phí, nhận ảnh)"
+            return "Gemma 4 31B (Mien phi, nhan anh)"
         case .autoStrongest:
-            return "\u{26a1} Gemini 3.7 Flash (Trả phí)"
+            return "Gemini 3.7 Flash (Tra phi)"
         case .gemini31Pro:
-            return "\u{1f9e0} Gemini 3.1 Pro (Trả phí, phân tích sâu)"
+            return "Gemini 3.1 Pro (Tra phi, phan tich sau)"
         case .gemini35Flash:
-            return "\u{1f3af} Gemini 3.5 Flash (Trả phí)"
+            return "Gemini 3.5 Flash (Tra phi)"
         case .gemini25Flash:
-            return "\u{2728} Gemini 2.5 Flash (Trả phí)"
+            return "Gemini 2.5 Flash (Tra phi)"
         case .gemini36Flash:
-            return "\u{26a1} Gemini 3.6 Flash (Trả phí)"
+            return "Gemini 3.6 Flash (Tra phi)"
         case .gemini37Flash:
-            return "\u{1f680} Gemini 3.7 Flash (Trả phí)"
+            return "Gemini 3.7 Flash (Tra phi)"
         case .gemini25Pro:
-            return "\u{1f48e} Gemini 2.5 Pro (Trả phí)"
+            return "Gemini 2.5 Pro (Tra phi)"
         case .gemini20Flash:
-            return "\u{1f525} Gemini 2.0 Flash (Trả phí)"
+            return "Gemini 2.0 Flash (Tra phi)"
         case .geminiFlash15:
-            return "\u{1f31f} Gemini 1.5 Flash (Trả phí)"
+            return "Gemini 1.5 Flash (Tra phi)"
         case .geminiPro15:
-            return "\u{1f52e} Gemini 1.5 Pro (Trả phí)"
+            return "Gemini 1.5 Pro (Tra phi)"
         case .gpt4oMini:
-            return "\u{1f7e2} GPT-4o Mini (Trả phí)"
+            return "GPT-4o Mini (Tra phi)"
         case .claude35Haiku:
-            return "\u{1f7e3} Claude 3.5 Haiku (Trả phí)"
+            return "Claude 3.5 Haiku (Tra phi)"
         case .llamaVision:
-            return "\u{1f999} Llama 3.2 Vision (Trả phí)"
+            return "Llama 3.2 Vision (Tra phi)"
         }
     }
 
@@ -430,7 +466,7 @@ public final class GeminiService {
         completion: @escaping (Bool, String) -> Void
     ) {
         guard index < candidates.count else {
-            completion(false, "\u{274c} Đã thử tất cả model OpenRouter nhưng key bị giới hạn quota hoặc hết credits. Hãy kiểm tra số dư trên openrouter.ai.")
+            completion(false, "Da thu tat ca model OpenRouter nhung key bi gioi han quota hoac het credits. Hay kiem tra so du tren openrouter.ai.")
             return
         }
 
