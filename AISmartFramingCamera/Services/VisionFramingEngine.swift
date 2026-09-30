@@ -1006,7 +1006,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let type: SmartFocusType
         if let first = candidates.first {
             focus = CGPoint(x: first.rect.midX, y: first.rect.midY)
-            type = first.category == .face ? .face : .saliency
+            type = first.category == .face ? .face : .salientObject
         } else {
             focus = CGPoint(x: 0.5, y: 0.5)
             type = .center
