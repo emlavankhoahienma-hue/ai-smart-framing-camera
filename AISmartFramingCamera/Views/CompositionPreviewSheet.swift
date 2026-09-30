@@ -20,9 +20,10 @@ struct CompositionPreviewSheet: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
+                let compactHeight = geometry.size.height < 600
                 ScrollView {
                     if let choice = selection {
-                        VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: compactHeight ? 12 : 18) {
                             HStack {
                                 Text("PHƯƠNG ÁN \((choices.firstIndex(where: { $0.id == choice.id }) ?? 0) + 1) / \(choices.count)")
                                     .font(.caption.weight(.semibold))
@@ -37,7 +38,7 @@ struct CompositionPreviewSheet: View {
                                 .resizable()
                                 .scaledToFit()
                                 .frame(maxWidth: .infinity)
-                                .frame(height: min(300, max(180, geometry.size.height * 0.42)))
+                                .frame(height: min(300, geometry.size.height * (compactHeight ? 0.28 : 0.38)))
                                 .background(Color.black, in: RoundedRectangle(cornerRadius: 16))
                                 .accessibilityLabel("Xem trước bố cục \(choice.plan.intent.title)")
 
@@ -49,22 +50,24 @@ struct CompositionPreviewSheet: View {
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
-
-                            if choices.count > 1 {
-                                HStack(alignment: .top, spacing: 10) {
-                                    ForEach(Array(choices.enumerated()), id: \.element.id) { index, option in
-                                        thumbnail(option, number: index + 1, selected: option.id == choice.id)
-                                    }
-                                }
-                            }
                         }
-                        .padding(20)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, compactHeight ? 12 : 20)
                         .frame(maxWidth: 540)
                         .frame(maxWidth: .infinity)
                     }
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     VStack(spacing: 8) {
+                        if let choice = selection, choices.count > 1 {
+                            HStack(alignment: .top, spacing: 10) {
+                                ForEach(Array(choices.enumerated()), id: \.element.id) { index, option in
+                                    thumbnail(option, number: index + 1, selected: option.id == choice.id,
+                                              imageHeight: compactHeight ? 56 : 76)
+                                }
+                            }
+                            .padding(.bottom, 4)
+                        }
                         Button {
                             if let choice = selection { onSelect(choice.id) }
                         } label: {
@@ -102,7 +105,8 @@ struct CompositionPreviewSheet: View {
         .preferredColorScheme(.dark)
     }
 
-    private func thumbnail(_ choice: LocalCompositionChoice, number: Int, selected: Bool) -> some View {
+    private func thumbnail(_ choice: LocalCompositionChoice, number: Int, selected: Bool,
+                           imageHeight: CGFloat) -> some View {
         Button {
             selectedID = choice.id
         } label: {
@@ -110,7 +114,7 @@ struct CompositionPreviewSheet: View {
                 Image(decorative: choice.preview, scale: 1)
                     .resizable()
                     .scaledToFit()
-                    .frame(height: 86)
+                    .frame(height: imageHeight)
                     .frame(maxWidth: .infinity)
                     .background(Color.black, in: RoundedRectangle(cornerRadius: 8))
                 Text("\(number). \(choice.plan.intent.title)")

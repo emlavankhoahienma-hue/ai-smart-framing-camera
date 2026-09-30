@@ -18,15 +18,15 @@ jobs:
   snapshot:
     name: Simulator UI Visual Snapshot
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: write
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Select Xcode 16
+      - name: Select latest Xcode
         run: |
           latest=$(ls -d /Applications/Xcode_16*.app /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
           if [ -n "$latest" ]; then
@@ -63,20 +63,22 @@ jobs:
 
       - name: Upload build log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: simulator-build-log
           path: build-sim.log
 
       - name: Run Simulator Snapshot Suite
-        timeout-minutes: 10
+        # Three cold simulators each have bounded boot/install/capture commands.
+        # Keep enough total time for all three instead of interrupting device 3.
+        timeout-minutes: 25
         run: |
           chmod +x scripts/capture_simulator_screenshots.sh
           ./scripts/capture_simulator_screenshots.sh "${{ github.workspace }}/build-sim/Release-iphonesimulator/AISmartFramingCamera.app"
 
       - name: Upload Screenshots Artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: iPhone-Screenshots
           path: screenshots/*.png
