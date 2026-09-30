@@ -127,7 +127,7 @@ public enum RicohGRSimulations {
 
     // MARK: - 6. Ricoh Theta Doc (Tai lieu trung thuc, sac do phang, han che sai mau)
     private static func applyThetaDoc(_ input: CIImage) -> CIImage {
-        var out = FilmSimulationCore.applyColorControls(input, contrast: 1.02, saturation: 1.00)
+        let out = FilmSimulationCore.applyColorControls(input, contrast: 1.02, saturation: 1.00)
         return FilmSimulationCore.applyToneCurve(
             out,
             p0: CGPoint(x: 0.00, y: 0.04),
