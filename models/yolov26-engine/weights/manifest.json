@@ -1,0 +1,22 @@
+{
+  "model_name": "YOLOv26-ANE-Engine",
+  "version": "26.1.0",
+  "classes": [
+    "face",
+    "person",
+    "dog",
+    "cat"
+  ],
+  "input_resolution": [
+    640,
+    640
+  ],
+  "input_format": "RGB, 0..255 scaled by 1/255.0",
+  "output_format": {
+    "coordinates": "Normalized [cx, cy, w, h] in [0, 1]",
+    "confidence": "Per-class probabilities for [face, person, dog, cat]"
+  },
+  "quantization": "fp16",
+  "sha256": "e3684fa8682542779aca427752a8f097f55f724df083fa81b48f9cafcbb083b7",
+  "canonical_package": "yolov26_ane.mlpackage"
+}

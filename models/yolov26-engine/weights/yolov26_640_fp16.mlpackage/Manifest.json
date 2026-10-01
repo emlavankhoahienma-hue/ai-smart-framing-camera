@@ -1,0 +1,9 @@
+{
+    "fileFormatVersion": "1.0.0",
+    "itemInfoEntries": {
+        "com.apple.CoreML": {
+            "path": "Data/com.apple.CoreML/model.mlmodel"
+        }
+    },
+    "rootModelIdentifier": "com.apple.CoreML"
+}
