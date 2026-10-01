@@ -305,7 +305,7 @@ struct TopCameraBar: View {
                 .buttonStyle(PlainButtonStyle())
                 .accessibilityLabel("Định dạng: \(currentFormatLabel). Chạm để thay đổi.")
 
-                Text("4:3")
+                Text(viewModel.captureMode.isVideo ? "16:9" : (viewModel.isWindowedZoomActive ? viewModel.windowedZoomAspectRatio.rawValue : "4:3"))
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.85))
             }
@@ -374,7 +374,13 @@ struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
     private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
-    private let zoomOptions: [CGFloat] = [1.0, 2.0, 3.0]
+    private var zoomOptions: [CGFloat] {
+        if viewModel.cameraService.hasUltraWideLens {
+            return [0.5, 1.0, 2.0, 3.0]
+        } else {
+            return [1.0, 2.0, 3.0]
+        }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -396,7 +402,7 @@ struct ViewfinderZoomSelectorPill: View {
                                 .matchedGeometryEffect(id: "active_viewfinder_zoom_ring", in: zoomPillNamespace)
                         }
 
-                        Text("\(Int(zoom))x")
+                        Text(zoom == 0.5 ? "0.5x" : "\(Int(zoom))x")
                             .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
                             .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.78))
                     }
@@ -404,7 +410,7 @@ struct ViewfinderZoomSelectorPill: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Thu phóng \(Int(zoom)) lần")
+                .accessibilityLabel(zoom == 0.5 ? "Thu phong 0.5 lan" : "Thu phong \(Int(zoom)) lan")
             }
         }
     }

@@ -10,6 +10,7 @@ public struct VideoPreviewSheetView: View {
 
     @State private var player: AVPlayer?
     @State private var isGradingWithAI: Bool = false
+    @State private var isCroppingWindowedZoom: Bool = false
     @State private var gradingSuccessNote: String? = nil
     @State private var hasSavedToPhotos: Bool = false
     @State private var processedVideoURL: URL? = nil
@@ -49,7 +50,32 @@ public struct VideoPreviewSheetView: View {
                         .background(Capsule().fill(Color.white.opacity(0.08)))
                     }
 
-                    // 3. Action Buttons: [Chỉnh màu], [Lưu], [Chia sẻ]
+                    // 3. Optional Windowed Zoom Crop Banner
+                    if let focal = viewModel.lastRecordedVideoWindowedFocal, focal > 24.5 {
+                        Button(action: applyWindowedZoomCrop) {
+                            HStack(spacing: 6) {
+                                if isCroppingWindowedZoom {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "viewfinder")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                Text(isCroppingWindowedZoom ? "Đang xử lý…" : "Cắt Windowed Zoom (\(Int(focal))mm)")
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.white.opacity(0.12))
+                            .cornerRadius(10)
+                        }
+                        .disabled(isCroppingWindowedZoom || isGradingWithAI)
+                        .padding(.horizontal, 16)
+                    }
+
+                    // 4. Action Buttons: [Chỉnh màu], [Lưu], [Chia sẻ]
                     HStack(spacing: 12) {
                         Button(action: applyAICinematicColor) {
                             HStack(spacing: 6) {
@@ -70,7 +96,7 @@ public struct VideoPreviewSheetView: View {
                             .background(Color.white.opacity(0.12))
                             .cornerRadius(10)
                         }
-                        .disabled(isGradingWithAI)
+                        .disabled(isGradingWithAI || isCroppingWindowedZoom)
 
                         Button(action: { saveVideoToPhotos() }) {
                             HStack(spacing: 6) {
@@ -121,11 +147,62 @@ public struct VideoPreviewSheetView: View {
         }
     }
 
+    private func applyWindowedZoomCrop() {
+        guard let windowFocal = viewModel.lastRecordedVideoWindowedFocal,
+              let windowAspect = viewModel.lastRecordedVideoWindowedAspect,
+              windowFocal > 24.5 else { return }
+
+        isCroppingWindowedZoom = true
+        let asset = AVAsset(url: processedVideoURL ?? videoURL)
+
+        let fractions = windowAspect.windowFractions(focalLength: windowFocal)
+        let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
+            let source = request.sourceImage.clampedToExtent()
+            let origExtent = request.sourceImage.extent
+            let cropW = origExtent.width * fractions.widthFraction
+            let cropH = origExtent.height * fractions.heightFraction
+            let cropX = origExtent.origin.x + (origExtent.width - cropW) / 2.0
+            let cropY = origExtent.origin.y + (origExtent.height - cropH) / 2.0
+            let cropped = source.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
+            request.finish(with: cropped, context: nil)
+        })
+
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("cropped_\(UUID().uuidString).mov")
+        try? FileManager.default.removeItem(at: tempURL)
+
+        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+            self.isCroppingWindowedZoom = false
+            return
+        }
+
+        exportSession.videoComposition = composition
+        exportSession.outputURL = tempURL
+        exportSession.outputFileType = .mov
+        exportSession.shouldOptimizeForNetworkUse = true
+
+        exportSession.exportAsynchronously {
+            DispatchQueue.main.async {
+                self.isCroppingWindowedZoom = false
+                if exportSession.status == .completed {
+                    self.processedVideoURL = tempURL
+                    self.gradingSuccessNote = "Đã cắt theo khung Windowed Zoom (\(Int(windowFocal))mm)"
+                    self.player = AVPlayer(url: tempURL)
+                    self.player?.play()
+                    self.saveVideoToPhotos(url: tempURL)
+                } else {
+                    CameraLogger.error("Cắt video Windowed Zoom thất bại: \(String(describing: exportSession.error))", category: .photoKit)
+                }
+            }
+        }
+    }
+
     private func applyAICinematicColor() {
         isGradingWithAI = true
-        let asset = AVAsset(url: videoURL)
+        let asset = AVAsset(url: processedVideoURL ?? videoURL)
         let filterPreset = viewModel.selectedFilmPreset
         let aiColorParameters = viewModel.currentAIColorParams
+        let windowFocal = viewModel.lastRecordedVideoWindowedFocal
+        let windowAspect = viewModel.lastRecordedVideoWindowedAspect
 
         let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
             let source = request.sourceImage.clampedToExtent()
@@ -140,7 +217,20 @@ public struct VideoPreviewSheetView: View {
                 output = aiFiltered
             }
 
-            output = output.cropped(to: request.sourceImage.extent)
+            if let wf = windowFocal, let wa = windowAspect, wf > 24.5 {
+                let fractions = wa.windowFractions(focalLength: wf)
+                if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
+                    let origExtent = request.sourceImage.extent
+                    let cropW = origExtent.width * fractions.widthFraction
+                    let cropH = origExtent.height * fractions.heightFraction
+                    let cropX = origExtent.origin.x + (origExtent.width - cropW) / 2.0
+                    let cropY = origExtent.origin.y + (origExtent.height - cropH) / 2.0
+                    output = output.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
+                }
+            } else {
+                output = output.cropped(to: request.sourceImage.extent)
+            }
+
             request.finish(with: output, context: nil)
         })
 

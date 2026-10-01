@@ -2,8 +2,8 @@
 //  WindowedZoomOverlayView.swift
 //  AISmartFramingCamera
 //
-//  Khung ngắm thu nhỏ quang học Rangefinder (Windowed Zoom)
-//  Tự động phân tích bối cảnh AI, co giãn tiêu cự mm và cắt ảnh cảm biến 48MP siêu nét.
+//  Khung ngam thu nho quang hoc Rangefinder (Windowed Zoom)
+//  Tu dong phan tich boi canh AI, co gian tieu cu mm va cat anh/video chuan quang hoc.
 //
 
 import SwiftUI
@@ -14,12 +14,18 @@ public struct WindowedZoomOverlayView: View {
 
     @State private var gestureInitialFocalLength: Double = 35.0
     @State private var isPinching: Bool = false
+    @Namespace private var focalPillNamespace
 
     private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
+    private let presets = WindowedFocalLengthPreset.standardPresets
 
     public init(viewModel: CameraViewModel, containerSize: CGSize) {
         self.viewModel = viewModel
         self.containerSize = containerSize
+    }
+
+    private var isFull: Bool {
+        viewModel.windowedZoomFocalLength <= 24.5
     }
 
     // MARK: - Window Dimensions Calculation
@@ -34,27 +40,38 @@ public struct WindowedZoomOverlayView: View {
 
     public var body: some View {
         ZStack {
-            // 1. Lớp làm tối ngoài viền (Cutout Dimming Mask 38%) với góc bo nhẹ 14pt
-            WindowedMaskCutout(windowRect: windowRect)
-                .fill(Color.black.opacity(0.38), style: FillStyle(eoFill: true))
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
-
-            // 2. Khung ngắm chính với viền bo tròn nhẹ 14pt & số mm trên đỉnh
-            ZStack(alignment: .top) {
-                // Viền chữ nhật bo tròn nhẹ phù hợp (14pt)
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
-                    .frame(width: windowRect.width, height: windowRect.height)
-
-                // Chỉ để lại đúng số mm trên khung, không có viền tròn bao quanh
-                Text("\(Int(round(viewModel.windowedZoomFocalLength)))mm")
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
-                    .foregroundColor(viewModel.isAIWindowedFocalRecommended ? amberGold : .white)
-                    .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
-                    .offset(y: -22)
+            // 1. Lop lam toi ngoai vien (Cutout Dimming Mask 38%) - An hoan toan khi chon Full (khong crop)
+            if !isFull {
+                WindowedMaskCutout(windowRect: windowRect)
+                    .fill(Color.black.opacity(0.38), style: FillStyle(eoFill: true))
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
             }
-            .position(x: windowRect.midX, y: windowRect.midY)
+
+            // 2. Khung ngam chinh voi vien bo tron nhe 14pt & so mm tren dinh
+            if !isFull {
+                ZStack(alignment: .top) {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
+                        .frame(width: windowRect.width, height: windowRect.height)
+
+                    Text("\(Int(round(viewModel.windowedZoomFocalLength)))mm")
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                        .foregroundColor(viewModel.isAIWindowedFocalRecommended ? amberGold : .white)
+                        .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
+                        .offset(y: -22)
+                }
+                .position(x: windowRect.midX, y: windowRect.midY)
+                .transition(.opacity)
+            }
+
+            // 3. Thanh chon tieu cu Prime nhanh (Full, 28mm, 35mm, 50mm, 85mm)
+            VStack {
+                Spacer()
+                focalPresetBar
+                    .padding(.bottom, 14)
+            }
         }
         .frame(width: containerSize.width, height: containerSize.height)
         .contentShape(Rectangle())
@@ -65,18 +82,65 @@ public struct WindowedZoomOverlayView: View {
                         isPinching = true
                         gestureInitialFocalLength = viewModel.windowedZoomFocalLength
                     }
-                    // Cử chỉ tự nhiên:
-                    // Chụm 2 tay thu nhỏ lại (value < 1.0) -> Khung ngắm thu bé lại (zoom in / mm tăng lên)
-                    // Mở 2 tay to ra (value > 1.0) -> Khung ngắm nở to ra (zoom out / mm giảm xuống)
                     let safeScale = Double(max(0.05, value))
                     let newFocal = gestureInitialFocalLength / safeScale
-                    viewModel.windowedZoomFocalLength = max(24.0, min(135.0, newFocal))
+                    let clamped = max(24.0, min(135.0, newFocal))
+                    viewModel.windowedZoomFocalLength = clamped <= 24.5 ? 24.0 : clamped
                     viewModel.isAIWindowedFocalRecommended = false
                 }
                 .onEnded { _ in
                     isPinching = false
                     viewModel.haptics.triggerSelectionChange()
                 }
+        )
+    }
+
+    private var focalPresetBar: some View {
+        HStack(spacing: 6) {
+            ForEach(presets) { preset in
+                let isSelected: Bool = {
+                    if preset.focalLength <= 24.0 {
+                        return isFull
+                    } else {
+                        return abs(viewModel.windowedZoomFocalLength - preset.focalLength) < 2.0
+                    }
+                }()
+
+                Button(action: {
+                    let generator = UISelectionFeedbackGenerator()
+                    generator.prepare()
+                    generator.selectionChanged()
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
+                        viewModel.windowedZoomFocalLength = preset.focalLength
+                        viewModel.isAIWindowedFocalRecommended = false
+                    }
+                }) {
+                    ZStack {
+                        if isSelected {
+                            Capsule()
+                                .stroke(amberGold, lineWidth: 1.5)
+                                .background(Capsule().fill(Color.black.opacity(0.40)))
+                                .matchedGeometryEffect(id: "active_windowed_focal_ring", in: focalPillNamespace)
+                        }
+
+                        Text(preset.label)
+                            .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                            .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.82))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                    }
+                    .frame(minWidth: 40, height: 32)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityLabel("Tieu cu \(preset.label)")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(Color.black.opacity(0.35))
         )
     }
 }
@@ -87,9 +151,7 @@ private struct WindowedMaskCutout: Shape {
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        // Toàn bộ màn hình
         path.addRect(rect)
-        // Khoét rỗng vùng khung ngắm với góc bo tròn 14pt khớp viền
         path.addRoundedRect(in: windowRect, cornerSize: CGSize(width: 14, height: 14))
         return path
     }

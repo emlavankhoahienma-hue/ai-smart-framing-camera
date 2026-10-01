@@ -218,6 +218,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public private(set) var captureMode: CameraCaptureMode = .photo {
         didSet {
             UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode")
+            windowedZoomAspectRatio = captureMode.isVideo ? .ratio16_9 : .ratio3_4
             if oldValue == .proVideo && captureMode != .proVideo {
                 proVideoService.resetToFullAuto()
             } else if captureMode == .proVideo {
@@ -565,9 +566,11 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    @Published public var windowedZoomFocalLength: Double = 35.0
+    @Published public var windowedZoomFocalLength: Double = 24.0
     @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
     @Published public var isAIWindowedFocalRecommended: Bool = false
+    @Published public var lastRecordedVideoWindowedFocal: Double? = nil
+    @Published public var lastRecordedVideoWindowedAspect: WindowedZoomAspectRatio? = nil
 
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
@@ -2888,6 +2891,13 @@ public final class CameraViewModel: ObservableObject {
             guard captureMode.isVideo, pendingCaptureMode == nil, isCameraReady,
                   !isCameraHibernating, !isShutterPressing else { return }
             wantsVideoRecording = true
+            if isWindowedZoomActive && windowedZoomFocalLength > 24.5 {
+                lastRecordedVideoWindowedFocal = windowedZoomFocalLength
+                lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
+            } else {
+                lastRecordedVideoWindowedFocal = nil
+                lastRecordedVideoWindowedAspect = nil
+            }
             haptics.triggerShutterClick()
             cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
         }
@@ -3293,7 +3303,7 @@ public final class CameraViewModel: ObservableObject {
         return PhotoProcessingSettings(preset: preset, scene: detectedScene, rule: activeCompositionRule,
             params: isAIFullColorEnabled ?
                 (geminiColorRecipe?.asAIColorParameters ?? currentAIColorParams ?? detectedScene.aiFullColorParameters) : nil,
-            applyFilm: apply, crop: isWindowedZoomActive, focalLength: windowedZoomFocalLength,
+            applyFilm: apply, crop: isWindowedZoomActive && windowedZoomFocalLength > 24.5, focalLength: windowedZoomFocalLength,
             aspect: windowedZoomAspectRatio,
             score: stateBeforeCapture == .alignmentPerfect ? 1 : (framingResult?.alignmentScore ?? 0.8))
     }
@@ -3550,15 +3560,19 @@ extension CameraViewModel: CameraServiceDelegate {
             let effectiveSourcePhoto: CGImage
             if isWindowed {
                 let fractions = windowAspect.windowFractions(focalLength: windowFocal)
-                let origW = CGFloat(photo.width)
-                let origH = CGFloat(photo.height)
-                let cropW = round(origW * fractions.widthFraction)
-                let cropH = round(origH * fractions.heightFraction)
-                let cropX = round((origW - cropW) / 2.0)
-                let cropY = round((origH - cropH) / 2.0)
-                let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
-                effectiveSourcePhoto = photo.cropping(to: cropRect) ?? photo
-                CameraLogger.info("Windowed Zoom Crop: \(photo.width)x\(photo.height) -> \(effectiveSourcePhoto.width)x\(effectiveSourcePhoto.height) (\(Int(windowFocal))mm, \(windowAspect.rawValue))", category: .capture)
+                if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
+                    let origW = CGFloat(photo.width)
+                    let origH = CGFloat(photo.height)
+                    let cropW = round(origW * fractions.widthFraction)
+                    let cropH = round(origH * fractions.heightFraction)
+                    let cropX = round((origW - cropW) / 2.0)
+                    let cropY = round((origH - cropH) / 2.0)
+                    let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
+                    effectiveSourcePhoto = photo.cropping(to: cropRect) ?? photo
+                    CameraLogger.info("Windowed Zoom Crop: \(photo.width)x\(photo.height) -> \(effectiveSourcePhoto.width)x\(effectiveSourcePhoto.height) (\(Int(windowFocal))mm, \(windowAspect.rawValue))", category: .capture)
+                } else {
+                    effectiveSourcePhoto = photo
+                }
             } else {
                 effectiveSourcePhoto = photo
             }

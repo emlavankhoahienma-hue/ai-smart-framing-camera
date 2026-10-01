@@ -1398,33 +1398,38 @@ public struct HistogramBarData: Identifiable, Equatable, @unchecked Sendable {
 public enum WindowedZoomAspectRatio: String, CaseIterable, Identifiable, Sendable {
     case ratio3_4 = "3:4"
     case ratio1_1 = "1:1"
+    case ratio16_9 = "16:9"
 
     public var id: String { rawValue }
 
     public var ratioHeightOverWidth: CGFloat {
         switch self {
-        case .ratio3_4: return 4.0 / 3.0 // chiều cao / chiều rộng cho ảnh đứng dọc
+        case .ratio3_4: return 4.0 / 3.0 // chieu cao / chieu rong cho anh dung doc
         case .ratio1_1: return 1.0
+        case .ratio16_9: return 16.0 / 9.0 // chieu cao / chieu rong cho video dung doc (9:16)
         }
     }
 
-    /// Tính toán tỉ lệ kích thước khung ngắm (fraction từ 0.0 đến 1.0 so với toàn cảnh 3:4)
+    /// Tinh toan ti le kich thuoc khung ngam (fraction tu 0.0 den 1.0 so voi toan canh)
     public func windowFractions(focalLength: Double) -> (widthFraction: CGFloat, heightFraction: CGFloat) {
-        let focal = max(24.0, min(135.0, focalLength))
-        let scale = 24.0 / focal // Tại 24mm: scale = 1.0; tại 35mm: scale ≈ 0.686; tại 50mm: scale = 0.48; tại 85mm: scale ≈ 0.282
+        // Khi tieu cu <= 24.0mm (hoac Full / khong zoom), bung rong 100% toan bo viewfinder khong cat anh
+        if focalLength <= 24.0 {
+            return (1.0, 1.0)
+        }
 
-        // Khung ngắm rangefinder tối đa chiếm 92% chiều rộng/cao để luôn chừa viền context
-        let maxScale: CGFloat = 0.92
+        let focal = max(24.0, min(135.0, focalLength))
+        let scale = 24.0 / focal // Tai 24mm: scale = 1.0; tai 35mm: scale ≈ 0.686; tai 50mm: scale = 0.48; tai 85mm: scale ≈ 0.282
 
         switch self {
         case .ratio3_4:
-            let effectiveScale = min(maxScale, CGFloat(scale))
+            let effectiveScale = CGFloat(scale)
             return (effectiveScale, effectiveScale)
         case .ratio1_1:
-            // Khung vuông: w = container.width * effectiveScale, h = w
-            // Vì container là 3:4 (hContainer = wContainer * 4/3), nên hFraction = effectiveScale * (3.0 / 4.0)
-            let effectiveScale = min(maxScale, CGFloat(scale))
+            let effectiveScale = CGFloat(scale)
             return (effectiveScale, effectiveScale * (3.0 / 4.0))
+        case .ratio16_9:
+            let effectiveScale = CGFloat(scale)
+            return (effectiveScale, effectiveScale)
         }
     }
 }
@@ -1437,9 +1442,10 @@ public struct WindowedFocalLengthPreset: Identifiable, Equatable, Sendable {
     public var id: Double { focalLength }
 
     public static let standardPresets: [WindowedFocalLengthPreset] = [
-        WindowedFocalLengthPreset(focalLength: 28.0, label: "28mm", sceneRecommendation: "Phong Cảnh / Đô Thị"),
-        WindowedFocalLengthPreset(focalLength: 35.0, label: "35mm", sceneRecommendation: "Đời Thường Cổ Điển"),
-        WindowedFocalLengthPreset(focalLength: 50.0, label: "50mm", sceneRecommendation: "Tiêu Chuẩn Mắt Người"),
-        WindowedFocalLengthPreset(focalLength: 85.0, label: "85mm", sceneRecommendation: "Chân Dung Hoàng Kim")
+        WindowedFocalLengthPreset(focalLength: 24.0, label: "Full", sceneRecommendation: "Toan Canh / Khong Zoom"),
+        WindowedFocalLengthPreset(focalLength: 28.0, label: "28mm", sceneRecommendation: "Phong Canh / Do Thi"),
+        WindowedFocalLengthPreset(focalLength: 35.0, label: "35mm", sceneRecommendation: "Doi Thuong Co Dien"),
+        WindowedFocalLengthPreset(focalLength: 50.0, label: "50mm", sceneRecommendation: "Tieu Chuan Mat Nguoi"),
+        WindowedFocalLengthPreset(focalLength: 85.0, label: "85mm", sceneRecommendation: "Chan Dung Hoang Kim")
     ]
 }

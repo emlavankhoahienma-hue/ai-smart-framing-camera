@@ -966,9 +966,10 @@ public final class CameraService: NSObject {
         }
 
         let targetFPS = selectedVideoFormatOption.fps
-        guard camera.activeFormat.videoSupportedFrameRateRanges.contains(where: {
+        let matchingRange = camera.activeFormat.videoSupportedFrameRateRanges.first(where: {
             $0.minFrameRate <= targetFPS && targetFPS <= $0.maxFrameRate
-        }) else {
+        })
+        guard let validRange = matchingRange else {
             wantsRecording = false
             publishRecordingState(.idle, force: true)
             reportRecordingFailure(CameraServiceError.recordingUnavailable)
@@ -976,9 +977,12 @@ public final class CameraService: NSObject {
         }
         do {
             try camera.lockForConfiguration()
-            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
+            let frameDuration = validRange.minFrameDuration
             camera.activeVideoMinFrameDuration = frameDuration
             camera.activeVideoMaxFrameDuration = frameDuration
+            if camera.isSmoothAutoFocusSupported {
+                camera.isSmoothAutoFocusEnabled = true
+            }
             if camera.isLowLightBoostSupported {
                 camera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
@@ -994,7 +998,16 @@ public final class CameraService: NSObject {
         }
 
         if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
-        if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
+        if connection.isVideoStabilizationSupported {
+            if camera.activeFormat.isVideoStabilizationModeSupported(.cinematicExtended) {
+                connection.preferredVideoStabilizationMode = .cinematicExtended
+            } else if camera.activeFormat.isVideoStabilizationModeSupported(.cinematic) {
+                connection.preferredVideoStabilizationMode = .cinematic
+            } else {
+                connection.preferredVideoStabilizationMode = .auto
+            }
+        }
+        movieFileOutput.movieFragmentInterval = .invalid
         let availableCodecs = movieFileOutput.availableVideoCodecTypes
         let targetCodec: AVVideoCodecType = selectedVideoCodec == .hevc && availableCodecs.contains(.hevc) ? .hevc : .h264
         if availableCodecs.contains(targetCodec) {
@@ -1119,9 +1132,16 @@ public final class CameraService: NSObject {
                 self.photoOutput.maxPhotoDimensions = videoMaxPhotoDim
             }
 
-            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
+            let matchingRange = targetFormat.videoSupportedFrameRateRanges.first(where: {
+                $0.minFrameRate <= targetFPS && targetFPS <= $0.maxFrameRate
+            })
+            let frameDuration = matchingRange?.minFrameDuration ?? CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
             camera.activeVideoMinFrameDuration = frameDuration
             camera.activeVideoMaxFrameDuration = frameDuration
+
+            if camera.isSmoothAutoFocusSupported {
+                camera.isSmoothAutoFocusEnabled = true
+            }
 
             // Disable auto HDR adjustments and low-light frame rate drops
             if camera.isLowLightBoostSupported {
