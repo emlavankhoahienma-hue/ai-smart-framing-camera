@@ -68,7 +68,10 @@ def create_mlpackage_bundle(mlmodel: ct.models.MLModel, target_package_path: Pat
         "fileFormatVersion": "1.0.0",
         "itemInfoEntries": {
             "com.apple.CoreML": {
-                "path": "Data/com.apple.CoreML/model.mlmodel"
+                "author": "com.apple.CoreML",
+                "description": "Core ML Model Specification",
+                "name": "model.mlmodel",
+                "path": "com.apple.CoreML/model.mlmodel",
             }
         },
         "rootModelIdentifier": "com.apple.CoreML",

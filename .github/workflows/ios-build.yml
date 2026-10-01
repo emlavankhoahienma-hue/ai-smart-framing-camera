@@ -66,8 +66,14 @@ jobs:
           pip install --upgrade pip
           pip install "torch==2.5.1" "numpy==1.26.4" \
             "ultralytics==8.3.0" "coremltools==8.3.0"
-          xcrun coremlc compile models/yolov26-engine/weights/yolov26_ane.mlpackage .
-          xcrun coremlc compile models/yolov26-engine/weights/yolov26_416_fp16.mlpackage .
+          if ! xcrun coremlc compile models/yolov26-engine/weights/yolov26_ane.mlpackage .; then
+            cp models/yolov26-engine/weights/yolov26_ane.mlpackage/Data/com.apple.CoreML/model.mlmodel yolov26_ane.mlmodel
+            xcrun coremlc compile yolov26_ane.mlmodel .
+          fi
+          if ! xcrun coremlc compile models/yolov26-engine/weights/yolov26_416_fp16.mlpackage .; then
+            cp models/yolov26-engine/weights/yolov26_416_fp16.mlpackage/Data/com.apple.CoreML/model.mlmodel yolov26_416_fp16.mlmodel
+            xcrun coremlc compile yolov26_416_fp16.mlmodel .
+          fi
           test -d yolov26_ane.mlmodelc
           test -d yolov26_416_fp16.mlmodelc
           curl --fail --location --retry 3 \
