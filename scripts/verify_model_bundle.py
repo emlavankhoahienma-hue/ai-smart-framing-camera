@@ -33,6 +33,15 @@ def main() -> None:
     siglip = tree_hash(bundle / "SigLIPBaseImage.mlmodelc")
     yolo = {name: tree_hash(bundle / f"{name}.mlmodelc")
             for name in YOLO_WEIGHTS_SHA256}
+    
+    yolo26_names = ["yolov26_ane", "yolov26_416_fp16"]
+    yolo26 = {}
+    for name in yolo26_names:
+        p = bundle / f"{name}.mlmodelc"
+        if p.is_dir():
+            yolo26[name] = tree_hash(p)
+            print(f"YOLOv26 ANE compiled SHA256 [{name}]: {yolo26[name]}")
+            
     prompt_path = bundle / "SigLIPPrompts.json"
     source_manifest = bundle / "SigLIPModelManifest.json"
     prompts = json.loads(prompt_path.read_text(encoding="utf-8"))
@@ -47,11 +56,15 @@ def main() -> None:
         raise RuntimeError("Composition prompt bank missing or out of date")
     manifest["compiledSHA256"] = siglip
     source_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    (bundle / "YOLOModelManifest.json").write_text(json.dumps({
-        "repository": "ultralytics/assets", "release": "v8.3.0",
+    
+    yolo_manifest_data = {
+        "repository": "ultralytics/assets + models/yolov26-engine",
+        "release": "v8.3.0 + yolov26-ane-26.1.0",
         "models": {name: {"weightsSHA256": YOLO_WEIGHTS_SHA256[name],
                            "compiledSHA256": yolo[name]} for name in yolo},
-    }, indent=2), encoding="utf-8")
+        "yolov26_ane": {name: {"compiledSHA256": yolo26[name]} for name in yolo26},
+    }
+    (bundle / "YOLOModelManifest.json").write_text(json.dumps(yolo_manifest_data, indent=2), encoding="utf-8")
     print(f"SigLIP compiled SHA256: {siglip}")
     print(f"YOLO compiled SHA256: {yolo}")
 

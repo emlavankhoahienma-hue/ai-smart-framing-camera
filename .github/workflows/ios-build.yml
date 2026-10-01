@@ -57,7 +57,7 @@ jobs:
             -o "$RUNNER_TEMP/capture-transition-regressions"
           "$RUNNER_TEMP/capture-transition-regressions"
 
-      - name: Export & Compile pinned YOLO11 CoreML models
+      - name: Export & Compile YOLO CoreML models (Dedicated YOLOv26 ANE + Fallback)
         env:
           # Ultralytics/CoreMLTools currently emit upstream torch tracing and
           # output-renaming notices that do not identify defects in this app.
@@ -66,6 +66,10 @@ jobs:
           pip install --upgrade pip
           pip install "torch==2.5.1" "numpy==1.26.4" \
             "ultralytics==8.3.0" "coremltools==8.3.0"
+          xcrun coremlc compile models/yolov26-engine/weights/yolov26_ane.mlpackage .
+          xcrun coremlc compile models/yolov26-engine/weights/yolov26_416_fp16.mlpackage .
+          test -d yolov26_ane.mlmodelc
+          test -d yolov26_416_fp16.mlmodelc
           curl --fail --location --retry 3 \
             https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt \
             --output yolo11n.pt
@@ -152,6 +156,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
+          test -d yolov26_ane.mlmodelc
+          test -d yolov26_416_fp16.mlmodelc
+          cp -r yolov26_ane.mlmodelc Payload/AISmartFramingCamera.app/
+          cp -r yolov26_416_fp16.mlmodelc Payload/AISmartFramingCamera.app/
           test -d yolo11n.mlmodelc
           test -d yolo11s.mlmodelc
           cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/
@@ -164,6 +172,8 @@ jobs:
             cat AISmartFramingCamera/Resources/AlignAI_SubjectRanker_Weights.part* > Payload/AISmartFramingCamera.app/AlignAI_SubjectRanker_Weights.bin
             echo "✓ Đã tích hợp thành công AlignAI_SubjectRanker_Weights (114 MB) vào App Bundle!"
           fi
+          test -d Payload/AISmartFramingCamera.app/yolov26_ane.mlmodelc
+          test -d Payload/AISmartFramingCamera.app/yolov26_416_fp16.mlmodelc
           test -d Payload/AISmartFramingCamera.app/yolo11n.mlmodelc
           test -d Payload/AISmartFramingCamera.app/yolo11s.mlmodelc
           test -d SigLIPBaseImage.mlmodelc
