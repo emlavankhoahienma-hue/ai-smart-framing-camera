@@ -1,376 +1,251 @@
 /**
- * Align Camera - MWM Intelligence Design System
- * 1:1 Color Tokens, Typography, Card Metrics, and Responsive Framework
- * Supports Mobile (<640px), Tablet (640-1024px), Desktop (1024-1440px), and Ultra-wide / 4K TV (>1440px)
- * Zero Emojis. Pure Semantic Engineering.
+ * Align Camera - Classic 2010s Technical Specification & Table Layout
+ * Zero Colors (Monochrome Grayscale), Zero Images, Zero Emojis.
+ * Pure HTML tables, clean columns, and high-density typography.
  */
 
 :root {
-  --mwm-ink: #0c0c0c;
-  --mwm-ink-alt: #08090a;
-  --mwm-surface-1: #141414;
-  --mwm-surface-2: #181818;
-  --mwm-surface-hover: #1e1e1e;
-  --mwm-control: #2a2a2a;
-  --mwm-control-active: #3d3d3d;
-  --mwm-hairline: #1f2128;
-  --mwm-border: #242630;
-  --mwm-orange: #ff5301;
-  --mwm-orange-hot: #ff4814;
-  --mwm-orange-muted: rgba(255, 83, 1, 0.72);
-  --mwm-orange-border: rgba(255, 83, 1, 0.22);
-  --mwm-blue: #3b82f6;
-  --mwm-emerald: #10b981;
-  --mwm-text: #ffffff;
-  --mwm-text-muted: #9a9a9a;
-  --mwm-text-body: #858585;
-  --mwm-text-tertiary: #616161;
-  --mwm-font-ui: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
-  --mwm-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --mwm-eyebrow-track: 0.12em;
-  --mwm-radius-btn: 10px;
-  --mwm-radius-card: 20px;
-  --mwm-radius-panel: 24px;
+  --bg-page: #0f1012;
+  --bg-surface: #16171a;
+  --bg-header: #202227;
+  --bg-row-alt: #1a1b1f;
+  --border-color: #33363f;
+  --border-subtle: #262930;
+  --text-main: #e6e8ec;
+  --text-muted: #9598a2;
+  --text-dim: #6c707d;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: Consolas, "Courier New", Courier, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 html {
+  background-color: var(--bg-page);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
   scroll-behavior: smooth;
-  background-color: var(--mwm-ink);
-  color: var(--mwm-text);
-  font-family: var(--mwm-font-ui);
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  background-color: var(--mwm-ink);
-  color: var(--mwm-text);
+  background-color: var(--bg-page);
+  color: var(--text-main);
+  padding: 24px 16px;
   min-height: 100vh;
-  overflow-x: hidden;
 }
 
-/* Custom Sleek Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* Master Container */
+.container {
+  max-width: 980px;
+  margin: 0 auto;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--mwm-ink);
+/* Header & Banner */
+header {
+  border-bottom: 2px solid var(--border-color);
+  padding-bottom: 16px;
+  margin-bottom: 24px;
 }
 
-::-webkit-scrollbar-thumb {
-  background: #242630;
-  border-radius: 9999px;
-  border: 2px solid var(--mwm-ink);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #383c4c;
-}
-
-/* Master Responsive Shell (Mobile, Tablet, Desktop, TV) */
-.app-detail-shell {
-  margin-inline: auto;
-  max-width: 1180px;
-  width: calc(100% - 2rem);
-}
-
-/* 4K TV & Ultra-wide Monitors (>1440px and >1920px) */
-@media (min-width: 1440px) {
-  .app-detail-shell {
-    max-width: 1320px;
-  }
-}
-
-@media (min-width: 1920px) {
-  .app-detail-shell {
-    max-width: 1480px;
-    width: calc(100% - 4rem);
-  }
-}
-
-/* MWM Fixed Navigation Bar */
-.mwm-navbar {
-  background-color: rgba(12, 12, 12, 0.88);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--mwm-hairline);
-}
-
-/* MWM Eyebrow Chips */
-.app-section-chip {
-  align-items: center;
-  box-shadow: none;
-  color: var(--mwm-orange);
-  display: inline-flex;
-  font-family: var(--mwm-font-mono);
+.breadcrumb {
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 800;
-  gap: 8px;
-  letter-spacing: var(--mwm-eyebrow-track);
-  margin-bottom: 0.75rem;
-  padding: 0;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.site-title {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #ffffff;
+  margin-bottom: 4px;
   text-transform: uppercase;
 }
 
-/* MWM Hero Panel */
-.app-hero-panel {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)), var(--mwm-surface-1);
-  border: 1px solid var(--mwm-hairline);
-  border-radius: var(--mwm-radius-panel);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 20px 45px -15px rgba(0, 0, 0, 0.7);
-  transition: border-color 0.26s ease;
-}
-
-.app-hero-panel:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-/* MWM App Icon Aura */
-.app-icon-aura {
-  position: relative;
-  border-radius: 2rem;
-}
-
-.app-icon-aura::after {
-  content: "";
-  position: absolute;
-  inset: -8px;
-  border-radius: 2.25rem;
-  background: radial-gradient(circle, rgba(255, 83, 1, 0.15) 0%, transparent 70%);
-  z-index: 0;
-  pointer-events: none;
-}
-
-.app-icon-frame {
-  position: relative;
-  z-index: 1;
-  background: linear-gradient(145deg, #1f2128, #0e1014);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 2rem;
-  box-shadow: 0 16px 32px -8px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.15);
-}
-
-/* KPI Cards inside Hero (1:1 from MWM) */
-.app-kpi-card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)), var(--mwm-surface-2);
-  border: 1px solid var(--mwm-hairline);
-  border-radius: 16px;
-  display: block;
-  isolation: isolate;
-  overflow: hidden;
-  position: relative;
-  padding: 14px 18px;
-  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.26s ease,
-              background 0.26s ease,
-              box-shadow 0.26s ease;
-}
-
-.app-kpi-card:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)), #1d1f26;
-  transform: translateY(-2px);
-  box-shadow: 0 10px 24px -6px rgba(0, 0, 0, 0.6);
-}
-
-/* MWM Floating Section Navigation */
-.app-section-nav {
-  background: rgba(20, 20, 20, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--mwm-hairline);
-  border-radius: 9999px;
-  box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.5);
-  margin-inline: auto;
-  max-width: 100%;
-  padding: 4px;
-  width: fit-content;
-}
-
-.app-section-nav-pill {
-  background: transparent;
-  border: 1px solid transparent;
-  color: rgba(255, 255, 255, 0.65);
-  border-radius: 9999px;
-  padding: 8px 18px;
+.site-subtitle {
   font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Classic Text Navigation Bar */
+nav.menu-bar {
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  padding: 8px 12px;
+  margin-bottom: 24px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+nav.menu-bar a {
+  color: var(--text-main);
+  text-decoration: underline;
+}
+
+nav.menu-bar a:hover {
+  background-color: var(--bg-header);
+  color: #ffffff;
+}
+
+/* Section Headings */
+h2.section-title {
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-left: 4px solid #ffffff;
+  padding-left: 8px;
+  margin: 28px 0 12px 0;
+  color: #ffffff;
+}
+
+/* Responsive Table Wrapper */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin-bottom: 20px;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+}
+
+/* Pure Classic 2010s Table */
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+table.data-table th,
+table.data-table td {
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  vertical-align: top;
+}
+
+table.data-table th {
+  background-color: var(--bg-header);
+  color: #ffffff;
   font-weight: 600;
-  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+table.data-table tr:nth-child(even) {
+  background-color: var(--bg-row-alt);
+}
+
+table.data-table tr:hover {
+  background-color: #1f2127;
+}
+
+.col-label {
+  width: 25%;
+  font-weight: 600;
+  color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* Button & Action Links */
+.action-btn {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid #ffffff;
+  background-color: #ffffff;
+  color: #000000;
+  font-size: 12px;
+  font-weight: 700;
   text-decoration: none;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  margin-right: 8px;
+  margin-top: 4px;
+}
+
+.action-btn:hover {
+  background-color: #d0d0d0;
+  border-color: #d0d0d0;
+}
+
+.action-btn-outline {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  background-color: transparent;
+  color: var(--text-main);
+  font-size: 12px;
+  text-decoration: none;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  margin-right: 8px;
+  margin-top: 4px;
+}
+
+.action-btn-outline:hover {
+  border-color: #ffffff;
+  color: #ffffff;
+}
+
+/* Checksum Box */
+.checksum-box {
+  background-color: #000000;
+  border: 1px solid var(--border-color);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+  user-select: all;
+  margin-bottom: 8px;
+  color: #ffffff;
+}
+
+/* Terminal Command Box */
+pre.cmd-box {
+  background-color: #000000;
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #cccccc;
+  overflow-x: auto;
+  margin-top: 4px;
+}
+
+/* Footer */
+footer {
+  border-top: 1px solid var(--border-color);
+  padding-top: 16px;
+  margin-top: 40px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
   gap: 6px;
 }
 
-.app-section-nav-pill:hover {
+/* Link Styling */
+a {
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.06);
+  text-decoration: underline;
 }
 
-.app-section-nav-pill.active {
-  background: #ffffff;
-  color: #0c0c0c;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-/* UX Insights Full-Width Luxury Showcase Cards */
-.mwm-editorial-card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)), #121316;
-  border: 1px solid var(--mwm-hairline);
-  border-radius: 24px;
-  overflow: hidden;
-  box-shadow: 0 16px 36px -10px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  transition: border-color 0.26s ease, transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.mwm-editorial-card:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-  transform: translateY(-2px);
-}
-
-/* Ultra-Refined Viewfinder Mockup (Pure SVG & CSS - No Ugly Popups) */
-.viewfinder-device {
-  width: 100%;
-  max-width: 320px;
-  aspect-ratio: 9 / 18.5;
-  background: #000000;
-  border: 7px solid #22242c;
-  border-radius: 36px;
-  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-/* Dynamic Island */
-.viewfinder-island {
-  position: absolute;
-  top: 7px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 76px;
-  height: 18px;
-  background: #000000;
-  border-radius: 18px;
-  z-index: 20;
-}
-
-/* Camera HUD Rule of Thirds Grid */
-.viewfinder-grid {
-  position: absolute;
-  inset: 0;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
-  background-size: 33.333% 33.333%;
-  pointer-events: none;
-}
-
-/* Live Horizon Line */
-.viewfinder-horizon {
-  position: absolute;
-  inset-x: 24px;
-  top: 50%;
-  height: 1px;
-  background: rgba(16, 185, 129, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.viewfinder-horizon-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  background: #10b981;
-  box-shadow: 0 0 10px #10b981;
-}
-
-/* Capability Map Features (1:1 from MWM Section 5) */
-.app-feature-card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)), var(--mwm-surface-1);
-  border: 1px solid var(--mwm-hairline);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  overflow: hidden;
-  position: relative;
-  padding: 24px 28px;
-  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.26s ease,
-              background 0.26s ease,
-              box-shadow 0.26s ease;
-}
-
-.app-feature-card:hover {
-  border-color: rgba(255, 255, 255, 0.18);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025)), #1a1b22;
-  transform: translateY(-2px);
-  box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.6);
-}
-
-.app-feature-marker {
-  background: linear-gradient(90deg, #ff5301, rgba(255, 83, 1, 0.25));
-  border-radius: 9999px;
-  box-shadow: 0 0 12px rgba(255, 83, 1, 0.35);
-  flex-shrink: 0;
-  height: 2px;
-  width: 16px;
-}
-
-/* FAQ Accordion (1:1 from MWM Section 6) */
-.app-faq-item {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)), var(--mwm-surface-1);
-  border: 1px solid var(--mwm-hairline);
-  border-radius: 14px;
-  overflow: hidden;
-  transition: border-color 0.22s ease;
-}
-
-.app-faq-item:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-}
-
-.app-faq-question-btn {
-  cursor: pointer;
-  user-select: none;
-}
-
-.app-faq-answer {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.28s cubic-bezier(0.16, 1, 0.3, 1),
-              opacity 0.22s ease;
-  opacity: 0;
-}
-
-.app-faq-item.open .app-faq-answer {
-  grid-template-rows: 1fr;
-  opacity: 1;
-}
-
-.app-faq-inner {
-  overflow: hidden;
-}
-
-.app-faq-icon {
-  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.app-faq-item.open .app-faq-icon {
-  transform: rotate(180deg);
-}
-
-/* Code & Checksum Box */
-.mwm-code-container {
-  background-color: #07080a;
-  border: 1px solid var(--mwm-hairline);
-  border-radius: 12px;
-  font-family: var(--mwm-font-mono);
+a:hover {
+  color: #cccccc;
 }

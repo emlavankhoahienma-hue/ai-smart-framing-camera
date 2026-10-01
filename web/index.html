@@ -1,788 +1,341 @@
 <!DOCTYPE html>
-<html lang="vi" class="scroll-smooth">
+<html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Align Camera - Photo &amp; Video App | Apple Silicon Neural Engine</title>
-  <meta name="description" content="Align Camera - Ứng dụng máy ảnh thông minh tích hợp mô hình YOLOv26 chạy thuần trên chip Apple Neural Engine (ANE). Canh góc, căn khung hình chuẩn tỷ lệ vàng thời gian thực.">
-  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Align Camera - Bảng thông số kỹ thuật &amp; Bản phát hành (v1.0.0)</title>
+  <meta name="description" content="Align Camera - Ứng dụng máy ảnh AI tỷ lệ vàng chạy thuần trên Apple Neural Engine. Thông số kỹ thuật, bản phát hành và mã băm SHA-256.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
 
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <div class="container">
+
+    <!-- Header Section -->
+    <header>
+      <div class="breadcrumb">
+        [ Trang chủ ] / [ Danh mục ứng dụng ] / [ Align Camera ]
+      </div>
+      <h1 class="site-title">ALIGN CAMERA (iOS)</h1>
+      <p class="site-subtitle">
+        Phần mềm máy ảnh thông minh tích hợp mô hình YOLOv26 chạy thuần trên chip Apple Neural Engine (ANE). Canh góc, căn khung hình chuẩn tỷ lệ vàng và nhận diện đối tượng thời gian thực.
+      </p>
+    </header>
+
+    <!-- Classic Navigation Menu -->
+    <nav class="menu-bar">
+      <span>[ <a href="#thong-tin-chung">Thông tin chung</a> ]</span>
+      <span>[ <a href="#chi-so-phan-cung">Chỉ số phần cứng</a> ]</span>
+      <span>[ <a href="#danh-muc-tinh-nang">Danh mục tính năng</a> ]</span>
+      <span>[ <a href="#hoi-dap-ky-thuat">Hỏi đáp kỹ thuật</a> ]</span>
+      <span>[ <a href="#huong-dan-cai-dat">Hướng dẫn cài đặt</a> ]</span>
+      <span>[ <a href="#tai-ve">Tải về &amp; Checksum</a> ]</span>
+      <span>[ <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer">Kho mã nguồn GitHub</a> ]</span>
+    </nav>
+
+    <!-- SECTION 1: METADATA TABLE -->
+    <section id="thong-tin-chung">
+      <h2 class="section-title">1. Thông tin tổng quan &amp; Bản phát hành</h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 30%;">Thông số kỹ thuật</th>
+              <th>Giá trị chi tiết</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="col-label">Tên phần mềm</td>
+              <td><strong>Align Camera</strong> (Tên định danh dự án: AI Smart Framing Camera)</td>
+            </tr>
+            <tr>
+              <td class="col-label">Tác giả / Nhà phát triển</td>
+              <td>Khoa Hien (Tài khoản GitHub: <code>emlavankhoahienma-hue</code>)</td>
+            </tr>
+            <tr>
+              <td class="col-label">Danh mục ứng dụng</td>
+              <td>Nhiếp ảnh &amp; Video / Thị giác máy tính (Photo &amp; Video / Computer Vision)</td>
+            </tr>
+            <tr>
+              <td class="col-label">Yêu cầu hệ điều hành</td>
+              <td>iOS 17.0 trở lên</td>
+            </tr>
+            <tr>
+              <td class="col-label">Tương thích phần cứng</td>
+              <td>Thiết bị Apple Silicon từ chip A12 Bionic (iPhone XS, XR) đến A18 Pro (iPhone 16 Series)</td>
+            </tr>
+            <tr>
+              <td class="col-label">Phiên bản hiện tại</td>
+              <td class="mono">v1.0.0-build.353</td>
+            </tr>
+            <tr>
+              <td class="col-label">Phương thức cài đặt</td>
+              <td>Tệp unsigned IPA (Cài đặt thông qua Sideloadly, TrollStore hoặc AltStore)</td>
+            </tr>
+            <tr>
+              <td class="col-label">Tên tệp cài đặt</td>
+              <td class="mono">AISmartFramingCamera.ipa</td>
+            </tr>
+            <tr>
+              <td class="col-label">Dung lượng tệp</td>
+              <td class="mono">239.3 MB (250,912,768 bytes)</td>
+            </tr>
+            <tr>
+              <td class="col-label">Kho mã nguồn</td>
+              <td><a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer">https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera</a></td>
+            </tr>
+            <tr>
+              <td class="col-label">Giấy phép phân phối</td>
+              <td>Mã nguồn mở theo giấy phép MIT License</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 2: HARDWARE BENCHMARKS TABLE -->
+    <section id="chi-so-phan-cung">
+      <h2 class="section-title">2. Bảng chỉ số đo lường phần cứng (Hardware Telemetry)</h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 25%;">Hạng mục kiểm thử</th>
+              <th style="width: 20%;">Chỉ số đo lường</th>
+              <th style="width: 25%;">Vi xử lý đảm nhiệm</th>
+              <th>Ghi chú vận hành</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="col-label">Độ trễ suy luận AI (Latency)</td>
+              <td class="mono"><strong>1.4 ms - 3.9 ms</strong></td>
+              <td>Apple Neural Engine (ANE)</td>
+              <td>Chạy 100% trên chip ANE chuyên dụng, 0% CPU fallback.</td>
+            </tr>
+            <tr>
+              <td class="col-label">Tốc độ khung hình (Frame Rate)</td>
+              <td class="mono"><strong>120+ FPS</strong></td>
+              <td>ANE + GPU Metal Pipeline</td>
+              <td>Khung ngắm thời gian thực đạt chuẩn Apple ProMotion, không giật khung hình.</td>
+            </tr>
+            <tr>
+              <td class="col-label">Bộ nhớ RAM tiêu thụ</td>
+              <td class="mono"><strong>&lt; 35 MB</strong></td>
+              <td>Hệ thống Unified Memory</td>
+              <td>Mô hình nén tối ưu, không tràn bộ nhớ, không gây xung đột ứng dụng nền.</td>
+            </tr>
+            <tr>
+              <td class="col-label">Nhiệt độ &amp; Tải CPU</td>
+              <td class="mono"><strong>&lt; 3.0% CPU Load</strong></td>
+              <td>CPU Cores (Idle)</td>
+              <td>CPU hầu như ở trạng thái nghỉ, máy luôn mát khi quay chụp thời gian dài.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 3: CAPABILITY MATRIX TABLE -->
+    <section id="danh-muc-tinh-nang">
+      <h2 class="section-title">3. Bảng năng lực công nghệ cốt lõi (Capability Matrix)</h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 8%;">STT</th>
+              <th style="width: 32%;">Mô-đun tính năng</th>
+              <th>Mô tả kỹ thuật &amp; Cơ chế hoạt động</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono" style="text-align: center;">01</td>
+              <td class="col-label">YOLOv26 Apple Neural Engine Engine</td>
+              <td>Tối ưu hóa 100% các lớp mạng nơ-ron tích chập để biên dịch và thực thi trực tiếp trên vi xử lý ANE từ chip A12 đến A18 Pro, giải phóng toàn bộ năng lực CPU/GPU.</td>
+            </tr>
+            <tr>
+              <td class="mono" style="text-align: center;">02</td>
+              <td class="col-label">NMS-Free Pipeline Không Nghẽn CPU</td>
+              <td>Loại bỏ thuật toán lọc Non-Maximum Suppression trên CPU. Đầu ra của mô hình trả về trực tiếp tọa độ chuẩn hóa, triệt tiêu hiện tượng sụt giảm khung hình khi chụp kéo dài.</td>
+            </tr>
+            <tr>
+              <td class="mono" style="text-align: center;">03</td>
+              <td class="col-label">Bộ lọc Màu Điện ảnh Cinematic LUTs</td>
+              <td>Tích hợp các bảng màu LUTs điện ảnh (Kodak, Fuji, Cinema) áp dụng trực tiếp lên luồng video camera thời gian thực mà không làm tăng độ trễ ngắm chụp.</td>
+            </tr>
+            <tr>
+              <td class="mono" style="text-align: center;">04</td>
+              <td class="col-label">Tự động Cắt Cúp &amp; Zoom Mượt</td>
+              <td>Thuật toán nhận diện và bám đuổi tâm đối tượng (Subject Tracking) kết hợp hàm dịch chuyển mượt mà (Smooth Easing Camera Pan), hỗ trợ bố cục theo tỷ lệ vàng (Rule of Thirds).</td>
+            </tr>
+            <tr>
+              <td class="mono" style="text-align: center;">05</td>
+              <td class="col-label">Biểu tượng Thích ứng iOS 18 (Adaptive Icon)</td>
+              <td>Hỗ trợ đầy đủ bộ biểu tượng chế độ Sáng (Light), chế độ Tối (Dark) tích hợp chuẩn Dark Platter của Apple, và chế độ nhuộm màu linh hoạt (Tinted).</td>
+            </tr>
+            <tr>
+              <td class="mono" style="text-align: center;">06</td>
+              <td class="col-label">Đóng gói Sideload Độc lập</td>
+              <td>Định dạng tệp unsigned IPA hoàn chỉnh, không đính kèm mã theo dõi, không quảng cáo, tương thích hoàn hảo với các trình nạp Sideloadly, TrollStore và AltStore.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 4: TECHNICAL FAQ TABLE -->
+    <section id="hoi-dap-ky-thuat">
+      <h2 class="section-title">4. Giải đáp thắc mắc kỹ thuật (Technical FAQ)</h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 35%;">Câu hỏi kỹ thuật</th>
+              <th>Giải đáp chi tiết từ nhà phát triển</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="col-label">Align Camera có thể cài đặt trên những thiết bị iPhone nào?</td>
+              <td>Hỗ trợ mọi dòng iPhone chạy hệ điều hành iOS 17.0 trở lên, trang bị vi xử lý Apple Silicon từ chip A12 Bionic (iPhone XS, XR) đến A18 Pro (iPhone 16 Series).</td>
+            </tr>
+            <tr>
+              <td class="col-label">Tại sao ứng dụng không làm nóng máy và tốn pin như các app AI khác?</td>
+              <td>Toàn bộ mô hình thị giác AI được ánh xạ 100% vào chip Apple Neural Engine (ANE), vi xử lý chuyên dụng có hiệu suất tiêu thụ điện cực thấp (TOPS/Watt cao). CPU và GPU hầu như ở trạng thái nghỉ, bộ nhớ RAM tiêu thụ dưới 35MB.</td>
+            </tr>
+            <tr>
+              <td class="col-label">Làm thế nào để cài đặt tệp IPA này vào iPhone?</td>
+              <td>Bạn chỉ cần tải tệp IPA về máy tính, mở phần mềm Sideloadly (hoặc AltStore), kết nối iPhone bằng cáp USB, kéo file IPA vào giao diện phần mềm và nhấn Start để nạp ứng dụng trong vòng 1 phút.</td>
+            </tr>
+            <tr>
+              <td class="col-label">Ứng dụng có cần kết nối Internet để nhận diện AI không?</td>
+              <td>Hoàn toàn không. Toàn bộ quá trình nhận diện chủ thể, căn khung tỷ lệ vàng và xử lý màu sắc diễn ra 100% Offline (On-Device) ngay trên máy, bảo mật tuyệt đối dữ liệu cá nhân của bạn.</td>
+            </tr>
+            <tr>
+              <td class="col-label">Làm sao để xác thực tệp IPA tải về không bị can thiệp mã độc?</td>
+              <td>Mỗi bản phát hành đều được cung cấp công khai mã băm SHA-256 từ hệ thống build tự động GitHub Actions. Bạn có thể dùng lệnh Get-FileHash trên Windows PowerShell hoặc shasum trên macOS để đối chiếu từng byte dữ liệu.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 5: INSTALLATION GUIDE TABLE -->
+    <section id="huong-dan-cai-dat">
+      <h2 class="section-title">5. Quy trình cài đặt qua Sideloadly (4 bước)</h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 15%;">Thứ tự bước</th>
+              <th style="width: 30%;">Hành động cần thực hiện</th>
+              <th>Hướng dẫn chi tiết</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono" style="text-align: center;">Bước 01</td>
+              <td class="col-label">Chuẩn bị công cụ</td>
+              <td>Tải và cài đặt phần mềm Sideloadly từ trang chính thức: <a href="https://sideloadly.io/" target="_blank" rel="noopener noreferrer">https://sideloadly.io/</a> (Hỗ trợ cả Windows và macOS).</td>
+            </tr>
+            <tr>
+              <td class="mono" style="text-align: center;">Bước 02</td>
+              <td class="col-label">Tải tệp tin IPA</td>
+              <td>Tải tệp tin <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.353/AISmartFramingCamera.ipa">AISmartFramingCamera.ipa</a> (239.3 MB) về máy tính của bạn.</td>
+            </tr>
+            <tr>
+              <td class="mono" style="text-align: center;">Bước 03</td>
+              <td class="col-label">Kết nối &amp; Nạp ứng dụng</td>
+              <td>Kết nối iPhone với máy tính qua cáp USB. Mở Sideloadly, kéo tệp IPA vào ô IPA Icon, nhập Apple ID của bạn và nhấn nút [ Start ].</td>
+            </tr>
+            <tr>
+              <td class="mono" style="text-align: center;">Bước 04</td>
+              <td class="col-label">Xác thực chứng chỉ trên iOS</td>
+              <td>Trên iPhone, vào Cài đặt (Settings) &gt; Cài đặt chung (General) &gt; Quản lý VPN &amp; Thiết bị (VPN &amp; Device Management) &gt; Chọn tài khoản Apple ID của bạn và nhấn [ Tin cậy ] (Trust). Mở Align Camera và sử dụng.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- SECTION 6: DOWNLOAD & SHA-256 CHECKSUM -->
+    <section id="tai-ve">
+      <h2 class="section-title">6. Tải về bản phát hành &amp; Đối chiếu mã băm SHA-256</h2>
+      
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 30%;">Mục xác thực</th>
+              <th>Giá trị kiểm tra</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="col-label">Tệp phát hành</td>
+              <td class="mono"><strong>AISmartFramingCamera.ipa</strong> (v1.0.0-build.353)</td>
+            </tr>
+            <tr>
+              <td class="col-label">Dung lượng tệp</td>
+              <td class="mono">239.3 MB (250,912,768 bytes)</td>
+            </tr>
+            <tr>
+              <td class="col-label">Mã băm SHA-256 chuẩn</td>
+              <td>
+                <div class="checksum-box" id="checksumText">12A9C9FF9049C8D6E6BBB2EDD8CFE7E1CC490E2AAE94AFF846E0F941DD2BCD62</div>
+                <button type="button" class="action-btn" id="btnCopyHash" onclick="copyHash()">[ SAO CHÉP MÃ BĂM SHA-256 ]</button>
+                <span id="copyStatus" style="font-family: var(--font-mono); font-size: 11px; color: #aaaaaa;"></span>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-label">Lệnh kiểm tra trên Windows</td>
+              <td>
+                <pre class="cmd-box">Get-FileHash .\AISmartFramingCamera.ipa -Algorithm SHA256</pre>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-label">Lệnh kiểm tra trên macOS / Linux</td>
+              <td>
+                <pre class="cmd-box">shasum -a 256 AISmartFramingCamera.ipa</pre>
+              </td>
+            </tr>
+            <tr>
+              <td class="col-label">Liên kết tải trực tiếp</td>
+              <td>
+                <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.353/AISmartFramingCamera.ipa" class="action-btn">[ TẢI TỆP IPA TRỰC TIẾP (239.3 MB) ]</a>
+                <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/tag/v1.0.0-build.353" target="_blank" rel="noopener noreferrer" class="action-btn-outline">[ XEM BẢN PHÁT HÀNH TRÊN GITHUB ]</a>
+                <a href="https://sideloadly.io/" target="_blank" rel="noopener noreferrer" class="action-btn-outline">[ TẢI CÔNG CỤ SIDELOADLY ]</a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <div>Phần mềm: Align Camera (v1.0.0-build.353) | Tác giả: Khoa Hien (emlavankhoahienma-hue)</div>
+      <div>Kho lưu trữ: <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer">https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera</a></div>
+      <div>Bản quyền mã nguồn mở theo giấy phép MIT. Apple Silicon, iOS, ProMotion, Neural Engine là nhãn hiệu của Apple Inc.</div>
+      <div>Kiểu giao diện: Bảng biểu tài liệu kỹ thuật đơn sắc cổ điển (Classic 2010s Technical Table Layout).</div>
+    </footer>
+
+  </div>
+
   <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            mwm: {
-              ink: '#0C0C0C',
-              surface: '#141414',
-              surface2: '#181818',
-              hairline: '#1F2128',
-              border: '#242630',
-              orange: '#FF5301'
-            }
-          }
-        }
-      }
+    function copyHash() {
+      const hash = "12A9C9FF9049C8D6E6BBB2EDD8CFE7E1CC490E2AAE94AFF846E0F941DD2BCD62";
+      navigator.clipboard.writeText(hash).then(function() {
+        const status = document.getElementById("copyStatus");
+        status.textContent = "--> Đã sao chép vào bộ nhớ tạm thành công.";
+        setTimeout(function() {
+          status.textContent = "";
+        }, 3000);
+      });
     }
   </script>
 
-  <!-- MWM Custom Stylesheet -->
-  <link rel="stylesheet" href="css/style.css">
-</head>
-<body class="bg-[#0C0C0C] text-[#FFFFFF] antialiased selection:bg-[#FF5301]/30 selection:text-white">
-
-  <!-- Top MWM Navigation Bar -->
-  <header class="w-full mwm-navbar sticky top-0 z-50">
-    <div class="app-detail-shell h-14 flex items-center justify-between">
-      
-      <!-- Brand Logo & Name -->
-      <a href="#overview" class="flex items-center gap-3 group">
-        <div class="w-8 h-8 rounded-xl bg-[#1C1E24] border border-[#242630] p-1 flex items-center justify-center overflow-hidden">
-          <img src="assets/logo.png" alt="Align Camera Logo" class="w-full h-full object-contain">
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-sm font-bold text-white tracking-tight">Align Camera</span>
-          <span class="px-2 py-0.5 text-[10px] font-mono rounded-full bg-[#FF5301]/10 text-[#FF5301] border border-[#FF5301]/25">v1.0.0</span>
-        </div>
-      </a>
-
-      <!-- Center Links (Desktop & TV) -->
-      <nav class="hidden md:flex items-center space-x-1 text-xs font-medium text-zinc-400">
-        <a href="#overview" class="px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/5 transition-colors">Overview</a>
-        <a href="#editorial-preview" class="px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/5 transition-colors">UX Insights</a>
-        <a href="#features" class="px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/5 transition-colors">Features</a>
-        <a href="#faq" class="px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/5 transition-colors">FAQ</a>
-        <a href="#download" class="px-3 py-1.5 rounded-lg hover:text-white hover:bg-white/5 transition-colors">Download</a>
-      </nav>
-
-      <!-- Right Action Buttons -->
-      <div class="flex items-center space-x-2.5 text-xs">
-        <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" 
-           target="_blank" 
-           rel="noopener noreferrer" 
-           class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#141414] border border-[#242630] hover:border-white/20 text-zinc-400 hover:text-white transition-colors">
-          <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-            <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
-          </svg>
-          <span>GitHub</span>
-        </a>
-
-        <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.353/AISmartFramingCamera.ipa" 
-           class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#FF5301] hover:bg-[#FF4814] text-white font-medium transition-colors shadow-sm">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-          </svg>
-          <span>Tải IPA</span>
-        </a>
-      </div>
-
-    </div>
-  </header>
-
-  <main class="space-y-12 sm:space-y-16 py-6 md:py-10">
-
-    <!-- PHẦN 1: BREADCRUMBS & MWM HERO PANEL (1:1 Layout từ MWM Screenshot 2) -->
-    <section id="overview" class="app-detail-shell space-y-4">
-      
-      <!-- Breadcrumb -->
-      <nav aria-label="Breadcrumb" class="mwm-breadcrumb mb-3">
-        <ol class="flex items-center space-x-2 text-xs text-zinc-500 font-medium">
-          <li><a href="#overview" class="hover:text-white transition-colors">Home</a></li>
-          <li class="text-zinc-700">/</li>
-          <li><a href="#overview" class="hover:text-white transition-colors">Apps</a></li>
-          <li class="text-zinc-700">/</li>
-          <li class="text-white font-semibold">Align Camera</li>
-        </ol>
-      </nav>
-
-      <!-- App Hero Panel (1:1 MWM Structure) -->
-      <div class="app-hero-panel p-5 sm:p-7 md:p-8 space-y-8">
-        
-        <!-- Top Row: Icon + Title + App Store Badge -->
-        <div class="relative grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-          
-          <div class="flex flex-col sm:flex-row sm:items-start gap-5 sm:gap-6 text-center sm:text-left">
-            <!-- App Icon Frame with User's Transparent Logo -->
-            <div class="app-icon-aura mx-auto sm:mx-0 flex-shrink-0">
-              <div class="app-icon-frame w-28 h-28 sm:w-36 sm:h-36 md:w-40 md:h-40 p-3 sm:p-4 flex items-center justify-center overflow-hidden">
-                <img src="assets/logo.png" alt="Align Camera Logo" class="block w-full h-full object-contain">
-              </div>
-            </div>
-
-            <!-- Title & Metadata -->
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center justify-center sm:justify-start gap-3">
-                <h1 class="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight text-white leading-tight">
-                  Align Camera
-                </h1>
-                <span class="px-2.5 py-0.5 text-xs font-mono font-medium rounded-full bg-[#FF5301]/10 text-[#FF5301] border border-[#FF5301]/25">
-                  v1.0.0
-                </span>
-              </div>
-
-              <p class="mt-2 text-xs sm:text-sm text-zinc-400">
-                <span class="font-medium text-zinc-200">Khoa Hien</span>
-                <span class="mx-2 text-zinc-700">/</span>
-                <span>Photo &amp; Video</span>
-                <span class="mx-2 text-zinc-700">/</span>
-                <span class="text-[#FF5301]">Computer Vision</span>
-              </p>
-
-              <p class="mt-4 max-w-3xl text-sm md:text-base text-zinc-300 leading-relaxed">
-                Ứng dụng máy ảnh thông minh tích hợp mô hình YOLOv26 chạy thuần trên chip Apple Neural Engine (ANE). Tự động canh góc, căn khung hình chuẩn tỷ lệ vàng và nhận diện đối tượng theo thời gian thực với độ trễ siêu thấp.
-              </p>
-            </div>
-          </div>
-
-          <!-- Right: Apple Store Sideload Badge -->
-          <div class="flex flex-wrap items-center justify-center lg:justify-end gap-3 pt-1 flex-shrink-0">
-            <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.353/AISmartFramingCamera.ipa" 
-               class="inline-flex items-center gap-3 px-5 py-3 rounded-2xl bg-black hover:bg-zinc-900 text-white border border-white/15 hover:border-white/30 transition-all duration-200 shadow-xl group">
-              <svg class="w-6 h-6 text-white flex-shrink-0" fill="currentColor" viewBox="0 0 170 170">
-                <path d="M150.37 130.25c-2.45 5.66-5.35 10.87-8.71 15.66-4.58 6.53-8.33 11.05-11.22 13.56-4.48 4.12-9.28 6.23-14.42 6.35-3.69 0-8.14-1.05-13.32-3.18-5.19-2.12-9.97-3.17-14.34-3.17-4.58 0-9.49 1.05-14.75 3.17-5.26 2.13-9.5 3.24-12.74 3.35-4.35.13-9.16-1.9-14.42-6.08-3.7-3.04-7.69-7.85-11.96-14.42-7.84-12.08-14.04-26.11-18.6-42.08-4.57-15.98-6.86-30.82-6.86-44.53 0-16.75 4.35-30.82 13.06-42.22 8.71-11.4 19.53-17.21 32.46-17.43 4.8 0 10.34 1.25 16.63 3.75 6.3 2.5 10.23 3.86 11.8 4.07 2.18-.32 6.33-1.74 12.44-4.28 6.1-2.54 11.43-3.75 15.98-3.63 12.85.65 23.3 5.39 31.35 14.21 8.05 8.82 12.85 19.38 14.42 31.68-11.54 6.97-17.21 16.54-17.01 28.73.22 10.12 4.14 18.72 11.75 25.8 7.62 7.07 16.65 11.2 27.1 12.39-2.61 7.84-5.77 15.34-9.48 22.52zM119.22 31.8c0-7.84 2.83-15.24 8.5-22.19 5.66-6.97 12.84-11.32 21.54-13.06.33 1.52.5 3.04.5 4.57 0 7.84-2.95 15.46-8.84 22.86-5.88 7.4-13.07 11.76-21.54 13.06-.11-1.74-.16-3.48-.16-5.24z"/>
-              </svg>
-              <div class="text-left">
-                <div class="text-[10px] text-zinc-400 uppercase tracking-wider leading-none">Download for iOS</div>
-                <div class="text-sm font-bold text-white tracking-tight leading-tight">Sideload / IPA Direct</div>
-              </div>
-            </a>
-          </div>
-
-        </div>
-
-        <!-- Bottom Row: 4 KPI Cards (1:1 from MWM Source Code) -->
-        <div class="relative mt-6 border-t border-white/[0.06] pt-5">
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-            
-            <!-- KPI 1: ANE Latency -->
-            <div class="app-kpi-card flex flex-col justify-between">
-              <div class="flex items-center justify-between text-[10px] sm:text-[11px] font-mono uppercase tracking-[0.14em] text-zinc-400">
-                <span>ĐỘ TRỄ ANE</span>
-                <!-- Micro ranking signal SVG from MWM -->
-                <svg class="w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
-                </svg>
-              </div>
-              <div class="my-2">
-                <div class="text-2xl sm:text-3xl font-black text-white tracking-tight tabular-nums">1.4 - 3.9 ms</div>
-              </div>
-              <div class="text-[11px] text-zinc-400 truncate">
-                100% Apple Neural Engine &bull; 0% CPU
-              </div>
-            </div>
-
-            <!-- KPI 2: Processing Speed -->
-            <div class="app-kpi-card flex flex-col justify-between">
-              <div class="flex items-center justify-between text-[10px] sm:text-[11px] font-mono uppercase tracking-[0.14em] text-zinc-400">
-                <span>TỐC ĐỘ XỬ LÝ</span>
-                <!-- Sparkline graph SVG from MWM -->
-                <svg class="w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"/>
-                </svg>
-              </div>
-              <div class="my-2">
-                <div class="text-2xl sm:text-3xl font-black text-white tracking-tight tabular-nums">120+ FPS</div>
-              </div>
-              <div class="text-[11px] text-zinc-400 truncate">
-                ProMotion &bull; Real-time 0 Lag
-              </div>
-            </div>
-
-            <!-- KPI 3: RAM Consumption -->
-            <div class="app-kpi-card flex flex-col justify-between">
-              <div class="flex items-center justify-between text-[10px] sm:text-[11px] font-mono uppercase tracking-[0.14em] text-zinc-400">
-                <span>TIÊU THỤ RAM</span>
-                <!-- Meter SVG from MWM -->
-                <svg class="w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/>
-                </svg>
-              </div>
-              <div class="my-2">
-                <div class="text-2xl sm:text-3xl font-black text-white tracking-tight tabular-nums">&lt; 35 MB</div>
-              </div>
-              <div class="text-[11px] text-zinc-400 truncate">
-                Siêu nhẹ &bull; 0% Quá nhiệt
-              </div>
-            </div>
-
-            <!-- KPI 4: Version -->
-            <div class="app-kpi-card flex flex-col justify-between">
-              <div class="flex items-center justify-between text-[10px] sm:text-[11px] font-mono uppercase tracking-[0.14em] text-zinc-400">
-                <span>PHIÊN BẢN HIỆN TẠI</span>
-                <!-- Database SVG from MWM -->
-                <svg class="w-4 h-4 text-zinc-500" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/>
-                </svg>
-              </div>
-              <div class="my-2">
-                <div class="text-2xl sm:text-3xl font-black text-white tracking-tight tabular-nums">v1.0.0</div>
-              </div>
-              <div class="text-[11px] text-zinc-400 truncate">
-                Build 353 &bull; iOS 17.0 - 18.x
-              </div>
-            </div>
-
-          </div>
-        </div>
-
-        <div class="text-[11px] font-mono text-zinc-500 pt-1">
-          Live hardware telemetry from Apple Silicon Neural Engine &amp; CoreML benchmarks.
-        </div>
-
-      </div>
-
-      <!-- Floating Section Navigation Pills (1:1 from MWM Source Code) -->
-      <div class="pt-2">
-        <nav class="app-section-nav flex items-center justify-center gap-1 overflow-x-auto no-scrollbar" aria-label="Section Navigation">
-          <a href="#editorial-preview" class="app-section-nav-pill active">UX insights</a>
-          <a href="#features" class="app-section-nav-pill">Features 6</a>
-          <a href="#faq" class="app-section-nav-pill">FAQ 5</a>
-          <a href="#download" class="app-section-nav-pill">Download &amp; SHA-256</a>
-          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer" class="app-section-nav-pill">GitHub Repo</a>
-        </nav>
-      </div>
-
-    </section>
-
-    <!-- PHẦN 2: UX INSIGHTS (1:1 Layout MWM Section #editorial-preview, Tối ưu không bao giờ bị bóp méo chữ) -->
-    <section id="editorial-preview" class="bg-black border-y border-white/5 py-12 md:py-16">
-      <div class="app-detail-shell space-y-10">
-        
-        <!-- Section Header -->
-        <div class="text-center max-w-2xl mx-auto space-y-3">
-          <div><span class="app-section-chip">UX INSIGHTS</span></div>
-          <h2 class="text-3xl sm:text-4xl md:text-5xl font-black text-white tracking-tight">
-            Interface Decoded
-          </h2>
-          <p class="text-sm md:text-base text-zinc-400 leading-relaxed">
-            A deep, visual dive into the app's core experience. Our experts analyze user flows, ergonomics, and key screen architectures to uncover the mechanics behind its product success.
-          </p>
-        </div>
-
-        <!-- 2 Full-Width Luxury Editorial Cards (Wide Layout on Desktop & TV, Stacked on Mobile) -->
-        <div class="space-y-8">
-
-          <!-- Card 1: AI Framing Precision -->
-          <div class="mwm-editorial-card p-6 sm:p-8 lg:p-10">
-            <div class="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-6">
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-xl bg-[#1C1E24] border border-[#242630] p-1 flex items-center justify-center overflow-hidden">
-                  <img src="assets/logo.png" alt="Align Camera Logo" class="w-full h-full object-contain">
-                </div>
-                <span class="text-sm font-bold text-white tracking-tight">Align Camera</span>
-              </div>
-              <div class="text-xs font-mono text-zinc-500">v1.0.0 / Build 353</div>
-            </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)] items-center gap-8 lg:gap-12">
-              
-              <!-- Left: Pure CSS/SVG Live Camera Viewfinder (No Dialog Popups!) -->
-              <div class="mx-auto lg:mx-0 w-full flex justify-center">
-                <div class="viewfinder-device">
-                  <!-- Island -->
-                  <div class="viewfinder-island"></div>
-
-                  <!-- Top HUD Telemetry -->
-                  <div class="pt-8 px-4 flex justify-between items-center text-[9px] font-mono text-zinc-400 z-10">
-                    <span class="bg-black/60 px-1.5 py-0.5 rounded border border-white/10">ISO 100</span>
-                    <span class="bg-black/60 px-1.5 py-0.5 rounded border border-white/10">1/250s</span>
-                    <span class="bg-black/60 px-1.5 py-0.5 rounded border border-white/10">48MP RAW</span>
-                  </div>
-
-                  <!-- Center Golden Ratio Viewport Overlay -->
-                  <div class="relative w-full h-48 my-auto flex items-center justify-center">
-                    <div class="viewfinder-grid"></div>
-                    
-                    <!-- Horizon Line 0.0° Level -->
-                    <div class="viewfinder-horizon">
-                      <div class="viewfinder-horizon-dot"></div>
-                      <div class="absolute -top-4 text-[9px] font-mono text-[#10b981] bg-black/80 px-1.5 py-0.5 rounded border border-[#10b981]/30">
-                        0.0° LEVEL
-                      </div>
-                    </div>
-
-                    <!-- AI Smart Bounding Box -->
-                    <div class="absolute w-32 h-40 border-2 border-[#3b82f6] rounded-lg p-1.5 flex flex-col justify-between">
-                      <div class="flex items-center justify-between text-[8px] font-mono bg-[#3b82f6] text-white px-1 py-0.5 rounded font-bold">
-                        <span>PERSON 0.98</span>
-                        <span>120 FPS</span>
-                      </div>
-                      <div class="flex items-center justify-between text-[8px] font-mono text-[#3b82f6] bg-black/70 px-1 py-0.5 rounded border border-[#3b82f6]/30">
-                        <span>ANE 1.8ms</span>
-                        <span>GOLDEN RATIO</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Bottom Camera Lens Dials & Shutter -->
-                  <div class="pb-5 px-4 space-y-3 z-10">
-                    <div class="flex items-center justify-center gap-2 text-[10px] font-mono">
-                      <span class="px-2 py-0.5 rounded-full bg-white/10 text-zinc-300">0.5x</span>
-                      <span class="px-2 py-0.5 rounded-full bg-[#FF5301] text-white font-bold">1x</span>
-                      <span class="px-2 py-0.5 rounded-full bg-white/10 text-zinc-300">2x</span>
-                      <span class="px-2 py-0.5 rounded-full bg-white/10 text-zinc-300">5x</span>
-                    </div>
-
-                    <div class="flex items-center justify-center">
-                      <div class="w-12 h-12 rounded-full border-2 border-white flex items-center justify-center">
-                        <div class="w-9 h-9 rounded-full bg-white"></div>
-                      </div>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-              <!-- Right: Editorial Article Content (Ample Space on Any Screen!) -->
-              <div class="space-y-4 text-left">
-                <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-[#3b82f6]/10 border border-[#3b82f6]/20 text-[11px] font-mono font-bold text-[#3b82f6] uppercase tracking-wider">
-                  AI FRAMING PRECISION
-                </div>
-                
-                <h3 class="text-2xl sm:text-3xl font-extrabold text-white leading-tight">
-                  Khung nhìn Tỷ lệ vàng &amp; Canh góc Tự động
-                </h3>
-
-                <p class="text-sm sm:text-base text-zinc-400 leading-relaxed">
-                  Thuật toán phát hiện và bám đuổi tâm đối tượng (Subject Tracking) với cơ chế camera chuyển động êm ái (Smooth Easing Camera Pan). Hệ thống tự động cân chỉnh độ nghiêng đường chân trời và tối ưu góc máy theo quy tắc một phần ba (Rule of Thirds) ngay trong lúc ngắm chụp thời gian thực.
-                </p>
-
-                <p class="text-sm sm:text-base text-zinc-400 leading-relaxed">
-                  Không còn tình trạng chụp lệch góc hay đối tượng bị trôi ra khỏi tâm ngắm. Mô hình AI phân tích ma trận điểm ảnh với tần suất 120 chu kỳ/giây giúp người dùng bắt trọn từng khoảnh khắc một cách hoàn hảo và chuẩn xác.
-                </p>
-
-                <div class="pt-4 border-t border-white/[0.08] flex items-center gap-2 text-xs font-mono text-zinc-500">
-                  <span class="w-2 h-2 rounded-full bg-[#3b82f6]"></span>
-                  <span>Align Intelligence &bull; Live telemetry &amp; ergonomics analysis.</span>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          <!-- Card 2: Apple Silicon Acceleration -->
-          <div class="mwm-editorial-card p-6 sm:p-8 lg:p-10">
-            <div class="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-6">
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-xl bg-[#1C1E24] border border-[#242630] p-1 flex items-center justify-center overflow-hidden">
-                  <img src="assets/logo.png" alt="Align Camera Logo" class="w-full h-full object-contain">
-                </div>
-                <span class="text-sm font-bold text-white tracking-tight">Align Camera</span>
-              </div>
-              <div class="text-xs font-mono text-zinc-500">v1.0.0 / Build 353</div>
-            </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)] items-center gap-8 lg:gap-12">
-              
-              <!-- Left: Pure CSS/SVG Live Camera Low-Light / LUT Viewfinder -->
-              <div class="mx-auto lg:mx-0 w-full flex justify-center">
-                <div class="viewfinder-device">
-                  <!-- Island -->
-                  <div class="viewfinder-island"></div>
-
-                  <!-- Top HUD Telemetry -->
-                  <div class="pt-8 px-4 flex justify-between items-center text-[9px] font-mono text-zinc-400 z-10">
-                    <span class="bg-black/60 px-1.5 py-0.5 rounded border border-white/10">LUT: KODAK 5207</span>
-                    <span class="bg-black/60 px-1.5 py-0.5 rounded border border-[#10b981]/40 text-[#10b981]">ANE 100%</span>
-                  </div>
-
-                  <!-- Center Cinematic Palette Simulation -->
-                  <div class="relative w-full h-48 my-auto flex flex-col items-center justify-center p-4 text-center">
-                    <div class="w-20 h-20 rounded-2xl bg-gradient-to-tr from-[#1E2538] to-[#12151D] border border-white/10 flex items-center justify-center shadow-inner mb-3">
-                      <svg class="w-10 h-10 text-[#FF5301]" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
-                      </svg>
-                    </div>
-                    <div class="text-xs font-mono font-bold text-white">NMS-Free Pipeline</div>
-                    <div class="text-[10px] font-mono text-zinc-400 mt-1">CPU Load: 0.0% &bull; RAM: 32.4 MB</div>
-                  </div>
-
-                  <!-- Bottom Telemetry Readout -->
-                  <div class="pb-6 px-4 space-y-2 z-10">
-                    <div class="p-2 rounded-lg bg-black/60 border border-white/10 text-[9px] font-mono text-zinc-300 flex justify-between">
-                      <span>ProMotion Display:</span>
-                      <span class="text-[#FF5301] font-bold">120 FPS Locked</span>
-                    </div>
-                  </div>
-
-                </div>
-              </div>
-
-              <!-- Right: Editorial Article Content -->
-              <div class="space-y-4 text-left">
-                <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-[#FF5301]/10 border border-[#FF5301]/20 text-[11px] font-mono font-bold text-[#FF5301] uppercase tracking-wider">
-                  CINEMATIC TONE CONTROL
-                </div>
-                
-                <h3 class="text-2xl sm:text-3xl font-extrabold text-white leading-tight">
-                  Xử lý Thuần Apple Neural Engine 120 FPS
-                </h3>
-
-                <p class="text-sm sm:text-base text-zinc-400 leading-relaxed">
-                  Mô hình YOLOv26 được tối ưu hóa toàn diện cho Apple Neural Engine từ chip Apple A12 Bionic đến A18 Pro. Loại bỏ hoàn toàn thuật toán Non-Maximum Suppression trên CPU, trả về trực tiếp tọa độ chuẩn hóa giúp loại bỏ hiện tượng tụt khung hình khi quay chụp kéo dài.
-                </p>
-
-                <p class="text-sm sm:text-base text-zinc-400 leading-relaxed">
-                  Tích hợp bộ preset chuyển màu điện ảnh (Cinematic LUTs) áp dụng trực tiếp lên luồng video 4K với mức tiêu thụ điện năng cực thấp, giúp thiết bị luôn mát mẻ mà không gây nóng máy.
-                </p>
-
-                <div class="pt-4 border-t border-white/[0.08] flex items-center gap-2 text-xs font-mono text-zinc-500">
-                  <span class="w-2 h-2 rounded-full bg-[#FF5301]"></span>
-                  <span>Align Intelligence &bull; Live telemetry &amp; ergonomics analysis.</span>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-        </div>
-
-      </div>
-    </section>
-
-    <!-- PHẦN 3: CAPABILITY MAP (1:1 Layout MWM Section #features) -->
-    <section id="features" class="app-detail-shell py-10 md:py-16">
-      
-      <div class="text-center mb-8 md:mb-12">
-        <span class="app-section-chip">Features</span>
-        <h2 class="text-3xl sm:text-4xl md:text-5xl font-black text-white tracking-tight mb-3">
-          Capability map
-        </h2>
-        <p class="text-sm md:text-base text-zinc-400 max-w-3xl mx-auto leading-relaxed">
-          Core workflows, user promises, and product signals extracted from the store listing.
-        </p>
-      </div>
-
-      <!-- 6 Clean Feature Cards (1:1 MWM Grid) -->
-      <div class="grid md:grid-cols-2 gap-3 md:gap-4">
-        
-        <!-- Card 1 -->
-        <div class="app-feature-card group">
-          <h3 class="flex items-start gap-2 text-[15px] md:text-lg font-bold text-white mb-2">
-            <span class="app-feature-marker mt-[0.65em]"></span>
-            <span class="min-w-0 line-clamp-2">YOLOv26 Apple Neural Engine Engine</span>
-          </h3>
-          <p class="text-zinc-400 leading-relaxed text-sm">
-            Tối ưu hóa 100% các lớp mạng nơ-ron để thực thi trực tiếp trên vi xử lý ANE từ chip A12 đến A18 Pro, giải phóng toàn bộ năng lực tính toán của CPU và GPU.
-          </p>
-        </div>
-
-        <!-- Card 2 -->
-        <div class="app-feature-card group">
-          <h3 class="flex items-start gap-2 text-[15px] md:text-lg font-bold text-white mb-2">
-            <span class="app-feature-marker mt-[0.65em]"></span>
-            <span class="min-w-0 line-clamp-2">NMS-Free Pipeline Không Nghẽn CPU</span>
-          </h3>
-          <p class="text-zinc-400 leading-relaxed text-sm">
-            Loại bỏ thuật toán Non-Maximum Suppression trên CPU, trả về trực tiếp tọa độ chuẩn hóa giúp loại bỏ triệt để hiện tượng tụt khung hình khi quay chụp kéo dài.
-          </p>
-        </div>
-
-        <!-- Card 3 -->
-        <div class="app-feature-card group">
-          <h3 class="flex items-start gap-2 text-[15px] md:text-lg font-bold text-white mb-2">
-            <span class="app-feature-marker mt-[0.65em]"></span>
-            <span class="min-w-0 line-clamp-2">Bộ lọc Màu Điện ảnh Cinematic LUTs</span>
-          </h3>
-          <p class="text-zinc-400 leading-relaxed text-sm">
-            Tích hợp các bộ preset chuyển màu điện ảnh và tinh chỉnh độ phơi sáng, tương phản mượt mà trực tiếp trên luồng camera thời gian thực.
-          </p>
-        </div>
-
-        <!-- Card 4 -->
-        <div class="app-feature-card group">
-          <h3 class="flex items-start gap-2 text-[15px] md:text-lg font-bold text-white mb-2">
-            <span class="app-feature-marker mt-[0.65em]"></span>
-            <span class="min-w-0 line-clamp-2">Tự động Cắt Cúp &amp; Zoom Mượt</span>
-          </h3>
-          <p class="text-zinc-400 leading-relaxed text-sm">
-            Thuật toán bám đuổi tâm đối tượng (Subject Tracking) với chuyển động camera mượt mà (Smooth Easing Camera Pan) chuẩn xác từng pixel.
-          </p>
-        </div>
-
-        <!-- Card 5 -->
-        <div class="app-feature-card group">
-          <h3 class="flex items-start gap-2 text-[15px] md:text-lg font-bold text-white mb-2">
-            <span class="app-feature-marker mt-[0.65em]"></span>
-            <span class="min-w-0 line-clamp-2">Biểu tượng Thích ứng iOS 18 (Adaptive App Icon)</span>
-          </h3>
-          <p class="text-zinc-400 leading-relaxed text-sm">
-            Hỗ trợ đầy đủ chế độ Light, Dark tự động ăn khớp với hệ thống Dark Platter của Apple, và chế độ Tinted nhuộm màu linh hoạt.
-          </p>
-        </div>
-
-        <!-- Card 6 -->
-        <div class="app-feature-card group">
-          <h3 class="flex items-start gap-2 text-[15px] md:text-lg font-bold text-white mb-2">
-            <span class="app-feature-marker mt-[0.65em]"></span>
-            <span class="min-w-0 line-clamp-2">Đóng gói Sideload Độc lập</span>
-          </h3>
-          <p class="text-zinc-400 leading-relaxed text-sm">
-            Định dạng tệp unsigned IPA hoàn chỉnh, không kèm mã theo dõi, không quảng cáo, tương thích hoàn hảo với Sideloadly và TrollStore.
-          </p>
-        </div>
-
-      </div>
-
-    </section>
-
-    <!-- PHẦN 4: TECHNICAL FAQ (1:1 Layout MWM Section #faq) -->
-    <section id="faq" class="bg-zinc-900/30 border-y border-white/5 py-12 md:py-16">
-      <div class="app-detail-shell space-y-8">
-        
-        <div class="text-center mb-8 md:mb-12">
-          <span class="app-section-chip">FAQ</span>
-          <h2 class="text-3xl sm:text-4xl md:text-5xl font-black text-white tracking-tight mb-3">
-            Quick answers
-          </h2>
-          <p class="text-sm md:text-base text-zinc-400 max-w-2xl mx-auto leading-relaxed">
-            Useful context before comparing, ranking, or downloading this app.
-          </p>
-        </div>
-
-        <div class="max-w-3xl mx-auto space-y-3 md:space-y-4">
-
-          <!-- FAQ Item 1 -->
-          <div class="app-faq-item group is-open open">
-            <h3>
-              <button type="button" class="app-faq-question-btn text-[#FF5301] flex w-full items-center justify-between gap-4 px-4 py-4 md:px-6 md:py-5 text-left text-base md:text-lg font-semibold transition-colors" aria-expanded="true">
-                <span class="pr-4">Align Camera có thể cài đặt trên những thiết bị iPhone nào?</span>
-                <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-white/5 group-hover:bg-white/10 transition-colors">
-                  <svg class="app-faq-icon w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                  </svg>
-                </span>
-              </button>
-            </h3>
-            <div class="app-faq-answer">
-              <div class="app-faq-inner px-4 pb-4 md:px-6 md:pb-6 text-sm md:text-base text-zinc-400 leading-relaxed border-t border-white/[0.06] pt-3">
-                Hỗ trợ mọi dòng iPhone chạy iOS 17.0 trở lên, trang bị chip từ A12 Bionic (iPhone XS, XR) đến A18 Pro (iPhone 16 Series).
-              </div>
-            </div>
-          </div>
-
-          <!-- FAQ Item 2 -->
-          <div class="app-faq-item group">
-            <h3>
-              <button type="button" class="app-faq-question-btn text-white hover:text-[#FF5301] flex w-full items-center justify-between gap-4 px-4 py-4 md:px-6 md:py-5 text-left text-base md:text-lg font-semibold transition-colors" aria-expanded="false">
-                <span class="pr-4">Tại sao ứng dụng không làm nóng máy và tốn pin như các app AI khác?</span>
-                <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-white/5 group-hover:bg-white/10 transition-colors">
-                  <svg class="app-faq-icon w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                  </svg>
-                </span>
-              </button>
-            </h3>
-            <div class="app-faq-answer">
-              <div class="app-faq-inner px-4 pb-4 md:px-6 md:pb-6 text-sm md:text-base text-zinc-400 leading-relaxed border-t border-white/[0.06] pt-3">
-                Mô hình AI được ánh xạ 100% vào chip Apple Neural Engine (ANE), vi xử lý chuyên dụng có hiệu suất tiêu thụ điện cực thấp (TOPS/Watt cao). CPU và GPU hầu như ở trạng thái nghỉ, bộ nhớ RAM tiêu thụ dưới 35MB.
-              </div>
-            </div>
-          </div>
-
-          <!-- FAQ Item 3 -->
-          <div class="app-faq-item group">
-            <h3>
-              <button type="button" class="app-faq-question-btn text-white hover:text-[#FF5301] flex w-full items-center justify-between gap-4 px-4 py-4 md:px-6 md:py-5 text-left text-base md:text-lg font-semibold transition-colors" aria-expanded="false">
-                <span class="pr-4">Làm thế nào để cài đặt tệp IPA này vào iPhone?</span>
-                <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-white/5 group-hover:bg-white/10 transition-colors">
-                  <svg class="app-faq-icon w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                  </svg>
-                </span>
-              </button>
-            </h3>
-            <div class="app-faq-answer">
-              <div class="app-faq-inner px-4 pb-4 md:px-6 md:pb-6 text-sm md:text-base text-zinc-400 leading-relaxed border-t border-white/[0.06] pt-3">
-                Bạn chỉ cần tải tệp IPA về máy tính, mở phần mềm Sideloadly (hoặc AltStore), kết nối iPhone bằng cáp USB, kéo file IPA vào và nhấn Start để cài đặt chỉ sau 1 phút.
-              </div>
-            </div>
-          </div>
-
-          <!-- FAQ Item 4 -->
-          <div class="app-faq-item group">
-            <h3>
-              <button type="button" class="app-faq-question-btn text-white hover:text-[#FF5301] flex w-full items-center justify-between gap-4 px-4 py-4 md:px-6 md:py-5 text-left text-base md:text-lg font-semibold transition-colors" aria-expanded="false">
-                <span class="pr-4">Ứng dụng có cần kết nối Internet để nhận diện AI không?</span>
-                <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-white/5 group-hover:bg-white/10 transition-colors">
-                  <svg class="app-faq-icon w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                  </svg>
-                </span>
-              </button>
-            </h3>
-            <div class="app-faq-answer">
-              <div class="app-faq-inner px-4 pb-4 md:px-6 md:pb-6 text-sm md:text-base text-zinc-400 leading-relaxed border-t border-white/[0.06] pt-3">
-                Hoàn toàn không. Toàn bộ quá trình nhận diện, căn khung và xử lý màu diễn ra 100% Offline (On-Device) ngay trên thiết bị, bảo mật tuyệt đối dữ liệu hình ảnh của bạn.
-              </div>
-            </div>
-          </div>
-
-          <!-- FAQ Item 5 -->
-          <div class="app-faq-item group">
-            <h3>
-              <button type="button" class="app-faq-question-btn text-white hover:text-[#FF5301] flex w-full items-center justify-between gap-4 px-4 py-4 md:px-6 md:py-5 text-left text-base md:text-lg font-semibold transition-colors" aria-expanded="false">
-                <span class="pr-4">Làm sao để xác thực tệp IPA tải về không bị can thiệp mã độc?</span>
-                <span class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-white/5 group-hover:bg-white/10 transition-colors">
-                  <svg class="app-faq-icon w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                  </svg>
-                </span>
-              </button>
-            </h3>
-            <div class="app-faq-answer">
-              <div class="app-faq-inner px-4 pb-4 md:px-6 md:pb-6 text-sm md:text-base text-zinc-400 leading-relaxed border-t border-white/[0.06] pt-3">
-                Mỗi bản phát hành đều được cung cấp công khai mã băm SHA-256 từ hệ thống GitHub Actions. Bạn có thể dùng lệnh Get-FileHash trên Windows hoặc shasum trên macOS để đối chiếu chính xác từng byte.
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-      </div>
-    </section>
-
-    <!-- PHẦN 5: DOWNLOAD & SHA-256 CHECKSUM (1:1 Layout MWM Section #appstore) -->
-    <section id="download" class="app-detail-shell py-10 md:py-16">
-      
-      <div class="app-hero-panel p-6 sm:p-8 md:p-10 space-y-6">
-        
-        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <span class="app-section-chip">DISTRIBUTION</span>
-            <h2 class="text-2xl sm:text-3xl md:text-4xl font-black text-white tracking-tight">
-              Tải về Bản phát hành Mới nhất
-            </h2>
-            <p class="text-xs sm:text-sm text-zinc-400 mt-1 font-mono">
-              Tệp: <span class="text-white font-semibold">AISmartFramingCamera.ipa</span> (239.3 MB) &bull; v1.0.0-build.353
-            </p>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <span class="px-3 py-1 rounded-full bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/25 text-xs font-mono">
-              SHA-256 Verified
-            </span>
-            <span class="px-3 py-1 rounded-full bg-[#FF5301]/10 text-[#FF5301] border border-[#FF5301]/25 text-xs font-mono">
-              Unsigned IPA
-            </span>
-          </div>
-        </div>
-
-        <!-- SHA-256 Checksum Container -->
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <label class="text-xs font-mono text-zinc-400 uppercase tracking-wider">
-              Mã băm SHA-256 Xác thực Tệp IPA:
-            </label>
-            <button type="button" 
-                    class="copy-hash-btn inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-[#181818] border border-[#242630] hover:border-[#FF5301] text-xs font-mono text-white hover:text-[#FF5301] transition-all cursor-pointer"
-                    data-hash="12A9C9FF9049C8D6E6BBB2EDD8CFE7E1CC490E2AAE94AFF846E0F941DD2BCD62">
-              <span class="copy-icon">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-                </svg>
-              </span>
-              <span class="copy-label">Sao chép mã băm</span>
-            </button>
-          </div>
-
-          <div class="mwm-code-container p-3.5 sm:p-4 text-xs font-mono text-zinc-300 break-all select-all">
-            12A9C9FF9049C8D6E6BBB2EDD8CFE7E1CC490E2AAE94AFF846E0F941DD2BCD62
-          </div>
-
-          <!-- Terminal Verification Snippets -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 text-[11px] font-mono text-zinc-400">
-            <div class="p-3 rounded-xl bg-[#08090A] border border-[#1F2128]">
-              <div class="text-zinc-500 mb-1"># Kiểm tra trên Windows (PowerShell):</div>
-              <div class="text-white">Get-FileHash .\AISmartFramingCamera.ipa -Algorithm SHA256</div>
-            </div>
-            <div class="p-3 rounded-xl bg-[#08090A] border border-[#1F2128]">
-              <div class="text-zinc-500 mb-1"># Kiểm tra trên macOS / Linux:</div>
-              <div class="text-white">shasum -a 256 AISmartFramingCamera.ipa</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Action Buttons -->
-        <div class="pt-4 border-t border-white/[0.08] flex flex-col sm:flex-row flex-wrap items-center gap-3">
-          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.353/AISmartFramingCamera.ipa" 
-             class="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-[#FF5301] hover:bg-[#FF4814] text-white font-medium text-sm transition-all duration-200 shadow-lg shadow-orange-500/20 active:scale-[0.98]">
-            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-            </svg>
-            <span>Tải xuống tệp IPA (Direct Link)</span>
-          </a>
-
-          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/tag/v1.0.0-build.353" 
-             target="_blank" 
-             rel="noopener noreferrer" 
-             class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#141414] hover:bg-zinc-800 text-white border border-[#242630] hover:border-white/20 font-medium text-sm transition-all duration-200">
-            <svg class="w-4 h-4 text-zinc-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
-              <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
-            </svg>
-            <span>Xem trên GitHub Releases</span>
-          </a>
-
-          <a href="https://sideloadly.io/" 
-             target="_blank" 
-             rel="noopener noreferrer" 
-             class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#141414] hover:bg-zinc-800 text-zinc-400 hover:text-white border border-[#242630] hover:border-white/20 font-medium text-sm transition-all duration-200">
-            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
-            </svg>
-            <span>Tải Sideloadly (Công cụ cài đặt)</span>
-          </a>
-        </div>
-
-      </div>
-
-    </section>
-
-  </main>
-
-  <!-- MWM Style Dark Footer -->
-  <footer class="border-t border-[#1F2128] bg-[#08090A] py-12 mt-16 text-xs text-zinc-500">
-    <div class="app-detail-shell space-y-6">
-      
-      <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div class="flex items-center space-x-3">
-          <div class="w-8 h-8 rounded-xl bg-[#1C1E24] border border-[#242630] p-1 flex items-center justify-center overflow-hidden">
-            <img src="assets/logo.png" alt="Align Camera Logo" class="w-full h-full object-contain">
-          </div>
-          <span class="text-sm font-bold text-white">Align Camera</span>
-          <span class="text-zinc-700">&bull;</span>
-          <span class="font-mono text-xs text-zinc-400">v1.0.0-build.353</span>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-6 font-mono text-xs">
-          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer" class="hover:text-white transition-colors">
-            GitHub Repository
-          </a>
-          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases" target="_blank" rel="noopener noreferrer" class="hover:text-white transition-colors">
-            Releases
-          </a>
-          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/issues" target="_blank" rel="noopener noreferrer" class="hover:text-white transition-colors">
-            Issues &amp; Feedback
-          </a>
-        </div>
-      </div>
-
-      <div class="pt-6 border-t border-white/[0.05] flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-[11px] leading-relaxed text-zinc-500">
-        <div>
-          Phát triển bởi <span class="text-zinc-300">Khoa Hien (emlavankhoahienma-hue)</span>. Nghiên cứu thị giác máy tính và tối ưu hóa suy luận Apple Neural Engine trên nền tảng di động.
-        </div>
-        <div>
-          Apple Silicon, iOS, ProMotion, Neural Engine là các nhãn hiệu thương mại của Apple Inc.
-        </div>
-      </div>
-
-    </div>
-  </footer>
-
-  <!-- App Interactive Logic Script -->
-  <script src="js/app.js"></script>
 </body>
 </html>
