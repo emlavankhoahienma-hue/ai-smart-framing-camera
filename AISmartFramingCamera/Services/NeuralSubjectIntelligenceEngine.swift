@@ -357,7 +357,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         var primaryEye: CGPoint? = nil
         var lookDir = CGVector(dx: 0, dy: 0)
         
-        // 0. Nhận diện vật thể bằng YOLOv11 CoreML (nếu có model)
+        // 0. Nhận diện vật thể bằng YOLOv26 CoreML (nâng cấp từ v11/v12)
         if YOLODetectionEngine.shared.hasYOLOModel {
             let yoloCandidates = YOLODetectionEngine.shared.detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
             candidates.append(contentsOf: yoloCandidates)
