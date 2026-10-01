@@ -1,33 +1,13 @@
 <!DOCTYPE html>
-<html lang="vi" class="dark scroll-smooth">
+<html lang="vi" class="scroll-smooth">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
-  
-  <title>AI Smart Framing Camera - AlignAI Studio | Camera AI Chuẩn Tỷ Lệ Vàng Cho iPhone</title>
-  
-  <!-- SEO & Social Meta Tags -->
-  <meta name="description" content="AI Smart Framing Camera (AlignAI Studio) - Ứng dụng camera iOS khai thác Apple Neural Engine & Vision framework. Tự động nhận diện chủ thể, căn chỉnh góc chụp theo Tỷ lệ vàng & Quy tắc 1/3, tự động kích hoạt ống kính Telephoto phần cứng từ 2x và giả lập màu phim Fuji, Kodak.">
-  <meta name="keywords" content="AI Smart Framing Camera, AlignAI Studio, iOS Camera, Apple Neural Engine, Sideloadly, TrollStore, IPA Build 300, Golden Ratio Camera, Rule of Thirds, Telephoto iOS, Film Simulation">
-  <meta name="author" content="Founder & CEO SmartVN">
-  <meta name="theme-color" content="#060709">
-  <meta property="og:title" content="AI Smart Framing Camera - AlignAI Studio">
-  <meta property="og:description" content="Camera AI thông minh căn chuẩn tỷ lệ vàng, quy tắc 1/3 thời gian thực và tự động can thiệp camera telephoto phần cứng cho iPhone.">
-  <meta property="og:type" content="website">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Align Camera - Ứng dụng Máy ảnh AI Tỉ lệ vàng cho iOS</title>
+  <meta name="description" content="Align Camera - Ứng dụng máy ảnh thông minh tích hợp mô hình YOLOv26 chạy thuần trên chip Apple Neural Engine (ANE). Tự động canh góc, căn khung hình chuẩn tỷ lệ vàng và nhận diện đối tượng thời gian thực.">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 
-  <!-- PWA Manifest & App Icons -->
-  <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="icon" type="image/png" href="./assets/AppLogo.png">
-  <link rel="apple-touch-icon" href="./assets/icon-192.png">
-
-  <!-- Three.js CDN for 3D Optical Hardware Studio -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-
-  <!-- Tailwind CSS via CDN -->
+  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -35,1803 +15,694 @@
       theme: {
         extend: {
           colors: {
-            void: '#060709',
-            obsidian: '#0e1017',
-            card: {
-              glass: 'rgba(18, 21, 31, 0.85)',
-              border: 'rgba(255, 255, 255, 0.08)',
-              hover: 'rgba(255, 255, 255, 0.12)'
+            obsidian: {
+              DEFAULT: '#090A0D',
+              card: '#111318',
+              hover: '#151821',
+              border: '#1E222D',
+              borderHover: '#2D3242'
             },
-            'amber-gold': '#FFB029',
-            'amber-light': '#FFC857',
-            'emerald-lens': '#10B981',
-            'mint-cyan': '#22D3EE',
-            'ruby-rec': '#EF4444'
-          },
-          fontFamily: {
-            sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"SF Pro Text"', 'Inter', 'Segoe UI', 'Roboto', 'sans-serif'],
-            mono: ['"SF Mono"', '"JetBrains Mono"', 'Menlo', 'Consolas', 'monospace']
-          },
-          boxShadow: {
-            'gold-glow': '0 0 25px -4px rgba(255, 176, 41, 0.35)',
-            'cyan-glow': '0 0 25px -4px rgba(34, 211, 238, 0.35)',
-            'glass': '0 20px 50px rgba(0, 0, 0, 0.7)'
+            text: {
+              primary: '#F2F4F8',
+              secondary: '#858B9E',
+              muted: '#5E6475'
+            },
+            accent: {
+              blue: '#3B82F6',
+              emerald: '#10B981'
+            }
           }
         }
       }
-    };
+    }
   </script>
 
-  <!-- Lucide Vector Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
-
-  <style>
-    /* Architectural Custom Aesthetics */
-    ::-webkit-scrollbar {
-      width: 7px;
-      height: 7px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #060709;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #252836;
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #FFB029;
-    }
-
-    .pulse-target {
-      animation: pulseGoldRing 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    }
-    @keyframes pulseGoldRing {
-      0%, 100% { transform: scale(1); opacity: 0.9; }
-      50% { transform: scale(1.08); opacity: 0.4; }
-    }
-
-    .shutter-ripple {
-      animation: shutterFlash 0.35s ease-out;
-    }
-    @keyframes shutterFlash {
-      0% { opacity: 0.9; }
-      100% { opacity: 0; }
-    }
-
-    /* 3D Phone Chassis Styles */
-    .perspective-container {
-      perspective: 1200px;
-    }
-    .phone-3d-chassis {
-      transform-style: preserve-3d;
-      transition: transform 0.15s ease-out;
-      will-change: transform;
-    }
-
-    /* Film Simulation Filter Presets */
-    .filter-provia { filter: contrast(1.08) saturate(1.15) brightness(1.02); }
-    .filter-velvia { filter: contrast(1.22) saturate(1.35) brightness(0.98); }
-    .filter-classic-chrome { filter: contrast(1.12) saturate(0.82) sepia(0.12); }
-    .filter-monochrome { filter: grayscale(1) contrast(1.3) brightness(0.95); }
-
-    .film-grain {
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.08'/%3E%3C/svg%3E");
-    }
-  </style>
+  <!-- Custom Design System Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="bg-void text-zinc-100 antialiased selection:bg-amber-gold selection:text-void overflow-x-hidden min-h-screen flex flex-col">
+<body class="bg-[#090A0D] text-[#F2F4F8] antialiased selection:bg-[#3B82F6]/30 selection:text-white">
 
-  <!-- ================= THREE.JS 3D OPTICAL BACKGROUND CANVAS ================= -->
-  <canvas id="threeBackgroundCanvas" class="fixed inset-0 w-full h-full pointer-events-none z-0 opacity-50"></canvas>
-
-  <!-- ================= ANNOUNCEMENT BAR ================= -->
-  <div class="relative z-30 bg-gradient-to-r from-obsidian via-[#161a26] to-obsidian border-b border-white/[0.08] px-4 py-2 text-xs font-mono text-zinc-300">
-    <div class="container mx-auto flex flex-wrap items-center justify-between gap-2">
-      <div class="flex items-center gap-2">
-        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-gold/15 text-amber-gold text-[10px] font-semibold tracking-wide border border-amber-gold/30">
-          <span class="w-1.5 h-1.5 rounded-full bg-amber-gold animate-ping"></span>
-          BẢN CHÍNH THỨC
-        </span>
-        <span class="text-zinc-200">Bản Cài Đặt Mới Nhất: <strong class="text-amber-gold">v1.0.0 (Build 300)</strong> | Không Cần Jailbreak &bull; iOS 16.0 &ndash; 18.0+</span>
-      </div>
-      <div class="hidden md:flex items-center gap-4 text-[11px] text-zinc-400">
-        <span class="flex items-center gap-1.5 text-mint-cyan">
-          <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
-          <span>APPLE NEURAL ENGINE 60 FPS</span>
-        </span>
-        <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer" class="hover:text-amber-gold transition-colors flex items-center gap-1">
-          <i data-lucide="git-branch" class="w-3.5 h-3.5"></i>
-          <span>GitHub Repository</span>
-        </a>
-      </div>
-    </div>
-  </div>
-
-  <!-- ================= HEADER & NAVIGATION ================= -->
-  <header class="sticky top-0 z-40 bg-void/85 backdrop-blur-xl border-b border-card-border transition-all duration-200">
-    <div class="container mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-4">
-      
-      <!-- Brand Logo -->
-      <a href="#" class="flex items-center gap-3 group">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-gold via-amber-light to-void p-[1.5px] shadow-gold-glow group-hover:scale-105 transition-transform">
-          <div class="w-full h-full bg-obsidian rounded-[10px] flex items-center justify-center overflow-hidden">
-            <img src="./assets/AppLogo.png" alt="AlignAI Camera" class="w-7 h-7 object-contain" onerror="this.src='./assets/icon-192.png'">
-          </div>
-        </div>
-        <div class="flex flex-col text-left">
-          <div class="flex items-center gap-2">
-            <span class="font-bold tracking-tight text-white text-base sm:text-lg">AI SMART FRAMING</span>
-            <span class="px-1.5 py-0.2 rounded bg-amber-gold/20 text-amber-gold text-[9px] font-mono font-bold uppercase border border-amber-gold/40">PRO</span>
-          </div>
-          <span class="text-[11px] font-mono text-zinc-400 tracking-wider">ALIGN-AI STUDIO</span>
-        </div>
-      </a>
-
-      <!-- Desktop Nav Links -->
-      <nav class="hidden lg:flex items-center gap-6 text-xs font-medium text-zinc-300">
-        <a href="#hero-viewfinder" class="hover:text-amber-gold transition-colors flex items-center gap-1.5">
-          <i data-lucide="scan" class="w-3.5 h-3.5 text-amber-gold"></i>
-          <span>Khung Ngắm Trực Tiếp</span>
-        </a>
-        <a href="#feedback-console" class="hover:text-amber-gold transition-colors flex items-center gap-1.5">
-          <i data-lucide="sliders" class="w-3.5 h-3.5 text-mint-cyan"></i>
-          <span>Hệ Quang Học 3D &amp; Form</span>
-        </a>
-        <a href="#features" class="hover:text-amber-gold transition-colors flex items-center gap-1.5">
-          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-zinc-400"></i>
-          <span>Tính Năng Pro</span>
-        </a>
-        <a href="#sideload-guide" class="hover:text-amber-gold transition-colors flex items-center gap-1.5">
-          <i data-lucide="download-cloud" class="w-3.5 h-3.5 text-zinc-400"></i>
-          <span>Cài Đặt IPA</span>
-        </a>
-        <a href="#founder" class="hover:text-amber-gold transition-colors flex items-center gap-1.5">
-          <i data-lucide="user-check" class="w-3.5 h-3.5 text-zinc-400"></i>
-          <span>Nhà Sáng Lập</span>
-        </a>
+  <!-- Header Breadcrumbs Bar -->
+  <header class="w-full border-b border-[#1E222D] bg-[#090A0D]/90 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 h-12 flex items-center justify-between">
+      <nav aria-label="Breadcrumb" class="flex items-center space-x-2 text-xs font-mono text-[#858B9E]">
+        <a href="#overview" class="hover:text-[#F2F4F8] transition-colors">Trang chủ</a>
+        <svg class="w-3.5 h-3.5 text-[#5E6475]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+        </svg>
+        <span class="hover:text-[#F2F4F8] transition-colors">Ứng dụng</span>
+        <svg class="w-3.5 h-3.5 text-[#5E6475]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+        </svg>
+        <span class="text-[#3B82F6] font-medium">Align Camera</span>
       </nav>
 
-      <!-- Action Buttons -->
-      <div class="flex items-center gap-2 sm:gap-3">
-        <button id="pwaInstallBtn" class="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-mono text-zinc-300 bg-white/[0.04] hover:bg-white/[0.08] border border-card-border hover:border-white/20 transition-all">
-          <i data-lucide="plus-square" class="w-3.5 h-3.5 text-mint-cyan"></i>
-          <span>Cài App PWA</span>
-        </button>
-
-        <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer" class="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-mono text-zinc-300 bg-white/[0.04] hover:bg-white/[0.08] border border-card-border hover:border-white/20 transition-all" title="Xem mã nguồn trên GitHub">
-          <i data-lucide="github" class="w-3.5 h-3.5"></i>
-          <span>GitHub</span>
-        </a>
-
-        <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.300/AISmartFramingCamera.ipa" class="inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-semibold text-void bg-gradient-to-r from-amber-gold via-amber-light to-amber-gold hover:from-amber-light hover:to-amber-gold transition-all duration-200 shadow-gold-glow">
-          <i data-lucide="download" class="w-4 h-4 stroke-[2.5]"></i>
-          <span>Tải IPA Build 300</span>
-        </a>
-
-        <!-- Mobile Menu Toggle -->
-        <button id="mobileMenuBtn" aria-label="Mở menu" class="lg:hidden p-2 rounded-xl text-zinc-300 hover:text-white bg-white/[0.05] border border-card-border">
-          <i data-lucide="menu" class="w-5 h-5"></i>
-        </button>
-      </div>
-
-    </div>
-
-    <!-- Mobile Dropdown Menu -->
-    <div id="mobileMenu" class="hidden lg:hidden border-t border-card-border bg-obsidian/95 backdrop-blur-2xl px-4 py-4 space-y-3 text-sm">
-      <a href="#hero-viewfinder" class="block py-2 text-zinc-300 hover:text-amber-gold flex items-center gap-2">
-        <i data-lucide="scan" class="w-4 h-4 text-amber-gold"></i> Khung Ngắm Trực Tiếp
-      </a>
-      <a href="#feedback-console" class="block py-2 text-zinc-300 hover:text-amber-gold flex items-center gap-2">
-        <i data-lucide="sliders" class="w-4 h-4 text-mint-cyan"></i> Hệ Quang Học 3D &amp; Form VIP
-      </a>
-      <a href="#features" class="block py-2 text-zinc-300 hover:text-amber-gold flex items-center gap-2">
-        <i data-lucide="sparkles" class="w-4 h-4 text-zinc-400"></i> Tính Năng Pro
-      </a>
-      <a href="#sideload-guide" class="block py-2 text-zinc-300 hover:text-amber-gold flex items-center gap-2">
-        <i data-lucide="download-cloud" class="w-4 h-4 text-zinc-400"></i> Cài Đặt IPA Sideload
-      </a>
-      <a href="#founder" class="block py-2 text-zinc-300 hover:text-amber-gold flex items-center gap-2">
-        <i data-lucide="user-check" class="w-4 h-4 text-zinc-400"></i> Nhà Sáng Lập SmartVN
-      </a>
-      <div class="pt-2 border-t border-white/10 flex flex-col gap-2">
-        <a href="https://gh-proxy.com/https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.300/AISmartFramingCamera.ipa" class="py-2.5 px-3 rounded-xl bg-white/[0.05] text-center text-xs font-mono text-zinc-200">
-          Tải CDN Tốc Độ Cao
+      <div class="flex items-center space-x-3 text-xs font-mono">
+        <span class="hidden sm:inline-block px-2.5 py-1 rounded-full bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/20">
+          ANE 100% On-Device
+        </span>
+        <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer" class="text-[#858B9E] hover:text-[#F2F4F8] transition-colors flex items-center gap-1.5">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+          </svg>
+          <span class="hidden md:inline">GitHub</span>
         </a>
       </div>
     </div>
   </header>
 
-  <!-- ================= SECTION 1: HERO & AUTHENTIC APP SHOWCASE ================= -->
-  <section id="hero" class="relative pt-8 pb-16 md:pt-14 md:pb-24 overflow-hidden border-b border-white/10 z-10">
-    <div class="container mx-auto px-4 sm:px-6 relative z-10">
-      
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-12 items-center">
-        
-        <!-- Left Column: Architectural Value Proposition (7 cols on lg) -->
-        <div class="lg:col-span-7 space-y-6 text-left">
+  <main class="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-12">
+
+    <!-- PHẦN 1: HERO CARD & METRICS BAR -->
+    <section id="overview" class="space-y-6">
+      <!-- Main Hero Card -->
+      <div class="obsidian-card p-6 sm:p-10 relative overflow-hidden">
+        <!-- Ambient Background Mesh Glow -->
+        <div class="absolute -top-32 -right-32 w-80 h-80 bg-[#3B82F6]/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div class="absolute -bottom-32 -left-32 w-80 h-80 bg-[#10B981]/5 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div class="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-8">
           
-          <!-- Hardware Engine Badge -->
-          <div class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white/[0.04] border border-amber-gold/30 text-xs font-mono text-amber-gold">
-            <span class="w-2 h-2 rounded-full bg-amber-gold shadow-gold-glow animate-pulse"></span>
-            <span>KIẾN TRÚC THỊ GIÁC MÁY TÍNH ON-DEVICE &bull; APPLE NEURAL ENGINE</span>
-          </div>
-
-          <!-- Hero Headline (No cheesy AI marketing fluff) -->
-          <h1 class="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-[1.1]">
-            AlignAI Studio: <br>
-            <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-gold via-amber-light to-white">
-              Camera AI Chuẩn Tỷ Lệ Vàng.
-            </span>
-          </h1>
-
-          <p class="text-base sm:text-lg text-zinc-300 max-w-2xl leading-relaxed">
-            Ứng dụng camera iOS khai thác trực tiếp sức mạnh phần cứng <strong>Apple Neural Engine</strong> và <strong>Vision framework</strong>. Tự động nhận diện chủ thể, căn chuẩn góc chụp theo <strong>Tỷ Lệ Vàng (1:1.618)</strong> và <strong>Quy Tắc 1/3</strong> thời gian thực, tự động can thiệp phần cứng chuyển sang camera Telephoto vật lý (&ge; 2x) và mô phỏng màu phim điện ảnh Fuji &amp; Kodak.
-          </p>
-
-          <!-- Core Direct Actions -->
-          <div class="flex flex-wrap items-center gap-3 pt-2">
-            <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.300/AISmartFramingCamera.ipa" class="px-5 py-3 rounded-xl font-semibold text-void bg-gradient-to-r from-amber-gold via-amber-light to-amber-gold hover:from-amber-light hover:to-amber-gold transition-all duration-200 shadow-gold-glow flex items-center gap-2 text-sm sm:text-base">
-              <i data-lucide="download" class="w-4 h-4 stroke-[2.5]"></i>
-              <span>Tải File IPA (Build 300)</span>
-            </a>
-
-            <a href="https://gh-proxy.com/https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.300/AISmartFramingCamera.ipa" class="px-4 py-3 rounded-xl font-mono text-xs sm:text-sm text-zinc-200 bg-white/[0.05] hover:bg-white/[0.1] border border-card-border hover:border-amber-gold/40 transition-all flex items-center gap-2">
-              <i data-lucide="zap" class="w-4 h-4 text-amber-gold"></i>
-              <span>CDN Tốc Độ Cao</span>
-            </a>
-
-            <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer" class="px-4 py-3 rounded-xl font-mono text-xs sm:text-sm text-zinc-400 hover:text-white bg-transparent hover:bg-white/[0.04] border border-transparent hover:border-card-border transition-all flex items-center gap-1.5">
-              <i data-lucide="code-2" class="w-4 h-4"></i>
-              <span>Mã Nguồn GitHub</span>
-            </a>
-          </div>
-
-          <!-- Compatibility Bar -->
-          <div class="pt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs font-mono text-zinc-400">
-            <span class="flex items-center gap-1.5">
-              <i data-lucide="shield-check" class="w-4 h-4 text-emerald-lens"></i>
-              Không Cần Jailbreak
-            </span>
-            <span class="flex items-center gap-1.5">
-              <i data-lucide="check" class="w-4 h-4 text-amber-gold"></i>
-              iOS 16.0 &ndash; 18.0+
-            </span>
-            <span class="flex items-center gap-1.5">
-              <i data-lucide="package-check" class="w-4 h-4 text-mint-cyan"></i>
-              Sideloadly / TrollStore / AltStore
-            </span>
-          </div>
-
-          <!-- Specs Matrix Minimal Strip -->
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-white/10 text-left">
-            <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-              <div class="text-[10px] font-mono text-zinc-400 uppercase">Độ Trễ ANE</div>
-              <div class="text-base font-bold font-mono text-white mt-0.5">&lt; 16 ms (60 FPS)</div>
+          <!-- Left & Middle: Icon + App Identity -->
+          <div class="flex flex-col sm:flex-row items-start gap-6 max-w-3xl">
+            <!-- Apple Squircle App Icon -->
+            <div class="w-24 h-24 sm:w-28 sm:h-28 rounded-[22.37%] bg-gradient-to-br from-[#1C202B] to-[#0A0C10] border border-[#2D3242] p-1.5 shadow-2xl flex-shrink-0 flex items-center justify-center">
+              <img src="assets/logo.svg" alt="Biểu trưng Align Camera" class="w-full h-full rounded-[22.37%] object-cover">
             </div>
-            <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-              <div class="text-[10px] font-mono text-zinc-400 uppercase">Xử Lý Thị Giác</div>
-              <div class="text-base font-bold font-mono text-mint-cyan mt-0.5">100% Cục Bộ</div>
-            </div>
-            <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-              <div class="text-[10px] font-mono text-zinc-400 uppercase">Phần Cứng</div>
-              <div class="text-base font-bold font-mono text-amber-gold mt-0.5">48MP Quad-Bayer</div>
-            </div>
-            <div class="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-              <div class="text-[10px] font-mono text-zinc-400 uppercase">Giấy Phép</div>
-              <div class="text-base font-bold font-mono text-white mt-0.5">MIT Open Source</div>
-            </div>
-          </div>
 
-        </div>
-
-        <!-- Right Column: 3D Interactive Phone & Authentic App UI Showcase (5 cols on lg) -->
-        <div id="hero-viewfinder" class="lg:col-span-5 flex flex-col items-center">
-          
-          <!-- Mode Switcher: Authentic App Screenshot vs Live Simulator -->
-          <div class="flex items-center gap-2 p-1 rounded-xl bg-obsidian/90 border border-white/10 mb-4 shadow-lg">
-            <button id="viewModeRealApp" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-void bg-amber-gold transition-all flex items-center gap-1.5 shadow">
-              <i data-lucide="smartphone" class="w-3.5 h-3.5"></i>
-              <span>Ảnh Thật Bản Build 300</span>
-            </button>
-            <button id="viewModeSimulator" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-zinc-400 hover:text-white transition-all flex items-center gap-1.5">
-              <i data-lucide="camera" class="w-3.5 h-3.5"></i>
-              <span>Khung Ngắm Trực Tiếp</span>
-            </button>
-          </div>
-
-          <!-- 3D Perspective Tilt Container -->
-          <div class="perspective-container w-full max-w-[340px] sm:max-w-[360px]" id="phone3dWrapper">
-            
-            <!-- 3D Titanium Chassis Element -->
-            <div id="phoneChassis" class="phone-3d-chassis rounded-[44px] p-2.5 bg-gradient-to-b from-[#323644] via-[#161822] to-[#0c0d14] shadow-glass border border-white/20 relative select-none">
-              
-              <!-- Subtle Specular Reflection Glare Overlay -->
-              <div id="specularGlare" class="absolute inset-0 rounded-[44px] pointer-events-none opacity-40 z-40 transition-opacity" style="background: radial-gradient(circle at 50% 30%, rgba(255,255,255,0.2) 0%, transparent 60%);"></div>
-
-              <!-- Side Volume & Power Accents -->
-              <div class="absolute -left-[4px] top-24 w-[3px] h-10 bg-zinc-600 rounded-l"></div>
-              <div class="absolute -left-[4px] top-38 w-[3px] h-10 bg-zinc-600 rounded-l"></div>
-              <div class="absolute -right-[4px] top-32 w-[3px] h-14 bg-zinc-600 rounded-r"></div>
-
-              <!-- Screen Bezel Container -->
-              <div class="relative w-full aspect-[471/1024] rounded-[34px] bg-black overflow-hidden border border-black/80 flex flex-col justify-between">
-                
-                <!-- ================= MODE 1: AUTHENTIC APP SCREENSHOT DISPLAY ================= -->
-                <div id="realAppViewContainer" class="absolute inset-0 z-30 transition-opacity duration-300 block">
-                  <!-- The real screenshot image uploaded by user -->
-                  <img src="./assets/app-screenshot-latest.png" alt="AlignAI Studio App Screenshot" class="w-full h-full object-cover">
-                  
-                  <!-- Interactive Hotspot on Permission 'Allow' Button -->
-                  <button type="button" id="allowHotspotBtn" aria-label="Bấm để kích hoạt camera" class="absolute top-[55.8%] right-[8%] w-[42%] h-[4.8%] rounded-r-xl focus:outline-none cursor-pointer bg-blue-500/10 hover:bg-blue-500/30 transition-colors border border-blue-400/40 animate-pulse flex items-center justify-center text-[10px] font-mono text-blue-300 font-bold" title="Chạm để mở camera trực tiếp">
-                    CHẠM KÍCH HOẠT
-                  </button>
-                </div>
-
-                <!-- ================= MODE 2: INTERACTIVE LIVE CAMERA SIMULATOR ================= -->
-                <div id="liveSimulatorContainer" class="absolute inset-0 z-20 flex flex-col justify-between overflow-hidden opacity-0 pointer-events-none transition-opacity duration-300">
-                  
-                  <!-- Shutter Flash Layer -->
-                  <div id="shutterFlashOverlay" class="absolute inset-0 bg-white pointer-events-none opacity-0 z-50 transition-none"></div>
-
-                  <!-- Top Status Bar & Dynamic Island -->
-                  <div class="relative z-30 pt-2 px-5 flex items-center justify-between text-[11px] font-mono text-zinc-300">
-                    <span id="simulatorClock">4:04</span>
-                    <div class="w-22 h-4.5 bg-black rounded-full border border-zinc-800/80 flex items-center justify-between px-2">
-                      <div class="w-1.5 h-1.5 rounded-full bg-zinc-900"></div>
-                      <div class="flex items-center gap-1">
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-lens animate-pulse"></span>
-                        <span class="text-[8px] text-zinc-400">48MP</span>
-                      </div>
-                    </div>
-                    <div class="flex items-center gap-1">
-                      <i data-lucide="wifi" class="w-3 h-3"></i>
-                      <i data-lucide="battery" class="w-3 h-3"></i>
-                    </div>
-                  </div>
-
-                  <!-- Top HUD Tool Bar (Matching the authentic app screenshot layout) -->
-                  <div class="relative z-30 pt-1 px-4 flex items-center justify-between pointer-events-auto">
-                    <!-- Left: Histogram & Exposure text -->
-                    <div class="flex flex-col gap-0.5">
-                      <div class="flex items-center gap-1.5 text-[9px] font-mono text-zinc-300">
-                        <span class="text-amber-gold font-bold">ISO 32</span>
-                        <span>EV +0.0</span>
-                        <span class="text-zinc-400">JPEG</span>
-                      </div>
-                      <canvas id="histogramCanvas" width="85" height="10" class="rounded bg-black/40 border border-white/10"></canvas>
-                    </div>
-
-                    <!-- Right: Tool Pill (Camera Flip, Flash, Aspect, Grid) -->
-                    <div class="flex items-center gap-2 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-zinc-300 text-xs">
-                      <button type="button" class="hover:text-amber-gold"><i data-lucide="refresh-cw" class="w-3 h-3"></i></button>
-                      <button type="button" class="text-amber-gold"><i data-lucide="zap" class="w-3 h-3"></i></button>
-                      <button type="button" class="hover:text-amber-gold"><i data-lucide="maximize" class="w-3 h-3"></i></button>
-                      <button type="button" id="toolGridToggle" class="hover:text-amber-gold"><i data-lucide="grid" class="w-3 h-3"></i></button>
-                    </div>
-                  </div>
-
-                  <!-- Viewport Scene Area -->
-                  <div class="absolute inset-0 z-10 overflow-hidden" id="cameraViewport">
-                    <div id="viewportScene" class="w-full h-full bg-cover bg-center transition-all duration-500 ease-out filter-provia relative" style="background-image: url('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80');">
-                      
-                      <div id="filmGrainOverlay" class="absolute inset-0 film-grain pointer-events-none opacity-40"></div>
-
-                      <!-- Rule of Thirds Grid -->
-                      <div id="gridThirds" class="absolute inset-0 pointer-events-none transition-opacity duration-300 grid grid-cols-3 grid-rows-3">
-                        <div class="border-r border-b border-white/20 relative"><div class="absolute -bottom-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-gold shadow-gold-glow"></div></div>
-                        <div class="border-r border-b border-white/20 relative"><div class="absolute -bottom-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-gold shadow-gold-glow"></div></div>
-                        <div class="border-b border-white/20"></div>
-                        <div class="border-r border-b border-white/20 relative"><div class="absolute -bottom-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-gold shadow-gold-glow"></div></div>
-                        <div class="border-r border-b border-white/20 relative"><div class="absolute -bottom-1 -right-1 w-1.5 h-1.5 rounded-full bg-amber-gold shadow-gold-glow"></div></div>
-                        <div class="border-b border-white/20"></div>
-                        <div class="border-r border-white/20"></div>
-                        <div class="border-r border-white/20"></div>
-                        <div></div>
-                      </div>
-
-                      <!-- AI Subject Target Bounding Box -->
-                      <div id="aiTargetBox" class="absolute top-[28%] left-[28%] w-[44%] h-[38%] pointer-events-none transition-all duration-700 ease-out">
-                        <div class="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-amber-gold"></div>
-                        <div class="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-amber-gold"></div>
-                        <div class="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-amber-gold"></div>
-                        <div class="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-amber-gold"></div>
-                        
-                        <div class="absolute -top-5 left-0 flex items-center gap-1 px-1.5 py-0.2 rounded bg-black/80 backdrop-blur border border-amber-gold/40 text-[8px] font-mono text-amber-gold">
-                          <span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-gold animate-pulse"></span>
-                          <span>AI MỞ NEO &bull; 98.4%</span>
-                        </div>
-
-                        <div id="targetGoldRing" class="absolute inset-0 m-auto w-12 h-12 rounded-full border-2 border-dashed border-amber-gold pulse-target flex items-center justify-center">
-                          <div class="w-1.5 h-1.5 rounded-full bg-amber-gold shadow-gold-glow"></div>
-                        </div>
-                      </div>
-
-                      <!-- User Crosshair -->
-                      <div id="userCrosshair" class="absolute top-[34%] left-[34%] w-10 h-10 pointer-events-none transition-all duration-500 ease-out flex items-center justify-center">
-                        <div class="w-8 h-8 rounded-full border border-white/80 flex items-center justify-center">
-                          <div class="w-1 h-1 rounded-full bg-white"></div>
-                        </div>
-                      </div>
-
-                      <!-- Telephoto Hardware Switch Toast -->
-                      <div id="telephotoHardwareToast" class="absolute top-20 inset-x-3 bg-obsidian/95 backdrop-blur-xl border border-amber-gold/50 rounded-xl p-2 shadow-2xl flex items-center gap-2 transform -translate-y-8 opacity-0 pointer-events-none transition-all duration-300 z-40">
-                        <div class="w-6 h-6 rounded-lg bg-amber-gold/20 flex items-center justify-center shrink-0">
-                          <i data-lucide="layers" class="w-3.5 h-3.5 text-amber-gold"></i>
-                        </div>
-                        <div class="text-left text-xs leading-tight">
-                          <div class="font-bold text-amber-gold font-mono uppercase text-[9px]">Phần Cứng AVCaptureSession</div>
-                          <div class="text-[10px] text-zinc-200">Kích hoạt cảm biến Telephoto vật lý (&ge; 2x)</div>
-                        </div>
-                      </div>
-
-                    </div>
-                  </div>
-
-                  <!-- Bottom Viewfinder Controls (Matching the authentic app screenshot layout) -->
-                  <div class="relative z-30 pb-4 px-3 flex flex-col gap-2.5 bg-gradient-to-t from-black/95 via-black/70 to-transparent">
-                    
-                    <!-- Focal Zoom Selector with [AI] Icon and Grid Splits (From screenshot) -->
-                    <div class="flex items-center justify-between px-3">
-                      <!-- Left: [AI] Button -->
-                      <button type="button" id="snapAssistBtn" class="w-8 h-8 rounded-xl bg-white/10 hover:bg-amber-gold/20 border border-white/20 hover:border-amber-gold/40 flex items-center justify-center text-amber-gold font-mono text-xs font-bold transition-colors" title="Căn tâm AI">
-                        AI
-                      </button>
-
-                      <!-- Center: 1x, 2x, 3x (Matching screenshot amber ring on active) -->
-                      <div class="flex items-center gap-3 text-xs font-mono">
-                        <button type="button" data-zoom="1" class="zoom-btn active w-6 h-6 rounded-full border border-amber-gold text-amber-gold font-bold flex items-center justify-center transition-all">1x</button>
-                        <button type="button" data-zoom="2" class="zoom-btn text-zinc-400 hover:text-white transition-all">2x</button>
-                        <button type="button" data-zoom="3" class="zoom-btn text-zinc-400 hover:text-white transition-all">3x</button>
-                      </div>
-
-                      <!-- Right: Composition Split Button -->
-                      <button type="button" id="toggleGridBtn" class="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center text-zinc-300 hover:text-white transition-colors">
-                        <i data-lucide="grid-3x3" class="w-4 h-4"></i>
-                      </button>
-                    </div>
-
-                    <!-- Shutter Button Row (Matching authentic screenshot) -->
-                    <div class="flex items-center justify-around px-2 pt-1">
-                      <!-- Gallery Thumbnail -->
-                      <div class="w-10 h-10 rounded-xl bg-white/10 border border-white/20 overflow-hidden flex items-center justify-center">
-                        <i data-lucide="image" class="w-5 h-5 text-zinc-400"></i>
-                      </div>
-
-                      <!-- Shutter Trigger Button (Tactile Metallic Shutter Ring) -->
-                      <button type="button" id="cameraShutterBtn" aria-label="Bấm chụp" class="w-16 h-16 rounded-full p-1 bg-gradient-to-b from-zinc-500 via-zinc-700 to-zinc-900 shadow-2xl active:scale-95 transition-transform flex items-center justify-center group focus:outline-none">
-                        <div class="w-full h-full rounded-full border-2 border-white/80 flex items-center justify-center group-hover:border-amber-gold transition-colors">
-                          <div class="w-11 h-11 rounded-full bg-white group-hover:bg-amber-gold transition-colors shadow"></div>
-                        </div>
-                      </button>
-
-                      <!-- Filter Mode Toggle (GÓC OFF) -->
-                      <button type="button" id="filterCycleBtn" class="flex flex-col items-center justify-center text-zinc-400 hover:text-amber-gold transition-colors">
-                        <i data-lucide="aperture" class="w-5 h-5"></i>
-                        <span class="text-[8px] font-mono uppercase mt-0.5" id="currentFilterLabel">PROVIA</span>
-                      </button>
-                    </div>
-
-                    <!-- Bottom Photo / Video Pill Switcher (From screenshot) -->
-                    <div class="flex items-center justify-center mt-1">
-                      <div class="flex items-center gap-3 px-3 py-1 rounded-full bg-zinc-900/90 border border-white/15 text-[10px] font-bold font-mono">
-                        <span class="text-amber-gold flex items-center gap-1">
-                          <i data-lucide="camera" class="w-3 h-3"></i> ẢNH
-                        </span>
-                        <span class="text-zinc-500 flex items-center gap-1">
-                          <i data-lucide="video" class="w-3 h-3"></i> VIDEO
-                        </span>
-                      </div>
-                    </div>
-
-                  </div>
-
-                </div>
-
+            <!-- Title & Description -->
+            <div class="space-y-2">
+              <div class="flex flex-wrap items-center gap-2.5">
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-[#F2F4F8]">
+                  Align Camera
+                </h1>
+                <span class="px-2.5 py-0.5 text-xs font-mono font-medium rounded-full bg-[#3B82F6]/10 text-[#3B82F6] border border-[#3B82F6]/25">
+                  v1.0.0-build.353
+                </span>
+                <span class="px-2.5 py-0.5 text-xs font-mono font-medium rounded-full bg-[#1E222D] text-[#858B9E] border border-[#2D3242]">
+                  iOS 17.0+
+                </span>
               </div>
+
+              <div class="text-xs sm:text-sm font-mono text-[#858B9E] flex items-center gap-2">
+                <span>Khoa Hien (emlavankhoahienma-hue)</span>
+                <span class="text-[#5E6475]">&bull;</span>
+                <span class="text-[#858B9E]">Photo &amp; Video / Computer Vision</span>
+              </div>
+
+              <p class="text-sm sm:text-base text-[#858B9E] leading-relaxed pt-2">
+                Ứng dụng máy ảnh thông minh tích hợp mô hình YOLOv26 chạy thuần trên chip Apple Neural Engine (ANE). Tự động canh góc, căn khung hình chuẩn tỷ lệ vàng và nhận diện đối tượng theo thời gian thực với độ trễ siêu thấp.
+              </p>
             </div>
           </div>
 
-          <!-- Status Indicator Below Phone -->
-          <div class="mt-4 flex items-center gap-2 text-xs font-mono text-zinc-400">
-            <span class="w-2 h-2 rounded-full bg-emerald-lens animate-ping"></span>
-            <span>Chạm "Khung Ngắm Trực Tiếp" để tương tác 60 FPS</span>
+          <!-- Right: Direct Download & Repo Actions -->
+          <div class="flex flex-col sm:flex-row lg:flex-col gap-3 w-full lg:w-72 flex-shrink-0 pt-2 lg:pt-0">
+            <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.353/AISmartFramingCamera.ipa" 
+               class="inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-[#3B82F6] hover:bg-blue-600 text-white font-medium text-sm transition-all duration-200 shadow-lg shadow-blue-500/20 active:scale-[0.98]">
+              <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              <span>Tải tệp IPA (v1.0.0)</span>
+            </a>
+
+            <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" 
+               target="_blank" 
+               rel="noopener noreferrer"
+               class="inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-[#151821] hover:bg-[#1E222D] text-[#F2F4F8] border border-[#1E222D] hover:border-[#2D3242] font-medium text-sm transition-all duration-200 active:scale-[0.98]">
+              <svg class="w-4 h-4 text-[#858B9E] flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+              </svg>
+              <span>Kho mã nguồn GitHub</span>
+            </a>
           </div>
 
         </div>
-
       </div>
 
-    </div>
-  </section>
-
-  <!-- ================= SECTION 2: ARCHITECTURAL FEATURES ================= -->
-  <section id="features" class="py-16 md:py-24 relative bg-obsidian/40 border-b border-white/10 z-10">
-    <div class="container mx-auto px-4 sm:px-6">
-      
-      <div class="text-center max-w-3xl mx-auto mb-16">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.04] border border-card-border text-[11px] font-mono text-amber-gold mb-3">
-          <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
-          <span>KIẾN TRÚC ĐỘC QUYỀN ALIGNAI</span>
+      <!-- Dải thanh thông số kỹ thuật (Metrics Bar) 4 ô -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Metric 1 -->
+        <div class="obsidian-card p-5">
+          <div class="flex items-center justify-between text-xs font-mono text-[#858B9E] uppercase tracking-wider mb-2">
+            <span>ĐỘ TRỄ ANE</span>
+            <svg class="w-4 h-4 text-[#10B981]" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <div class="text-2xl sm:text-3xl font-bold font-mono text-[#F2F4F8] tracking-tight">
+            1.4 - 3.9 ms
+          </div>
+          <div class="text-xs text-[#10B981] font-mono mt-2 flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#10B981]"></span>
+            <span>100% ANE (0% CPU Fallback)</span>
+          </div>
         </div>
-        <h2 class="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
-          Nhiếp Ảnh Điện Toán Thời Gian Thực
-        </h2>
-        <p class="text-zinc-400 text-sm sm:text-base mt-3">
-          Tối ưu hóa sâu vào tầng phần cứng Apple Silicon để mang đến trải nghiệm căn góc điện ảnh không độ trễ.
+
+        <!-- Metric 2 -->
+        <div class="obsidian-card p-5">
+          <div class="flex items-center justify-between text-xs font-mono text-[#858B9E] uppercase tracking-wider mb-2">
+            <span>TỐC ĐỘ XỬ LÝ</span>
+            <svg class="w-4 h-4 text-[#3B82F6]" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <div class="text-2xl sm:text-3xl font-bold font-mono text-[#F2F4F8] tracking-tight">
+            120+ FPS
+          </div>
+          <div class="text-xs text-[#3B82F6] font-mono mt-2 flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#3B82F6]"></span>
+            <span>Mượt mà, không giật khung hình</span>
+          </div>
+        </div>
+
+        <!-- Metric 3 -->
+        <div class="obsidian-card p-5">
+          <div class="flex items-center justify-between text-xs font-mono text-[#858B9E] uppercase tracking-wider mb-2">
+            <span>TIÊU THỤ RAM</span>
+            <svg class="w-4 h-4 text-[#858B9E]" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+            </svg>
+          </div>
+          <div class="text-2xl sm:text-3xl font-bold font-mono text-[#F2F4F8] tracking-tight">
+            &lt; 35 MB
+          </div>
+          <div class="text-xs text-[#858B9E] font-mono mt-2 flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#858B9E]"></span>
+            <span>Siêu nhẹ, không gây nóng máy</span>
+          </div>
+        </div>
+
+        <!-- Metric 4 -->
+        <div class="obsidian-card p-5">
+          <div class="flex items-center justify-between text-xs font-mono text-[#858B9E] uppercase tracking-wider mb-2">
+            <span>PHIÊN BẢN HIỆN TẠI</span>
+            <svg class="w-4 h-4 text-[#858B9E]" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+            </svg>
+          </div>
+          <div class="text-2xl sm:text-3xl font-bold font-mono text-[#F2F4F8] tracking-tight">
+            v1.0.0
+          </div>
+          <div class="text-xs text-[#858B9E] font-mono mt-2 flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#858B9E]"></span>
+            <span>Build 353 (iOS 17 &amp; iOS 18)</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PHẦN 2: THANH ĐIỀU HƯỚNG TAB (NAVIGATION PILLS) -->
+    <nav class="sticky top-14 z-40 py-2.5 -mx-4 px-4 sm:-mx-6 sm:px-6 bg-[#090A0D]/80 backdrop-blur-lg border-y border-[#1E222D]">
+      <div class="flex items-center gap-2 overflow-x-auto no-scrollbar max-w-6xl mx-auto">
+        <a href="#overview" class="nav-pill-link pill-badge px-4 py-2 rounded-full text-xs font-mono text-[#858B9E] whitespace-nowrap active">
+          Tổng quan
+        </a>
+        <a href="#interface" class="nav-pill-link pill-badge px-4 py-2 rounded-full text-xs font-mono text-[#858B9E] whitespace-nowrap">
+          Giao diện thực tế
+        </a>
+        <a href="#capabilities" class="nav-pill-link pill-badge px-4 py-2 rounded-full text-xs font-mono text-[#858B9E] whitespace-nowrap">
+          Tính năng cốt lõi
+        </a>
+        <a href="#faq" class="nav-pill-link pill-badge px-4 py-2 rounded-full text-xs font-mono text-[#858B9E] whitespace-nowrap">
+          Hỏi đáp kỹ thuật
+        </a>
+        <a href="#download" class="nav-pill-link pill-badge px-4 py-2 rounded-full text-xs font-mono text-[#858B9E] whitespace-nowrap">
+          Hướng dẫn cài đặt &amp; Tải về
+        </a>
+      </div>
+    </nav>
+
+    <!-- PHẦN 3: GIAO DIỆN TRỰC QUAN (INTERFACE DECODED) -->
+    <section id="interface" class="space-y-6 pt-4">
+      <div>
+        <div class="text-xs font-mono uppercase tracking-wider text-[#3B82F6] mb-1">Kiến trúc phần mềm</div>
+        <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-[#F2F4F8]">Interface Decoded</h2>
+        <p class="text-sm sm:text-base text-[#858B9E] mt-1 max-w-3xl">
+          Phân tích kiến trúc khung nhìn, cơ chế xử lý hình ảnh và hệ thống điều khiển thông minh của Align Camera.
         </p>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Card 1: Chế độ Khung nhìn Thông minh (Smart Viewfinder) -->
+        <div class="obsidian-card p-6 flex flex-col justify-between space-y-6">
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <h3 class="text-lg font-bold text-[#F2F4F8] flex items-center gap-2">
+                <svg class="w-5 h-5 text-[#3B82F6]" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                </svg>
+                <span>Chế độ Khung nhìn Thông minh (Smart Viewfinder)</span>
+              </h3>
+              <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/20">
+                ACTIVE HUD
+              </span>
+            </div>
+            <p class="text-xs sm:text-sm text-[#858B9E] leading-relaxed">
+              Khung ngắm hiển thị hộp nhận diện thời gian thực (Bounding Box), lưới tỷ lệ vàng (Rule of Thirds) và thanh đo độ cân bằng đường chân trời tự động căn chỉnh đối tượng người, khuôn mặt và thú cưng.
+            </p>
+          </div>
+
+          <!-- Viewfinder Visual Simulation Canvas -->
+          <div class="relative w-full h-80 rounded-xl overflow-hidden bg-[#050608] border border-[#1E222D] flex items-center justify-center">
+            
+            <!-- Live Background Simulation Grid -->
+            <div id="viewfinderGrid" class="absolute inset-0 hud-grid-overlay pointer-events-none transition-opacity duration-300"></div>
+
+            <!-- Horizon Balance Leveler Bar -->
+            <div class="absolute inset-x-8 flex items-center justify-center pointer-events-none horizon-line">
+              <div class="w-full max-w-sm h-[1.5px] bg-[#10B981]/60 flex items-center justify-center relative">
+                <div class="w-3 h-3 rounded-full border border-[#10B981] bg-[#10B981]/30"></div>
+                <div class="absolute -top-5 text-[10px] font-mono text-[#10B981] bg-black/80 px-1.5 py-0.5 rounded border border-[#10B981]/30">
+                  HORIZON 0.0° LEVEL
+                </div>
+              </div>
+            </div>
+
+            <!-- YOLOv26 Real-time Bounding Box Element -->
+            <div class="absolute w-44 h-52 border-2 border-[#3B82F6] rounded-lg left-1/4 top-10 pulse-detection flex flex-col justify-between p-2 pointer-events-none">
+              <!-- Top Box Metadata -->
+              <div class="flex items-center justify-between text-[10px] font-mono bg-[#3B82F6] text-white px-1.5 py-0.5 rounded font-semibold">
+                <span id="hudTargetType">PERSON 0.98</span>
+                <span>120 FPS</span>
+              </div>
+
+              <!-- Corner Crosshairs -->
+              <div class="flex justify-between items-center opacity-70">
+                <div class="w-2 h-2 border-l border-t border-white"></div>
+                <div class="w-2 h-2 border-r border-t border-white"></div>
+              </div>
+              <div class="flex justify-between items-center opacity-70">
+                <div class="w-2 h-2 border-l border-b border-white"></div>
+                <div class="w-2 h-2 border-r border-b border-white"></div>
+              </div>
+
+              <!-- Bottom Box Metadata -->
+              <div class="flex items-center justify-between text-[10px] font-mono text-[#3B82F6] bg-black/80 backdrop-blur px-1.5 py-0.5 rounded border border-[#3B82F6]/30">
+                <span id="hudCoords">NORM [0.482, 0.518]</span>
+                <span id="hudLatency">ANE 1.8ms</span>
+              </div>
+            </div>
+
+            <!-- Top HUD Live Readout -->
+            <div class="absolute top-3 inset-x-4 flex justify-between items-center text-[10px] font-mono text-[#858B9E] pointer-events-none">
+              <span class="bg-black/70 px-2 py-0.5 rounded border border-[#1E222D]">EXPOSURE: +0.0EV</span>
+              <span class="bg-black/70 px-2 py-0.5 rounded border border-[#1E222D]">AF-C / MATRIX 3x3</span>
+              <span class="bg-black/70 px-2 py-0.5 rounded border border-[#1E222D]">RAW DNG 48MP</span>
+            </div>
+
+            <!-- Controls overlay bar -->
+            <div class="absolute bottom-3 inset-x-4 flex justify-between items-center z-20">
+              <button id="btnToggleGrid" class="px-2.5 py-1 rounded bg-[#111318]/90 border border-[#1E222D] hover:border-[#3B82F6] text-[11px] font-mono text-[#F2F4F8] transition-colors">
+                Bật/Tắt Lưới Tỷ Lệ Vàng
+              </button>
+              <div class="text-[10px] font-mono text-[#10B981] bg-black/70 px-2 py-1 rounded border border-[#1E222D]">
+                ANE Inference: 100% OK
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Card 2: Chế độ Đóng băng Tiết kiệm Pin (Hibernation Standby) -->
+        <div class="obsidian-card p-6 flex flex-col justify-between space-y-6">
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <h3 class="text-lg font-bold text-[#F2F4F8] flex items-center gap-2">
+                <svg class="w-5 h-5 text-[#858B9E]" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                </svg>
+                <span>Chế độ Đóng băng Tiết kiệm Pin (Hibernation Standby)</span>
+              </h3>
+              <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-[#1E222D] text-[#858B9E] border border-[#2D3242]">
+                STANDBY MODE
+              </span>
+            </div>
+            <p class="text-xs sm:text-sm text-[#858B9E] leading-relaxed">
+              Khi không có chuyển động hoặc người dùng tạm dừng tác nghiệp, màn hình chuyển sang chế độ Standby với logo tách nền tinh tế, hỗ trợ chạm chuyển đổi Nền Đen / Nền Trắng và ngắt camera sensor để làm mát máy tối đa.
+            </p>
+          </div>
+
+          <!-- Standby Simulation Canvas -->
+          <div id="standbyCanvas" class="standby-canvas-dark relative w-full h-80 rounded-xl overflow-hidden flex flex-col items-center justify-center p-6 text-center transition-all duration-300">
+            
+            <!-- Minimal Standby Logo -->
+            <div class="w-20 h-20 rounded-[22.37%] border border-[#2D3242] flex items-center justify-center mb-4 transition-colors">
+              <svg class="w-10 h-10" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                <path id="standbyLogoPath" stroke="#F2F4F8" stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z"/>
+                <circle cx="12" cy="13" r="3.5" stroke="#3B82F6" stroke-width="1.5"/>
+              </svg>
+            </div>
+
+            <div class="text-sm font-semibold tracking-tight">Camera Sensor Hibernated</div>
+            <div id="standbyModeText" class="text-xs font-mono text-[#858B9E] mt-1">
+              Trạng thái: Nền Đen Tối Giản (OLED Pure Black)
+            </div>
+
+            <div class="mt-4 flex items-center gap-2 text-[11px] font-mono text-[#10B981] bg-black/40 px-3 py-1 rounded-full border border-[#1E222D]">
+              <span class="w-2 h-2 rounded-full bg-[#10B981]"></span>
+              <span>Nhiệt độ SoC: Mát (0% Thermal Load)</span>
+            </div>
+
+            <!-- Interactivity switch -->
+            <div class="absolute bottom-3 inset-x-4 flex justify-between items-center z-20">
+              <button id="toggleStandbyThemeBtn" class="px-3 py-1.5 rounded-lg bg-[#161920] border border-[#1E222D] hover:border-[#2D3242] text-xs font-mono text-[#F2F4F8] transition-colors">
+                Chuyển sang Nền Trắng
+              </button>
+              <span class="text-[10px] font-mono text-[#858B9E]">Chạm vào để thử nghiệm</span>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- PHẦN 4: BẢN ĐỒ NĂNG LỰC CỐT LÕI (CAPABILITY MAP) -->
+    <section id="capabilities" class="space-y-6 pt-4">
+      <div>
+        <div class="text-xs font-mono uppercase tracking-wider text-[#10B981] mb-1">Năng lực xử lý</div>
+        <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-[#F2F4F8]">Capability Map</h2>
+        <p class="text-sm sm:text-base text-[#858B9E] mt-1 max-w-3xl">
+          Các công nghệ xử lý đồ họa và trí tuệ nhân tạo được xây dựng chuyên biệt cho hệ sinh thái Apple Silicon.
+        </p>
+      </div>
+
+      <!-- Lưới 6 thẻ tính năng -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         
         <!-- Card 1 -->
-        <div class="bg-card-glass backdrop-blur-xl border border-card-border hover:border-amber-gold/50 p-6 rounded-2xl transition-all duration-300 group hover:-translate-y-1 shadow-lg">
-          <div class="w-12 h-12 rounded-xl bg-amber-gold/15 text-amber-gold flex items-center justify-center mb-5 group-hover:scale-110 transition-transform">
-            <i data-lucide="scan" class="w-6 h-6"></i>
+        <div class="obsidian-card p-6 space-y-3">
+          <div class="w-10 h-10 rounded-lg bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center text-[#3B82F6]">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+            </svg>
           </div>
-          <h3 class="text-lg font-bold text-white mb-2">Tỷ Lệ Vàng &bull; Fibonacci</h3>
-          <p class="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-            Thuật toán định vị đường xoắn ốc Fibonacci và quy tắc 1/3 điện ảnh, tự động bám dính chủ thể để bạn luôn có bức ảnh chuẩn bố cục nghệ thuật.
+          <h3 class="text-base font-bold text-[#F2F4F8]">YOLOv26 Apple Neural Engine Engine</h3>
+          <p class="text-xs sm:text-sm text-[#858B9E] leading-relaxed">
+            Tối ưu hóa 100% các lớp mạng nơ-ron để thực thi trực tiếp trên vi xử lý ANE từ chip A12 đến A18 Pro.
           </p>
         </div>
 
         <!-- Card 2 -->
-        <div class="bg-card-glass backdrop-blur-xl border border-card-border hover:border-mint-cyan/50 p-6 rounded-2xl transition-all duration-300 group hover:-translate-y-1 shadow-lg">
-          <div class="w-12 h-12 rounded-xl bg-mint-cyan/15 text-mint-cyan flex items-center justify-center mb-5 group-hover:scale-110 transition-transform">
-            <i data-lucide="layers" class="w-6 h-6"></i>
+        <div class="obsidian-card p-6 space-y-3">
+          <div class="w-10 h-10 rounded-lg bg-[#10B981]/10 border border-[#10B981]/20 flex items-center justify-center text-[#10B981]">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
           </div>
-          <h3 class="text-lg font-bold text-white mb-2">Kích Hoạt Telephoto Vật Lý</h3>
-          <p class="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-            Can thiệp trực tiếp phần cứng camera iPhone qua AVCaptureDevice. Khi zoom từ 2x trở lên, app tự động chuyển sang cảm biến Telephoto thật để giữ trọn chi tiết quang học.
+          <h3 class="text-base font-bold text-[#F2F4F8]">NMS-Free Pipeline Không Nghẽn CPU</h3>
+          <p class="text-xs sm:text-sm text-[#858B9E] leading-relaxed">
+            Loại bỏ thuật toán Non-Maximum Suppression trên CPU, trả về trực tiếp tọa độ chuẩn hóa giúp loại bỏ hiện tượng tụt khung hình.
           </p>
         </div>
 
         <!-- Card 3 -->
-        <div class="bg-card-glass backdrop-blur-xl border border-card-border hover:border-emerald-lens/50 p-6 rounded-2xl transition-all duration-300 group hover:-translate-y-1 shadow-lg">
-          <div class="w-12 h-12 rounded-xl bg-emerald-lens/15 text-emerald-lens flex items-center justify-center mb-5 group-hover:scale-110 transition-transform">
-            <i data-lucide="film" class="w-6 h-6"></i>
+        <div class="obsidian-card p-6 space-y-3">
+          <div class="w-10 h-10 rounded-lg bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center text-[#3B82F6]">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
+            </svg>
           </div>
-          <h3 class="text-lg font-bold text-white mb-2">Màu Phim Analog Cổ Điển</h3>
-          <p class="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-            Bộ xử lý dải màu phim huyền thoại (Fuji Provia, Velvia, Classic Chrome, Kodak Portra) với độ hạt grain hữu cơ, tôn vinh sắc thái làn da và phong cảnh.
+          <h3 class="text-base font-bold text-[#F2F4F8]">Bộ lọc Màu Điện ảnh Cinematic LUTs</h3>
+          <p class="text-xs sm:text-sm text-[#858B9E] leading-relaxed">
+            Tích hợp các bộ preset chuyển màu điện ảnh và tinh chỉnh độ phơi sáng, tương phản mượt mà.
           </p>
         </div>
 
         <!-- Card 4 -->
-        <div class="bg-card-glass backdrop-blur-xl border border-card-border hover:border-amber-gold/50 p-6 rounded-2xl transition-all duration-300 group hover:-translate-y-1 shadow-lg">
-          <div class="w-12 h-12 rounded-xl bg-white/[0.06] text-white flex items-center justify-center mb-5 group-hover:scale-110 transition-transform">
-            <i data-lucide="shield-check" class="w-6 h-6 text-emerald-lens"></i>
+        <div class="obsidian-card p-6 space-y-3">
+          <div class="w-10 h-10 rounded-lg bg-[#10B981]/10 border border-[#10B981]/20 flex items-center justify-center text-[#10B981]">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"/>
+            </svg>
           </div>
-          <h3 class="text-lg font-bold text-white mb-2">100% Cục Bộ &bull; Không Cần Mạng</h3>
-          <p class="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-            Mọi quá trình xử lý thị giác đều chạy on-device qua Apple Neural Engine. Không gửi ảnh lên máy chủ, bảo vệ quyền riêng tư tuyệt đối ngay cả khi bật chế độ máy bay.
+          <h3 class="text-base font-bold text-[#F2F4F8]">Tự động Cắt Cúp &amp; Zoom Mượt</h3>
+          <p class="text-xs sm:text-sm text-[#858B9E] leading-relaxed">
+            Thuật toán bám đuổi tâm đối tượng (Subject Tracking) với chuyển động camera mượt (Smooth Easing Camera Pan).
+          </p>
+        </div>
+
+        <!-- Card 5 -->
+        <div class="obsidian-card p-6 space-y-3">
+          <div class="w-10 h-10 rounded-lg bg-[#3B82F6]/10 border border-[#3B82F6]/20 flex items-center justify-center text-[#3B82F6]">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <rect x="3" y="3" width="18" height="18" rx="5" ry="5"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </div>
+          <h3 class="text-base font-bold text-[#F2F4F8]">Biểu tượng Thích ứng iOS 18 (Adaptive App Icon)</h3>
+          <p class="text-xs sm:text-sm text-[#858B9E] leading-relaxed">
+            Hỗ trợ đầy đủ chế độ Light, Dark tự động ăn khớp với hệ thống Dark Platter của Apple, và chế độ Tinted nhuộm màu linh hoạt.
+          </p>
+        </div>
+
+        <!-- Card 6 -->
+        <div class="obsidian-card p-6 space-y-3">
+          <div class="w-10 h-10 rounded-lg bg-[#10B981]/10 border border-[#10B981]/20 flex items-center justify-center text-[#10B981]">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+            </svg>
+          </div>
+          <h3 class="text-base font-bold text-[#F2F4F8]">Đóng gói Sideload Độc lập</h3>
+          <p class="text-xs sm:text-sm text-[#858B9E] leading-relaxed">
+            Định dạng tệp unsigned IPA hoàn chỉnh, không kèm mã theo dõi, không quảng cáo, tương thích hoàn hảo với Sideloadly và TrollStore.
           </p>
         </div>
 
       </div>
+    </section>
 
-    </div>
-  </section>
-
-  <!-- ================= SECTION 3: SIDELOAD INSTALLATION GUIDE ================= -->
-  <section id="sideload-guide" class="py-16 md:py-24 bg-void relative border-b border-white/10 z-10">
-    <div class="container mx-auto px-4 sm:px-6">
-      
-      <div class="text-center max-w-3xl mx-auto mb-12">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.04] border border-card-border text-[11px] font-mono text-mint-cyan mb-3">
-          <i data-lucide="terminal" class="w-3.5 h-3.5"></i>
-          <span>HƯỚNG DẪN CÀI ĐẶT FILE IPA</span>
-        </div>
-        <h2 class="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
-          Cài Đặt Dễ Dàng Không Cần Jailbreak
-        </h2>
-        <p class="text-zinc-400 text-sm mt-3">
-          Hỗ trợ cài đặt cho mọi thiết bị iPhone chạy iOS 16.0 đến iOS 18.0+ thông qua các công cụ Sideload phổ biến nhất hiện nay.
+    <!-- PHẦN 5: CÂU HỎI THƯỜNG GẶP (TECHNICAL FAQ) -->
+    <section id="faq" class="space-y-6 pt-4">
+      <div>
+        <div class="text-xs font-mono uppercase tracking-wider text-[#3B82F6] mb-1">Kiến thức chuyên sâu</div>
+        <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-[#F2F4F8]">Technical FAQ</h2>
+        <p class="text-sm sm:text-base text-[#858B9E] mt-1 max-w-3xl">
+          Giải đáp các thắc mắc chuyên sâu về kiến trúc thực thi trên thiết bị, cơ chế sideload và tính tương thích phần cứng.
         </p>
       </div>
 
-      <!-- Sideload Method Selector Tabs -->
-      <div class="max-w-2xl mx-auto mb-8 flex items-center justify-center p-1 rounded-2xl bg-obsidian border border-card-border">
-        <button type="button" data-method="sideloadly" class="sideload-tab-btn flex-1 py-2 px-3 rounded-xl text-xs font-semibold text-void bg-amber-gold transition-all flex items-center justify-center gap-1.5">
-          <i data-lucide="laptop" class="w-3.5 h-3.5"></i>
-          <span>Sideloadly (PC/Mac)</span>
-        </button>
-        <button type="button" data-method="trollstore" class="sideload-tab-btn flex-1 py-2 px-3 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white transition-all flex items-center justify-center gap-1.5">
-          <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
-          <span>TrollStore (iOS 14-17.0)</span>
-        </button>
-        <button type="button" data-method="altstore" class="sideload-tab-btn flex-1 py-2 px-3 rounded-xl text-xs font-semibold text-zinc-400 hover:text-white transition-all flex items-center justify-center gap-1.5">
-          <i data-lucide="wifi" class="w-3.5 h-3.5"></i>
-          <span>AltStore</span>
-        </button>
-      </div>
+      <!-- Danh sách Accordion -->
+      <div class="space-y-3 max-w-4xl">
 
-      <!-- Tab Content Panels -->
-      <div class="max-w-3xl mx-auto">
+        <!-- Question 1 -->
+        <div class="accordion-item obsidian-card overflow-hidden">
+          <div class="accordion-header p-5 flex items-center justify-between text-sm sm:text-base font-medium text-[#F2F4F8]" role="button" tabindex="0" aria-expanded="false">
+            <span>Align Camera có thể cài đặt trên những thiết bị iPhone nào?</span>
+            <svg class="accordion-icon w-4 h-4 text-[#858B9E] flex-shrink-0 ml-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+          <div class="accordion-content">
+            <div class="accordion-inner px-5 pb-5 pt-1 text-xs sm:text-sm text-[#858B9E] leading-relaxed border-t border-[#1E222D]">
+              Hỗ trợ mọi dòng iPhone chạy iOS 17.0 trở lên, trang bị chip từ A12 Bionic (iPhone XS, XR) đến A18 Pro (iPhone 16 Series).
+            </div>
+          </div>
+        </div>
+
+        <!-- Question 2 -->
+        <div class="accordion-item obsidian-card overflow-hidden">
+          <div class="accordion-header p-5 flex items-center justify-between text-sm sm:text-base font-medium text-[#F2F4F8]" role="button" tabindex="0" aria-expanded="false">
+            <span>Tại sao ứng dụng không làm nóng máy và tốn pin như các app AI khác?</span>
+            <svg class="accordion-icon w-4 h-4 text-[#858B9E] flex-shrink-0 ml-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+          <div class="accordion-content">
+            <div class="accordion-inner px-5 pb-5 pt-1 text-xs sm:text-sm text-[#858B9E] leading-relaxed border-t border-[#1E222D]">
+              Mô hình AI được ánh xạ 100% vào chip Apple Neural Engine (ANE), vi xử lý chuyên dụng có hiệu suất tiêu thụ điện cực thấp (TOPS/Watt cao). CPU và GPU hầu như ở trạng thái nghỉ, bộ nhớ RAM tiêu thụ dưới 35MB.
+            </div>
+          </div>
+        </div>
+
+        <!-- Question 3 -->
+        <div class="accordion-item obsidian-card overflow-hidden">
+          <div class="accordion-header p-5 flex items-center justify-between text-sm sm:text-base font-medium text-[#F2F4F8]" role="button" tabindex="0" aria-expanded="false">
+            <span>Làm thế nào để cài đặt tệp IPA này vào iPhone?</span>
+            <svg class="accordion-icon w-4 h-4 text-[#858B9E] flex-shrink-0 ml-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+          <div class="accordion-content">
+            <div class="accordion-inner px-5 pb-5 pt-1 text-xs sm:text-sm text-[#858B9E] leading-relaxed border-t border-[#1E222D]">
+              Bạn chỉ cần tải tệp IPA về máy tính, mở phần mềm Sideloadly (hoặc AltStore), kết nối iPhone bằng cáp USB, kéo file IPA vào và nhấn Start để cài đặt chỉ sau 1 phút.
+            </div>
+          </div>
+        </div>
+
+        <!-- Question 4 -->
+        <div class="accordion-item obsidian-card overflow-hidden">
+          <div class="accordion-header p-5 flex items-center justify-between text-sm sm:text-base font-medium text-[#F2F4F8]" role="button" tabindex="0" aria-expanded="false">
+            <span>Ứng dụng có cần kết nối Internet để nhận diện AI không?</span>
+            <svg class="accordion-icon w-4 h-4 text-[#858B9E] flex-shrink-0 ml-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+          <div class="accordion-content">
+            <div class="accordion-inner px-5 pb-5 pt-1 text-xs sm:text-sm text-[#858B9E] leading-relaxed border-t border-[#1E222D]">
+              Hoàn toàn không. Toàn bộ quá trình nhận diện, căn khung và xử lý màu diễn ra 100% Offline (On-Device) ngay trên thiết bị, bảo mật tuyệt đối dữ liệu hình ảnh của bạn.
+            </div>
+          </div>
+        </div>
+
+        <!-- Question 5 -->
+        <div class="accordion-item obsidian-card overflow-hidden">
+          <div class="accordion-header p-5 flex items-center justify-between text-sm sm:text-base font-medium text-[#F2F4F8]" role="button" tabindex="0" aria-expanded="false">
+            <span>Làm sao để xác thực tệp IPA tải về không bị can thiệp mã độc?</span>
+            <svg class="accordion-icon w-4 h-4 text-[#858B9E] flex-shrink-0 ml-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </div>
+          <div class="accordion-content">
+            <div class="accordion-inner px-5 pb-5 pt-1 text-xs sm:text-sm text-[#858B9E] leading-relaxed border-t border-[#1E222D]">
+              Mỗi bản phát hành đều được cung cấp công khai mã băm SHA-256 từ hệ thống GitHub Actions. Bạn có thể dùng lệnh Get-FileHash trên Windows hoặc shasum trên macOS để đối chiếu chính xác từng byte.
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- PHẦN 6: KHUNG TẢI VỀ & XÁC THỰC MÃ BĂM (DOWNLOAD & CHECKSUM) -->
+    <section id="download" class="space-y-6 pt-4">
+      <div class="obsidian-card p-6 sm:p-10 relative overflow-hidden border-[#2D3242]">
         
-        <div id="contentSideloadly" class="sideload-content block">
-          <div class="bg-card-glass backdrop-blur-xl border border-card-border p-6 rounded-2xl text-left space-y-4">
-            <h3 class="text-base font-bold text-white flex items-center gap-2">
-              <i data-lucide="check-circle" class="w-5 h-5 text-emerald-lens"></i> Cài Đặt Qua Sideloadly (Khuyến Nghị Cho Mọi Máy)
-            </h3>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-              <div class="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <div class="text-xs font-bold text-amber-gold font-mono mb-1">BƯỚC 01</div>
-                <div class="text-xs text-zinc-300">Tải file <strong>AISmartFramingCamera.ipa</strong> (Build 300) về máy tính từ link phía trên.</div>
-              </div>
-              <div class="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <div class="text-xs font-bold text-amber-gold font-mono mb-1">BƯỚC 02</div>
-                <div class="text-xs text-zinc-300">Mở Sideloadly, kết nối iPhone qua cáp USB và kéo tệp IPA vào giao diện.</div>
-              </div>
-              <div class="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <div class="text-xs font-bold text-amber-gold font-mono mb-1">BƯỚC 03</div>
-                <div class="text-xs text-zinc-300">Nhập Apple ID và bấm <strong>Start</strong> để ký và nạp trực tiếp vào iPhone.</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div id="contentTrollStore" class="sideload-content hidden">
-          <div class="bg-card-glass backdrop-blur-xl border border-card-border p-6 rounded-2xl text-left space-y-3">
-            <h3 class="text-base font-bold text-white flex items-center gap-2">
-              <i data-lucide="infinity" class="w-5 h-5 text-amber-gold"></i> Cài Đặt Vĩnh Viễn Không Thu Hồi (iOS 14 &ndash; 17.0)
-            </h3>
-            <p class="text-xs text-zinc-300">1. Tải file IPA trực tiếp bằng trình duyệt Safari trên iPhone.</p>
-            <p class="text-xs text-zinc-300">2. Trong ứng dụng Tệp (Files), chọn Chia sẻ &gt; Mở bằng TrollStore.</p>
-            <p class="text-xs text-zinc-300">3. Bấm Install để cài đặt vĩnh viễn, không bao giờ bị giới hạn 7 ngày.</p>
-          </div>
-        </div>
-
-        <div id="contentAltStore" class="sideload-content hidden">
-          <div class="bg-card-glass backdrop-blur-xl border border-card-border p-6 rounded-2xl text-left space-y-3">
-            <h3 class="text-base font-bold text-white flex items-center gap-2">
-              <i data-lucide="radio" class="w-5 h-5 text-mint-cyan"></i> Ký Chứng Chỉ Không Dây Qua Wi-Fi
-            </h3>
-            <p class="text-xs text-zinc-300">1. Tải file IPA về máy qua Safari.</p>
-            <p class="text-xs text-zinc-300">2. Mở AltStore, chọn tab My Apps và bấm dấu + ở góc trên.</p>
-            <p class="text-xs text-zinc-300">3. Chọn tệp AISmartFramingCamera.ipa để AltStore nạp tự động.</p>
-          </div>
-        </div>
-
-      </div>
-
-    </div>
-  </section>
-
-  <!-- ================= SECTION 4: THREE.JS 3D OPTICAL SYSTEM & VIP CONSOLE FORM ================= -->
-  <section id="feedback-console" class="py-16 md:py-24 bg-void relative z-10 border-b border-white/10">
-    <div class="container mx-auto px-4 sm:px-6">
-      
-      <div class="text-center max-w-3xl mx-auto mb-12">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-gold/10 border border-amber-gold/30 text-[11px] font-mono text-amber-gold mb-3">
-          <i data-lucide="sliders" class="w-3.5 h-3.5"></i>
-          <span>THREE.JS 3D OPTICAL ENGINE &bull; VIP CALIBRATION CONSOLE</span>
-        </div>
-        <h2 class="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
-          Bàn Điều Khiển Quang Học 3D &amp; Góp Ý VIP
-        </h2>
-        <p class="text-zinc-400 text-sm mt-3">
-          Tương tác trực tiếp với mô hình ống kính quang học 3D, thiết lập cấu hình cảm biến và đăng ký nhận bản dựng nâng cấp thuật toán tiếp theo.
-        </p>
-      </div>
-
-      <!-- Dual Column Layout: Left = 3D Lens Viewer, Right = Calibration Form -->
-      <div class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        
-        <!-- LEFT: 3D Three.js Interactive Optical Lens Viewport (5 cols) -->
-        <div class="lg:col-span-5 bg-card-glass backdrop-blur-2xl border border-card-border p-5 rounded-3xl shadow-glass relative flex flex-col justify-between">
-          
-          <div class="flex items-center justify-between pb-3 border-b border-white/10 text-xs font-mono text-zinc-300">
-            <span class="flex items-center gap-1.5 text-amber-gold font-bold">
-              <i data-lucide="eye" class="w-4 h-4"></i> HỆ QUANG HỌC 3D
-            </span>
-            <span class="text-[10px] text-zinc-400 px-2 py-0.5 rounded bg-white/[0.04]">THREE.JS WEBGL</span>
-          </div>
-
-          <!-- Three.js 3D Lens Canvas Container -->
-          <div class="relative w-full aspect-square max-h-[360px] my-3 rounded-2xl bg-gradient-to-b from-[#0e1017] to-[#060709] border border-white/10 overflow-hidden flex items-center justify-center select-none" id="lens3dContainer">
-            <canvas id="lens3dCanvas" class="w-full h-full cursor-grab active:cursor-grabbing"></canvas>
-            
-            <!-- Real-time HUD Telemetry Overlaid on 3D Viewport -->
-            <div class="absolute top-3 left-3 flex flex-col gap-1 pointer-events-none text-left">
-              <div class="text-[9px] font-mono text-zinc-400">TIÊU CỰ HIỆN TẠI</div>
-              <div class="text-sm font-bold font-mono text-amber-gold" id="hudFocalLength">24mm (Wide 1x)</div>
-              <div class="text-[10px] font-mono text-zinc-300" id="hudAperture">Khẩu Độ: f/1.78 Quad-Pixel</div>
+        <div class="space-y-6">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div class="text-xs font-mono uppercase tracking-wider text-[#10B981] mb-1">Bản phát hành chính thức</div>
+              <h2 class="text-2xl sm:text-3xl font-extrabold text-[#F2F4F8]">Tải về Bản phát hành Mới nhất</h2>
+              <p class="text-xs sm:text-sm text-[#858B9E] mt-1 font-mono">
+                Tệp cài đặt: <span class="text-[#F2F4F8] font-semibold">AISmartFramingCamera.ipa</span> (239.3 MB) &bull; v1.0.0-build.353
+              </p>
             </div>
 
-            <div class="absolute top-3 right-3 text-right pointer-events-none">
-              <div class="text-[9px] font-mono text-zinc-400">CẢM BIẾN</div>
-              <div class="text-xs font-bold font-mono text-mint-cyan" id="hudSensorName">A17 Pro &bull; 48MP</div>
-            </div>
-
-            <div class="absolute bottom-3 inset-x-3 flex items-center justify-between text-[10px] font-mono text-zinc-400 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/10 pointer-events-none">
-              <span class="flex items-center gap-1">
-                <i data-lucide="move" class="w-3 h-3 text-amber-gold"></i>
-                Kéo để xoay ống kính 3D
+            <!-- Badges -->
+            <div class="flex items-center gap-2">
+              <span class="px-3 py-1 rounded-full bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/25 text-xs font-mono">
+                SHA-256 Verified
               </span>
-              <span class="text-emerald-lens font-bold" id="hudFps">60 FPS</span>
+              <span class="px-3 py-1 rounded-full bg-[#3B82F6]/10 text-[#3B82F6] border border-[#3B82F6]/25 text-xs font-mono">
+                Unsigned IPA
+              </span>
             </div>
           </div>
 
-          <!-- 3D Lens Direct Focal Length Quick Switchers -->
-          <div class="flex items-center gap-2 pt-2 border-t border-white/10">
-            <button type="button" data-focal="24" class="focal-btn active flex-1 py-2 px-2 rounded-xl text-xs font-mono font-bold text-void bg-amber-gold transition-all text-center">
-              24mm (1x)
-            </button>
-            <button type="button" data-focal="48" class="focal-btn flex-1 py-2 px-2 rounded-xl text-xs font-mono font-bold text-zinc-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] transition-all text-center">
-              48mm (2x Tele)
-            </button>
-            <button type="button" data-focal="120" class="focal-btn flex-1 py-2 px-2 rounded-xl text-xs font-mono font-bold text-zinc-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] transition-all text-center">
-              120mm (5x Prism)
-            </button>
-          </div>
-
-        </div>
-
-        <!-- RIGHT: Hardware Calibration & VIP Feedback Console (7 cols) -->
-        <div class="lg:col-span-7 bg-card-glass backdrop-blur-2xl border border-card-border p-6 sm:p-8 rounded-3xl shadow-glass relative">
-          
-          <form id="alignAiFeedbackForm" class="space-y-6" novalidate>
-            
-            <!-- 1. Interactive Device Hardware Matrix -->
-            <div>
-              <label class="block text-xs font-mono uppercase text-zinc-300 mb-2.5 flex items-center justify-between">
-                <span class="flex items-center gap-1.5"><i data-lucide="smartphone" class="w-3.5 h-3.5 text-amber-gold"></i> 1. Cấu Hình Thiết Bị iPhone *</span>
-                <span class="text-[10px] text-zinc-500 font-mono">CHỌN PHẦN CỨNG BẠN SỬ DỤNG</span>
+          <!-- SHA-256 Checksum Container -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-mono text-[#858B9E] uppercase tracking-wider">
+                Mã băm SHA-256 Xác thực Tệp IPA:
               </label>
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2" id="deviceChipGroup">
-                <button type="button" data-device="iPhone 16 Pro Max" class="device-chip p-2.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-amber-gold/50 text-left transition-all">
-                  <div class="text-xs font-bold text-white">16 Pro Max</div>
-                  <div class="text-[10px] font-mono text-amber-gold">A18 Pro &bull; 48MP</div>
-                </button>
-                <button type="button" data-device="iPhone 15 Pro / Max" class="device-chip active p-2.5 rounded-xl bg-amber-gold/15 border border-amber-gold/50 text-left transition-all">
-                  <div class="text-xs font-bold text-white">15 Pro / Max</div>
-                  <div class="text-[10px] font-mono text-amber-gold">A17 Pro &bull; 48MP</div>
-                </button>
-                <button type="button" data-device="iPhone 14 Pro / Max" class="device-chip p-2.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-amber-gold/50 text-left transition-all">
-                  <div class="text-xs font-bold text-white">14 Pro / Max</div>
-                  <div class="text-[10px] font-mono text-zinc-400">A16 &bull; 48MP ISP</div>
-                </button>
-                <button type="button" data-device="iPhone 11 - 13 / Khác" class="device-chip p-2.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-amber-gold/50 text-left transition-all">
-                  <div class="text-xs font-bold text-white">iPhone Khác</div>
-                  <div class="text-[10px] font-mono text-zinc-400">iOS 16.0+</div>
-                </button>
-              </div>
-              <input type="hidden" id="selectedDevice" value="iPhone 15 Pro / Max">
-            </div>
-
-            <!-- 2. Optical Feature Tuning Matrix -->
-            <div>
-              <label class="block text-xs font-mono uppercase text-zinc-300 mb-2.5 flex items-center justify-between">
-                <span class="flex items-center gap-1.5"><i data-lucide="crosshair" class="w-3.5 h-3.5 text-mint-cyan"></i> 2. Thuật Toán Cần Tối Ưu *</span>
-                <span class="text-[10px] text-zinc-500 font-mono">CHỌN MỤC TIÊU PHẢN HỒI</span>
-              </label>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="purposeChipGroup">
-                <button type="button" data-type="ai_framing" class="purpose-chip active p-3 rounded-xl bg-amber-gold/15 border border-amber-gold/50 text-left flex items-start gap-2.5 transition-all">
-                  <div class="w-7 h-7 rounded-lg bg-amber-gold/20 flex items-center justify-center shrink-0 text-amber-gold"><i data-lucide="scan" class="w-4 h-4"></i></div>
-                  <div>
-                    <div class="text-xs font-bold text-white">Bố Cục Tỷ Lệ Vàng AI Mới</div>
-                    <div class="text-[10px] text-zinc-400 leading-tight mt-0.5">Căn chỉnh xoắn ốc Fibonacci, quy tắc 1/3</div>
-                  </div>
-                </button>
-                <button type="button" data-type="film_recipe" class="purpose-chip p-3 rounded-xl bg-white/[0.03] border border-white/10 hover:border-white/20 text-left flex items-start gap-2.5 transition-all">
-                  <div class="w-7 h-7 rounded-lg bg-emerald-lens/20 flex items-center justify-center shrink-0 text-emerald-lens"><i data-lucide="film" class="w-4 h-4"></i></div>
-                  <div>
-                    <div class="text-xs font-bold text-white">Công Thức Màu Phim Mới</div>
-                    <div class="text-[10px] text-zinc-400 leading-tight mt-0.5">Giả lập màu Fuji Provia, Kodak Portra</div>
-                  </div>
-                </button>
-                <button type="button" data-type="telephoto_hardware" class="purpose-chip p-3 rounded-xl bg-white/[0.03] border border-white/10 hover:border-white/20 text-left flex items-start gap-2.5 transition-all">
-                  <div class="w-7 h-7 rounded-lg bg-mint-cyan/20 flex items-center justify-center shrink-0 text-mint-cyan"><i data-lucide="layers" class="w-4 h-4"></i></div>
-                  <div>
-                    <div class="text-xs font-bold text-white">Can Thiệp Telephoto Phần Cứng</div>
-                    <div class="text-[10px] text-zinc-400 leading-tight mt-0.5">Tự động kích hoạt ống kính quang học &ge; 2x</div>
-                  </div>
-                </button>
-                <button type="button" data-type="vip_tester" class="purpose-chip p-3 rounded-xl bg-white/[0.03] border border-white/10 hover:border-white/20 text-left flex items-start gap-2.5 transition-all">
-                  <div class="w-7 h-7 rounded-lg bg-ruby-rec/20 flex items-center justify-center shrink-0 text-ruby-rec"><i data-lucide="badge-check" class="w-4 h-4"></i></div>
-                  <div>
-                    <div class="text-xs font-bold text-white">Đăng Ký Firmware VIP (Build 400)</div>
-                    <div class="text-[10px] text-zinc-400 leading-tight mt-0.5">Nhận bản cài nghiệm thu đầu tiên qua TestFlight</div>
-                  </div>
-                </button>
-              </div>
-              <input type="hidden" id="selectedPurpose" value="ai_framing">
-            </div>
-
-            <!-- 3. User Contact Inputs -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label for="userName" class="block text-xs font-mono uppercase text-zinc-300 mb-1.5 flex items-center gap-1.5">
-                  <i data-lucide="user" class="w-3.5 h-3.5 text-amber-gold"></i> Họ và Tên *
-                </label>
-                <input type="text" id="userName" required placeholder="Nguyễn Văn A" class="w-full bg-void/80 border border-white/15 focus:border-amber-gold rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-gold transition-all">
-              </div>
-
-              <div>
-                <label for="userEmail" class="block text-xs font-mono uppercase text-zinc-300 mb-1.5 flex items-center gap-1.5">
-                  <i data-lucide="mail" class="w-3.5 h-3.5 text-amber-gold"></i> Email hoặc Discord Nhận Phản Hồi *
-                </label>
-                <input type="email" id="userEmail" required placeholder="name@example.com hoặc username#0000" class="w-full bg-void/80 border border-white/15 focus:border-amber-gold rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-gold transition-all">
-              </div>
-            </div>
-
-            <!-- 4. Textarea Message -->
-            <div>
-              <label for="userMessage" class="block text-xs font-mono uppercase text-zinc-300 mb-1.5 flex items-center justify-between">
-                <span class="flex items-center gap-1.5"><i data-lucide="edit-3" class="w-3.5 h-3.5 text-amber-gold"></i> Yêu Cầu Kỹ Thuật / Đóng Góp Chi Tiết *</span>
-                <span id="charCount" class="text-zinc-500 font-mono text-[10px]">0 / 500 ký tự</span>
-              </label>
-              <textarea id="userMessage" rows="3" maxlength="500" required placeholder="Mô tả ý tưởng nâng cấp bố cục AI, đề xuất bộ lọc màu phim hoặc phản ánh quá trình cài đặt IPA..." class="w-full bg-void/80 border border-white/15 focus:border-amber-gold rounded-xl p-3.5 text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-amber-gold transition-all"></textarea>
-            </div>
-
-            <!-- Submit Button -->
-            <button type="submit" id="submitFeedbackBtn" class="w-full py-3.5 px-6 rounded-xl font-semibold text-void bg-gradient-to-r from-amber-gold via-amber-light to-amber-gold hover:from-amber-light hover:to-amber-gold transition-all duration-200 shadow-gold-glow flex items-center justify-center gap-2 group text-sm sm:text-base cursor-pointer">
-              <i data-lucide="send" class="w-4 h-4 stroke-[2.5] group-hover:translate-x-1 transition-transform"></i>
-              <span>Tạo Cấu Hình &amp; Gửi Phiếu Kỹ Thuật VIP</span>
-            </button>
-
-          </form>
-
-          <div class="mt-5 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-zinc-400">
-            <span class="flex items-center gap-1 text-[11px]">
-              <i data-lucide="lock" class="w-3.5 h-3.5 text-emerald-lens"></i> Dữ liệu lưu cục bộ và gửi bảo mật
-            </span>
-            <button type="button" id="viewSubmissionsBtn" class="text-amber-gold hover:underline text-[11px] font-mono">
-              Xem lịch sử phiếu (<span id="submissionCount">0</span>)
-            </button>
-          </div>
-
-        </div>
-
-      </div>
-
-    </div>
-  </section>
-
-  <!-- ================= SECTION 5: FOUNDER & CONNECT CHANNELS ================= -->
-  <section id="founder" class="py-16 md:py-24 relative bg-obsidian/40 border-b border-white/10 z-10">
-    <div class="container mx-auto px-4 sm:px-6">
-      
-      <div class="text-center max-w-3xl mx-auto mb-12">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.04] border border-card-border text-[11px] font-mono text-amber-gold mb-3">
-          <i data-lucide="user-check" class="w-3.5 h-3.5"></i>
-          <span>KẾT NỐI VỚI NHÀ SÁNG LẬP</span>
-        </div>
-        <h2 class="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">
-          Founder &amp; CEO SmartVN
-        </h2>
-        <p class="text-zinc-400 text-sm mt-3 max-w-xl mx-auto">
-          Nhà phát triển kiến trúc thị giác máy tính và nhiếp ảnh điện toán trên nền tảng iOS.
-        </p>
-      </div>
-
-      <div class="max-w-3xl mx-auto bg-card-glass backdrop-blur-2xl border border-card-border p-6 sm:p-8 rounded-3xl shadow-xl">
-        <div class="flex flex-col sm:flex-row items-center gap-6">
-          
-          <div class="relative shrink-0">
-            <div class="w-24 h-24 rounded-2xl bg-gradient-to-br from-amber-gold to-obsidian p-[2px] shadow-gold-glow">
-              <div class="w-full h-full bg-obsidian rounded-[14px] flex items-center justify-center overflow-hidden">
-                <img src="./assets/AppLogo.png" alt="Founder & CEO SmartVN" class="w-16 h-16 object-contain" onerror="this.src='./assets/icon-512.png'">
-              </div>
-            </div>
-            <div class="absolute -bottom-1 -right-1 bg-amber-gold text-void p-1 rounded-full shadow border-2 border-void">
-              <i data-lucide="check" class="w-3.5 h-3.5 stroke-[3]"></i>
-            </div>
-          </div>
-
-          <div class="flex-1 text-center sm:text-left">
-            <h3 class="text-xl font-bold text-white">Founder &amp; CEO SmartVN</h3>
-            <div class="text-xs font-mono text-amber-gold uppercase tracking-wider mb-2">Systems Architect &bull; Vision Engineer</div>
-            <p class="text-zinc-300 text-xs sm:text-sm leading-relaxed mb-5">
-              Phát triển các công cụ nhiếp ảnh quang học thông minh, tối ưu hóa triệt để phần cứng Apple để mang đến trải nghiệm điện ảnh chuẩn xác cho người dùng toàn cầu.
-            </p>
-
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              <a href="https://www.facebook.com/founderceoSmartVN/" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2.5 p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-blue-500/40 transition-all">
-                <div class="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0">
-                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-                </div>
-                <span class="text-xs text-zinc-200 truncate">Facebook</span>
-              </a>
-
-              <a href="https://www.tiktok.com/@hehimhjs?lang=vi-VN" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2.5 p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-pink-500/40 transition-all">
-                <div class="w-7 h-7 rounded-lg bg-pink-500/20 text-pink-400 flex items-center justify-center shrink-0">
-                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-1.01-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.24 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z"/></svg>
-                </div>
-                <span class="text-xs text-zinc-200 truncate">TikTok</span>
-              </a>
-
-              <a href="https://discord.com/users/1143882170386104450" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2.5 p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-indigo-500/40 transition-all">
-                <div class="w-7 h-7 rounded-lg bg-indigo-600/20 text-indigo-400 flex items-center justify-center shrink-0">
-                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
-                </div>
-                <span class="text-xs text-zinc-200 truncate">Discord</span>
-              </a>
-
-              <a href="https://github.com/emlavankhoahienma-hue" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2.5 p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-zinc-400 transition-all">
-                <div class="w-7 h-7 rounded-lg bg-zinc-700/30 text-zinc-200 flex items-center justify-center shrink-0">
-                  <i data-lucide="github" class="w-3.5 h-3.5"></i>
-                </div>
-                <span class="text-xs text-zinc-200 truncate">GitHub</span>
-              </a>
-
-              <button type="button" id="onlyFansTriggerBtn" class="flex items-center gap-2.5 p-2 rounded-xl bg-cyan-950/30 hover:bg-cyan-900/40 border border-cyan-500/30 hover:border-cyan-400 transition-all text-left cursor-pointer">
-                <div class="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0">
-                  <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.372 0 0 5.372 0 12s5.372 12 12 12 12-5.372 12-12S18.628 0 12 0zm5.663 11.517c-.368 1.488-1.52 2.766-3.037 3.371a5.056 5.056 0 0 1-5.187-.872l1.624-1.624a2.76 2.76 0 0 0 2.825.485c.83-.332 1.464-1.034 1.666-1.851.202-.816-.017-1.67-.58-2.233a2.766 2.766 0 0 0-2.233-.58 2.784 2.784 0 0 0-1.851 1.666l-1.624-1.624a5.076 5.076 0 0 1 3.371-3.037c1.488-.368 3.036.012 4.195 1.014 1.159 1.002 1.704 2.531 1.341 4.025z"/></svg>
-                </div>
-                <div class="overflow-hidden">
-                  <span class="text-xs text-white">OnlyFans</span>
-                  <span class="text-[8px] font-mono text-ruby-rec font-bold ml-1">18+</span>
-                </div>
+              <button type="button" 
+                      class="copy-hash-btn inline-flex items-center gap-2 px-3 py-1 rounded-lg bg-[#161920] border border-[#1E222D] hover:border-[#3B82F6] text-xs font-mono text-[#F2F4F8] hover:text-[#3B82F6] transition-all cursor-pointer"
+                      data-hash="12A9C9FF9049C8D6E6BBB2EDD8CFE7E1CC490E2AAE94AFF846E0F941DD2BCD62">
+                <span class="copy-icon">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                  </svg>
+                </span>
+                <span class="copy-label">Sao chép mã băm</span>
               </button>
             </div>
 
+            <div class="code-container p-3 sm:p-4 text-xs font-mono text-[#858B9E] break-all select-all border border-[#1E222D]">
+              12A9C9FF9049C8D6E6BBB2EDD8CFE7E1CC490E2AAE94AFF846E0F941DD2BCD62
+            </div>
+
+            <!-- Terminal Verification Snippets -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 text-[11px] font-mono text-[#858B9E]">
+              <div class="p-2.5 rounded bg-[#07080B] border border-[#1E222D]">
+                <div class="text-[#5E6475] mb-1"># Kiểm tra trên Windows (PowerShell):</div>
+                <div class="text-[#F2F4F8]">Get-FileHash .\AISmartFramingCamera.ipa -Algorithm SHA256</div>
+              </div>
+              <div class="p-2.5 rounded bg-[#07080B] border border-[#1E222D]">
+                <div class="text-[#5E6475] mb-1"># Kiểm tra trên macOS / Linux:</div>
+                <div class="text-[#F2F4F8]">shasum -a 256 AISmartFramingCamera.ipa</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="pt-4 border-t border-[#1E222D] flex flex-col sm:flex-row flex-wrap items-center gap-3">
+            <!-- Nút chính: Tải xuống tệp IPA -->
+            <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.353/AISmartFramingCamera.ipa" 
+               class="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-[#3B82F6] hover:bg-blue-600 text-white font-medium text-sm transition-all duration-200 shadow-lg shadow-blue-500/20 active:scale-[0.98]">
+              <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              <span>Tải xuống tệp IPA (Direct Link)</span>
+            </a>
+
+            <!-- Nút phụ 1: Xem trên GitHub Releases -->
+            <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/tag/v1.0.0-build.353" 
+               target="_blank" 
+               rel="noopener noreferrer"
+               class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#151821] hover:bg-[#1E222D] text-[#F2F4F8] border border-[#1E222D] hover:border-[#2D3242] font-medium text-sm transition-all duration-200">
+              <svg class="w-4 h-4 text-[#858B9E] flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+                <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+              </svg>
+              <span>Xem trên GitHub Releases</span>
+            </a>
+
+            <!-- Nút phụ 2: Tải Sideloadly -->
+            <a href="https://sideloadly.io/" 
+               target="_blank" 
+               rel="noopener noreferrer"
+               class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#151821] hover:bg-[#1E222D] text-[#858B9E] hover:text-[#F2F4F8] border border-[#1E222D] hover:border-[#2D3242] font-medium text-sm transition-all duration-200">
+              <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+              </svg>
+              <span>Tải Sideloadly (Công cụ cài đặt)</span>
+            </a>
           </div>
 
         </div>
       </div>
+    </section>
 
-    </div>
-  </section>
+  </main>
 
-  <!-- ================= FOOTER ================= -->
-  <footer class="mt-auto py-8 bg-black border-t border-card-border text-xs text-zinc-500 z-10">
-    <div class="container mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-      <div class="flex items-center gap-3">
-        <img src="./assets/AppLogo.png" alt="AlignAI Studio Logo" class="w-6 h-6 object-contain opacity-70" onerror="this.src='./assets/icon-192.png'">
-        <div>
-          <div class="font-bold text-zinc-300">AI SMART FRAMING CAMERA &bull; AlignAI Studio</div>
-          <div class="text-[10px]">Giấy phép mã nguồn mở MIT License &copy; 2026 Founder &amp; CEO SmartVN.</div>
+  <!-- Footer -->
+  <footer class="border-t border-[#1E222D] bg-[#07080B] py-12 mt-16 text-xs text-[#858B9E]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 space-y-6">
+      <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="flex items-center space-x-3">
+          <div class="w-7 h-7 rounded-[22.37%] bg-[#111318] border border-[#1E222D] flex items-center justify-center">
+            <img src="assets/favicon.svg" alt="Align Camera Logo" class="w-4 h-4">
+          </div>
+          <span class="text-sm font-semibold text-[#F2F4F8]">Align Camera</span>
+          <span class="text-[#5E6475]">&bull;</span>
+          <span class="font-mono">v1.0.0-build.353</span>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-6 font-mono">
+          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer" class="hover:text-[#F2F4F8] transition-colors">
+            Mã nguồn GitHub
+          </a>
+          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases" target="_blank" rel="noopener noreferrer" class="hover:text-[#F2F4F8] transition-colors">
+            Danh sách phát hành
+          </a>
+          <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/issues" target="_blank" rel="noopener noreferrer" class="hover:text-[#F2F4F8] transition-colors">
+            Báo lỗi &amp; Góp ý
+          </a>
         </div>
       </div>
-      <div class="flex items-center gap-4 text-[11px] font-mono">
-        <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera" target="_blank" rel="noopener noreferrer" class="hover:text-amber-gold">GitHub</a>
-        <a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.300/AISmartFramingCamera.ipa" class="hover:text-amber-gold">Bản Build 300 IPA</a>
-        <a href="#hero-viewfinder" class="hover:text-amber-gold">Khung Ngắm Trực Tiếp</a>
+
+      <div class="pt-6 border-t border-[#1E222D]/60 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 text-[11px] leading-relaxed text-[#5E6475]">
+        <div>
+          Phát triển bởi <span class="text-[#858B9E]">Khoa Hien (emlavankhoahienma-hue)</span>. Dự án nghiên cứu thị giác máy tính và tối ưu hóa suy luận Apple Neural Engine trên nền tảng di động.
+        </div>
+        <div>
+          Apple Silicon, iOS, ProMotion, Neural Engine là các nhãn hiệu thương mại của Apple Inc.
+        </div>
       </div>
     </div>
   </footer>
 
-  <!-- ================= 18+ AGE VERIFICATION MODAL ================= -->
-  <div id="ageVerificationModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl opacity-0 pointer-events-none transition-opacity duration-300" role="dialog" aria-modal="true">
-    <div class="bg-card-glass backdrop-blur-2xl border border-ruby-rec/40 w-full max-w-md rounded-3xl p-6 sm:p-8 shadow-2xl relative text-center transform scale-95 transition-transform duration-300" id="ageModalContainer">
-      <div class="w-14 h-14 rounded-2xl bg-ruby-rec/20 border border-ruby-rec/40 text-ruby-rec flex items-center justify-center mx-auto mb-4">
-        <i data-lucide="shield-alert" class="w-7 h-7"></i>
-      </div>
-      <h3 class="text-xl font-bold text-white mb-2">Xác Nhận Độ Tuổi (18+)</h3>
-      <div class="inline-block px-2.5 py-0.5 rounded-full bg-ruby-rec/15 text-ruby-rec text-xs font-mono font-semibold mb-3 border border-ruby-rec/30">
-        NỘI DUNG DÀNH CHO NGƯỜI TRƯỞNG THÀNH
-      </div>
-      <p class="text-zinc-300 text-xs sm:text-sm leading-relaxed mb-6">
-        Liên kết này dẫn tới kênh cá nhân OnlyFans của Founder &amp; CEO SmartVN. Bạn phải từ 18 tuổi trở lên để tiếp tục.
-      </p>
-      <div class="grid grid-cols-2 gap-3">
-        <button type="button" id="ageCancelBtn" class="py-2.5 px-4 rounded-xl font-semibold text-zinc-300 bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 transition-colors text-xs sm:text-sm">
-          Thôi, bỏ đi
-        </button>
-        <button type="button" id="ageConfirmBtn" class="py-2.5 px-4 rounded-xl font-semibold text-white bg-ruby-rec hover:bg-red-600 transition-colors text-xs sm:text-sm shadow-lg shadow-ruby-rec/20">
-          Tôi trên 18 tuổi
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ================= FORM SUCCESS MODAL (NO ALERT) ================= -->
-  <div id="formSuccessModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl opacity-0 pointer-events-none transition-opacity duration-300" role="dialog" aria-modal="true">
-    <div class="bg-card-glass backdrop-blur-2xl border border-emerald-lens/50 w-full max-w-md rounded-3xl p-6 sm:p-8 shadow-2xl relative text-center transform scale-95 transition-transform duration-300">
-      <div class="w-14 h-14 rounded-2xl bg-emerald-lens/20 border border-emerald-lens/40 text-emerald-lens flex items-center justify-center mx-auto mb-4">
-        <i data-lucide="check-circle" class="w-7 h-7"></i>
-      </div>
-      <h3 class="text-xl font-bold text-white mb-1.5">Đã Ghi Nhận Phiếu Kỹ Thuật!</h3>
-      <div class="text-[11px] font-mono text-emerald-lens mb-3" id="ticketIdBadge">MÃ PHIẾU: ALIGN-XXXX</div>
-      <p class="text-zinc-300 text-xs sm:text-sm leading-relaxed mb-6" id="formSuccessMessage">
-        Cảm ơn bạn đã đóng góp thông số hiệu chuẩn cho AlignAI Studio. Cấu hình thiết bị của bạn đã được ghi nhận vào danh sách ưu tiên thử nghiệm Firmware tiếp theo.
-      </p>
-      <button type="button" id="closeSuccessModalBtn" class="w-full py-2.5 px-5 rounded-xl font-semibold text-void bg-emerald-lens hover:bg-emerald-400 transition-colors text-xs sm:text-sm shadow-lg cursor-pointer">
-        Đóng Cửa Sổ
-      </button>
-    </div>
-  </div>
-
-  <!-- ================= SUBMISSIONS HISTORY DRAWER MODAL ================= -->
-  <div id="historyDrawerModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl opacity-0 pointer-events-none transition-opacity duration-300">
-    <div class="bg-card-glass backdrop-blur-2xl border border-white/10 w-full max-w-lg rounded-3xl p-6 shadow-2xl relative flex flex-col max-h-[85vh]">
-      <div class="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
-        <h3 class="text-base font-bold text-white flex items-center gap-2">
-          <i data-lucide="history" class="w-4 h-4 text-amber-gold"></i> Lịch Sử Phiếu Đã Lưu
-        </h3>
-        <button type="button" id="closeHistoryBtn" class="text-zinc-400 hover:text-white p-1">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-      <div id="historyItemsList" class="overflow-y-auto space-y-3 pr-1 text-xs text-left flex-1">
-        <!-- Rendered dynamically -->
-      </div>
-      <div class="pt-4 mt-2 border-t border-white/10 flex justify-between items-center">
-        <button type="button" id="clearHistoryBtn" class="text-ruby-rec text-xs hover:underline">Xóa lịch sử</button>
-        <button type="button" id="doneHistoryBtn" class="px-4 py-1.5 rounded-xl bg-white/10 text-white text-xs font-semibold hover:bg-white/20">Xong</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ================= MASTER LOGIC SCRIPT WITH THREE.JS ================= -->
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      // 1. Initialize Lucide Icons
-      if (typeof lucide !== 'undefined') {
-        lucide.createIcons();
-      }
-
-      // 2. THREE.JS 3D OPTICAL SPACE BACKGROUND
-      function initThreeBackground() {
-        const canvas = document.getElementById('threeBackgroundCanvas');
-        if (!canvas || typeof THREE === 'undefined') return;
-
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 80;
-
-        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-        // Create 3D Optical Floating Bokeh Particles
-        const particleCount = 100;
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(particleCount * 3);
-
-        for (let i = 0; i < particleCount; i++) {
-          positions[i * 3] = (Math.random() - 0.5) * 160;
-          positions[i * 3 + 1] = (Math.random() - 0.5) * 120;
-          positions[i * 3 + 2] = (Math.random() - 0.5) * 80;
-        }
-
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-        // Custom Canvas Texture for Optical Bokeh Orb
-        const circleCanvas = document.createElement('canvas');
-        circleCanvas.width = 64;
-        circleCanvas.height = 64;
-        const ctx = circleCanvas.getContext('2d');
-        const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-        grad.addColorStop(0, 'rgba(255, 176, 41, 0.9)');
-        grad.addColorStop(0.3, 'rgba(34, 211, 238, 0.5)');
-        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 64, 64);
-
-        const particleTexture = new THREE.CanvasTexture(circleCanvas);
-        const material = new THREE.PointsMaterial({
-          size: 3.8,
-          map: particleTexture,
-          transparent: true,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        });
-
-        const points = new THREE.Points(geometry, material);
-        scene.add(points);
-
-        let mouseX = 0;
-        let mouseY = 0;
-        window.addEventListener('mousemove', (e) => {
-          mouseX = (e.clientX - window.innerWidth / 2) * 0.0005;
-          mouseY = (e.clientY - window.innerHeight / 2) * 0.0005;
-        });
-
-        function animateBg() {
-          requestAnimationFrame(animateBg);
-          points.rotation.y += 0.0008;
-          points.rotation.x += 0.0004;
-          camera.position.x += (mouseX * 40 - camera.position.x) * 0.04;
-          camera.position.y += (-mouseY * 40 - camera.position.y) * 0.04;
-          camera.lookAt(scene.position);
-          renderer.render(scene, camera);
-        }
-        animateBg();
-
-        window.addEventListener('resize', () => {
-          camera.aspect = window.innerWidth / window.innerHeight;
-          camera.updateProjectionMatrix();
-          renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-      }
-      initThreeBackground();
-
-      // 3. THREE.JS 3D INTERACTIVE CAMERA LENS BARREL (Inside the Form Console)
-      let updateLensZoom = null;
-      function init3DCameraLens() {
-        const canvas = document.getElementById('lens3dCanvas');
-        if (!canvas || typeof THREE === 'undefined') return;
-
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
-        camera.position.set(0, 0, 7.5);
-
-        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-        scene.add(ambientLight);
-
-        const keyLight = new THREE.DirectionalLight(0xffb029, 2.5); // Amber Gold Key
-        keyLight.position.set(5, 5, 5);
-        scene.add(keyLight);
-
-        const rimLight = new THREE.DirectionalLight(0x22d3ee, 2.0); // Cyan Rim
-        rimLight.position.set(-5, -3, 4);
-        scene.add(rimLight);
-
-        // Lens Group
-        const lensGroup = new THREE.Group();
-        scene.add(lensGroup);
-
-        // Materials
-        const darkTitaniumMat = new THREE.MeshStandardMaterial({
-          color: 0x1a1c24,
-          metalness: 0.9,
-          roughness: 0.25
-        });
-
-        const goldRingMat = new THREE.MeshStandardMaterial({
-          color: 0xffb029,
-          metalness: 0.95,
-          roughness: 0.15
-        });
-
-        const cyanCoatingMat = new THREE.MeshPhysicalMaterial({
-          color: 0x22d3ee,
-          metalness: 0.1,
-          roughness: 0.05,
-          transmission: 0.85,
-          transparent: true,
-          opacity: 0.65,
-          reflectivity: 0.9
-        });
-
-        // 1. Outer Main Barrel
-        const outerBarrelGeo = new THREE.CylinderGeometry(1.8, 1.8, 2.4, 36);
-        outerBarrelGeo.rotateX(Math.PI / 2);
-        const outerBarrel = new THREE.Mesh(outerBarrelGeo, darkTitaniumMat);
-        lensGroup.add(outerBarrel);
-
-        // 2. Knurled Ribbed Ring
-        const ribbedGeo = new THREE.TorusGeometry(1.84, 0.06, 12, 48);
-        const ribbedRing = new THREE.Mesh(ribbedGeo, darkTitaniumMat);
-        ribbedRing.position.z = 0.4;
-        lensGroup.add(ribbedRing);
-
-        // 3. Golden Calibration Accent Ring
-        const goldRingGeo = new THREE.TorusGeometry(1.82, 0.035, 12, 48);
-        const goldRing = new THREE.Mesh(goldRingGeo, goldRingMat);
-        goldRing.position.z = 0.85;
-        lensGroup.add(goldRing);
-
-        // 4. Front Glass Element (Curved convex lens)
-        const glassGeo = new THREE.SphereGeometry(1.65, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.38);
-        glassGeo.rotateX(Math.PI / 2);
-        const frontGlass = new THREE.Mesh(glassGeo, cyanCoatingMat);
-        frontGlass.position.z = 0.85;
-        lensGroup.add(frontGlass);
-
-        // 5. Aperture Diaphragm Group (Inner Iris)
-        const irisGroup = new THREE.Group();
-        irisGroup.position.z = 0.1;
-        const bladeGeo = new THREE.RingGeometry(0.35, 1.6, 6);
-        const bladeMat = new THREE.MeshStandardMaterial({ color: 0x111319, metalness: 0.8, roughness: 0.4 });
-        const irisMesh = new THREE.Mesh(bladeGeo, bladeMat);
-        irisGroup.add(irisMesh);
-        lensGroup.add(irisGroup);
-
-        // 6. 3D Golden Ratio Fibonacci Spiral Curve
-        const curvePoints = [];
-        const numSpiralPoints = 60;
-        for (let i = 0; i < numSpiralPoints; i++) {
-          const t = i / numSpiralPoints;
-          const theta = t * Math.PI * 3.5;
-          const r = 0.15 + t * 1.35;
-          curvePoints.push(new THREE.Vector3(Math.cos(theta) * r, Math.sin(theta) * r, 1.05 - t * 0.3));
-        }
-        const spiralGeo = new THREE.BufferGeometry().setFromPoints(curvePoints);
-        const spiralMat = new THREE.LineBasicMaterial({ color: 0xffb029, linewidth: 2, transparent: true, opacity: 0.85 });
-        const spiralLine = new THREE.Line(spiralGeo, spiralMat);
-        lensGroup.add(spiralLine);
-
-        // Smooth Mouse / Touch Drag Rotation
-        let isDragging = false;
-        let prevMouseX = 0;
-        let prevMouseY = 0;
-        let targetRotX = 0.3;
-        let targetRotY = -0.4;
-        let currentRotX = 0.3;
-        let currentRotY = -0.4;
-        let targetScale = 1.0;
-        let currentScale = 1.0;
-
-        function onPointerDown(e) {
-          isDragging = true;
-          const clientX = e.clientX || (e.touches && e.touches[0].clientX);
-          const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-          prevMouseX = clientX;
-          prevMouseY = clientY;
-        }
-
-        function onPointerMove(e) {
-          if (!isDragging) return;
-          const clientX = e.clientX || (e.touches && e.touches[0].clientX);
-          const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-          const deltaX = clientX - prevMouseX;
-          const deltaY = clientY - prevMouseY;
-          prevMouseX = clientX;
-          prevMouseY = clientY;
-
-          targetRotY += deltaX * 0.01;
-          targetRotX += deltaY * 0.01;
-          targetRotX = Math.max(-1.1, Math.min(1.1, targetRotX));
-        }
-
-        function onPointerUp() {
-          isDragging = false;
-        }
-
-        canvas.addEventListener('mousedown', onPointerDown);
-        window.addEventListener('mousemove', onPointerMove);
-        window.addEventListener('mouseup', onPointerUp);
-
-        canvas.addEventListener('touchstart', onPointerDown, { passive: true });
-        window.addEventListener('touchmove', onPointerMove, { passive: true });
-        window.addEventListener('touchend', onPointerUp);
-
-        // Focal length morph callback
-        updateLensZoom = function(focalMm) {
-          if (focalMm === 24) {
-            targetScale = 1.0;
-            irisMesh.scale.set(1.0, 1.0, 1.0);
-          } else if (focalMm === 48) {
-            targetScale = 1.25;
-            irisMesh.scale.set(0.7, 0.7, 0.7);
-          } else if (focalMm === 120) {
-            targetScale = 1.55;
-            irisMesh.scale.set(0.45, 0.45, 0.45);
-          }
-        };
-
-        // Render loop
-        function renderLens() {
-          requestAnimationFrame(renderLens);
-
-          // Idle subtle float when not dragging
-          if (!isDragging) {
-            targetRotY += 0.0025;
-          }
-
-          currentRotX += (targetRotX - currentRotX) * 0.1;
-          currentRotY += (targetRotY - currentRotY) * 0.1;
-          currentScale += (targetScale - currentScale) * 0.08;
-
-          lensGroup.rotation.x = currentRotX;
-          lensGroup.rotation.y = currentRotY;
-          lensGroup.scale.set(currentScale, currentScale, currentScale);
-
-          spiralLine.rotation.z += 0.01;
-
-          renderer.render(scene, camera);
-        }
-        renderLens();
-
-        // Handle Resize
-        const resizeObserver = new ResizeObserver(() => {
-          if (!canvas.clientWidth || !canvas.clientHeight) return;
-          camera.aspect = canvas.clientWidth / canvas.clientHeight;
-          camera.updateProjectionMatrix();
-          renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-        });
-        resizeObserver.observe(canvas);
-      }
-      init3DCameraLens();
-
-      // 4. INTERACTIVE 3D PHONE TILT (Hero Section)
-      const phoneWrapper = document.getElementById('phone3dWrapper');
-      const phoneChassis = document.getElementById('phoneChassis');
-      const specularGlare = document.getElementById('specularGlare');
-
-      if (phoneWrapper && phoneChassis) {
-        let currentRotX = 0;
-        let currentRotY = 0;
-        let destRotX = 0;
-        let destRotY = 0;
-
-        function updatePhoneTilt(e) {
-          const rect = phoneWrapper.getBoundingClientRect();
-          const centerX = rect.left + rect.width / 2;
-          const centerY = rect.top + rect.height / 2;
-          const x = (e.clientX - centerX) / (rect.width / 2);
-          const y = (e.clientY - centerY) / (rect.height / 2);
-
-          destRotY = Math.max(-16, Math.min(16, x * 15));
-          destRotX = Math.max(-16, Math.min(16, -y * 15));
-
-          if (specularGlare) {
-            const posX = 50 + x * 35;
-            const posY = 30 + y * 35;
-            specularGlare.style.background = `radial-gradient(circle at ${posX}% ${posY}%, rgba(255,255,255,0.28) 0%, transparent 60%)`;
-          }
-        }
-
-        window.addEventListener('mousemove', (e) => {
-          const rect = phoneWrapper.getBoundingClientRect();
-          if (e.clientX >= rect.left - 200 && e.clientX <= rect.right + 200 &&
-              e.clientY >= rect.top - 200 && e.clientY <= rect.bottom + 200) {
-            updatePhoneTilt(e);
-          } else {
-            destRotX = 0;
-            destRotY = 0;
-          }
-        });
-
-        function renderTiltLerp() {
-          currentRotX += (destRotX - currentRotX) * 0.12;
-          currentRotY += (destRotY - currentRotY) * 0.12;
-          phoneChassis.style.transform = `rotateX(${currentRotX.toFixed(2)}deg) rotateY(${currentRotY.toFixed(2)}deg)`;
-          requestAnimationFrame(renderTiltLerp);
-        }
-        renderTiltLerp();
-      }
-
-      // 5. VIEW SWITCHER: AUTHENTIC SCREENSHOT VS LIVE SIMULATOR
-      const viewModeRealApp = document.getElementById('viewModeRealApp');
-      const viewModeSimulator = document.getElementById('viewModeSimulator');
-      const realAppViewContainer = document.getElementById('realAppViewContainer');
-      const liveSimulatorContainer = document.getElementById('liveSimulatorContainer');
-      const allowHotspotBtn = document.getElementById('allowHotspotBtn');
-
-      function showSimulator() {
-        if (!realAppViewContainer || !liveSimulatorContainer) return;
-        realAppViewContainer.classList.add('opacity-0', 'pointer-events-none');
-        realAppViewContainer.classList.remove('block');
-        liveSimulatorContainer.classList.remove('opacity-0', 'pointer-events-none');
-        liveSimulatorContainer.classList.add('opacity-100');
-
-        if (viewModeSimulator && viewModeRealApp) {
-          viewModeSimulator.classList.remove('text-zinc-400');
-          viewModeSimulator.classList.add('text-void', 'bg-amber-gold', 'shadow');
-          viewModeRealApp.classList.remove('text-void', 'bg-amber-gold', 'shadow');
-          viewModeRealApp.classList.add('text-zinc-400');
-        }
-      }
-
-      function showRealApp() {
-        if (!realAppViewContainer || !liveSimulatorContainer) return;
-        liveSimulatorContainer.classList.add('opacity-0', 'pointer-events-none');
-        liveSimulatorContainer.classList.remove('opacity-100');
-        realAppViewContainer.classList.remove('opacity-0', 'pointer-events-none');
-        realAppViewContainer.classList.add('block');
-
-        if (viewModeSimulator && viewModeRealApp) {
-          viewModeRealApp.classList.remove('text-zinc-400');
-          viewModeRealApp.classList.add('text-void', 'bg-amber-gold', 'shadow');
-          viewModeSimulator.classList.remove('text-void', 'bg-amber-gold', 'shadow');
-          viewModeSimulator.classList.add('text-zinc-400');
-        }
-      }
-
-      if (viewModeSimulator) viewModeSimulator.addEventListener('click', showSimulator);
-      if (viewModeRealApp) viewModeRealApp.addEventListener('click', showRealApp);
-      if (allowHotspotBtn) allowHotspotBtn.addEventListener('click', showSimulator);
-
-      // 6. LIVE CAMERA SIMULATOR CONTROLS
-      const zoomButtons = document.querySelectorAll('.zoom-btn');
-      const viewportScene = document.getElementById('viewportScene');
-      const telephotoToast = document.getElementById('telephotoHardwareToast');
-      const shutterBtn = document.getElementById('cameraShutterBtn');
-      const shutterFlash = document.getElementById('shutterFlashOverlay');
-      const gridThirds = document.getElementById('gridThirds');
-      const toggleGridBtn = document.getElementById('toggleGridBtn');
-      const toolGridToggle = document.getElementById('toolGridToggle');
-      const filterCycleBtn = document.getElementById('filterCycleBtn');
-      const currentFilterLabel = document.getElementById('currentFilterLabel');
-      const snapAssistBtn = document.getElementById('snapAssistBtn');
-      const aiTargetBox = document.getElementById('aiTargetBox');
-      const userCrosshair = document.getElementById('userCrosshair');
-
-      // Zoom level handling
-      zoomButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-          const zoomVal = parseInt(btn.getAttribute('data-zoom'));
-          zoomButtons.forEach(b => {
-            b.classList.remove('active', 'border', 'border-amber-gold', 'text-amber-gold', 'font-bold');
-            b.classList.add('text-zinc-400');
-          });
-          btn.classList.add('active', 'border', 'border-amber-gold', 'text-amber-gold', 'font-bold');
-          btn.classList.remove('text-zinc-400');
-
-          if (viewportScene) {
-            if (zoomVal === 1) viewportScene.style.transform = 'scale(1)';
-            else if (zoomVal === 2) viewportScene.style.transform = 'scale(1.4)';
-            else if (zoomVal === 3) viewportScene.style.transform = 'scale(1.85)';
-          }
-
-          if (zoomVal >= 2) {
-            if (telephotoToast) {
-              telephotoToast.classList.remove('opacity-0', '-translate-y-8', 'pointer-events-none');
-              telephotoToast.classList.add('opacity-100', 'translate-y-0');
-              setTimeout(() => {
-                telephotoToast.classList.add('opacity-0', '-translate-y-8', 'pointer-events-none');
-                telephotoToast.classList.remove('opacity-100', 'translate-y-0');
-              }, 2500);
-            }
-          }
-        });
-      });
-
-      // Shutter Trigger Action
-      if (shutterBtn && shutterFlash) {
-        shutterBtn.addEventListener('click', () => {
-          shutterFlash.classList.add('shutter-ripple');
-          setTimeout(() => {
-            shutterFlash.classList.remove('shutter-ripple');
-          }, 350);
-        });
-      }
-
-      // Grid toggles
-      function toggleGrid() {
-        if (!gridThirds) return;
-        gridThirds.classList.toggle('opacity-0');
-      }
-      if (toggleGridBtn) toggleGridBtn.addEventListener('click', toggleGrid);
-      if (toolGridToggle) toolGridToggle.addEventListener('click', toggleGrid);
-
-      // Filter Cycle Preset
-      const filters = [
-        { id: 'provia', label: 'PROVIA', class: 'filter-provia' },
-        { id: 'velvia', label: 'VELVIA', class: 'filter-velvia' },
-        { id: 'chrome', label: 'CHROME', class: 'filter-classic-chrome' },
-        { id: 'mono', label: 'B&W MONO', class: 'filter-monochrome' }
-      ];
-      let currentFilterIndex = 0;
-
-      if (filterCycleBtn && viewportScene && currentFilterLabel) {
-        filterCycleBtn.addEventListener('click', () => {
-          viewportScene.classList.remove(filters[currentFilterIndex].class);
-          currentFilterIndex = (currentFilterIndex + 1) % filters.length;
-          viewportScene.classList.add(filters[currentFilterIndex].class);
-          currentFilterLabel.textContent = filters[currentFilterIndex].label;
-        });
-      }
-
-      // Snap Assist (Golden Ratio lock)
-      if (snapAssistBtn && userCrosshair && aiTargetBox) {
-        snapAssistBtn.addEventListener('click', () => {
-          userCrosshair.style.top = '28%';
-          userCrosshair.style.left = '28%';
-          userCrosshair.classList.add('border-amber-gold');
-          setTimeout(() => {
-            userCrosshair.style.top = '34%';
-            userCrosshair.style.left = '34%';
-          }, 1800);
-        });
-      }
-
-      // Draw real-time histogram simulation
-      const histCanvas = document.getElementById('histogramCanvas');
-      if (histCanvas) {
-        const hCtx = histCanvas.getContext('2d');
-        function drawHist() {
-          hCtx.clearRect(0, 0, histCanvas.width, histCanvas.height);
-          hCtx.fillStyle = 'rgba(255, 176, 41, 0.7)';
-          hCtx.beginPath();
-          hCtx.moveTo(0, histCanvas.height);
-          for (let x = 0; x < histCanvas.width; x += 4) {
-            const h = Math.sin((x + Date.now() * 0.003) * 0.1) * 3 + 4 + Math.random() * 2;
-            hCtx.lineTo(x, histCanvas.height - h);
-          }
-          hCtx.lineTo(histCanvas.width, histCanvas.height);
-          hCtx.fill();
-        }
-        setInterval(drawHist, 200);
-      }
-
-      // 7. 3D LENS QUICK FOCAL SWITCHERS IN FORM CONSOLE
-      const focalButtons = document.querySelectorAll('.focal-btn');
-      const hudFocalLength = document.getElementById('hudFocalLength');
-      const hudAperture = document.getElementById('hudAperture');
-
-      focalButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-          const focalVal = parseInt(btn.getAttribute('data-focal'));
-          focalButtons.forEach(b => {
-            b.classList.remove('active', 'text-void', 'bg-amber-gold');
-            b.classList.add('text-zinc-400', 'bg-white/[0.04]');
-          });
-          btn.classList.add('active', 'text-void', 'bg-amber-gold');
-          btn.classList.remove('text-zinc-400', 'bg-white/[0.04]');
-
-          if (updateLensZoom) updateLensZoom(focalVal);
-
-          if (focalVal === 24) {
-            if (hudFocalLength) hudFocalLength.textContent = '24mm (Wide 1x)';
-            if (hudAperture) hudAperture.textContent = 'Khẩu Độ: f/1.78 Quad-Pixel';
-          } else if (focalVal === 48) {
-            if (hudFocalLength) hudFocalLength.textContent = '48mm (Tele 2x)';
-            if (hudAperture) hudAperture.textContent = 'Khẩu Độ: f/1.78 Quang Học';
-          } else if (focalVal === 120) {
-            if (hudFocalLength) hudFocalLength.textContent = '120mm (Prism 5x)';
-            if (hudAperture) hudAperture.textContent = 'Khẩu Độ: f/2.8 Tetraprism';
-          }
-        });
-      });
-
-      // 8. DEVICE MATRIX & PURPOSE SELECTION IN FORM
-      const deviceChips = document.querySelectorAll('.device-chip');
-      const selectedDeviceInput = document.getElementById('selectedDevice');
-      const hudSensorName = document.getElementById('hudSensorName');
-
-      deviceChips.forEach(chip => {
-        chip.addEventListener('click', () => {
-          deviceChips.forEach(c => {
-            c.classList.remove('active', 'bg-amber-gold/15', 'border-amber-gold/50');
-            c.classList.add('bg-white/[0.03]', 'border-white/10');
-          });
-          chip.classList.add('active', 'bg-amber-gold/15', 'border-amber-gold/50');
-          chip.classList.remove('bg-white/[0.03]', 'border-white/10');
-          const devVal = chip.getAttribute('data-device');
-          if (selectedDeviceInput) selectedDeviceInput.value = devVal;
-
-          if (hudSensorName) {
-            if (devVal.includes('16')) hudSensorName.textContent = 'A18 Pro • 48MP Fusion';
-            else if (devVal.includes('15')) hudSensorName.textContent = 'A17 Pro • 48MP';
-            else if (devVal.includes('14')) hudSensorName.textContent = 'A16 • 48MP Quad';
-            else hudSensorName.textContent = 'Apple Bionic • 12MP';
-          }
-        });
-      });
-
-      const purposeChips = document.querySelectorAll('.purpose-chip');
-      const selectedPurposeInput = document.getElementById('selectedPurpose');
-
-      purposeChips.forEach(chip => {
-        chip.addEventListener('click', () => {
-          purposeChips.forEach(c => {
-            c.classList.remove('active', 'bg-amber-gold/15', 'border-amber-gold/50');
-            c.classList.add('bg-white/[0.03]', 'border-white/10');
-          });
-          chip.classList.add('active', 'bg-amber-gold/15', 'border-amber-gold/50');
-          chip.classList.remove('bg-white/[0.03]', 'border-white/10');
-          if (selectedPurposeInput) selectedPurposeInput.value = chip.getAttribute('data-type');
-        });
-      });
-
-      // Character counter
-      const userMessage = document.getElementById('userMessage');
-      const charCount = document.getElementById('charCount');
-      if (userMessage && charCount) {
-        userMessage.addEventListener('input', () => {
-          charCount.textContent = `${userMessage.value.length} / 500 ký tự`;
-        });
-      }
-
-      // 9. LOCAL STORAGE TICKET HISTORY
-      function getPastTickets() {
-        try {
-          return JSON.parse(localStorage.getItem('alignai_console_tickets') || '[]');
-        } catch {
-          return [];
-        }
-      }
-
-      function updatePastTicketsCount() {
-        const countSpan = document.getElementById('submissionCount');
-        if (countSpan) countSpan.textContent = getPastTickets().length;
-      }
-      updatePastTicketsCount();
-
-      // Form submission handler
-      const feedbackForm = document.getElementById('alignAiFeedbackForm');
-      const formSuccessModal = document.getElementById('formSuccessModal');
-      const closeSuccessModalBtn = document.getElementById('closeSuccessModalBtn');
-      const ticketIdBadge = document.getElementById('ticketIdBadge');
-
-      if (feedbackForm) {
-        feedbackForm.addEventListener('submit', (e) => {
-          e.preventDefault();
-
-          const name = document.getElementById('userName').value.trim();
-          const email = document.getElementById('userEmail').value.trim();
-          const device = selectedDeviceInput ? selectedDeviceInput.value : 'iPhone 15 Pro / Max';
-          const purpose = selectedPurposeInput ? selectedPurposeInput.value : 'ai_framing';
-          const msg = userMessage ? userMessage.value.trim() : '';
-
-          if (!name || !email || !msg) return;
-
-          const ticketId = 'ALIGN-2026-' + Math.floor(1000 + Math.random() * 9000);
-          const ticketRecord = {
-            id: ticketId,
-            name,
-            email,
-            device,
-            purpose,
-            message: msg,
-            timestamp: new Date().toLocaleString('vi-VN')
-          };
-
-          const tickets = getPastTickets();
-          tickets.unshift(ticketRecord);
-          localStorage.setItem('alignai_console_tickets', JSON.stringify(tickets));
-          updatePastTicketsCount();
-
-          feedbackForm.reset();
-          if (charCount) charCount.textContent = '0 / 500 ký tự';
-          if (ticketIdBadge) ticketIdBadge.textContent = `MÃ PHIẾU: ${ticketId}`;
-
-          if (formSuccessModal) {
-            formSuccessModal.classList.remove('opacity-0', 'pointer-events-none');
-            formSuccessModal.classList.add('opacity-100');
-          }
-        });
-      }
-
-      if (closeSuccessModalBtn && formSuccessModal) {
-        closeSuccessModalBtn.addEventListener('click', () => {
-          formSuccessModal.classList.remove('opacity-100');
-          formSuccessModal.classList.add('opacity-0', 'pointer-events-none');
-        });
-      }
-
-      // History drawer
-      const viewSubmissionsBtn = document.getElementById('viewSubmissionsBtn');
-      const historyDrawerModal = document.getElementById('historyDrawerModal');
-      const closeHistoryBtn = document.getElementById('closeHistoryBtn');
-      const doneHistoryBtn = document.getElementById('doneHistoryBtn');
-      const clearHistoryBtn = document.getElementById('clearHistoryBtn');
-      const historyItemsList = document.getElementById('historyItemsList');
-
-      function renderHistory() {
-        if (!historyItemsList) return;
-        const tickets = getPastTickets();
-        if (tickets.length === 0) {
-          historyItemsList.innerHTML = '<div class="text-zinc-500 py-8 text-center">Chưa có phiếu kỹ thuật nào được lưu trên thiết bị.</div>';
-          return;
-        }
-        historyItemsList.innerHTML = tickets.map(t => `
-          <div class="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
-            <div class="flex items-center justify-between text-[11px] font-mono">
-              <span class="text-amber-gold font-bold">${t.id}</span>
-              <span class="text-zinc-500">${t.timestamp}</span>
-            </div>
-            <div class="text-white font-medium">${t.device} &bull; ${t.name}</div>
-            <div class="text-zinc-400 text-[11px] line-clamp-2">${t.message}</div>
-          </div>
-        `).join('');
-      }
-
-      if (viewSubmissionsBtn && historyDrawerModal) {
-        viewSubmissionsBtn.addEventListener('click', () => {
-          renderHistory();
-          historyDrawerModal.classList.remove('opacity-0', 'pointer-events-none');
-          historyDrawerModal.classList.add('opacity-100');
-        });
-      }
-
-      function closeHistory() {
-        if (historyDrawerModal) {
-          historyDrawerModal.classList.remove('opacity-100');
-          historyDrawerModal.classList.add('opacity-0', 'pointer-events-none');
-        }
-      }
-      if (closeHistoryBtn) closeHistoryBtn.addEventListener('click', closeHistory);
-      if (doneHistoryBtn) doneHistoryBtn.addEventListener('click', closeHistory);
-
-      if (clearHistoryBtn) {
-        clearHistoryBtn.addEventListener('click', () => {
-          localStorage.removeItem('alignai_console_tickets');
-          renderHistory();
-          updatePastTicketsCount();
-        });
-      }
-
-      // 10. SIDELOAD GUIDE TABS
-      const sideloadTabBtns = document.querySelectorAll('.sideload-tab-btn');
-      const sideloadContents = document.querySelectorAll('.sideload-content');
-
-      sideloadTabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-          const method = btn.getAttribute('data-method');
-          sideloadTabBtns.forEach(b => {
-            b.classList.remove('text-void', 'bg-amber-gold');
-            b.classList.add('text-zinc-400');
-          });
-          btn.classList.add('text-void', 'bg-amber-gold');
-          btn.classList.remove('text-zinc-400');
-
-          sideloadContents.forEach(c => c.classList.add('hidden'));
-          if (method === 'sideloadly') document.getElementById('contentSideloadly')?.classList.remove('hidden');
-          if (method === 'trollstore') document.getElementById('contentTrollStore')?.classList.remove('hidden');
-          if (method === 'altstore') document.getElementById('contentAltStore')?.classList.remove('hidden');
-        });
-      });
-
-      // 11. ONLYFANS 18+ MODAL
-      const onlyFansTriggerBtn = document.getElementById('onlyFansTriggerBtn');
-      const ageVerificationModal = document.getElementById('ageVerificationModal');
-      const ageConfirmBtn = document.getElementById('ageConfirmBtn');
-      const ageCancelBtn = document.getElementById('ageCancelBtn');
-
-      if (onlyFansTriggerBtn && ageVerificationModal) {
-        onlyFansTriggerBtn.addEventListener('click', () => {
-          ageVerificationModal.classList.remove('opacity-0', 'pointer-events-none');
-          ageVerificationModal.classList.add('opacity-100');
-        });
-      }
-
-      if (ageCancelBtn && ageVerificationModal) {
-        ageCancelBtn.addEventListener('click', () => {
-          ageVerificationModal.classList.remove('opacity-100');
-          ageVerificationModal.classList.add('opacity-0', 'pointer-events-none');
-        });
-      }
-
-      if (ageConfirmBtn && ageVerificationModal) {
-        ageConfirmBtn.addEventListener('click', () => {
-          ageVerificationModal.classList.remove('opacity-100');
-          ageVerificationModal.classList.add('opacity-0', 'pointer-events-none');
-          window.open('https://onlyfans.com/u493409575', '_blank', 'noopener,noreferrer');
-        });
-      }
-
-      // 12. MOBILE MENU TOGGLE
-      const mobileMenuBtn = document.getElementById('mobileMenuBtn');
-      const mobileMenu = document.getElementById('mobileMenu');
-      if (mobileMenuBtn && mobileMenu) {
-        mobileMenuBtn.addEventListener('click', () => {
-          mobileMenu.classList.toggle('hidden');
-        });
-      }
-
-      // 13. PWA INSTALLATION PROMPT
-      let deferredPrompt;
-      const pwaInstallBtn = document.getElementById('pwaInstallBtn');
-
-      window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        deferredPrompt = e;
-        if (pwaInstallBtn) pwaInstallBtn.classList.remove('hidden');
-      });
-
-      if (pwaInstallBtn) {
-        pwaInstallBtn.addEventListener('click', async () => {
-          if (deferredPrompt) {
-            deferredPrompt.prompt();
-            const { outcome } = await deferredPrompt.userChoice;
-            deferredPrompt = null;
-            if (outcome === 'accepted') pwaInstallBtn.classList.add('hidden');
-          } else {
-            const msg = document.getElementById('formSuccessMessage');
-            if (msg) {
-              msg.textContent = 'Để cài đặt trên iPhone: Chạm biểu tượng Chia sẻ (Share) trên Safari > cuộn xuống và chọn "Thêm vào Màn hình chính" (Add to Home Screen).';
-            }
-            if (ticketIdBadge) ticketIdBadge.textContent = 'HƯỚNG DẪN CÀI ĐẶT PWA';
-            if (formSuccessModal) {
-              formSuccessModal.classList.remove('opacity-0', 'pointer-events-none');
-              formSuccessModal.classList.add('opacity-100');
-            }
-          }
-        });
-      }
-
-      // 14. SERVICE WORKER REGISTRATION (Network-First & Cache Purge)
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(regs => {
-          for (let reg of regs) {
-            reg.update();
-          }
-        });
-        navigator.serviceWorker.register('./sw.js?v=6', { updateViaCache: 'none' })
-          .catch((err) => console.warn('[PWA] Service Worker registration failed:', err));
-      }
-    });
-  </script>
+  <!-- App Interactive Logic Script -->
+  <script src="js/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,218 @@
+/**
+ * Align Camera - Deep Tech Obsidian Design System
+ * Inspired by Apple, Linear, and Stripe design principles.
+ * Zero Emojis. Pure SVG and technical typography.
+ */
+
+:root {
+  --bg-primary: #090A0D;
+  --bg-card: #111318;
+  --bg-card-hover: #151821;
+  --border-subtle: #1E222D;
+  --border-hover: #2D3242;
+  --text-primary: #F2F4F8;
+  --text-secondary: #858B9E;
+  --text-muted: #5E6475;
+  --accent-blue: #3B82F6;
+  --accent-blue-subtle: rgba(59, 130, 246, 0.12);
+  --accent-emerald: #10B981;
+  --accent-emerald-subtle: rgba(16, 185, 129, 0.12);
+  --squircle-radius: 22.37%;
+}
+
+/* Base resets & typography */
+html {
+  scroll-behavior: smooth;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Apple Squircle Geometry Helper */
+.squircle {
+  border-radius: 22.37%;
+}
+
+/* Custom Sleek Dark Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 9999px;
+  border: 2px solid var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}
+
+/* Glassmorphism Navigation Bar */
+.glass-nav {
+  background-color: rgba(9, 10, 13, 0.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Glass Pill Badge */
+.pill-badge {
+  background: rgba(22, 25, 33, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pill-badge:hover,
+.pill-badge.active {
+  border-color: var(--border-hover);
+  background: rgba(30, 34, 45, 0.9);
+  color: var(--text-primary);
+}
+
+.pill-badge.active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+/* Obsidian Interactive Cards */
+.obsidian-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.obsidian-card:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.7),
+              0 0 20px -5px rgba(59, 130, 246, 0.08);
+}
+
+/* HUD Viewfinder Grid (Rule of Thirds) */
+.hud-grid-overlay {
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+  background-size: 33.333% 33.333%;
+}
+
+/* Glowing Pulse Keyframe for Live Bounding Box */
+@keyframes radarPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+.pulse-detection {
+  animation: radarPulse 2.5s infinite cubic-bezier(0.24, 0, 0.38, 1);
+}
+
+/* Horizon Level Balance Animation */
+@keyframes horizonScan {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-0.5deg);
+  }
+}
+
+.horizon-line {
+  animation: horizonScan 6s ease-in-out infinite;
+}
+
+/* Technical FAQ Accordion */
+.accordion-header {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.accordion-header:hover {
+  color: var(--text-primary);
+}
+
+.accordion-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0;
+}
+
+.accordion-item.open .accordion-content {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.accordion-inner {
+  overflow: hidden;
+}
+
+.accordion-icon {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.accordion-item.open .accordion-icon {
+  transform: rotate(180deg);
+}
+
+/* Code Snippet / Checksum Container */
+.code-container {
+  background-color: #07080B;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Copy Toast Tooltip */
+.copy-toast {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+.copy-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Hibernation Standby Mode Simulator Styles */
+.standby-canvas-dark {
+  background-color: #050608;
+  color: #F2F4F8;
+  border: 1px solid var(--border-subtle);
+}
+
+.standby-canvas-light {
+  background-color: #F8FAFC;
+  color: #090A0D;
+  border: 1px solid #E2E8F0;
+}
