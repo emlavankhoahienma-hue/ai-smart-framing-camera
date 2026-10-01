@@ -335,6 +335,22 @@
         }, 3000);
       });
     }
+
+    // Tự động xóa sạch Cache cũ và hủy đăng ký Service Worker từ phiên bản trước
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for (var reg of registrations) {
+          reg.unregister();
+        }
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then(function(names) {
+        for (var name of names) {
+          caches.delete(name);
+        }
+      });
+    }
   </script>
 
 </body>
