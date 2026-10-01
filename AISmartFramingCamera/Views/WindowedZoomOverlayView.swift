@@ -95,45 +95,32 @@ public struct WindowedZoomOverlayView: View {
         )
     }
 
+    private func isPresetSelected(_ preset: WindowedFocalLengthPreset) -> Bool {
+        if preset.focalLength <= 24.0 {
+            return isFull
+        }
+        return abs(viewModel.windowedZoomFocalLength - preset.focalLength) < 2.0
+    }
+
+    private func selectPreset(_ preset: WindowedFocalLengthPreset) {
+        let generator = UISelectionFeedbackGenerator()
+        generator.prepare()
+        generator.selectionChanged()
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
+            viewModel.windowedZoomFocalLength = preset.focalLength
+            viewModel.isAIWindowedFocalRecommended = false
+        }
+    }
+
     private var focalPresetBar: some View {
         HStack(spacing: 6) {
             ForEach(presets) { preset in
-                let isSelected: Bool = {
-                    if preset.focalLength <= 24.0 {
-                        return isFull
-                    } else {
-                        return abs(viewModel.windowedZoomFocalLength - preset.focalLength) < 2.0
-                    }
-                }()
-
-                Button(action: {
-                    let generator = UISelectionFeedbackGenerator()
-                    generator.prepare()
-                    generator.selectionChanged()
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
-                        viewModel.windowedZoomFocalLength = preset.focalLength
-                        viewModel.isAIWindowedFocalRecommended = false
-                    }
-                }) {
-                    ZStack {
-                        if isSelected {
-                            Capsule()
-                                .stroke(amberGold, lineWidth: 1.5)
-                                .background(Capsule().fill(Color.black.opacity(0.40)))
-                                .matchedGeometryEffect(id: "active_windowed_focal_ring", in: focalPillNamespace)
-                        }
-
-                        Text(preset.label)
-                            .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.82))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                    }
-                    .frame(minWidth: 40, height: 32)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Tieu cu \(preset.label)")
+                FocalPresetButton(
+                    preset: preset,
+                    isSelected: isPresetSelected(preset),
+                    action: { selectPreset(preset) },
+                    focalPillNamespace: focalPillNamespace
+                )
             }
         }
         .padding(.horizontal, 8)
@@ -142,6 +129,39 @@ public struct WindowedZoomOverlayView: View {
             Capsule()
                 .fill(Color.black.opacity(0.35))
         )
+    }
+}
+
+// MARK: - Focal Preset Button Subview (Fast Type-Checking)
+private struct FocalPresetButton: View {
+    let preset: WindowedFocalLengthPreset
+    let isSelected: Bool
+    let action: () -> Void
+    var focalPillNamespace: Namespace.ID
+
+    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                if isSelected {
+                    Capsule()
+                        .stroke(amberGold, lineWidth: 1.5)
+                        .background(Capsule().fill(Color.black.opacity(0.40)))
+                        .matchedGeometryEffect(id: "active_windowed_focal_ring", in: focalPillNamespace)
+                }
+
+                Text(preset.label)
+                    .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.82))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+            }
+            .frame(minWidth: 40, height: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("Tieu cu \(preset.label)")
     }
 }
 
