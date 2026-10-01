@@ -157,7 +157,8 @@ private struct FocalPresetButton: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
             }
-            .frame(minWidth: 40, height: 32)
+            .frame(minWidth: 40)
+            .frame(height: 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
