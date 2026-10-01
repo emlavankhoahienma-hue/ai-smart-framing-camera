@@ -44,7 +44,7 @@ public final class LiveEntityTracker: @unchecked Sendable {
             let dt = lastUpdateTimestamp > 0 ? min(0.20, max(0.01, timestamp - lastUpdateTimestamp)) : 0.05
             lastUpdateTimestamp = timestamp
 
-            var remainingCandidates = rawCandidates
+            let remainingCandidates = rawCandidates
             var updatedTracks: [TrackedState] = []
             var matchedCandidateIndices = Set<Int>()
 

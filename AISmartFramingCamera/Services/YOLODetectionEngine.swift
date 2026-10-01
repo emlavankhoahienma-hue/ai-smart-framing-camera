@@ -79,7 +79,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     }
     
     /// Chạy nhận diện người, khuôn mặt, động vật và đồ vật trên CVPixelBuffer.
-    public func detectObjects(
+    func detectObjects(
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation = .up,
         cancellation: CompositionAnalysisCancellation
