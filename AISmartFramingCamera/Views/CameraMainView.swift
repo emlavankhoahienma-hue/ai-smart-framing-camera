@@ -666,33 +666,100 @@ private struct ScanlineRasterView: View {
 
 // MARK: - Standby View khi Camera Ngủ Đông
 struct CameraHibernationStandbyView: View {
-    private let canvasBackground = Color(red: 0.031, green: 0.035, blue: 0.047) // #08090C
+    @AppStorage("camera_standby_is_white_bg") private var isWhiteBackground: Bool = false
+
+    private var currentBackground: Color {
+        isWhiteBackground ? Color(red: 0.965, green: 0.968, blue: 0.975) : Color(red: 0.031, green: 0.035, blue: 0.047)
+    }
+
+    private var primaryTextColor: Color {
+        isWhiteBackground ? Color(red: 0.12, green: 0.13, blue: 0.16) : Color.white
+    }
+
+    private var secondaryTextColor: Color {
+        isWhiteBackground ? Color.black.opacity(0.48) : Color.white.opacity(0.55)
+    }
+
+    private var pillBackground: Color {
+        isWhiteBackground ? Color.black.opacity(0.06) : Color.white.opacity(0.10)
+    }
+
+    private var pillBorderColor: Color {
+        isWhiteBackground ? Color.black.opacity(0.12) : Color.white.opacity(0.16)
+    }
 
     var body: some View {
         ZStack {
-            canvasBackground
+            currentBackground
                 .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.25), value: isWhiteBackground)
 
-            VStack(spacing: 12) {
+            VStack(spacing: 14) {
+                // Biểu tượng Logo mới tách nền
                 if let uiImage = UIImage(named: "AppLogo") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "AppLogo", ofType: "png") ?? "") {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 76, height: 76)
+                        .frame(width: 84, height: 84)
+                        .shadow(color: isWhiteBackground ? Color.black.opacity(0.10) : Color.black.opacity(0.50), radius: 12, y: 4)
                 } else {
                     Image("AppLogo")
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 76, height: 76)
+                        .frame(width: 84, height: 84)
+                        .shadow(color: isWhiteBackground ? Color.black.opacity(0.10) : Color.black.opacity(0.50), radius: 12, y: 4)
                 }
 
-                Text("AlignAI Camera")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .tracking(0.8)
-                    .foregroundColor(.white)
+                VStack(spacing: 4) {
+                    Text("AlignAI Camera")
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .tracking(0.6)
+                        .foregroundColor(primaryTextColor)
+
+                    Text("Hệ thống camera đang sẵn sàng")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(secondaryTextColor)
+                }
+
+                // Nút chuyển đổi nhanh Nền Đen / Nền Trắng
+                Button(action: {
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.impactOccurred()
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        isWhiteBackground.toggle()
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isWhiteBackground ? "moon.fill" : "sun.max.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(isWhiteBackground ? "Nền đen" : "Nền trắng")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(primaryTextColor.opacity(0.80))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(
+                        Capsule()
+                            .fill(pillBackground)
+                            .overlay(
+                                Capsule()
+                                    .stroke(pillBorderColor, lineWidth: 0.8)
+                            )
+                    )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.top, 4)
             }
             .padding(.horizontal, 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.impactOccurred()
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isWhiteBackground.toggle()
+            }
+        }
     }
 }
