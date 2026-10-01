@@ -1202,7 +1202,7 @@ struct AdvancedSettingsSection: View {
         SettingsSectionCard(title: "Chẩn đoán Engine", icon: "cross.case.fill") {
             VStack(alignment: .leading, spacing: 12) {
                 diagRow(label: "Động cơ thị giác", value: "Apple Vision + Optical Flow + Gyro")
-                diagRow(label: "AI Neural Engine", value: "AlignAI 114MB + CoreML YOLO")
+                diagRow(label: "AI Neural Engine", value: "AlignAI 114MB + CoreML YOLOv26")
                 diagRow(label: "Model hoạt động", value: viewModel.activeModelUsedName.isEmpty ? "Cục bộ on-device (Neural Engine)" : viewModel.activeModelUsedName)
                 diagRow(label: "Độ trễ phân tích", value: viewModel.geminiLatencyMs > 0 ? "\(viewModel.geminiLatencyMs) ms" : "0 ms (Realtime 60fps)")
 

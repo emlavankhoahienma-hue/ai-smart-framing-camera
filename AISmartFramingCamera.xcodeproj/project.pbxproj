@@ -71,6 +71,7 @@
 		C2000000000000000000005A /* VintageCamSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005A /* VintageCamSimulations.swift */; };
 		C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005B /* AnalogDVSimulations.swift */; };
 		C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005C /* CinemaAndStudioSimulations.swift */; };
+		C2000000000000000000005D /* LiveEntityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005D /* LiveEntityTracker.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -140,6 +141,7 @@
 		C1000000000000000000005A /* VintageCamSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VintageCamSimulations.swift; sourceTree = "<group>"; };
 		C1000000000000000000005B /* AnalogDVSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalogDVSimulations.swift; sourceTree = "<group>"; };
 		C1000000000000000000005C /* CinemaAndStudioSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CinemaAndStudioSimulations.swift; sourceTree = "<group>"; };
+		C1000000000000000000005D /* LiveEntityTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveEntityTracker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -220,6 +222,7 @@
 				B100000000000000000000027 /* FocusPeakingEngine.swift */,
 				B100000000000000000000028 /* ProVideoManualControlsService.swift */,
 				B100000000000000000000031 /* RobustTargetEmbedder.bin */,
+				C1000000000000000000005D /* LiveEntityTracker.swift */,
 				C30000000000000000000001 /* FilmSimulations */,
 			);
 			path = Services;
@@ -429,6 +432,7 @@
 				C2000000000000000000005A /* VintageCamSimulations.swift in Sources */,
 				C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */,
 				C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */,
+				C2000000000000000000005D /* LiveEntityTracker.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

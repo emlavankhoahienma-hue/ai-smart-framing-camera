@@ -905,15 +905,16 @@ public final class VisionFramingEngine: @unchecked Sendable {
         var result = SubjectDetectionResult()
         var candidates: [LiveDetectedEntity] = []
 
-        // 1. YOLO 80 COCO Classes (if CoreML model is available)
+        // 1. YOLOv26 CoreML (High-Precision Face, Pet, and Human Detection)
         if YOLODetectionEngine.shared.hasYOLOModel {
             let yoloCandidates = YOLODetectionEngine.shared.detectObjects(
                 pixelBuffer: buffer,
                 orientation: orientation,
                 cancellation: CompositionAnalysisCancellation()
             )
-            for c in yoloCandidates where c.confidence >= 0.35 {
-                guard c.category == .human || c.category == .animal else { continue }
+            for c in yoloCandidates where c.confidence >= 0.30 {
+                // Focus strictly on Human, Face, and Animal (Dogs, Cats, Pets)
+                guard c.category == .human || c.category == .animal || c.category == .face else { continue }
                 candidates.append(LiveDetectedEntity(
                     rect: c.boundingBox,
                     label: c.label,
@@ -1024,7 +1025,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
 
     private func deduplicateCandidates(_ list: [LiveDetectedEntity]) -> [LiveDetectedEntity] {
-        var valid: [LiveDetectedEntity] = []
+        var merged: [LiveDetectedEntity] = []
         let sorted = list.sorted {
             if $0.category.priorityWeight != $1.category.priorityWeight {
                 return $0.category.priorityWeight > $1.category.priorityWeight
@@ -1038,16 +1039,40 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 width: max(0, min(1 - max(0, item.rect.minX), item.rect.width)),
                 height: max(0, min(1 - max(0, item.rect.minY), item.rect.height))
             )
-            guard clampedRect.width >= 0.04, clampedRect.height >= 0.04 else { continue }
-            let duplicate = valid.contains { existing in
+            guard clampedRect.width >= 0.03, clampedRect.height >= 0.03 else { continue }
+            
+            // Kiểm tra trùng lặp giữa các mô hình phát hiện (IoU / Overlap)
+            if let matchIdx = merged.firstIndex(where: { existing in
                 let inter = existing.rect.intersection(clampedRect)
                 guard !inter.isNull, !inter.isEmpty else { return false }
                 let interArea = inter.width * inter.height
                 let smallerArea = min(existing.rect.width * existing.rect.height, clampedRect.width * clampedRect.height)
-                return (interArea / smallerArea) > 0.60 && (existing.category == item.category || existing.category == .face)
-            }
-            if !duplicate {
-                valid.append(LiveDetectedEntity(
+                guard smallerArea > 0 else { return false }
+                let overlap = interArea / smallerArea
+                return overlap > 0.55 && (existing.category == item.category || existing.category == .face)
+            }) {
+                let existing = merged[matchIdx]
+                // Nếu cùng loại thực thể (vd: cả YOLO và Vision đều thấy Chó hoặc Người), hợp nhất tọa độ có trọng số
+                if existing.category == item.category {
+                    let totalWeight = CGFloat(existing.confidence + item.confidence)
+                    let w1 = CGFloat(existing.confidence) / totalWeight
+                    let w2 = CGFloat(item.confidence) / totalWeight
+                    let fusedRect = CGRect(
+                        x: existing.rect.minX * w1 + clampedRect.minX * w2,
+                        y: existing.rect.minY * w1 + clampedRect.minY * w2,
+                        width: existing.rect.width * w1 + clampedRect.width * w2,
+                        height: existing.rect.height * w1 + clampedRect.height * w2
+                    )
+                    merged[matchIdx] = LiveDetectedEntity(
+                        id: existing.id,
+                        rect: fusedRect,
+                        label: existing.confidence >= item.confidence ? existing.label : item.label,
+                        confidence: max(existing.confidence, item.confidence),
+                        category: existing.category
+                    )
+                }
+            } else {
+                merged.append(LiveDetectedEntity(
                     id: item.id,
                     rect: clampedRect,
                     label: item.label,
@@ -1056,7 +1081,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 ))
             }
         }
-        return Array(valid.prefix(8))
+        return Array(merged.prefix(8))
     }
 
     private func luminance(_ buffer: CVPixelBuffer) -> (Float, Float) {
@@ -1136,87 +1161,22 @@ public final class VisionFramingEngine: @unchecked Sendable {
     }
 }
 
-// MARK: - Live Detected Entity Smoother (Zero-Jitter EMA & Multi-Object Tracking)
+// MARK: - Live Detected Entity Smoother (Zero-Jitter Adaptive EMA & Multi-Object Tracking)
 
-/// Real-time Exponential Moving Average (EMA) smoother and multi-object tracker.
-/// Eliminates bounding box jitter, suppresses frame drops with grace period,
-/// and stabilizes onscreen entity rendering at 60/120Hz.
+/// Bộ làm mịn và theo dõi đối tượng theo thời gian thực (Adaptive EMA & Multi-Object Tracker).
+/// - Khử rung giật bounding box bằng bộ lọc hàm mũ thích ứng theo vận tốc di chuyển.
+/// - Bảo toàn UUID danh tính thực thể giữa các frame giúp SwiftUI không bị hủy/tạo lại view gây giật lag.
+/// - Duy trì quán tính (Coasting) chống hiện tượng chớp tắt khi nhận diện bị đứt quãng tức thời.
 public final class LiveDetectedEntitySmoother: @unchecked Sendable {
-    private var trackedEntities: [LiveDetectedEntity] = []
-    private let alpha: CGFloat = 0.65
-    private let maxGracePeriod: TimeInterval = 0.25
+    private let tracker = LiveEntityTracker()
 
     public init() {}
 
     public func update(with incoming: [LiveDetectedEntity], timestamp: TimeInterval = CACurrentMediaTime()) -> [LiveDetectedEntity] {
-        var updated: [LiveDetectedEntity] = []
-        var unmatchedIncoming = incoming
-
-        for entity in trackedEntities {
-            var matchedIndex: Int?
-            var bestScore: CGFloat = 0.0
-
-            for (idx, cand) in unmatchedIncoming.enumerated() {
-                let iou = computeIoU(entity.rect, cand.rect)
-                let centerDist = hypot(entity.rect.midX - cand.rect.midX, entity.rect.midY - cand.rect.midY)
-                let score = iou > 0.3 ? iou : (centerDist < 0.12 ? (1.0 - centerDist / 0.12) * 0.5 : 0.0)
-
-                if score > bestScore && score > 0.25 {
-                    bestScore = score
-                    matchedIndex = idx
-                }
-            }
-
-            if let idx = matchedIndex {
-                let cand = unmatchedIncoming.remove(at: idx)
-                let smoothX = alpha * cand.rect.minX + (1.0 - alpha) * entity.rect.minX
-                let smoothY = alpha * cand.rect.minY + (1.0 - alpha) * entity.rect.minY
-                let smoothW = alpha * cand.rect.width + (1.0 - alpha) * entity.rect.width
-                let smoothH = alpha * cand.rect.height + (1.0 - alpha) * entity.rect.height
-                let smoothConf = Float(alpha) * cand.confidence + Float(1.0 - alpha) * entity.confidence
-                let newRect = CGRect(x: smoothX, y: smoothY, width: smoothW, height: smoothH)
-
-                updated.append(LiveDetectedEntity(
-                    id: entity.id,
-                    rect: newRect,
-                    label: cand.label,
-                    confidence: smoothConf,
-                    category: cand.category,
-                    lastSeen: timestamp
-                ))
-            } else if timestamp - entity.lastSeen < maxGracePeriod {
-                updated.append(entity)
-            }
-        }
-
-        for cand in unmatchedIncoming {
-            if cand.confidence >= 0.38 {
-                updated.append(LiveDetectedEntity(
-                    id: UUID(),
-                    rect: cand.rect,
-                    label: cand.label,
-                    confidence: cand.confidence,
-                    category: cand.category,
-                    lastSeen: timestamp
-                ))
-            }
-        }
-
-        updated.sort { ($0.rect.width * $0.rect.height) > ($1.rect.width * $1.rect.height) }
-        let result = Array(updated.prefix(6))
-        trackedEntities = result
-        return result
+        tracker.update(with: incoming, timestamp: timestamp)
     }
 
     public func reset() {
-        trackedEntities.removeAll()
-    }
-
-    private func computeIoU(_ r1: CGRect, _ r2: CGRect) -> CGFloat {
-        let intersection = r1.intersection(r2)
-        guard !intersection.isNull, !intersection.isEmpty else { return 0 }
-        let interArea = intersection.width * intersection.height
-        let unionArea = (r1.width * r1.height) + (r2.width * r2.height) - interArea
-        return unionArea > 0 ? interArea / unionArea : 0
+        tracker.reset()
     }
 }

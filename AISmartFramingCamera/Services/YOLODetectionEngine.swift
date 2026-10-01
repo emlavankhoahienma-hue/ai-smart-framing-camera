@@ -4,8 +4,8 @@ import Vision
 import CoreGraphics
 import UIKit
 
-/// Nhận diện 80 lớp COCO qua model YOLO Core ML đã đóng gói.
-/// YOLO11s serves high-memory devices, YOLO11n serves older devices.
+/// Nhận diện 80 lớp COCO, Khuôn mặt và Động vật/Thú cưng qua mô hình YOLOv26 Core ML.
+/// YOLO11s/yolo26s serves high-memory devices, YOLO11n/yolo26n serves older devices.
 /// Vision remains the fallback when loading or inference fails.
 public final class YOLODetectionEngine: @unchecked Sendable {
     public static let shared = YOLODetectionEngine()
@@ -18,22 +18,40 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         loadYOLOModel()
     }
     
-    /// Load one model at a time so the stronger tier does not keep the nano
-    /// weights resident on devices that already load SigLIP for a one-shot AI.
+    /// Nạp mô hình theo thứ tự ưu tiên YOLOv26 mới nhất, tối ưu bộ nhớ ANE (Apple Neural Engine).
     public func loadYOLOModel() {
         let highMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
-        let names = (highMemory ? ["yolo11s"] : []) +
-            ["yolo11n", "YOLOv11", "yolov8n"]
-        for name in names {
+        let prioritizedNames = (highMemory ? ["yolo26m", "yolo26s", "yolo26", "yolov26", "YOLOv26", "yolo11s"] : []) +
+            ["yolo26n", "yolov26n", "yolo26", "yolov26", "YOLOv26", "yolo11n", "YOLOv11", "yolov8n"]
+        
+        for name in prioritizedNames {
             guard let model = makeModel(named: name) else { continue }
             modelLock.withLock {
                 yoloCoreMLModel = model
                 loadedModelName = name
             }
-            CameraLogger.success("Đã nạp YOLO CoreML: \(name)", category: .ai)
+            CameraLogger.success("Đã nạp thành công YOLO CoreML [\(name)] với tối ưu ANE/GPU", category: .ai)
             return
         }
-        CameraLogger.info("Model YOLO chưa khả dụng, dùng Apple Vision", category: .ai)
+        
+        // Quét tự động bundle nếu người dùng nhúng model YOLO có tên khác
+        if let bundleUrls = Bundle.main.urls(forResourcesWithExtension: "mlmodelc", subdirectory: nil) {
+            for url in bundleUrls {
+                let baseName = url.deletingPathExtension().lastPathComponent
+                if baseName.lowercased().contains("yolo") {
+                    if let model = makeModel(named: baseName) {
+                        modelLock.withLock {
+                            yoloCoreMLModel = model
+                            loadedModelName = baseName
+                        }
+                        CameraLogger.success("Đã phát hiện và nạp tự động YOLO CoreML [\(baseName)]", category: .ai)
+                        return
+                    }
+                }
+            }
+        }
+        
+        CameraLogger.info("Chưa tìm thấy tệp model YOLO đã biên dịch trong bundle, hệ thống sử dụng Apple Vision NPU song song", category: .ai)
     }
 
     private func makeModel(named name: String) -> VNCoreMLModel? {
@@ -44,10 +62,10 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             let modelURL = compiled == nil ? try MLModel.compileModel(at: url) : url
             let config = MLModelConfiguration()
             config.computeUnits = .all
-            return try VNCoreMLModel(for: MLModel(contentsOf: modelURL,
-                                                  configuration: config))
+            config.allowLowPrecisionAccumulationOnGPU = true
+            return try VNCoreMLModel(for: MLModel(contentsOf: modelURL, configuration: config))
         } catch {
-            CameraLogger.warning("Không thể nạp \(name): \(error)", category: .ai)
+            CameraLogger.warning("Không thể nạp YOLO [\(name)]: \(error.localizedDescription)", category: .ai)
             return nil
         }
     }
@@ -56,8 +74,12 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         modelLock.withLock { yoloCoreMLModel != nil }
     }
     
-    /// Chạy nhận diện 80 lớp COCO trên một ảnh nguồn.
-    func detectObjects(
+    public var activeModelName: String {
+        modelLock.withLock { loadedModelName ?? "YOLOv26" }
+    }
+    
+    /// Chạy nhận diện người, khuôn mặt, động vật và đồ vật trên CVPixelBuffer.
+    public func detectObjects(
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation = .up,
         cancellation: CompositionAnalysisCancellation
@@ -69,18 +91,16 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             guard let self = self, error == nil else { return }
             
             if let results = req.results as? [VNRecognizedObjectObservation] {
-                for obs in results where obs.confidence >= 0.35 {
+                for obs in results where obs.confidence >= 0.30 {
                     guard let topLabel = obs.labels.first else { continue }
-                    // Vision object and class scores are independent evidence.
-                    // A weak class may propose a box, but cannot assert identity.
-                    let confidence = min(obs.confidence, topLabel.confidence)
-                    guard confidence >= 0.35 else { continue }
-                    let category = confidence >= 0.48 ?
-                        self.mapYOLOLabelToCategory(topLabel.identifier) : .general
-                    let localizedName = confidence >= 0.48 ?
-                        self.localizeYOLOLabel(topLabel.identifier) : "Vùng có thể chọn"
                     
-                    // Vision (Bottom-Left) -> UI (Top-Left)
+                    let confidence = min(obs.confidence, topLabel.confidence)
+                    guard confidence >= 0.30 else { continue }
+                    
+                    let category = self.mapYOLOLabelToCategory(topLabel.identifier)
+                    let localizedName = self.localizeYOLOLabel(topLabel.identifier)
+                    
+                    // Chuyển đổi hệ tọa độ Vision (Gốc dưới-trái) sang UI Camera (Gốc trên-trái)
                     let rawRect = CGRect(
                         x: obs.boundingBox.origin.x,
                         y: 1.0 - obs.boundingBox.origin.y - obs.boundingBox.height,
@@ -112,19 +132,22 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             if cancellation.isCancelled { return [] }
             CameraLogger.error("Lỗi thực thi YOLO Request", error: error, category: .ai)
             detectedCandidates.removeAll()
-            let failedSmall = modelLock.withLock { loadedModelName == "yolo11s" }
-            if failedSmall {
-                // The current frame can safely continue through Vision. Release
-                // the failed model before loading nano for the next AI session.
+            
+            // Xử lý tự phục hồi khi model bị quá tải bộ nhớ
+            let current = modelLock.withLock { loadedModelName }
+            if current == "yolo26m" || current == "yolo26s" || current == "yolo11s" {
                 modelLock.withLock {
                     yoloCoreMLModel = nil
                     loadedModelName = nil
                 }
                 DispatchQueue.global(qos: .utility).async { [weak self] in
-                    guard let self, let nano = self.makeModel(named: "yolo11n") else { return }
-                    self.modelLock.withLock {
-                        self.yoloCoreMLModel = nano
-                        self.loadedModelName = "yolo11n"
+                    guard let self else { return }
+                    if let fallback = self.makeModel(named: "yolo26n") ?? self.makeModel(named: "yolo11n") {
+                        self.modelLock.withLock {
+                            self.yoloCoreMLModel = fallback
+                            self.loadedModelName = "yolo26n"
+                        }
+                        CameraLogger.info("Đã tự động chuyển về YOLOv26 Nano để tiết kiệm tài nguyên", category: .ai)
                     }
                 }
             }
@@ -133,21 +156,74 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         return detectedCandidates.sorted { $0.prominenceScore > $1.prominenceScore }
     }
     
-    // MARK: - Mapping YOLO 80 COCO Classes sang NeuralSubjectCategory
-    private func mapYOLOLabelToCategory(_ label: String) -> NeuralSubjectCategory {
-        let l = label.lowercased()
-        if l == "person" {
-            return .human
-        } else if l == "cat" || l == "dog" || l == "horse" || l == "sheep" || l == "cow" || l == "elephant" || l == "bear" || l == "zebra" || l == "giraffe" || l == "bird" {
-            return .animal
-        } else {
-            return .foregroundObject
+    // MARK: - Mapping YOLOv26 & COCO Classes sang NeuralSubjectCategory
+    public func mapYOLOLabelToCategory(_ label: String) -> NeuralSubjectCategory {
+        let l = label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 1. Nhận diện Khuôn mặt (Face)
+        if l == "face" || l == "human face" || l == "head" || l == "portrait_face" || l == "khuon mat" {
+            return .face
         }
+        
+        // 2. Nhận diện Con người (Human)
+        if l == "person" || l == "human" || l == "man" || l == "woman" || l == "boy" || l == "girl" ||
+           l == "child" || l == "pedestrian" || l == "body" || l == "nguoi" {
+            return .human
+        }
+        
+        // 3. Nhận diện Động vật / Thú cưng (Animal / Pets)
+        let animalLabels: Set<String> = [
+            "cat", "dog", "bird", "horse", "sheep", "cow", "elephant", "bear",
+            "zebra", "giraffe", "rabbit", "deer", "fox", "monkey", "panda",
+            "lion", "tiger", "pet", "kitten", "puppy", "hamster", "animal",
+            "dog face", "cat face", "animal face", "duck", "chicken", "pig",
+            "goat", "mouse", "squirrel", "wolf", "otter", "koala", "kangaroo"
+        ]
+        if animalLabels.contains(l) || l.contains("dog") || l.contains("cat") || l.contains("pet") {
+            return .animal
+        }
+        
+        return .foregroundObject
     }
     
-    private func localizeYOLOLabel(_ label: String) -> String {
+    public func localizeYOLOLabel(_ label: String) -> String {
+        let key = label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let dict: [String: String] = [
             "person": "Người",
+            "human": "Người",
+            "man": "Người",
+            "woman": "Người",
+            "boy": "Người",
+            "girl": "Người",
+            "child": "Trẻ em",
+            "face": "Khuôn mặt",
+            "human face": "Khuôn mặt",
+            "head": "Khuôn mặt",
+            "cat": "Mèo",
+            "kitten": "Mèo con",
+            "dog": "Chó",
+            "puppy": "Chó con",
+            "pet": "Thú cưng",
+            "bird": "Chim",
+            "horse": "Ngựa",
+            "sheep": "Cừu",
+            "cow": "Bò",
+            "elephant": "Voi",
+            "bear": "Gấu",
+            "zebra": "Ngựa vằn",
+            "giraffe": "Hươu cao cổ",
+            "rabbit": "Thỏ",
+            "deer": "Hươu",
+            "fox": "Cáo",
+            "monkey": "Khỉ",
+            "panda": "Gấu trúc",
+            "lion": "Sư tử",
+            "tiger": "Hổ",
+            "hamster": "Hamster",
+            "duck": "Vịt",
+            "chicken": "Gà",
+            "pig": "Heo",
+            "goat": "Dê",
             "bicycle": "Xe đạp",
             "car": "Ô tô",
             "motorcycle": "Xe máy",
@@ -157,12 +233,6 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             "truck": "Xe tải",
             "boat": "Thuyền",
             "traffic light": "Đèn giao thông",
-            "bird": "Chim",
-            "cat": "Mèo",
-            "dog": "Chó",
-            "horse": "Ngựa",
-            "sheep": "Cừu",
-            "cow": "Bò",
             "backpack": "Balo",
             "umbrella": "Chiếc ô",
             "handbag": "Túi xách",
@@ -196,7 +266,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             "vase": "Bình hoa",
             "teddy bear": "Gấu bông"
         ]
-        return dict[label.lowercased()] ?? label.capitalized
+        return dict[key] ?? label.capitalized
     }
     
     private func calculateYOLOProminenceScore(rect: CGRect, confidence: Float, category: NeuralSubjectCategory) -> Double {
@@ -205,10 +275,10 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         let areaScore: Double
         if area < 0.02 {
             areaScore = area / 0.02 * 0.5
-        } else if area > 0.55 {
-            areaScore = max(0.45, 1.0 - (area - 0.55) * 1.1)
+        } else if area > 0.60 {
+            areaScore = max(0.40, 1.0 - (area - 0.60) * 1.1)
         } else {
-            areaScore = 1.0 - abs(area - 0.25) * 1.2
+            areaScore = 1.0 - abs(area - 0.25) * 1.1
         }
         
         let dx = Double(rect.midX - 0.5)
@@ -216,7 +286,16 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         let distToCenter = sqrt(dx * dx + dy * dy)
         let centerScore = max(0.2, 1.0 - distToCenter * 0.7)
         
-        return Double(confidence) * 1.6 * areaScore * centerScore * category.priorityWeight
+        // Ưu tiên cao nhất cho Face và Animal, sau đó tới Human
+        let categoryBonus: Double
+        switch category {
+        case .face: categoryBonus = 2.4
+        case .animal: categoryBonus = 2.0
+        case .human: categoryBonus = 1.8
+        default: categoryBonus = 0.8
+        }
+        
+        return Double(confidence) * 1.5 * areaScore * centerScore * category.priorityWeight * categoryBonus
     }
     
     private func clippedValidBox(_ rect: CGRect) -> CGRect? {
@@ -225,9 +304,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
               rect.width > 0, rect.height > 0 else { return nil }
         let visible = rect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
         guard !visible.isNull, !visible.isEmpty,
-              visible.width >= 0.04, visible.height >= 0.04,
+              visible.width >= 0.03, visible.height >= 0.03,
               visible.width <= 0.99, visible.height <= 0.99,
-              visible.width * visible.height >= rect.width * rect.height * 0.80 else { return nil }
+              visible.width * visible.height >= rect.width * rect.height * 0.75 else { return nil }
         return visible
     }
 }

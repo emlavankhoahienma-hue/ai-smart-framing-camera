@@ -45,11 +45,13 @@ public struct ARFramingOverlayView: View {
                     }
                     ForEach(unpinnedEntities) { entity in
                         let layerRect = viewModel.convertMetadataRectToLayerRect(entity.rect, in: size)
-                        LiveEntityBoxView(entity: entity, layerRect: layerRect) {
-                            viewModel.pinTargetAndStartMotion(
-                                at: CGPoint(x: entity.rect.midX, y: entity.rect.midY),
-                                subjectRect: entity.rect
-                            )
+                        if layerRect.width >= 12, layerRect.height >= 12 {
+                            LiveEntityBoxView(entity: entity, layerRect: layerRect) {
+                                viewModel.pinTargetAndStartMotion(
+                                    at: CGPoint(x: entity.rect.midX, y: entity.rect.midY),
+                                    subjectRect: entity.rect
+                                )
+                            }
                         }
                     }
                 }

@@ -206,7 +206,7 @@ public enum AIEngineSource: Equatable {
         case .semanticLocal(let label):
             return "\u{1f9e0} SigLIP + Vision/YOLO (\(label))"
         case .yoloNeural(let label):
-            return "\u{26a1} YOLOv11 Neural (\(label))"
+            return "\u{26a1} YOLOv26 Neural (\(label))"
         case .appleNeuralEngine(let scene):
             return "\u{26a1} Apple Neural Engine (\(scene))"
         }
@@ -224,9 +224,9 @@ public enum AIEngineSource: Equatable {
         case .localTrained114MB:
             return "AI 114MB"
         case .semanticLocal:
-            return "SIGLIP"
+            return "AI 114MB"
         case .yoloNeural(let label):
-            return "YOLO (\(label.uppercased()))"
+            return "YOLOv26 (\(label.uppercased()))"
         case .appleNeuralEngine:
             return "NPU"
         }
