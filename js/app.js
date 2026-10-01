@@ -1,30 +1,28 @@
 /**
- * Align Camera - Core Interactive Scripts
+ * Align Camera - Core Interactive Scripts (MWM Architecture)
  * Handles FAQ accordion toggles, clipboard operations with visual feedback,
- * active scroll spying on navigation pills, and interactive camera simulations.
+ * and active scroll tracking on navigation pills.
  * Zero emojis. Pure semantic engineering.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  initNavigationSpy();
+  initNavigationPills();
   initFaqAccordion();
   initChecksumCopy();
-  initStandbyDemo();
-  initViewfinderDemo();
 });
 
 /**
- * 1. Navigation Active State & Smooth Scroll
+ * 1. Navigation Pills Active State & Smooth Scroll Tracking
  */
-function initNavigationSpy() {
-  const navLinks = document.querySelectorAll('.nav-pill-link');
+function initNavigationPills() {
+  const navLinks = document.querySelectorAll('.mwm-pill');
   const sections = document.querySelectorAll('section[id]');
 
   if (!sections.length || !navLinks.length) return;
 
   const observerOptions = {
     root: null,
-    rootMargin: '-20% 0px -60% 0px',
+    rootMargin: '-20% 0px -50% 0px',
     threshold: 0
   };
 
@@ -47,23 +45,23 @@ function initNavigationSpy() {
 }
 
 /**
- * 2. FAQ Accordion Toggle System
+ * 2. FAQ Accordion System
  */
 function initFaqAccordion() {
-  const accordionHeaders = document.querySelectorAll('.accordion-header');
+  const accordionHeaders = document.querySelectorAll('.mwm-accordion-header');
 
   accordionHeaders.forEach((header) => {
     header.addEventListener('click', () => {
-      const parentItem = header.closest('.accordion-item');
+      const parentItem = header.closest('.mwm-accordion-item');
       if (!parentItem) return;
 
       const isOpen = parentItem.classList.contains('open');
 
-      // Close all other accordions for clean single-focus reading
-      document.querySelectorAll('.accordion-item').forEach((item) => {
+      // Close all other accordions for focused reading
+      document.querySelectorAll('.mwm-accordion-item').forEach((item) => {
         if (item !== parentItem) {
           item.classList.remove('open');
-          const itemHeader = item.querySelector('.accordion-header');
+          const itemHeader = item.querySelector('.mwm-accordion-header');
           if (itemHeader) {
             itemHeader.setAttribute('aria-expanded', 'false');
           }
@@ -100,7 +98,6 @@ function initChecksumCopy() {
         if (navigator.clipboard && window.isSecureContext) {
           await navigator.clipboard.writeText(hashValue);
         } else {
-          // Fallback for non-https or older browser contexts
           const textArea = document.createElement('textarea');
           textArea.value = hashValue;
           textArea.style.position = 'fixed';
@@ -146,73 +143,4 @@ function initChecksumCopy() {
       }
     });
   });
-}
-
-/**
- * 4. Hibernation Standby Simulation (Dark / Light Canvas Switcher)
- */
-function initStandbyDemo() {
-  const toggleBtn = document.getElementById('toggleStandbyThemeBtn');
-  const canvas = document.getElementById('standbyCanvas');
-  const modeText = document.getElementById('standbyModeText');
-  const logoPath = document.getElementById('standbyLogoPath');
-
-  if (!toggleBtn || !canvas) return;
-
-  let isDark = true;
-
-  toggleBtn.addEventListener('click', () => {
-    isDark = !isDark;
-    if (isDark) {
-      canvas.classList.remove('standby-canvas-light');
-      canvas.classList.add('standby-canvas-dark');
-      toggleBtn.textContent = 'Chuyển sang Nền Trắng';
-      if (modeText) modeText.textContent = 'Trạng thái: Nền Đen Tối Giản (OLED Pure Black)';
-      if (logoPath) logoPath.setAttribute('stroke', '#F2F4F8');
-    } else {
-      canvas.classList.remove('standby-canvas-dark');
-      canvas.classList.add('standby-canvas-light');
-      toggleBtn.textContent = 'Chuyển sang Nền Đen';
-      if (modeText) modeText.textContent = 'Trạng thái: Nền Trắng Tinh Khiết (Studio White)';
-      if (logoPath) logoPath.setAttribute('stroke', '#090A0D');
-    }
-  });
-}
-
-/**
- * 5. Interactive Viewfinder HUD Filters
- */
-function initViewfinderDemo() {
-  const gridToggle = document.getElementById('btnToggleGrid');
-  const gridOverlay = document.getElementById('viewfinderGrid');
-  const targetLabel = document.getElementById('hudTargetType');
-  const confLabel = document.getElementById('hudConfScore');
-
-  if (gridToggle && gridOverlay) {
-    gridToggle.addEventListener('click', () => {
-      const isHidden = gridOverlay.classList.contains('opacity-0');
-      if (isHidden) {
-        gridOverlay.classList.remove('opacity-0');
-        gridToggle.classList.add('border-[#3B82F6]', 'text-[#3B82F6]');
-      } else {
-        gridOverlay.classList.add('opacity-0');
-        gridToggle.classList.remove('border-[#3B82F6]', 'text-[#3B82F6]');
-      }
-    });
-  }
-
-  // Periodic simulated target tracking coordinates & latency fluctuation
-  const coordsLabel = document.getElementById('hudCoords');
-  const latencyLabel = document.getElementById('hudLatency');
-
-  if (coordsLabel && latencyLabel) {
-    setInterval(() => {
-      const lat = (1.4 + Math.random() * 2.2).toFixed(1);
-      latencyLabel.textContent = `ANE ${lat}ms`;
-
-      const x = (0.45 + (Math.random() - 0.5) * 0.06).toFixed(3);
-      const y = (0.50 + (Math.random() - 0.5) * 0.04).toFixed(3);
-      coordsLabel.textContent = `NORM [${x}, ${y}]`;
-    }, 1800);
-  }
 }

@@ -1,30 +1,26 @@
 /**
- * Align Camera - Deep Tech Obsidian Design System
- * Inspired by Apple, Linear, and Stripe design principles.
- * Zero Emojis. Pure SVG and technical typography.
+ * Align Camera - MWM & Apple Premium Minimalist Design System
+ * Inspired by MWM Intelligence & Apple Developer UX architectures.
+ * Absolutely Zero Emojis. Pure typography and crisp SVG vectors.
  */
 
 :root {
-  --bg-primary: #090A0D;
-  --bg-card: #111318;
-  --bg-card-hover: #151821;
-  --border-subtle: #1E222D;
-  --border-hover: #2D3242;
-  --text-primary: #F2F4F8;
-  --text-secondary: #858B9E;
-  --text-muted: #5E6475;
-  --accent-blue: #3B82F6;
-  --accent-blue-subtle: rgba(59, 130, 246, 0.12);
-  --accent-emerald: #10B981;
-  --accent-emerald-subtle: rgba(16, 185, 129, 0.12);
-  --squircle-radius: 22.37%;
+  --mwm-bg: #090A0D;
+  --mwm-card: #111318;
+  --mwm-card-hover: #151821;
+  --mwm-border: #1E222D;
+  --mwm-border-hover: #2D3242;
+  --mwm-text: #F2F4F8;
+  --mwm-text-muted: #858B9E;
+  --mwm-text-subtle: #5E6475;
+  --mwm-accent-blue: #3B82F6;
+  --mwm-accent-emerald: #10B981;
 }
 
-/* Base resets & typography */
 html {
   scroll-behavior: smooth;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+  background-color: var(--mwm-bg);
+  color: var(--mwm-text);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, sans-serif;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -32,187 +28,197 @@ html {
 }
 
 body {
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+  background-color: var(--mwm-bg);
+  color: var(--mwm-text);
   min-height: 100vh;
   overflow-x: hidden;
 }
 
-/* Apple Squircle Geometry Helper */
-.squircle {
-  border-radius: 22.37%;
-}
-
-/* Custom Sleek Dark Scrollbar */
+/* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-primary);
+  background: var(--mwm-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-subtle);
+  background: #1C202B;
   border-radius: 9999px;
-  border: 2px solid var(--bg-primary);
+  border: 1px solid var(--mwm-bg);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--border-hover);
+  background: #2D3242;
 }
 
-/* Glassmorphism Navigation Bar */
-.glass-nav {
-  background-color: rgba(9, 10, 13, 0.82);
+/* Top Glass Navigation */
+.mwm-navbar {
+  background-color: rgba(9, 10, 13, 0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--mwm-border);
 }
 
-/* Glass Pill Badge */
-.pill-badge {
-  background: rgba(22, 25, 33, 0.7);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border-subtle);
+/* MWM Hero Card Surface */
+.mwm-hero-card {
+  background-color: var(--mwm-card);
+  border: 1px solid var(--mwm-border);
+  border-radius: 24px;
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6);
+  transition: border-color 0.25s ease;
+}
+
+.mwm-hero-card:hover {
+  border-color: var(--mwm-border-hover);
+}
+
+/* Metrics Mini Boxes inside Hero Card */
+.mwm-metric-box {
+  background-color: #0C0E12;
+  border: 1px solid var(--mwm-border);
+  border-radius: 14px;
+  padding: 16px 20px;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.pill-badge:hover,
-.pill-badge.active {
-  border-color: var(--border-hover);
-  background: rgba(30, 34, 45, 0.9);
-  color: var(--text-primary);
+.mwm-metric-box:hover {
+  border-color: var(--mwm-border-hover);
+  background-color: #0F1217;
 }
 
-.pill-badge.active {
-  border-color: var(--accent-blue);
-  color: var(--accent-blue);
+/* Navigation Pills */
+.mwm-pill {
+  padding: 8px 18px;
+  border-radius: 9999px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--mwm-text-muted);
+  border: 1px solid transparent;
+  background-color: transparent;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
-/* Obsidian Interactive Cards */
-.obsidian-card {
-  background-color: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 16px;
-  transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+.mwm-pill:hover {
+  color: var(--mwm-text);
+  background-color: rgba(255, 255, 255, 0.05);
 }
 
-.obsidian-card:hover {
-  border-color: var(--border-hover);
-  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.7),
-              0 0 20px -5px rgba(59, 130, 246, 0.08);
+.mwm-pill.active {
+  background-color: #F2F4F8;
+  color: #090A0D;
+  font-weight: 600;
 }
 
-/* HUD Viewfinder Grid (Rule of Thirds) */
-.hud-grid-overlay {
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
-  background-size: 33.333% 33.333%;
+/* UX Insights Showcase Card */
+.mwm-insight-card {
+  background-color: #101217;
+  border: 1px solid var(--mwm-border);
+  border-radius: 20px;
+  overflow: hidden;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
-/* Glowing Pulse Keyframe for Live Bounding Box */
-@keyframes radarPulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
-  }
+.mwm-insight-card:hover {
+  border-color: var(--mwm-border-hover);
+  box-shadow: 0 15px 35px -10px rgba(0, 0, 0, 0.5);
 }
 
-.pulse-detection {
-  animation: radarPulse 2.5s infinite cubic-bezier(0.24, 0, 0.38, 1);
+/* iPhone Phone Bezel Frame */
+.iphone-frame {
+  position: relative;
+  width: 100%;
+  max-width: 250px;
+  aspect-ratio: 9 / 19.5;
+  background: #000000;
+  border: 8px solid #1E222D;
+  border-radius: 38px;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.8),
+              inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-/* Horizon Level Balance Animation */
-@keyframes horizonScan {
-  0%, 100% {
-    transform: rotate(0deg);
-  }
-  50% {
-    transform: rotate(-0.5deg);
-  }
+/* Dynamic Island */
+.iphone-island {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 72px;
+  height: 20px;
+  background: #000000;
+  border-radius: 20px;
+  z-index: 30;
 }
 
-.horizon-line {
-  animation: horizonScan 6s ease-in-out infinite;
+/* Capability Map Grid Cards (from MWM Screenshot 5) */
+.mwm-capability-card {
+  background-color: #111318;
+  border: 1px solid var(--mwm-border);
+  border-radius: 18px;
+  padding: 28px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Technical FAQ Accordion */
-.accordion-header {
+.mwm-capability-card:hover {
+  border-color: var(--mwm-border-hover);
+  background-color: #141720;
+  transform: translateY(-2px);
+}
+
+/* Accordion Transitions */
+.mwm-accordion-item {
+  background-color: #111318;
+  border: 1px solid var(--mwm-border);
+  border-radius: 14px;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.mwm-accordion-item:hover {
+  border-color: var(--mwm-border-hover);
+}
+
+.mwm-accordion-header {
   cursor: pointer;
   user-select: none;
-  transition: color 0.2s ease, background-color 0.2s ease;
 }
 
-.accordion-header:hover {
-  color: var(--text-primary);
-}
-
-.accordion-content {
+.mwm-accordion-content {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+              opacity 0.25s ease;
   opacity: 0;
 }
 
-.accordion-item.open .accordion-content {
+.mwm-accordion-item.open .mwm-accordion-content {
   grid-template-rows: 1fr;
   opacity: 1;
 }
 
-.accordion-inner {
+.mwm-accordion-inner {
   overflow: hidden;
 }
 
-.accordion-icon {
+.mwm-accordion-icon {
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.accordion-item.open .accordion-icon {
+.mwm-accordion-item.open .mwm-accordion-icon {
   transform: rotate(180deg);
 }
 
-/* Code Snippet / Checksum Container */
-.code-container {
+/* Code Container for SHA-256 */
+.mwm-code-box {
   background-color: #07080B;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-/* Copy Toast Tooltip */
-.copy-toast {
-  opacity: 0;
-  transform: translateY(4px);
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  pointer-events: none;
-}
-
-.copy-toast.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* Hibernation Standby Mode Simulator Styles */
-.standby-canvas-dark {
-  background-color: #050608;
-  color: #F2F4F8;
-  border: 1px solid var(--border-subtle);
-}
-
-.standby-canvas-light {
-  background-color: #F8FAFC;
-  color: #090A0D;
-  border: 1px solid #E2E8F0;
+  border: 1px solid var(--mwm-border);
+  border-radius: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
