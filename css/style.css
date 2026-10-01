@@ -1,34 +1,50 @@
 /**
- * Align Camera - MWM & Apple Premium Minimalist Design System
- * Inspired by MWM Intelligence & Apple Developer UX architectures.
- * Absolutely Zero Emojis. Pure typography and crisp SVG vectors.
+ * Align Camera - MWM Intelligence Design System
+ * 1:1 Color Tokens, Typography, Card Metrics, and Responsive Framework
+ * Supports Mobile (<640px), Tablet (640-1024px), Desktop (1024-1440px), and Ultra-wide / 4K TV (>1440px)
+ * Zero Emojis. Pure Semantic Engineering.
  */
 
 :root {
-  --mwm-bg: #090A0D;
-  --mwm-card: #111318;
-  --mwm-card-hover: #151821;
-  --mwm-border: #1E222D;
-  --mwm-border-hover: #2D3242;
-  --mwm-text: #F2F4F8;
-  --mwm-text-muted: #858B9E;
-  --mwm-text-subtle: #5E6475;
-  --mwm-accent-blue: #3B82F6;
-  --mwm-accent-emerald: #10B981;
+  --mwm-ink: #0c0c0c;
+  --mwm-ink-alt: #08090a;
+  --mwm-surface-1: #141414;
+  --mwm-surface-2: #181818;
+  --mwm-surface-hover: #1e1e1e;
+  --mwm-control: #2a2a2a;
+  --mwm-control-active: #3d3d3d;
+  --mwm-hairline: #1f2128;
+  --mwm-border: #242630;
+  --mwm-orange: #ff5301;
+  --mwm-orange-hot: #ff4814;
+  --mwm-orange-muted: rgba(255, 83, 1, 0.72);
+  --mwm-orange-border: rgba(255, 83, 1, 0.22);
+  --mwm-blue: #3b82f6;
+  --mwm-emerald: #10b981;
+  --mwm-text: #ffffff;
+  --mwm-text-muted: #9a9a9a;
+  --mwm-text-body: #858585;
+  --mwm-text-tertiary: #616161;
+  --mwm-font-ui: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+  --mwm-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --mwm-eyebrow-track: 0.12em;
+  --mwm-radius-btn: 10px;
+  --mwm-radius-card: 20px;
+  --mwm-radius-panel: 24px;
 }
 
 html {
   scroll-behavior: smooth;
-  background-color: var(--mwm-bg);
+  background-color: var(--mwm-ink);
   color: var(--mwm-text);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, sans-serif;
+  font-family: var(--mwm-font-ui);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  background-color: var(--mwm-bg);
+  background-color: var(--mwm-ink);
   color: var(--mwm-text);
   min-height: 100vh;
   overflow-x: hidden;
@@ -36,189 +52,325 @@ body {
 
 /* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--mwm-bg);
+  background: var(--mwm-ink);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1C202B;
+  background: #242630;
   border-radius: 9999px;
-  border: 1px solid var(--mwm-bg);
+  border: 2px solid var(--mwm-ink);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #2D3242;
+  background: #383c4c;
 }
 
-/* Top Glass Navigation */
+/* Master Responsive Shell (Mobile, Tablet, Desktop, TV) */
+.app-detail-shell {
+  margin-inline: auto;
+  max-width: 1180px;
+  width: calc(100% - 2rem);
+}
+
+/* 4K TV & Ultra-wide Monitors (>1440px and >1920px) */
+@media (min-width: 1440px) {
+  .app-detail-shell {
+    max-width: 1320px;
+  }
+}
+
+@media (min-width: 1920px) {
+  .app-detail-shell {
+    max-width: 1480px;
+    width: calc(100% - 4rem);
+  }
+}
+
+/* MWM Fixed Navigation Bar */
 .mwm-navbar {
-  background-color: rgba(9, 10, 13, 0.85);
+  background-color: rgba(12, 12, 12, 0.88);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--mwm-border);
+  border-bottom: 1px solid var(--mwm-hairline);
 }
 
-/* MWM Hero Card Surface */
-.mwm-hero-card {
-  background-color: var(--mwm-card);
-  border: 1px solid var(--mwm-border);
-  border-radius: 24px;
-  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6);
-  transition: border-color 0.25s ease;
+/* MWM Eyebrow Chips */
+.app-section-chip {
+  align-items: center;
+  box-shadow: none;
+  color: var(--mwm-orange);
+  display: inline-flex;
+  font-family: var(--mwm-font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  gap: 8px;
+  letter-spacing: var(--mwm-eyebrow-track);
+  margin-bottom: 0.75rem;
+  padding: 0;
+  text-transform: uppercase;
 }
 
-.mwm-hero-card:hover {
-  border-color: var(--mwm-border-hover);
+/* MWM Hero Panel */
+.app-hero-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)), var(--mwm-surface-1);
+  border: 1px solid var(--mwm-hairline);
+  border-radius: var(--mwm-radius-panel);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 20px 45px -15px rgba(0, 0, 0, 0.7);
+  transition: border-color 0.26s ease;
 }
 
-/* Metrics Mini Boxes inside Hero Card */
-.mwm-metric-box {
-  background-color: #0C0E12;
-  border: 1px solid var(--mwm-border);
-  border-radius: 14px;
-  padding: 16px 20px;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+.app-hero-panel:hover {
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
-.mwm-metric-box:hover {
-  border-color: var(--mwm-border-hover);
-  background-color: #0F1217;
+/* MWM App Icon Aura */
+.app-icon-aura {
+  position: relative;
+  border-radius: 2rem;
 }
 
-/* Navigation Pills */
-.mwm-pill {
-  padding: 8px 18px;
+.app-icon-aura::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 2.25rem;
+  background: radial-gradient(circle, rgba(255, 83, 1, 0.15) 0%, transparent 70%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.app-icon-frame {
+  position: relative;
+  z-index: 1;
+  background: linear-gradient(145deg, #1f2128, #0e1014);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 2rem;
+  box-shadow: 0 16px 32px -8px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+/* KPI Cards inside Hero (1:1 from MWM) */
+.app-kpi-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)), var(--mwm-surface-2);
+  border: 1px solid var(--mwm-hairline);
+  border-radius: 16px;
+  display: block;
+  isolation: isolate;
+  overflow: hidden;
+  position: relative;
+  padding: 14px 18px;
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.26s ease,
+              background 0.26s ease,
+              box-shadow 0.26s ease;
+}
+
+.app-kpi-card:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)), #1d1f26;
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -6px rgba(0, 0, 0, 0.6);
+}
+
+/* MWM Floating Section Navigation */
+.app-section-nav {
+  background: rgba(20, 20, 20, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--mwm-hairline);
   border-radius: 9999px;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  color: var(--mwm-text-muted);
+  box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.5);
+  margin-inline: auto;
+  max-width: 100%;
+  padding: 4px;
+  width: fit-content;
+}
+
+.app-section-nav-pill {
+  background: transparent;
   border: 1px solid transparent;
-  background-color: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  border-radius: 9999px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   text-decoration: none;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.mwm-pill:hover {
-  color: var(--mwm-text);
-  background-color: rgba(255, 255, 255, 0.05);
+.app-section-nav-pill:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
 }
 
-.mwm-pill.active {
-  background-color: #F2F4F8;
-  color: #090A0D;
-  font-weight: 600;
+.app-section-nav-pill.active {
+  background: #ffffff;
+  color: #0c0c0c;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-/* UX Insights Showcase Card */
-.mwm-insight-card {
-  background-color: #101217;
-  border: 1px solid var(--mwm-border);
-  border-radius: 20px;
+/* UX Insights Full-Width Luxury Showcase Cards */
+.mwm-editorial-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)), #121316;
+  border: 1px solid var(--mwm-hairline);
+  border-radius: 24px;
   overflow: hidden;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  box-shadow: 0 16px 36px -10px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: border-color 0.26s ease, transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.mwm-insight-card:hover {
-  border-color: var(--mwm-border-hover);
-  box-shadow: 0 15px 35px -10px rgba(0, 0, 0, 0.5);
-}
-
-/* iPhone Phone Bezel Frame */
-.iphone-frame {
-  position: relative;
-  width: 100%;
-  max-width: 250px;
-  aspect-ratio: 9 / 19.5;
-  background: #000000;
-  border: 8px solid #1E222D;
-  border-radius: 38px;
-  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.8),
-              inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Dynamic Island */
-.iphone-island {
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 72px;
-  height: 20px;
-  background: #000000;
-  border-radius: 20px;
-  z-index: 30;
-}
-
-/* Capability Map Grid Cards (from MWM Screenshot 5) */
-.mwm-capability-card {
-  background-color: #111318;
-  border: 1px solid var(--mwm-border);
-  border-radius: 18px;
-  padding: 28px;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.mwm-capability-card:hover {
-  border-color: var(--mwm-border-hover);
-  background-color: #141720;
+.mwm-editorial-card:hover {
+  border-color: rgba(255, 255, 255, 0.16);
   transform: translateY(-2px);
 }
 
-/* Accordion Transitions */
-.mwm-accordion-item {
-  background-color: #111318;
-  border: 1px solid var(--mwm-border);
+/* Ultra-Refined Viewfinder Mockup (Pure SVG & CSS - No Ugly Popups) */
+.viewfinder-device {
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 9 / 18.5;
+  background: #000000;
+  border: 7px solid #22242c;
+  border-radius: 36px;
+  box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* Dynamic Island */
+.viewfinder-island {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 76px;
+  height: 18px;
+  background: #000000;
+  border-radius: 18px;
+  z-index: 20;
+}
+
+/* Camera HUD Rule of Thirds Grid */
+.viewfinder-grid {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.12) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.12) 1px, transparent 1px);
+  background-size: 33.333% 33.333%;
+  pointer-events: none;
+}
+
+/* Live Horizon Line */
+.viewfinder-horizon {
+  position: absolute;
+  inset-x: 24px;
+  top: 50%;
+  height: 1px;
+  background: rgba(16, 185, 129, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.viewfinder-horizon-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #10b981;
+  box-shadow: 0 0 10px #10b981;
+}
+
+/* Capability Map Features (1:1 from MWM Section 5) */
+.app-feature-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)), var(--mwm-surface-1);
+  border: 1px solid var(--mwm-hairline);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  overflow: hidden;
+  position: relative;
+  padding: 24px 28px;
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.26s ease,
+              background 0.26s ease,
+              box-shadow 0.26s ease;
+}
+
+.app-feature-card:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025)), #1a1b22;
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.6);
+}
+
+.app-feature-marker {
+  background: linear-gradient(90deg, #ff5301, rgba(255, 83, 1, 0.25));
+  border-radius: 9999px;
+  box-shadow: 0 0 12px rgba(255, 83, 1, 0.35);
+  flex-shrink: 0;
+  height: 2px;
+  width: 16px;
+}
+
+/* FAQ Accordion (1:1 from MWM Section 6) */
+.app-faq-item {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)), var(--mwm-surface-1);
+  border: 1px solid var(--mwm-hairline);
   border-radius: 14px;
   overflow: hidden;
-  transition: border-color 0.2s ease;
+  transition: border-color 0.22s ease;
 }
 
-.mwm-accordion-item:hover {
-  border-color: var(--mwm-border-hover);
+.app-faq-item:hover {
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
-.mwm-accordion-header {
+.app-faq-question-btn {
   cursor: pointer;
   user-select: none;
 }
 
-.mwm-accordion-content {
+.app-faq-answer {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              opacity 0.25s ease;
+  transition: grid-template-rows 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.22s ease;
   opacity: 0;
 }
 
-.mwm-accordion-item.open .mwm-accordion-content {
+.app-faq-item.open .app-faq-answer {
   grid-template-rows: 1fr;
   opacity: 1;
 }
 
-.mwm-accordion-inner {
+.app-faq-inner {
   overflow: hidden;
 }
 
-.mwm-accordion-icon {
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+.app-faq-icon {
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.mwm-accordion-item.open .mwm-accordion-icon {
+.app-faq-item.open .app-faq-icon {
   transform: rotate(180deg);
 }
 
-/* Code Container for SHA-256 */
-.mwm-code-box {
-  background-color: #07080B;
-  border: 1px solid var(--mwm-border);
+/* Code & Checksum Box */
+.mwm-code-container {
+  background-color: #07080a;
+  border: 1px solid var(--mwm-hairline);
   border-radius: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--mwm-font-mono);
 }
