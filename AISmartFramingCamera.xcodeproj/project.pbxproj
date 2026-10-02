@@ -72,7 +72,7 @@
 		C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005B /* AnalogDVSimulations.swift */; };
 		C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005C /* CinemaAndStudioSimulations.swift */; };
 		C2000000000000000000005D /* LiveEntityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005D /* LiveEntityTracker.swift */; };
-		C2000000000000000000005E /* CameraDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000005E /* CameraDesignSystem.swift */; };
+		C2000000000000000000005E /* CameraDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005E /* CameraDesignSystem.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
