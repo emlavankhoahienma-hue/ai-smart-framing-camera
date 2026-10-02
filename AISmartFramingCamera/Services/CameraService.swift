@@ -1008,11 +1008,12 @@ public final class CameraService: NSObject {
             }
         }
         movieFileOutput.movieFragmentInterval = .invalid
+        let availableCodecs = movieFileOutput.availableVideoCodecTypes
         let targetCodec: AVVideoCodecType
         switch selectedVideoCodec {
         case .proRes422:
-            if availableCodecs.contains(.proRes422) {
-                targetCodec = .proRes422
+            if availableCodecs.contains(.appleProRes422) {
+                targetCodec = .appleProRes422
             } else if availableCodecs.contains(.hevc) {
                 targetCodec = .hevc
             } else {
@@ -1024,7 +1025,7 @@ public final class CameraService: NSObject {
             targetCodec = .h264
         }
         if availableCodecs.contains(targetCodec) {
-            movieFileOutput.setOutputSettings([AVVideoCodecKey: targetCodec], for: connection)
+            movieFileOutput.setOutputSettings([AVVideoCodecKey: targetCodec.rawValue], for: connection)
         }
 
         videoDataOutput.connection(with: .video)?.isEnabled = false

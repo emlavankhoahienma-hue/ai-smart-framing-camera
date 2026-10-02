@@ -382,7 +382,7 @@ public struct ProVideoManualControlsView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(presets, id: \.self) { p in
-                        let isCur = !proService.isAutoISO && abs(proService.currentISO - p.val) < 10
+                        let isCur = !proService.isAutoISO && abs(proService.currentISO - p) < 10
                         Button(action: {
                             proService.setManualISO(p)
                             haptic.selectionChanged()

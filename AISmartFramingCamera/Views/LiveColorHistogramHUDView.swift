@@ -234,7 +234,11 @@ public struct LiveColorHistogramHUDView: View {
     // MARK: - Data Formatting & Handlers
     private var activeFormatTitle: String {
         if viewModel.captureMode.isVideo {
-            return viewModel.selectedVideoCodec == .hevc ? "HEVC" : "H.264"
+            switch viewModel.selectedVideoCodec {
+            case .proRes422: return "PRORES"
+            case .hevc: return "HEVC"
+            case .h264: return "H.264"
+            }
         }
 
         switch viewModel.selectedPhotoFormat {

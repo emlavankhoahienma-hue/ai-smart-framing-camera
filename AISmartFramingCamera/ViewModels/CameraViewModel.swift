@@ -1292,8 +1292,12 @@ public final class CameraViewModel: ObservableObject {
     public func toggleVideoCodec() {
         guard recordingState == .idle, !wantsVideoRecording else { return }
         haptics.triggerSelectionChange()
-        withAnimation(.easeInOut(duration: 0.2)) {
-            selectedVideoCodec = (selectedVideoCodec == .hevc) ? .h264 : .hevc
+        let allCases = VideoCodec.allCases
+        if let idx = allCases.firstIndex(of: selectedVideoCodec) {
+            let nextIdx = (idx + 1) % allCases.count
+            withAnimation(.easeInOut(duration: 0.2)) {
+                selectedVideoCodec = allCases[nextIdx]
+            }
         }
     }
 
