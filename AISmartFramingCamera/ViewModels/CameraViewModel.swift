@@ -291,7 +291,7 @@ public final class CameraViewModel: ObservableObject {
     // Pro Video Manual Controls Service & State
     public let proVideoService = ProVideoManualControlsService.shared
     @Published public var selectedProTab: ProVideoParameterTab = .iso
-    @Published public var isShowingProControlsDrawer: Bool = true
+    @Published public var isShowingProControlsDrawer: Bool = false
 
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
@@ -2950,78 +2950,7 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - AI Video Cinematography Director Actions
 
     public func requestAIVideoCinematographyGuidance() {
-        guard captureMode.isVideo, pendingCaptureMode == nil,
-              isCameraReady, !isCameraHibernating else { return }
-        videoDirectorGeneration &+= 1
-        let generation = videoDirectorGeneration
-        videoDirectorTimeoutTask?.cancel()
-        videoDirectorTimeoutTask = nil
-        videoGuidanceRequest?.cancel()
-        videoGuidanceRequest = nil
-        haptics.triggerSelectionChange()
-        isAIVideoDirectorActive = true
-        isAIVideoDirectorAnalyzing = true
-        activeVideoGuidance = nil
-        currentActiveWaypointIndex = 0
-        videoDirectorError = nil
-        hasCompletedAllWaypoints = false
-        waypointElapsedSeconds = 0.0
-
-        let subjectRect = detectedSubjectRects.first ?? detectedFaceRects.first
-        let faceRects = detectedFaceRects
-        let lookDir = latestSubjectDetectionResult?.lookingDirection ?? .zero
-        let scene = detectedScene
-        let fallback = GeminiService.generateLocalVideoGuidance(
-            sceneContext: scene,
-            subjectRect: subjectRect,
-            faceRects: faceRects,
-            lookingDirection: lookDir
-        )
-
-        // Video data delivery is disabled during movie recording, so use the
-        // last measured scene instead of waiting for a frame that cannot arrive.
-        guard recordingState == .idle, !wantsVideoRecording,
-              useGeminiForAnalysis, geminiService.hasAPIKey else {
-            applyVideoGuidance(fallback)
-            return
-        }
-
-        videoDirectorTimeoutTask = Task { [weak self] in
-            do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
-            guard let self, self.videoDirectorGeneration == generation,
-                  self.isAIVideoDirectorActive, self.isAIVideoDirectorAnalyzing else { return }
-            self.videoDirectorError = "Phân tích video quá thời gian; dùng hướng dẫn trên máy."
-            self.applyVideoGuidance(fallback)
-        }
-
-        visionEngine.captureImmediateFrame { [weak self] cgImg in
-            guard let self, self.videoDirectorGeneration == generation,
-                  self.isAIVideoDirectorActive, self.isAIVideoDirectorAnalyzing else { return }
-            guard let image = cgImg else {
-                self.applyVideoGuidance(fallback)
-                return
-            }
-
-            self.videoGuidanceRequest = self.geminiService.analyzeVideoCinematography(
-                image: image,
-                sceneContext: scene,
-                subjectRect: subjectRect,
-                faceRects: faceRects,
-                lookingDirection: lookDir
-            ) { [weak self] result in
-                Task { @MainActor [weak self] in
-                    guard let self, self.videoDirectorGeneration == generation,
-                          self.isAIVideoDirectorActive, self.isAIVideoDirectorAnalyzing else { return }
-                    switch result {
-                    case .success(let guidance):
-                        self.applyVideoGuidance(guidance)
-                    case .failure(let err):
-                        self.videoDirectorError = err.localizedDescription
-                        self.applyVideoGuidance(fallback)
-                    }
-                }
-            }
-        }
+        dismissAIVideoDirector()
     }
 
     private func applyVideoGuidance(_ guidance: AIVideoDirectorGuidance) {

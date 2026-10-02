@@ -148,7 +148,7 @@ public struct ProVideoManualControlsView: View {
                     quickTogglesRow
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 14)
                         .fill(CameraDesignSystem.Colors.surface)
@@ -156,6 +156,15 @@ public struct ProVideoManualControlsView: View {
                             RoundedRectangle(cornerRadius: 14)
                                 .stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1)
                         )
+                )
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 10)
+                        .onEnded { val in
+                            if val.translation.height > 15 {
+                                collapseDrawer()
+                            }
+                        }
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
             }

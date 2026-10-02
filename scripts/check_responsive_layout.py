@@ -62,7 +62,7 @@ assert 'CameraPreviewView(viewModel: viewModel)' in MAIN
 assert 'ARFramingOverlayView(viewModel: viewModel)' in MAIN
 assert 'TrackingGeometry.screenPoint' in OVERLAY
 assert 'TrackingGeometry.bufferPoint' in OVERLAY
-assert '.frame(width: 82, height: 44)' in CONTROLS
+assert '.frame(minWidth: 44, minHeight: 44)' in CONTROLS
 report = {'scope': 'calculated point-space layouts and projection round trips, not device rendering',
           'screens': [geometry(*screen) for screen in SCREENS], 'passed': len(SCREENS)}
 (ROOT / 'validation/responsive-layout-report.json').write_text(

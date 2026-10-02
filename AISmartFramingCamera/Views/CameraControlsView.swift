@@ -14,22 +14,19 @@ public struct CameraControlsView: View {
     private var deckHeight: CGFloat {
         if viewModel.captureMode.isVideo {
             return viewModel.isShowingProControlsDrawer
-                ? (compact ? 318 : 336)
-                : (compact ? 180 : 192)
+                ? (compact ? 300 : 316)
+                : (compact ? 172 : 184)
         } else {
-            return compact ? 172 : 184
+            return compact ? 136 : 148
         }
     }
 
     public var body: some View {
         VStack(spacing: compact ? 4 : 6) {
-            // Row 0: Pro Video Manual Controls (Mockup 4) or Lens Zoom Selector Pill (Mockup 1)
+            // Row 0: Pro Video Manual Controls (Mockup 4)
             if viewModel.captureMode.isVideo {
                 ProVideoManualControlsView(viewModel: viewModel)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
-            } else if !viewModel.captureMode.isVideo && !viewModel.isWindowedZoomActive {
-                ViewfinderZoomSelectorPill(viewModel: viewModel)
-                    .padding(.bottom, 2)
             }
 
             // Row 1: Balanced 3-Column Shutter Control Deck
@@ -124,11 +121,10 @@ struct CameraModeSegmentedSwitcher: View {
                 generator.prepare()
                 generator.impactOccurred()
                 if viewModel.captureMode.isVideo {
-                    if viewModel.isAIVideoDirectorActive {
-                        viewModel.dismissAIVideoDirector()
-                    } else {
-                        viewModel.requestAIVideoCinematographyGuidance()
+                    withAnimation(CameraDesignSystem.Animations.modeSwitch) {
+                        viewModel.selectCaptureMode(.photo)
                     }
+                    viewModel.startAISession()
                 } else if viewModel.isWindowedZoomActive {
                     viewModel.applyAIWindowedFocalLengthRecommendation()
                 } else {
@@ -232,10 +228,7 @@ struct CameraModeSegmentedSwitcher: View {
     }
 
     private var isAIActive: Bool {
-        if viewModel.captureMode.isVideo {
-            return viewModel.isAIVideoDirectorActive
-        }
-        return viewModel.aiSessionState.isSessionActive
+        viewModel.aiSessionState.isSessionActive
     }
 }
 
@@ -285,28 +278,8 @@ struct MainCaptureButton: View {
 
     // MARK: - Video Record Control
     private var videoRecordControl: some View {
-        ZStack {
-            // 1. Sliding Track Slot
-            if isDraggingToAI {
-                Capsule()
-                    .fill(Color.black.opacity(0.65))
-                    .frame(width: 76, height: 46)
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1.0)
-                    )
-                    .offset(x: -30)
-                    .opacity(trackOpacity)
-                    .animation(.easeOut(duration: 0.15), value: dragOffset)
-            }
-
-            // 2. AI Video Director Left Dock Target
-            aiVideoDirectorDockTarget
-
-            // 3. Central Minimalist Video Shutter
-            minimalistVideoShutter
-        }
-        .frame(width: 160, height: 80)
+        minimalistVideoShutter
+            .frame(width: 80, height: 80)
     }
 
     // MARK: - Minimalist Photo Shutter (Thin White Outer Ring & Solid White Core)
@@ -343,7 +316,7 @@ struct MainCaptureButton: View {
         ZStack {
             // Outer Ring: Fixed 76x76 Size
             Circle()
-                .stroke(viewModel.isAIVideoDirectorActive ? amberGold : Color.white, lineWidth: 3.5)
+                .stroke(Color.white, lineWidth: 3.5)
                 .frame(width: 76, height: 76)
 
             // Inner Core: Red Circle / Rounded Rectangle
@@ -351,27 +324,23 @@ struct MainCaptureButton: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color(red: 0.95, green: 0.15, blue: 0.20))
                     .frame(width: 28, height: 28)
-                    .offset(x: dragOffset)
                     .animation(.spring(response: 0.25, dampingFraction: 0.72), value: viewModel.isRecordingVideo)
             } else {
                 Circle()
                     .fill(Color(red: 0.95, green: 0.15, blue: 0.20))
                     .frame(width: 62, height: 62)
-                    .offset(x: dragOffset)
                     .scaleEffect(isTouchingShutter ? 0.92 : 1.0)
-            }
-
-            if viewModel.isAIVideoDirectorAnalyzing {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .scaleEffect(0.95)
-                    .offset(x: dragOffset)
             }
         }
         .contentShape(Circle())
         .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isTouchingShutter)
-        .gesture(dragAndTapGesture(isForVideo: true))
-        .accessibilityLabel("Nút quay video: Chạm để quay hoặc dừng, giữ kéo sang trái để AI Đạo diễn")
+        .onTapGesture {
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.prepare()
+            generator.impactOccurred()
+            viewModel.toggleVideoRecording()
+        }
+        .accessibilityLabel("Nút quay video: Chạm để quay hoặc dừng")
     }
 
     // MARK: - Gesture Handler (Tap & Drag to AI Dock)
@@ -418,27 +387,15 @@ struct MainCaptureButton: View {
                     generator.prepare()
                     generator.impactOccurred()
 
-                    if isForVideo {
-                        if viewModel.isAIVideoDirectorActive {
-                            viewModel.dismissAIVideoDirector()
-                        } else {
-                            viewModel.requestAIVideoCinematographyGuidance()
-                        }
+                    if viewModel.aiSessionState.isSessionActive {
+                        viewModel.cancelAISession()
                     } else {
-                        if viewModel.aiSessionState.isSessionActive {
-                            viewModel.cancelAISession()
-                        } else {
-                            viewModel.startAISession()
-                        }
+                        viewModel.startAISession()
                     }
                 } else if !isDraggingToAI && abs(transX) < 14 && abs(transY) < 14 {
                     // Regular Tap
-                    if isForVideo {
-                        viewModel.toggleVideoRecording()
-                    } else {
-                        if viewModel.aiSessionState != .capturing {
-                            viewModel.takePhotoManual()
-                        }
+                    if viewModel.aiSessionState != .capturing {
+                        viewModel.takePhotoManual()
                     }
                 }
 
@@ -502,34 +459,6 @@ struct MainCaptureButton: View {
                     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
             }
             .shadow(color: hasReachedDock ? amberGold.opacity(0.60) : Color.clear, radius: 8)
-            .offset(x: -56)
-            .scaleEffect(dockScale)
-            .opacity(dockOpacity)
-            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
-
-            Spacer()
-        }
-    }
-
-    // MARK: - AI Video Director Left Dock Target
-    private var aiVideoDirectorDockTarget: some View {
-        HStack {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.80))
-                    .frame(width: 44, height: 44)
-
-                Circle()
-                    .stroke(hasReachedDock ? amberGold : (viewModel.isAIVideoDirectorActive ? amberGold.opacity(0.85) : Color.white.opacity(0.35)), lineWidth: hasReachedDock ? 2.2 : 1.0)
-                    .frame(width: 44, height: 44)
-
-                Image(systemName: "sparkles.tv")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(hasReachedDock ? amberGold : (viewModel.isAIVideoDirectorActive ? amberGold : Color.white.opacity(0.75)))
-                    .scaleEffect(hasReachedDock ? 1.20 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
-            }
-            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? amberGold.opacity(0.60) : Color.clear, radius: 8)
             .offset(x: -56)
             .scaleEffect(dockScale)
             .opacity(dockOpacity)

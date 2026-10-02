@@ -18,9 +18,9 @@ struct CameraFormFactorLayout {
 
     var controlDeckHeight: CGFloat {
         if isVideo {
-            return isProExpanded ? (isCompact ? 318 : 336) : (isCompact ? 180 : 192)
+            return isProExpanded ? (isCompact ? 300 : 316) : (isCompact ? 172 : 184)
         } else {
-            return isCompact ? 172 : 184
+            return isCompact ? 136 : 148
         }
     }
 
@@ -66,8 +66,7 @@ public struct CameraMainView: View {
 
     public var body: some View {
         GeometryReader { geometry in
-            let layout = CameraFormFactorLayout(
-                availableSize: geometry.size,
+            let layout = CameraFormFactorLayout(availableSize: geometry.size,
                 safeAreaInsets: geometry.safeAreaInsets,
                 isVideo: viewModel.captureMode.isVideo,
                 isProExpanded: viewModel.isShowingProControlsDrawer
@@ -150,6 +149,14 @@ public struct CameraMainView: View {
                                 AIStatusHUDView(viewModel: viewModel)
                             }
                             .padding(.top, layout.viewfinderTopInset)
+                        }
+                        // Bottom Viewfinder Minimalist Zoom Pill (1x, 2x, 5x)
+                        .overlay(alignment: .bottom) {
+                            if !viewModel.isWindowedZoomActive && !viewModel.isShowingProControlsDrawer {
+                                ViewfinderZoomSelectorPill(viewModel: viewModel)
+                                    .padding(.bottom, layout.viewfinderBottomInset)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                            }
                         }
                         .padding(.horizontal, 6)
 
@@ -234,20 +241,20 @@ public struct CameraMainView: View {
     }
 }
 
-// MARK: - Top Camera Bar (Flash, Histogram, ISO, EV, Format, 4:3, Windowed Zoom, Settings)
+// MARK: - Top Camera Bar (Flash, Live Photo, Windowed Zoom, Histogram, EV, Format, Settings)
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     let histogramWidth: CGFloat
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            // 1. Flash Menu (bolt.fill + Tự động + chevron.down)
+        HStack(alignment: .center, spacing: 8) {
+            // 1. Flash Menu (Auto / On / Off)
             Menu {
                 Button(action: { viewModel.activeFlashMode = .auto }) {
                     Label("Tự động", systemImage: "bolt.badge.automatic.fill")
                 }
                 Button(action: { viewModel.activeFlashMode = .on }) {
-                    Label("Bật", systemImage: "bolt.fill")
+                    Label(viewModel.captureMode.isVideo ? "Bật đèn rọi" : "Bật", systemImage: "bolt.fill")
                 }
                 Button(action: { viewModel.activeFlashMode = .off }) {
                     Label("Tắt", systemImage: "bolt.slash.fill")
@@ -257,7 +264,7 @@ struct TopCameraBar: View {
                     Image(systemName: flashIconName)
                         .font(.system(size: 13, weight: .semibold))
                     Text(flashLabel)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .bold))
                 }
@@ -275,26 +282,78 @@ struct TopCameraBar: View {
             }
             .accessibilityLabel("Đèn flash: \(flashLabel)")
 
-            // 2. In Video Mode: Mini Histogram + Audio VU Level Meter
+            // 2. Photo Mode: Live Photo Toggle Button
+            if !viewModel.captureMode.isVideo {
+                Button(action: {
+                    let generator = UISelectionFeedbackGenerator()
+                    generator.prepare()
+                    generator.selectionChanged()
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        viewModel.isLivePhotoEnabled.toggle()
+                    }
+                }) {
+                    Image(systemName: viewModel.isLivePhotoEnabled ? "livephoto" : "livephoto.slash")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(viewModel.isLivePhotoEnabled ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.textSecondary)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Circle()
+                                .fill(CameraDesignSystem.Colors.surfaceElevated.opacity(0.85))
+                                .overlay(
+                                    Circle()
+                                        .stroke(viewModel.isLivePhotoEnabled ? CameraDesignSystem.Colors.accent.opacity(0.6) : CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
+                                )
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityLabel(viewModel.isLivePhotoEnabled ? "Tắt Live Photo" : "Bật Live Photo")
+            }
+
+            // 3. Windowed Zoom (Rangefinder Frame) Toggle Button (Available in both Photo & Video)
+            Button(action: {
+                let generator = UISelectionFeedbackGenerator()
+                generator.prepare()
+                generator.selectionChanged()
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    viewModel.isWindowedZoomActive.toggle()
+                }
+            }) {
+                Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(viewModel.isWindowedZoomActive ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.textPrimary)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        Circle()
+                            .fill(CameraDesignSystem.Colors.surfaceElevated.opacity(0.85))
+                            .overlay(
+                                Circle()
+                                    .stroke(viewModel.isWindowedZoomActive ? CameraDesignSystem.Colors.accent.opacity(0.6) : CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
+                            )
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel(viewModel.isWindowedZoomActive ? "Tắt zoom cửa sổ" : "Bật zoom cửa sổ")
+
+            // 4. Video Mode Extra Tools: Mini Histogram + Audio VU Level Meter
             if viewModel.captureMode.isVideo {
                 if viewModel.showHistogramInViewfinder {
                     LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
-                        .frame(height: 32)
+                        .frame(height: 30)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
 
                 AudioVULevelMeterView(levels: viewModel.audioLevels)
             } else if viewModel.showHistogramInViewfinder {
                 LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
-                    .frame(height: 32)
+                    .frame(height: 30)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
 
             Spacer(minLength: 4)
 
-            // 3. Technical Specs (Clean layout tailored for Photo vs Video mode)
+            // 5. Right Group: Technical Specs & Settings
             if viewModel.captureMode.isVideo {
-                // Video Mode: Quick Format Switcher Pill (e.g. "4K 60" or "HD 60")
+                // Video Format Quick Switcher Pill (e.g. "4K 60" or "HD 60")
                 Button(action: {
                     let generator = UISelectionFeedbackGenerator()
                     generator.prepare()
@@ -318,11 +377,11 @@ struct TopCameraBar: View {
                 .buttonStyle(PlainButtonStyle())
                 .accessibilityLabel("Định dạng video: \(viewModel.activeVideoResolutionString)")
             } else {
-                // Photo Mode: EV + Photo Format Pill (RAW/HEIF/JPEG) + Aspect Ratio
+                // Photo Mode: EV Bias Readout + Format Switcher Pill
                 HStack(spacing: 6) {
                     Text(String(format: "EV %+.1f", viewModel.exposureBias))
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(CameraDesignSystem.Colors.textPrimary)
+                        .foregroundColor(CameraDesignSystem.Colors.textSecondary)
 
                     Button(action: {
                         let generator = UISelectionFeedbackGenerator()
@@ -333,36 +392,39 @@ struct TopCameraBar: View {
                         Text(currentFormatLabel)
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
                             .foregroundColor(viewModel.selectedPhotoFormat == .dng ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
                             .background(
                                 viewModel.selectedPhotoFormat == .dng
-                                    ? RoundedRectangle(cornerRadius: 4).fill(CameraDesignSystem.Colors.accent)
-                                    : RoundedRectangle(cornerRadius: 4).fill(CameraDesignSystem.Colors.surfaceElevated)
+                                    ? RoundedRectangle(cornerRadius: 6).fill(CameraDesignSystem.Colors.accent)
+                                    : RoundedRectangle(cornerRadius: 6).fill(CameraDesignSystem.Colors.surfaceElevated)
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 4)
+                                RoundedRectangle(cornerRadius: 6)
                                     .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
                             )
                     }
                     .buttonStyle(PlainButtonStyle())
                     .accessibilityLabel("Định dạng ảnh: \(currentFormatLabel)")
-
-                    Text(viewModel.isWindowedZoomActive ? viewModel.windowedZoomAspectRatio.rawValue : "4:3")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(CameraDesignSystem.Colors.textSecondary)
                 }
             }
 
-            // 4. Settings Sheet Button (Gear Icon)
+            // 6. Settings Sheet Button (Gear Icon)
             Button(action: {
                 viewModel.isShowingSettings = true
             }) {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundColor(CameraDesignSystem.Colors.textPrimary)
-                    .frame(width: 38, height: 38)
-                    .contentShape(Rectangle())
+                    .frame(width: 36, height: 36)
+                    .background(
+                        Circle()
+                            .fill(CameraDesignSystem.Colors.surfaceElevated.opacity(0.85))
+                            .overlay(
+                                Circle()
+                                    .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
+                            )
+                    )
             }
             .buttonStyle(PlainButtonStyle())
             .accessibilityLabel("Cài đặt hệ thống")
@@ -400,18 +462,12 @@ struct TopCameraBar: View {
     }
 }
 
-// MARK: - Minimalist Optical Zoom Selector (0.5x, 1x, 2x, 5x Capsule Pill)
+// MARK: - Minimalist Optical Zoom Selector (1x, 2x, 5x Capsule Pill)
 struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
 
-    private var zoomOptions: [CGFloat] {
-        if viewModel.cameraService.hasUltraWideLens {
-            return [0.5, 1.0, 2.0, 5.0]
-        } else {
-            return [1.0, 2.0, 5.0]
-        }
-    }
+    private let zoomOptions: [CGFloat] = [1.0, 2.0, 5.0]
 
     var body: some View {
         HStack(spacing: 6) {
@@ -433,7 +489,7 @@ struct ViewfinderZoomSelectorPill: View {
                                 .matchedGeometryEffect(id: "active_viewfinder_zoom_ring", in: zoomPillNamespace)
                         }
 
-                        Text(zoom == 0.5 ? "0.5x" : "\(Int(zoom))x")
+                        Text("\(Int(zoom))x")
                             .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
                             .foregroundColor(isSelected ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textSecondary)
                     }
@@ -441,7 +497,7 @@ struct ViewfinderZoomSelectorPill: View {
                     .contentShape(Circle())
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(zoom == 0.5 ? "Thu phóng 0.5 lần" : "Thu phóng \(Int(zoom)) lần")
+                .accessibilityLabel("Thu phóng \(Int(zoom)) lần")
             }
         }
         .padding(.horizontal, 8)
