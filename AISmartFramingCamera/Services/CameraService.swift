@@ -1012,8 +1012,8 @@ public final class CameraService: NSObject {
         let targetCodec: AVVideoCodecType
         switch selectedVideoCodec {
         case .proRes422:
-            if availableCodecs.contains(.appleProRes422) {
-                targetCodec = .appleProRes422
+            if availableCodecs.contains(.proRes422) {
+                targetCodec = .proRes422
             } else if availableCodecs.contains(.hevc) {
                 targetCodec = .hevc
             } else {
