@@ -6,34 +6,37 @@ import AVFoundation
 struct CameraFormFactorLayout {
     let availableSize: CGSize
     let safeAreaInsets: EdgeInsets
+    let isVideo: Bool
+    let isProExpanded: Bool
 
     var isCompact: Bool { availableSize.height < 700 || availableSize.width < 375 }
     var topHorizontalPadding: CGFloat { availableSize.width < 375 ? 8 : 14 }
     var topVerticalPadding: CGFloat {
-        isCompact ? 2 : min(18, max(4, (availableSize.height - 700) * 0.12))
+        isCompact ? 2 : min(14, max(4, (availableSize.height - 700) * 0.10))
     }
     var topBottomPadding: CGFloat { isCompact ? 4 : 6 }
-    var controlDeckHeight: CGFloat { isCompact ? 148 : 156 }
-    func controlDeckHeight(isVideo: Bool) -> CGFloat {
+
+    var controlDeckHeight: CGFloat {
         if isVideo {
-            return isCompact ? 248 : 268
+            return isProExpanded ? (isCompact ? 318 : 336) : (isCompact ? 180 : 192)
         } else {
-            return isCompact ? 148 : 156
+            return isCompact ? 172 : 184
         }
     }
+
     var minimumGap: CGFloat { isCompact ? 4 : 8 }
     var bottomComfort: CGFloat {
-        safeAreaInsets.bottom >= 20 ? (isCompact ? 8 : 14) : (isCompact ? 6 : 10)
+        safeAreaInsets.bottom >= 20 ? (isCompact ? 6 : 10) : (isCompact ? 4 : 8)
     }
     var viewfinderSize: CGSize {
-        let widthLimit = max(1, availableSize.width - 12)
+        let widthLimit = max(1, availableSize.width - (isCompact ? 10 : 16))
         let heightLimit = max(1, availableSize.height - 44 - topVerticalPadding -
-                              topBottomPadding - controlDeckHeight - bottomComfort - minimumGap)
+                              topBottomPadding - controlDeckHeight - bottomComfort - minimumGap * 2)
         let height = min(widthLimit * 4 / 3, heightLimit)
         return CGSize(width: height * 3 / 4, height: height)
     }
     var histogramWidth: CGFloat {
-        max(70, min(100, availableSize.width * 0.22))
+        max(70, min(95, availableSize.width * 0.22))
     }
     var viewfinderTopInset: CGFloat { max(6, min(12, viewfinderSize.height * 0.02)) }
     var viewfinderBottomInset: CGFloat { max(8, min(14, viewfinderSize.height * 0.025)) }
@@ -63,8 +66,12 @@ public struct CameraMainView: View {
 
     public var body: some View {
         GeometryReader { geometry in
-            let layout = CameraFormFactorLayout(availableSize: geometry.size,
-                                                safeAreaInsets: geometry.safeAreaInsets)
+            let layout = CameraFormFactorLayout(
+                availableSize: geometry.size,
+                safeAreaInsets: geometry.safeAreaInsets,
+                isVideo: viewModel.captureMode.isVideo,
+                isProExpanded: viewModel.isShowingProControlsDrawer
+            )
             ZStack {
                 // 1. Deep Obsidian Canvas
                 canvasBackground
@@ -81,7 +88,7 @@ public struct CameraMainView: View {
 
                         Spacer(minLength: layout.minimumGap / 2)
 
-                        // 3. Fixed 3:4 High-End Viewfinder (Identical in Photo & Video)
+                        // 3. High-End Viewfinder (Dynamically adapts height so bottom controls are never clipped)
                         ZStack {
                             CameraPreviewView(viewModel: viewModel)
                                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
@@ -103,8 +110,7 @@ public struct CameraMainView: View {
                                 .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                             }
 
-                            // Keep the viewfinder responsive when AVFoundation is
-                            // configuring or temporarily unavailable.
+                            // Standby view when camera is reconfiguring
                             if viewModel.isCameraHibernating || !viewModel.isCameraReady {
                                 CameraHibernationStandbyView()
                                     .transition(.opacity.animation(.easeInOut(duration: 0.25)))
@@ -133,15 +139,6 @@ public struct CameraMainView: View {
                                 .stroke(Color(red: 0.15, green: 0.16, blue: 0.20), lineWidth: 1.0)
                         }
                         .shadow(color: Color.black.opacity(0.60), radius: 12, y: 4)
-                        // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
-                        .overlay(alignment: .topLeading) {
-                            if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating {
-                                AudioVULevelMeterView(levels: viewModel.audioLevels)
-                                    .padding(.top, layout.viewfinderTopInset)
-                                    .padding(.leading, 10)
-                                    .transition(.opacity)
-                            }
-                        }
                         // Top Viewfinder Overlays (Video Timer / AI Status)
                         .overlay(alignment: .top) {
                             VStack(spacing: 6) {
@@ -154,22 +151,17 @@ public struct CameraMainView: View {
                             }
                             .padding(.top, layout.viewfinderTopInset)
                         }
-                        // Bottom In-Viewfinder Minimalist Zoom Selector (Centered, No Capsule Background)
-                        .overlay(alignment: .bottom) {
-                            if !viewModel.isWindowedZoomActive {
-                                ViewfinderZoomSelectorPill(viewModel: viewModel)
-                                    .padding(.bottom, layout.viewfinderBottomInset)
-                            }
-                        }
                         .padding(.horizontal, 6)
 
                         Spacer(minLength: layout.minimumGap / 2)
 
-                        // 4. Bottom Control Deck (Album + Minimalist Shutter + Camera Flip + AI Button + Mode Switcher)
+                        // 4. Bottom Control Deck (Album + Minimalist Shutter + Camera Flip + Mode Switcher)
                         CameraControlsView(viewModel: viewModel, compact: layout.isCompact)
-                            .frame(height: layout.controlDeckHeight(isVideo: viewModel.captureMode.isVideo))
+                            .frame(height: layout.controlDeckHeight)
                             .padding(.bottom, layout.bottomComfort)
                     }
+                    .animation(.spring(response: 0.32, dampingFraction: 0.82), value: viewModel.isShowingProControlsDrawer)
+                    .animation(.easeInOut(duration: 0.20), value: viewModel.captureMode)
                 } else {
                     CameraPermissionPlaceholderView(viewModel: viewModel)
                 }
@@ -283,62 +275,84 @@ struct TopCameraBar: View {
             }
             .accessibilityLabel("Đèn flash: \(flashLabel)")
 
-            // 2. Mini Live Color Histogram
-            if viewModel.showHistogramInViewfinder {
-                LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
-                    .frame(height: 28)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
+            // 2. In Video Mode: Mini Histogram + Audio VU Level Meter
+            if viewModel.captureMode.isVideo {
+                if viewModel.showHistogramInViewfinder {
+                    LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
+                        .frame(height: 32)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
 
-            // 2.1 Live Audio VU Level Meter (Mockup 4)
-            if viewModel.showAudioLevelMeter || viewModel.captureMode.isVideo {
                 AudioVULevelMeterView(levels: viewModel.audioLevels)
+            } else if viewModel.showHistogramInViewfinder {
+                LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
+                    .frame(height: 32)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
             }
 
             Spacer(minLength: 4)
 
-            // 3. Technical Specs: EV, Format, Aspect Ratio
-            HStack(spacing: 8) {
-                Text(String(format: "EV %+.1f", viewModel.exposureBias))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
-
+            // 3. Technical Specs (Clean layout tailored for Photo vs Video mode)
+            if viewModel.captureMode.isVideo {
+                // Video Mode: Quick Format Switcher Pill (e.g. "4K 60" or "HD 60")
                 Button(action: {
                     let generator = UISelectionFeedbackGenerator()
                     generator.prepare()
                     generator.selectionChanged()
-                    if viewModel.captureMode.isVideo {
-                        viewModel.toggleVideoFormat()
-                    } else {
-                        viewModel.togglePhotoFormat()
-                    }
+                    viewModel.toggleVideoFormat()
                 }) {
-                    Text(currentFormatLabel)
+                    Text(viewModel.activeVideoResolutionString)
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2.5)
+                        .foregroundColor(CameraDesignSystem.Colors.textPrimary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
                         .background(
-                            viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo
-                                ? RoundedRectangle(cornerRadius: 4).fill(CameraDesignSystem.Colors.accent)
-                                : RoundedRectangle(cornerRadius: 4).fill(CameraDesignSystem.Colors.surface)
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(CameraDesignSystem.Colors.surfaceElevated)
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 4)
+                            RoundedRectangle(cornerRadius: 6)
                                 .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Định dạng: \(currentFormatLabel)")
+                .accessibilityLabel("Định dạng video: \(viewModel.activeVideoResolutionString)")
+            } else {
+                // Photo Mode: EV + Photo Format Pill (RAW/HEIF/JPEG) + Aspect Ratio
+                HStack(spacing: 6) {
+                    Text(String(format: "EV %+.1f", viewModel.exposureBias))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(CameraDesignSystem.Colors.textPrimary)
 
-                Text(viewModel.captureMode.isVideo ? "16:9" : (viewModel.isWindowedZoomActive ? viewModel.windowedZoomAspectRatio.rawValue : "4:3"))
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
+                    Button(action: {
+                        let generator = UISelectionFeedbackGenerator()
+                        generator.prepare()
+                        generator.selectionChanged()
+                        viewModel.togglePhotoFormat()
+                    }) {
+                        Text(currentFormatLabel)
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(viewModel.selectedPhotoFormat == .dng ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(
+                                viewModel.selectedPhotoFormat == .dng
+                                    ? RoundedRectangle(cornerRadius: 4).fill(CameraDesignSystem.Colors.accent)
+                                    : RoundedRectangle(cornerRadius: 4).fill(CameraDesignSystem.Colors.surfaceElevated)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
+                            )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel("Định dạng ảnh: \(currentFormatLabel)")
+
+                    Text(viewModel.isWindowedZoomActive ? viewModel.windowedZoomAspectRatio.rawValue : "4:3")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(CameraDesignSystem.Colors.textSecondary)
+                }
             }
-            .lineLimit(1)
-            .minimumScaleFactor(0.80)
-
-            Spacer(minLength: 4)
 
             // 4. Settings Sheet Button (Gear Icon)
             Button(action: {
@@ -347,7 +361,7 @@ struct TopCameraBar: View {
                 Image(systemName: "gearshape")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(CameraDesignSystem.Colors.textPrimary)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 38, height: 38)
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())

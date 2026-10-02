@@ -13,19 +13,21 @@ public struct CameraControlsView: View {
 
     private var deckHeight: CGFloat {
         if viewModel.captureMode.isVideo {
-            return compact ? 268 : 288
+            return viewModel.isShowingProControlsDrawer
+                ? (compact ? 318 : 336)
+                : (compact ? 180 : 192)
         } else {
-            return compact ? 186 : 200
+            return compact ? 172 : 184
         }
     }
 
     public var body: some View {
-        VStack(spacing: compact ? 6 : 8) {
+        VStack(spacing: compact ? 4 : 6) {
             // Row 0: Pro Video Manual Controls (Mockup 4) or Lens Zoom Selector Pill (Mockup 1)
             if viewModel.captureMode.isVideo {
                 ProVideoManualControlsView(viewModel: viewModel)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
-            } else if !viewModel.isWindowedZoomActive {
+            } else if !viewModel.captureMode.isVideo && !viewModel.isWindowedZoomActive {
                 ViewfinderZoomSelectorPill(viewModel: viewModel)
                     .padding(.bottom, 2)
             }
@@ -57,10 +59,10 @@ public struct CameraControlsView: View {
             // Row 2: Mode Switcher (AI, ẢNH, VIDEO)
             CameraModeSegmentedSwitcher(viewModel: viewModel)
                 .padding(.horizontal, 24)
-                .padding(.bottom, 4)
+                .padding(.bottom, 2)
         }
-        .padding(.top, compact ? 4 : 8)
-        .padding(.bottom, compact ? 4 : 8)
+        .padding(.top, compact ? 2 : 4)
+        .padding(.bottom, compact ? 2 : 4)
         .frame(height: deckHeight)
         .frame(maxWidth: .infinity)
         .background(

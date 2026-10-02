@@ -109,7 +109,6 @@ public struct ProVideoManualControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var proService = ProVideoManualControlsService.shared
 
-    @State private var isCollapsed: Bool = false
     private let haptic = UISelectionFeedbackGenerator()
 
     private let tabs: [(tab: ProVideoParameterTab, title: String)] = [
@@ -125,19 +124,22 @@ public struct ProVideoManualControlsView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 5) {
+            // 0. Drag Grabber Handle (visual affordance to swipe up/down)
+            dragHandleBar
+
             // 1. Parameter Cards Tab Bar (S | ISO | WB | EV | MF)
             parameterTabBar
 
-            // 2. Expandable Adjustment Drawer
-            if !isCollapsed {
-                VStack(spacing: 12) {
-                    // 2.1 Large Readout + Auto Toggle
+            // 2. Expandable Adjustment Drawer (Mockup 4)
+            if viewModel.isShowingProControlsDrawer {
+                VStack(spacing: 10) {
+                    // 2.1 Readout Header + Auto Toggle + Dismiss Chevron
                     parameterReadoutHeader
 
                     // 2.2 Interactive Horizontal Tick Ruler (Mockup 4)
                     ProParameterTickRuler(tab: viewModel.selectedProTab, proService: proService)
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 4)
 
                     // 2.3 Quick Presets Row
                     quickPresetsRow
@@ -145,53 +147,78 @@ public struct ProVideoManualControlsView: View {
                     // 2.4 Quick Toggles: Khóa tự động & Focus Peaking
                     quickTogglesRow
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: 14)
                         .fill(CameraDesignSystem.Colors.surface)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 16)
+                            RoundedRectangle(cornerRadius: 14)
                                 .stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1)
                         )
                 )
-                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .onAppear {
             proService.syncHardwareCapabilities()
         }
     }
 
+    // MARK: - 0. Drag Grabber Handle
+    private var dragHandleBar: some View {
+        HStack {
+            Spacer()
+            Capsule()
+                .fill(Color.white.opacity(0.35))
+                .frame(width: 38, height: 4)
+                .padding(.vertical, 3)
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 8)
+                .onEnded { value in
+                    if value.translation.height > 15 {
+                        collapseDrawer()
+                    } else if value.translation.height < -15 {
+                        expandDrawer()
+                    }
+                }
+        )
+    }
+
     // MARK: - 1. Parameter Cards Tab Bar
     private var parameterTabBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             ForEach(tabs, id: \.tab) { item in
                 let isSelected = viewModel.selectedProTab == item.tab
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    let generator = UISelectionFeedbackGenerator()
+                    generator.prepare()
+                    generator.selectionChanged()
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
                         if viewModel.selectedProTab == item.tab {
-                            isCollapsed.toggle()
+                            viewModel.isShowingProControlsDrawer.toggle()
                         } else {
                             viewModel.selectedProTab = item.tab
-                            isCollapsed = false
+                            viewModel.isShowingProControlsDrawer = true
                         }
                     }
-                    haptic.selectionChanged()
                 }) {
                     VStack(spacing: 2) {
                         Text(item.title)
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
                             .lineLimit(1)
 
                         Text(tabValueLabel(for: item.tab))
-                            .font(.system(size: 10.5, weight: isSelected ? .bold : .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: isSelected ? .bold : .medium, design: .monospaced))
                             .lineLimit(1)
                     }
                     .foregroundColor(isSelected ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 48)
+                    .frame(height: 42)
                     .background(
                         RoundedRectangle(cornerRadius: 10)
                             .fill(isSelected ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
@@ -205,6 +232,16 @@ public struct ProVideoManualControlsView: View {
                 .accessibilityLabel("Thông số \(item.title): \(tabValueLabel(for: item.tab))")
             }
         }
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .onEnded { val in
+                    if val.translation.height > 15 {
+                        collapseDrawer()
+                    } else if val.translation.height < -15 {
+                        expandDrawer()
+                    }
+                }
+        )
     }
 
     private func tabValueLabel(for tab: ProVideoParameterTab) -> String {
@@ -222,23 +259,65 @@ public struct ProVideoManualControlsView: View {
         }
     }
 
-    // MARK: - 2.1 Large Readout Header
+    // MARK: - 2.1 Readout Header
     private var parameterReadoutHeader: some View {
         HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(readoutTitle)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                     .foregroundColor(CameraDesignSystem.Colors.textSecondary)
 
                 Text(currentPrimaryValueText)
-                    .font(.system(size: 24, weight: .bold, design: .monospaced))
+                    .font(.system(size: 21, weight: .bold, design: .monospaced))
                     .foregroundColor(CameraDesignSystem.Colors.textPrimary)
             }
 
             Spacer()
 
-            // AUTO Button Toggle
-            autoToggleButton
+            HStack(spacing: 8) {
+                // AUTO Button Toggle
+                autoToggleButton
+
+                // 1-Tap Dismiss / Collapse Button
+                Button(action: {
+                    collapseDrawer()
+                }) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(CameraDesignSystem.Colors.textSecondary)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(CameraDesignSystem.Colors.surfaceElevated))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityLabel("Thu gọn bảng điều khiển thủ công")
+            }
+        }
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onEnded { val in
+                    if val.translation.height > 15 {
+                        collapseDrawer()
+                    }
+                }
+        )
+    }
+
+    private func collapseDrawer() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.prepare()
+        generator.impactOccurred()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            viewModel.isShowingProControlsDrawer = false
+        }
+    }
+
+    private func expandDrawer() {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.prepare()
+        generator.impactOccurred()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            viewModel.isShowingProControlsDrawer = true
         }
     }
 
