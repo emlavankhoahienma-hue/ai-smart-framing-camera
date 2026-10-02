@@ -1011,7 +1011,7 @@ struct DirectorHUDCard: View {
                     Circle()
                         .fill(isCompleted ? Color.green : Color.yellow)
                         .frame(width: 6, height: 6)
-                    Text(isCompleted ? "HOÀN TẤT \u{2713}" : "Tâm \(currentIndex + 1)/\(totalCount)")
+                    Text(isCompleted ? "HOÀN TẤT" : "Tâm \(currentIndex + 1)/\(totalCount)")
                         .font(.system(size: 10, weight: .heavy, design: .rounded))
                         .foregroundColor(isCompleted ? .green : .yellow)
                 }
@@ -1030,8 +1030,9 @@ struct DirectorHUDCard: View {
             // Director Tip
             if !guidance.directorTip.isEmpty {
                 HStack(alignment: .top, spacing: 5) {
-                    Text("\u{1f4a1}")
+                    Image(systemName: "lightbulb.fill")
                         .font(.system(size: 10))
+                        .foregroundColor(.yellow)
                     Text(guidance.directorTip)
                         .font(.system(size: 10.5, weight: .regular, design: .rounded))
                         .foregroundColor(.yellow.opacity(0.95))

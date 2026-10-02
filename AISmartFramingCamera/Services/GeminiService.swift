@@ -514,18 +514,18 @@ public final class GeminiService {
                 DispatchQueue.main.async {
                     self.lastModelUsed = testModel
                     self.lastLatencyMs = latency
-                    completion(true, "\u{2705} Kết nối thành công! [OpenRouter] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
+                    completion(true, "Ket noi thanh cong! [OpenRouter] Dang dung: \(testModel) (Do tre: \(latency)ms)")
                 }
             } else if http.statusCode == 429,
                       testModel.hasSuffix(":free") || testModel == "openrouter/free" {
                 DispatchQueue.main.async {
-                    completion(false, "\u{274c} OpenRouter đang giới hạn lượt miễn phí. Kiểm tra này cũng tính là một yêu cầu API.")
+                    completion(false, "OpenRouter dang gioi han luot mien phi. Kiem tra nay cung tinh la mot yeu cau API.")
                 }
             } else if http.statusCode == 404 || http.statusCode == 429 || http.statusCode == 503 || http.statusCode == 502 {
                 self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
             } else {
                 let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
-                DispatchQueue.main.async { completion(false, "\u{274c} Lỗi OpenRouter (\(http.statusCode)): \(msg)") }
+                DispatchQueue.main.async { completion(false, "Loi OpenRouter (\(http.statusCode)): \(msg)") }
             }
         }.resume()
     }

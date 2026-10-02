@@ -11,10 +11,25 @@ public struct CameraControlsView: View {
         self.compact = compact
     }
 
-    private var deckHeight: CGFloat { compact ? 148 : 156 }
+    private var deckHeight: CGFloat {
+        if viewModel.captureMode.isVideo {
+            return compact ? 268 : 288
+        } else {
+            return compact ? 186 : 200
+        }
+    }
 
     public var body: some View {
         VStack(spacing: compact ? 6 : 8) {
+            // Row 0: Pro Video Manual Controls (Mockup 4) or Lens Zoom Selector Pill (Mockup 1)
+            if viewModel.captureMode.isVideo {
+                ProVideoManualControlsView(viewModel: viewModel)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if !viewModel.isWindowedZoomActive {
+                ViewfinderZoomSelectorPill(viewModel: viewModel)
+                    .padding(.bottom, 2)
+            }
+
             // Row 1: Balanced 3-Column Shutter Control Deck
             HStack(alignment: .center, spacing: 0) {
                 // Left Column: Album Thumbnail
@@ -27,7 +42,7 @@ public struct CameraControlsView: View {
 
                 // Center Column: Minimalist Shutter Button (Strictly Centered on Screen Axis)
                 MainCaptureButton(viewModel: viewModel)
-                    .frame(width: 80, height: 80)
+                    .frame(width: 78, height: 78)
 
                 // Right Column: Camera Flip Button
                 HStack {
@@ -37,38 +52,19 @@ public struct CameraControlsView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 22)
+            .padding(.horizontal, 24)
 
-            // Row 2: AI Button (Left) + Mode Switcher (Center under Shutter) + Balanced Spacer (Right)
-            HStack(alignment: .center, spacing: 0) {
-                // Left: AI Button (nutAI Asset, No Background, No Border)
-                HStack {
-                    AIViewfinderButton(viewModel: viewModel)
-                        .frame(width: 44, height: 44)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-
-                // Center: Camera Mode Switcher (ẢNH / VIDEO) directly under Shutter
-                CameraModeSegmentedSwitcher(viewModel: viewModel)
-
-                // Right: Film Drawer Mini Quick Trigger / Symmetrical Spacer
-                HStack {
-                    Spacer()
-                    SelectedCameraBadgeButton(viewModel: viewModel)
-                        .frame(width: 44, height: 44)
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .padding(.horizontal, 22)
-            .padding(.bottom, 4)
+            // Row 2: Mode Switcher (AI, ẢNH, VIDEO)
+            CameraModeSegmentedSwitcher(viewModel: viewModel)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 4)
         }
-        .padding(.top, compact ? 2 : 4)
-        .padding(.bottom, compact ? 4 : 6)
+        .padding(.top, compact ? 4 : 8)
+        .padding(.bottom, compact ? 4 : 8)
         .frame(height: deckHeight)
         .frame(maxWidth: .infinity)
         .background(
-            Color(red: 0.031, green: 0.035, blue: 0.043)
+            CameraDesignSystem.Colors.background
                 .ignoresSafeArea(edges: .bottom)
         )
         .overlay(alignment: .bottom) {
@@ -113,56 +109,131 @@ public struct CustomAppIconView: View {
     }
 }
 
-// MARK: - Sliding Segmented Mode Switcher (ẢNH / VIDEO)
+// MARK: - Sliding Segmented Mode Switcher (AI / ẢNH / VIDEO)
 struct CameraModeSegmentedSwitcher: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var modeAnimationNamespace
 
-    private struct ModeItem: Identifiable {
-        let mode: CameraCaptureMode
-        let title: String
-        var id: String { title }
+    var body: some View {
+        HStack(spacing: 38) {
+            // 1. AI Button
+            Button(action: {
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.prepare()
+                generator.impactOccurred()
+                if viewModel.captureMode.isVideo {
+                    if viewModel.isAIVideoDirectorActive {
+                        viewModel.dismissAIVideoDirector()
+                    } else {
+                        viewModel.requestAIVideoCinematographyGuidance()
+                    }
+                } else if viewModel.isWindowedZoomActive {
+                    viewModel.applyAIWindowedFocalLengthRecommendation()
+                } else {
+                    if viewModel.aiSessionState.isSessionActive {
+                        viewModel.cancelAISession()
+                    } else {
+                        viewModel.startAISession()
+                    }
+                }
+            }) {
+                VStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("AI")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+
+                    if isAIActive {
+                        Capsule()
+                            .fill(CameraDesignSystem.Colors.accent)
+                            .frame(width: 22, height: 2.5)
+                            .matchedGeometryEffect(id: "active_mode_underline", in: modeAnimationNamespace)
+                    } else {
+                        Color.clear.frame(width: 22, height: 2.5)
+                    }
+                }
+                .foregroundColor(isAIActive ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.textSecondary)
+                .frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel("Chế độ AI Bố cục")
+
+            // 2. ẢNH Button
+            Button(action: {
+                let generator = UISelectionFeedbackGenerator()
+                generator.prepare()
+                generator.selectionChanged()
+                withAnimation(CameraDesignSystem.Animations.modeSwitch) {
+                    viewModel.selectCaptureMode(.photo)
+                }
+            }) {
+                VStack(spacing: 4) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("ẢNH")
+                        .font(.system(size: 12, weight: isPhotoMode ? .bold : .semibold, design: .rounded))
+
+                    if isPhotoMode {
+                        Capsule()
+                            .fill(CameraDesignSystem.Colors.accent)
+                            .frame(width: 26, height: 2.5)
+                            .matchedGeometryEffect(id: "active_mode_underline", in: modeAnimationNamespace)
+                    } else {
+                        Color.clear.frame(width: 26, height: 2.5)
+                    }
+                }
+                .foregroundColor(isPhotoMode ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.textSecondary)
+                .frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel("Chế độ chụp ảnh")
+
+            // 3. VIDEO Button
+            Button(action: {
+                let generator = UISelectionFeedbackGenerator()
+                generator.prepare()
+                generator.selectionChanged()
+                withAnimation(CameraDesignSystem.Animations.modeSwitch) {
+                    viewModel.selectCaptureMode(.video)
+                }
+            }) {
+                VStack(spacing: 4) {
+                    Image(systemName: "video.fill")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("VIDEO")
+                        .font(.system(size: 12, weight: isVideoMode ? .bold : .semibold, design: .rounded))
+
+                    if isVideoMode {
+                        Capsule()
+                            .fill(CameraDesignSystem.Colors.accent)
+                            .frame(width: 26, height: 2.5)
+                            .matchedGeometryEffect(id: "active_mode_underline", in: modeAnimationNamespace)
+                    } else {
+                        Color.clear.frame(width: 26, height: 2.5)
+                    }
+                }
+                .foregroundColor(isVideoMode ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.textSecondary)
+                .frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel("Chế độ quay video")
+        }
+        .frame(height: 44)
     }
 
-    private let modes: [ModeItem] = [
-        ModeItem(mode: .photo, title: "ẢNH"),
-        ModeItem(mode: .video, title: "VIDEO")
-    ]
+    private var isPhotoMode: Bool {
+        viewModel.captureMode == .photo
+    }
 
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25) // #D9A441
+    private var isVideoMode: Bool {
+        viewModel.captureMode.isVideo
+    }
 
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(modes) { item in
-                let isSelected = (viewModel.captureMode == item.mode) || (item.mode == .video && viewModel.captureMode == .proVideo)
-                Button(action: {
-                    let generator = UISelectionFeedbackGenerator()
-                    generator.prepare()
-                    generator.selectionChanged()
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-                        viewModel.selectCaptureMode(item.mode)
-                    }
-                }) {
-                    Text(item.title)
-                        .font(.system(size: 12, weight: isSelected ? .bold : .semibold, design: .rounded))
-                        .foregroundColor(isSelected ? amberGold : .white.opacity(0.55))
-                        .frame(width: 82, height: 44)
-                        .background(
-                            ZStack {
-                                if isSelected {
-                                    Capsule()
-                                        .stroke(amberGold, lineWidth: 1.2)
-                                        .matchedGeometryEffect(id: "active_mode_border", in: modeAnimationNamespace)
-                                }
-                            }
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Chế độ \(item.title)")
-            }
+    private var isAIActive: Bool {
+        if viewModel.captureMode.isVideo {
+            return viewModel.isAIVideoDirectorActive
         }
-        .padding(2)
-        .frame(height: 36)
+        return viewModel.aiSessionState.isSessionActive
     }
 }
 
@@ -480,11 +551,11 @@ struct GalleryThumbnailButton: View {
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(red: 0.10, green: 0.11, blue: 0.14))
+                    .fill(CameraDesignSystem.Colors.surface)
                     .frame(width: 50, height: 50)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.28), lineWidth: 1.0)
+                            .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
                     )
 
                 if let photo = viewModel.latestCapturedPhoto {
@@ -504,7 +575,7 @@ struct GalleryThumbnailButton: View {
                         name: "iconnutxemanhganday",
                         fallbackSF: "photo.on.rectangle.angled",
                         size: 24,
-                        color: .white.opacity(0.82)
+                        color: CameraDesignSystem.Colors.textPrimary
                     )
                 }
             }
@@ -535,16 +606,16 @@ struct CameraFlipButton: View {
         }) {
             ZStack {
                 Circle()
-                    .fill(Color(red: 0.10, green: 0.11, blue: 0.14))
+                    .fill(CameraDesignSystem.Colors.surfaceElevated)
                     .frame(width: 50, height: 50)
                     .overlay(
                         Circle()
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1.0)
+                            .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
                     )
 
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
                     .rotationEffect(.degrees(flipDegrees))
             }
             .contentShape(Circle())

@@ -76,7 +76,12 @@ public struct SettingsSheetView: View {
                     navigationHeader
                         .padding(.horizontal, 20)
                         .padding(.top, 16)
-                        .padding(.bottom, 14)
+                        .padding(.bottom, 12)
+
+                    // 1.1 In-Sheet Search Bar (Mockup 3)
+                    searchBar
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
 
                     // 2. Fluid Segmented Tab Bar (Chụp | AI Bố cục | Nâng cao)
                     tabSelectorPills
@@ -132,7 +137,6 @@ public struct SettingsSheetView: View {
                     }
                 }
             }
-            .searchable(text: $searchText, prompt: "Tìm kiếm thông số, cài đặt...")
             .preferredColorScheme(.dark)
             .confirmationDialog(
                 "Xác nhận xóa OpenRouter API Key?",
@@ -189,6 +193,39 @@ public struct SettingsSheetView: View {
             .foregroundColor(amberGold)
             .accessibilityLabel("Đóng cài đặt")
         }
+    }
+
+    // MARK: - In-Sheet Search Bar (Mockup 3)
+    private var searchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(textSecondary)
+                .font(.system(size: 15, weight: .semibold))
+
+            TextField("Tìm kiếm cài đặt", text: $searchText)
+                .font(.system(size: 15))
+                .foregroundColor(textPrimary)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+
+            if !searchText.isEmpty {
+                Button(action: { searchText = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(textSecondary)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Fluid Segmented Tab Selector (Chụp | AI Bố cục | Nâng cao)
@@ -447,33 +484,61 @@ struct PhotoCaptureSettingsSection: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            photoFormatCard
-            videoCodecCard
-            cameraHardwareSpecsCard
+            photoCaptureCard
+            videoRecordingCard
+            aiAndCalibrationCard
             filmColorCard
             viewfinderHUDCard
+            cameraHardwareSpecsCard
         }
     }
 
-    // Card 1: Chụp ảnh & Lưu trữ
+    // Card 1: Chụp ảnh (Mockup 3)
     @ViewBuilder
-    private var photoFormatCard: some View {
+    private var photoCaptureCard: some View {
         SettingsSectionCard(title: "Chụp ảnh", icon: "camera.fill") {
             VStack(spacing: 0) {
                 SettingsPickerRow(
-                    title: "Định dạng",
-                    subtitle: "Chọn định dạng lưu ảnh chất lượng cao",
-                    icon: "photo.fill",
-                    selectedValueString: viewModel.selectedPhotoFormat.rawValue
+                    title: "Độ phân giải",
+                    subtitle: "Định dạng lưu ảnh và độ phân giải cảm biến",
+                    icon: "camera.badge.ellipsis",
+                    selectedValueString: photoResolutionLabel
                 ) {
                     Picker("", selection: $viewModel.selectedPhotoFormat) {
-                        ForEach(PhotoSaveFormat.allCases) { format in
-                            Text(format.rawValue).tag(format)
-                        }
+                        Text("HEIF Tối đa (48MP)").tag(PhotoSaveFormat.heif)
+                        Text("HEIC Chuẩn (12MP)").tag(PhotoSaveFormat.heic)
+                        Text("JPEG").tag(PhotoSaveFormat.jpeg)
+                        Text("RAW (DNG)").tag(PhotoSaveFormat.dng)
                     }
                     .pickerStyle(.menu)
                     .tint(amberGold)
                 }
+
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsPickerRow(
+                    title: "Tỷ lệ khung hình",
+                    subtitle: "Tỷ lệ khung ngắm và ảnh chụp",
+                    icon: "aspectratio",
+                    selectedValueString: viewModel.windowedZoomAspectRatio.rawValue == "3:4" ? "4:3" : viewModel.windowedZoomAspectRatio.rawValue
+                ) {
+                    Picker("", selection: $viewModel.windowedZoomAspectRatio) {
+                        Text("4:3").tag(WindowedZoomAspectRatio.ratio3_4)
+                        Text("16:9").tag(WindowedZoomAspectRatio.ratio16_9)
+                        Text("1:1").tag(WindowedZoomAspectRatio.ratio1_1)
+                    }
+                    .pickerStyle(.menu)
+                    .tint(amberGold)
+                }
+
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsToggleRow(
+                    title: "Chống rung quang học (OIS)",
+                    subtitle: "Ổn định cảm biến chống rung khi cầm tay",
+                    icon: "hand.raised.fill",
+                    isOn: $viewModel.isOpticalStabilizationEnabled
+                )
 
                 Divider().background(Color.white.opacity(0.06))
 
@@ -492,27 +557,31 @@ struct PhotoCaptureSettingsSection: View {
                     icon: "photo.on.rectangle.angled",
                     isOn: $viewModel.isSaveOriginalPhotoEnabled
                 )
-
-                Divider().background(Color.white.opacity(0.06))
-
-                SettingsToggleRow(
-                    title: "Độ phân giải gốc cao nhất",
-                    subtitle: "Yêu cầu tối đa 48 MP nếu camera hỗ trợ. DNG luôn lưu file RAW gốc",
-                    icon: "sparkles.rectangle.stack.fill",
-                    isOn: $viewModel.isSuperResolutionRAWEnabled
-                )
             }
         }
     }
 
-    // Card 2: Quay phim & Codec
+    private var photoResolutionLabel: String {
+        switch viewModel.selectedPhotoFormat {
+        case .heif:
+            return viewModel.isSuperResolutionRAWEnabled ? "HEIF Tối đa (48MP)" : "HEIF (24MP)"
+        case .heic:
+            return "HEIC Chuẩn (12MP)"
+        case .jpeg:
+            return "JPEG"
+        case .dng:
+            return "RAW (DNG)"
+        }
+    }
+
+    // Card 2: Quay video (Mockup 3)
     @ViewBuilder
-    private var videoCodecCard: some View {
+    private var videoRecordingCard: some View {
         SettingsSectionCard(title: "Quay video", icon: "video.fill") {
             VStack(spacing: 0) {
                 SettingsPickerRow(
-                    title: "Độ phân giải",
-                    subtitle: "Chọn độ phân giải và tốc độ khung hình",
+                    title: "Độ phân giải & Tốc độ",
+                    subtitle: "Độ nét và số khung hình trên giây",
                     icon: "video.fill",
                     selectedValueString: viewModel.selectedVideoFormatOption.rawValue
                 ) {
@@ -528,8 +597,8 @@ struct PhotoCaptureSettingsSection: View {
                 Divider().background(Color.white.opacity(0.06))
 
                 SettingsPickerRow(
-                    title: "Codec",
-                    subtitle: "Chọn định dạng nén video tối ưu phần cứng",
+                    title: "Định dạng",
+                    subtitle: "Chuẩn nén video tối ưu phần cứng",
                     icon: "cylinder.split.1x2.fill",
                     selectedValueString: viewModel.selectedVideoCodec.rawValue
                 ) {
@@ -540,6 +609,54 @@ struct PhotoCaptureSettingsSection: View {
                     }
                     .pickerStyle(.menu)
                     .tint(amberGold)
+                }
+
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsToggleRow(
+                    title: "Khóa cân bằng trắng",
+                    subtitle: "Giữ cố định nhiệt độ màu trong suốt cảnh quay",
+                    icon: "lock.fill",
+                    isOn: $viewModel.isWhiteBalanceLocked
+                )
+            }
+        }
+    }
+
+    // Card 3: AI và hiệu chuẩn (Mockup 3)
+    @ViewBuilder
+    private var aiAndCalibrationCard: some View {
+        SettingsSectionCard(title: "AI và hiệu chuẩn", icon: "cpu") {
+            VStack(spacing: 0) {
+                SettingsActionRow(
+                    title: "Động cơ AI",
+                    subtitle: "Mạng nơ-ron nhận diện bố cục và chủ thể thời gian thực",
+                    icon: "brain.head.profile",
+                    badgeText: "YOLOv26 (ANE)"
+                ) {
+                    // Hiển thị thông số engine
+                }
+
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsToggleRow(
+                    title: "Lưới bố cục",
+                    subtitle: "Hiển thị đường lưới căn chỉnh trên khung ngắm",
+                    icon: "grid",
+                    isOn: $viewModel.isCompositionGridVisible
+                )
+
+                Divider().background(Color.white.opacity(0.06))
+
+                SettingsActionRow(
+                    title: "Hiệu chuẩn chân trời",
+                    subtitle: viewModel.lastGyroCalibrationDate != nil
+                        ? "Đã cân bằng (Bù lệch Roll: \(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°)"
+                        : "Cân bằng cảm biến con quay gyro 6-DoF",
+                    icon: "gyroscope",
+                    badgeText: viewModel.lastGyroCalibrationDate != nil ? "Tự động" : "Cần cân"
+                ) {
+                    viewModel.isShowingGyroCalibration = true
                 }
             }
         }

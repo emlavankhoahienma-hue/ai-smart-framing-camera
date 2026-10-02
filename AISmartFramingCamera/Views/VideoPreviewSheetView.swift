@@ -15,8 +15,8 @@ public struct VideoPreviewSheetView: View {
     @State private var hasSavedToPhotos: Bool = false
     @State private var processedVideoURL: URL? = nil
 
-    private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
-    private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
+    private let champagne = CameraDesignSystem.Colors.accent
+    private let darkBg = CameraDesignSystem.Colors.background
 
     public var body: some View {
         NavigationView {
@@ -81,49 +81,57 @@ public struct VideoPreviewSheetView: View {
                             HStack(spacing: 6) {
                                 if isGradingWithAI {
                                     ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .progressViewStyle(CircularProgressViewStyle(tint: CameraDesignSystem.Colors.textPrimary))
                                         .scaleEffect(0.8)
                                 } else {
                                     Image(systemName: "wand.and.stars")
-                                        .font(.system(size: 13, weight: .semibold))
+                                        .font(.system(size: 14, weight: .semibold))
                                 }
                                 Text(isGradingWithAI ? "Đang xử lý…" : "Chỉnh màu")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 14, weight: .semibold))
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(CameraDesignSystem.Colors.textPrimary)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
+                            .padding(.vertical, 13)
+                            .background(CameraDesignSystem.Colors.surfaceElevated)
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1)
+                            )
                         }
                         .disabled(isGradingWithAI || isCroppingWindowedZoom)
 
                         Button(action: { saveVideoToPhotos() }) {
                             HStack(spacing: 6) {
                                 Image(systemName: hasSavedToPhotos ? "checkmark" : "arrow.down")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 14, weight: .bold))
                                 Text(hasSavedToPhotos ? "Đã lưu" : "Lưu")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 14, weight: .bold))
                             }
-                            .foregroundColor(.black)
+                            .foregroundColor(CameraDesignSystem.Colors.background)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
+                            .padding(.vertical, 13)
                             .background(champagne)
-                            .cornerRadius(10)
+                            .cornerRadius(12)
                         }
 
                         ShareLink(item: processedVideoURL ?? videoURL) {
                             HStack(spacing: 6) {
                                 Image(systemName: "square.and.arrow.up")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 14, weight: .semibold))
                                 Text("Chia sẻ")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 14, weight: .semibold))
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(CameraDesignSystem.Colors.textPrimary)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
+                            .padding(.vertical, 13)
+                            .background(CameraDesignSystem.Colors.surfaceElevated)
+                            .cornerRadius(12)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1)
+                            )
                         }
                     }
                     .padding(.horizontal, 16)

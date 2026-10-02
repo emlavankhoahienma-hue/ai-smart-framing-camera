@@ -29,12 +29,13 @@ public struct CapturedPhotoPreviewView: View {
 
     private var shareButtonLabel: some View {
         Label("Chia sẻ", systemImage: "square.and.arrow.up")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(.white)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(CameraDesignSystem.Colors.textPrimary)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 11)
-            .background(Color.white.opacity(0.12))
-            .cornerRadius(10)
+            .padding(.vertical, 13)
+            .background(CameraDesignSystem.Colors.surfaceElevated)
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1))
     }
 
     // MARK: - Zoom & Pan Inspection States (Modern iPhone Style)
@@ -56,8 +57,8 @@ public struct CapturedPhotoPreviewView: View {
         )
     }
 
-    private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
-    private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
+    private let champagne = CameraDesignSystem.Colors.accent
+    private let darkBg = CameraDesignSystem.Colors.background
 
     public init(item: CapturedPhotoItem, viewModel: CameraViewModel? = nil) {
         self.item = item
@@ -207,27 +208,26 @@ public struct CapturedPhotoPreviewView: View {
                         .background(Capsule().fill(Color.orange.opacity(0.15)))
                     }
 
-                    // 3. Metadata Dashboard (Quiet Pro style)
-                    // 3. Metadata Dashboard (Quiet Pro style)
+                    // 3. Metadata Dashboard (Quiet Pro style matching Mockup 2)
                     VStack(spacing: 6) {
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 if item.saveFormat == .dng {
                                     HStack(spacing: 6) {
                                         Text("RAW (DNG)")
                                             .font(.system(size: 14, weight: .bold))
                                             .foregroundColor(champagne)
-                                        Text("•").foregroundColor(.white.opacity(0.3))
+                                        Text("•").foregroundColor(CameraDesignSystem.Colors.textSecondary.opacity(0.4))
                                         Text("Cảm biến gốc")
-                                            .font(.system(size: 13))
-                                            .foregroundColor(.yellow)
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(champagne)
                                     }
                                     Text(item.resolutionDescription)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.7))
-                                    Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.5))
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(CameraDesignSystem.Colors.textPrimary)
+                                    Text("Bố cục: \(item.compositionRule.rawValue) · \(Int(item.alignmentScore * 100))%")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(CameraDesignSystem.Colors.textSecondary)
                                 } else {
                                     HStack(spacing: 6) {
                                         if item.isLivePhoto {
@@ -237,41 +237,39 @@ public struct CapturedPhotoPreviewView: View {
                                                  Text("LIVE PHOTO")
                                                      .font(.system(size: 9, weight: .heavy, design: .rounded))
                                             }
-                                            .foregroundColor(.yellow)
+                                            .foregroundColor(champagne)
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 3)
-                                            .background(Capsule().fill(Color.yellow.opacity(0.18)))
+                                            .background(Capsule().fill(champagne.opacity(0.18)))
                                         }
-                                        Text(selectedPreviewPreset.displayName)
-                                            .font(.system(size: 14, weight: .semibold))
-                                            .foregroundColor(.white)
-                                        Text("•").foregroundColor(.white.opacity(0.3))
-                                        Text(item.sceneType.rawValue)
-                                            .font(.system(size: 13))
-                                            .foregroundColor(.white.opacity(0.7))
+                                        Text(item.resolutionDescription.isEmpty ? "12.2 MP · 3024 × 4032" : item.resolutionDescription)
+                                            .font(.system(size: 14, weight: .bold))
+                                            .foregroundColor(CameraDesignSystem.Colors.textPrimary)
                                     }
-                                    Text(item.resolutionDescription)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.7))
-                                    Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.5))
+                                    Text("Bố cục: \(item.compositionRule.rawValue) · \(Int(item.alignmentScore * 100))%")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(CameraDesignSystem.Colors.textSecondary)
                                 }
                             }
 
                             Spacer()
 
-                            // EXIF Capsule
-                            HStack(spacing: 8) {
+                            // EXIF Pill matching Mockup 2
+                            HStack(spacing: 6) {
                                 Text("ISO \(Int(item.iso))")
+                                Text("·")
                                 Text(String(format: "1/%.0fs", 1.0 / max(0.0001, item.shutterSpeed)))
                             }
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.7))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Color.white.opacity(0.06))
-                            .cornerRadius(6)
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundColor(CameraDesignSystem.Colors.textPrimary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(CameraDesignSystem.Colors.surfaceElevated)
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1)
+                            )
                         }
                         .padding(.horizontal, 20)
                     }
@@ -381,7 +379,7 @@ public struct CapturedPhotoPreviewView: View {
                                     HStack(spacing: 6) {
                                         if isOptimizingWithAI {
                                             ProgressView()
-                                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                .progressViewStyle(CircularProgressViewStyle(tint: CameraDesignSystem.Colors.textPrimary))
                                                 .scaleEffect(0.8)
                                         } else {
                                             Image(systemName: "wand.and.stars")
@@ -390,11 +388,15 @@ public struct CapturedPhotoPreviewView: View {
                                         Text(isOptimizingWithAI ? "Đang chọn màu…" : "AI Chỉnh màu")
                                             .font(.system(size: 13, weight: .semibold))
                                     }
-                                    .foregroundColor(.white)
+                                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 11)
-                                    .background(Color.white.opacity(0.12))
-                                    .cornerRadius(10)
+                                    .padding(.vertical, 13)
+                                    .background(CameraDesignSystem.Colors.surfaceElevated)
+                                    .cornerRadius(12)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1)
+                                    )
                                 }
                                 .disabled(isOptimizingWithAI)
 
@@ -403,7 +405,7 @@ public struct CapturedPhotoPreviewView: View {
                                     HStack(spacing: 6) {
                                         if isSharpeningProcessing {
                                             ProgressView()
-                                                .progressViewStyle(CircularProgressViewStyle(tint: isAISharpnessEnabled ? .black : .white))
+                                                .progressViewStyle(CircularProgressViewStyle(tint: isAISharpnessEnabled ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary))
                                                 .scaleEffect(0.8)
                                         } else {
                                             Image(systemName: isAISharpnessEnabled ? "sparkle.magnifyingglass" : "sparkles")
@@ -416,14 +418,14 @@ public struct CapturedPhotoPreviewView: View {
                                                 .font(.system(size: 10, weight: .bold))
                                         }
                                     }
-                                    .foregroundColor(isAISharpnessEnabled ? .black : .white)
+                                    .foregroundColor(isAISharpnessEnabled ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 11)
-                                    .background(isAISharpnessEnabled ? champagne : Color.white.opacity(0.12))
-                                    .cornerRadius(10)
+                                    .padding(.vertical, 13)
+                                    .background(isAISharpnessEnabled ? champagne : CameraDesignSystem.Colors.surfaceElevated)
+                                    .cornerRadius(12)
                                     .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(isAISharpnessEnabled ? champagne : Color.white.opacity(0.15), lineWidth: 1)
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(isAISharpnessEnabled ? champagne : CameraDesignSystem.Colors.hairline, lineWidth: 1)
                                     )
                                 }
                             }
@@ -431,7 +433,7 @@ public struct CapturedPhotoPreviewView: View {
 
                         // 5.2 Action Row: [Lưu ảnh] & [Chia sẻ]
                         HStack(spacing: 10) {
-                            // Nút Lưu ảnh
+                            // Nút Lưu ảnh (Vàng Gold #D6A246, chữ đen #08090C)
                             Button(action: {
                                 if item.saveFormat == .dng {
                                     viewModel?.savePhotoToLibrary(item) { success in
@@ -443,15 +445,15 @@ public struct CapturedPhotoPreviewView: View {
                             }) {
                                 HStack(spacing: 6) {
                                     Image(systemName: hasSavedNewEnhancement ? "checkmark" : "arrow.down")
-                                        .font(.system(size: 13, weight: .semibold))
+                                        .font(.system(size: 14, weight: .bold))
                                     Text(hasSavedNewEnhancement ? "Đã lưu vào Photos" : "Lưu vào Photos")
-                                        .font(.system(size: 13, weight: .semibold))
+                                        .font(.system(size: 14, weight: .bold))
                                 }
-                                .foregroundColor(.black)
+                                .foregroundColor(CameraDesignSystem.Colors.background)
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 11)
+                                .padding(.vertical, 13)
                                 .background(champagne)
-                                .cornerRadius(10)
+                                .cornerRadius(12)
                             }
 
                             // Nút Chia sẻ
@@ -460,15 +462,19 @@ public struct CapturedPhotoPreviewView: View {
                                     preview: SharePreview("AlignAI_RAW.dng", image: Image(decorative: item.originalImage, scale: 1, orientation: .up))) {
                                     HStack(spacing: 6) {
                                         Image(systemName: "square.and.arrow.up")
-                                            .font(.system(size: 13, weight: .semibold))
+                                            .font(.system(size: 14, weight: .semibold))
                                         Text("Chia sẻ tệp RAW")
-                                            .font(.system(size: 13, weight: .semibold))
+                                            .font(.system(size: 14, weight: .semibold))
                                     }
-                                    .foregroundColor(.white)
+                                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 11)
-                                    .background(Color.white.opacity(0.12))
-                                    .cornerRadius(10)
+                                    .padding(.vertical, 13)
+                                    .background(CameraDesignSystem.Colors.surfaceElevated)
+                                    .cornerRadius(12)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1)
+                                    )
                                 }
                             } else {
                                 ShareLink(item: Image(decorative: currentProcessedImage, scale: 1, orientation: .up),
@@ -588,48 +594,44 @@ public struct CapturedPhotoPreviewView: View {
                 .shadow(color: Color.black.opacity(0.70), radius: 3, x: 0, y: 0)
                 .position(x: dividerX, y: size.height / 2)
 
-            // 2. Subtle Before / After Badges
+            // 2. Mockup 2 Style Before / After Badges: AI CROP vs ANH GOC
             HStack {
-                Text("ĐÃ LỌC")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.45)))
-                    .padding(.leading, 8)
+                Text("AI CROP")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.black.opacity(0.60)))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.8))
+                    .padding(.leading, 12)
                 Spacer()
                 Text("ẢNH GỐC")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.45)))
-                    .padding(.trailing, 8)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.black.opacity(0.60)))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.8))
+                    .padding(.trailing, 12)
             }
             .frame(width: size.width)
-            .padding(.top, 10)
+            .padding(.top, 12)
             .allowsHitTesting(false)
 
             // 3. Center Draggable Knob with Left/Right Indicator Arrows
             ZStack {
                 Circle()
                     .fill(Color.white)
-                    .frame(width: 32, height: 32)
-                    .shadow(color: Color.black.opacity(0.60), radius: 4, x: 0, y: 1)
+                    .frame(width: 36, height: 36)
+                    .shadow(color: Color.black.opacity(0.65), radius: 6, x: 0, y: 2)
 
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color.black.opacity(0.80))
-                    .offset(x: -7)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color.black.opacity(0.80))
-                    .offset(x: 7)
-
-                Circle()
-                    .fill(Color.black.opacity(0.35))
-                    .frame(width: 3.5, height: 3.5)
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .bold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                .foregroundColor(Color(red: 0.08, green: 0.09, blue: 0.12))
             }
             .position(x: dividerX, y: size.height / 2)
 
@@ -803,7 +805,7 @@ public struct CapturedPhotoPreviewView: View {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         self.isAISharpnessEnabled = true
                         self.currentProcessedImage = sharpened
-                        self.aiOptimizationSuccessNote = "\u{2728} Đã bật làm nét nhẹ AI (bảo toàn 100% màu sắc)"
+                        self.aiOptimizationSuccessNote = "Đã bật làm nét AI (bảo toàn màu sắc)"
                     }
                 }
             }

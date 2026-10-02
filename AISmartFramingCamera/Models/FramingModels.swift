@@ -109,6 +109,7 @@ public enum VideoFormatOption: String, CaseIterable, Identifiable {
 }
 
 public enum VideoCodec: String, CaseIterable, Identifiable {
+    case proRes422 = "Apple ProRes 422"
     case hevc = "HEVC"
     case h264 = "H.264"
 
@@ -134,7 +135,7 @@ public enum AISessionState: Equatable {
         case .targetPlaced(let locked):
             return locked ? "Mục tiêu đã khóa — Di chuyển tâm trắng vào vòng vàng" : "Di chuyển máy để căn chỉnh bố cục"
         case .alignmentPerfect:
-            return "\u{2713} Khớp hoàn hảo! Chuẩn bị chụp..."
+            return "Khớp hoàn hảo! Chuẩn bị chụp..."
         case .capturing:
             return "Đang chụp ảnh..."
         case .done:
@@ -200,15 +201,15 @@ public enum AIEngineSource: Equatable {
                 .replacingOccurrences(of: "openai/", with: "")
                 .replacingOccurrences(of: "anthropic/", with: "")
                 .replacingOccurrences(of: "meta-llama/", with: "")
-            return "\u{2728} OpenRouter: \(clean)"
+            return "OpenRouter: \(clean)"
         case .localTrained114MB(let cat):
-            return "\u{1f9e0} AI Local 114MB (\(cat))"
+            return "AI Local 114MB (\(cat))"
         case .semanticLocal(let label):
-            return "\u{1f9e0} SigLIP + Vision/YOLO (\(label))"
+            return "SigLIP + Vision/YOLO (\(label))"
         case .yoloNeural(let label):
-            return "\u{26a1} YOLOv26 Neural (\(label))"
+            return "YOLOv26 Neural (\(label))"
         case .appleNeuralEngine(let scene):
-            return "\u{26a1} Apple Neural Engine (\(scene))"
+            return "Apple Neural Engine (\(scene))"
         }
     }
 

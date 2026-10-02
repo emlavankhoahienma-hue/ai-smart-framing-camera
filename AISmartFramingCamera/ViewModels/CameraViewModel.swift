@@ -689,6 +689,15 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isCompositionRuleSheetPresented: Bool = false {
         didSet { updateCameraHibernationState() }
     }
+    @Published public var isOpticalStabilizationEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(isOpticalStabilizationEnabled, forKey: "isOpticalStabilizationEnabled") }
+    }
+    @Published public var isWhiteBalanceLocked: Bool = false {
+        didSet { UserDefaults.standard.set(isWhiteBalanceLocked, forKey: "isWhiteBalanceLocked") }
+    }
+    @Published public var isCompositionGridVisible: Bool = true {
+        didSet { UserDefaults.standard.set(isCompositionGridVisible, forKey: "isCompositionGridVisible") }
+    }
 
     // Engine Source Indicator
     @Published public var activeEngineSource: AIEngineSource? = nil
@@ -876,6 +885,15 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "isSaveOriginalPhotoEnabled") != nil {
             self.isSaveOriginalPhotoEnabled = defaults.bool(forKey: "isSaveOriginalPhotoEnabled")
+        }
+        if defaults.object(forKey: "isOpticalStabilizationEnabled") != nil {
+            self.isOpticalStabilizationEnabled = defaults.bool(forKey: "isOpticalStabilizationEnabled")
+        }
+        if defaults.object(forKey: "isWhiteBalanceLocked") != nil {
+            self.isWhiteBalanceLocked = defaults.bool(forKey: "isWhiteBalanceLocked")
+        }
+        if defaults.object(forKey: "isCompositionGridVisible") != nil {
+            self.isCompositionGridVisible = defaults.bool(forKey: "isCompositionGridVisible")
         }
         if defaults.object(forKey: "isKeepScreenAwakeEnabled") != nil {
             self.isKeepScreenAwakeEnabled = defaults.bool(forKey: "isKeepScreenAwakeEnabled")
@@ -2761,7 +2779,7 @@ public final class CameraViewModel: ObservableObject {
         isAEAFLocked = true
         isShowingSunSlider = true
         cameraService.lockFocusAndExposure(at: devicePoint)
-        CameraLogger.info("\u{1f512} ĐÃ KHÓA AE/AF tại (\(String(format: "%.2f", normalizedPoint.x)), \(String(format: "%.2f", normalizedPoint.y)))", category: .capture)
+        CameraLogger.info("DA KHOA AE/AF tai (\(String(format: "%.2f", normalizedPoint.x)), \(String(format: "%.2f", normalizedPoint.y)))", category: .capture)
     }
 
     public func unlockAEAF() {
@@ -2776,7 +2794,7 @@ public final class CameraViewModel: ObservableObject {
         withAnimation(.easeOut(duration: 0.25)) {
             self.activeFocusSquarePoint = nil
         }
-        CameraLogger.info("\u{1f513} ĐÃ MỞ KHÓA AE/AF", category: .capture)
+        CameraLogger.info("DA MO KHOA AE/AF", category: .capture)
     }
 
     public func toggleFlash() {

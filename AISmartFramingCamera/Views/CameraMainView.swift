@@ -14,6 +14,13 @@ struct CameraFormFactorLayout {
     }
     var topBottomPadding: CGFloat { isCompact ? 4 : 6 }
     var controlDeckHeight: CGFloat { isCompact ? 148 : 156 }
+    func controlDeckHeight(isVideo: Bool) -> CGFloat {
+        if isVideo {
+            return isCompact ? 248 : 268
+        } else {
+            return isCompact ? 148 : 156
+        }
+    }
     var minimumGap: CGFloat { isCompact ? 4 : 8 }
     var bottomComfort: CGFloat {
         safeAreaInsets.bottom >= 20 ? (isCompact ? 8 : 14) : (isCompact ? 6 : 10)
@@ -160,7 +167,7 @@ public struct CameraMainView: View {
 
                         // 4. Bottom Control Deck (Album + Minimalist Shutter + Camera Flip + AI Button + Mode Switcher)
                         CameraControlsView(viewModel: viewModel, compact: layout.isCompact)
-                            .frame(height: layout.controlDeckHeight)
+                            .frame(height: layout.controlDeckHeight(isVideo: viewModel.captureMode.isVideo))
                             .padding(.bottom, layout.bottomComfort)
                     }
                 } else {
@@ -239,40 +246,62 @@ public struct CameraMainView: View {
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     let histogramWidth: CGFloat
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25) // #D9A441
 
     var body: some View {
-        HStack(alignment: .center, spacing: 6) {
-            // 1. Flash Toggle Button
-            Button(action: {
-                viewModel.toggleFlash()
-            }) {
-                Image(systemName: flashIconName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.85) : amberGold)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+        HStack(alignment: .center, spacing: 10) {
+            // 1. Flash Menu (bolt.fill + Tự động + chevron.down)
+            Menu {
+                Button(action: { viewModel.activeFlashMode = .auto }) {
+                    Label("Tự động", systemImage: "bolt.badge.automatic.fill")
+                }
+                Button(action: { viewModel.activeFlashMode = .on }) {
+                    Label("Bật", systemImage: "bolt.fill")
+                }
+                Button(action: { viewModel.activeFlashMode = .off }) {
+                    Label("Tắt", systemImage: "bolt.slash.fill")
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: flashIconName)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(flashLabel)
+                        .font(.system(size: 12, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundColor(viewModel.activeFlashMode == .off ? CameraDesignSystem.Colors.textSecondary : CameraDesignSystem.Colors.textPrimary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(CameraDesignSystem.Colors.surface.opacity(0.85))
+                        .overlay(
+                            Capsule()
+                                .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
+                        )
+                )
             }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Đèn flash")
+            .accessibilityLabel("Đèn flash: \(flashLabel)")
 
             // 2. Mini Live Color Histogram
             if viewModel.showHistogramInViewfinder {
                 LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
                     .frame(height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
             }
 
-            Spacer(minLength: 2)
+            // 2.1 Live Audio VU Level Meter (Mockup 4)
+            if viewModel.showAudioLevelMeter || viewModel.captureMode.isVideo {
+                AudioVULevelMeterView(levels: viewModel.audioLevels)
+            }
 
-            // 3. Technical Specs Row: ISO, EV, Format/Codec, 4:3
+            Spacer(minLength: 4)
+
+            // 3. Technical Specs: EV, Format, Aspect Ratio
             HStack(spacing: 8) {
-                Text(viewModel.liveISO)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.85))
-
                 Text(String(format: "EV %+.1f", viewModel.exposureBias))
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
 
                 Button(action: {
                     let generator = UISelectionFeedbackGenerator()
@@ -284,61 +313,40 @@ struct TopCameraBar: View {
                         viewModel.togglePhotoFormat()
                     }
                 }) {
-                    HStack(spacing: 3) {
-                        if viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo {
-                            Circle()
-                                .fill(amberGold)
-                                .frame(width: 4, height: 4)
-                        }
-                        Text(currentFormatLabel)
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo ? .black : amberGold)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
-                    .background(
-                        viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo
-                            ? RoundedRectangle(cornerRadius: 4).fill(amberGold)
-                            : RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08))
-                    )
+                    Text(currentFormatLabel)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(
+                            viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo
+                                ? RoundedRectangle(cornerRadius: 4).fill(CameraDesignSystem.Colors.accent)
+                                : RoundedRectangle(cornerRadius: 4).fill(CameraDesignSystem.Colors.surface)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
+                        )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Định dạng: \(currentFormatLabel). Chạm để thay đổi.")
+                .accessibilityLabel("Định dạng: \(currentFormatLabel)")
 
                 Text(viewModel.captureMode.isVideo ? "16:9" : (viewModel.isWindowedZoomActive ? viewModel.windowedZoomAspectRatio.rawValue : "4:3"))
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
             }
             .lineLimit(1)
             .minimumScaleFactor(0.80)
 
-            Spacer(minLength: 2)
+            Spacer(minLength: 4)
 
-            // 4. Windowed Zoom Mode Toggle Button
-            Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.prepare()
-                generator.impactOccurred()
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
-                    viewModel.isWindowedZoomActive.toggle()
-                }
-            }) {
-                Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(viewModel.isWindowedZoomActive ? amberGold : Color.white.opacity(0.85))
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
-
-            // 5. Settings Sheet Button (Gear Icon)
+            // 4. Settings Sheet Button (Gear Icon)
             Button(action: {
                 viewModel.isShowingSettings = true
             }) {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white.opacity(0.85))
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
@@ -346,6 +354,15 @@ struct TopCameraBar: View {
             .accessibilityLabel("Cài đặt hệ thống")
         }
         .frame(height: 44)
+    }
+
+    private var flashLabel: String {
+        switch viewModel.activeFlashMode {
+        case .auto: return "Tự động"
+        case .on: return "Bật"
+        case .off: return "Tắt"
+        @unknown default: return "Tự động"
+        }
     }
 
     private var flashIconName: String {
@@ -369,50 +386,60 @@ struct TopCameraBar: View {
     }
 }
 
-// MARK: - Minimalist Optical Zoom Selector (Strictly 1×, 2×, 3× with Single Matched Ring, No Capsule Background)
+// MARK: - Minimalist Optical Zoom Selector (0.5x, 1x, 2x, 5x Capsule Pill)
 struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
+
     private var zoomOptions: [CGFloat] {
         if viewModel.cameraService.hasUltraWideLens {
-            return [0.5, 1.0, 2.0, 3.0]
+            return [0.5, 1.0, 2.0, 5.0]
         } else {
-            return [1.0, 2.0, 3.0]
+            return [1.0, 2.0, 5.0]
         }
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             ForEach(zoomOptions, id: \.self) { zoom in
-                let isSelected = viewModel.selectedZoomPreset == zoom
+                let isSelected = abs(viewModel.selectedZoomPreset - zoom) < 0.1
                 Button(action: {
                     let generator = UISelectionFeedbackGenerator()
                     generator.prepare()
                     generator.selectionChanged()
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
+                    withAnimation(CameraDesignSystem.Animations.modeSwitch) {
                         viewModel.setZoomFromButton(zoom)
                     }
                 }) {
                     ZStack {
                         if isSelected {
                             Circle()
-                                .stroke(amberGold, lineWidth: 1.5)
+                                .fill(CameraDesignSystem.Colors.accent)
                                 .frame(width: 32, height: 32)
                                 .matchedGeometryEffect(id: "active_viewfinder_zoom_ring", in: zoomPillNamespace)
                         }
 
                         Text(zoom == 0.5 ? "0.5x" : "\(Int(zoom))x")
                             .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.78))
+                            .foregroundColor(isSelected ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textSecondary)
                     }
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+                    .frame(width: 34, height: 34)
+                    .contentShape(Circle())
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(zoom == 0.5 ? "Thu phong 0.5 lan" : "Thu phong \(Int(zoom)) lan")
+                .accessibilityLabel(zoom == 0.5 ? "Thu phóng 0.5 lần" : "Thu phóng \(Int(zoom)) lần")
             }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(CameraDesignSystem.Colors.surface.opacity(0.92))
+                .overlay(
+                    Capsule()
+                        .stroke(CameraDesignSystem.Colors.hairline, lineWidth: CameraDesignSystem.Dimensions.physicalPixelHairline)
+                )
+        )
     }
 }
 

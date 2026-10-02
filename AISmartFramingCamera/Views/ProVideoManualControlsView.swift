@@ -1,133 +1,158 @@
 import SwiftUI
 
+// MARK: - Pro Video Parameter Tick Ruler Shape
+private struct ProTriangleIndicator: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Interactive Horizontal Tick Dial Ruler (Mockup 4)
+private struct ProParameterTickRuler: View {
+    let tab: ProVideoParameterTab
+    @ObservedObject var proService: ProVideoManualControlsService
+    @State private var dragAccumulator: CGFloat = 0
+
+    var body: some View {
+        ZStack(alignment: .center) {
+            // Background ticks
+            GeometryReader { geometry in
+                Canvas { context, size in
+                    let midX = size.width / 2.0
+                    let step: CGFloat = 9.0
+                    let tickCount = Int(size.width / step) / 2 + 6
+                    let offset = dragAccumulator.truncatingRemainder(dividingBy: step)
+
+                    for i in -tickCount...tickCount {
+                        let x = midX + CGFloat(i) * step + offset
+                        guard x >= 0 && x <= size.width else { continue }
+                        let isMajor = abs(i) % 5 == 0
+                        let tickHeight: CGFloat = isMajor ? 18 : 9
+                        let tickColor = isMajor ? Color.white.opacity(0.85) : Color.white.opacity(0.25)
+
+                        let tickPath = Path { p in
+                            p.move(to: CGPoint(x: x, y: size.height))
+                            p.addLine(to: CGPoint(x: x, y: size.height - tickHeight))
+                        }
+                        context.stroke(tickPath, with: .color(tickColor), lineWidth: isMajor ? 1.5 : 1.0)
+                    }
+                }
+            }
+            .frame(height: 28)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { val in
+                        let delta = val.translation.width - dragAccumulator
+                        dragAccumulator = val.translation.width
+                        stepValue(delta: delta)
+                    }
+                    .onEnded { _ in
+                        dragAccumulator = 0
+                    }
+            )
+
+            // Center gold indicator needle (Mockup 4)
+            VStack(spacing: 0) {
+                ProTriangleIndicator()
+                    .fill(CameraDesignSystem.Colors.accent)
+                    .frame(width: 8, height: 6)
+                Rectangle()
+                    .fill(CameraDesignSystem.Colors.accent)
+                    .frame(width: 2, height: 22)
+            }
+            .allowsHitTesting(false)
+        }
+        .frame(height: 32)
+    }
+
+    private func stepValue(delta: CGFloat) {
+        let haptic = UISelectionFeedbackGenerator()
+        haptic.prepare()
+        switch tab {
+        case .shutter:
+            let step = delta > 0 ? 10.0 : -10.0
+            let newSpeed = max(proService.minShutterSpeed, min(2000.0, proService.currentShutterSpeed + step))
+            proService.setManualShutterSpeed(newSpeed)
+            haptic.selectionChanged()
+        case .iso:
+            let step: Float = delta > 0 ? 25.0 : -25.0
+            let newISO = max(proService.minISO, min(proService.maxISO, proService.currentISO + step))
+            proService.setManualISO(newISO)
+            haptic.selectionChanged()
+        case .wb:
+            let step: Float = delta > 0 ? 100.0 : -100.0
+            let newKelvin = max(2500.0, min(9000.0, proService.currentKelvin + step))
+            proService.setManualWhiteBalance(kelvin: newKelvin, tint: proService.currentTint)
+            haptic.selectionChanged()
+        case .aperture:
+            let step: Float = delta > 0 ? 0.1 : -0.1
+            let newEV = max(-2.0, min(2.0, proService.currentEVBias + step))
+            proService.setManualEVBias(newEV)
+            haptic.selectionChanged()
+        case .focus:
+            let step: Float = delta > 0 ? 0.02 : -0.02
+            let newPos = max(0.0, min(1.0, proService.currentLensPosition + step))
+            proService.setManualFocus(newPos)
+            haptic.selectionChanged()
+        }
+    }
+}
+
+// MARK: - Main Pro Video Manual Controls View (Mockup 4)
 public struct ProVideoManualControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var proService = ProVideoManualControlsService.shared
 
-    @State private var isCollapsed: Bool = true
+    @State private var isCollapsed: Bool = false
     private let haptic = UISelectionFeedbackGenerator()
+
+    private let tabs: [(tab: ProVideoParameterTab, title: String)] = [
+        (.shutter, "S"),
+        (.iso, "ISO"),
+        (.wb, "WB"),
+        (.aperture, "EV"),
+        (.focus, "MF")
+    ]
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
     }
 
     public var body: some View {
-        VStack(spacing: 8) {
-            // MARK: - Floating Pro Top Tabs
-            HStack(spacing: 6) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                // ISO Tab
-                proTabButton(
-                    tab: .iso,
-                    title: "ISO",
-                    valueString: proService.isAutoISO ? "AUTO (\(Int(proService.measuredLiveISO)))" : "\(Int(proService.currentISO))",
-                    isAuto: proService.isAutoISO
-                )
+        VStack(spacing: 10) {
+            // 1. Parameter Cards Tab Bar (S | ISO | WB | EV | MF)
+            parameterTabBar
 
-                // Shutter Tab
-                proTabButton(
-                    tab: .shutter,
-                    title: "SEC",
-                    valueString: proService.isAutoShutter ? "AUTO" : "1/\(Int(proService.currentShutterSpeed))s",
-                    isAuto: proService.isAutoShutter
-                )
-
-                // Aperture / EV Tab
-                proTabButton(
-                    tab: .aperture,
-                    title: "f/\(String(format: "%.1f", proService.hardwareLensAperture))",
-                    valueString: proService.isAutoEV ? "0.0 EV" : String(format: "%+.1f EV", proService.currentEVBias),
-                    isAuto: proService.isAutoEV
-                )
-
-                // WB Tab
-                proTabButton(
-                    tab: .wb,
-                    title: "WB",
-                    valueString: proService.isAutoWB ? "AWB" : "\(Int(proService.currentKelvin))K",
-                    isAuto: proService.isAutoWB
-                )
-
-                // Hardware Lens Focus Tab
-                proTabButton(
-                    tab: .focus,
-                    title: "FOCUS",
-                    valueString: proService.isAutoFocus
-                        ? "AF \(Int(proService.measuredLiveLensPosition * 100))"
-                        : "MF \(Int(proService.currentLensPosition * 100))",
-                    isAuto: proService.isAutoFocus
-                )
-
-                // Focus Peaking Toggle Quick Button
-                Button(action: {
-                    viewModel.isFocusPeakingEnabled.toggle()
-                    haptic.selectionChanged()
-                }) {
-                    HStack(spacing: 3) {
-                        Circle()
-                            .fill(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor : Color.gray.opacity(0.6))
-                            .frame(width: 6, height: 6)
-                        Text("PEAK")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor : .white.opacity(0.8))
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
-                    .background(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor.opacity(0.22) : Color.white.opacity(0.08))
-                    .clipShape(Capsule())
-                }
-                .accessibilityLabel("Bật tắt Focus Peaking báo nét")
-                    }
-                }
-
-                // Collapse / Expand Toggle Button
-                Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        isCollapsed.toggle()
-                    }
-                    haptic.selectionChanged()
-                }) {
-                    Image(systemName: isCollapsed ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.white.opacity(0.8))
-                        .padding(.horizontal, 4)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color.black.opacity(0.75))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                    )
-            )
-
-            // MARK: - Expandable Adjustment Drawer Panel
+            // 2. Expandable Adjustment Drawer
             if !isCollapsed {
-                VStack(spacing: 10) {
-                    switch viewModel.selectedProTab {
-                    case .iso:
-                        isoControlPanel
-                    case .shutter:
-                        shutterControlPanel
-                    case .aperture:
-                        apertureEVControlPanel
-                    case .wb:
-                        whiteBalanceControlPanel
-                    case .focus:
-                        manualFocusControlPanel
-                    }
+                VStack(spacing: 12) {
+                    // 2.1 Large Readout + Auto Toggle
+                    parameterReadoutHeader
+
+                    // 2.2 Interactive Horizontal Tick Ruler (Mockup 4)
+                    ProParameterTickRuler(tab: viewModel.selectedProTab, proService: proService)
+                        .padding(.horizontal, 8)
+
+                    // 2.3 Quick Presets Row
+                    quickPresetsRow
+
+                    // 2.4 Quick Toggles: Khóa tự động & Focus Peaking
+                    quickTogglesRow
                 }
-                .padding(12)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
                 .background(
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(Color.black.opacity(0.82))
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(CameraDesignSystem.Colors.surface)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 18)
-                                .stroke(Color.yellow.opacity(0.35), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(CameraDesignSystem.Colors.hairline, lineWidth: 1)
                         )
                 )
                 .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
@@ -139,245 +164,267 @@ public struct ProVideoManualControlsView: View {
         }
     }
 
-    // MARK: - Tab Selector Pill
-    private func proTabButton(tab: ProVideoParameterTab, title: String, valueString: String, isAuto: Bool) -> some View {
-        let isSelected = viewModel.selectedProTab == tab
-        return Button(action: {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                viewModel.selectedProTab = tab
-                if isCollapsed { isCollapsed = false }
-            }
-            haptic.selectionChanged()
-        }) {
-            VStack(spacing: 2) {
-                HStack(spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    if isAuto {
-                        Text("A")
-                            .font(.system(size: 7.5, weight: .heavy))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Color.cyan.opacity(0.3))
-                            .cornerRadius(3)
-                            .foregroundColor(.cyan)
-                    }
-                }
-                Text(valueString)
-                    .font(.system(size: 11, weight: isSelected ? .heavy : .semibold, design: .monospaced))
-                    .lineLimit(1)
-            }
-            .foregroundColor(isSelected ? .yellow : .white.opacity(0.85))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.yellow.opacity(0.18) : Color.white.opacity(0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.yellow.opacity(0.7) : Color.clear, lineWidth: 1)
-            )
-        }
-    }
-
-    // MARK: - 1. ISO Panel
-    private var isoControlPanel: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Text("ĐỘ NHẠY SÁNG ISO")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.gray)
-
-                Spacer()
-
-                // AUTO Button
+    // MARK: - 1. Parameter Cards Tab Bar
+    private var parameterTabBar: some View {
+        HStack(spacing: 6) {
+            ForEach(tabs, id: \.tab) { item in
+                let isSelected = viewModel.selectedProTab == item.tab
                 Button(action: {
-                    proService.setAutoISO(!proService.isAutoISO)
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        if viewModel.selectedProTab == item.tab {
+                            isCollapsed.toggle()
+                        } else {
+                            viewModel.selectedProTab = item.tab
+                            isCollapsed = false
+                        }
+                    }
                     haptic.selectionChanged()
                 }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(proService.isAutoISO ? Color.green : Color.gray)
-                            .frame(width: 6, height: 6)
-                        Text(proService.isAutoISO ? "AUTO: BẬT" : "AUTO: TẮT")
-                            .font(.system(size: 11, weight: .bold))
+                    VStack(spacing: 2) {
+                        Text(item.title)
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .lineLimit(1)
+
+                        Text(tabValueLabel(for: item.tab))
+                            .font(.system(size: 10.5, weight: isSelected ? .bold : .medium, design: .monospaced))
+                            .lineLimit(1)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(proService.isAutoISO ? Color.green.opacity(0.2) : Color.white.opacity(0.1))
-                    .cornerRadius(8)
-                    .foregroundColor(proService.isAutoISO ? .green : .white)
+                    .foregroundColor(isSelected ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(isSelected ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(isSelected ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.hairline, lineWidth: 1)
+                    )
                 }
-            }
-
-            // Quick Presets
-            let presets: [Float] = [50, 100, 200, 400, 800, 1600, 3200]
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(presets, id: \.self) { preset in
-                        let isCur = !proService.isAutoISO && abs(proService.currentISO - preset) < 10
-                        Button(action: {
-                            proService.setManualISO(preset)
-                            haptic.selectionChanged()
-                        }) {
-                            Text("\(Int(preset))")
-                                .font(.system(size: 11, weight: isCur ? .heavy : .medium, design: .monospaced))
-                                .foregroundColor(isCur ? .black : .white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(isCur ? Color.yellow : Color.white.opacity(0.12))
-                                .cornerRadius(6)
-                        }
-                    }
-                }
-            }
-
-            // Slider
-            HStack(spacing: 12) {
-                Text("\(Int(proService.minISO))")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.gray)
-
-                Slider(
-                    value: Binding(
-                        get: { Double(proService.currentISO) },
-                        set: {
-                            proService.setManualISO(Float($0))
-                            haptic.selectionChanged()
-                        }
-                    ),
-                    in: Double(proService.minISO)...Double(proService.maxISO),
-                    step: 25.0
-                )
-                .accentColor(.yellow)
-
-                Text("\(Int(proService.maxISO))")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.gray)
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityLabel("Thông số \(item.title): \(tabValueLabel(for: item.tab))")
             }
         }
     }
 
-    // MARK: - 2. Shutter Speed Panel
-    private var shutterControlPanel: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Text("TỐC ĐỘ MÀN TRẬP (SHUTTER)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.gray)
+    private func tabValueLabel(for tab: ProVideoParameterTab) -> String {
+        switch tab {
+        case .shutter:
+            return proService.isAutoShutter ? "AUTO" : "1/\(Int(proService.currentShutterSpeed))s"
+        case .iso:
+            return proService.isAutoISO ? "AUTO" : "\(Int(proService.currentISO))"
+        case .wb:
+            return proService.isAutoWB ? "AWB" : "\(Int(proService.currentKelvin))K"
+        case .aperture:
+            return proService.isAutoEV ? "0.0 EV" : String(format: "%+.1f", proService.currentEVBias)
+        case .focus:
+            return proService.isAutoFocus ? "AF" : "\(Int(proService.currentLensPosition * 100))"
+        }
+    }
 
-                Spacer()
+    // MARK: - 2.1 Large Readout Header
+    private var parameterReadoutHeader: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(readoutTitle)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(CameraDesignSystem.Colors.textSecondary)
 
-                Button(action: {
-                    proService.setAutoShutter(!proService.isAutoShutter)
-                    haptic.selectionChanged()
-                }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(proService.isAutoShutter ? Color.green : Color.gray)
-                            .frame(width: 6, height: 6)
-                        Text(proService.isAutoShutter ? "AUTO: BẬT" : "AUTO: TẮT")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(proService.isAutoShutter ? Color.green.opacity(0.2) : Color.white.opacity(0.1))
-                    .cornerRadius(8)
-                    .foregroundColor(proService.isAutoShutter ? .green : .white)
-                }
+                Text(currentPrimaryValueText)
+                    .font(.system(size: 24, weight: .bold, design: .monospaced))
+                    .foregroundColor(CameraDesignSystem.Colors.textPrimary)
             }
 
-            // Cine Shutter Speed Presets (180 deg cinema rule)
-            let shutterPresets: [(label: String, val: Double)] = [
-                ("1/24", 24),
-                ("1/48 (180°)", 48),
-                ("1/50", 50),
-                ("1/60", 60),
-                ("1/120", 120),
-                ("1/240", 240),
-                ("1/500", 500),
-                ("1/1000", 1000)
+            Spacer()
+
+            // AUTO Button Toggle
+            autoToggleButton
+        }
+    }
+
+    private var readoutTitle: String {
+        switch viewModel.selectedProTab {
+        case .shutter: return "TỐC ĐỘ MÀN TRẬP"
+        case .iso: return "ĐỘ NHẠY SÁNG ISO"
+        case .wb: return "CÂN BẰNG TRẮNG"
+        case .aperture: return "BÙ PHƠI SÁNG EV"
+        case .focus: return "LẤY NÉT ỐNG KÍNH"
+        }
+    }
+
+    private var currentPrimaryValueText: String {
+        switch viewModel.selectedProTab {
+        case .shutter:
+            return proService.isAutoShutter
+                ? "AUTO (1/\(Int(proService.measuredLiveShutterSpeed))s)"
+                : "1/\(Int(proService.currentShutterSpeed)) s"
+        case .iso:
+            return proService.isAutoISO
+                ? "AUTO (\(Int(proService.measuredLiveISO)))"
+                : "ISO \(Int(proService.currentISO))"
+        case .wb:
+            return proService.isAutoWB
+                ? "AWB (\(Int(proService.measuredLiveKelvin))K)"
+                : "\(Int(proService.currentKelvin)) K"
+        case .aperture:
+            return proService.isAutoEV
+                ? "0.0 EV"
+                : String(format: "%+.1f EV", proService.currentEVBias)
+        case .focus:
+            return proService.isAutoFocus
+                ? "AF-C TỰ ĐỘNG"
+                : "MF \(Int(proService.currentLensPosition * 100))%"
+        }
+    }
+
+    // MARK: - Auto Mode Toggle Button
+    @ViewBuilder
+    private var autoToggleButton: some View {
+        switch viewModel.selectedProTab {
+        case .shutter:
+            Button(action: {
+                proService.setAutoShutter(!proService.isAutoShutter)
+                haptic.selectionChanged()
+            }) {
+                autoButtonLabel(isAuto: proService.isAutoShutter)
+            }
+        case .iso:
+            Button(action: {
+                proService.setAutoISO(!proService.isAutoISO)
+                haptic.selectionChanged()
+            }) {
+                autoButtonLabel(isAuto: proService.isAutoISO)
+            }
+        case .wb:
+            Button(action: {
+                proService.setAutoWB(!proService.isAutoWB)
+                haptic.selectionChanged()
+            }) {
+                autoButtonLabel(isAuto: proService.isAutoWB)
+            }
+        case .aperture:
+            Button(action: {
+                proService.setAutoEV(true)
+                haptic.selectionChanged()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("RESET")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(CameraDesignSystem.Colors.surfaceElevated)
+                .cornerRadius(8)
+                .foregroundColor(CameraDesignSystem.Colors.textPrimary)
+            }
+        case .focus:
+            Button(action: {
+                let enableAuto = !proService.isAutoFocus
+                proService.setAutoFocus(enableAuto)
+                if !enableAuto {
+                    viewModel.isFocusPeakingEnabled = true
+                }
+                haptic.selectionChanged()
+            }) {
+                autoButtonLabel(isAuto: proService.isAutoFocus)
+            }
+            .disabled(!proService.isManualFocusSupported)
+        }
+    }
+
+    private func autoButtonLabel(isAuto: Bool) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(isAuto ? CameraDesignSystem.Colors.meterGood : CameraDesignSystem.Colors.textSecondary)
+                .frame(width: 6, height: 6)
+            Text(isAuto ? "AUTO: BẬT" : "AUTO: TẮT")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(isAuto ? CameraDesignSystem.Colors.meterGood.opacity(0.18) : CameraDesignSystem.Colors.surfaceElevated)
+        .cornerRadius(8)
+        .foregroundColor(isAuto ? CameraDesignSystem.Colors.meterGood : CameraDesignSystem.Colors.textPrimary)
+    }
+
+    // MARK: - 2.3 Quick Presets Row
+    @ViewBuilder
+    private var quickPresetsRow: some View {
+        switch viewModel.selectedProTab {
+        case .shutter:
+            let presets: [(label: String, val: Double)] = [
+                ("1/24", 24), ("1/48", 48), ("1/60", 60), ("1/120", 120),
+                ("1/240", 240), ("1/500", 500), ("1/1000", 1000)
             ]
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(shutterPresets, id: \.val) { preset in
-                        let isCur = !proService.isAutoShutter && abs(proService.currentShutterSpeed - preset.val) < 2
+                    ForEach(presets, id: \.val) { p in
+                        let isCur = !proService.isAutoShutter && abs(proService.currentShutterSpeed - p.val) < 2
                         Button(action: {
-                            proService.setManualShutterSpeed(preset.val)
+                            proService.setManualShutterSpeed(p.val)
                             haptic.selectionChanged()
                         }) {
-                            Text(preset.label)
+                            Text(p.label)
                                 .font(.system(size: 11, weight: isCur ? .heavy : .medium, design: .monospaced))
-                                .foregroundColor(isCur ? .black : .white)
+                                .foregroundColor(isCur ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 5)
-                                .background(isCur ? Color.yellow : Color.white.opacity(0.12))
+                                .background(isCur ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
                                 .cornerRadius(6)
                         }
                     }
                 }
             }
-
-            // Slider
-            HStack(spacing: 12) {
-                Text("1/\(Int(proService.minShutterSpeed))")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.gray)
-
-                Slider(
-                    value: Binding(
-                        get: { proService.currentShutterSpeed },
-                        set: {
-                            proService.setManualShutterSpeed($0)
+        case .iso:
+            let presets: [Float] = [50, 100, 200, 400, 800, 1600, 3200]
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(presets, id: \.self) { p in
+                        let isCur = !proService.isAutoISO && abs(proService.currentISO - p.val) < 10
+                        Button(action: {
+                            proService.setManualISO(p)
                             haptic.selectionChanged()
+                        }) {
+                            Text("\(Int(p))")
+                                .font(.system(size: 11, weight: isCur ? .heavy : .medium, design: .monospaced))
+                                .foregroundColor(isCur ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(isCur ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
+                                .cornerRadius(6)
                         }
-                    ),
-                    in: proService.minShutterSpeed...min(2000.0, proService.maxShutterSpeed),
-                    step: 10.0
-                )
-                .accentColor(.yellow)
-
-                Text("1/2000")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.gray)
-            }
-        }
-    }
-
-    // MARK: - 3. Aperture & EV Panel
-    private var apertureEVControlPanel: some View {
-        VStack(spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Khẩu độ f/\(String(format: "%.1f", proService.hardwareLensAperture)) · Cố định")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
-                    Text("Bù phơi sáng EV")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.gray)
-                }
-
-                Spacer()
-
-                // Auto / Reset EV Button
-                Button(action: {
-                    proService.setAutoEV(true)
-                    haptic.selectionChanged()
-                }) {
-                    Text("RESET 0.0 EV")
-                        .font(.system(size: 11, weight: .bold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(proService.currentEVBias == 0 ? Color.green.opacity(0.2) : Color.white.opacity(0.12))
-                        .cornerRadius(8)
-                        .foregroundColor(proService.currentEVBias == 0 ? .green : .white)
+                    }
                 }
             }
-
-            // EV Presets
+        case .wb:
+            let presets: [(name: String, kelvin: Float)] = [
+                ("3200K Vàng", 3200), ("4300K Huỳnh quang", 4300),
+                ("5600K Ban ngày", 5600), ("6500K Mây", 6500), ("7500K Râm", 7500)
+            ]
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(presets, id: \.kelvin) { p in
+                        let isCur = !proService.isAutoWB && abs(proService.currentKelvin - p.kelvin) < 100
+                        Button(action: {
+                            proService.setManualWhiteBalance(kelvin: p.kelvin, tint: proService.currentTint)
+                            haptic.selectionChanged()
+                        }) {
+                            Text(p.name)
+                                .font(.system(size: 10.5, weight: isCur ? .heavy : .medium))
+                                .foregroundColor(isCur ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(isCur ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
+                                .cornerRadius(6)
+                        }
+                    }
+                }
+            }
+        case .aperture:
             let evPresets: [Float] = [-1.5, -1.0, -0.5, 0.0, +0.5, +1.0, +1.5]
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(evPresets, id: \.self) { ev in
                     let isCur = abs(proService.currentEVBias - ev) < 0.08
                     Button(action: {
@@ -386,250 +433,87 @@ public struct ProVideoManualControlsView: View {
                     }) {
                         Text(String(format: "%+.1f", ev))
                             .font(.system(size: 11, weight: isCur ? .heavy : .medium, design: .monospaced))
-                            .foregroundColor(isCur ? .black : .white)
+                            .foregroundColor(isCur ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 5)
-                            .background(isCur ? Color.yellow : Color.white.opacity(0.12))
+                            .background(isCur ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
                             .cornerRadius(6)
                     }
                 }
             }
-
-            // Slider
-            HStack(spacing: 12) {
-                Text("-2.0 EV")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.gray)
-
-                Slider(
-                    value: Binding(
-                        get: { Double(proService.currentEVBias) },
-                        set: {
-                            proService.setManualEVBias(Float($0))
-                            haptic.selectionChanged()
-                        }
-                    ),
-                    in: -2.0...2.0,
-                    step: 0.1
-                )
-                .accentColor(.yellow)
-
-                Text("+2.0 EV")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.gray)
-            }
-        }
-    }
-
-    // MARK: - 4. White Balance Panel
-    private var whiteBalanceControlPanel: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Text("CÂN BẰNG TRẮNG (WHITE BALANCE)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.gray)
-
-                Spacer()
-
-                Button(action: {
-                    proService.setAutoWB(!proService.isAutoWB)
-                    haptic.selectionChanged()
-                }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(proService.isAutoWB ? Color.green : Color.gray)
-                            .frame(width: 6, height: 6)
-                        Text(proService.isAutoWB ? "AWB: BẬT" : "AWB: TẮT")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(proService.isAutoWB ? Color.green.opacity(0.2) : Color.white.opacity(0.1))
-                    .cornerRadius(8)
-                    .foregroundColor(proService.isAutoWB ? .green : .white)
-                }
-            }
-
-            // WB Scene Presets
-            let wbPresets: [(name: String, kelvin: Float)] = [
-                ("3200K Vàng", 3200),
-                ("4300K Huỳnh quang", 4300),
-                ("5600K Ban ngày", 5600),
-                ("6500K Mây", 6500),
-                ("7500K Râm", 7500)
-            ]
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(wbPresets, id: \.kelvin) { preset in
-                        let isCur = !proService.isAutoWB && abs(proService.currentKelvin - preset.kelvin) < 100
-                        Button(action: {
-                            proService.setManualWhiteBalance(kelvin: preset.kelvin, tint: proService.currentTint)
-                            haptic.selectionChanged()
-                        }) {
-                            Text(preset.name)
-                                .font(.system(size: 10.5, weight: isCur ? .heavy : .medium))
-                                .foregroundColor(isCur ? .black : .white)
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 5)
-                                .background(isCur ? Color.yellow : Color.white.opacity(0.12))
-                                .cornerRadius(6)
-                        }
-                    }
-                }
-            }
-
-            // Kelvin Slider with warm-to-cool visual
-            HStack(spacing: 12) {
-                Text("2500K")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.orange)
-
-                Slider(
-                    value: Binding(
-                        get: { Double(proService.currentKelvin) },
-                        set: {
-                            proService.setManualWhiteBalance(kelvin: Float($0), tint: proService.currentTint)
-                            haptic.selectionChanged()
-                        }
-                    ),
-                    in: 2500...9000,
-                    step: 50.0
-                )
-                .accentColor(.cyan)
-
-                Text("9000K")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.cyan)
-            }
-
-            // Tint Adjustment Row
-            HStack(spacing: 10) {
-                Text("TINT:")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(.gray)
-
-                Text("-30 G")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.green)
-
-                Slider(
-                    value: Binding(
-                        get: { Double(proService.currentTint) },
-                        set: {
-                            proService.setManualWhiteBalance(kelvin: proService.currentKelvin, tint: Float($0))
-                            haptic.selectionChanged()
-                        }
-                    ),
-                    in: -30...30,
-                    step: 1.0
-                )
-                .accentColor(.purple)
-
-                Text("+30 M")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.purple)
-            }
-        }
-    }
-
-    // MARK: - 5. Manual Lens Focus Panel
-    private var manualFocusControlPanel: some View {
-        VStack(spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("LẤY NÉT ỐNG KÍNH")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(.gray)
-                    Text(proService.isManualFocusSupported
-                         ? "Vị trí lens \(Int(proService.currentLensPosition * 100))%"
-                         : "Thiết bị không hỗ trợ khóa lens tùy chỉnh")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(proService.isManualFocusSupported ? .white.opacity(0.8) : .orange)
-                }
-
-                Spacer()
-
-                Button(action: {
-                    let enableAuto = !proService.isAutoFocus
-                    proService.setAutoFocus(enableAuto)
-                    if !enableAuto {
-                        viewModel.isFocusPeakingEnabled = true
-                    }
-                    haptic.selectionChanged()
-                }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(proService.isAutoFocus ? Color.green : Color.yellow)
-                            .frame(width: 6, height: 6)
-                        Text(proService.isAutoFocus ? "AF-C" : "MF")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background((proService.isAutoFocus ? Color.green : Color.yellow).opacity(0.2))
-                    .cornerRadius(8)
-                    .foregroundColor(proService.isAutoFocus ? .green : .yellow)
-                }
-                .disabled(!proService.isManualFocusSupported)
-                .opacity(proService.isManualFocusSupported ? 1 : 0.45)
-            }
-
+        case .focus:
             let focusPresets: [(name: String, position: Float)] = [
-                ("MACRO", 0.02),
-                ("GẦN", 0.20),
-                ("TRUNG", 0.50),
-                ("XA", 0.78),
-                ("∞", 1.00)
+                ("MACRO", 0.02), ("GẦN", 0.20), ("TRUNG", 0.50), ("XA", 0.78), ("∞", 1.00)
             ]
-            HStack(spacing: 7) {
-                ForEach(focusPresets, id: \.position) { preset in
-                    let isCurrent = !proService.isAutoFocus
-                        && abs(proService.currentLensPosition - preset.position) < 0.04
+            HStack(spacing: 6) {
+                ForEach(focusPresets, id: \.position) { p in
+                    let isCur = !proService.isAutoFocus && abs(proService.currentLensPosition - p.position) < 0.04
                     Button(action: {
-                        proService.setManualFocus(preset.position)
+                        proService.setManualFocus(p.position)
                         viewModel.isFocusPeakingEnabled = true
                         haptic.selectionChanged()
                     }) {
-                        Text(preset.name)
-                            .font(.system(size: 10.5, weight: isCurrent ? .heavy : .medium, design: .monospaced))
-                            .foregroundColor(isCurrent ? .black : .white)
+                        Text(p.name)
+                            .font(.system(size: 10.5, weight: isCur ? .heavy : .medium, design: .monospaced))
+                            .foregroundColor(isCur ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 5)
-                            .background(isCurrent ? Color.yellow : Color.white.opacity(0.12))
+                            .background(isCur ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
                             .cornerRadius(6)
                     }
                     .disabled(!proService.isManualFocusSupported)
                 }
             }
+        }
+    }
 
-            HStack(spacing: 12) {
-                Label("GẦN", systemImage: "camera.macro")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(.yellow)
-
-                Slider(
-                    value: Binding(
-                        get: { Double(proService.currentLensPosition) },
-                        set: {
-                            proService.setManualFocus(Float($0))
-                            viewModel.isFocusPeakingEnabled = true
-                        }
-                    ),
-                    in: 0...1,
-                    step: 0.01
+    // MARK: - 2.4 Quick Toggles: Khóa tự động & Focus Peaking (Mockup 4)
+    private var quickTogglesRow: some View {
+        HStack(spacing: 10) {
+            // Toggle 1: Khóa tự động (Auto AE/AF lock)
+            Button(action: {
+                viewModel.isAEAFLocked.toggle()
+                haptic.selectionChanged()
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: viewModel.isAEAFLocked ? "lock.fill" : "lock.open")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Khóa tự động")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(viewModel.isAEAFLocked ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(viewModel.isAEAFLocked ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(viewModel.isAEAFLocked ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.hairline, lineWidth: 1)
                 )
-                .accentColor(.yellow)
-                .disabled(!proService.isManualFocusSupported)
-
-                Text("XA ∞")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .foregroundColor(.cyan)
             }
 
-            Text("Chạm lên khung ngắm để trở lại autofocus. Focus Peaking tự bật khi chỉnh tay.")
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundColor(.white.opacity(0.55))
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Toggle 2: Focus Peaking
+            Button(action: {
+                viewModel.isFocusPeakingEnabled.toggle()
+                haptic.selectionChanged()
+            }) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(viewModel.isFocusPeakingEnabled ? viewModel.focusPeakingColor.swiftUIColor : CameraDesignSystem.Colors.textSecondary)
+                        .frame(width: 8, height: 8)
+                    Text("Focus Peaking")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(viewModel.isFocusPeakingEnabled ? CameraDesignSystem.Colors.background : CameraDesignSystem.Colors.textPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(viewModel.isFocusPeakingEnabled ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.surfaceElevated)
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(viewModel.isFocusPeakingEnabled ? CameraDesignSystem.Colors.accent : CameraDesignSystem.Colors.hairline, lineWidth: 1)
+                )
+            }
         }
     }
 }
