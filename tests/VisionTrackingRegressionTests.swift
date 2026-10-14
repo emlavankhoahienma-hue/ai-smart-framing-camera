@@ -16,10 +16,11 @@ final class VisionTrackingRegressionTests: XCTestCase {
         XCTAssertEqual(policy.consecutiveFailures, 0)
     }
 
-    func testThreeConsecutiveFailuresRetireTracker() {
+    func testConsecutiveFailuresRetireTracker() {
         var policy = VisionContinuityPolicy()
-        XCTAssertFalse(policy.reject())
-        XCTAssertFalse(policy.reject())
+        for _ in 0..<5 {
+            XCTAssertFalse(policy.reject())
+        }
         XCTAssertTrue(policy.reject())
         policy.accept()
         XCTAssertFalse(policy.reject())

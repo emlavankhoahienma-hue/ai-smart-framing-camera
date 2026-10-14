@@ -60,16 +60,27 @@ final class TargetPatchFlow {
                     var bestPoint: CGPoint?
                     for y in stride(from: y0, to: y1, by: 2) {
                         for x in stride(from: x0, to: x1, by: 2) where containsPatch(x, y) {
-                            let ix = abs(value(x + 1, y) - value(x - 1, y))
-                            let iy = abs(value(x, y + 1) - value(x, y - 1))
-                            let score = min(ix, iy)
-                            if score > bestScore {
-                                bestScore = score
+                            var sxx = 0.0, syy = 0.0, sxy = 0.0
+                            for v in -1...1 {
+                                for u in -1...1 {
+                                    let ix = 0.5 * (value(x + u + 1, y + v) - value(x + u - 1, y + v))
+                                    let iy = 0.5 * (value(x + u, y + v + 1) - value(x + u, y + v - 1))
+                                    sxx += ix * ix
+                                    syy += iy * iy
+                                    sxy += ix * iy
+                                }
+                            }
+                            let trace = sxx + syy
+                            let diff = sxx - syy
+                            let disc = sqrt(max(0.0, diff * diff + 4.0 * sxy * sxy))
+                            let minEigenvalue = 0.5 * (trace - disc)
+                            if minEigenvalue > bestScore {
+                                bestScore = minEigenvalue
                                 bestPoint = CGPoint(x: CGFloat(x), y: CGFloat(y))
                             }
                         }
                     }
-                    if bestScore >= 12, let bestPoint { points.append(bestPoint) }
+                    if bestScore >= 16.0, let bestPoint { points.append(bestPoint) }
                 }
             }
             return points
@@ -101,14 +112,27 @@ final class TargetPatchFlow {
         previousBox = box
     }
 
-    func evaluate(buffer: CVPixelBuffer, box: CGRect, fallback: CGPoint) -> Evaluation? {
+    func evaluate(buffer: CVPixelBuffer, box: CGRect, fallback: CGPoint, gyroNormalizedShift: CGPoint = .zero) -> Evaluation? {
         guard let image = GrayImage(buffer: buffer) else { return nil }
         guard let previous, previous.width == image.width, previous.height == image.height,
               let anchor, let previousBox, points.count >= 5 else {
             return Evaluation(image: image, point: fallback, isReliable: false, inliers: 0)
         }
-        let coarse = CGPoint(x: Double(box.midX - previousBox.midX) * Double(image.width),
-                             y: Double(previousBox.midY - box.midY) * Double(image.height))
+        let visionDx = Double(box.midX - previousBox.midX) * Double(image.width)
+        let visionDy = Double(previousBox.midY - box.midY) * Double(image.height)
+        let coarse: CGPoint
+        if gyroNormalizedShift != .zero {
+            let gyroDx = Double(gyroNormalizedShift.x) * Double(image.width)
+            let gyroDy = Double(gyroNormalizedShift.y) * Double(image.height)
+            let diff = hypot(visionDx - gyroDx, visionDy - gyroDy)
+            if diff <= 20.0 {
+                coarse = CGPoint(x: visionDx, y: visionDy)
+            } else {
+                coarse = CGPoint(x: gyroDx, y: gyroDy)
+            }
+        } else {
+            coarse = CGPoint(x: visionDx, y: visionDy)
+        }
         var pairs: [(old: CGPoint, new: CGPoint)] = []
         for old in points {
             let center = CGPoint(x: old.x + coarse.x, y: old.y + coarse.y)
@@ -178,9 +202,14 @@ final class TargetPatchFlow {
         let sx = Int(source.x.rounded()), sy = Int(source.y.rounded())
         guard template.containsPatch(sx, sy) else { return nil }
         let cx = Int(center.x.rounded()), cy = Int(center.y.rounded())
+        let minX = max(4, cx - radius)
+        let maxX = min(target.width - 5, cx + radius)
+        let minY = max(4, cy - radius)
+        let maxY = min(target.height - 5, cy + radius)
+        guard minX <= maxX, minY <= maxY else { return nil }
         var scores: [(Double, Int, Int)] = []
-        for y in (cy - radius)...(cy + radius) {
-            for x in (cx - radius)...(cx + radius) where target.containsPatch(x, y) {
+        for y in minY...maxY {
+            for x in minX...maxX where target.containsPatch(x, y) {
                 var sumA = 0.0, sumB = 0.0, sumAA = 0.0, sumBB = 0.0, sumAB = 0.0
                 for offsetY in -3...3 {
                     for offsetX in -3...3 {

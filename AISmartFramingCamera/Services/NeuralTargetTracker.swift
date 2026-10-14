@@ -11,13 +11,14 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private var model: VNCoreMLModel?
     private var anchor: [Double]?
+    private var adaptive: [Double]?
 
     public var hasActiveTrainedModel: Bool { lock.withLock { model != nil } }
     public init() { loadModelWeights() }
 
     public func loadModelWeights() {
         lock.withLock {
-            model = nil; anchor = nil
+            model = nil; anchor = nil; adaptive = nil
             guard let url = Bundle.main.url(forResource: "RobustTargetEmbedder", withExtension: "mlmodelc"),
                   let core = try? MLModel(contentsOf: url),
                   let metadata = core.modelDescription.metadata[.creatorDefinedKey] as? [String: String],
@@ -29,15 +30,44 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     }
 
     public func setAnchorTemplate(from pixelBuffer: CVPixelBuffer, at targetPoint: CGPoint) {
-        lock.withLock { anchor = embedding(pixelBuffer, at: targetPoint) }
+        lock.withLock {
+            let vec = embedding(pixelBuffer, at: targetPoint)
+            anchor = vec
+            adaptive = vec
+        }
     }
 
-    public func clearAnchor() { lock.withLock { anchor = nil } }
+    public func clearAnchor() { lock.withLock { anchor = nil; adaptive = nil } }
+
+    public func updateAdaptiveTemplate(from pixelBuffer: CVPixelBuffer, at targetPoint: CGPoint, alpha: Double = 0.15) {
+        lock.withLock {
+            guard let anchor, let current = embedding(pixelBuffer, at: targetPoint) else { return }
+            let anchorSimilarity = zip(anchor, current).reduce(0.0) { $0 + $1.0 * $1.1 }
+            // Anti-drift check: observation must remain sufficiently similar to original anchor T0
+            guard anchorSimilarity >= 0.60 else { return }
+            if let prevAdaptive = adaptive {
+                var updated = [Double](repeating: 0, count: 128)
+                for i in 0..<128 {
+                    updated[i] = (1.0 - alpha) * prevAdaptive[i] + alpha * current[i]
+                }
+                let norm = sqrt(updated.reduce(0.0) { $0 + $1 * $1 })
+                adaptive = norm > 1e-9 ? updated.map { $0 / norm } : current
+            } else {
+                adaptive = current
+            }
+        }
+    }
 
     public func verifyTarget(in pixelBuffer: CVPixelBuffer, at targetPoint: CGPoint) -> Double {
         lock.withLock {
             guard let anchor, let vector = embedding(pixelBuffer, at: targetPoint) else { return 0 }
-            return min(1, max(-1, zip(anchor, vector).reduce(0) { $0 + $1.0 * $1.1 }))
+            let score0 = zip(anchor, vector).reduce(0.0) { $0 + $1.0 * $1.1 }
+            guard score0 >= 0.40 else { return min(1, max(-1, score0)) }
+            if let adaptive {
+                let scoreAdaptive = zip(adaptive, vector).reduce(0.0) { $0 + $1.0 * $1.1 }
+                return min(1, max(-1, max(score0, scoreAdaptive)))
+            }
+            return min(1, max(-1, score0))
         }
     }
 

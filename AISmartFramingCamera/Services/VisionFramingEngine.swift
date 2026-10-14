@@ -167,6 +167,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private let patchFlow = TargetPatchFlow()
     private var referencePrint: VNFeaturePrintObservation?
     private var referenceHistogram: [Float]?
+    private var adaptivePrint: VNFeaturePrintObservation?
+    private var adaptiveHistogram: [Float]?
+    private var lastAdaptiveUpdate = -Double.infinity
+    private var lastBoxPose: simd_quatd?
+    private var lastBoxTimestamp = -Double.infinity
     private var anchorUV = CGPoint(x: 0.5, y: 0.5)
     private var boxSize = CGSize(width: 0.14, height: 0.14)
     private var lastBox: CGRect?
@@ -270,6 +275,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
         tracker = nil; continuity = VisionContinuityPolicy()
         patchFlow.reset()
         referencePrint = nil; referenceHistogram = nil; lastBox = nil
+        adaptivePrint = nil; adaptiveHistogram = nil; lastAdaptiveUpdate = -.infinity
+        lastBoxPose = nil; lastBoxTimestamp = -.infinity
         misses = 0; lastAppearanceCheck = -.infinity
         lastSearch = -.infinity
         lastInertialSearch = -.infinity
@@ -296,11 +303,16 @@ public final class VisionFramingEngine: @unchecked Sendable {
         anchorUV = CGPoint(x: (seedPoint.x - box.minX) / box.width,
                            y: ((1 - seedPoint.y) - box.minY) / box.height)
         boxSize = box.size; lastBox = box
+        lastBoxTimestamp = timestamp
+        lastBoxPose = SpatialTrackingEngine.shared.pose(at: timestamp) ?? SpatialTrackingEngine.shared.latestPose()
         referencePrint = featurePrint(source, box: box, orientation: sourceOrientation)
         if referencePrint != nil {
             lastAppearanceCheck = timestamp
         }
         referenceHistogram = histogram(source, box: box, orientation: sourceOrientation)
+        adaptivePrint = referencePrint
+        adaptiveHistogram = referenceHistogram
+        lastAdaptiveUpdate = timestamp
         if sourceOrientation == .up {
             NeuralTargetTracker.shared.setAnchorTemplate(from: source, at: seedPoint)
             patchFlow.seed(buffer: source, box: box, point: seedPoint)
@@ -419,8 +431,33 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         return nil
                     }
                     let rawPoint = point(in: rawBox)
+                    let currentPose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) ?? SpatialTrackingEngine.shared.latestPose()
+                    let gyroShift: CGPoint
+                    if orientation == .up, let lastPose = lastBoxPose, let lastBox,
+                       frame.timestamp > lastBoxTimestamp, frame.timestamp - lastBoxTimestamp <= 0.25,
+                       let currentPose {
+                        let prevPoint = point(in: lastBox)
+                        let prevRay = frame.calibration.deviceRay(at: prevPoint)
+                        let worldRay = lastPose.act(prevRay)
+                        let currRay = currentPose.inverse.act(worldRay)
+                        let proj = frame.calibration.project(deviceRay: currRay)
+                        if proj.isInFront {
+                            let shiftX = proj.point.x - prevPoint.x
+                            let shiftY = proj.point.y - prevPoint.y
+                            if shiftX.isFinite, shiftY.isFinite, hypot(shiftX, shiftY) <= 0.5 {
+                                gyroShift = CGPoint(x: shiftX, y: shiftY)
+                            } else {
+                                gyroShift = .zero
+                            }
+                        } else {
+                            gyroShift = .zero
+                        }
+                    } else {
+                        gyroShift = .zero
+                    }
                     let flow = orientation == .up ? patchFlow.evaluate(buffer: buffer, box: rawBox,
-                                                                       fallback: rawPoint) : nil
+                                                                       fallback: rawPoint,
+                                                                       gyroNormalizedShift: gyroShift) : nil
                     let measuredPoint = (flow?.isReliable == true ? flow?.point : nil) ?? rawPoint
                     let residual = prediction.map { hypot($0.point.x - measuredPoint.x,
                                                            $0.point.y - measuredPoint.y) } ?? 0
@@ -547,6 +584,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         // Smoothed size belongs to the recovery search only.
                         // NEVER feed a synthesized box back to the live sequence.
                         lastBox = rawBox
+                        lastBoxTimestamp = frame.timestamp
+                        lastBoxPose = currentPose
                         // Rebase the box fallback to the point actually followed by
                         // texture. Otherwise a flow dropout jumps to the old box UV.
                         let selectedUV = CGPoint(x: (measuredPoint.x - rawBox.minX) / rawBox.width,
@@ -560,6 +599,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         continuity.accept()
                         misses = 0; pendingRecovery = nil
                         hasLiveObservation = true
+                        updateAdaptiveTemplate(buffer: buffer, box: rawBox, orientation: orientation,
+                                               timestamp: frame.timestamp, evidence: evidence,
+                                               confidence: observation.confidence,
+                                               flowIsReliable: flow?.isReliable == true)
+                        if orientation == .up {
+                            NeuralTargetTracker.shared.updateAdaptiveTemplate(from: buffer, at: measuredPoint)
+                        }
                         return (measuredPoint, Double(observation.confidence), evidence)
                     }
                 }
@@ -626,11 +672,20 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     if matchesBearing || previousAgrees {
                         tracker = recoveredTracker
                         lastBox = observation.boundingBox; boxSize = recovered.2.size
+                        lastBoxTimestamp = frame.timestamp
+                        lastBoxPose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) ?? SpatialTrackingEngine.shared.latestPose()
                         patchFlow.seed(buffer: buffer, box: observation.boundingBox, point: confirmedPoint)
                         continuity.accept()
                         misses = 0; lastAppearanceCheck = frame.timestamp
                         hasLiveObservation = true
                         pendingRecovery = nil; pendingLargeInnovation = nil
+                        updateAdaptiveTemplate(buffer: buffer, box: observation.boundingBox, orientation: orientation,
+                                               timestamp: frame.timestamp, evidence: .reidentified,
+                                               confidence: observation.confidence,
+                                               flowIsReliable: true)
+                        if orientation == .up {
+                            NeuralTargetTracker.shared.updateAdaptiveTemplate(from: buffer, at: confirmedPoint)
+                        }
                         return (confirmedPoint, min(recovered.1, Double(observation.confidence)), .reidentified)
                     }
                 }
@@ -715,17 +770,78 @@ public final class VisionFramingEngine: @unchecked Sendable {
         return bins.map { $0 / count }
     }
 
+    private func updateAdaptiveTemplate(buffer: CVPixelBuffer, box: CGRect,
+                                        orientation: CGImagePropertyOrientation,
+                                        timestamp: TimeInterval,
+                                        evidence: TrackingOpticalEvidence,
+                                        confidence: Float,
+                                        flowIsReliable: Bool) {
+        let isHighQuality = evidence == .verifiedContinuation ||
+            evidence == .confirmedContinuation ||
+            evidence == .reidentified ||
+            (evidence == .geometryContinuation && confidence >= 0.80 && flowIsReliable)
+        guard isHighQuality else { return }
+        guard timestamp - lastAdaptiveUpdate >= 0.40 else { return }
+        guard let referencePrint else { return }
+
+        guard let currentPrint = featurePrint(buffer, box: box, orientation: orientation) else { return }
+        var distanceToAnchor: Float = 0
+        guard (try? referencePrint.computeDistance(&distanceToAnchor, to: currentPrint)) != nil,
+              distanceToAnchor.isFinite, distanceToAnchor <= 0.45 else { return }
+
+        if let currentHistogram = histogram(buffer, box: box, orientation: orientation) {
+            if let currentAdaptiveHist = adaptiveHistogram {
+                let anchorSim: Float
+                if let refHist = referenceHistogram {
+                    anchorSim = zip(refHist, currentHistogram).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+                } else {
+                    anchorSim = 1.0
+                }
+                if anchorSim >= 0.60 {
+                    let alpha: Float = 0.15
+                    var updated = [Float](repeating: 0, count: currentAdaptiveHist.count)
+                    var sum: Float = 0
+                    for i in 0..<updated.count {
+                        let val = (1.0 - alpha) * currentAdaptiveHist[i] + alpha * currentHistogram[i]
+                        updated[i] = val
+                        sum += val
+                    }
+                    if sum > 1e-6 {
+                        adaptiveHistogram = updated.map { $0 / sum }
+                    }
+                }
+            } else {
+                adaptiveHistogram = currentHistogram
+            }
+        }
+
+        adaptivePrint = currentPrint
+        lastAdaptiveUpdate = timestamp
+    }
+
     private func verify(_ buffer: CVPixelBuffer, box: CGRect, orientation: CGImagePropertyOrientation,
                         strict: Bool) -> AppearanceResult {
         guard let referencePrint, let current = featurePrint(buffer, box: box, orientation: orientation)
             else { return .unavailable }
-        var distance: Float = 0
-        guard (try? referencePrint.computeDistance(&distance, to: current)) != nil, distance.isFinite
+        var distance0: Float = 0
+        guard (try? referencePrint.computeDistance(&distance0, to: current)) != nil, distance0.isFinite
             else { return .unavailable }
+        var distanceAdaptive: Float?
+        if let adaptivePrint {
+            var distA: Float = 0
+            if (try? adaptivePrint.computeDistance(&distA, to: current)) != nil, distA.isFinite {
+                distanceAdaptive = distA
+            }
+        }
         let config = ingressLock.withLock { (lowTexture, scene.isDeformableNature) }
-        // Starting thresholds for revision 2, not probabilities or trained claims.
-        let maximum: Float = strict ? (config.0 ? 0.32 : 0.42) : (config.1 ? 0.65 : 0.60)
-        guard distance <= maximum else { return .mismatch }
+        // Anti-drift guard: ensure current observation has not drifted completely away from original anchor T0
+        let maxAnchorDrift: Float = strict ? (config.0 ? 0.48 : 0.55) : (config.1 ? 0.72 : 0.68)
+        guard distance0 <= maxAnchorDrift else { return .mismatch }
+
+        let maximum: Float = strict ? (config.0 ? 0.35 : 0.45) : (config.1 ? 0.65 : 0.60)
+        let effectiveDistance = min(distance0, distanceAdaptive ?? distance0)
+        guard effectiveDistance <= maximum else { return .mismatch }
+
         if strict, orientation == .up, NeuralTargetTracker.shared.hasActiveTrainedModel {
             let p = point(in: box)
             // The optional CNN uses a fixed 0.16 image crop; at the image edge,
@@ -734,20 +850,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
                NeuralTargetTracker.shared.verifyTarget(in: buffer, at: p) < 0.75 { return .mismatch }
         }
         if let referenceHistogram, let currentHistogram = histogram(buffer, box: box, orientation: orientation) {
-            let similarity = zip(referenceHistogram, currentHistogram).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
-            guard similarity >= (strict ? 0.72 : 0.45) else { return .mismatch }
+            let sim0 = zip(referenceHistogram, currentHistogram).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+            let simAdapt = adaptiveHistogram.map { zip($0, currentHistogram).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) } } ?? sim0
+            guard sim0 >= (strict ? 0.55 : 0.35) else { return .mismatch }
+            let effectiveSim = max(sim0, simAdapt)
+            guard effectiveSim >= (strict ? 0.72 : 0.45) else { return .mismatch }
         }
-        return .match(Double(distance))
+        return .match(Double(effectiveDistance))
     }
 
     private func matchesReferenceColor(_ buffer: CVPixelBuffer, box: CGRect,
-                                       orientation: CGImagePropertyOrientation) -> Bool {
+                                        orientation: CGImagePropertyOrientation) -> Bool {
         guard let referenceHistogram else { return true }
         guard let current = histogram(buffer, box: box, orientation: orientation) else { return false }
-        let similarity = zip(referenceHistogram, current).reduce(Float(0)) {
-            $0 + sqrt($1.0 * $1.1)
-        }
-        return similarity >= (referencePrint == nil ? 0.82 : 0.88)
+        let sim0 = zip(referenceHistogram, current).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+        let simAdapt = adaptiveHistogram.map { zip($0, current).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) } } ?? sim0
+        guard sim0 >= (referencePrint == nil ? 0.70 : 0.75) else { return false }
+        let effectiveSim = max(sim0, simAdapt)
+        return effectiveSim >= (referencePrint == nil ? 0.82 : 0.88)
     }
 
     private var inertialRecoveryConfidence: Float {
@@ -783,6 +903,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     candidatePoint.y - prediction.point.y) <= 0.08 else { return false }
         tracker = candidate
         lastBox = observedBox
+        lastBoxTimestamp = frame.timestamp
+        lastBoxPose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) ?? SpatialTrackingEngine.shared.latestPose()
         patchFlow.seed(buffer: buffer, box: observedBox, point: candidatePoint)
         continuity.accept()
         misses = 0
@@ -839,10 +961,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
             guard let roi = box(at: p, size: candidateSize) else { continue }
             // Cheap color evidence runs before the heavier FeaturePrint.
             if let referenceHistogram, let current = histogram(buffer, box: roi, orientation: orientation) {
-                let similarity = zip(referenceHistogram, current).reduce(Float(0)) {
-                    $0 + sqrt($1.0 * $1.1)
-                }
-                guard similarity >= 0.62 else { continue }
+                let sim0 = zip(referenceHistogram, current).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+                let simAdapt = adaptiveHistogram.map { zip($0, current).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) } } ?? sim0
+                guard max(sim0, simAdapt) >= 0.62, sim0 >= 0.45 else { continue }
             }
             checksByRegion[region] += 1
             if case let .match(distance) = verify(buffer, box: roi, orientation: orientation, strict: true) {
