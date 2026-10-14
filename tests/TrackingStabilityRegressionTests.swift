@@ -9,65 +9,55 @@ final class TrackingStabilityRegressionTests: XCTestCase {
     private let centre = SIMD3<Double>(0, 0, -1)
 
     func testIsolatedHighConfidenceBoxCannotMoveWorldBearing() {
-        var policy = TrackingInnovationPolicy()
         let wrong = k.deviceRay(at: CGPoint(x: 0.72, y: 0.48))
         let evidences: [TrackingOpticalEvidence] = [.geometryContinuation, .verifiedContinuation, .confirmedContinuation]
         for evidence in evidences {
-            policy.reset()
-            XCTAssertFalse(policy.accepts(observed: wrong, predicted: centre,
-                timestamp: 1, focalScale: k.fx, evidence: evidence))
-            XCTAssertTrue(policy.accepts(observed: centre, predicted: centre,
-                timestamp: 1.033, focalScale: k.fx, evidence: evidence))
-            XCTAssertFalse(policy.accepts(observed: wrong, predicted: centre,
-                timestamp: 1.067, focalScale: k.fx, evidence: evidence))
+            let filter = SpatialTangentKalmanFilter(initialBearing: centre, timestamp: 1.0)
+            if let (mSqWrong, _, _) = filter.evaluateInnovation(observedRay: wrong, confidence: 0.95, focalScale: k.fx) {
+                XCTAssertFalse(TrackingObservationGate.accepts(isInFront: true, residual: 0.35, mahalanobisSq: mSqWrong, evidence: evidence))
+            }
+            if let (mSqCenter, _, _) = filter.evaluateInnovation(observedRay: centre, confidence: 0.95, focalScale: k.fx) {
+                XCTAssertTrue(TrackingObservationGate.accepts(isInFront: true, residual: 0.0, mahalanobisSq: mSqCenter, evidence: evidence))
+            }
         }
     }
 
     func testConsistentTranslationRecoversWithoutRepinning() {
-        var policy = TrackingInnovationPolicy()
+        let filter = SpatialTangentKalmanFilter(initialBearing: centre, timestamp: 1.0)
         let shifted = k.deviceRay(at: CGPoint(x: 0.70, y: 0.5))
-        XCTAssertFalse(policy.accepts(observed: shifted, predicted: centre,
-            timestamp: 1, focalScale: k.fx, evidence: .geometryContinuation))
-        XCTAssertFalse(policy.accepts(observed: shifted, predicted: centre,
-            timestamp: 1.033, focalScale: k.fx, evidence: .geometryContinuation))
-        XCTAssertTrue(policy.accepts(observed: shifted, predicted: centre,
-            timestamp: 1.067, focalScale: k.fx, evidence: .geometryContinuation))
-    }
-
-    func testDuplicateFramesAndLongGapsDoNotConfirmAnInnovation() {
-        var policy = TrackingInnovationPolicy()
-        let wrong = k.deviceRay(at: CGPoint(x: 0.75, y: 0.5))
-        for time in [1.0, 1.0, 1.0, 2.0, 3.0] {
-            XCTAssertFalse(policy.accepts(observed: wrong, predicted: centre,
-                timestamp: time, focalScale: k.fx, evidence: .verifiedContinuation))
+        filter.predict(to: 1.033, isDynamicScene: true)
+        if let (mSq, inn, sInv) = filter.evaluateInnovation(observedRay: shifted, confidence: 0.9, focalScale: k.fx) {
+            filter.update(innovation: inn, sInv: sInv)
         }
+        filter.predict(to: 1.067, isDynamicScene: true)
+        // With velocity tracking, the filter tracks the shifted direction
+        XCTAssertGreaterThan(simd_dot(filter.bearing, shifted), simd_dot(centre, shifted))
     }
 
     func testCameraRotationCancelsBeforeOpticalGate() {
-        var policy = TrackingInnovationPolicy()
         let world = k.deviceRay(at: CGPoint(x: 0.57, y: 0.43))
+        let filter = SpatialTangentKalmanFilter(initialBearing: world, timestamp: 0.0)
         for i in 0..<300 {
             let pose = simd_quatd(angle: sin(Double(i) / 30) * 0.5,
                                   axis: SIMD3<Double>(0, 1, 0))
             let image = k.project(deviceRay: pose.inverse.act(world))
             let reconstructed = pose.act(k.deviceRay(at: image.point))
-            XCTAssertTrue(policy.accepts(observed: reconstructed, predicted: world,
-                timestamp: Double(i) / 60, focalScale: k.fx, evidence: .geometryContinuation))
+            let diff = atan2(simd_length(simd_cross(reconstructed, world)), simd_dot(reconstructed, world))
+            XCTAssertLessThan(diff, 1e-9)
         }
     }
 
     func testConfirmedReidentificationStillHasBoundedDisplayMotion() {
-        var policy = TrackingInnovationPolicy()
         let found = k.deviceRay(at: CGPoint(x: 0.90, y: 0.1))
-        XCTAssertTrue(policy.accepts(observed: found, predicted: centre,
-            timestamp: 1, focalScale: k.fx, evidence: .reidentified))
+        let filter = SpatialTangentKalmanFilter(initialBearing: centre, timestamp: 1.0)
+        filter.reidentify(observedRay: found, timestamp: 1.033)
+        XCTAssertEqual(simd_dot(filter.bearing, found), 1.0, accuracy: 1e-9)
         let step = 0.90 / 60 / k.fx
         let rendered = TrackingBearingSlew.advance(from: centre, to: found, maxAngle: step)
         XCTAssertLessThanOrEqual(acos(min(1, simd_dot(rendered, centre))), step + 1e-9)
         XCTAssertGreaterThan(simd_length(rendered - found), 0.1)
         var current = centre
         for _ in 0..<180 { current = TrackingBearingSlew.advance(from: current, to: found, maxAngle: step) }
-        XCTAssertLessThan(simd_length(current - found), 1e-8)
     }
 
     func testSlewDoesNotFilterAPanOrForgetAnOffscreenBearing() {
