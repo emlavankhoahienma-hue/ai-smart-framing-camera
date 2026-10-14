@@ -999,10 +999,8 @@ public final class CameraService: NSObject {
 
         if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
         if connection.isVideoStabilizationSupported {
-            if camera.activeFormat.isVideoStabilizationModeSupported(.cinematicExtended) {
-                connection.preferredVideoStabilizationMode = .cinematicExtended
-            } else if camera.activeFormat.isVideoStabilizationModeSupported(.cinematic) {
-                connection.preferredVideoStabilizationMode = .cinematic
+            if camera.activeFormat.isVideoStabilizationModeSupported(.standard) {
+                connection.preferredVideoStabilizationMode = .standard
             } else {
                 connection.preferredVideoStabilizationMode = .auto
             }

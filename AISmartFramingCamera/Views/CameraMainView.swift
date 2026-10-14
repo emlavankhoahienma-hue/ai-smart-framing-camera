@@ -6,6 +6,7 @@ import AVFoundation
 struct CameraFormFactorLayout {
     let availableSize: CGSize
     let safeAreaInsets: EdgeInsets
+    var isVideo: Bool = false
 
     var isCompact: Bool { availableSize.height < 700 || availableSize.width < 375 }
     var topHorizontalPadding: CGFloat { availableSize.width < 375 ? 8 : 14 }
@@ -18,12 +19,20 @@ struct CameraFormFactorLayout {
     var bottomComfort: CGFloat {
         safeAreaInsets.bottom >= 20 ? (isCompact ? 8 : 14) : (isCompact ? 6 : 10)
     }
+    var viewfinderAspectRatio: CGFloat {
+        isVideo ? (9.0 / 16.0) : (3.0 / 4.0)
+    }
     var viewfinderSize: CGSize {
         let widthLimit = max(1, availableSize.width - 12)
         let heightLimit = max(1, availableSize.height - 44 - topVerticalPadding -
                               topBottomPadding - controlDeckHeight - bottomComfort - minimumGap)
-        let height = min(widthLimit * 4 / 3, heightLimit)
-        return CGSize(width: height * 3 / 4, height: height)
+        if isVideo {
+            let height = min(widthLimit * 16.0 / 9.0, heightLimit)
+            return CGSize(width: height * 9.0 / 16.0, height: height)
+        } else {
+            let height = min(widthLimit * 4.0 / 3.0, heightLimit)
+            return CGSize(width: height * 3.0 / 4.0, height: height)
+        }
     }
     var histogramWidth: CGFloat {
         max(70, min(100, availableSize.width * 0.22))
@@ -57,7 +66,8 @@ public struct CameraMainView: View {
     public var body: some View {
         GeometryReader { geometry in
             let layout = CameraFormFactorLayout(availableSize: geometry.size,
-                                                safeAreaInsets: geometry.safeAreaInsets)
+                                                safeAreaInsets: geometry.safeAreaInsets,
+                                                isVideo: viewModel.captureMode.isVideo)
             ZStack {
                 // 1. Deep Obsidian Canvas
                 canvasBackground
@@ -74,10 +84,10 @@ public struct CameraMainView: View {
 
                         Spacer(minLength: layout.minimumGap / 2)
 
-                        // 3. Fixed 3:4 High-End Viewfinder (Identical in Photo & Video)
+                        // 3. Adaptive High-End Viewfinder (3:4 Photo, 9:16 Video)
                         ZStack {
                             CameraPreviewView(viewModel: viewModel)
-                                .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                                .aspectRatio(layout.viewfinderAspectRatio, contentMode: .fit)
 
                             // Realtime Film Atmosphere Overlay
                             if viewModel.isFilmSimulationActive {
@@ -119,13 +129,14 @@ public struct CameraMainView: View {
                         }
                         .frame(width: layout.viewfinderSize.width,
                                height: layout.viewfinderSize.height)
-                        .aspectRatio(3.0 / 4.0, contentMode: .fit)
+                        .aspectRatio(layout.viewfinderAspectRatio, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 20, style: .continuous)
                                 .stroke(Color(red: 0.15, green: 0.16, blue: 0.20), lineWidth: 1.0)
                         }
                         .shadow(color: Color.black.opacity(0.60), radius: 12, y: 4)
+                        .animation(.easeInOut(duration: 0.25), value: viewModel.captureMode.isVideo)
                         // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
                         .overlay(alignment: .topLeading) {
                             if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating {
