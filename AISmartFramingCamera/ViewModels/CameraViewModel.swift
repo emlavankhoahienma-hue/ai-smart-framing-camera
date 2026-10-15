@@ -1944,6 +1944,7 @@ public final class CameraViewModel: ObservableObject {
 
     private func finishLocalAnalysis(_ analysis: LocalCompositionAnalysis, source: AITrackingSource) {
         localAnalysisFinished = true
+        geminiError = nil
         guard source.frame.displayZoom.isFinite, source.frame.displayZoom > 0,
               abs(displayZoom - CGFloat(source.frame.displayZoom)) <= 0.08 else {
             localTrackingSource = nil

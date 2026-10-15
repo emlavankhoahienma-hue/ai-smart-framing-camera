@@ -3,6 +3,90 @@ import CoreML
 import Vision
 import CoreGraphics
 import UIKit
+import CoreVideo
+import VideoToolbox
+import CoreImage
+
+/// Bộ chuẩn hóa và rescale CVPixelBuffer thời gian thực (0% CPU, dùng VideoToolbox / ANE / GPU)
+private final class PixelBufferScaler: @unchecked Sendable {
+    private var transferSession: VTPixelTransferSession?
+    private var bufferPool: CVPixelBufferPool?
+    private var poolWidth: Int = 0
+    private var poolHeight: Int = 0
+    private let lock = NSLock()
+    private lazy var ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    init() {
+        var session: VTPixelTransferSession?
+        if VTPixelTransferSessionCreate(kCFAllocatorDefault, &session) == noErr {
+            self.transferSession = session
+        }
+    }
+
+    deinit {
+        if let session = transferSession {
+            VTPixelTransferSessionInvalidate(session)
+        }
+    }
+
+    func scale(pixelBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) -> CVPixelBuffer? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard targetWidth > 0, targetHeight > 0 else { return nil }
+        let srcWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let srcHeight = CVPixelBufferGetHeight(pixelBuffer)
+        if srcWidth == targetWidth && srcHeight == targetHeight {
+            return pixelBuffer
+        }
+
+        // Tái sử dụng CVPixelBufferPool để tránh cấp phát bộ nhớ liên tục trong vòng lặp 60fps
+        if bufferPool == nil || poolWidth != targetWidth || poolHeight != targetHeight {
+            poolWidth = targetWidth
+            poolHeight = targetHeight
+            bufferPool = nil
+
+            let poolAttributes: [CFString: Any] = [
+                kCVPixelBufferPoolMinimumBufferCountKey: 2
+            ]
+            let pixelBufferAttributes: [CFString: Any] = [
+                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey: targetWidth,
+                kCVPixelBufferHeightKey: targetHeight,
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any]
+            ]
+            let status = CVPixelBufferPoolCreate(
+                kCFAllocatorDefault,
+                poolAttributes as CFDictionary,
+                pixelBufferAttributes as CFDictionary,
+                &bufferPool
+            )
+            guard status == kCVReturnSuccess, bufferPool != nil else { return nil }
+        }
+
+        guard let pool = bufferPool else { return nil }
+        var destBuffer: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &destBuffer) == kCVReturnSuccess,
+              let destination = destBuffer else { return nil }
+
+        // 1. Ưu tiên scaler phần cứng VideoToolbox (chuyển đổi định dạng và scale cực nhanh)
+        if let session = transferSession {
+            VTSessionSetProperty(session, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_Normal)
+            let transferStatus = VTPixelTransferSessionTransferImage(session, pixelBuffer, destination)
+            if transferStatus == noErr {
+                return destination
+            }
+        }
+
+        // 2. Dự phòng CoreImage GPU rendering
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let scaleX = CGFloat(targetWidth) / CGFloat(max(1, srcWidth))
+        let scaleY = CGFloat(targetHeight) / CGFloat(max(1, srcHeight))
+        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        ciContext.render(scaledImage, to: destination)
+        return destination
+    }
+}
 
 /// Nhận diện 80 lớp COCO, Khuôn mặt và Động vật/Thú cưng qua mô hình YOLOv26 Core ML.
 /// YOLO11s/yolo26s serves high-memory devices, YOLO11n/yolo26n serves older devices.
@@ -15,6 +99,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     private var yoloNativeMLModel: MLModel?
     private var isDedicatedYOLO26ANE: Bool = false
     private var loadedModelName: String?
+    private var inputWidth: Int = 640
+    private var inputHeight: Int = 640
+    private let pixelBufferScaler = PixelBufferScaler()
     
     public init() {
         loadYOLOModel()
@@ -34,9 +121,11 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 yoloCoreMLModel = modelResult.vnModel
                 isDedicatedYOLO26ANE = modelResult.isDedicatedANE
                 loadedModelName = name
+                inputWidth = modelResult.inputWidth
+                inputHeight = modelResult.inputHeight
             }
             let modelTypeDesc = modelResult.isDedicatedANE ? "YOLOv26 ANE NMS-Free" : "YOLO CoreML Vision"
-            CameraLogger.success("Đã nạp thành công [\(name)] (\(modelTypeDesc)) với tối ưu ANE/GPU", category: .ai)
+            CameraLogger.success("Đã nạp thành công [\(name)] (\(modelTypeDesc)) với tối ưu ANE/GPU (\(modelResult.inputWidth)x\(modelResult.inputHeight))", category: .ai)
             return
         }
         
@@ -51,6 +140,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                             yoloCoreMLModel = modelResult.vnModel
                             isDedicatedYOLO26ANE = modelResult.isDedicatedANE
                             loadedModelName = baseName
+                            inputWidth = modelResult.inputWidth
+                            inputHeight = modelResult.inputHeight
                         }
                         CameraLogger.success("Đã phát hiện và nạp tự động YOLO [\(baseName)]", category: .ai)
                         return
@@ -62,7 +153,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         CameraLogger.info("Chưa tìm thấy tệp model YOLO đã biên dịch trong bundle, hệ thống sử dụng Apple Vision NPU song song", category: .ai)
     }
 
-    private func makeModel(named name: String) -> (mlModel: MLModel, vnModel: VNCoreMLModel?, isDedicatedANE: Bool)? {
+    private func makeModel(named name: String) -> (mlModel: MLModel, vnModel: VNCoreMLModel?, isDedicatedANE: Bool, inputWidth: Int, inputHeight: Int)? {
         let compiled = Bundle.main.url(forResource: name, withExtension: "mlmodelc")
         let package = Bundle.main.url(forResource: name, withExtension: "mlpackage")
         guard let url = compiled ?? package else { return nil }
@@ -76,9 +167,16 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             // Nhận biết mô hình YOLOv26 ANE chuyên biệt qua 2 tensor đầu ra coordinates & confidence
             let outputs = mlModel.modelDescription.outputDescriptionsByName
             let isDedicated = outputs["coordinates"] != nil && outputs["confidence"] != nil
+
+            var targetW = 640
+            var targetH = 640
+            if let imageConstraint = mlModel.modelDescription.inputDescriptionsByName["image"]?.imageConstraint {
+                targetW = imageConstraint.pixelsWide
+                targetH = imageConstraint.pixelsHigh
+            }
             
             let vnModel = isDedicated ? nil : try? VNCoreMLModel(for: mlModel)
-            return (mlModel, vnModel, isDedicated)
+            return (mlModel, vnModel, isDedicated, targetW, targetH)
         } catch {
             CameraLogger.warning("Không thể nạp YOLO [\(name)]: \(error.localizedDescription)", category: .ai)
             return nil
@@ -100,6 +198,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled else { return [] }
+        guard CVPixelBufferGetWidth(pixelBuffer) > 32, CVPixelBufferGetHeight(pixelBuffer) > 32 else { return [] }
         
         let (nativeModel, vnModel, isDedicated) = modelLock.withLock {
             (yoloNativeMLModel, yoloCoreMLModel, isDedicatedYOLO26ANE)
@@ -121,10 +220,16 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled else { return [] }
+
+        let (targetW, targetH) = modelLock.withLock { (inputWidth, inputHeight) }
+        guard let scaledBuffer = pixelBufferScaler.scale(pixelBuffer: pixelBuffer, targetWidth: targetW, targetHeight: targetH) else {
+            return []
+        }
+        guard !cancellation.isCancelled else { return [] }
         
         do {
             let inputProvider = try MLDictionaryFeatureProvider(dictionary: [
-                "image": MLFeatureValue(pixelBuffer: pixelBuffer)
+                "image": MLFeatureValue(pixelBuffer: scaledBuffer)
             ])
             let output = try model.prediction(from: inputProvider)
             guard !cancellation.isCancelled else { return [] }

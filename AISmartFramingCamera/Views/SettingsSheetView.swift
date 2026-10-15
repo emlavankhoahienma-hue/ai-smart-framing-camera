@@ -46,7 +46,6 @@ public struct SettingsSheetView: View {
 
     // Diagnostics & Reset
     @State private var showResetSessionConfirmation: Bool = false
-    @State private var showDevConsole: Bool = false
 
     // Unified Toast Message
     @State private var toastMessage: String? = nil
@@ -109,7 +108,6 @@ public struct SettingsSheetView: View {
                                     AdvancedSettingsSection(
                                         viewModel: viewModel,
                                         showResetSessionConfirmation: $showResetSessionConfirmation,
-                                        showDevConsole: $showDevConsole,
                                         toastMessage: $toastMessage
                                     )
                                     .transition(.opacity.combined(with: .offset(y: 8)))
@@ -205,13 +203,14 @@ public struct SettingsSheetView: View {
                     Text(tab.shortTitle)
                         .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
                         .lineLimit(1)
-                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
+                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.45))
                         .frame(maxWidth: .infinity)
                         .frame(height: 38)
                         .background {
                             if isSelected {
                                 Capsule()
-                                    .fill(Color.white.opacity(0.18))
+                                    .fill(AlignTheme.signatureGradient)
+                                    .shadow(color: AlignTheme.electricCyan.opacity(0.45), radius: 6)
                                     .matchedGeometryEffect(id: "active_obsidian_tab", in: tabNamespace)
                             }
                         }
@@ -256,7 +255,6 @@ public struct SettingsSheetView: View {
                 AdvancedSettingsSection(
                     viewModel: viewModel,
                     showResetSessionConfirmation: $showResetSessionConfirmation,
-                    showDevConsole: $showDevConsole,
                     toastMessage: $toastMessage
                 )
             }
@@ -280,22 +278,33 @@ public struct SettingsSheetView: View {
 // MARK: - Dedicated Row Icon Component
 public struct SettingsRowIcon: View {
     let icon: String
-    let color: Color
+    let isActive: Bool
 
-    public init(_ icon: String, color: Color = Color.white.opacity(0.85)) {
+    public init(_ icon: String, isActive: Bool = false) {
         self.icon = icon
-        self.color = color
+        self.isActive = isActive
     }
 
     public var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.white.opacity(0.08))
-                .frame(width: 30, height: 30)
+            if isActive {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AlignTheme.signatureGradient)
+                    .frame(width: 30, height: 30)
+                    .shadow(color: AlignTheme.electricCyan.opacity(0.55), radius: 6, x: 0, y: 0)
 
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white)
+            } else {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+                    .frame(width: 30, height: 30)
+
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.40))
+            }
         }
         .frame(width: 30, height: 30)
     }
@@ -321,17 +330,18 @@ private struct FilmPresetPill: View {
                 Text(preset.displayName)
                     .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
             }
-            .foregroundColor(.white)
+            .foregroundColor(isSelected ? .white : Color.white.opacity(0.50))
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(isSelected ? Color.white.opacity(0.20) : Color.white.opacity(0.06))
+                    .fill(isSelected ? AnyShapeStyle(AlignTheme.signatureGradient) : AnyShapeStyle(Color.white.opacity(0.06)))
             )
             .overlay(
                 Capsule()
-                    .stroke(isSelected ? Color.white.opacity(0.40) : Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(isSelected ? Color.white.opacity(0.60) : Color.white.opacity(0.08), lineWidth: 1)
             )
+            .shadow(color: isSelected ? AlignTheme.electricCyan.opacity(0.50) : Color.clear, radius: 6)
         }
         .buttonStyle(.plain)
     }
@@ -361,6 +371,7 @@ private struct PeakingColorCircleButton: View {
                     .stroke(isPicked ? Color.white : Color.clear, lineWidth: 2)
                     .padding(-2)
             )
+            .shadow(color: isPicked ? color.swiftUIColor.opacity(0.60) : Color.clear, radius: 6)
         }
         .buttonStyle(.plain)
     }
@@ -377,12 +388,12 @@ private struct CompositionRuleCard: View {
             HStack(spacing: 6) {
                 Image(systemName: rule.iconName)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.50))
+                    .foregroundColor(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.40))
                     .frame(width: 18)
 
                 Text(rule.displayNameVietnamese)
                     .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
 
@@ -390,7 +401,7 @@ private struct CompositionRuleCard: View {
 
                 if isSelected {
                     Circle()
-                        .fill(Color.white)
+                        .fill(AlignTheme.electricCyan)
                         .frame(width: 5, height: 5)
                 }
             }
@@ -399,12 +410,13 @@ private struct CompositionRuleCard: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.14) : Color(red: 0.05, green: 0.05, blue: 0.07))
+                    .fill(isSelected ? AnyShapeStyle(AlignTheme.electricCyan.opacity(0.18)) : AnyShapeStyle(Color(red: 0.05, green: 0.05, blue: 0.07)))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? Color.white.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(isSelected ? AnyShapeStyle(AlignTheme.signatureGradient) : AnyShapeStyle(Color.white.opacity(0.08)), lineWidth: isSelected ? 1.5 : 1)
             )
+            .shadow(color: isSelected ? AlignTheme.electricCyan.opacity(0.40) : Color.clear, radius: 6)
         }
         .buttonStyle(.plain)
     }
@@ -420,17 +432,18 @@ private struct SensitivityPill: View {
         Button(action: onSelect) {
             Text(preset.shortName)
                 .font(.system(size: 13, weight: isPicked ? .bold : .medium, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(isPicked ? .white : Color.white.opacity(0.50))
                 .frame(maxWidth: .infinity)
                 .frame(height: 36)
                 .background(
                     Capsule()
-                        .fill(isPicked ? Color.white.opacity(0.20) : Color.white.opacity(0.06))
+                        .fill(isPicked ? AnyShapeStyle(AlignTheme.signatureGradient) : AnyShapeStyle(Color.white.opacity(0.06)))
                 )
                 .overlay(
                     Capsule()
-                        .stroke(isPicked ? Color.white.opacity(0.40) : Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(isPicked ? Color.white.opacity(0.60) : Color.white.opacity(0.08), lineWidth: 1)
                 )
+                .shadow(color: isPicked ? AlignTheme.electricCyan.opacity(0.50) : Color.clear, radius: 6)
         }
         .buttonStyle(.plain)
     }
@@ -1122,13 +1135,12 @@ struct AIFramingSettingsSection: View {
 struct AdvancedSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
     @Binding var showResetSessionConfirmation: Bool
-    @Binding var showDevConsole: Bool
     @Binding var toastMessage: String?
 
     var body: some View {
         VStack(spacing: 16) {
             featuresCard
-            diagnosticsCard
+            systemLogsCard
             supportInfoCard
         }
     }
@@ -1189,104 +1201,92 @@ struct AdvancedSettingsSection: View {
     }
 
     @ViewBuilder
-    private var diagnosticsCard: some View {
-        SettingsSectionCard(title: "Chẩn đoán Engine", icon: "cross.case.fill") {
-            VStack(alignment: .leading, spacing: 12) {
-                diagRow(label: "Động cơ thị giác", value: "Apple Vision + Optical Flow + Gyro")
-                diagRow(label: "AI Neural Engine", value: "AlignAI 114MB + CoreML YOLOv26")
-                diagRow(label: "Model hoạt động", value: viewModel.activeModelUsedName.isEmpty ? "Cục bộ on-device (Neural Engine)" : viewModel.activeModelUsedName)
-                diagRow(label: "Độ trễ phân tích", value: viewModel.geminiLatencyMs > 0 ? "\(viewModel.geminiLatencyMs) ms" : "0 ms (Realtime 60fps)")
-
-                Divider().background(Color.white.opacity(0.06))
-
-                DisclosureGroup("Nhật ký kỹ thuật & Chẩn đoán lỗi", isExpanded: $showDevConsole) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if let crashReport = CameraLogger.readRecentCrashReport() {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Báo cáo sự cố gần nhất (Crash Report):")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.red)
-                                Text(crashReport)
-                                    .font(.system(size: 9.5, design: .monospaced))
-                                    .foregroundColor(.white.opacity(0.9))
-                                    .padding(8)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color.red.opacity(0.15))
-                                    .cornerRadius(6)
-                            }
-                        }
-
-                        if let err = viewModel.geminiError {
-                            Text("Lỗi AI ghi nhận: \(err)")
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Nhật ký hệ thống gần nhất:")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white)
-                            ScrollView(.vertical) {
-                                Text(CameraLogger.readRecentLogText(maxChars: 3000))
-                                    .font(.system(size: 9, design: .monospaced))
-                                    .foregroundColor(.white.opacity(0.75))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(maxHeight: 160)
+    private var systemLogsCard: some View {
+        SettingsSectionCard(title: "Nhật ký hệ thống & Gỡ lỗi", icon: "terminal.fill") {
+            VStack(alignment: .leading, spacing: 10) {
+                if let crashReport = CameraLogger.readRecentCrashReport() {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Báo cáo sự cố gần nhất (Crash Report):")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.red)
+                        Text(crashReport)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.9))
                             .padding(8)
-                            .background(Color.black.opacity(0.4))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.red.opacity(0.15))
                             .cornerRadius(6)
-                        }
-
-                        HStack(spacing: 8) {
-                            Button(action: {
-                                var fullText = ""
-                                if let crash = CameraLogger.readRecentCrashReport() {
-                                    fullText += crash + "\n\n"
-                                }
-                                fullText += CameraLogger.readRecentLogText(maxChars: 5000)
-                                UIPasteboard.general.string = fullText
-                                toastMessage = "Đã sao chép toàn bộ nhật ký vào bộ nhớ tạm"
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "doc.on.doc")
-                                    Text("Sao chép nhật ký")
-                                }
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.white.opacity(0.12))
-                                .cornerRadius(6)
-                            }
-
-                            Button(action: {
-                                CameraLogger.clearAllLogs()
-                                toastMessage = "Đã xóa sạch nhật ký"
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "trash")
-                                    Text("Xóa nhật ký")
-                                }
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.red.opacity(0.85))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.red.opacity(0.12))
-                                .cornerRadius(6)
-                            }
-                        }
-
-                        Text("Ghi chú: Bạn có thể vào ứng dụng Tệp (Files) > Trên iPhone > AlignAI Studio để xem trực tiếp tệp alignai_crash_log.txt và alignai_debug_log.txt.")
-                            .font(.system(size: 9.5))
-                            .foregroundColor(.white.opacity(0.45))
-                            .padding(.top, 2)
                     }
-                    .padding(.vertical, 6)
                 }
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.75))
+
+                if let err = viewModel.geminiError {
+                    Text("Lỗi AI ghi nhận: \(err)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Nhật ký hệ thống gần nhất:")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                    ScrollView(.vertical) {
+                        Text(CameraLogger.readRecentLogText(maxChars: 4000))
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.75))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 180)
+                    .padding(8)
+                    .background(Color.black.opacity(0.4))
+                    .cornerRadius(6)
+                }
+
+                HStack(spacing: 8) {
+                    Button(action: {
+                        var fullText = ""
+                        if let crash = CameraLogger.readRecentCrashReport() {
+                            fullText += crash + "\n\n"
+                        }
+                        fullText += CameraLogger.readRecentLogText(maxChars: 5000)
+                        UIPasteboard.general.string = fullText
+                        toastMessage = "Đã sao chép toàn bộ nhật ký vào bộ nhớ tạm"
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.on.doc")
+                            Text("Sao chép nhật ký")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.12))
+                        .cornerRadius(6)
+                    }
+
+                    Button(action: {
+                        CameraLogger.clearAllLogs()
+                        toastMessage = "Đã xóa sạch nhật ký"
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                            Text("Xóa nhật ký")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.red.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.12))
+                        .cornerRadius(6)
+                    }
+
+                    Spacer()
+                }
+
+                Text("Ghi chú: Bạn có thể vào ứng dụng Tệp (Files) > Trên iPhone > AlignAI Studio để xem trực tiếp tệp alignai_crash_log.txt và alignai_debug_log.txt.")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .padding(.top, 2)
             }
         }
     }
@@ -1334,16 +1334,16 @@ struct AdvancedSettingsSection: View {
                 Divider().background(Color.white.opacity(0.06))
 
                 VStack(spacing: 8) {
-                    diagRow(label: "Tác giả", value: "SmartVN (Trần Văn Trình)")
-                    diagRow(label: "Liên hệ", value: "tranvantrinhhd@gmail.com")
-                    diagRow(label: "Phiên bản", value: "AI Smart Framing Camera v1.0.0 (Build 300)")
+                    infoRow(label: "Tác giả", value: "SmartVN (Trần Văn Trình)")
+                    infoRow(label: "Liên hệ", value: "tranvantrinhhd@gmail.com")
+                    infoRow(label: "Phiên bản", value: "AI Smart Framing Camera v1.0.0 (Build 300)")
                 }
                 .padding(.vertical, 8)
             }
         }
     }
 
-    private func diagRow(label: String, value: String) -> some View {
+    private func infoRow(label: String, value: String) -> some View {
         HStack {
             Text(label)
                 .font(.system(size: 12, weight: .medium))
@@ -1590,18 +1590,18 @@ public struct SettingsToggleRow: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            SettingsRowIcon(icon)
+            SettingsRowIcon(icon, isActive: isOn)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 14.5, weight: .medium))
-                    .foregroundColor(.white)
+                    .font(.system(size: 14.5, weight: isOn ? .semibold : .medium))
+                    .foregroundColor(isOn ? .white : Color.white.opacity(0.60))
                     .lineLimit(1)
 
                 if let sub = subtitle, !sub.isEmpty {
                     Text(sub)
                         .font(.system(size: 11.5, weight: .regular))
-                        .foregroundColor(Color(red: 0.58, green: 0.60, blue: 0.66))
+                        .foregroundColor(isOn ? Color.white.opacity(0.70) : Color.white.opacity(0.35))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1611,8 +1611,19 @@ public struct SettingsToggleRow: View {
 
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(AlignTheme.irisViolet)
+                .tint(AlignTheme.electricCyan)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isOn ? AlignTheme.electricCyan.opacity(0.08) : Color.clear)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(isOn ? AlignTheme.electricCyan.opacity(0.35) : Color.clear, lineWidth: 1)
+                )
+        )
+        .animation(.easeInOut(duration: 0.2), value: isOn)
         .frame(minHeight: 48)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -1643,7 +1654,7 @@ public struct SettingsPickerRow<Content: View>: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            SettingsRowIcon(icon)
+            SettingsRowIcon(icon, isActive: !selectedValueString.isEmpty)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
