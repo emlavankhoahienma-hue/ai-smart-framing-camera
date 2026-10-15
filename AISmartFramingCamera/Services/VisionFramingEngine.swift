@@ -354,8 +354,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         let admission = ingressLock.withLock { () -> (UInt64, Bool, Bool)? in
             // Full scene analysis runs once on the detached AI capture. Preview
-            // needs only a lightweight face pass; tracking retains its own FPS.
-            guard !busy, now - lastAdmission >= (active ? 1 / 32.0 : 1 / 18.0) else { return nil }
+            // uses ~7 Hz detection; liveEntitySmoother ensures fluid 60 FPS UI.
+            // Tracking retains its full ~32 FPS admission budget.
+            guard !busy, now - lastAdmission >= (active ? 1 / 32.0 : 1 / 7.0) else { return nil }
             busy = true; lastAdmission = now
             let capture = captureNext; captureNext = false
             return (generation, active, capture)
@@ -660,9 +661,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                    y: center.y + previous.point.y - oldProjection.point.y)
         }
         // Tier 1: Fast Semantic Re-ID using Detectors (YOLO + Vision Multi-Request)
-        // Rate-limited to max ~8 Hz (0.12s interval) to prevent thermal/FPS drops during misses
-        if frame.timestamp - lastDetectorReIDTime >= 0.12 {
+        // Rate-limited to max ~7 Hz (0.14s interval) to prevent thermal/FPS drops during misses
+        var tier1Ran = false
+        if frame.timestamp - lastDetectorReIDTime >= 0.14 {
             lastDetectorReIDTime = frame.timestamp
+            tier1Ran = true
             if let fastMatch = reidentifyWithDetectors(buffer, orientation: orientation,
                                                        frame: frame, prediction: prediction,
                                                        searchCenter: searchCenter) {
@@ -697,7 +700,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
 
         // Tier 2: Fallback Spatial / Grid Search (for generic objects or detector misses)
-        if let recovered = search(buffer, center: searchCenter, orientation: orientation) {
+        // Never execute Tier 1 and Tier 2 in the same frame to maintain strict compute budget and prevent queue stall
+        if !tier1Ran, let recovered = search(buffer, center: searchCenter, orientation: orientation) {
             let recoveredTracker = VisionObjectSequence(box: recovered.2)
             if let observation = try? recoveredTracker.advance(in: buffer, orientation: orientation),
                observation.confidence >= 0.40 {
@@ -1095,7 +1099,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
 
-        // 2. Apple Vision Multi-Request Suite targeted to pinned category
+        // 2. Apple Vision Multi-Request Suite targeted to pinned category (fallback when YOLO candidates absent or for saliency)
         var requests: [VNRequest] = []
         let faceReq = VNDetectFaceRectanglesRequest()
         let humanReq = VNDetectHumanRectanglesRequest()
@@ -1103,37 +1107,40 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let animalReq = VNRecognizeAnimalsRequest()
         let saliencyReq = VNGenerateObjectnessBasedSaliencyImageRequest()
 
+        let hasYOLOCandidates = !candidates.isEmpty
         switch pinnedCategory {
         case .face:
-            requests = [faceReq]
+            if !hasYOLOCandidates { requests = [faceReq] }
         case .human:
-            requests = [humanReq, faceReq]
+            if !hasYOLOCandidates { requests = [humanReq, faceReq] }
         case .animal:
-            requests = [animalReq]
+            if !hasYOLOCandidates { requests = [animalReq] }
         case .foregroundObject, .general:
             requests = [saliencyReq]
         }
 
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-        if (try? handler.perform(requests)) != nil {
-            if let faces = faceReq.results {
-                for f in faces where f.confidence >= 0.40 {
-                    candidates.append((f.boundingBox, .face, f.confidence))
+        if !requests.isEmpty {
+            let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+            if (try? handler.perform(requests)) != nil {
+                if let faces = faceReq.results {
+                    for f in faces where f.confidence >= 0.40 {
+                        candidates.append((f.boundingBox, .face, f.confidence))
+                    }
                 }
-            }
-            if let humans = humanReq.results {
-                for h in humans where h.confidence >= 0.40 {
-                    candidates.append((h.boundingBox, .human, h.confidence))
+                if let humans = humanReq.results {
+                    for h in humans where h.confidence >= 0.40 {
+                        candidates.append((h.boundingBox, .human, h.confidence))
+                    }
                 }
-            }
-            if let animals = animalReq.results {
-                for a in animals where a.confidence >= 0.40 {
-                    candidates.append((a.boundingBox, .animal, a.confidence))
+                if let animals = animalReq.results {
+                    for a in animals where a.confidence >= 0.40 {
+                        candidates.append((a.boundingBox, .animal, a.confidence))
+                    }
                 }
-            }
-            if let salients = saliencyReq.results?.first?.salientObjects {
-                for s in salients {
-                    candidates.append((s.boundingBox, .foregroundObject, s.confidence))
+                if let salients = saliencyReq.results?.first?.salientObjects {
+                    for s in salients {
+                        candidates.append((s.boundingBox, .foregroundObject, s.confidence))
+                    }
                 }
             }
         }
@@ -1159,7 +1166,15 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
 
         let pinnedArea = max(1e-4, boxSize.width * boxSize.height)
-        var validMatches: [(point: CGPoint, score: Double, visionBox: CGRect)] = []
+
+        struct PreCandidate {
+            let visionBox: CGRect
+            let category: NeuralSubjectCategory
+            let point: CGPoint
+            let preScore: Double
+        }
+
+        var candidatePool: [PreCandidate] = []
 
         for cand in uniqueCandidates {
             let b = cand.visionBox
@@ -1175,21 +1190,36 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
 
             // Quick color histogram pre-filter
+            var colorScore: Double = 0.5
             if let referenceHistogram, let candHist = histogram(buffer, box: b, orientation: orientation) {
                 let sim0 = zip(referenceHistogram, candHist).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
                 let simAdapt = adaptiveHistogram.map { zip($0, candHist).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) } } ?? sim0
                 guard max(sim0, simAdapt) >= 0.58, sim0 >= 0.40 else { continue }
+                colorScore = 1.0 - Double(max(sim0, simAdapt))
             }
-
-            // Strict Anti-Hijacking verification: passes through Dual-Template T0 and Tt
-            let verifyResult = verify(buffer, box: b, orientation: orientation, strict: true)
-            guard case let .match(featureDistance) = verifyResult else { continue }
 
             let candPoint = point(in: b)
             let distToCenter = hypot(candPoint.x - searchCenter.x, candPoint.y - searchCenter.y)
             let categoryBonus = (cand.category == pinnedCategory) ? 0.0 : 0.08
+            let preScore = colorScore + Double(distToCenter) * 0.25 + categoryBonus
+            candidatePool.append(PreCandidate(visionBox: b, category: cand.category, point: candPoint, preScore: preScore))
+        }
+
+        // Budgeting: verify at most top 2 candidates with expensive FeaturePrint
+        candidatePool.sort { $0.preScore < $1.preScore }
+        let topCandidates = candidatePool.prefix(2)
+
+        var validMatches: [(point: CGPoint, score: Double, visionBox: CGRect)] = []
+
+        for cand in topCandidates {
+            // Strict Anti-Hijacking verification: passes through Dual-Template T0 and Tt
+            let verifyResult = verify(buffer, box: cand.visionBox, orientation: orientation, strict: true)
+            guard case let .match(featureDistance) = verifyResult else { continue }
+
+            let distToCenter = hypot(cand.point.x - searchCenter.x, cand.point.y - searchCenter.y)
+            let categoryBonus = (cand.category == pinnedCategory) ? 0.0 : 0.08
             let combinedScore = featureDistance + Double(distToCenter) * 0.25 + categoryBonus
-            validMatches.append((candPoint, combinedScore, b))
+            validMatches.append((cand.point, combinedScore, cand.visionBox))
         }
 
         guard !validMatches.isEmpty else { return nil }
@@ -1270,58 +1300,59 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     category: c.category
                 ))
             }
-        }
+            result.faceRectangles = candidates.filter { $0.category == .face }.map { $0.rect }
+        } else {
+            // 2. Apple Vision Multi-Request Suite (People, Faces, Pets/Animals Only - Fallback when YOLO model is absent)
+            let faceRequest = VNDetectFaceRectanglesRequest()
+            let humanRequest = VNDetectHumanRectanglesRequest()
+            humanRequest.upperBodyOnly = false
+            let animalRequest = VNRecognizeAnimalsRequest()
 
-        // 2. Apple Vision Multi-Request Suite (People, Faces, Pets/Animals Only - Zero Clutter)
-        let faceRequest = VNDetectFaceRectanglesRequest()
-        let humanRequest = VNDetectHumanRectanglesRequest()
-        humanRequest.upperBodyOnly = false
-        let animalRequest = VNRecognizeAnimalsRequest()
-
-        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-        let visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest]
-        if (try? handler.perform(visionRequests)) != nil {
-            let faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.40 }
-            result.faceRectangles = faces.map {
-                CGRect(x: $0.boundingBox.minX, y: 1 - $0.boundingBox.maxY,
-                       width: $0.boundingBox.width, height: $0.boundingBox.height)
-            }
-            for face in faces {
-                let rect = CGRect(x: face.boundingBox.minX, y: 1 - face.boundingBox.maxY,
-                                  width: face.boundingBox.width, height: face.boundingBox.height)
-                candidates.append(LiveDetectedEntity(
-                    rect: rect,
-                    label: "Khuôn mặt",
-                    confidence: face.confidence,
-                    category: .face
-                ))
-            }
-
-            if let animals = animalRequest.results {
-                for obs in animals where obs.confidence >= 0.40 {
-                    let topLabel = obs.labels.first?.identifier.lowercased() ?? ""
-                    let name = topLabel.contains("cat") ? "Mèo" : (topLabel.contains("dog") ? "Chó" : "Thú cưng")
-                    let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
-                                      width: obs.boundingBox.width, height: obs.boundingBox.height)
+            let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+            let visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest]
+            if (try? handler.perform(visionRequests)) != nil {
+                let faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.40 }
+                result.faceRectangles = faces.map {
+                    CGRect(x: $0.boundingBox.minX, y: 1 - $0.boundingBox.maxY,
+                           width: $0.boundingBox.width, height: $0.boundingBox.height)
+                }
+                for face in faces {
+                    let rect = CGRect(x: face.boundingBox.minX, y: 1 - face.boundingBox.maxY,
+                                      width: face.boundingBox.width, height: face.boundingBox.height)
                     candidates.append(LiveDetectedEntity(
                         rect: rect,
-                        label: name,
-                        confidence: obs.confidence,
-                        category: .animal
+                        label: "Khuôn mặt",
+                        confidence: face.confidence,
+                        category: .face
                     ))
                 }
-            }
 
-            if let humans = humanRequest.results {
-                for obs in humans where obs.confidence >= 0.45 {
-                    let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
-                                      width: obs.boundingBox.width, height: obs.boundingBox.height)
-                    candidates.append(LiveDetectedEntity(
-                        rect: rect,
-                        label: "Người",
-                        confidence: obs.confidence,
-                        category: .human
-                    ))
+                if let animals = animalRequest.results {
+                    for obs in animals where obs.confidence >= 0.40 {
+                        let topLabel = obs.labels.first?.identifier.lowercased() ?? ""
+                        let name = topLabel.contains("cat") ? "Mèo" : (topLabel.contains("dog") ? "Chó" : "Thú cưng")
+                        let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
+                                          width: obs.boundingBox.width, height: obs.boundingBox.height)
+                        candidates.append(LiveDetectedEntity(
+                            rect: rect,
+                            label: name,
+                            confidence: obs.confidence,
+                            category: .animal
+                        ))
+                    }
+                }
+
+                if let humans = humanRequest.results {
+                    for obs in humans where obs.confidence >= 0.45 {
+                        let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
+                                          width: obs.boundingBox.width, height: obs.boundingBox.height)
+                        candidates.append(LiveDetectedEntity(
+                            rect: rect,
+                            label: "Người",
+                            confidence: obs.confidence,
+                            category: .human
+                        ))
+                    }
                 }
             }
         }
@@ -1329,7 +1360,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         candidates = deduplicateCandidates(candidates)
         result.detectedEntities = candidates
         result.dominantSubjectRect = candidates.first?.rect ?? result.faceRectangles.first
-        result.confidence = candidates.first?.confidence ?? (faceRequest.results?.first?.confidence ?? 0)
+        result.confidence = candidates.first?.confidence ?? 0
 
         let focus: CGPoint
         let type: SmartFocusType
@@ -1341,9 +1372,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
             type = .center
         }
 
-        let luma = luminance(buffer)
-        result.averageLuminance = luma.0
-        result.estimatedColorTemp = luma.1
+        result.averageLuminance = 0.5
+        result.estimatedColorTemp = 5500
 
         // Keep only the newest undelivered detection. A blocked main queue
         // must never accumulate camera-pool buffers at the analysis frame rate.
@@ -1432,19 +1462,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         return Array(merged.prefix(8))
     }
 
-    private func luminance(_ buffer: CVPixelBuffer) -> (Float, Float) {
-        let image = CIImage(cvPixelBuffer: buffer)
-        let avg = image.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: image.extent)])
-        var rgba = [UInt8](repeating: 0, count: 4)
-        rgba.withUnsafeMutableBytes { bytes in
-            guard let baseAddress = bytes.baseAddress else { return }
-            context.render(avg, toBitmap: baseAddress, rowBytes: 4,
-                           bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8,
-                           colorSpace: CGColorSpaceCreateDeviceRGB())
-        }
-        let r = Float(rgba[0]) / 255, g = Float(rgba[1]) / 255, b = Float(rgba[2]) / 255
-        return (0.2126 * r + 0.7152 * g + 0.0722 * b, max(2700, min(9000, 3500 + b / max(r, 0.01) * 3000)))
-    }
 
     private func deliverCaptures(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                                  frame: TrackingFrameContext?, requested: Bool, epoch: UInt64? = nil) {

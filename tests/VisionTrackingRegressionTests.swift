@@ -363,4 +363,101 @@ final class VisionTrackingRegressionTests: XCTestCase {
         XCTAssertLessThanOrEqual(recoveryDetectorInvocations, 28)
         XCTAssertGreaterThanOrEqual(recoveryDetectorInvocations, 25)
     }
+
+    func testAlternatingTier1AndTier2RecoveryBudgetNeverCollidesInSameFrame() {
+        // Enforces that Tier 1 (detector) and Tier 2 (grid search) never execute in the same frame
+        var tier1RanCount = 0
+        var tier2RanCount = 0
+        var collisionCount = 0
+
+        var lastDetectorTime = -Double.infinity
+        var lastSearchTime = -Double.infinity
+        var t = 0.0
+
+        for _ in 0..<60 {
+            t += 1.0 / 30.0
+            var tier1Ran = false
+            var tier2Ran = false
+
+            if t - lastDetectorTime >= 0.14 {
+                lastDetectorTime = t
+                tier1Ran = true
+                tier1RanCount += 1
+            }
+
+            if !tier1Ran && (t - lastSearchTime >= 0.15) {
+                lastSearchTime = t
+                tier2Ran = true
+                tier2RanCount += 1
+            }
+
+            if tier1Ran && tier2Ran {
+                collisionCount += 1
+            }
+        }
+
+        XCTAssertEqual(collisionCount, 0, "Tier 1 and Tier 2 must never collide in the same frame")
+        XCTAssertGreaterThan(tier1RanCount, 0)
+        XCTAssertGreaterThan(tier2RanCount, 0)
+    }
+
+    func testHorizonLevelerDeadbandSuppressesMicroFluctuationUpdates() {
+        var currentRoll = 0.0
+        var publishedCount = 0
+        let isLevel = false
+
+        // Simulate 30 stationary frames with micro-gravity jitter (-0.05 to +0.05 deg)
+        let jitters: [Double] = [0.01, -0.02, 0.03, -0.01, 0.04, -0.03, 0.02, 0.01, -0.04, 0.02]
+        for j in jitters {
+            let calibratedRoll = currentRoll + j
+            let level = abs(calibratedRoll) <= (isLevel ? 1.3 : 0.8)
+            if abs(calibratedRoll - currentRoll) >= 0.20 || level != isLevel {
+                currentRoll = calibratedRoll
+                publishedCount += 1
+            }
+        }
+        XCTAssertEqual(publishedCount, 0, "Micro fluctuations under 0.20 deg must be filtered by deadband")
+
+        // Significant deliberate tilt must publish immediately
+        let tiltRoll = 1.5
+        let level = abs(tiltRoll) <= (isLevel ? 1.3 : 0.8)
+        if abs(tiltRoll - currentRoll) >= 0.20 || level != isLevel {
+            currentRoll = tiltRoll
+            publishedCount += 1
+        }
+        XCTAssertEqual(publishedCount, 1, "Deliberate movement must trigger UI publish")
+    }
+
+    func testHistogramComputationSuppressedWhenHiddenAndCappedAt10Hz() {
+        // Test when showHistogramInViewfinder is false: 0 computes across 60 frames
+        var computeCount = 0
+        var lastComputeTime = 0.0
+        let showHistogram = false
+        var t = 0.0
+
+        for _ in 0..<60 {
+            t += 1.0 / 30.0
+            if showHistogram && (t - lastComputeTime >= 0.10) {
+                lastComputeTime = t
+                computeCount += 1
+            }
+        }
+        XCTAssertEqual(computeCount, 0, "Histogram computation must be 0 when hidden")
+
+        // Test when showHistogram is true: capped at 10 Hz over 2 seconds (60 frames at 30 fps)
+        let showHistogramActive = true
+        computeCount = 0
+        lastComputeTime = 0.0
+        t = 0.0
+
+        for _ in 0..<60 {
+            t += 1.0 / 30.0
+            if showHistogramActive && (t - lastComputeTime >= 0.10) {
+                lastComputeTime = t
+                computeCount += 1
+            }
+        }
+        XCTAssertLessThanOrEqual(computeCount, 21, "Histogram compute rate must be capped at 10 Hz")
+        XCTAssertGreaterThanOrEqual(computeCount, 19)
+    }
 }

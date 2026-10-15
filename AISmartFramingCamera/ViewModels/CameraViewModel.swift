@@ -17,6 +17,7 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var isFocusPeakingEnabled = false
     var focusPeakingColor: FocusPeakingColor = .green
     var isRecordingVideo = false
+    var showHistogramInViewfinder = true
 }
 
 /// Owns frame-rate work on AVFoundation's serial sample-buffer queue. UI state is
@@ -97,7 +98,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
                 self?.owner?.refreshSuggestionProjection(frame: frame)
             }
         }
-        if now - lastHistogramComputeTime >= 0.05 {
+        if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.10 {
             lastHistogramComputeTime = now
             let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
             DispatchQueue.main.async { [weak self] in
@@ -662,7 +663,10 @@ public final class CameraViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(showDetectionBoxes, forKey: "showDetectionBoxes") }
     }
     @Published public var showHistogramInViewfinder: Bool = true {
-        didSet { UserDefaults.standard.set(showHistogramInViewfinder, forKey: "showHistogramInViewfinder") }
+        didSet {
+            UserDefaults.standard.set(showHistogramInViewfinder, forKey: "showHistogramInViewfinder")
+            updateFrameProcessingConfiguration()
+        }
     }
     @Published public var isHistogramBarExpanded: Bool = true {
         didSet { UserDefaults.standard.set(isHistogramBarExpanded, forKey: "isHistogramBarExpanded") }
@@ -908,7 +912,8 @@ public final class CameraViewModel: ObservableObject {
                 tracksSuggestions: aiSessionState == .analyzing,
                 isFocusPeakingEnabled: isFocusPeakingEnabled,
                 focusPeakingColor: focusPeakingColor,
-                isRecordingVideo: isRecordingVideo
+                isRecordingVideo: isRecordingVideo,
+                showHistogramInViewfinder: showHistogramInViewfinder
             )
         )
     }
@@ -1177,8 +1182,13 @@ public final class CameraViewModel: ObservableObject {
         cameraService.onLiveCameraStatsUpdated = { [weak self] stats in
             guard let self = self, !self.isShowingSettings else { return }
             let isoInt = Int(round(stats.iso))
-            self.liveISO = "ISO \(isoInt)"
-            self.liveShutterSpeed = stats.shutterSpeedString
+            let newISO = "ISO \(isoInt)"
+            if self.liveISO != newISO {
+                self.liveISO = newISO
+            }
+            if self.liveShutterSpeed != stats.shutterSpeedString {
+                self.liveShutterSpeed = stats.shutterSpeedString
+            }
             self.proVideoService.updateLiveMeasurements(
                 iso: stats.iso,
                 shutterDuration: stats.exposureDurationSeconds,
@@ -3178,7 +3188,7 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Thước Cân Bằng Chân Trời (Virtual Horizon Leveler)
     private func startHorizonLeveler() {
         guard horizonMotionManager.isDeviceMotionAvailable else { return }
-        horizonMotionManager.deviceMotionUpdateInterval = 1.0 / 30.0
+        horizonMotionManager.deviceMotionUpdateInterval = 1.0 / 15.0
         horizonMotionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: OperationQueue.main) { [weak self] (motion: CMDeviceMotion?, error: Error?) in
             // Auto capture needs current gravity even when its overlay is hidden.
             guard let self = self, let motion = motion, !self.isCameraHibernating else { return }
@@ -3186,9 +3196,16 @@ public final class CameraViewModel: ObservableObject {
             let gy = Double(motion.gravity.y)
             let rawRoll = atan2(gx, -gy) * 180.0 / .pi
             let calibratedRoll = rawRoll - self.gyroRollOffsetDegrees
-            self.currentRollDegrees = calibratedRoll
+
             // Separate entry/exit angles prevent repeated feedback at 0.8 degrees.
             let level = abs(calibratedRoll) <= (self.isDeviceLevel ? 1.3 : 0.8)
+
+            // Deadband filtering: only publish when roll change is significant (>= 0.20 deg)
+            // or when device level state transitions, eliminating continuous 30Hz SwiftUI invalidation.
+            if abs(calibratedRoll - self.currentRollDegrees) >= 0.20 || level != self.isDeviceLevel {
+                self.currentRollDegrees = calibratedRoll
+            }
+
             let now = CACurrentMediaTime()
             if level && !self.isDeviceLevel && !self.hasTriggeredLevelHaptic {
                 if self.isHorizonLevelerEnabled && self.isProximityHapticsEnabled && !self.isAISessionActive &&
@@ -3200,7 +3217,9 @@ public final class CameraViewModel: ObservableObject {
             } else if !level {
                 self.hasTriggeredLevelHaptic = false
             }
-            self.isDeviceLevel = level
+            if self.isDeviceLevel != level {
+                self.isDeviceLevel = level
+            }
         }
     }
 
