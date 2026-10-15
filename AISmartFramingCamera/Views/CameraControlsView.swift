@@ -142,15 +142,15 @@ struct CameraModeSegmentedSwitcher: View {
                     }
                 }) {
                     Text(item.title)
-                        .font(.system(size: 12, weight: isSelected ? .bold : .semibold, design: .rounded))
-                        .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.55))
-                        .frame(width: 82, height: 44)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .rounded))
+                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
+                        .frame(width: 78, height: 32)
                         .background(
                             ZStack {
                                 if isSelected {
                                     Capsule()
-                                        .stroke(AlignTheme.signatureGradient, lineWidth: 1.2)
-                                        .matchedGeometryEffect(id: "active_mode_border", in: modeAnimationNamespace)
+                                        .fill(Color(white: 0.24))
+                                        .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
                                 }
                             }
                         )
@@ -159,8 +159,16 @@ struct CameraModeSegmentedSwitcher: View {
                 .accessibilityLabel("Chế độ \(item.title)")
             }
         }
-        .padding(2)
-        .frame(height: 36)
+        .padding(3)
+        .background(
+            Capsule()
+                .fill(Color(white: 0.08))
+                .overlay {
+                    Capsule()
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                }
+        )
+        .frame(height: 38)
     }
 }
 

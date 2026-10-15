@@ -107,12 +107,12 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         loadYOLOModel()
     }
     
-    /// Nạp mô hình theo thứ tự ưu tiên YOLOv26 mới nhất, tối ưu bộ nhớ ANE (Apple Neural Engine).
+    /// Nạp mô hình theo thứ tự ưu tiên YOLO tối ưu, ổn định cao và chống nhận diện giả.
     public func loadYOLOModel() {
         let highMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
         let prioritizedNames = (highMemory
-            ? ["yolov26_ane", "yolov26_640_fp16", "yolo26m", "yolo26s", "yolo26", "yolov26", "YOLOv26", "yolov26_416_fp16", "yolo11s"]
-            : ["yolov26_416_fp16", "yolov26_ane", "yolo26n", "yolov26n", "yolo26", "yolov26", "YOLOv26", "yolo11n", "yolov8n"])
+            ? ["yolo11s", "yolo11n"]
+            : ["yolo11n", "yolo11s"])
         
         for name in prioritizedNames {
             guard let modelResult = makeModel(named: name) else { continue }
@@ -129,11 +129,12 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             return
         }
         
-        // Quét tự động bundle nếu người dùng nhúng model YOLO có tên khác
+        // Quét tự động bundle nếu người dùng nhúng model YOLO COCO chuẩn có tên khác
         if let bundleUrls = Bundle.main.urls(forResourcesWithExtension: "mlmodelc", subdirectory: nil) {
             for url in bundleUrls {
                 let baseName = url.deletingPathExtension().lastPathComponent
-                if baseName.lowercased().contains("yolo") {
+                let lower = baseName.lowercased()
+                if lower.contains("yolo") && !lower.contains("yolov26_") && !lower.contains("yolo26") {
                     if let modelResult = makeModel(named: baseName) {
                         modelLock.withLock {
                             yoloNativeMLModel = modelResult.mlModel
@@ -150,10 +151,17 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             }
         }
         
-        CameraLogger.info("Chưa tìm thấy tệp model YOLO đã biên dịch trong bundle, hệ thống sử dụng Apple Vision NPU song song", category: .ai)
+        CameraLogger.info("Hệ thống sử dụng Apple Vision NPU native độc lập cho độ chính xác cao và triệt tiêu nhận diện giả", category: .ai)
     }
 
     private func makeModel(named name: String) -> (mlModel: MLModel, vnModel: VNCoreMLModel?, isDedicatedANE: Bool, inputWidth: Int, inputHeight: Int)? {
+        let lower = name.lowercased()
+        // Bỏ qua các model tổng hợp chưa qua huấn luyện thực tế (synthetic toy weights)
+        if lower.contains("yolov26_ane") || lower.contains("yolov26_416") || lower.contains("yolov26_640") || lower.contains("yolo26") {
+            CameraLogger.info("Bỏ qua mô hình tổng hợp [\(name)] để ưu tiên mô hình COCO và Apple Vision chính xác cao", category: .ai)
+            return nil
+        }
+
         let compiled = Bundle.main.url(forResource: name, withExtension: "mlmodelc")
         let package = Bundle.main.url(forResource: name, withExtension: "mlpackage")
         guard let url = compiled ?? package else { return nil }
@@ -164,10 +172,6 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             config.allowLowPrecisionAccumulationOnGPU = true
             let mlModel = try MLModel(contentsOf: modelURL, configuration: config)
             
-            // Nhận biết mô hình YOLOv26 ANE chuyên biệt qua 2 tensor đầu ra coordinates & confidence
-            let outputs = mlModel.modelDescription.outputDescriptionsByName
-            let isDedicated = outputs["coordinates"] != nil && outputs["confidence"] != nil
-
             var targetW = 640
             var targetH = 640
             if let imageConstraint = mlModel.modelDescription.inputDescriptionsByName["image"]?.imageConstraint {
@@ -175,8 +179,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 targetH = imageConstraint.pixelsHigh
             }
             
-            let vnModel = isDedicated ? nil : try? VNCoreMLModel(for: mlModel)
-            return (mlModel, vnModel, isDedicated, targetW, targetH)
+            // Các model chuẩn COCO (YOLO11s, YOLO11n) chạy qua Apple Vision CoreML để tận dụng NMS tích hợp
+            let vnModel = try? VNCoreMLModel(for: mlModel)
+            return (mlModel, vnModel, false, targetW, targetH)
         } catch {
             CameraLogger.warning("Không thể nạp YOLO [\(name)]: \(error.localizedDescription)", category: .ai)
             return nil
@@ -383,11 +388,11 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             guard let self = self, error == nil else { return }
             
             if let results = req.results as? [VNRecognizedObjectObservation] {
-                for obs in results where obs.confidence >= 0.30 {
+                for obs in results where obs.confidence >= 0.45 {
                     guard let topLabel = obs.labels.first else { continue }
                     
                     let confidence = min(obs.confidence, topLabel.confidence)
-                    guard confidence >= 0.30 else { continue }
+                    guard confidence >= 0.45 else { continue }
                     
                     let category = self.mapYOLOLabelToCategory(topLabel.identifier)
                     let localizedName = self.localizeYOLOLabel(topLabel.identifier)
@@ -401,6 +406,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                     )
                     
                     guard let uiRect = self.clippedValidBox(rawRect) else { continue }
+                    guard uiRect.width >= 0.04, uiRect.height >= 0.04, uiRect.width <= 0.95, uiRect.height <= 0.95 else { continue }
+                    let aspectRatio = uiRect.width / max(0.001, uiRect.height)
+                    guard aspectRatio >= 0.15 && aspectRatio <= 6.5 else { continue }
                     
                     let score = self.calculateYOLOProminenceScore(rect: uiRect, confidence: confidence, category: category)
                     

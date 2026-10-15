@@ -128,7 +128,7 @@ public final class LiveEntityTracker: @unchecked Sendable {
             // 2. Thêm các Candidate mới chưa được ghép cặp
             for (index, candidate) in remainingCandidates.enumerated() {
                 guard !matchedCandidateIndices.contains(index) else { continue }
-                guard candidate.confidence >= 0.35 else { continue }
+                guard candidate.confidence >= 0.45 else { continue }
 
                 let newTrack = TrackedState(
                     id: UUID(),
@@ -155,14 +155,19 @@ public final class LiveEntityTracker: @unchecked Sendable {
 
             for track in sortedByPriority {
                 let duplicate = finalTracks.contains { existing in
+                    let isFaceInBody = (existing.category == .human && track.category == .face && existing.smoothedRect.contains(track.smoothedRect))
+                                    || (existing.category == .face && track.category == .human && track.smoothedRect.contains(existing.smoothedRect))
+                    if isFaceInBody { return false }
+
                     let inter = existing.smoothedRect.intersection(track.smoothedRect)
                     guard !inter.isNull, !inter.isEmpty else { return false }
                     let interArea = inter.width * inter.height
-                    let smallerArea = min(existing.smoothedRect.width * existing.smoothedRect.height,
-                                          track.smoothedRect.width * track.smoothedRect.height)
-                    guard smallerArea > 0 else { return false }
-                    let overlap = interArea / smallerArea
-                    return overlap > 0.65 && (existing.category == track.category || existing.category == .face)
+                    let unionArea = existing.smoothedRect.width * existing.smoothedRect.height + track.smoothedRect.width * track.smoothedRect.height - interArea
+                    guard unionArea > 0 else { return false }
+                    let iou = interArea / unionArea
+                    let smallerArea = min(existing.smoothedRect.width * existing.smoothedRect.height, track.smoothedRect.width * track.smoothedRect.height)
+                    let containment = smallerArea > 0 ? (interArea / smallerArea) : 0
+                    return iou > 0.35 || containment > 0.55
                 }
                 if !duplicate {
                     finalTracks.append(track)
@@ -171,8 +176,12 @@ public final class LiveEntityTracker: @unchecked Sendable {
 
             activeTracks = finalTracks
 
-            // 4. Trả về thực thể trực tiếp với UUID cố định
-            return finalTracks.prefix(8).map {
+            // 4. Trả về thực thể ổn định: yêu cầu track đã được xác nhận qua ít nhất 2 frame hoặc có độ tin cậy cao ngay từ đầu (chống nhảy loạn xạ)
+            let confirmedTracks = finalTracks.filter { track in
+                track.trackedCount >= 2 || track.confidence >= 0.65
+            }
+
+            return confirmedTracks.prefix(5).map {
                 LiveDetectedEntity(
                     id: $0.id,
                     rect: $0.smoothedRect,

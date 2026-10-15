@@ -1081,14 +1081,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
         guard referencePrint != nil else { return nil }
         var candidates: [(visionBox: CGRect, category: NeuralSubjectCategory, confidence: Float)] = []
 
-        // 1. YOLOv26 CoreML candidates (high accuracy semantic bounding boxes)
+        // 1. YOLO CoreML candidates (high accuracy semantic bounding boxes)
         if YOLODetectionEngine.shared.hasYOLOModel {
             let yoloCandidates = YOLODetectionEngine.shared.detectObjects(
                 pixelBuffer: buffer,
                 orientation: orientation,
                 cancellation: CompositionAnalysisCancellation()
             )
-            for c in yoloCandidates where c.confidence >= 0.35 {
+            for c in yoloCandidates where c.confidence >= 0.45 {
                 let vBox = CGRect(
                     x: max(0.0, min(1.0, c.boundingBox.minX)),
                     y: max(0.0, min(1.0, 1.0 - c.boundingBox.maxY)),
@@ -1099,7 +1099,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
 
-        // 2. Apple Vision Multi-Request Suite targeted to pinned category (fallback when YOLO candidates absent or for saliency)
+        // 2. Apple Vision Multi-Request Suite targeted to pinned category (Face, Human, Animal, Saliency)
         var requests: [VNRequest] = []
         let faceReq = VNDetectFaceRectanglesRequest()
         let humanReq = VNDetectHumanRectanglesRequest()
@@ -1107,14 +1107,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let animalReq = VNRecognizeAnimalsRequest()
         let saliencyReq = VNGenerateObjectnessBasedSaliencyImageRequest()
 
-        let hasYOLOCandidates = !candidates.isEmpty
         switch pinnedCategory {
         case .face:
-            if !hasYOLOCandidates { requests = [faceReq] }
+            requests = [faceReq]
         case .human:
-            if !hasYOLOCandidates { requests = [humanReq, faceReq] }
+            requests = [humanReq, faceReq]
         case .animal:
-            if !hasYOLOCandidates { requests = [animalReq] }
+            requests = [animalReq]
         case .foregroundObject, .general:
             requests = [saliencyReq]
         }
@@ -1283,42 +1282,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
         var result = SubjectDetectionResult()
         var candidates: [LiveDetectedEntity] = []
 
-        // 1. YOLOv26 CoreML (High-Precision Face, Pet, and Human Detection)
-        if YOLODetectionEngine.shared.hasYOLOModel {
-            let yoloCandidates = YOLODetectionEngine.shared.detectObjects(
-                pixelBuffer: buffer,
-                orientation: orientation,
-                cancellation: CompositionAnalysisCancellation()
-            )
-            for c in yoloCandidates where c.confidence >= 0.30 {
-                // Focus strictly on Human, Face, and Animal (Dogs, Cats, Pets)
-                guard c.category == .human || c.category == .animal || c.category == .face else { continue }
-                candidates.append(LiveDetectedEntity(
-                    rect: c.boundingBox,
-                    label: c.label,
-                    confidence: c.confidence,
-                    category: c.category
-                ))
-            }
-            result.faceRectangles = candidates.filter { $0.category == .face }.map { $0.rect }
-        } else {
-            // 2. Apple Vision Multi-Request Suite (People, Faces, Pets/Animals Only - Fallback when YOLO model is absent)
-            let faceRequest = VNDetectFaceRectanglesRequest()
-            let humanRequest = VNDetectHumanRectanglesRequest()
-            humanRequest.upperBodyOnly = false
-            let animalRequest = VNRecognizeAnimalsRequest()
+        // 1. Apple Vision Native Precision Detection (Luôn luôn chạy trên Apple Neural Engine - cực kỳ chính xác)
+        let faceRequest = VNDetectFaceRectanglesRequest()
+        let humanRequest = VNDetectHumanRectanglesRequest()
+        humanRequest.upperBodyOnly = false
+        let animalRequest = VNRecognizeAnimalsRequest()
 
-            let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-            let visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest]
-            if (try? handler.perform(visionRequests)) != nil {
-                let faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.40 }
-                result.faceRectangles = faces.map {
-                    CGRect(x: $0.boundingBox.minX, y: 1 - $0.boundingBox.maxY,
-                           width: $0.boundingBox.width, height: $0.boundingBox.height)
-                }
-                for face in faces {
-                    let rect = CGRect(x: face.boundingBox.minX, y: 1 - face.boundingBox.maxY,
-                                      width: face.boundingBox.width, height: face.boundingBox.height)
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+        let visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest]
+        if (try? handler.perform(visionRequests)) != nil {
+            if let faces = faceRequest.results {
+                for face in faces where face.confidence >= 0.45 {
+                    let rect = CGRect(
+                        x: face.boundingBox.minX,
+                        y: 1.0 - face.boundingBox.maxY,
+                        width: face.boundingBox.width,
+                        height: face.boundingBox.height
+                    )
+                    guard rect.width >= 0.035, rect.height >= 0.035, rect.width <= 0.95, rect.height <= 0.95 else { continue }
                     candidates.append(LiveDetectedEntity(
                         rect: rect,
                         label: "Khuôn mặt",
@@ -1326,34 +1307,65 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         category: .face
                     ))
                 }
+            }
+            result.faceRectangles = candidates.filter { $0.category == .face }.map { $0.rect }
 
-                if let animals = animalRequest.results {
-                    for obs in animals where obs.confidence >= 0.40 {
-                        let topLabel = obs.labels.first?.identifier.lowercased() ?? ""
-                        let name = topLabel.contains("cat") ? "Mèo" : (topLabel.contains("dog") ? "Chó" : "Thú cưng")
-                        let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
-                                          width: obs.boundingBox.width, height: obs.boundingBox.height)
-                        candidates.append(LiveDetectedEntity(
-                            rect: rect,
-                            label: name,
-                            confidence: obs.confidence,
-                            category: .animal
-                        ))
-                    }
+            if let humans = humanRequest.results {
+                for obs in humans where obs.confidence >= 0.50 {
+                    let rect = CGRect(
+                        x: obs.boundingBox.minX,
+                        y: 1.0 - obs.boundingBox.maxY,
+                        width: obs.boundingBox.width,
+                        height: obs.boundingBox.height
+                    )
+                    guard rect.width >= 0.05, rect.height >= 0.05, rect.width <= 0.95, rect.height <= 0.95 else { continue }
+                    candidates.append(LiveDetectedEntity(
+                        rect: rect,
+                        label: "Người",
+                        confidence: obs.confidence,
+                        category: .human
+                    ))
                 }
+            }
 
-                if let humans = humanRequest.results {
-                    for obs in humans where obs.confidence >= 0.45 {
-                        let rect = CGRect(x: obs.boundingBox.minX, y: 1 - obs.boundingBox.maxY,
-                                          width: obs.boundingBox.width, height: obs.boundingBox.height)
-                        candidates.append(LiveDetectedEntity(
-                            rect: rect,
-                            label: "Người",
-                            confidence: obs.confidence,
-                            category: .human
-                        ))
-                    }
+            if let animals = animalRequest.results {
+                for obs in animals where obs.confidence >= 0.50 {
+                    let topLabel = obs.labels.first?.identifier.lowercased() ?? ""
+                    let name = topLabel.contains("cat") ? "Mèo" : (topLabel.contains("dog") ? "Chó" : "Thú cưng")
+                    let rect = CGRect(
+                        x: obs.boundingBox.minX,
+                        y: 1.0 - obs.boundingBox.maxY,
+                        width: obs.boundingBox.width,
+                        height: obs.boundingBox.height
+                    )
+                    guard rect.width >= 0.05, rect.height >= 0.05, rect.width <= 0.95, rect.height <= 0.95 else { continue }
+                    candidates.append(LiveDetectedEntity(
+                        rect: rect,
+                        label: name,
+                        confidence: obs.confidence,
+                        category: .animal
+                    ))
                 }
+            }
+        }
+
+        // 2. Real YOLO CoreML (Tích hợp song song khi có mô hình COCO chuẩn đã nạp)
+        if YOLODetectionEngine.shared.hasYOLOModel {
+            let yoloCandidates = YOLODetectionEngine.shared.detectObjects(
+                pixelBuffer: buffer,
+                orientation: orientation,
+                cancellation: CompositionAnalysisCancellation()
+            )
+            for c in yoloCandidates where c.confidence >= 0.50 {
+                guard c.boundingBox.width >= 0.04, c.boundingBox.height >= 0.04,
+                      c.boundingBox.width <= 0.95, c.boundingBox.height <= 0.95 else { continue }
+                guard c.category == .human || c.category == .animal || c.category == .face else { continue }
+                candidates.append(LiveDetectedEntity(
+                    rect: c.boundingBox,
+                    label: c.label,
+                    confidence: c.confidence,
+                    category: c.category
+                ))
             }
         }
 
@@ -1410,6 +1422,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
             return $0.confidence > $1.confidence
         }
+
         for item in sorted {
             let clampedRect = CGRect(
                 x: max(0, min(1, item.rect.minX)),
@@ -1417,39 +1430,27 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 width: max(0, min(1 - max(0, item.rect.minX), item.rect.width)),
                 height: max(0, min(1 - max(0, item.rect.minY), item.rect.height))
             )
-            guard clampedRect.width >= 0.03, clampedRect.height >= 0.03 else { continue }
-            
-            // Kiểm tra trùng lặp giữa các mô hình phát hiện (IoU / Overlap)
-            if let matchIdx = merged.firstIndex(where: { existing in
+            guard clampedRect.width >= 0.04, clampedRect.height >= 0.04 else { continue }
+
+            // Cho phép khuôn mặt lồng bên trong thân người
+            let isFaceInsideBody = (item.category == .face && merged.contains { $0.category == .human && $0.rect.contains(clampedRect) })
+                                || (item.category == .human && merged.contains { $0.category == .face && clampedRect.contains($0.rect) })
+
+            // Khử triệt để hiện tượng hộp chồng chéo / nhận diện trùng vị trí (Non-Maximum Suppression)
+            let isDuplicate = merged.contains { existing in
+                if isFaceInsideBody { return false }
                 let inter = existing.rect.intersection(clampedRect)
                 guard !inter.isNull, !inter.isEmpty else { return false }
                 let interArea = inter.width * inter.height
+                let unionArea = existing.rect.width * existing.rect.height + clampedRect.width * clampedRect.height - interArea
+                guard unionArea > 0 else { return false }
+                let iou = interArea / unionArea
                 let smallerArea = min(existing.rect.width * existing.rect.height, clampedRect.width * clampedRect.height)
-                guard smallerArea > 0 else { return false }
-                let overlap = interArea / smallerArea
-                return overlap > 0.55 && (existing.category == item.category || existing.category == .face)
-            }) {
-                let existing = merged[matchIdx]
-                // Nếu cùng loại thực thể (vd: cả YOLO và Vision đều thấy Chó hoặc Người), hợp nhất tọa độ có trọng số
-                if existing.category == item.category {
-                    let totalWeight = CGFloat(existing.confidence + item.confidence)
-                    let w1 = CGFloat(existing.confidence) / totalWeight
-                    let w2 = CGFloat(item.confidence) / totalWeight
-                    let fusedRect = CGRect(
-                        x: existing.rect.minX * w1 + clampedRect.minX * w2,
-                        y: existing.rect.minY * w1 + clampedRect.minY * w2,
-                        width: existing.rect.width * w1 + clampedRect.width * w2,
-                        height: existing.rect.height * w1 + clampedRect.height * w2
-                    )
-                    merged[matchIdx] = LiveDetectedEntity(
-                        id: existing.id,
-                        rect: fusedRect,
-                        label: existing.confidence >= item.confidence ? existing.label : item.label,
-                        confidence: max(existing.confidence, item.confidence),
-                        category: existing.category
-                    )
-                }
-            } else {
+                let containment = smallerArea > 0 ? (interArea / smallerArea) : 0
+                return iou > 0.35 || containment > 0.55
+            }
+
+            if !isDuplicate {
                 merged.append(LiveDetectedEntity(
                     id: item.id,
                     rect: clampedRect,
@@ -1459,7 +1460,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 ))
             }
         }
-        return Array(merged.prefix(8))
+        return Array(merged.prefix(5))
     }
 
 

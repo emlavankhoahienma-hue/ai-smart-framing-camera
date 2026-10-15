@@ -201,16 +201,15 @@ public struct SettingsSheetView: View {
                     }
                 }) {
                     Text(tab.shortTitle)
-                        .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .medium, design: .rounded))
                         .lineLimit(1)
-                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.45))
+                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
                         .frame(maxWidth: .infinity)
                         .frame(height: 38)
                         .background {
                             if isSelected {
                                 Capsule()
-                                    .fill(AlignTheme.signatureGradient)
-                                    .shadow(color: AlignTheme.electricCyan.opacity(0.45), radius: 6)
+                                    .fill(Color(white: 0.24))
                                     .matchedGeometryEffect(id: "active_obsidian_tab", in: tabNamespace)
                             }
                         }
@@ -221,10 +220,10 @@ public struct SettingsSheetView: View {
         .padding(3)
         .background(
             Capsule()
-                .fill(cardBackground)
+                .fill(Color(white: 0.08))
                 .overlay {
                     Capsule()
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
                 }
         )
         .frame(height: 44)
