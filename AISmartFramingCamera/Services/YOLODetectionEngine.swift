@@ -18,7 +18,7 @@ private final class PixelBufferScaler: @unchecked Sendable {
 
     init() {
         var session: VTPixelTransferSession?
-        if VTPixelTransferSessionCreate(kCFAllocatorDefault, &session) == noErr {
+        if VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &session) == noErr {
             self.transferSession = session
         }
     }
@@ -72,7 +72,7 @@ private final class PixelBufferScaler: @unchecked Sendable {
         // 1. Ưu tiên scaler phần cứng VideoToolbox (chuyển đổi định dạng và scale cực nhanh)
         if let session = transferSession {
             VTSessionSetProperty(session, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_Normal)
-            let transferStatus = VTPixelTransferSessionTransferImage(session, pixelBuffer, destination)
+            let transferStatus = VTPixelTransferSessionTransferImage(session, from: pixelBuffer, to: destination)
             if transferStatus == noErr {
                 return destination
             }
