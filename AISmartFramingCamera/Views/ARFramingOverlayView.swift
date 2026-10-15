@@ -767,16 +767,12 @@ struct ZoomRevealOverlay: View {
                     // 3. Future zoom region.
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(
-                            LinearGradient(
-                                colors: [Color.yellow, Color.yellow.opacity(0.7), Color.yellow],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
+                            AlignTheme.signatureGradient,
                             lineWidth: 1.8
                         )
                         .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
                         .position(x: pixelRect.midX, y: pixelRect.midY)
-                        .shadow(color: Color.yellow.opacity(0.35), radius: 8, x: 0, y: 0)
+                        .shadow(color: AlignTheme.electricCyan.opacity(0.35), radius: 8, x: 0, y: 0)
 
                     // 4. Bốn góc ngắm bố cục điện ảnh (Cinematic Corner Ticks)
                     CinematicCornerTicks(rect: pixelRect)
@@ -788,10 +784,10 @@ struct ZoomRevealOverlay: View {
                         Text("AI ZOOM \(String(format: "%.1f", displayZoom))x")
                             .font(.system(size: 9, weight: .heavy, design: .rounded))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(.white)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3.5)
-                    .background(Capsule().fill(Color.yellow))
+                    .background(Capsule().fill(AlignTheme.signatureGradient))
                     .shadow(color: Color.black.opacity(0.35), radius: 4, x: 0, y: 2)
                     .position(x: pixelRect.midX, y: max(24, pixelRect.minY - 12))
                 }

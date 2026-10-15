@@ -106,6 +106,34 @@ public struct CameraMainView: View {
                                 .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                             }
 
+                            // Optical Zoom HUD Feedback Badge
+                            if viewModel.isZoomHUDVisible, let hudText = viewModel.activeZoomHUDText {
+                                VStack {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "camera.aperture")
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundColor(AlignTheme.electricCyan)
+                                        Text(hudText)
+                                            .font(.system(size: 11, weight: .heavy, design: .rounded))
+                                            .foregroundColor(AlignTheme.platinumWhite)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        Capsule()
+                                            .fill(AlignTheme.obsidianBlack.opacity(0.85))
+                                            .overlay(
+                                                Capsule()
+                                                    .stroke(AlignTheme.rimGradient, lineWidth: 1.0)
+                                            )
+                                    )
+                                    .shadow(color: AlignTheme.electricCyan.opacity(0.35), radius: 8)
+                                    .padding(.top, 16)
+                                    Spacer()
+                                }
+                                .transition(.scale(scale: 0.88).combined(with: .opacity))
+                            }
+
                             // Keep the viewfinder responsive when AVFoundation is
                             // configuring or temporarily unavailable.
                             if viewModel.isCameraHibernating || !viewModel.isCameraReady {
@@ -250,7 +278,6 @@ public struct CameraMainView: View {
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     let histogramWidth: CGFloat
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25) // #D9A441
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
@@ -260,7 +287,7 @@ struct TopCameraBar: View {
             }) {
                 Image(systemName: flashIconName)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.85) : amberGold)
+                    .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.85) : AlignTheme.amberGold)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
@@ -298,18 +325,18 @@ struct TopCameraBar: View {
                     HStack(spacing: 3) {
                         if viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo {
                             Circle()
-                                .fill(amberGold)
+                                .fill(AlignTheme.irisViolet)
                                 .frame(width: 4, height: 4)
                         }
                         Text(currentFormatLabel)
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo ? .black : amberGold)
+                            .foregroundColor(viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo ? AlignTheme.platinumWhite : AlignTheme.electricCyan)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2.5)
                     .background(
                         viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo
-                            ? RoundedRectangle(cornerRadius: 4).fill(amberGold)
+                            ? RoundedRectangle(cornerRadius: 4).fill(AlignTheme.irisViolet)
                             : RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08))
                     )
                 }
@@ -336,7 +363,7 @@ struct TopCameraBar: View {
             }) {
                 Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(viewModel.isWindowedZoomActive ? amberGold : Color.white.opacity(0.85))
+                    .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.electricCyan : Color.white.opacity(0.85))
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
@@ -384,7 +411,6 @@ struct TopCameraBar: View {
 struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
     private var zoomOptions: [CGFloat] {
         let opts = viewModel.cameraService.availableDisplayZoomOptions
         if !opts.isEmpty {
@@ -416,15 +442,15 @@ struct ViewfinderZoomSelectorPill: View {
 
                         if isSelected {
                             Circle()
-                                .stroke(amberGold, lineWidth: 1.6)
+                                .stroke(AlignTheme.signatureGradient, lineWidth: 1.6)
                                 .frame(width: 34, height: 34)
-                                .shadow(color: amberGold.opacity(0.45), radius: 5)
+                                .shadow(color: AlignTheme.electricCyan.opacity(0.55), radius: 6)
                                 .matchedGeometryEffect(id: "active_viewfinder_zoom_ring", in: zoomPillNamespace)
                         }
 
                         Text(zoom == 0.5 ? "0.5x" : "\(Int(zoom))x")
                             .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.85))
+                            .foregroundColor(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.85))
                     }
                     .scaleEffect(isSelected ? 1.08 : 0.96)
                     .frame(width: 42, height: 42)
@@ -441,7 +467,6 @@ struct ViewfinderZoomSelectorPill: View {
 struct CompositionRuleSheet: View {
     @ObservedObject var viewModel: CameraViewModel
     @Environment(\.dismiss) private var dismiss
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         NavigationStack {
@@ -459,7 +484,7 @@ struct CompositionRuleSheet: View {
 
                         VStack(spacing: 10) {
                             Toggle("Live Photo", isOn: $viewModel.isLivePhotoEnabled)
-                                .tint(amberGold)
+                                .tint(AlignTheme.irisViolet)
                         }
                         .padding(.horizontal, 4)
                     }
@@ -474,7 +499,7 @@ struct CompositionRuleSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Xong") { dismiss() }
-                        .foregroundColor(amberGold)
+                        .foregroundColor(AlignTheme.electricCyan)
                         .font(.system(size: 16, weight: .bold))
                 }
             }
@@ -523,10 +548,13 @@ struct CompositionRuleSheet: View {
                         Text("Bắt đầu căn bố cục")
                     }
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(.black)
+                    .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(amberGold))
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(AlignTheme.signatureGradient)
+                    )
                 }
                 .padding(16)
             }
@@ -540,14 +568,13 @@ struct CompositionRuleRow: View {
     let rule: CompositionRule
     let isSelected: Bool
     let onSelect: () -> Void
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
                 Image(systemName: rule.iconName)
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.8))
+                    .foregroundColor(isSelected ? AlignTheme.irisViolet : Color.white.opacity(0.8))
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -564,17 +591,17 @@ struct CompositionRuleRow: View {
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(amberGold)
+                        .foregroundColor(AlignTheme.electricCyan)
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isSelected ? amberGold.opacity(0.12) : Color(red: 0.075, green: 0.082, blue: 0.102))
+                    .fill(isSelected ? AlignTheme.irisViolet.opacity(0.18) : Color(red: 0.075, green: 0.082, blue: 0.102))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(isSelected ? amberGold.opacity(0.50) : Color.white.opacity(0.08), lineWidth: 1.0)
+                            .stroke(isSelected ? AlignTheme.signatureGradient : Color.white.opacity(0.08), lineWidth: 1.0)
                     )
             )
         }
@@ -585,13 +612,12 @@ struct CompositionRuleRow: View {
 // MARK: - Camera Permission Placeholder View
 struct CameraPermissionPlaceholderView: View {
     @ObservedObject var viewModel: CameraViewModel
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         VStack(spacing: 20) {
             Image(systemName: "camera.fill")
                 .font(.system(size: 54))
-                .foregroundColor(amberGold)
+                .foregroundColor(AlignTheme.electricCyan)
 
             Text("Cho phép camera để bắt đầu")
                 .font(.title2.bold())
@@ -610,10 +636,10 @@ struct CameraPermissionPlaceholderView: View {
             }) {
                 Text("Mở Cài đặt")
                     .font(.headline)
-                    .foregroundColor(.black)
+                    .foregroundColor(.white)
                     .padding(.horizontal, 28)
                     .padding(.vertical, 14)
-                    .background(amberGold)
+                    .background(AlignTheme.signatureGradient)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }

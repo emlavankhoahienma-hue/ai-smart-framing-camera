@@ -301,6 +301,40 @@ public final class CameraViewModel: ObservableObject {
     public var availableDisplayZoomOptions: [CGFloat] {
         return [1.0, 2.0, 3.0]
     }
+    @Published public var activeZoomHUDText: String? = nil
+    @Published public var isZoomHUDVisible: Bool = false
+    private var zoomHUDDismissWorkItem: DispatchWorkItem? = nil
+
+    public func presentZoomChangeHUD(displayZoom: CGFloat) {
+        let label: String
+        let isTele = displayZoom >= 1.95 && cameraService.hasPhysicalTelephotoLens
+        if displayZoom < 0.75 {
+            label = "0.5x • 13mm ULTRA WIDE"
+        } else if displayZoom < 1.4 {
+            label = "1.0x • 24mm WIDE"
+        } else if displayZoom < 2.5 {
+            label = isTele ? "2.0x • 48mm TELE" : "2.0x • 48mm"
+        } else if displayZoom < 4.0 {
+            label = isTele ? "\(String(format: "%.1f", displayZoom))x • 77mm TELE" : "\(String(format: "%.1f", displayZoom))x"
+        } else {
+            label = isTele ? "\(String(format: "%.1f", displayZoom))x • 120mm TELE" : "\(String(format: "%.1f", displayZoom))x"
+        }
+
+        zoomHUDDismissWorkItem?.cancel()
+        activeZoomHUDText = label
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
+            self.isZoomHUDVisible = true
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            withAnimation(.easeOut(duration: 0.35)) {
+                self?.isZoomHUDVisible = false
+            }
+        }
+        zoomHUDDismissWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
+    }
+
     @Published public var isRevealingZoomTarget: Bool = false
     @Published public var lockOnProgress: CGFloat = 0
     @Published public var liveZoomFactorForReveal: CGFloat = 1.0
@@ -968,6 +1002,17 @@ public final class CameraViewModel: ObservableObject {
 
     /// Tải ảnh chụp gần đây nhất từ thư viện ảnh máy để hiển thị trên nút Album ở góc trái
     public func loadLatestPhotoFromAlbum() {
+        // 1. Kiểm tra ngay kho ảnh cục bộ Align Studio (0ms delay, không phụ thuộc quyền Photos)
+        if let latest = AppPhotoStorageService.shared.latestRecord(),
+           let thumb = AppPhotoStorageService.shared.loadThumbnailImage(for: latest) {
+            let uiThumb = UIImage(cgImage: thumb)
+            DispatchQueue.main.async { [weak self] in
+                self?.latestAlbumThumbnail = uiThumb
+            }
+            return
+        }
+
+        // 2. Fallback: Nếu kho cục bộ rỗng, tải từ Apple Photos nếu đã cấp quyền
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fetchOptions = PHFetchOptions()
             fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
@@ -2721,34 +2766,49 @@ public final class CameraViewModel: ObservableObject {
         guard isWindowedZoomActive, isCameraReady, !isCameraHibernating else { return }
         let focal = windowedZoomFocalLength
         let targetDisplayZoom: CGFloat
+        let targetDeviceZoom: CGFloat
         if focal < 48.0 {
             // 24mm, 28mm, 35mm -> Wide camera 1.0x
             targetDisplayZoom = 1.0
-        } else if focal < 72.0 {
-            // 50mm (~2.08x) -> Telephoto 2.0x (or closest optical tele)
-            targetDisplayZoom = 2.0
+            targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(1.0)
         } else {
-            // 85mm (~3.54x), 135mm (~5.6x) -> Telephoto 3.0x / 5.0x
-            let opts = cameraService.availableDisplayZoomOptions
-            if opts.contains(5.0) && focal >= 110.0 {
-                targetDisplayZoom = 5.0
-            } else if opts.contains(3.0) {
-                targetDisplayZoom = 3.0
-            } else if opts.contains(2.0) {
-                targetDisplayZoom = 2.0
+            // 50mm (~2.08x), 75mm (~3.1x), 85mm (~3.54x), 135mm (~5.6x):
+            // Luon luon uu tien kich hoat camera Telephoto quang hoc vat ly
+            if let teleDevice = cameraService.telephotoOpticalDeviceZoom, cameraService.hasPhysicalTelephotoLens {
+                if focal >= 110.0 && cameraService.availableDisplayZoomOptions.contains(5.0) {
+                    targetDisplayZoom = 5.0
+                    targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(5.0)
+                } else {
+                    targetDisplayZoom = cameraService.telephotoOpticalDisplayZoom ?? 2.0
+                    targetDeviceZoom = teleDevice
+                }
             } else {
                 targetDisplayZoom = 2.0
+                targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(2.0)
             }
         }
 
-        let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetDisplayZoom)
         if abs(cameraService.currentZoom - targetDeviceZoom) > 0.05 {
             cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: 4.5)
         }
+        presentZoomChangeHUD(displayZoom: targetDisplayZoom)
     }
 
     private func requestManualZoom(_ displayZoomVal: CGFloat, smooth: Bool = false) {
-        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        let deviceZoom: CGFloat
+        if displayZoomVal >= 1.95, let teleDevice = cameraService.telephotoOpticalDeviceZoom, cameraService.hasPhysicalTelephotoLens {
+            // Khi nguoi dung chon zoom 2x hay tren 2x: kich hoat truc tiep camera Telephoto quang hoc
+            if displayZoomVal <= 2.05 {
+                deviceZoom = teleDevice
+            } else {
+                let standardDev = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+                deviceZoom = max(teleDevice, standardDev)
+            }
+        } else {
+            deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        }
+        presentZoomChangeHUD(displayZoom: displayZoomVal)
+
         let requestID = UUID()
         manualZoomRequestID = requestID
         pendingManualZoomTarget = deviceZoom
@@ -2781,13 +2841,23 @@ public final class CameraViewModel: ObservableObject {
         requestManualZoom(displayZoomVal, smooth: true)
     }
 
-    /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
-    /// Tự động throttle AVFoundation calls (25ms) để chống nghẽn hàng đợi camera phần cứng
+    /// Zoom lien tuc muot ma khi nguoi dung vuot/pinch bang hai ngon tay
+    /// Tu dong throttle AVFoundation calls (25ms) de chong nghen hang doi camera phan cung
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
         selectedZoomPreset = resolveClosestZoomPreset(for: displayZoomVal)
-        let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        let deviceZoom: CGFloat
+        if displayZoomVal >= 1.95, let teleDevice = cameraService.telephotoOpticalDeviceZoom, cameraService.hasPhysicalTelephotoLens {
+            if displayZoomVal <= 2.05 {
+                deviceZoom = teleDevice
+            } else {
+                let standardDev = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+                deviceZoom = max(teleDevice, standardDev)
+            }
+        } else {
+            deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
+        }
         let now = CACurrentMediaTime()
         if now - lastContinuousZoomTime >= 0.025 || abs(deviceZoom - lastContinuousAppliedZoom) > 0.08 {
             lastContinuousZoomTime = now
@@ -3451,7 +3521,7 @@ public final class CameraViewModel: ObservableObject {
 
     public func savePhotoToLibrary(_ item: CapturedPhotoItem, completion: ((Bool) -> Void)? = nil) {
         let saveOriginal = isSaveOriginalPhotoEnabled && !item.preservesOriginalFile && item.saveFormat != .dng
-        let access: PHAccessLevel = Bundle.main.object(forInfoDictionaryKey: "NSPhotoLibraryAddUsageDescription") != nil ? .addOnly : .readWrite
+        let access: PHAccessLevel = .readWrite
         PHPhotoLibrary.requestAuthorization(for: access) { [weak self] status in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -3516,6 +3586,28 @@ public final class CameraViewModel: ObservableObject {
                     if let originalData {
                         let original = PHAssetCreationRequest.forAsset()
                         original.addResource(with: .photo, data: originalData, options: nil)
+                    }
+
+                    // Tự động thêm vào Album "Align Studio" trong Apple Photos
+                    let albumTitle = "Align Studio"
+                    let collections = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
+                    var targetAlbum: PHAssetCollection? = nil
+                    collections.enumerateObjects { col, _, stop in
+                        if col.localizedTitle == albumTitle || col.localizedTitle == "AlignAI Studio" {
+                            targetAlbum = col
+                            stop.pointee = true
+                        }
+                    }
+                    if let album = targetAlbum {
+                        if let albumChange = PHAssetCollectionChangeRequest(for: album),
+                           let placeholder = request.placeholderForCreatedAsset {
+                            albumChange.addAssets([placeholder] as NSArray)
+                        }
+                    } else {
+                        let albumChange = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumTitle)
+                        if let placeholder = request.placeholderForCreatedAsset {
+                            albumChange.addAssets([placeholder] as NSArray)
+                        }
                     }
                 }) { [weak self] success, error in
                     Task { @MainActor [weak self] in
@@ -3700,6 +3792,30 @@ extension CameraViewModel: CameraServiceDelegate {
                 shutterSpeed: shutterSpeed,
                 aiColorParameters: finalColorParams
             )
+
+            // Lưu vĩnh viễn ảnh vào kho nội bộ app Align Studio (Documents/AlignStudioCaptures) để không bao giờ mất khi thoát app
+            let persistedData: Data?
+            if format == .dng {
+                persistedData = rawData
+            } else if item.preservesOriginalFile, let raw = rawData {
+                persistedData = raw
+            } else {
+                persistedData = Self.encodeRenderedPhoto(processedImageResult, sourceData: rawData, format: format)
+            }
+            if let dataToSave = persistedData {
+                AppPhotoStorageService.shared.persistCapture(
+                    id: item.id,
+                    image: processedImageResult,
+                    mainData: dataToSave,
+                    format: format,
+                    sceneType: activeScene,
+                    preset: isFilmActive ? effectivePreset : .standard,
+                    compositionRule: activeRule,
+                    score: score,
+                    iso: iso,
+                    shutterSpeed: shutterSpeed
+                )
+            }
 
             DispatchQueue.main.async {
                 CameraLogger.success("Render bộ lọc hoàn tất, hiển thị xem trước & lưu ảnh (LivePhoto: \(item.isLivePhoto))", category: .capture)

@@ -129,8 +129,6 @@ struct CameraModeSegmentedSwitcher: View {
         ModeItem(mode: .video, title: "VIDEO")
     ]
 
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25) // #D9A441
-
     var body: some View {
         HStack(spacing: 4) {
             ForEach(modes) { item in
@@ -145,13 +143,13 @@ struct CameraModeSegmentedSwitcher: View {
                 }) {
                     Text(item.title)
                         .font(.system(size: 12, weight: isSelected ? .bold : .semibold, design: .rounded))
-                        .foregroundColor(isSelected ? amberGold : .white.opacity(0.55))
+                        .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.55))
                         .frame(width: 82, height: 44)
                         .background(
                             ZStack {
                                 if isSelected {
                                     Capsule()
-                                        .stroke(amberGold, lineWidth: 1.2)
+                                        .stroke(AlignTheme.signatureGradient, lineWidth: 1.2)
                                         .matchedGeometryEffect(id: "active_mode_border", in: modeAnimationNamespace)
                                 }
                             }
@@ -173,8 +171,6 @@ struct MainCaptureButton: View {
     @State private var isDraggingToAI: Bool = false
     @State private var hasReachedDock: Bool = false
     @State private var isTouchingShutter: Bool = false
-
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         if viewModel.captureMode.isVideo {
@@ -254,7 +250,7 @@ struct MainCaptureButton: View {
             // Progress Indicator when Capturing
             if case .capturing = viewModel.aiSessionState {
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: amberGold))
+                    .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.electricCyan))
                     .scaleEffect(0.95)
                     .offset(x: dragOffset)
             }
@@ -270,7 +266,7 @@ struct MainCaptureButton: View {
         ZStack {
             // Outer Ring: Fixed 76x76 Size
             Circle()
-                .stroke(viewModel.isAIVideoDirectorActive ? amberGold : Color.white, lineWidth: 3.5)
+                .stroke(viewModel.isAIVideoDirectorActive ? AlignTheme.electricCyan : Color.white, lineWidth: 3.5)
                 .frame(width: 76, height: 76)
 
             // Inner Core: Red Circle / Rounded Rectangle
@@ -383,11 +379,11 @@ struct MainCaptureButton: View {
         case .idle, .done:
             return Color.white
         case .analyzing, .targetPlaced:
-            return amberGold
+            return AlignTheme.electricCyan
         case .alignmentPerfect:
             return Color.green
         case .capturing:
-            return amberGold
+            return AlignTheme.electricCyan
         }
     }
 
@@ -419,16 +415,16 @@ struct MainCaptureButton: View {
                     .frame(width: 44, height: 44)
 
                 Circle()
-                    .stroke(hasReachedDock ? amberGold : Color.white.opacity(0.35), lineWidth: hasReachedDock ? 2.2 : 1.0)
+                    .stroke(hasReachedDock ? AlignTheme.electricCyan : Color.white.opacity(0.35), lineWidth: hasReachedDock ? 2.2 : 1.0)
                     .frame(width: 44, height: 44)
 
                 Image(systemName: "wand.and.stars")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(hasReachedDock ? amberGold : Color.white.opacity(0.75))
+                    .foregroundColor(hasReachedDock ? AlignTheme.electricCyan : Color.white.opacity(0.75))
                     .scaleEffect(hasReachedDock ? 1.20 : 1.0)
                     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
             }
-            .shadow(color: hasReachedDock ? amberGold.opacity(0.60) : Color.clear, radius: 8)
+            .shadow(color: hasReachedDock ? AlignTheme.electricCyan.opacity(0.60) : Color.clear, radius: 8)
             .offset(x: -56)
             .scaleEffect(dockScale)
             .opacity(dockOpacity)
@@ -447,16 +443,16 @@ struct MainCaptureButton: View {
                     .frame(width: 44, height: 44)
 
                 Circle()
-                    .stroke(hasReachedDock ? amberGold : (viewModel.isAIVideoDirectorActive ? amberGold.opacity(0.85) : Color.white.opacity(0.35)), lineWidth: hasReachedDock ? 2.2 : 1.0)
+                    .stroke(hasReachedDock ? AlignTheme.electricCyan : (viewModel.isAIVideoDirectorActive ? AlignTheme.electricCyan.opacity(0.85) : Color.white.opacity(0.35)), lineWidth: hasReachedDock ? 2.2 : 1.0)
                     .frame(width: 44, height: 44)
 
                 Image(systemName: "sparkles.tv")
                     .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(hasReachedDock ? amberGold : (viewModel.isAIVideoDirectorActive ? amberGold : Color.white.opacity(0.75)))
+                    .foregroundColor(hasReachedDock ? AlignTheme.electricCyan : (viewModel.isAIVideoDirectorActive ? AlignTheme.electricCyan : Color.white.opacity(0.75)))
                     .scaleEffect(hasReachedDock ? 1.20 : 1.0)
                     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
             }
-            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? amberGold.opacity(0.60) : Color.clear, radius: 8)
+            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? AlignTheme.electricCyan.opacity(0.60) : Color.clear, radius: 8)
             .offset(x: -56)
             .scaleEffect(dockScale)
             .opacity(dockOpacity)
@@ -558,7 +554,6 @@ struct CameraFlipButton: View {
 // MARK: - AI Viewfinder Button (nutAI Asset, No Background, No Border, 44x44pt Target)
 struct AIViewfinderButton: View {
     @ObservedObject var viewModel: CameraViewModel
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         Button(action: {
@@ -589,21 +584,22 @@ struct AIViewfinderButton: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 32, height: 32)
-                        .foregroundColor(isPulsing ? amberGold : Color.white.opacity(0.90))
+                        .foregroundColor(isPulsing ? AlignTheme.electricCyan : Color.white.opacity(0.90))
                 } else if let altImage = UIImage(named: "nuticonbocuc") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nuticonbocuc", ofType: "png") ?? "") {
                     Image(uiImage: altImage)
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 32, height: 32)
-                        .foregroundColor(isPulsing ? amberGold : Color.white.opacity(0.90))
+                        .foregroundColor(isPulsing ? AlignTheme.electricCyan : Color.white.opacity(0.90))
                 } else {
                     Image(systemName: "viewfinder")
                         .font(.system(size: 24, weight: .semibold))
-                        .foregroundColor(isPulsing ? amberGold : Color.white.opacity(0.90))
+                        .foregroundColor(isPulsing ? AlignTheme.electricCyan : Color.white.opacity(0.90))
                 }
             }
             .frame(width: 44, height: 44)
+            .shadow(color: isPulsing ? AlignTheme.electricCyan.opacity(0.55) : .clear, radius: 6)
             .scaleEffect(isPulsing ? 1.06 : 1.0)
             .animation(.spring(response: 0.35, dampingFraction: 0.65), value: isPulsing)
             .contentShape(Rectangle())
@@ -631,7 +627,6 @@ struct AIViewfinderButton: View {
 // MARK: - Selected Camera Mini Badge Button (Opens Drawer)
 public struct SelectedCameraBadgeButton: View {
     @ObservedObject var viewModel: CameraViewModel
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -646,13 +641,13 @@ public struct SelectedCameraBadgeButton: View {
         }) {
             ZStack {
                 Circle()
-                    .fill(Color(red: 0.10, green: 0.11, blue: 0.14))
+                    .fill(AlignTheme.carbonSurface)
                     .frame(width: 36, height: 36)
                     .overlay(
                         Circle()
                             .stroke(
-                                viewModel.isShowingFilmDrawer ? amberGold :
-                                    (viewModel.isFilmSimulationActive ? amberGold.opacity(0.70) : Color.white.opacity(0.18)),
+                                viewModel.isShowingFilmDrawer ? AlignTheme.electricCyan :
+                                    (viewModel.isFilmSimulationActive ? AlignTheme.irisViolet.opacity(0.80) : Color.white.opacity(0.18)),
                                 lineWidth: 1.0
                             )
                     )
@@ -660,11 +655,11 @@ public struct SelectedCameraBadgeButton: View {
                 if viewModel.isFilmSimulationActive {
                     Image(systemName: viewModel.selectedFilmPreset.deviceIconSF)
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(viewModel.isShowingFilmDrawer ? amberGold : viewModel.selectedFilmPreset.previewColor)
+                        .foregroundColor(viewModel.isShowingFilmDrawer ? AlignTheme.electricCyan : viewModel.selectedFilmPreset.previewColor)
                 } else {
                     Image(systemName: "camera.filters")
                         .font(.system(size: 15, weight: .regular))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(AlignTheme.platinumWhite.opacity(0.55))
                 }
             }
             .frame(width: 44, height: 44)
@@ -693,7 +688,6 @@ private struct SprocketPerforationsRow: View {
 // MARK: - Raw Original Clean Card (Turn Off Simulation)
 private struct RawCleanCardView: View {
     let isSelected: Bool
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         VStack(spacing: 1.5) {
@@ -706,7 +700,7 @@ private struct RawCleanCardView: View {
                     .padding(.vertical, 1.2)
                     .background(
                         Capsule()
-                            .fill(isSelected ? amberGold : Color.white.opacity(0.15))
+                            .fill(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.15))
                     )
                 Spacer()
             }
@@ -723,7 +717,7 @@ private struct RawCleanCardView: View {
 
                 Image(systemName: "circle.slash")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(isSelected ? amberGold : .white.opacity(0.70))
+                    .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.70))
             }
 
             Spacer(minLength: 1)
@@ -731,7 +725,7 @@ private struct RawCleanCardView: View {
             // Bottom Name Label
             Text("TẮT MÀU")
                 .font(.system(size: 8.0, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? amberGold : .white.opacity(0.70))
+                .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.70))
                 .lineLimit(1)
                 .minimumScaleFactor(0.70)
                 .padding(.horizontal, 2)
@@ -740,11 +734,11 @@ private struct RawCleanCardView: View {
         .frame(width: 54, height: 68)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(red: 0.11, green: 0.12, blue: 0.15))
+                .fill(AlignTheme.carbonSurface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? amberGold : Color.white.opacity(0.12), lineWidth: isSelected ? 1.8 : 0.8)
+                .stroke(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.12), lineWidth: isSelected ? 1.8 : 0.8)
         )
         .scaleEffect(isSelected ? 1.04 : 1.0)
         .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isSelected)
@@ -755,7 +749,6 @@ private struct RawCleanCardView: View {
 public struct CameraCardView: View {
     let preset: FilmPreset
     let isSelected: Bool
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     public init(preset: FilmPreset, isSelected: Bool) {
         self.preset = preset
@@ -768,12 +761,12 @@ public struct CameraCardView: View {
             HStack {
                 Text(preset.deviceBadge)
                     .font(.system(size: 7.0, weight: .heavy, design: .monospaced))
-                    .foregroundColor(isSelected ? .black : preset.previewColor)
+                    .foregroundColor(isSelected ? .white : preset.previewColor)
                     .padding(.horizontal, 3.5)
                     .padding(.vertical, 1.2)
                     .background(
                         Capsule()
-                            .fill(isSelected ? amberGold : Color.black.opacity(0.45))
+                            .fill(isSelected ? AlignTheme.irisViolet : Color.black.opacity(0.45))
                     )
                 Spacer()
             }
@@ -790,7 +783,7 @@ public struct CameraCardView: View {
 
                 Image(systemName: preset.deviceIconSF)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(isSelected ? amberGold : .white.opacity(0.92))
+                    .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.92))
             }
 
             Spacer(minLength: 1)
@@ -798,7 +791,7 @@ public struct CameraCardView: View {
             // Bottom Name Label
             Text(preset.shortTitle)
                 .font(.system(size: 8.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? amberGold : .white)
+                .foregroundColor(isSelected ? AlignTheme.platinumWhite : .white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.70)
                 .padding(.horizontal, 2)
@@ -807,11 +800,11 @@ public struct CameraCardView: View {
         .frame(width: 54, height: 68)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(red: 0.11, green: 0.12, blue: 0.15))
+                .fill(AlignTheme.carbonSurface)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? amberGold : Color.white.opacity(0.12), lineWidth: isSelected ? 1.8 : 0.8)
+                .stroke(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.12), lineWidth: isSelected ? 1.8 : 0.8)
         )
         .scaleEffect(isSelected ? 1.04 : 1.0)
         .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isSelected)
@@ -821,7 +814,6 @@ public struct CameraCardView: View {
 // MARK: - Film Preset Drawer (Compact Storyboard 35mm Reel & Tabs)
 public struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -852,7 +844,7 @@ public struct FilmPresetDrawer: View {
                 .foregroundColor(.white.opacity(0.60))
 
             Slider(value: $viewModel.filmSimulationIntensity, in: 0.1...1.0, step: 0.05)
-                .accentColor(amberGold)
+                .accentColor(AlignTheme.electricCyan)
 
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -861,12 +853,12 @@ public struct FilmPresetDrawer: View {
             }) {
                 Text("\(Int(round(viewModel.filmSimulationIntensity * 100)))%")
                     .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
-                    .foregroundColor(amberGold)
+                    .foregroundColor(AlignTheme.electricCyan)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
                         Capsule()
-                            .fill(amberGold.opacity(0.15))
+                            .fill(AlignTheme.electricCyan.opacity(0.15))
                     )
             }
             .buttonStyle(PlainButtonStyle())
@@ -886,22 +878,22 @@ public struct FilmPresetDrawer: View {
             }) {
                 HStack(spacing: 4.5) {
                     Circle()
-                        .fill(viewModel.isFilmSimulationActive ? amberGold : Color.gray.opacity(0.60))
+                        .fill(viewModel.isFilmSimulationActive ? AlignTheme.electricCyan : Color.gray.opacity(0.60))
                         .frame(width: 6.5, height: 6.5)
 
                     Text(viewModel.isFilmSimulationActive ? "MÀU: BẬT" : "MÀU: TẮT")
                         .font(.system(size: 9.5, weight: .heavy, design: .rounded))
-                        .foregroundColor(viewModel.isFilmSimulationActive ? amberGold : .white.opacity(0.70))
+                        .foregroundColor(viewModel.isFilmSimulationActive ? AlignTheme.electricCyan : .white.opacity(0.70))
                 }
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3.5)
                 .background(
                     Capsule()
-                        .fill(viewModel.isFilmSimulationActive ? amberGold.opacity(0.16) : Color.white.opacity(0.08))
+                        .fill(viewModel.isFilmSimulationActive ? AlignTheme.electricCyan.opacity(0.16) : Color.white.opacity(0.08))
                 )
                 .overlay(
                     Capsule()
-                        .stroke(viewModel.isFilmSimulationActive ? amberGold.opacity(0.45) : Color.white.opacity(0.16), lineWidth: 1.0)
+                        .stroke(viewModel.isFilmSimulationActive ? AlignTheme.electricCyan.opacity(0.45) : Color.white.opacity(0.16), lineWidth: 1.0)
                 )
             }
             .buttonStyle(PlainButtonStyle())
@@ -922,11 +914,11 @@ public struct FilmPresetDrawer: View {
                             VStack(spacing: 3) {
                                 Text(category.displayName)
                                     .font(.system(size: 11.0, weight: isSelected ? .bold : .medium, design: .rounded))
-                                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.60))
+                                    .foregroundColor(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.60))
 
                                 // Selection bar indicator
                                 Rectangle()
-                                    .fill(isSelected ? amberGold : Color.clear)
+                                    .fill(isSelected ? AlignTheme.electricCyan : Color.clear)
                                     .frame(height: 1.8)
                                     .cornerRadius(1)
                             }

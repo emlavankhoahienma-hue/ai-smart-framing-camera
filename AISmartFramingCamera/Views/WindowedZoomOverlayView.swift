@@ -16,7 +16,6 @@ public struct WindowedZoomOverlayView: View {
     @State private var isPinching: Bool = false
     @Namespace private var focalPillNamespace
 
-    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
     private let presets = WindowedFocalLengthPreset.standardPresets
 
     public init(viewModel: CameraViewModel, containerSize: CGSize) {
@@ -56,9 +55,9 @@ public struct WindowedZoomOverlayView: View {
                         .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
                         .frame(width: windowRect.width, height: windowRect.height)
 
-                    Text(viewModel.displayZoom >= 1.95 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
+                    Text(viewModel.displayZoom >= 1.95 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE OPTICAL" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundColor(viewModel.isAIWindowedFocalRecommended ? amberGold : .white)
+                        .foregroundColor(viewModel.isAIWindowedFocalRecommended ? AlignTheme.electricCyan : .white)
                         .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
                         .offset(y: -22)
                 }
@@ -139,21 +138,19 @@ private struct FocalPresetButton: View {
     let action: () -> Void
     var focalPillNamespace: Namespace.ID
 
-    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
-
     var body: some View {
         Button(action: action) {
             ZStack {
                 if isSelected {
                     Capsule()
-                        .stroke(amberGold, lineWidth: 1.5)
+                        .stroke(AlignTheme.signatureGradient, lineWidth: 1.5)
                         .background(Capsule().fill(Color.black.opacity(0.40)))
                         .matchedGeometryEffect(id: "active_windowed_focal_ring", in: focalPillNamespace)
                 }
 
                 Text(preset.label)
                     .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
-                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.82))
+                    .foregroundColor(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.82))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
             }

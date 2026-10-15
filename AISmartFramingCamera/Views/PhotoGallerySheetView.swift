@@ -3,8 +3,8 @@ import Photos
 import UIKit
 
 public enum GalleryTab: String, CaseIterable, Identifiable {
-    case recent = "Gần đây"
-    case appAlbum = "AlignAI Studio"
+    case appAlbum = "Align Studio"
+    case recent = "Apple Photos"
 
     public var id: String { rawValue }
 }
@@ -13,14 +13,16 @@ public struct PhotoGallerySheetView: View {
     @ObservedObject var viewModel: CameraViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedTab: GalleryTab = .recent
+    @State private var selectedTab: GalleryTab = .appAlbum
+    @State private var storedRecords: [AppPhotoStorageService.StoredPhotoRecord] = []
     @State private var recentAssets: [PHAsset] = []
-    @State private var savedRawURLs: [URL] = []
-    @State private var isLoadingAssets: Bool = true
+    @State private var isLoadingRecords: Bool = true
+    @State private var isLoadingAssets: Bool = false
     @State private var selectedPreviewItem: CapturedPhotoItem? = nil
+    @State private var recordToDelete: AppPhotoStorageService.StoredPhotoRecord? = nil
+    @State private var showDeleteConfirmation: Bool = false
+    @State private var photoKitAuthorizationStatus: PHAuthorizationStatus = .notDetermined
 
-    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
-    private let darkBg = Color(red: 0.031, green: 0.035, blue: 0.043)
     private let columns = [
         GridItem(.flexible(), spacing: 2),
         GridItem(.flexible(), spacing: 2),
@@ -34,7 +36,7 @@ public struct PhotoGallerySheetView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                darkBg.ignoresSafeArea()
+                AlignTheme.obsidianBlack.ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     // Header Bar
@@ -42,34 +44,29 @@ public struct PhotoGallerySheetView: View {
                         Button(action: { dismiss() }) {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 22))
-                                .foregroundColor(.white.opacity(0.65))
+                                .foregroundColor(AlignTheme.platinumWhite.opacity(0.65))
                         }
                         Spacer()
                         Text("Thư viện ảnh")
                             .font(.system(size: 17, weight: .bold))
-                            .foregroundColor(.white)
+                            .foregroundColor(AlignTheme.platinumWhite)
                         Spacer()
                         Color.clear.frame(width: 22, height: 22)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
 
-                    // 2-Tab Segmented Switcher (Recent vs AlignAI Studio)
-                    Picker("Tab", selection: $selectedTab) {
-                        ForEach(GalleryTab.allCases) { tab in
-                            Text(tab.rawValue).tag(tab)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
+                    // 2-Tab Custom Minimalist Pill Switcher
+                    tabSelectorPill
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
 
                     // Tab Content
                     ScrollView {
-                        if selectedTab == .recent {
-                            recentPhotosGrid
-                        } else {
+                        if selectedTab == .appAlbum {
                             appAlbumGrid
+                        } else {
+                            recentPhotosGrid
                         }
                     }
                 }
@@ -78,28 +75,140 @@ public struct PhotoGallerySheetView: View {
             .sheet(item: $selectedPreviewItem) { item in
                 CapturedPhotoPreviewView(item: item, viewModel: viewModel)
             }
+            .confirmationDialog(
+                "Xác nhận xóa ảnh này khỏi ứng dụng?",
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Xóa ảnh", role: .destructive) {
+                    if let record = recordToDelete {
+                        AppPhotoStorageService.shared.deleteRecord(record)
+                        fetchStoredRecords()
+                        recordToDelete = nil
+                    }
+                }
+                Button("Hủy", role: .cancel) {
+                    recordToDelete = nil
+                }
+            }
             .onAppear {
-                fetchRecentPhotos()
-                fetchSavedRawFiles()
+                fetchStoredRecords()
+                checkPhotoKitStatus()
             }
         }
     }
 
-    // MARK: - Tab 1: Recent Photos Grid
+    // MARK: - Tab Selector Pill
+    private var tabSelectorPill: some View {
+        HStack(spacing: 0) {
+            ForEach(GalleryTab.allCases) { tab in
+                let isSelected = selectedTab == tab
+                Button(action: {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                        selectedTab = tab
+                        if tab == .recent && recentAssets.isEmpty {
+                            fetchRecentPhotos()
+                        }
+                    }
+                }) {
+                    Text(tab.rawValue)
+                        .font(.system(size: 13, weight: isSelected ? .bold : .medium))
+                        .foregroundColor(isSelected ? AlignTheme.platinumWhite : AlignTheme.platinumWhite.opacity(0.60))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            ZStack {
+                                if isSelected {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(AlignTheme.graphiteSurface)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(AlignTheme.rimGradient, lineWidth: 1.2)
+                                        )
+                                }
+                            }
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(AlignTheme.carbonSurface)
+        )
+    }
+
+    // MARK: - Tab 1: App Album Grid (Persistent Sandbox Storage)
+    private var appAlbumGrid: some View {
+        Group {
+            if isLoadingRecords {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.electricCyan))
+                    .padding(.top, 40)
+            } else if storedRecords.isEmpty {
+                VStack(spacing: 14) {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 42))
+                        .foregroundColor(AlignTheme.electricCyan.opacity(0.7))
+
+                    Text("Chưa có ảnh trong Align Studio")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(AlignTheme.platinumWhite)
+
+                    Text("Các ảnh chụp qua Align Studio sẽ được lưu an toàn tại đây và không bị mất khi thoát ứng dụng.")
+                        .font(.system(size: 13))
+                        .foregroundColor(AlignTheme.mutedCaption)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 36)
+                }
+                .padding(.top, 60)
+            } else {
+                LazyVGrid(columns: columns, spacing: 2) {
+                    ForEach(storedRecords) { record in
+                        StoredRecordThumbnailCell(record: record) {
+                            openRecordPreview(record)
+                        } onLongPress: {
+                            recordToDelete = record
+                            showDeleteConfirmation = true
+                        }
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+        }
+    }
+
+    // MARK: - Tab 2: Recent Device Photos Grid (Apple Photos)
     private var recentPhotosGrid: some View {
         Group {
-            if isLoadingAssets {
+            if photoKitAuthorizationStatus == .denied || photoKitAuthorizationStatus == .restricted {
+                VStack(spacing: 12) {
+                    Image(systemName: "lock.shield.fill")
+                        .font(.system(size: 38))
+                        .foregroundColor(AlignTheme.irisViolet.opacity(0.8))
+                    Text("Chưa cấp quyền xem thư viện Apple Photos")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(AlignTheme.platinumWhite)
+                    Text("Bạn có thể vào Cài đặt máy > Quyền riêng tư > Ảnh để cho phép ứng dụng hiển thị ảnh gần đây.")
+                        .font(.system(size: 12))
+                        .foregroundColor(AlignTheme.mutedCaption)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
+                .padding(.top, 60)
+            } else if isLoadingAssets {
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: amberGold))
+                    .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.electricCyan))
                     .padding(.top, 40)
             } else if recentAssets.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "photo.on.rectangle.angled")
                         .font(.system(size: 40))
-                        .foregroundColor(.white.opacity(0.35))
-                    Text("Không tìm thấy ảnh trong thư viện")
+                        .foregroundColor(AlignTheme.platinumWhite.opacity(0.35))
+                    Text("Không tìm thấy ảnh trong Apple Photos")
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white.opacity(0.65))
+                        .foregroundColor(AlignTheme.mutedCaption)
                 }
                 .padding(.top, 60)
             } else {
@@ -115,51 +224,29 @@ public struct PhotoGallerySheetView: View {
         }
     }
 
-    // MARK: - Tab 2: App Album & RAW Storage Grid
-    private var appAlbumGrid: some View {
-        Group {
-            if viewModel.latestCapturedPhoto != nil || !savedRawURLs.isEmpty {
-                LazyVGrid(columns: columns, spacing: 2) {
-                    if let latest = viewModel.latestCapturedPhoto {
-                        Button(action: {
-                            selectedPreviewItem = latest
-                        }) {
-                            Image(decorative: latest.processedImage, scale: 1.0, orientation: .up)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(minWidth: 0, maxWidth: .infinity)
-                                .frame(height: 124)
-                                .clipped()
-                        }
-                    }
-
-                    ForEach(savedRawURLs, id: \.self) { url in
-                        RawFileThumbnailCell(url: url) {
-                            loadRawFileAndPreview(url: url)
-                        }
-                    }
-                }
-                .padding(.horizontal, 2)
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "camera.filters")
-                        .font(.system(size: 40))
-                        .foregroundColor(amberGold.opacity(0.6))
-                    Text("Chưa có ảnh trong album AlignAI Studio")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.85))
-                    Text("Chụp ảnh RAW hoặc ảnh màu để lưu an toàn vào ứng dụng.")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.50))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                }
-                .padding(.top, 60)
+    // MARK: - Data Operations
+    private func fetchStoredRecords() {
+        isLoadingRecords = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let records = AppPhotoStorageService.shared.fetchAllRecords()
+            DispatchQueue.main.async {
+                self.storedRecords = records
+                self.isLoadingRecords = false
             }
         }
     }
 
+    private func checkPhotoKitStatus() {
+        photoKitAuthorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        if photoKitAuthorizationStatus == .authorized || photoKitAuthorizationStatus == .limited {
+            fetchRecentPhotos()
+        }
+    }
+
     private func fetchRecentPhotos() {
+        guard photoKitAuthorizationStatus == .authorized || photoKitAuthorizationStatus == .limited else {
+            return
+        }
         isLoadingAssets = true
         DispatchQueue.global(qos: .userInitiated).async {
             let options = PHFetchOptions()
@@ -177,45 +264,24 @@ public struct PhotoGallerySheetView: View {
         }
     }
 
-    private func fetchSavedRawFiles() {
-        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
-        let rawDirectory = documentsURL.appendingPathComponent("RAW", isDirectory: true)
-        guard let files = try? FileManager.default.contentsOfDirectory(at: rawDirectory, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey], options: .skipsHiddenFiles) else {
-            return
-        }
-        self.savedRawURLs = files.filter { $0.pathExtension.lowercased() == "dng" }
-            .sorted {
-                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
-                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date.distantPast
-                return d1 > d2
-            }
-    }
-
-    private func loadRawFileAndPreview(url: URL) {
+    private func openRecordPreview(_ record: AppPhotoStorageService.StoredPhotoRecord) {
         DispatchQueue.global(qos: .userInitiated).async {
-            guard let data = try? Data(contentsOf: url),
-                  let source = CGImageSourceCreateWithData(data as CFData, nil) else { return }
-            let previewOptions = [
-                kCGImageSourceCreateThumbnailWithTransform as String: true,
-                kCGImageSourceCreateThumbnailFromImageAlways as String: true,
-                kCGImageSourceThumbnailMaxPixelSize as String: 2048,
-                kCGImageSourceShouldCacheImmediately as String: false
-            ] as CFDictionary
-            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, previewOptions)
-                    ?? CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
-
+            guard let fullImage = AppPhotoStorageService.shared.loadFullImage(for: record) else { return }
+            let photoData = try? Data(contentsOf: AppPhotoStorageService.shared.photoURL(for: record))
             let item = CapturedPhotoItem(
-                originalImage: cgImage,
-                processedImage: cgImage,
-                rawPhotoData: data,
-                saveFormat: .dng,
+                originalImage: fullImage,
+                processedImage: fullImage,
+                rawPhotoData: photoData,
+                saveFormat: record.isDNG ? .dng : .jpeg,
                 preservesOriginalFile: true,
-                rawLocalFileURL: url,
+                rawLocalFileURL: record.isDNG ? AppPhotoStorageService.shared.photoURL(for: record) : nil,
                 sceneType: .general,
                 appliedPreset: .standard,
                 compositionRule: .ruleOfThirds,
-                alignmentScore: 1.0,
-                timestamp: (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
+                alignmentScore: record.alignmentScore,
+                timestamp: record.timestamp,
+                iso: record.iso,
+                shutterSpeed: record.shutterSpeed
             )
             DispatchQueue.main.async {
                 self.selectedPreviewItem = item
@@ -248,22 +314,20 @@ public struct PhotoGallerySheetView: View {
     }
 }
 
-// MARK: - RAW File Thumbnail Cell
-struct RawFileThumbnailCell: View {
-    let url: URL
+// MARK: - Stored Record Thumbnail Cell
+struct StoredRecordThumbnailCell: View {
+    let record: AppPhotoStorageService.StoredPhotoRecord
     let onTap: () -> Void
+    let onLongPress: () -> Void
 
-    @State private var thumbnail: UIImage? = nil
-    @State private var fileSizeString: String = ""
-
-    private let amberGold = Color(red: 1.0, green: 0.69, blue: 0.16)
+    @State private var thumbnailImage: UIImage? = nil
 
     var body: some View {
         Button(action: onTap) {
             ZStack(alignment: .bottomLeading) {
-                Color(red: 0.10, green: 0.11, blue: 0.14)
+                AlignTheme.carbonSurface
 
-                if let thumb = thumbnail {
+                if let thumb = thumbnailImage {
                     Image(uiImage: thumb)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -271,34 +335,31 @@ struct RawFileThumbnailCell: View {
                         .frame(height: 124)
                         .clipped()
                 } else {
-                    VStack(spacing: 6) {
-                        Image(systemName: "doc.text.fill")
-                            .font(.system(size: 26))
-                            .foregroundColor(amberGold)
-                        Text("RAW DNG")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(.white)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProgressView()
+                        .scaleEffect(0.65)
+                        .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.electricCyan))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                // Bottom badge
+                // Format & info badge
                 HStack(spacing: 4) {
-                    Text("RAW")
-                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    Text(record.format)
+                        .font(.system(size: 8.5, weight: .heavy, design: .rounded))
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1.5)
-                        .background(amberGold)
+                        .background(
+                            record.isDNG ?
+                            AnyView(Capsule().fill(AlignTheme.amberGold)) :
+                            AnyView(Capsule().fill(AlignTheme.electricCyan))
+                        )
                         .foregroundColor(.black)
-                        .cornerRadius(3)
 
-                    if !fileSizeString.isEmpty {
-                        Text(fileSizeString)
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.85))
-                    }
+                    Text(record.preset)
+                        .font(.system(size: 8, weight: .medium, design: .rounded))
+                        .foregroundColor(AlignTheme.platinumWhite.opacity(0.85))
+                        .lineLimit(1)
                 }
-                .padding(5)
+                .padding(4)
                 .background(Color.black.opacity(0.65))
                 .cornerRadius(4)
                 .padding(4)
@@ -307,42 +368,34 @@ struct RawFileThumbnailCell: View {
             .cornerRadius(6)
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button(role: .destructive, action: onLongPress) {
+                Label("Xóa ảnh khỏi Align Studio", systemImage: "trash")
+            }
+        }
         .onAppear {
-            loadThumbnailAndSize()
+            loadThumbnail()
         }
     }
 
-    private func loadThumbnailAndSize() {
+    private func loadThumbnail() {
+        guard thumbnailImage == nil else { return }
         DispatchQueue.global(qos: .userInitiated).async {
-            if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
-                let mb = Double(size) / (1024.0 * 1024.0)
+            if let cgThumb = AppPhotoStorageService.shared.loadThumbnailImage(for: record) {
+                let uiThumb = UIImage(cgImage: cgThumb)
                 DispatchQueue.main.async {
-                    self.fileSizeString = String(format: "%.1fMB", mb)
-                }
-            }
-            guard let data = try? Data(contentsOf: url),
-                  let source = CGImageSourceCreateWithData(data as CFData, nil) else { return }
-            let thumbOptions = [
-                kCGImageSourceCreateThumbnailWithTransform as String: true,
-                kCGImageSourceCreateThumbnailFromImageAlways as String: true,
-                kCGImageSourceThumbnailMaxPixelSize as String: 240,
-                kCGImageSourceShouldCacheImmediately as String: false
-            ] as CFDictionary
-            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions) {
-                let uiImage = UIImage(cgImage: cgImage)
-                DispatchQueue.main.async {
-                    self.thumbnail = uiImage
+                    self.thumbnailImage = uiThumb
                 }
             }
         }
     }
 }
 
-// MARK: - Asset Thumbnail Cell
+// MARK: - Asset Thumbnail Cell (Apple Photos)
 struct AssetThumbnailCell: View {
     let asset: PHAsset
     let onTap: () -> Void
@@ -352,7 +405,7 @@ struct AssetThumbnailCell: View {
     var body: some View {
         Button(action: onTap) {
             ZStack {
-                Color(red: 0.10, green: 0.11, blue: 0.14)
+                AlignTheme.carbonSurface
 
                 if let thumb = thumbnail {
                     Image(uiImage: thumb)
@@ -364,6 +417,7 @@ struct AssetThumbnailCell: View {
                 } else {
                     ProgressView()
                         .scaleEffect(0.6)
+                        .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.electricCyan))
                 }
             }
             .frame(height: 124)

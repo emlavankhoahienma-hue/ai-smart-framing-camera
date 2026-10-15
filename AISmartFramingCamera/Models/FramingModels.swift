@@ -1,6 +1,8 @@
 import Foundation
 import CoreGraphics
 import SwiftUI
+import UIKit
+import ImageIO
 
 // MARK: - Composition Rule Types
 public enum CompositionRule: String, CaseIterable, Identifiable, Sendable {
@@ -1454,4 +1456,285 @@ public struct WindowedFocalLengthPreset: Identifiable, Equatable, Sendable {
         WindowedFocalLengthPreset(focalLength: 50.0, label: "50mm", sceneRecommendation: "Tieu Chuan Mat Nguoi"),
         WindowedFocalLengthPreset(focalLength: 85.0, label: "85mm", sceneRecommendation: "Chan Dung Hoang Kim")
     ]
+}
+
+// MARK: - Align Studio Design System & Theme
+public struct AlignTheme {
+    // 1. Measured chromatic palette extracted directly from AppLogo.png:
+    // Top-Left: Iris Violet (120, 99, 242) -> #7863F2
+    public static let irisViolet = Color(red: 120.0 / 255.0, green: 99.0 / 255.0, blue: 242.0 / 255.0)
+    // Bottom-Left: Electric Cyan (40, 182, 242) -> #28B6F2
+    public static let electricCyan = Color(red: 40.0 / 255.0, green: 182.0 / 255.0, blue: 242.0 / 255.0)
+    // Bottom-Right: Emerald Mint (9, 167, 134) -> #09A786
+    public static let emeraldMint = Color(red: 9.0 / 255.0, green: 167.0 / 255.0, blue: 134.0 / 255.0)
+    // Top-Right: Optical Amber Gold (255, 183, 38) -> #FFB726
+    public static let amberGold = Color(red: 255.0 / 255.0, green: 183.0 / 255.0, blue: 38.0 / 255.0)
+
+    // 2. Pro Camera Luxury Neutrals (Leica / Apple Pro aesthetic):
+    public static let obsidianBlack = Color(red: 0.043, green: 0.047, blue: 0.055)     // #0B0C0E
+    public static let carbonSurface = Color(red: 0.075, green: 0.082, blue: 0.098)     // #131519
+    public static let graphiteSurface = Color(red: 0.110, green: 0.118, blue: 0.137)   // #1C1E23
+    public static let titaniumBorder = Color.white.opacity(0.12)
+    public static let platinumWhite = Color(red: 0.97, green: 0.98, blue: 0.98)       // #F8F9FA
+    public static let mutedCaption = Color.white.opacity(0.55)
+
+    // 3. Signature Controlled Gradients:
+    // Primary Brand Signature: Iris Violet -> Electric Cyan (Subtle, professional)
+    public static let signatureGradient = LinearGradient(
+        colors: [irisViolet, electricCyan],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
+    // Subtle Rim Stroke Gradient: 1.5pt border for AI buttons & cards
+    public static let rimGradient = LinearGradient(
+        colors: [irisViolet.opacity(0.85), electricCyan.opacity(0.85)],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
+    // Full Aperture Spectrum (Reserved for AI active states & hero branding):
+    public static let apertureSpectrumGradient = LinearGradient(
+        colors: [irisViolet, electricCyan, emeraldMint, amberGold],
+        startPoint: .leading,
+        endPoint: .trailing
+    )
+
+    // Optical Reticle Color: Strictly reserved for target tracking & optical framing
+    public static let opticalTargetColor = amberGold
+    public static let opticalAlignedColor = Color(red: 0.19, green: 0.82, blue: 0.35) // #30D158 (ISO Green)
+}
+
+// MARK: - Persistent App Photo Storage Service
+public final class AppPhotoStorageService: @unchecked Sendable {
+    public static let shared = AppPhotoStorageService()
+
+    public struct StoredPhotoRecord: Identifiable, Codable, Equatable, Sendable {
+        public let id: UUID
+        public let filename: String
+        public let thumbnailFilename: String
+        public let timestamp: Date
+        public let format: String
+        public let width: Int
+        public let height: Int
+        public let sceneType: String
+        public let preset: String
+        public let compositionRule: String
+        public let alignmentScore: Double
+        public let iso: Float
+        public let shutterSpeed: Double
+        public let isDNG: Bool
+
+        public var resolutionDescription: String {
+            let mp = Double(width * height) / 1_000_000.0
+            return String(format: "%.1f MP • %d x %d", mp, width, height)
+        }
+    }
+
+    private let fileManager = FileManager.default
+
+    public var capturesDirectory: URL {
+        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let dir = docs.appendingPathComponent("AlignStudioCaptures", isDirectory: true)
+        if !fileManager.fileExists(atPath: dir.path) {
+            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        }
+        return dir
+    }
+
+    public var thumbsDirectory: URL {
+        let dir = capturesDirectory.appendingPathComponent("Thumbnails", isDirectory: true)
+        if !fileManager.fileExists(atPath: dir.path) {
+            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        }
+        return dir
+    }
+
+    public var metadataDirectory: URL {
+        let dir = capturesDirectory.appendingPathComponent("Metadata", isDirectory: true)
+        if !fileManager.fileExists(atPath: dir.path) {
+            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+        }
+        return dir
+    }
+
+    private init() {
+        _ = capturesDirectory
+        _ = thumbsDirectory
+        _ = metadataDirectory
+    }
+
+    /// Save full capture permanently to app sandbox
+    @discardableResult
+    public func persistCapture(
+        id: UUID,
+        image: CGImage,
+        mainData: Data,
+        format: PhotoSaveFormat,
+        sceneType: DetectedSceneType,
+        preset: FilmPreset,
+        compositionRule: CompositionRule,
+        score: Double,
+        iso: Float = 100,
+        shutterSpeed: Double = 1.0 / 125.0
+    ) -> StoredPhotoRecord? {
+        let ext: String
+        switch format {
+        case .dng: ext = "dng"
+        case .jpeg: ext = "jpg"
+        case .heif, .heic: ext = "heic"
+        }
+
+        let photoFilename = "AlignStudio_\(id.uuidString).\(ext)"
+        let thumbFilename = "thumb_\(id.uuidString).jpg"
+        let photoURL = capturesDirectory.appendingPathComponent(photoFilename)
+        let thumbURL = thumbsDirectory.appendingPathComponent(thumbFilename)
+        let metaURL = metadataDirectory.appendingPathComponent("\(id.uuidString).json")
+
+        do {
+            try mainData.write(to: photoURL, options: .atomic)
+        } catch {
+            return nil
+        }
+
+        if let thumbData = generateThumbnailData(from: image, maxPixelSize: 512) {
+            try? thumbData.write(to: thumbURL, options: .atomic)
+        }
+
+        let record = StoredPhotoRecord(
+            id: id,
+            filename: photoFilename,
+            thumbnailFilename: thumbFilename,
+            timestamp: Date(),
+            format: ext.uppercased(),
+            width: image.width,
+            height: image.height,
+            sceneType: sceneType.displayName,
+            preset: preset.displayName,
+            compositionRule: compositionRule.name,
+            alignmentScore: score,
+            iso: iso,
+            shutterSpeed: shutterSpeed,
+            isDNG: format == .dng
+        )
+
+        if let metaData = try? JSONEncoder().encode(record) {
+            try? metaData.write(to: metaURL, options: .atomic)
+        }
+
+        return record
+    }
+
+    /// Fetch all saved records sorted by newest first
+    public func fetchAllRecords() -> [StoredPhotoRecord] {
+        guard let metaFiles = try? fileManager.contentsOfDirectory(at: metadataDirectory, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles) else {
+            return []
+        }
+
+        var records: [StoredPhotoRecord] = []
+        for file in metaFiles where file.pathExtension.lowercased() == "json" {
+            if let data = try? Data(contentsOf: file),
+               let rec = try? JSONDecoder().decode(StoredPhotoRecord.self, from: data) {
+                let imgURL = capturesDirectory.appendingPathComponent(rec.filename)
+                if fileManager.fileExists(atPath: imgURL.path) {
+                    records.append(rec)
+                }
+            }
+        }
+
+        // Also scan legacy RAW directory
+        let legacyRAW = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("RAW", isDirectory: true)
+        if let legacyURL = legacyRAW, let legacyFiles = try? fileManager.contentsOfDirectory(at: legacyURL, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles) {
+            for rawFile in legacyFiles where rawFile.pathExtension.lowercased() == "dng" {
+                if !records.contains(where: { $0.filename == rawFile.lastPathComponent }) {
+                    let id = UUID()
+                    let rec = StoredPhotoRecord(
+                        id: id,
+                        filename: rawFile.lastPathComponent,
+                        thumbnailFilename: "",
+                        timestamp: (try? rawFile.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date(),
+                        format: "DNG",
+                        width: 4032,
+                        height: 3024,
+                        sceneType: "RAW",
+                        preset: "Standard",
+                        compositionRule: "Rule of Thirds",
+                        alignmentScore: 1.0,
+                        iso: 100,
+                        shutterSpeed: 1.0 / 125.0,
+                        isDNG: true
+                    )
+                    records.append(rec)
+                }
+            }
+        }
+
+        records.sort { $0.timestamp > $1.timestamp }
+        return records
+    }
+
+    public func latestRecord() -> StoredPhotoRecord? {
+        return fetchAllRecords().first
+    }
+
+    public func photoURL(for record: StoredPhotoRecord) -> URL {
+        let standard = capturesDirectory.appendingPathComponent(record.filename)
+        if fileManager.fileExists(atPath: standard.path) {
+            return standard
+        }
+        let legacy = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("RAW").appendingPathComponent(record.filename)
+        if let l = legacy, fileManager.fileExists(atPath: l.path) {
+            return l
+        }
+        return standard
+    }
+
+    public func thumbnailURL(for record: StoredPhotoRecord) -> URL? {
+        guard !record.thumbnailFilename.isEmpty else { return nil }
+        let url = thumbsDirectory.appendingPathComponent(record.thumbnailFilename)
+        return fileManager.fileExists(atPath: url.path) ? url : nil
+    }
+
+    public func loadThumbnailImage(for record: StoredPhotoRecord) -> CGImage? {
+        if let thumbURL = thumbnailURL(for: record),
+           let data = try? Data(contentsOf: thumbURL),
+           let source = CGImageSourceCreateWithData(data as CFData, nil) {
+            return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        }
+        let fullURL = photoURL(for: record)
+        guard let source = CGImageSourceCreateWithURL(fullURL as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 320
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    public func loadFullImage(for record: StoredPhotoRecord) -> CGImage? {
+        let fullURL = photoURL(for: record)
+        guard let source = CGImageSourceCreateWithURL(fullURL as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
+
+    public func deleteRecord(_ record: StoredPhotoRecord) {
+        let imgURL = photoURL(for: record)
+        try? fileManager.removeItem(at: imgURL)
+        if let thumb = thumbnailURL(for: record) {
+            try? fileManager.removeItem(at: thumb)
+        }
+        let metaURL = metadataDirectory.appendingPathComponent("\(record.id.uuidString).json")
+        try? fileManager.removeItem(at: metaURL)
+    }
+
+    private func generateThumbnailData(from cgImage: CGImage, maxPixelSize: Int) -> Data? {
+        let uiImage = UIImage(cgImage: cgImage)
+        let scale = min(CGFloat(maxPixelSize) / CGFloat(cgImage.width), CGFloat(maxPixelSize) / CGFloat(cgImage.height), 1.0)
+        let targetSize = CGSize(width: max(1.0, round(CGFloat(cgImage.width) * scale)), height: max(1.0, round(CGFloat(cgImage.height) * scale)))
+        UIGraphicsBeginImageContextWithOptions(targetSize, true, 1.0)
+        uiImage.draw(in: CGRect(origin: .zero, size: targetSize))
+        let thumbImage = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        return thumbImage?.jpegData(compressionQuality: 0.80)
+    }
 }

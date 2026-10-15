@@ -132,6 +132,11 @@ public final class CameraService: NSObject {
     public private(set) var availableDisplayZoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0]
     public private(set) var defaultDisplayZoom: CGFloat = 1.0
 
+    // Optical Telephoto Lens Hardware Tracking
+    public private(set) var hasPhysicalTelephotoLens: Bool = false
+    public private(set) var telephotoOpticalDisplayZoom: CGFloat? = nil
+    public private(set) var telephotoOpticalDeviceZoom: CGFloat? = nil
+
     public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
         guard displayZoom.isFinite, displayMultiplier.isFinite, displayMultiplier > 0 else {
             return max(minZoom, min(defaultDisplayZoom, maxZoom))
@@ -329,6 +334,9 @@ public final class CameraService: NSObject {
                 if switchFactors.count >= 2 {
                     let teleDeviceZoom = CGFloat(switchFactors[1].doubleValue)
                     let teleDisplay = round((teleDeviceZoom / wideBase) * 10) / 10
+                    self.telephotoOpticalDeviceZoom = teleDeviceZoom
+                    self.telephotoOpticalDisplayZoom = teleDisplay
+                    self.hasPhysicalTelephotoLens = true
                     if teleDisplay > 2.0 {
                         options.append(teleDisplay)
                     } else if !options.contains(teleDisplay) {
@@ -344,6 +352,9 @@ public final class CameraService: NSObject {
                 CameraLogger.info("CameraService: Khởi tạo Triple Camera Apple (Wide Base: \(wideBase), Tele Options: \(options))", category: .capture)
             } else if camera.deviceType == .builtInDualCamera, let teleSwitch = switchFactors.first {
                 let teleZoom = CGFloat(teleSwitch.doubleValue)
+                self.telephotoOpticalDeviceZoom = teleZoom
+                self.telephotoOpticalDisplayZoom = teleZoom
+                self.hasPhysicalTelephotoLens = true
                 self.displayMultiplier = 1.0
                 self.hasUltraWideLens = false
                 self.defaultDisplayZoom = 1.0
@@ -370,6 +381,12 @@ public final class CameraService: NSObject {
                 if self.maxZoom >= 3.0 { options.append(3.0) }
                 if self.maxZoom >= 5.0 { options.append(5.0) }
                 self.availableDisplayZoomOptions = options
+            }
+
+            if !self.hasPhysicalTelephotoLens && AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back) != nil {
+                self.hasPhysicalTelephotoLens = true
+                self.telephotoOpticalDisplayZoom = 2.0
+                self.telephotoOpticalDeviceZoom = self.convertDisplayZoomToDeviceZoom(2.0)
             }
 
             // Đặt mức zoom khởi động mặc định là 1.0x (Cảm biến chính Wide sắc nét chuẩn xác)
@@ -657,6 +674,33 @@ public final class CameraService: NSObject {
                     self.availableDisplayZoomOptions = (wideBase > 1 ? [0.5, 1, 2, 3, 5] : [1, 2, 3, 5])
                         .filter { $0 * wideBase <= self.maxZoom }
                     self.defaultDisplayZoom = 1.0
+
+                    if targetPosition == .back {
+                        if factors.count >= 2 {
+                            let teleDev = CGFloat(factors[1].doubleValue)
+                            self.telephotoOpticalDeviceZoom = teleDev
+                            self.telephotoOpticalDisplayZoom = round((teleDev / wideBase) * 10) / 10
+                            self.hasPhysicalTelephotoLens = true
+                        } else if newCamera.deviceType == .builtInDualCamera, let teleSwitch = factors.first {
+                            let teleDev = CGFloat(teleSwitch.doubleValue)
+                            self.telephotoOpticalDeviceZoom = teleDev
+                            self.telephotoOpticalDisplayZoom = teleDev
+                            self.hasPhysicalTelephotoLens = true
+                        } else {
+                            self.hasPhysicalTelephotoLens = AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back) != nil
+                            if self.hasPhysicalTelephotoLens {
+                                self.telephotoOpticalDisplayZoom = 2.0
+                                self.telephotoOpticalDeviceZoom = self.convertDisplayZoomToDeviceZoom(2.0)
+                            } else {
+                                self.telephotoOpticalDisplayZoom = nil
+                                self.telephotoOpticalDeviceZoom = nil
+                            }
+                        }
+                    } else {
+                        self.hasPhysicalTelephotoLens = false
+                        self.telephotoOpticalDisplayZoom = nil
+                        self.telephotoOpticalDeviceZoom = nil
+                    }
 
                     self.zoomObservation?.invalidate()
                     self.zoomObservation = newCamera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in

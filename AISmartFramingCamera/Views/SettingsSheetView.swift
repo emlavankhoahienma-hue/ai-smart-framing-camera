@@ -59,7 +59,6 @@ public struct SettingsSheetView: View {
     private let cardBackground = Color(red: 0.075, green: 0.082, blue: 0.102)   // #13151A
     private let textPrimary = Color(white: 0.96)                                 // Trắng ngà
     private let textSecondary = Color(red: 0.58, green: 0.60, blue: 0.66)        // Xám lạnh
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)           // #D9A441
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -186,7 +185,7 @@ public struct SettingsSheetView: View {
                 dismiss()
             }
             .font(.system(size: 16, weight: .bold, design: .rounded))
-            .foregroundColor(amberGold)
+            .foregroundColor(AlignTheme.electricCyan)
             .accessibilityLabel("Đóng cài đặt")
         }
     }
@@ -206,13 +205,13 @@ public struct SettingsSheetView: View {
                     Text(tab.shortTitle)
                         .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
                         .lineLimit(1)
-                        .foregroundColor(isSelected ? .black : textSecondary)
+                        .foregroundColor(isSelected ? .white : textSecondary)
                         .frame(maxWidth: .infinity)
                         .frame(height: 38)
                         .background {
                             if isSelected {
                                 Capsule()
-                                    .fill(amberGold)
+                                    .fill(AlignTheme.signatureGradient)
                                     .matchedGeometryEffect(id: "active_obsidian_tab", in: tabNamespace)
                             }
                         }
@@ -283,7 +282,7 @@ public struct SettingsRowIcon: View {
     let icon: String
     let color: Color
 
-    public init(_ icon: String, color: Color = Color(red: 0.85, green: 0.64, blue: 0.25)) {
+    public init(_ icon: String, color: Color = AlignTheme.electricCyan) {
         self.icon = icon
         self.color = color
     }
@@ -307,7 +306,6 @@ private struct FilmPresetPill: View {
     let preset: FilmPreset
     let isSelected: Bool
     let onSelect: () -> Void
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         Button(action: onSelect) {
@@ -323,16 +321,16 @@ private struct FilmPresetPill: View {
                 Text(preset.displayName)
                     .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
             }
-            .foregroundColor(isSelected ? .black : Color.white.opacity(0.90))
+            .foregroundColor(isSelected ? .white : Color.white.opacity(0.90))
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(isSelected ? amberGold : Color.white.opacity(0.08))
+                    .fill(isSelected ? AlignTheme.signatureGradient : Color.white.opacity(0.08))
             )
             .overlay(
                 Capsule()
-                    .stroke(isSelected ? amberGold : Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.12), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -373,14 +371,13 @@ private struct CompositionRuleCard: View {
     let rule: CompositionRule
     let isSelected: Bool
     let onSelect: () -> Void
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 6) {
                 Image(systemName: rule.iconName)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.65))
+                    .foregroundColor(isSelected ? AlignTheme.irisViolet : Color.white.opacity(0.65))
                     .frame(width: 18)
 
                 Text(rule.displayNameVietnamese)
@@ -393,7 +390,7 @@ private struct CompositionRuleCard: View {
 
                 if isSelected {
                     Circle()
-                        .fill(amberGold)
+                        .fill(AlignTheme.electricCyan)
                         .frame(width: 6, height: 6)
                 }
             }
@@ -402,11 +399,11 @@ private struct CompositionRuleCard: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? amberGold.opacity(0.16) : Color(red: 0.05, green: 0.05, blue: 0.07))
+                    .fill(isSelected ? AlignTheme.irisViolet.opacity(0.16) : Color(red: 0.05, green: 0.05, blue: 0.07))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? amberGold.opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(isSelected ? AlignTheme.signatureGradient : Color.white.opacity(0.08), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -418,7 +415,6 @@ private struct SensitivityPill: View {
     let preset: TrackingSensitivityPreset
     let isPicked: Bool
     let onSelect: () -> Void
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         Button(action: onSelect) {
@@ -429,11 +425,11 @@ private struct SensitivityPill: View {
                 .frame(height: 36)
                 .background(
                     Capsule()
-                        .fill(isPicked ? amberGold : Color.white.opacity(0.06))
+                        .fill(isPicked ? AlignTheme.electricCyan : Color.white.opacity(0.06))
                 )
                 .overlay(
                     Capsule()
-                        .stroke(isPicked ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(isPicked ? AlignTheme.electricCyan : Color.white.opacity(0.08), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -443,7 +439,6 @@ private struct SensitivityPill: View {
 // MARK: - 1. Photo Capture Settings Section (Obsidian Glass Camera)
 struct PhotoCaptureSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         VStack(spacing: 16) {
@@ -472,7 +467,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(amberGold)
+                    .tint(AlignTheme.electricCyan)
                 }
 
                 Divider().background(Color.white.opacity(0.06))
@@ -522,7 +517,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(amberGold)
+                    .tint(AlignTheme.electricCyan)
                 }
 
                 Divider().background(Color.white.opacity(0.06))
@@ -539,7 +534,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(amberGold)
+                    .tint(AlignTheme.electricCyan)
                 }
             }
         }
@@ -585,7 +580,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(amberGold)
+                    .tint(AlignTheme.irisViolet)
                     .onChangeCompatible(of: viewModel.selectedFilmPreset) { newPreset in
                         viewModel.selectPreset(newPreset)
                     }
@@ -740,7 +735,7 @@ struct PhotoCaptureSettingsSection: View {
 
             Text(value)
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(amberGold)
+                .foregroundColor(AlignTheme.electricCyan)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
@@ -771,8 +766,6 @@ struct AIFramingSettingsSection: View {
     @State private var showDeleteFeedbackConfirmation = false
     @State private var feedbackRevision = 0
     @State private var feedbackExportURL: URL?
-
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         VStack(spacing: 16) {
@@ -882,7 +875,7 @@ struct AIFramingSettingsSection: View {
                         Spacer()
                         Text(viewModel.trackingSensitivity.shortName)
                             .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(amberGold)
+                            .foregroundColor(AlignTheme.irisViolet)
                     }
 
                     HStack(spacing: 8) {
@@ -945,7 +938,7 @@ struct AIFramingSettingsSection: View {
                 HStack(spacing: 10) {
                     Image(systemName: "key.fill")
                         .font(.system(size: 14))
-                        .foregroundColor(amberGold)
+                        .foregroundColor(AlignTheme.irisViolet)
 
                     if viewModel.geminiService.hasAPIKey {
                         if isKeyVisible {
@@ -1005,7 +998,7 @@ struct AIFramingSettingsSection: View {
                         SecureField("Dán OpenRouter sk-or-v1-...", text: $geminiKeyInput)
                             .font(.system(size: 12.5, design: .monospaced))
                             .foregroundColor(.white)
-                            .tint(amberGold)
+                            .tint(AlignTheme.irisViolet)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background(Color(red: 0.05, green: 0.05, blue: 0.07))
@@ -1024,10 +1017,10 @@ struct AIFramingSettingsSection: View {
                         }) {
                             Text("Lưu")
                                 .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                                .foregroundColor(.black)
+                                .foregroundColor(.white)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 10)
-                                .background(amberGold)
+                                .background(AlignTheme.irisViolet)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
@@ -1047,7 +1040,7 @@ struct AIFramingSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(amberGold)
+                    .tint(AlignTheme.irisViolet)
                     .onChangeCompatible(of: selectedModel) { newModel in
                         viewModel.geminiService.selectedModel = newModel
                     }
@@ -1072,13 +1065,13 @@ struct AIFramingSettingsSection: View {
                             toastMessage = "Đã lưu model tùy chỉnh"
                         }
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(amberGold)
+                        .foregroundColor(AlignTheme.irisViolet)
                     }
 
                     if !viewModel.geminiService.customModelName.isEmpty {
                         Text("Đang ưu tiên model tùy chỉnh: \(viewModel.geminiService.customModelName)")
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(amberGold.opacity(0.85))
+                            .foregroundColor(AlignTheme.irisViolet.opacity(0.85))
                     }
                 }
 
@@ -1096,14 +1089,14 @@ struct AIFramingSettingsSection: View {
                 }) {
                     HStack(spacing: 6) {
                         if isTestingKey {
-                            ProgressView().scaleEffect(0.8).tint(amberGold)
+                            ProgressView().scaleEffect(0.8).tint(AlignTheme.irisViolet)
                         } else {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                         }
                         Text(isTestingKey ? "Đang gửi yêu cầu kiểm tra..." : "Kiểm tra kết nối (tính 1 lượt API)")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
-                    .foregroundColor(amberGold)
+                    .foregroundColor(AlignTheme.irisViolet)
                     .padding(.vertical, 4)
                 }
 
@@ -1131,8 +1124,6 @@ struct AdvancedSettingsSection: View {
     @Binding var showResetSessionConfirmation: Bool
     @Binding var showDevConsole: Bool
     @Binding var toastMessage: String?
-
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     var body: some View {
         VStack(spacing: 16) {
@@ -1235,7 +1226,7 @@ struct AdvancedSettingsSection: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Nhật ký hệ thống gần nhất:")
                                 .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(amberGold)
+                                .foregroundColor(AlignTheme.emeraldMint)
                             ScrollView(.vertical) {
                                 Text(CameraLogger.readRecentLogText(maxChars: 3000))
                                     .font(.system(size: 9, design: .monospaced))
@@ -1306,7 +1297,7 @@ struct AdvancedSettingsSection: View {
             VStack(spacing: 0) {
                 NavigationLink(destination: FeedbackView()) {
                     HStack(spacing: 12) {
-                        SettingsRowIcon("envelope.fill", color: amberGold)
+                        SettingsRowIcon("envelope.fill", color: AlignTheme.irisViolet)
 
                         Text("Gửi góp ý & phản hồi")
                             .font(.system(size: 14.5, weight: .medium))
@@ -1325,11 +1316,11 @@ struct AdvancedSettingsSection: View {
 
                 NavigationLink(destination: SupportDeveloperView()) {
                     HStack(spacing: 12) {
-                        SettingsRowIcon("cup.and.saucer.fill", color: amberGold)
+                        SettingsRowIcon("cup.and.saucer.fill", color: AlignTheme.amberGold)
 
                         Text("Ủng hộ tác giả")
                             .font(.system(size: 14.5, weight: .bold, design: .rounded))
-                            .foregroundColor(amberGold)
+                            .foregroundColor(AlignTheme.amberGold)
 
                         Spacer()
 
@@ -1360,7 +1351,7 @@ struct AdvancedSettingsSection: View {
             Spacer()
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(amberGold)
+                .foregroundColor(AlignTheme.electricCyan)
                 .lineLimit(2)
                 .multilineTextAlignment(.trailing)
         }
@@ -1373,7 +1364,7 @@ public struct SupportDeveloperView: View {
     @State private var showVietQR: Bool = false
     @State private var qrReloadID = UUID()
 
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
+    private let warmGold = AlignTheme.amberGold
     private let vietQRURLString = "https://img.vietqr.io/image/mbbank-0344197212-compact2.png?amount=50000&addInfo=Donate%20AlignAI%20Camera&accountName=TRAN%20VAN%20TRINH"
 
     public init() {}
@@ -1385,12 +1376,12 @@ public struct SupportDeveloperView: View {
                 VStack(spacing: 8) {
                     ZStack {
                         Circle()
-                            .fill(amberGold.opacity(0.18))
+                            .fill(warmGold.opacity(0.18))
                             .frame(width: 72, height: 72)
 
                         Image(systemName: "cup.and.saucer.fill")
                             .font(.system(size: 32, weight: .bold))
-                            .foregroundColor(amberGold)
+                            .foregroundColor(warmGold)
                     }
                     .padding(.top, 10)
 
@@ -1416,7 +1407,7 @@ public struct SupportDeveloperView: View {
                                 .foregroundColor(.white)
                             Text("STK: 0344197212")
                                 .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                .foregroundColor(amberGold)
+                                .foregroundColor(warmGold)
                         }
 
                         Spacer()
@@ -1434,7 +1425,7 @@ public struct SupportDeveloperView: View {
                             .foregroundColor(.black)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(amberGold)
+                            .background(warmGold)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
@@ -1456,7 +1447,7 @@ public struct SupportDeveloperView: View {
                                 Image(systemName: showVietQR ? "chevron.up" : "chevron.down")
                                     .font(.system(size: 12))
                             }
-                            .foregroundColor(amberGold)
+                            .foregroundColor(warmGold)
                         }
 
                         if showVietQR {
@@ -1487,14 +1478,14 @@ public struct SupportDeveloperView: View {
                                         .foregroundColor(.black)
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 6)
-                                        .background(amberGold)
+                                        .background(warmGold)
                                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     }
                                     .frame(maxWidth: .infinity)
                                     .padding(20)
                                 default:
                                     ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: amberGold))
+                                        .progressViewStyle(CircularProgressViewStyle(tint: warmGold))
                                         .padding(24)
                                 }
                             }
@@ -1544,8 +1535,6 @@ public struct SettingsSectionCard<Content: View>: View {
     let icon: String
     let content: Content
 
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
-
     public init(
         title: String,
         icon: String,
@@ -1562,7 +1551,7 @@ public struct SettingsSectionCard<Content: View>: View {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(amberGold)
+                    .foregroundColor(AlignTheme.electricCyan)
 
                 Text(title)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
@@ -1600,11 +1589,9 @@ public struct SettingsToggleRow: View {
     let icon: String
     @Binding var isOn: Bool
 
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
-
     public var body: some View {
         HStack(spacing: 12) {
-            SettingsRowIcon(icon, color: amberGold)
+            SettingsRowIcon(icon, color: AlignTheme.electricCyan)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -1625,7 +1612,7 @@ public struct SettingsToggleRow: View {
 
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(amberGold)
+                .tint(AlignTheme.irisViolet)
         }
         .frame(minHeight: 48)
         .contentShape(Rectangle())
@@ -1640,8 +1627,6 @@ public struct SettingsPickerRow<Content: View>: View {
     let icon: String
     var selectedValueString: String = ""
     let picker: Content
-
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
 
     public init(
         title: String,
@@ -1659,7 +1644,7 @@ public struct SettingsPickerRow<Content: View>: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            SettingsRowIcon(icon, color: amberGold)
+            SettingsRowIcon(icon, color: AlignTheme.electricCyan)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -1701,8 +1686,6 @@ public struct SettingsActionRow: View {
     var badgeText: String? = nil
     let action: () -> Void
 
-    private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
-
     public init(
         title: String,
         subtitle: String? = nil,
@@ -1720,7 +1703,7 @@ public struct SettingsActionRow: View {
     public var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                SettingsRowIcon(icon, color: amberGold)
+                SettingsRowIcon(icon, color: AlignTheme.electricCyan)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -1742,11 +1725,11 @@ public struct SettingsActionRow: View {
                 if let badge = badgeText, !badge.isEmpty {
                     Text(badge)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(amberGold)
+                        .foregroundColor(AlignTheme.electricCyan)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(
-                            Capsule().fill(amberGold.opacity(0.15))
+                            Capsule().fill(AlignTheme.electricCyan.opacity(0.15))
                         )
                 }
 
