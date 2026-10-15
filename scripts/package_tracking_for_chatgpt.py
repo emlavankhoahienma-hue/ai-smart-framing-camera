@@ -145,7 +145,7 @@ Ket qua cua ban bat buoc phai dap ung day du cac tieu chi sau:
 6. VisualOdometryEngine.swift: Dang ky anh homography de ho tro do dich chuyen vi mo giua hai khung hinh lien tiep.
 7. VisionFramingEngine.swift: Pipeline xu ly thi giac Apple Vision, phat hien va theo doi bounding box.
 8. CompositionCalculator.swift: Tinh toan goc bo cuc, huong ngam muc tieu va ti le auto-zoom.
-9. NeuralSubjectIntelligenceEngine.swift: Phat hien chu the bang YOLO11 va Apple Vision Saliency.
+9. NeuralSubjectIntelligenceEngine.swift: Phat hien chu the bang YOLO12 va Apple Vision Saliency.
 10. FramingModels.swift: Cac kieu du lieu nen tang (TrackingQuality, FramingTarget, SceneType).
 11. validate_tracking_geometry.py: Bo kiem dinh rang buoc hinh hoc gom 18 bai test bat buoc phai vuot qua.
 12. validate_local_framing.py: Bo kiem dinh co che ngam, auto-zoom va bao toan khung hinh gom 8 bai test bat buoc phai vuot qua.

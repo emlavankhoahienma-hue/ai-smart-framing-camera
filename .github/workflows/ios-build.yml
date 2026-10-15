@@ -57,7 +57,7 @@ jobs:
             -o "$RUNNER_TEMP/capture-transition-regressions"
           "$RUNNER_TEMP/capture-transition-regressions"
 
-      - name: Export & Compile YOLO CoreML models (Dedicated YOLOv26 ANE + Fallback)
+      - name: Export & Compile YOLO CoreML models (YOLOv12 ANE Dedicated + Fallback)
         env:
           # Ultralytics/CoreMLTools currently emit upstream torch tracing and
           # output-renaming notices that do not identify defects in this app.
@@ -65,7 +65,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install "torch==2.5.1" "numpy==1.26.4" \
-            "ultralytics==8.3.0" "coremltools==8.3.0"
+            "ultralytics>=8.3.80" "coremltools>=8.0"
           if ! xcrun coremlc compile models/yolov26-engine/weights/yolov26_ane.mlpackage .; then
             cp models/yolov26-engine/weights/yolov26_ane.mlpackage/Data/com.apple.CoreML/model.mlmodel yolov26_ane.mlmodel
             xcrun coremlc compile yolov26_ane.mlmodel .
@@ -77,18 +77,18 @@ jobs:
           test -d yolov26_ane.mlmodelc
           test -d yolov26_416_fp16.mlmodelc
           curl --fail --location --retry 3 \
-            https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt \
-            --output yolo11n.pt
+            https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12n.pt \
+            --output yolo12n.pt
           curl --fail --location --retry 3 \
-            https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt \
-            --output yolo11s.pt
-          echo "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1  yolo11n.pt" | shasum -a 256 --check
-          echo "85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5  yolo11s.pt" | shasum -a 256 --check
-          python -c "from ultralytics import YOLO; YOLO('yolo11n.pt').export(format='coreml', nms=True); YOLO('yolo11s.pt').export(format='coreml', nms=True)"
-          xcrun coremlc compile yolo11n.mlpackage .
-          xcrun coremlc compile yolo11s.mlpackage .
-          test -d yolo11n.mlmodelc
-          test -d yolo11s.mlmodelc
+            https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12s.pt \
+            --output yolo12s.pt
+          echo "419ff3dca37d69bacc93a50fa0c186a1c6f9fe62fae0f108b0872829689e9ca6  yolo12n.pt" | shasum -a 256 --check
+          echo "e915c2c4286e3f6f8610ef106fa3f94a7b8c19b30eccede5887e22c33ef75f58  yolo12s.pt" | shasum -a 256 --check
+          python -c "from ultralytics import YOLO; YOLO('yolo12n.pt').export(format='coreml', nms=True, half=True); YOLO('yolo12s.pt').export(format='coreml', nms=True, half=True)"
+          xcrun coremlc compile yolo12n.mlpackage .
+          xcrun coremlc compile yolo12s.mlpackage .
+          test -d yolo12n.mlmodelc
+          test -d yolo12s.mlmodelc
 
       - name: Export, verify and compile pinned SigLIP
         run: |
@@ -166,10 +166,10 @@ jobs:
           test -d yolov26_416_fp16.mlmodelc
           cp -r yolov26_ane.mlmodelc Payload/AISmartFramingCamera.app/
           cp -r yolov26_416_fp16.mlmodelc Payload/AISmartFramingCamera.app/
-          test -d yolo11n.mlmodelc
-          test -d yolo11s.mlmodelc
-          cp -r yolo11n.mlmodelc Payload/AISmartFramingCamera.app/
-          cp -r yolo11s.mlmodelc Payload/AISmartFramingCamera.app/
+          test -d yolo12n.mlmodelc
+          test -d yolo12s.mlmodelc
+          cp -r yolo12n.mlmodelc Payload/AISmartFramingCamera.app/
+          cp -r yolo12s.mlmodelc Payload/AISmartFramingCamera.app/
           if [ -f "AISmartFramingCamera/Services/RobustTargetEmbedder.bin" ]; then
             cp AISmartFramingCamera/Services/RobustTargetEmbedder.bin Payload/AISmartFramingCamera.app/
             echo "✓ Đã tích hợp thành công RobustTargetEmbedder.bin vào App Bundle!"
@@ -180,8 +180,8 @@ jobs:
           fi
           test -d Payload/AISmartFramingCamera.app/yolov26_ane.mlmodelc
           test -d Payload/AISmartFramingCamera.app/yolov26_416_fp16.mlmodelc
-          test -d Payload/AISmartFramingCamera.app/yolo11n.mlmodelc
-          test -d Payload/AISmartFramingCamera.app/yolo11s.mlmodelc
+          test -d Payload/AISmartFramingCamera.app/yolo12n.mlmodelc
+          test -d Payload/AISmartFramingCamera.app/yolo12s.mlmodelc
           test -d SigLIPBaseImage.mlmodelc
           cp -r SigLIPBaseImage.mlmodelc Payload/AISmartFramingCamera.app/
           cp SigLIPPrompts.json SigLIPModelManifest.json Payload/AISmartFramingCamera.app/

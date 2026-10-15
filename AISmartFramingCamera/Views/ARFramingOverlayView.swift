@@ -593,42 +593,19 @@ struct LiveEntityBoxView: View {
             }
         }()
 
-        ZStack(alignment: .topLeading) {
-            CornerBracketsShape(bracketLength: min(16, min(layerRect.width, layerRect.height) * 0.35))
-                .stroke(color, lineWidth: 1.5)
-                .frame(width: max(24, layerRect.width), height: max(24, layerRect.height))
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(color.opacity(0.04))
-                )
-
-            HStack(spacing: 3) {
-                Text(entity.label)
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-
-                Text("\(Int(entity.confidence * 100))%")
-                    .font(.system(size: 8, weight: .regular, design: .monospaced))
-                    .foregroundColor(color)
-            }
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+        CornerBracketsShape(bracketLength: min(16, min(layerRect.width, layerRect.height) * 0.35))
+            .stroke(color, lineWidth: 1.5)
+            .frame(width: max(24, layerRect.width), height: max(24, layerRect.height))
             .background(
-                Capsule()
-                    .fill(Color.black.opacity(0.72))
-                    .overlay(
-                        Capsule()
-                            .stroke(color.opacity(0.4), lineWidth: 0.6)
-                    )
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(color.opacity(0.04))
             )
-            .offset(x: 2, y: -16)
-        }
-        .position(x: layerRect.midX, y: layerRect.midY)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onTap()
-        }
-        .animation(.easeOut(duration: 0.08), value: layerRect)
+            .position(x: layerRect.midX, y: layerRect.midY)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onTap()
+            }
+            .animation(.easeOut(duration: 0.08), value: layerRect)
     }
 }
 

@@ -88,8 +88,8 @@ private final class PixelBufferScaler: @unchecked Sendable {
     }
 }
 
-/// Nhận diện 80 lớp COCO, Khuôn mặt và Động vật/Thú cưng qua mô hình YOLOv26 Core ML.
-/// YOLO11s/yolo26s serves high-memory devices, YOLO11n/yolo26n serves older devices.
+/// Nhận diện 80 lớp COCO, Khuôn mặt và Động vật/Thú cưng qua mô hình YOLOv12 Core ML.
+/// YOLO12s serves high-memory devices, YOLO12n serves older devices.
 /// Vision remains the fallback when loading or inference fails.
 public final class YOLODetectionEngine: @unchecked Sendable {
     public static let shared = YOLODetectionEngine()
@@ -111,8 +111,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     public func loadYOLOModel() {
         let highMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
         let prioritizedNames = (highMemory
-            ? ["yolo11s", "yolo11n"]
-            : ["yolo11n", "yolo11s"])
+            ? ["yolo12s", "yolo12n", "yolo11s", "yolo11n"]
+            : ["yolo12n", "yolo12s", "yolo11n", "yolo11s"])
         
         for name in prioritizedNames {
             guard let modelResult = makeModel(named: name) else { continue }
@@ -124,7 +124,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 inputWidth = modelResult.inputWidth
                 inputHeight = modelResult.inputHeight
             }
-            let modelTypeDesc = modelResult.isDedicatedANE ? "YOLOv26 ANE NMS-Free" : "YOLO CoreML Vision"
+            let modelTypeDesc = modelResult.isDedicatedANE ? "YOLO ANE NMS-Free" : "YOLO CoreML Vision"
             CameraLogger.success("Đã nạp thành công [\(name)] (\(modelTypeDesc)) với tối ưu ANE/GPU (\(modelResult.inputWidth)x\(modelResult.inputHeight))", category: .ai)
             return
         }
@@ -179,7 +179,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 targetH = imageConstraint.pixelsHigh
             }
             
-            // Các model chuẩn COCO (YOLO11s, YOLO11n) chạy qua Apple Vision CoreML để tận dụng NMS tích hợp
+            // Các model chuẩn COCO (YOLO12s, YOLO12n) chạy qua Apple Vision CoreML để tận dụng NMS tích hợp
             let vnModel = try? VNCoreMLModel(for: mlModel)
             return (mlModel, vnModel, false, targetW, targetH)
         } catch {
@@ -193,7 +193,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     }
     
     public var activeModelName: String {
-        modelLock.withLock { loadedModelName ?? "YOLOv26" }
+        modelLock.withLock { loadedModelName ?? "YOLOv12" }
     }
     
     /// Chạy nhận diện người, khuôn mặt, động vật và đồ vật trên CVPixelBuffer.
@@ -376,7 +376,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         }
     }
     
-    // MARK: - Vision Framework Fallback Inference (YOLO11 / Classic Models)
+    // MARK: - Vision Framework CoreML Inference (YOLO12 / COCO Models)
     private func detectWithVisionCoreML(
         vnModel: VNCoreMLModel,
         pixelBuffer: CVPixelBuffer,
@@ -435,7 +435,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             
             // Xử lý tự phục hồi khi model bị quá tải bộ nhớ
             let current = modelLock.withLock { loadedModelName }
-            if current == "yolo26m" || current == "yolo26s" || current == "yolo11s" {
+            if current == "yolo12s" || current == "yolo11s" {
                 modelLock.withLock {
                     yoloCoreMLModel = nil
                     yoloNativeMLModel = nil
@@ -443,14 +443,14 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 }
                 DispatchQueue.global(qos: .utility).async { [weak self] in
                     guard let self else { return }
-                    if let fallback = self.makeModel(named: "yolov26_416_fp16") ?? self.makeModel(named: "yolo26n") ?? self.makeModel(named: "yolo11n") {
+                    if let fallback = self.makeModel(named: "yolo12n") ?? self.makeModel(named: "yolo11n") {
                         self.modelLock.withLock {
                             self.yoloNativeMLModel = fallback.mlModel
                             self.yoloCoreMLModel = fallback.vnModel
                             self.isDedicatedYOLO26ANE = fallback.isDedicatedANE
-                            self.loadedModelName = "yolov26_416_fp16"
+                            self.loadedModelName = "yolo12n"
                         }
-                        CameraLogger.info("Đã tự động chuyển về YOLOv26 Nano/416 để tiết kiệm tài nguyên", category: .ai)
+                        CameraLogger.info("Đã tự động chuyển về YOLOv12 Nano để tiết kiệm tài nguyên", category: .ai)
                     }
                 }
             }

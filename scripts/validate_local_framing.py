@@ -104,7 +104,7 @@ class LocalFramingTests(unittest.TestCase):
     def test_stronger_detector_has_matching_old_device_fallback_assets(self):
         if WORKFLOW is None or BUNDLE_CHECK is None:
             self.skipTest("Workflow and model-bundle validator were not supplied")
-        for name in ("yolo11n", "yolo11s"):
+        for name in ("yolo12n", "yolo12s"):
             self.assertIn(name + ".pt", WORKFLOW)
             self.assertIn(name + ".mlmodelc", WORKFLOW)
             self.assertIn('"' + name + '"', YOLO)
