@@ -175,7 +175,7 @@ public struct SettingsSheetView: View {
         HStack(alignment: .center) {
             Text("Cài đặt")
                 .font(.system(size: 26, weight: .bold, design: .default))
-                .foregroundColor(textPrimary)
+                .foregroundColor(.white)
 
             Spacer()
 
@@ -185,7 +185,7 @@ public struct SettingsSheetView: View {
                 dismiss()
             }
             .font(.system(size: 16, weight: .bold, design: .rounded))
-            .foregroundColor(AlignTheme.electricCyan)
+            .foregroundColor(.white)
             .accessibilityLabel("Đóng cài đặt")
         }
     }
@@ -205,13 +205,13 @@ public struct SettingsSheetView: View {
                     Text(tab.shortTitle)
                         .font(.system(size: 13, weight: isSelected ? .bold : .medium, design: .rounded))
                         .lineLimit(1)
-                        .foregroundColor(isSelected ? .white : textSecondary)
+                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
                         .frame(maxWidth: .infinity)
                         .frame(height: 38)
                         .background {
                             if isSelected {
                                 Capsule()
-                                    .fill(AlignTheme.signatureGradient)
+                                    .fill(Color.white.opacity(0.18))
                                     .matchedGeometryEffect(id: "active_obsidian_tab", in: tabNamespace)
                             }
                         }
@@ -282,7 +282,7 @@ public struct SettingsRowIcon: View {
     let icon: String
     let color: Color
 
-    public init(_ icon: String, color: Color = AlignTheme.electricCyan) {
+    public init(_ icon: String, color: Color = Color.white.opacity(0.85)) {
         self.icon = icon
         self.color = color
     }
@@ -290,12 +290,12 @@ public struct SettingsRowIcon: View {
     public var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(color.opacity(0.14))
+                .fill(Color.white.opacity(0.08))
                 .frame(width: 30, height: 30)
 
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(color)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
         }
         .frame(width: 30, height: 30)
     }
@@ -321,21 +321,16 @@ private struct FilmPresetPill: View {
                 Text(preset.displayName)
                     .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
             }
-            .foregroundColor(isSelected ? .white : Color.white.opacity(0.90))
+            .foregroundColor(.white)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
-                Group {
-                    if isSelected {
-                        Capsule().fill(AlignTheme.signatureGradient)
-                    } else {
-                        Capsule().fill(Color.white.opacity(0.08))
-                    }
-                }
+                Capsule()
+                    .fill(isSelected ? Color.white.opacity(0.20) : Color.white.opacity(0.06))
             )
             .overlay(
                 Capsule()
-                    .stroke(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(isSelected ? Color.white.opacity(0.40) : Color.white.opacity(0.08), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -382,12 +377,12 @@ private struct CompositionRuleCard: View {
             HStack(spacing: 6) {
                 Image(systemName: rule.iconName)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(isSelected ? AlignTheme.irisViolet : Color.white.opacity(0.65))
+                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.50))
                     .frame(width: 18)
 
                 Text(rule.displayNameVietnamese)
                     .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.80))
+                    .foregroundColor(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
 
@@ -395,8 +390,8 @@ private struct CompositionRuleCard: View {
 
                 if isSelected {
                     Circle()
-                        .fill(AlignTheme.electricCyan)
-                        .frame(width: 6, height: 6)
+                        .fill(Color.white)
+                        .frame(width: 5, height: 5)
                 }
             }
             .padding(.horizontal, 10)
@@ -404,18 +399,11 @@ private struct CompositionRuleCard: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? AlignTheme.irisViolet.opacity(0.16) : Color(red: 0.05, green: 0.05, blue: 0.07))
+                    .fill(isSelected ? Color.white.opacity(0.14) : Color(red: 0.05, green: 0.05, blue: 0.07))
             )
             .overlay(
-                Group {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(AlignTheme.signatureGradient, lineWidth: 1)
-                    } else {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                    }
-                }
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? Color.white.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -432,16 +420,16 @@ private struct SensitivityPill: View {
         Button(action: onSelect) {
             Text(preset.shortName)
                 .font(.system(size: 13, weight: isPicked ? .bold : .medium, design: .rounded))
-                .foregroundColor(isPicked ? .black : Color.white.opacity(0.85))
+                .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .frame(height: 36)
                 .background(
                     Capsule()
-                        .fill(isPicked ? AlignTheme.electricCyan : Color.white.opacity(0.06))
+                        .fill(isPicked ? Color.white.opacity(0.20) : Color.white.opacity(0.06))
                 )
                 .overlay(
                     Capsule()
-                        .stroke(isPicked ? AlignTheme.electricCyan : Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(isPicked ? Color.white.opacity(0.40) : Color.white.opacity(0.08), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -479,7 +467,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(AlignTheme.electricCyan)
+                    .tint(.white)
                 }
 
                 Divider().background(Color.white.opacity(0.06))
@@ -529,7 +517,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(AlignTheme.electricCyan)
+                    .tint(.white)
                 }
 
                 Divider().background(Color.white.opacity(0.06))
@@ -546,7 +534,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(AlignTheme.electricCyan)
+                    .tint(.white)
                 }
             }
         }
@@ -592,7 +580,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(AlignTheme.irisViolet)
+                    .tint(.white)
                     .onChangeCompatible(of: viewModel.selectedFilmPreset) { newPreset in
                         viewModel.selectPreset(newPreset)
                     }
@@ -747,7 +735,7 @@ struct PhotoCaptureSettingsSection: View {
 
             Text(value)
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(AlignTheme.electricCyan)
+                .foregroundColor(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
@@ -887,7 +875,7 @@ struct AIFramingSettingsSection: View {
                         Spacer()
                         Text(viewModel.trackingSensitivity.shortName)
                             .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(AlignTheme.irisViolet)
+                            .foregroundColor(.white)
                     }
 
                     HStack(spacing: 8) {
@@ -934,7 +922,7 @@ struct AIFramingSettingsSection: View {
                 if !viewModel.useGeminiForAnalysis {
                     Label("AI trên máy đang hoạt động, không cần cloud", systemImage: "iphone")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.green)
+                        .foregroundColor(Color.white.opacity(0.85))
                 }
 
                 if let cloudError = viewModel.geminiError {
@@ -950,7 +938,7 @@ struct AIFramingSettingsSection: View {
                 HStack(spacing: 10) {
                     Image(systemName: "key.fill")
                         .font(.system(size: 14))
-                        .foregroundColor(AlignTheme.irisViolet)
+                        .foregroundColor(.white)
 
                     if viewModel.geminiService.hasAPIKey {
                         if isKeyVisible {
@@ -1010,7 +998,7 @@ struct AIFramingSettingsSection: View {
                         SecureField("Dán OpenRouter sk-or-v1-...", text: $geminiKeyInput)
                             .font(.system(size: 12.5, design: .monospaced))
                             .foregroundColor(.white)
-                            .tint(AlignTheme.irisViolet)
+                            .tint(.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background(Color(red: 0.05, green: 0.05, blue: 0.07))
@@ -1032,7 +1020,7 @@ struct AIFramingSettingsSection: View {
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 10)
-                                .background(AlignTheme.irisViolet)
+                                .background(Color.white.opacity(0.20))
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
@@ -1052,7 +1040,7 @@ struct AIFramingSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(AlignTheme.irisViolet)
+                    .tint(.white)
                     .onChangeCompatible(of: selectedModel) { newModel in
                         viewModel.geminiService.selectedModel = newModel
                     }
@@ -1077,13 +1065,13 @@ struct AIFramingSettingsSection: View {
                             toastMessage = "Đã lưu model tùy chỉnh"
                         }
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(AlignTheme.irisViolet)
+                        .foregroundColor(.white)
                     }
 
                     if !viewModel.geminiService.customModelName.isEmpty {
                         Text("Đang ưu tiên model tùy chỉnh: \(viewModel.geminiService.customModelName)")
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(AlignTheme.irisViolet.opacity(0.85))
+                            .foregroundColor(Color.white.opacity(0.70))
                     }
                 }
 
@@ -1101,14 +1089,14 @@ struct AIFramingSettingsSection: View {
                 }) {
                     HStack(spacing: 6) {
                         if isTestingKey {
-                            ProgressView().scaleEffect(0.8).tint(AlignTheme.irisViolet)
+                            ProgressView().scaleEffect(0.8).tint(.white)
                         } else {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                         }
                         Text(isTestingKey ? "Đang gửi yêu cầu kiểm tra..." : "Kiểm tra kết nối (tính 1 lượt API)")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
-                    .foregroundColor(AlignTheme.irisViolet)
+                    .foregroundColor(.white)
                     .padding(.vertical, 4)
                 }
 
@@ -1238,7 +1226,7 @@ struct AdvancedSettingsSection: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Nhật ký hệ thống gần nhất:")
                                 .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(AlignTheme.emeraldMint)
+                                .foregroundColor(.white)
                             ScrollView(.vertical) {
                                 Text(CameraLogger.readRecentLogText(maxChars: 3000))
                                     .font(.system(size: 9, design: .monospaced))
@@ -1309,7 +1297,7 @@ struct AdvancedSettingsSection: View {
             VStack(spacing: 0) {
                 NavigationLink(destination: FeedbackView()) {
                     HStack(spacing: 12) {
-                        SettingsRowIcon("envelope.fill", color: AlignTheme.irisViolet)
+                        SettingsRowIcon("envelope.fill")
 
                         Text("Gửi góp ý & phản hồi")
                             .font(.system(size: 14.5, weight: .medium))
@@ -1328,11 +1316,11 @@ struct AdvancedSettingsSection: View {
 
                 NavigationLink(destination: SupportDeveloperView()) {
                     HStack(spacing: 12) {
-                        SettingsRowIcon("cup.and.saucer.fill", color: AlignTheme.amberGold)
+                        SettingsRowIcon("cup.and.saucer.fill")
 
                         Text("Ủng hộ tác giả")
                             .font(.system(size: 14.5, weight: .bold, design: .rounded))
-                            .foregroundColor(AlignTheme.amberGold)
+                            .foregroundColor(.white)
 
                         Spacer()
 
@@ -1363,7 +1351,7 @@ struct AdvancedSettingsSection: View {
             Spacer()
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(AlignTheme.electricCyan)
+                .foregroundColor(.white)
                 .lineLimit(2)
                 .multilineTextAlignment(.trailing)
         }
@@ -1376,7 +1364,6 @@ public struct SupportDeveloperView: View {
     @State private var showVietQR: Bool = false
     @State private var qrReloadID = UUID()
 
-    private let warmGold = AlignTheme.amberGold
     private let vietQRURLString = "https://img.vietqr.io/image/mbbank-0344197212-compact2.png?amount=50000&addInfo=Donate%20AlignAI%20Camera&accountName=TRAN%20VAN%20TRINH"
 
     public init() {}
@@ -1388,12 +1375,12 @@ public struct SupportDeveloperView: View {
                 VStack(spacing: 8) {
                     ZStack {
                         Circle()
-                            .fill(warmGold.opacity(0.18))
+                            .fill(Color.white.opacity(0.12))
                             .frame(width: 72, height: 72)
 
                         Image(systemName: "cup.and.saucer.fill")
                             .font(.system(size: 32, weight: .bold))
-                            .foregroundColor(warmGold)
+                            .foregroundColor(.white)
                     }
                     .padding(.top, 10)
 
@@ -1419,7 +1406,7 @@ public struct SupportDeveloperView: View {
                                 .foregroundColor(.white)
                             Text("STK: 0344197212")
                                 .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                .foregroundColor(warmGold)
+                                .foregroundColor(.white)
                         }
 
                         Spacer()
@@ -1434,10 +1421,10 @@ public struct SupportDeveloperView: View {
                                 Text("Sao chép")
                             }
                             .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(.black)
+                            .foregroundColor(.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(warmGold)
+                            .background(Color.white.opacity(0.18))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
@@ -1459,7 +1446,7 @@ public struct SupportDeveloperView: View {
                                 Image(systemName: showVietQR ? "chevron.up" : "chevron.down")
                                     .font(.system(size: 12))
                             }
-                            .foregroundColor(warmGold)
+                            .foregroundColor(.white)
                         }
 
                         if showVietQR {
@@ -1487,17 +1474,17 @@ public struct SupportDeveloperView: View {
                                             qrReloadID = UUID()
                                         }
                                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                                        .foregroundColor(.black)
+                                        .foregroundColor(.white)
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 6)
-                                        .background(warmGold)
+                                        .background(Color.white.opacity(0.18))
                                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                     }
                                     .frame(maxWidth: .infinity)
                                     .padding(20)
                                 default:
                                     ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: warmGold))
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                         .padding(24)
                                 }
                             }
@@ -1563,7 +1550,7 @@ public struct SettingsSectionCard<Content: View>: View {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(AlignTheme.electricCyan)
+                    .foregroundColor(Color.white.opacity(0.85))
 
                 Text(title)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
@@ -1603,7 +1590,7 @@ public struct SettingsToggleRow: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            SettingsRowIcon(icon, color: AlignTheme.electricCyan)
+            SettingsRowIcon(icon)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -1656,7 +1643,7 @@ public struct SettingsPickerRow<Content: View>: View {
 
     public var body: some View {
         HStack(spacing: 12) {
-            SettingsRowIcon(icon, color: AlignTheme.electricCyan)
+            SettingsRowIcon(icon)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -1715,7 +1702,7 @@ public struct SettingsActionRow: View {
     public var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                SettingsRowIcon(icon, color: AlignTheme.electricCyan)
+                SettingsRowIcon(icon)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -1737,11 +1724,11 @@ public struct SettingsActionRow: View {
                 if let badge = badgeText, !badge.isEmpty {
                     Text(badge)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(AlignTheme.electricCyan)
+                        .foregroundColor(.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(
-                            Capsule().fill(AlignTheme.electricCyan.opacity(0.15))
+                            Capsule().fill(Color.white.opacity(0.12))
                         )
                 }
 

@@ -2775,13 +2775,8 @@ public final class CameraViewModel: ObservableObject {
             // 50mm (~2.08x), 75mm (~3.1x), 85mm (~3.54x), 135mm (~5.6x):
             // Luon luon uu tien kich hoat camera Telephoto quang hoc vat ly
             if let teleDevice = cameraService.telephotoOpticalDeviceZoom, cameraService.hasPhysicalTelephotoLens {
-                if focal >= 110.0 && cameraService.availableDisplayZoomOptions.contains(5.0) {
-                    targetDisplayZoom = 5.0
-                    targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(5.0)
-                } else {
-                    targetDisplayZoom = cameraService.telephotoOpticalDisplayZoom ?? 2.0
-                    targetDeviceZoom = teleDevice
-                }
+                targetDisplayZoom = cameraService.telephotoOpticalDisplayZoom ?? 2.0
+                targetDeviceZoom = teleDevice
             } else {
                 targetDisplayZoom = 2.0
                 targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(2.0)

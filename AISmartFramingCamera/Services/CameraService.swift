@@ -129,7 +129,7 @@ public final class CameraService: NSObject {
     // Virtual Multi-Camera Mapping (Apple Camera App style: 0.5x, 1x, 2x, 3x/5x)
     public private(set) var displayMultiplier: CGFloat = 1.0
     public private(set) var hasUltraWideLens: Bool = false
-    public private(set) var availableDisplayZoomOptions: [CGFloat] = [1.0, 2.0, 3.0, 5.0]
+    public private(set) var availableDisplayZoomOptions: [CGFloat] = [1.0, 2.0, 3.0]
     public private(set) var defaultDisplayZoom: CGFloat = 1.0
 
     // Optical Telephoto Lens Hardware Tracking
@@ -345,9 +345,7 @@ public final class CameraService: NSObject {
                 } else if self.maxZoom >= wideBase * 3.0 {
                     options.append(3.0)
                 }
-                if self.maxZoom >= wideBase * 5.0 {
-                    options.append(5.0)
-                }
+                options = options.filter { $0 < 4.9 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
                 CameraLogger.info("CameraService: Khởi tạo Triple Camera Apple (Wide Base: \(wideBase), Tele Options: \(options))", category: .capture)
             } else if camera.deviceType == .builtInDualCamera, let teleSwitch = switchFactors.first {
@@ -360,7 +358,7 @@ public final class CameraService: NSObject {
                 self.defaultDisplayZoom = 1.0
                 var options: [CGFloat] = [1.0, teleZoom]
                 if self.maxZoom >= 3.0 && teleZoom != 3.0 { options.append(3.0) }
-                if self.maxZoom >= 5.0 { options.append(5.0) }
+                options = options.filter { $0 < 4.9 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
                 CameraLogger.info("CameraService: Khởi tạo Dual Camera Wide+Tele (Tele Zoom: \(teleZoom), Options: \(options))", category: .capture)
             } else if camera.deviceType == .builtInDualWideCamera, let firstSwitch = switchFactors.first {
@@ -370,7 +368,7 @@ public final class CameraService: NSObject {
                 self.defaultDisplayZoom = 1.0
                 var options: [CGFloat] = [0.5, 1.0, 2.0]
                 if self.maxZoom >= wideBase * 3.0 { options.append(3.0) }
-                if self.maxZoom >= wideBase * 5.0 { options.append(5.0) }
+                options = options.filter { $0 < 4.9 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
                 CameraLogger.info("CameraService: Khởi tạo Dual Wide Camera (Wide Base: \(wideBase), Options: \(options))", category: .capture)
             } else {
@@ -379,7 +377,7 @@ public final class CameraService: NSObject {
                 self.defaultDisplayZoom = 1.0
                 var options: [CGFloat] = [1.0, 2.0]
                 if self.maxZoom >= 3.0 { options.append(3.0) }
-                if self.maxZoom >= 5.0 { options.append(5.0) }
+                options = options.filter { $0 < 4.9 }
                 self.availableDisplayZoomOptions = options
             }
 

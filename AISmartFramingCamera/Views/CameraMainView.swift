@@ -325,19 +325,19 @@ struct TopCameraBar: View {
                     HStack(spacing: 3) {
                         if viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo {
                             Circle()
-                                .fill(AlignTheme.irisViolet)
+                                .fill(Color.white)
                                 .frame(width: 4, height: 4)
                         }
                         Text(currentFormatLabel)
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundColor(viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo ? AlignTheme.platinumWhite : AlignTheme.electricCyan)
+                            .foregroundColor(.white)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2.5)
                     .background(
                         viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo
-                            ? RoundedRectangle(cornerRadius: 4).fill(AlignTheme.irisViolet)
-                            : RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.08))
+                            ? RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.25))
+                            : RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.10))
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -412,7 +412,7 @@ struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
     private var zoomOptions: [CGFloat] {
-        let opts = viewModel.cameraService.availableDisplayZoomOptions
+        let opts = viewModel.cameraService.availableDisplayZoomOptions.filter { $0 < 4.9 }
         if !opts.isEmpty {
             return opts
         }
@@ -437,12 +437,12 @@ struct ViewfinderZoomSelectorPill: View {
                 }) {
                     ZStack {
                         Circle()
-                            .fill(Color.black.opacity(isSelected ? 0.55 : 0.32))
+                            .fill(Color.black.opacity(isSelected ? 0.60 : 0.32))
                             .frame(width: 34, height: 34)
 
                         if isSelected {
                             Circle()
-                                .stroke(AlignTheme.signatureGradient, lineWidth: 1.6)
+                                .stroke(AlignTheme.signatureGradient, lineWidth: 1.8)
                                 .frame(width: 34, height: 34)
                                 .shadow(color: AlignTheme.electricCyan.opacity(0.55), radius: 6)
                                 .matchedGeometryEffect(id: "active_viewfinder_zoom_ring", in: zoomPillNamespace)
@@ -450,7 +450,7 @@ struct ViewfinderZoomSelectorPill: View {
 
                         Text(zoom == 0.5 ? "0.5x" : "\(Int(zoom))x")
                             .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.85))
+                            .foregroundColor(isSelected ? .white : Color.white.opacity(0.75))
                     }
                     .scaleEffect(isSelected ? 1.08 : 0.96)
                     .frame(width: 42, height: 42)
