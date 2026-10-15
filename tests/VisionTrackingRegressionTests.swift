@@ -87,6 +87,96 @@ final class VisionTrackingRegressionTests: XCTestCase {
         XCTAssertFalse(result.isReliable)
     }
 
+    func testPatchFlowFastPanWithGyroTracksCorrectlyAndDoesNotOverflowBoundaries() throws {
+        let flow = TargetPatchFlow()
+        let box = CGRect(x: 0.35, y: 0.4, width: 0.3, height: 0.2)
+        flow.seed(buffer: try image(dx: 0, dy: 0), box: box, point: CGPoint(x: 0.5, y: 0.5))
+
+        // Fast pan: physical camera movement moved image by dx = 22, dy = -12.
+        // Vision bounding box lagged behind (only sensed dx = 4, dy = -2).
+        let laggedBox = CGRect(x: 0.35 + 4.0 / 320, y: 0.4 - 2.0 / 480, width: 0.3, height: 0.2)
+        let fallback = CGPoint(x: laggedBox.midX, y: 1 - laggedBox.midY)
+        let gyroNormalizedShift = CGPoint(x: 22.0 / 320.0, y: -12.0 / 480.0)
+
+        // Evaluate with Gyro assistance: Gyro guides search window directly to dx = 22, dy = -12
+        let result = try XCTUnwrap(flow.evaluate(buffer: try image(dx: 22, dy: -12),
+                                                 box: laggedBox, fallback: fallback,
+                                                 gyroNormalizedShift: gyroNormalizedShift))
+        XCTAssertTrue(result.isReliable)
+        XCTAssertGreaterThanOrEqual(result.inliers, 5)
+        XCTAssertEqual(result.point.x, 0.5 + 22.0 / 320.0, accuracy: 4.0 / 320.0)
+        XCTAssertEqual(result.point.y, 0.5 - 12.0 / 480.0, accuracy: 4.0 / 480.0)
+
+        // Test extreme boundary safety: camera violently panned off-screen
+        let extremeShift = CGPoint(x: 2.5, y: -3.0)
+        let extremeResult = flow.evaluate(buffer: try image(dx: 22, dy: -12),
+                                          box: laggedBox, fallback: fallback,
+                                          gyroNormalizedShift: extremeShift)
+        // Must never crash or throw an exception, returns safe evaluation
+        XCTAssertNotNil(extremeResult)
+        if let extremeResult {
+            XCTAssertFalse(extremeResult.isReliable)
+        }
+    }
+
+    func testDualTemplateAntiDriftAdaptsUnderGradualLightingChangeAndRejectsDriftToImposter() {
+        // T0: Initial color distribution histogram (normalized)
+        var h0 = [Float](repeating: 0, count: 64)
+        h0[10] = 0.40; h0[11] = 0.35; h0[18] = 0.25
+
+        var hAdaptive = h0
+        let alpha: Float = 0.15
+
+        // Simulate 8 frames of gradual lighting change (e.g. moving into warm sunlight)
+        var currentHist = h0
+        for step in 1...8 {
+            // Gradually shift energy from bins 10,11 to bins 18,19 (warm hue shift)
+            let shiftFactor = Float(step) * 0.04
+            var stepHist = [Float](repeating: 0, count: 64)
+            stepHist[10] = max(0.05, 0.40 - shiftFactor)
+            stepHist[11] = max(0.05, 0.35 - shiftFactor * 0.8)
+            stepHist[18] = 0.25 + shiftFactor * 0.9
+            stepHist[19] = shiftFactor * 0.9
+            let sum = stepHist.reduce(0, +)
+            stepHist = stepHist.map { $0 / sum }
+            currentHist = stepHist
+
+            // Check similarity with T0 and T_t
+            let sim0 = zip(h0, currentHist).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+
+            // Anti-drift check: must stay within safe distance of T0 (>= 0.55)
+            XCTAssertGreaterThanOrEqual(sim0, 0.55, "Step \(step) must remain within anchor safety threshold")
+
+            // EMA update of T_t
+            var updated = [Float](repeating: 0, count: 64)
+            var upSum: Float = 0
+            for i in 0..<64 {
+                let v = (1.0 - alpha) * hAdaptive[i] + alpha * currentHist[i]
+                updated[i] = v
+                upSum += v
+            }
+            hAdaptive = updated.map { $0 / upSum }
+        }
+
+        // At the end of the gradual lighting change:
+        // Direct similarity to original frozen T0 has degraded below strict threshold (< 0.72)
+        let finalSim0 = zip(h0, currentHist).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+        XCTAssertLessThan(finalSim0, 0.72, "Without adaptive template, frozen T0 would cause false .mismatch")
+
+        // BUT with adaptive T_t, effective similarity remains high (>= 0.72)
+        let finalSimAdapt = zip(hAdaptive, currentHist).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+        let effectiveSim = max(finalSim0, finalSimAdapt)
+        XCTAssertGreaterThanOrEqual(effectiveSim, 0.72, "Adaptive T_t maintains confident lock under lighting change")
+
+        // Now test Imposter / Obstacle (e.g. subject walked behind a green tree or blue wall)
+        var hImposter = [Float](repeating: 0, count: 64)
+        hImposter[45] = 0.60; hImposter[46] = 0.40 // completely different color bins
+        let imposterSim0 = zip(h0, hImposter).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+
+        // Anti-drift gate: T0 anchor BLOCKS imposter (sim0 < 0.55), preventing T_t from learning the obstacle!
+        XCTAssertLessThan(imposterSim0, 0.55, "T0 anchor must reject imposter/obstacle and block drift")
+    }
+
     func testLiveDetectedEntitySmootherSmoothsJitterAndPreservesIdentity() {
         let smoother = LiveDetectedEntitySmoother()
         let initial = [

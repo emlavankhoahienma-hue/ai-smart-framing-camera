@@ -120,22 +120,42 @@ final class TargetPatchFlow {
         }
         let visionDx = Double(box.midX - previousBox.midX) * Double(image.width)
         let visionDy = Double(previousBox.midY - box.midY) * Double(image.height)
-        let coarse: CGPoint
-        if gyroNormalizedShift != .zero {
+        let coarseX: Double
+        let coarseY: Double
+        if gyroNormalizedShift != .zero,
+           gyroNormalizedShift.x.isFinite, gyroNormalizedShift.y.isFinite {
             let gyroDx = Double(gyroNormalizedShift.x) * Double(image.width)
             let gyroDy = Double(gyroNormalizedShift.y) * Double(image.height)
-            let diff = hypot(visionDx - gyroDx, visionDy - gyroDy)
-            if diff <= 20.0 {
-                coarse = CGPoint(x: visionDx, y: visionDy)
+            if visionDx.isFinite, visionDy.isFinite {
+                let diff = hypot(visionDx - gyroDx, visionDy - gyroDy)
+                if diff <= 20.0 {
+                    coarseX = visionDx
+                    coarseY = visionDy
+                } else {
+                    coarseX = gyroDx
+                    coarseY = gyroDy
+                }
             } else {
-                coarse = CGPoint(x: gyroDx, y: gyroDy)
+                coarseX = gyroDx
+                coarseY = gyroDy
             }
+        } else if visionDx.isFinite, visionDy.isFinite {
+            coarseX = visionDx
+            coarseY = visionDy
         } else {
-            coarse = CGPoint(x: visionDx, y: visionDy)
+            coarseX = 0.0
+            coarseY = 0.0
         }
         var pairs: [(old: CGPoint, new: CGPoint)] = []
         for old in points {
-            let center = CGPoint(x: old.x + coarse.x, y: old.y + coarse.y)
+            let targetX = Double(old.x) + coarseX
+            let targetY = Double(old.y) + coarseY
+            guard targetX.isFinite, targetY.isFinite else { continue }
+            // Clamp search center within image bounds so the +/-10 search window
+            // never collapses at image margins or causes integer overflow/underflow.
+            let clampedCenterX = max(4.0, min(Double(image.width - 5), targetX))
+            let clampedCenterY = max(4.0, min(Double(image.height - 5), targetY))
+            let center = CGPoint(x: clampedCenterX, y: clampedCenterY)
             guard let new = match(template: previous, at: old, in: image,
                                   around: center, radius: 10, requireUnique: true),
                   let reverse = match(template: image, at: new, in: previous,
@@ -199,13 +219,14 @@ final class TargetPatchFlow {
 
     private func match(template: GrayImage, at source: CGPoint, in target: GrayImage,
                        around center: CGPoint, radius: Int, requireUnique: Bool) -> CGPoint? {
+        guard source.x.isFinite, source.y.isFinite, center.x.isFinite, center.y.isFinite else { return nil }
         let sx = Int(source.x.rounded()), sy = Int(source.y.rounded())
         guard template.containsPatch(sx, sy) else { return nil }
         let cx = Int(center.x.rounded()), cy = Int(center.y.rounded())
-        let minX = max(4, cx - radius)
-        let maxX = min(target.width - 5, cx + radius)
-        let minY = max(4, cy - radius)
-        let maxY = min(target.height - 5, cy + radius)
+        let minX = max(4, min(target.width - 5, cx - radius))
+        let maxX = min(target.width - 5, max(4, cx + radius))
+        let minY = max(4, min(target.height - 5, cy - radius))
+        let maxY = min(target.height - 5, max(4, cy + radius))
         guard minX <= maxX, minY <= maxY else { return nil }
         var scores: [(Double, Int, Int)] = []
         for y in minY...maxY {
