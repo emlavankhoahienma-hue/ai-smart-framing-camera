@@ -30,7 +30,7 @@ public struct WindowedZoomOverlayView: View {
 
     // MARK: - Window Dimensions Calculation
     private var windowRect: CGRect {
-        let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength)
+        let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength, baseOpticalZoom: viewModel.displayZoom)
         let w = containerSize.width * fractions.widthFraction
         let h = containerSize.height * fractions.heightFraction
         let x = (containerSize.width - w) / 2.0
@@ -56,7 +56,7 @@ public struct WindowedZoomOverlayView: View {
                         .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
                         .frame(width: windowRect.width, height: windowRect.height)
 
-                    Text("\(Int(round(viewModel.windowedZoomFocalLength)))mm")
+                    Text(viewModel.displayZoom >= 1.95 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
                         .foregroundColor(viewModel.isAIWindowedFocalRecommended ? amberGold : .white)
                         .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)

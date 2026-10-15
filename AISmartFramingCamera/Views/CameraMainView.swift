@@ -380,12 +380,16 @@ struct TopCameraBar: View {
     }
 }
 
-// MARK: - Minimalist Optical Zoom Selector (Strictly 1×, 2×, 3× with Single Matched Ring, No Capsule Background)
+// MARK: - Minimalist Optical Zoom Selector (Strictly 1x, 2x, 3x with Single Matched Ring, No Capsule Background)
 struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
     private let amberGold = Color(red: 0.85, green: 0.64, blue: 0.25)
     private var zoomOptions: [CGFloat] {
+        let opts = viewModel.cameraService.availableDisplayZoomOptions
+        if !opts.isEmpty {
+            return opts
+        }
         if viewModel.cameraService.hasUltraWideLens {
             return [0.5, 1.0, 2.0, 3.0]
         } else {
@@ -398,26 +402,32 @@ struct ViewfinderZoomSelectorPill: View {
             ForEach(zoomOptions, id: \.self) { zoom in
                 let isSelected = viewModel.selectedZoomPreset == zoom
                 Button(action: {
-                    let generator = UISelectionFeedbackGenerator()
-                    generator.prepare()
-                    generator.selectionChanged()
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
+                    let impact = UIImpactFeedbackGenerator(style: .medium)
+                    impact.prepare()
+                    impact.impactOccurred()
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.75)) {
                         viewModel.setZoomFromButton(zoom)
                     }
                 }) {
                     ZStack {
+                        Circle()
+                            .fill(Color.black.opacity(isSelected ? 0.55 : 0.32))
+                            .frame(width: 34, height: 34)
+
                         if isSelected {
                             Circle()
-                                .stroke(amberGold, lineWidth: 1.5)
-                                .frame(width: 32, height: 32)
+                                .stroke(amberGold, lineWidth: 1.6)
+                                .frame(width: 34, height: 34)
+                                .shadow(color: amberGold.opacity(0.45), radius: 5)
                                 .matchedGeometryEffect(id: "active_viewfinder_zoom_ring", in: zoomPillNamespace)
                         }
 
                         Text(zoom == 0.5 ? "0.5x" : "\(Int(zoom))x")
                             .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.78))
+                            .foregroundColor(isSelected ? amberGold : Color.white.opacity(0.85))
                     }
-                    .frame(width: 44, height: 44)
+                    .scaleEffect(isSelected ? 1.08 : 0.96)
+                    .frame(width: 42, height: 42)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())

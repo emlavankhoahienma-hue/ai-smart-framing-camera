@@ -291,6 +291,7 @@ public final class CameraService: NSObject {
             let deviceDiscovery = AVCaptureDevice.DiscoverySession(
                 deviceTypes: [
                     .builtInTripleCamera,
+                    .builtInDualCamera,
                     .builtInDualWideCamera,
                     .builtInWideAngleCamera
                 ],
@@ -318,8 +319,7 @@ public final class CameraService: NSObject {
 
             // Cấu hình tỷ lệ zoom chuẩn phong cách Apple Camera App
             let switchFactors = camera.virtualDeviceSwitchOverVideoZoomFactors
-            if (camera.deviceType == .builtInTripleCamera || camera.deviceType == .builtInDualWideCamera),
-               let firstSwitch = switchFactors.first {
+            if camera.deviceType == .builtInTripleCamera, let firstSwitch = switchFactors.first {
                 let wideBase = CGFloat(firstSwitch.doubleValue)
                 self.displayMultiplier = wideBase
                 self.hasUltraWideLens = true
@@ -331,8 +331,8 @@ public final class CameraService: NSObject {
                     let teleDisplay = round((teleDeviceZoom / wideBase) * 10) / 10
                     if teleDisplay > 2.0 {
                         options.append(teleDisplay)
-                    } else {
-                        options.append(3.0)
+                    } else if !options.contains(teleDisplay) {
+                        options.append(teleDisplay)
                     }
                 } else if self.maxZoom >= wideBase * 3.0 {
                     options.append(3.0)
@@ -340,8 +340,28 @@ public final class CameraService: NSObject {
                 if self.maxZoom >= wideBase * 5.0 {
                     options.append(5.0)
                 }
-                self.availableDisplayZoomOptions = options
-                CameraLogger.info("CameraService: Khởi tạo Multi-Camera Apple (Wide Base: \(wideBase), Options: \(options))", category: .capture)
+                self.availableDisplayZoomOptions = Array(Set(options)).sorted()
+                CameraLogger.info("CameraService: Khởi tạo Triple Camera Apple (Wide Base: \(wideBase), Tele Options: \(options))", category: .capture)
+            } else if camera.deviceType == .builtInDualCamera, let teleSwitch = switchFactors.first {
+                let teleZoom = CGFloat(teleSwitch.doubleValue)
+                self.displayMultiplier = 1.0
+                self.hasUltraWideLens = false
+                self.defaultDisplayZoom = 1.0
+                var options: [CGFloat] = [1.0, teleZoom]
+                if self.maxZoom >= 3.0 && teleZoom != 3.0 { options.append(3.0) }
+                if self.maxZoom >= 5.0 { options.append(5.0) }
+                self.availableDisplayZoomOptions = Array(Set(options)).sorted()
+                CameraLogger.info("CameraService: Khởi tạo Dual Camera Wide+Tele (Tele Zoom: \(teleZoom), Options: \(options))", category: .capture)
+            } else if camera.deviceType == .builtInDualWideCamera, let firstSwitch = switchFactors.first {
+                let wideBase = CGFloat(firstSwitch.doubleValue)
+                self.displayMultiplier = wideBase
+                self.hasUltraWideLens = true
+                self.defaultDisplayZoom = 1.0
+                var options: [CGFloat] = [0.5, 1.0, 2.0]
+                if self.maxZoom >= wideBase * 3.0 { options.append(3.0) }
+                if self.maxZoom >= wideBase * 5.0 { options.append(5.0) }
+                self.availableDisplayZoomOptions = Array(Set(options)).sorted()
+                CameraLogger.info("CameraService: Khởi tạo Dual Wide Camera (Wide Base: \(wideBase), Options: \(options))", category: .capture)
             } else {
                 self.displayMultiplier = 1.0
                 self.hasUltraWideLens = false
@@ -593,7 +613,7 @@ public final class CameraService: NSObject {
             }
             let targetPosition: AVCaptureDevice.Position = (self.currentCameraPosition == .back) ? .front : .back
             let discovery = AVCaptureDevice.DiscoverySession(
-                deviceTypes: targetPosition == .front ? [.builtInWideAngleCamera] : [.builtInTripleCamera, .builtInDualWideCamera, .builtInWideAngleCamera],
+                deviceTypes: targetPosition == .front ? [.builtInWideAngleCamera] : [.builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera, .builtInWideAngleCamera],
                 mediaType: .video,
                 position: targetPosition
             )
@@ -613,9 +633,12 @@ public final class CameraService: NSObject {
             do {
                 let newInput = try AVCaptureDeviceInput(device: newCamera)
                 let factors = newCamera.virtualDeviceSwitchOverVideoZoomFactors
-                let wideBase = (newCamera.deviceType == .builtInTripleCamera ||
-                                newCamera.deviceType == .builtInDualWideCamera) ?
-                    CGFloat(factors.first?.doubleValue ?? 1) : 1
+                let wideBase: CGFloat
+                if newCamera.deviceType == .builtInTripleCamera || newCamera.deviceType == .builtInDualWideCamera {
+                    wideBase = CGFloat(factors.first?.doubleValue ?? 1)
+                } else {
+                    wideBase = 1.0
+                }
                 let newMinZoom = newCamera.minAvailableVideoZoomFactor
                 let newMaxZoom = max(newMinZoom, min(newCamera.maxAvailableVideoZoomFactor, wideBase * 5))
                 try newCamera.lockForConfiguration()

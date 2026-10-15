@@ -155,7 +155,7 @@ public struct VideoPreviewSheetView: View {
         isCroppingWindowedZoom = true
         let asset = AVAsset(url: processedVideoURL ?? videoURL)
 
-        let fractions = windowAspect.windowFractions(focalLength: windowFocal)
+        let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom)
         let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
             let source = request.sourceImage.clampedToExtent()
             let origExtent = request.sourceImage.extent
@@ -218,7 +218,7 @@ public struct VideoPreviewSheetView: View {
             }
 
             if let wf = windowFocal, let wa = windowAspect, wf > 24.5 {
-                let fractions = wa.windowFractions(focalLength: wf)
+                let fractions = wa.windowFractions(focalLength: wf, baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom)
                 if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
                     let origExtent = request.sourceImage.extent
                     let cropW = origExtent.width * fractions.widthFraction

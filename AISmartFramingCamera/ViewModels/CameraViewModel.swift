@@ -564,14 +564,24 @@ public final class CameraViewModel: ObservableObject {
                 if aiSessionState.isSessionActive {
                     cancelAISession()
                 }
+                updateWindowedCameraHardwareZoom()
+            } else {
+                requestManualZoom(selectedZoomPreset, smooth: true)
             }
         }
     }
-    @Published public var windowedZoomFocalLength: Double = 24.0
+    @Published public var windowedZoomFocalLength: Double = 24.0 {
+        didSet {
+            if isWindowedZoomActive {
+                updateWindowedCameraHardwareZoom()
+            }
+        }
+    }
     @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
     @Published public var isAIWindowedFocalRecommended: Bool = false
     @Published public var lastRecordedVideoWindowedFocal: Double? = nil
     @Published public var lastRecordedVideoWindowedAspect: WindowedZoomAspectRatio? = nil
+    @Published public var lastRecordedVideoWindowedBaseZoom: CGFloat = 1.0
 
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
@@ -1170,7 +1180,7 @@ public final class CameraViewModel: ObservableObject {
             self.liveZoomFactorForReveal = disp
             self.displayZoom = disp
             if self.isPinchingZoom {
-                self.selectedZoomPreset = disp < 1.5 ? 1.0 : (disp < 2.5 ? 2.0 : 3.0)
+                self.selectedZoomPreset = self.resolveClosestZoomPreset(for: disp)
             }
             SpatialTrackingEngine.shared.updateZoomFactor(disp)
             self.finishManualZoomIfSettled(zoom)
@@ -2569,7 +2579,7 @@ public final class CameraViewModel: ObservableObject {
                         self.isRevealingZoomTarget = false
                         self.isZoomRampPhase = false
                     }
-                    selectedZoomPreset = displayZoom < 1.5 ? 1.0 : (displayZoom < 2.5 ? 2.0 : 3.0)
+                    selectedZoomPreset = resolveClosestZoomPreset(for: displayZoom)
                     return
                 }
             } else {
@@ -2696,26 +2706,79 @@ public final class CameraViewModel: ObservableObject {
         isPinchingZoom = true
     }
 
-    private func requestManualZoom(_ displayZoomVal: CGFloat) {
+    public func resolveClosestZoomPreset(for disp: CGFloat) -> CGFloat {
+        let options = cameraService.availableDisplayZoomOptions
+        if options.isEmpty {
+            if disp < 0.75 { return 0.5 }
+            if disp < 1.5 { return 1.0 }
+            if disp < 2.5 { return 2.0 }
+            return 3.0
+        }
+        return options.min(by: { abs($0 - disp) < abs($1 - disp) }) ?? 1.0
+    }
+
+    public func updateWindowedCameraHardwareZoom() {
+        guard isWindowedZoomActive, isCameraReady, !isCameraHibernating else { return }
+        let focal = windowedZoomFocalLength
+        let targetDisplayZoom: CGFloat
+        if focal < 48.0 {
+            // 24mm, 28mm, 35mm -> Wide camera 1.0x
+            targetDisplayZoom = 1.0
+        } else if focal < 72.0 {
+            // 50mm (~2.08x) -> Telephoto 2.0x (or closest optical tele)
+            targetDisplayZoom = 2.0
+        } else {
+            // 85mm (~3.54x), 135mm (~5.6x) -> Telephoto 3.0x / 5.0x
+            let opts = cameraService.availableDisplayZoomOptions
+            if opts.contains(5.0) && focal >= 110.0 {
+                targetDisplayZoom = 5.0
+            } else if opts.contains(3.0) {
+                targetDisplayZoom = 3.0
+            } else if opts.contains(2.0) {
+                targetDisplayZoom = 2.0
+            } else {
+                targetDisplayZoom = 2.0
+            }
+        }
+
+        let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetDisplayZoom)
+        if abs(cameraService.currentZoom - targetDeviceZoom) > 0.05 {
+            cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: 4.5)
+        }
+    }
+
+    private func requestManualZoom(_ displayZoomVal: CGFloat, smooth: Bool = false) {
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         let requestID = UUID()
         manualZoomRequestID = requestID
         pendingManualZoomTarget = deviceZoom
         manualZoomSettledAt = CACurrentMediaTime()
-        cameraService.setZoomFactor(deviceZoom) { [weak self] actualZoom in
-            guard let self, self.manualZoomRequestID == requestID else { return }
-            self.manualZoomRequestID = nil
-            self.pendingManualZoomTarget = nil
-            self.manualZoomSettledAt = CACurrentMediaTime()
-            self.zoomVerified = actualZoom != nil
-            self.alignmentGate.reset()
+        if smooth {
+            cameraService.smoothZoomFactor(to: deviceZoom, rate: 4.5)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self, self.manualZoomRequestID == requestID else { return }
+                self.manualZoomRequestID = nil
+                self.pendingManualZoomTarget = nil
+                self.manualZoomSettledAt = CACurrentMediaTime()
+                self.zoomVerified = true
+                self.alignmentGate.reset()
+            }
+        } else {
+            cameraService.setZoomFactor(deviceZoom) { [weak self] actualZoom in
+                guard let self, self.manualZoomRequestID == requestID else { return }
+                self.manualZoomRequestID = nil
+                self.pendingManualZoomTarget = nil
+                self.manualZoomSettledAt = CACurrentMediaTime()
+                self.zoomVerified = actualZoom != nil
+                self.alignmentGate.reset()
+            }
         }
     }
 
     public func setZoom(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         cancelAIZoomForGesture()
-        requestManualZoom(displayZoomVal)
+        requestManualZoom(displayZoomVal, smooth: true)
     }
 
     /// Zoom liên tục mượt mà khi người dùng vuốt/pinch bằng hai ngón tay
@@ -2723,7 +2786,7 @@ public final class CameraViewModel: ObservableObject {
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
-        selectedZoomPreset = displayZoomVal < 1.5 ? 1.0 : (displayZoomVal < 2.5 ? 2.0 : 3.0)
+        selectedZoomPreset = resolveClosestZoomPreset(for: displayZoomVal)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
         let now = CACurrentMediaTime()
         if now - lastContinuousZoomTime >= 0.025 || abs(deviceZoom - lastContinuousAppliedZoom) > 0.08 {
@@ -2741,7 +2804,7 @@ public final class CameraViewModel: ObservableObject {
         }
         guard finalDisplayZoom.isFinite else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
-        selectedZoomPreset = finalDisplayZoom < 1.5 ? 1.0 : (finalDisplayZoom < 2.5 ? 2.0 : 3.0)
+        selectedZoomPreset = resolveClosestZoomPreset(for: finalDisplayZoom)
         let deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(finalDisplayZoom)
         lastContinuousAppliedZoom = deviceZoom
         isPinchingZoom = false
@@ -2754,7 +2817,7 @@ public final class CameraViewModel: ObservableObject {
         cancelAIZoomForGesture()
         haptics.triggerSelectionChange()
         selectedZoomPreset = displayZoomVal
-        requestManualZoom(displayZoomVal)
+        requestManualZoom(displayZoomVal, smooth: true)
     }
 
     public func setExposure(_ bias: Float) {
@@ -2904,9 +2967,11 @@ public final class CameraViewModel: ObservableObject {
             if isWindowedZoomActive && windowedZoomFocalLength > 24.5 {
                 lastRecordedVideoWindowedFocal = windowedZoomFocalLength
                 lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
+                lastRecordedVideoWindowedBaseZoom = displayZoom
             } else {
                 lastRecordedVideoWindowedFocal = nil
                 lastRecordedVideoWindowedAspect = nil
+                lastRecordedVideoWindowedBaseZoom = 1.0
             }
             haptics.triggerShutterClick()
             cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
@@ -3307,6 +3372,7 @@ public final class CameraViewModel: ObservableObject {
         let focalLength: Double
         let aspect: WindowedZoomAspectRatio
         let score: Double
+        let baseOpticalZoom: CGFloat
     }
     private var captureProcessingSettings: PhotoProcessingSettings?
 
@@ -3324,7 +3390,8 @@ public final class CameraViewModel: ObservableObject {
                 (geminiColorRecipe?.asAIColorParameters ?? currentAIColorParams ?? detectedScene.aiFullColorParameters) : nil,
             applyFilm: apply, crop: isWindowedZoomActive && windowedZoomFocalLength > 24.5, focalLength: windowedZoomFocalLength,
             aspect: windowedZoomAspectRatio,
-            score: stateBeforeCapture == .alignmentPerfect ? 1 : (framingResult?.alignmentScore ?? 0.8))
+            score: stateBeforeCapture == .alignmentPerfect ? 1 : (framingResult?.alignmentScore ?? 0.8),
+            baseOpticalZoom: displayZoom)
     }
 
     private func captureNativePhoto(highResolution: Bool) {
@@ -3568,6 +3635,7 @@ extension CameraViewModel: CameraServiceDelegate {
         let isWindowed = settings.crop && format != .dng
         let windowFocal = settings.focalLength
         let windowAspect = settings.aspect
+        let windowBaseZoom = settings.baseOpticalZoom
         let hasColorEdits = isFilmActive && (effectivePreset != .standard || finalColorParams != nil)
         let appliedIntensity = Float(self.filmSimulationIntensity)
 
@@ -3578,7 +3646,7 @@ extension CameraViewModel: CameraServiceDelegate {
             // Nếu đang bật Windowed Zoom -> Cắt ảnh gốc 48MP chính xác theo tỉ lệ và kích thước khung ngắm
             let effectiveSourcePhoto: CGImage
             if isWindowed {
-                let fractions = windowAspect.windowFractions(focalLength: windowFocal)
+                let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: windowBaseZoom)
                 if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
                     let origW = CGFloat(photo.width)
                     let origH = CGFloat(photo.height)
