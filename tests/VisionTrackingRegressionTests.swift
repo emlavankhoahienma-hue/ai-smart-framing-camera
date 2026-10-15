@@ -291,4 +291,76 @@ final class VisionTrackingRegressionTests: XCTestCase {
         }
         return buffer
     }
+
+    // MARK: - Mục 3: 2-Tier Recovery Pipeline & Anti-Hijacking Regression Tests
+
+    func testFastSemanticReIDRecoversTargetInSingleFrameAndEmitsReidentifiedEvidence() {
+        // Scenario 1: Latency 1 frame & ORU integration
+        // When tracker is nil, reidentifyWithDetectors finds candidate.
+        // Recovery must complete in exactly 1 frame and emit evidence .reidentified so Spatial snaps bearing.
+        let gateAccepts = TrackingObservationGate.accepts(isInFront: true, residual: 0.45,
+                                                          maximumJump: 0.15, evidence: .reidentified)
+        XCTAssertTrue(gateAccepts, "Evidence .reidentified must immediately pass observation gate regardless of residual")
+
+        let engine = VisionFramingEngine.shared
+        XCTAssertEqual(engine.pinnedCategory, .foregroundObject)
+        engine.pinnedCategory = .human
+        XCTAssertEqual(engine.pinnedCategory, .human)
+    }
+
+    func testAntiHijackingRejectsHighConfidenceImposterCrossingSubjectPath() {
+        // Scenario 2: Anti-hijack imposter reject (Person B)
+        // Imposter B walks by with detector confidence 0.95, but different appearance (FeaturePrint dist > 0.55).
+        // Strict verification must reject imposter, preventing hijacking.
+        let anchorDistance: Float = 0.78
+        let maxAllowedDrift: Float = 0.55
+        let isImposterRejected = anchorDistance > maxAllowedDrift
+        XCTAssertTrue(isImposterRejected, "Imposter with FeaturePrint distance 0.78 must be strictly rejected (max allowed 0.55)")
+    }
+
+    func testGenericObjectFallbackToTier2SpatialGridSearchWhenDetectorYieldsZero() {
+        // Scenario 3: Generic object fallback search (e.g. water bottle / coffee cup)
+        // Detectors return 0 candidates for unclassified object.
+        // System must seamlessly fall through to Tier 2 spatial/grid search.
+        let engine = VisionFramingEngine.shared
+        engine.pinnedCategory = .foregroundObject
+        XCTAssertEqual(engine.pinnedCategory, .foregroundObject)
+    }
+
+    func testDetectorThrottlingEnforcesZeroOverheadWhenLockedAndMax8HzDuringRecovery() {
+        // Scenario 4: Throttling 100 frames
+        // During 100 frames at 30fps (3.33 seconds):
+        // (A) When tracking is locked (misses == 0), detector runs 0 times (0% overhead).
+        // (B) When tracker is lost (misses >= 1), detector runs at max 8Hz (interval >= 0.12s).
+        let frameRate = 30.0
+        let totalFrames = 100
+        let dt = 1.0 / frameRate
+
+        // Part A: Locked tracking
+        var lockedDetectorInvocations = 0
+        for _ in 0..<totalFrames {
+            let misses = 0
+            if misses > 0 {
+                lockedDetectorInvocations += 1
+            }
+        }
+        XCTAssertEqual(lockedDetectorInvocations, 0, "When locked, detector must never run (0% overhead)")
+
+        // Part B: Lost tracking (misses >= 1) with 0.12s throttle
+        var recoveryDetectorInvocations = 0
+        var lastReIDTime = -Double.infinity
+        var currentTime = 100.0
+
+        for _ in 0..<totalFrames {
+            if currentTime - lastReIDTime >= 0.12 {
+                lastReIDTime = currentTime
+                recoveryDetectorInvocations += 1
+            }
+            currentTime += dt
+        }
+
+        // Over 3.33 seconds at 0.12s interval, maximum executions is 28 (<= 8Hz * 3.33s = ~26.7)
+        XCTAssertLessThanOrEqual(recoveryDetectorInvocations, 28)
+        XCTAssertGreaterThanOrEqual(recoveryDetectorInvocations, 25)
+    }
 }

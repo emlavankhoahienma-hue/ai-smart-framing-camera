@@ -170,6 +170,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var adaptivePrint: VNFeaturePrintObservation?
     private var adaptiveHistogram: [Float]?
     private var lastAdaptiveUpdate = -Double.infinity
+    var pinnedCategory: NeuralSubjectCategory = .foregroundObject
+    var lastDetectorReIDTime = -Double.infinity
     private var lastBoxPose: simd_quatd?
     private var lastBoxTimestamp = -Double.infinity
     private var anchorUV = CGPoint(x: 0.5, y: 0.5)
@@ -286,6 +288,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
         pendingLargeInnovation = nil
         inertialRecovery = nil
         latestBuffer = nil
+        pinnedCategory = .foregroundObject
+        lastDetectorReIDTime = -.infinity
     }
 
     private func seed(in buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
@@ -313,6 +317,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
         adaptivePrint = referencePrint
         adaptiveHistogram = referenceHistogram
         lastAdaptiveUpdate = timestamp
+        pinnedCategory = classifyPinnedCategory(in: source, box: box, point: seedPoint, orientation: sourceOrientation)
+        lastDetectorReIDTime = -.infinity
         if sourceOrientation == .up {
             NeuralTargetTracker.shared.setAnchorTemplate(from: source, at: seedPoint)
             patchFlow.seed(buffer: source, box: box, point: seedPoint)
@@ -653,6 +659,44 @@ public final class VisionFramingEngine: @unchecked Sendable {
             searchCenter = CGPoint(x: center.x + previous.point.x - oldProjection.point.x,
                                    y: center.y + previous.point.y - oldProjection.point.y)
         }
+        // Tier 1: Fast Semantic Re-ID using Detectors (YOLO + Vision Multi-Request)
+        // Rate-limited to max ~8 Hz (0.12s interval) to prevent thermal/FPS drops during misses
+        if frame.timestamp - lastDetectorReIDTime >= 0.12 {
+            lastDetectorReIDTime = frame.timestamp
+            if let fastMatch = reidentifyWithDetectors(buffer, orientation: orientation,
+                                                       frame: frame, prediction: prediction,
+                                                       searchCenter: searchCenter) {
+                let recoveredTracker = VisionObjectSequence(box: fastMatch.2)
+                if let observation = try? recoveredTracker.advance(in: buffer, orientation: orientation),
+                   observation.confidence >= 0.40 {
+                    let confirmedPoint = point(in: observation.boundingBox)
+                    if hypot(confirmedPoint.x - fastMatch.0.x, confirmedPoint.y - fastMatch.0.y) < 0.08 {
+                        tracker = recoveredTracker
+                        lastBox = observation.boundingBox
+                        boxSize = fastMatch.2.size
+                        lastBoxTimestamp = frame.timestamp
+                        lastBoxPose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) ?? SpatialTrackingEngine.shared.latestPose()
+                        patchFlow.seed(buffer: buffer, box: observation.boundingBox, point: confirmedPoint)
+                        continuity.accept()
+                        misses = 0
+                        lastAppearanceCheck = frame.timestamp
+                        hasLiveObservation = true
+                        pendingRecovery = nil
+                        pendingLargeInnovation = nil
+                        updateAdaptiveTemplate(buffer: buffer, box: observation.boundingBox, orientation: orientation,
+                                               timestamp: frame.timestamp, evidence: .reidentified,
+                                               confidence: observation.confidence,
+                                               flowIsReliable: true)
+                        if orientation == .up {
+                            NeuralTargetTracker.shared.updateAdaptiveTemplate(from: buffer, at: confirmedPoint)
+                        }
+                        return (confirmedPoint, min(fastMatch.1, Double(observation.confidence)), .reidentified)
+                    }
+                }
+            }
+        }
+
+        // Tier 2: Fallback Spatial / Grid Search (for generic objects or detector misses)
         if let recovered = search(buffer, center: searchCenter, orientation: orientation) {
             let recoveredTracker = VisionObjectSequence(box: recovered.2)
             if let observation = try? recoveredTracker.advance(in: buffer, orientation: orientation),
@@ -983,6 +1027,183 @@ public final class VisionFramingEngine: @unchecked Sendable {
             hypot($0.0.x - best.0.x, $0.0.y - best.0.y) > step * 1.5
         }), rival.1 - best.1 < 0.04 { return nil }
         return (best.0, 0.80, best.2)
+    }
+
+    private func classifyPinnedCategory(in buffer: CVPixelBuffer, box: CGRect, point: CGPoint,
+                                        orientation: CGImagePropertyOrientation) -> NeuralSubjectCategory {
+        let visionPoint = CGPoint(x: point.x, y: 1 - point.y)
+        let faceReq = VNDetectFaceRectanglesRequest()
+        let humanReq = VNDetectHumanRectanglesRequest()
+        humanReq.upperBodyOnly = false
+        let animalReq = VNRecognizeAnimalsRequest()
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+        guard (try? handler.perform([faceReq, humanReq, animalReq])) != nil else {
+            return .foregroundObject
+        }
+        if let faces = faceReq.results {
+            for f in faces where f.confidence >= 0.40 {
+                let inter = f.boundingBox.intersection(box)
+                if f.boundingBox.contains(visionPoint) || (!inter.isNull && inter.width * inter.height > 0.20 * box.width * box.height) {
+                    return .face
+                }
+            }
+        }
+        if let animals = animalReq.results {
+            for a in animals where a.confidence >= 0.40 {
+                let inter = a.boundingBox.intersection(box)
+                if a.boundingBox.contains(visionPoint) || (!inter.isNull && inter.width * inter.height > 0.20 * box.width * box.height) {
+                    return .animal
+                }
+            }
+        }
+        if let humans = humanReq.results {
+            for h in humans where h.confidence >= 0.40 {
+                let inter = h.boundingBox.intersection(box)
+                if h.boundingBox.contains(visionPoint) || (!inter.isNull && inter.width * inter.height > 0.20 * box.width * box.height) {
+                    return .human
+                }
+            }
+        }
+        return .foregroundObject
+    }
+
+    func reidentifyWithDetectors(
+        _ buffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation,
+        frame: TrackingFrameContext,
+        prediction: TrackingProjection?,
+        searchCenter: CGPoint
+    ) -> (CGPoint, Double, CGRect)? {
+        guard referencePrint != nil else { return nil }
+        var candidates: [(visionBox: CGRect, category: NeuralSubjectCategory, confidence: Float)] = []
+
+        // 1. YOLOv26 CoreML candidates (high accuracy semantic bounding boxes)
+        if YOLODetectionEngine.shared.hasYOLOModel {
+            let yoloCandidates = YOLODetectionEngine.shared.detectObjects(
+                pixelBuffer: buffer,
+                orientation: orientation,
+                cancellation: CompositionAnalysisCancellation()
+            )
+            for c in yoloCandidates where c.confidence >= 0.35 {
+                let vBox = CGRect(
+                    x: max(0.0, min(1.0, c.boundingBox.minX)),
+                    y: max(0.0, min(1.0, 1.0 - c.boundingBox.maxY)),
+                    width: max(0.01, min(1.0, c.boundingBox.width)),
+                    height: max(0.01, min(1.0, c.boundingBox.height))
+                )
+                candidates.append((vBox, c.category, c.confidence))
+            }
+        }
+
+        // 2. Apple Vision Multi-Request Suite targeted to pinned category
+        var requests: [VNRequest] = []
+        let faceReq = VNDetectFaceRectanglesRequest()
+        let humanReq = VNDetectHumanRectanglesRequest()
+        humanReq.upperBodyOnly = false
+        let animalReq = VNRecognizeAnimalsRequest()
+        let saliencyReq = VNGenerateObjectnessBasedSaliencyImageRequest()
+
+        switch pinnedCategory {
+        case .face:
+            requests = [faceReq]
+        case .human:
+            requests = [humanReq, faceReq]
+        case .animal:
+            requests = [animalReq]
+        case .foregroundObject, .general:
+            requests = [saliencyReq]
+        }
+
+        let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
+        if (try? handler.perform(requests)) != nil {
+            if let faces = faceReq.results {
+                for f in faces where f.confidence >= 0.40 {
+                    candidates.append((f.boundingBox, .face, f.confidence))
+                }
+            }
+            if let humans = humanReq.results {
+                for h in humans where h.confidence >= 0.40 {
+                    candidates.append((h.boundingBox, .human, h.confidence))
+                }
+            }
+            if let animals = animalReq.results {
+                for a in animals where a.confidence >= 0.40 {
+                    candidates.append((a.boundingBox, .animal, a.confidence))
+                }
+            }
+            if let salients = saliencyReq.results?.first?.salientObjects {
+                for s in salients {
+                    candidates.append((s.boundingBox, .foregroundObject, s.confidence))
+                }
+            }
+        }
+
+        guard !candidates.isEmpty else { return nil }
+
+        // Deduplicate overlapping candidates across detector engines
+        var uniqueCandidates: [(visionBox: CGRect, category: NeuralSubjectCategory, confidence: Float)] = []
+        for cand in candidates {
+            let b = cand.visionBox
+            guard b.minX >= 0, b.minY >= 0, b.maxX <= 1, b.maxY <= 1,
+                  b.width >= 0.03, b.height >= 0.03 else { continue }
+            let isDuplicate = uniqueCandidates.contains { existing in
+                let inter = existing.visionBox.intersection(b)
+                guard !inter.isNull, !inter.isEmpty else { return false }
+                let interArea = inter.width * inter.height
+                let smallerArea = min(existing.visionBox.width * existing.visionBox.height, b.width * b.height)
+                return smallerArea > 0 && (interArea / smallerArea) > 0.60
+            }
+            if !isDuplicate {
+                uniqueCandidates.append((b, cand.category, cand.confidence))
+            }
+        }
+
+        let pinnedArea = max(1e-4, boxSize.width * boxSize.height)
+        var validMatches: [(point: CGPoint, score: Double, visionBox: CGRect)] = []
+
+        for cand in uniqueCandidates {
+            let b = cand.visionBox
+            let candArea = b.width * b.height
+            let areaRatio = candArea / pinnedArea
+            guard areaRatio >= 0.15, areaRatio <= 6.0 else { continue }
+
+            if pinnedCategory == .face || pinnedCategory == .foregroundObject {
+                let candAspect = b.width / b.height
+                let pinnedAspect = boxSize.width / boxSize.height
+                let aspectDeviation = max(candAspect / pinnedAspect, pinnedAspect / candAspect)
+                guard aspectDeviation <= 2.8 else { continue }
+            }
+
+            // Quick color histogram pre-filter
+            if let referenceHistogram, let candHist = histogram(buffer, box: b, orientation: orientation) {
+                let sim0 = zip(referenceHistogram, candHist).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) }
+                let simAdapt = adaptiveHistogram.map { zip($0, candHist).reduce(Float(0)) { $0 + sqrt($1.0 * $1.1) } } ?? sim0
+                guard max(sim0, simAdapt) >= 0.58, sim0 >= 0.40 else { continue }
+            }
+
+            // Strict Anti-Hijacking verification: passes through Dual-Template T0 and Tt
+            let verifyResult = verify(buffer, box: b, orientation: orientation, strict: true)
+            guard case let .match(featureDistance) = verifyResult else { continue }
+
+            let candPoint = point(in: b)
+            let distToCenter = hypot(candPoint.x - searchCenter.x, candPoint.y - searchCenter.y)
+            let categoryBonus = (cand.category == pinnedCategory) ? 0.0 : 0.08
+            let combinedScore = featureDistance + Double(distToCenter) * 0.25 + categoryBonus
+            validMatches.append((candPoint, combinedScore, b))
+        }
+
+        guard !validMatches.isEmpty else { return nil }
+        validMatches.sort { $0.score < $1.score }
+        guard let best = validMatches.first else { return nil }
+
+        if let rival = validMatches.dropFirst().first {
+            if hypot(rival.point.x - best.point.x, rival.point.y - best.point.y) > 0.08,
+               rival.score - best.score < 0.02 {
+                return nil
+            }
+        }
+
+        return (best.point, 0.85, best.visionBox)
     }
 
     private func deliver(_ point: CGPoint?, confidence: Double, buffer: CVPixelBuffer,
