@@ -203,6 +203,7 @@ public struct VideoPreviewSheetView: View {
         let aiColorParameters = viewModel.currentAIColorParams
         let windowFocal = viewModel.lastRecordedVideoWindowedFocal
         let windowAspect = viewModel.lastRecordedVideoWindowedAspect
+        let windowBaseZoom = viewModel.lastRecordedVideoWindowedBaseZoom
 
         let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
             let source = request.sourceImage.clampedToExtent()
@@ -218,7 +219,7 @@ public struct VideoPreviewSheetView: View {
             }
 
             if let wf = windowFocal, let wa = windowAspect, wf > 24.5 {
-                let fractions = wa.windowFractions(focalLength: wf, baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom)
+                let fractions = wa.windowFractions(focalLength: wf, baseOpticalZoom: windowBaseZoom)
                 if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
                     let origExtent = request.sourceImage.extent
                     let cropW = origExtent.width * fractions.widthFraction
