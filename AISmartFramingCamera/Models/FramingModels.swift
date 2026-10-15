@@ -1609,16 +1609,16 @@ public final class AppPhotoStorageService: @unchecked Sendable {
             format: ext.uppercased(),
             width: image.width,
             height: image.height,
-            sceneType: sceneType.displayName,
+            sceneType: sceneType.rawValue,
             preset: preset.displayName,
-            compositionRule: compositionRule.name,
+            compositionRule: compositionRule.rawValue,
             alignmentScore: score,
             iso: iso,
             shutterSpeed: shutterSpeed,
             isDNG: format == .dng
         )
 
-        if let metaData = try? JSONEncoder().encode(record) {
+        if let metaData: Data = try? JSONEncoder().encode(record) {
             try? metaData.write(to: metaURL, options: .atomic)
         }
 

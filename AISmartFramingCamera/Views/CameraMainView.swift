@@ -600,8 +600,15 @@ struct CompositionRuleRow: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(isSelected ? AlignTheme.irisViolet.opacity(0.18) : Color(red: 0.075, green: 0.082, blue: 0.102))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(isSelected ? AlignTheme.signatureGradient : Color.white.opacity(0.08), lineWidth: 1.0)
+                        Group {
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(AlignTheme.signatureGradient, lineWidth: 1.0)
+                            } else {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1.0)
+                            }
+                        }
                     )
             )
         }

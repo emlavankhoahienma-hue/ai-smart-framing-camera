@@ -325,8 +325,13 @@ private struct FilmPresetPill: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(
-                Capsule()
-                    .fill(isSelected ? AlignTheme.signatureGradient : Color.white.opacity(0.08))
+                Group {
+                    if isSelected {
+                        Capsule().fill(AlignTheme.signatureGradient)
+                    } else {
+                        Capsule().fill(Color.white.opacity(0.08))
+                    }
+                }
             )
             .overlay(
                 Capsule()
@@ -402,8 +407,15 @@ private struct CompositionRuleCard: View {
                     .fill(isSelected ? AlignTheme.irisViolet.opacity(0.16) : Color(red: 0.05, green: 0.05, blue: 0.07))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? AlignTheme.signatureGradient : Color.white.opacity(0.08), lineWidth: 1)
+                Group {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AlignTheme.signatureGradient, lineWidth: 1)
+                    } else {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    }
+                }
             )
         }
         .buttonStyle(.plain)
