@@ -228,6 +228,28 @@ final class VisionTrackingRegressionTests: XCTestCase {
         XCTAssertEqual(frameAfterGrace.count, 0)
     }
 
+    func testPatchFlowTranslationLoomingMaintainsLockWithoutDrift() throws {
+        let flow = TargetPatchFlow()
+        let initialBox = CGRect(x: 0.35, y: 0.40, width: 0.30, height: 0.20)
+        let initialPoint = CGPoint(x: 0.50, y: 0.50)
+        flow.seed(buffer: try image(dx: 0, dy: 0), box: initialBox, point: initialPoint)
+
+        let scaledWidth = 0.30 * 1.04
+        let scaledHeight = 0.20 * 1.04
+        let translatedBox = CGRect(x: 0.35 - (scaledWidth - 0.30) / 2.0,
+                                   y: 0.40 - 16.0 / 480.0,
+                                   width: scaledWidth, height: scaledHeight)
+        let fallback = CGPoint(x: translatedBox.midX, y: 1 - translatedBox.midY)
+
+        let result = try XCTUnwrap(flow.evaluate(buffer: try image(dx: 0, dy: 16),
+                                                 box: translatedBox, fallback: fallback,
+                                                 gyroNormalizedShift: .zero))
+        XCTAssertTrue(result.isReliable)
+        XCTAssertGreaterThanOrEqual(result.inliers, 5)
+        XCTAssertEqual(result.point.x, 0.50, accuracy: 4.0 / 320.0)
+        XCTAssertEqual(result.point.y, 0.50 + 16.0 / 480.0, accuracy: 4.0 / 480.0)
+    }
+
     private func flatImage() throws -> CVPixelBuffer {
         var created: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 320, 480,

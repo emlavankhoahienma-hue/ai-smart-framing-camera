@@ -92,9 +92,12 @@ enum TrackingObservationGate {
                         mahalanobisSq: Double, gateThreshold: Double = 16.0,
                         evidence: TrackingOpticalEvidence) -> Bool {
         if evidence == .reidentified { return residual.isFinite }
-        if evidence == .confirmedContinuation { return residual.isFinite }
         guard isInFront, residual.isFinite else { return false }
-        return mahalanobisSq <= gateThreshold
+        if evidence == .confirmedContinuation {
+            return mahalanobisSq <= max(gateThreshold, 100.0)
+        }
+        let effectiveGate = evidence == .verifiedContinuation ? max(gateThreshold, 25.0) : gateThreshold
+        return mahalanobisSq <= effectiveGate
     }
 }
 
@@ -156,6 +159,11 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
             return
         }
 
+        // Damping on angular velocity prevents persistent angular momentum
+        // when camera stops translating or panning
+        let damping = exp(-1.5 * dt)
+        angularVelocity *= damping
+
         let deltaTheta = angularVelocity * dt
         let angle = hypot(deltaTheta.x, deltaTheta.y)
         if angle > 1e-9 {
@@ -167,7 +175,8 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
         let qa = isDynamicScene ? 3.0 : 1.2
         let dt2 = dt * dt
         let dt3 = dt2 * dt
-        let qThetaTheta = Mat2.diagonal(dt3 / 3.0 * qa)
+        let qTrans = 0.004 * dt
+        let qThetaTheta = Mat2.diagonal(dt3 / 3.0 * qa + qTrans)
         let qThetaOmega = Mat2.diagonal(dt2 / 2.0 * qa)
         let qOmegaOmega = Mat2.diagonal(dt * qa)
 
@@ -599,6 +608,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 if evidence == .reidentified {
                     corrected = observed
                     filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
+                } else if evidence == .confirmedContinuation && residual > 0.20 {
+                    corrected = observed
+                    filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
                 } else {
                     filter.update(innovation: innovation, sInv: sInv)
                     let blended = filter.bearing
@@ -614,7 +626,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 } else {
                     worldRay = corrected
                 }
-                if evidence == .reidentified {
+                if evidence == .reidentified || (evidence == .confirmedContinuation && residual > 0.20) {
                     presentationIsRecovering = true
                 } else if !presentationIsRecovering {
                     // Accepted live optical motion is already rate limited.

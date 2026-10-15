@@ -128,7 +128,15 @@ final class TargetPatchFlow {
             let gyroDy = Double(gyroNormalizedShift.y) * Double(image.height)
             if visionDx.isFinite, visionDy.isFinite {
                 let diff = hypot(visionDx - gyroDx, visionDy - gyroDy)
-                if diff <= 20.0 {
+                let gyroSpeed = hypot(gyroDx, gyroDy)
+                // When camera rotates quickly (gyroSpeed >= 8.0) and vision lags behind (diff > 15.0),
+                // gyro provides the superior coarse motion estimate.
+                // However, during translation or walking, gyro is small (~0) while vision observes
+                // real parallax displacement. In that case, vision must lead coarse centering.
+                if gyroSpeed >= 8.0 && diff > 15.0 {
+                    coarseX = gyroDx
+                    coarseY = gyroDy
+                } else if hypot(visionDx, visionDy) <= 80.0 {
                     coarseX = visionDx
                     coarseY = visionDy
                 } else {
@@ -139,7 +147,7 @@ final class TargetPatchFlow {
                 coarseX = gyroDx
                 coarseY = gyroDy
             }
-        } else if visionDx.isFinite, visionDy.isFinite {
+        } else if visionDx.isFinite, visionDy.isFinite, hypot(visionDx, visionDy) <= 80.0 {
             coarseX = visionDx
             coarseY = visionDy
         } else {
@@ -168,10 +176,19 @@ final class TargetPatchFlow {
         }
         let dx = median(pairs.map { Double($0.new.x - $0.old.x) })
         let dy = median(pairs.map { Double($0.new.y - $0.old.y) })
-        let inliers = pairs.filter {
-            hypot(Double($0.new.x - $0.old.x) - dx, Double($0.new.y - $0.old.y) - dy) <= 2.2
+        let scaleRatio = (previousBox.width > 0.001 && box.width > 0.001) ?
+            Double(box.width / previousBox.width) : 1.0
+        let clampedScale = max(0.80, min(1.25, scaleRatio))
+        let cOldX = pairs.reduce(0.0) { $0 + Double($1.old.x) } / Double(pairs.count)
+        let cOldY = pairs.reduce(0.0) { $0 + Double($1.old.y) } / Double(pairs.count)
+        let inliers = pairs.filter { pair in
+            let expectedDx = dx + (clampedScale - 1.0) * (Double(pair.old.x) - cOldX)
+            let expectedDy = dy + (clampedScale - 1.0) * (Double(pair.old.y) - cOldY)
+            let residual = hypot(Double(pair.new.x - pair.old.x) - expectedDx,
+                                 Double(pair.new.y - pair.old.y) - expectedDy)
+            return residual <= 2.6
         }
-        guard inliers.count >= 6 else {
+        guard inliers.count >= 5 else {
             return Evaluation(image: image, point: fallback, isReliable: false, inliers: inliers.count)
         }
         let oldX = inliers.reduce(0.0) { $0 + Double($1.old.x) } / Double(inliers.count)
@@ -189,14 +206,14 @@ final class TargetPatchFlow {
         let a = denominator > 1 ? numeratorA / denominator : 1
         let b = denominator > 1 ? numeratorB / denominator : 0
         let scale = hypot(a, b)
-        guard (0.80...1.25).contains(scale) else {
+        guard (0.75...1.35).contains(scale) else {
             return Evaluation(image: image, point: fallback, isReliable: false, inliers: inliers.count)
         }
         let oldAnchorX = Double(anchor.x) * Double(image.width) - oldX
         let oldAnchorY = Double(anchor.y) * Double(image.height) - oldY
         let result = CGPoint(x: (newX + a * oldAnchorX - b * oldAnchorY) / Double(image.width),
                              y: (newY + b * oldAnchorX + a * oldAnchorY) / Double(image.height))
-        let expanded = box.insetBy(dx: -0.03, dy: -0.03)
+        let expanded = box.insetBy(dx: -0.04, dy: -0.04)
         let visionResult = CGPoint(x: result.x, y: 1 - result.y)
         guard result.x.isFinite, result.y.isFinite, expanded.contains(visionResult),
               (0...1).contains(result.x), (0...1).contains(result.y) else {

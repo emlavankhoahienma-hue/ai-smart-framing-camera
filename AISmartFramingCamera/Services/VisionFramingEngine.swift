@@ -504,13 +504,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     }
                     var evidence: TrackingOpticalEvidence
                     let ordinaryLimit = max(0.30, SpatialTrackingEngine.shared.maxObservationJump * 2)
+                    let frameJump = lastBox.map { hypot(rawBox.midX - $0.midX, rawBox.midY - $0.midY) } ?? 0
                     switch appearance {
                     case .match: evidence = .verifiedContinuation
                     case .unavailable:
                         // Follow the live VN sequence with patch-flow support;
                         // a very confident nearby VN point can bridge weak texture.
                         let supported = (flow?.isReliable == true && observation.confidence >= 0.55) ||
-                            (observation.confidence >= 0.70 && residual <= ordinaryLimit)
+                            (observation.confidence >= 0.70 && (residual <= ordinaryLimit || frameJump <= 0.12))
                         guard supported else {
                             misses += 1; pendingRecovery = nil; pendingLargeInnovation = nil
                             if shouldRetireSequence(afterFailureAt: frame.timestamp) {
@@ -522,10 +523,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     case .mismatch:
                         // Lighting can change the frozen appearance template.
                         // Keep a nearby, independently consistent flow track.
-                        guard flow?.isReliable == true, (flow?.inliers ?? 0) >= 7,
+                        guard flow?.isReliable == true, (flow?.inliers ?? 0) >= 5,
                               observation.confidence >= 0.65,
-                              residual <= max(0.22,
-                                  SpatialTrackingEngine.shared.maxObservationJump * 1.5) else {
+                              (residual <= max(0.22, SpatialTrackingEngine.shared.maxObservationJump * 1.5) || frameJump <= 0.08) else {
                             misses += 1; pendingRecovery = nil; pendingLargeInnovation = nil
                             if shouldRetireSequence(afterFailureAt: frame.timestamp) {
                                 self.tracker = nil; patchFlow.reset()
@@ -542,8 +542,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             // Two consecutive, flow-supported offsets let a live
                             // tracker correct a badly drifted bearing without
                             // treating one background jump as a new anchor.
-                            guard let flow, flow.isReliable, flow.inliers >= 7,
-                                  observation.confidence >= 0.70, let prediction else {
+                            let scaleRatio = lastBox.map { max(rawBox.width / $0.width, $0.width / rawBox.width) } ?? 1.0
+                            let isSmoothTrack = frameJump <= 0.12 && scaleRatio <= 1.35
+                            let canFollow = (flow?.isReliable == true && (flow?.inliers ?? 0) >= 5 && observation.confidence >= 0.60) ||
+                                (isSmoothTrack && observation.confidence >= 0.70)
+                            guard canFollow, let prediction else {
                                 pendingLargeInnovation = nil
                                 misses += 1; pendingRecovery = nil
                                 if shouldRetireSequence(afterFailureAt: frame.timestamp) {
@@ -558,13 +561,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
                                 frame.timestamp - $0.timestamp < 0.25 &&
                                 hypot(offset.x - $0.offset.x, offset.y - $0.offset.y) < 0.08
                             } ?? false
-                            if consistent {
+                            if consistent || (observation.confidence >= 0.75 && isSmoothTrack) {
                                 evidence = .confirmedContinuation
                                 pendingLargeInnovation = nil
                             } else {
                                 pendingLargeInnovation = (offset, frame.timestamp)
                                 lastBox = rawBox
-                                patchFlow.accept(flow, box: rawBox, point: measuredPoint)
+                                if let flow { patchFlow.accept(flow, box: rawBox, point: measuredPoint) }
+                                else { patchFlow.seed(buffer: buffer, box: rawBox, point: measuredPoint) }
                                 continuity.accept()
                                 misses = 0
                                 return nil
@@ -656,7 +660,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 let confirmedPoint = point(in: observation.boundingBox)
                 if hypot(confirmedPoint.x - recovered.0.x, confirmedPoint.y - recovered.0.y) < 0.05 {
                     let distanceToBearing = hypot(recovered.0.x - center.x, recovered.0.y - center.y)
-                    let matchesBearing = prediction?.isInsideImage == true && distanceToBearing <= 0.08
+                    let lastCenter = lastBox.map { point(in: $0) }
+                    let distanceToLastBox = lastCenter.map { hypot(recovered.0.x - $0.x, recovered.0.y - $0.y) } ?? 1.0
+                    let matchesBearing = (prediction?.isInsideImage == true && distanceToBearing <= 0.10) || distanceToLastBox <= 0.12
                     let previousAgrees: Bool
                     if let previous = pendingRecovery, frame.timestamp > previous.frame.timestamp,
                        frame.timestamp - previous.frame.timestamp < 0.5 {
