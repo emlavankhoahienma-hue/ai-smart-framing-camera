@@ -19,20 +19,12 @@ struct CameraFormFactorLayout {
     var bottomComfort: CGFloat {
         safeAreaInsets.bottom >= 20 ? (isCompact ? 8 : 14) : (isCompact ? 6 : 10)
     }
-    var viewfinderAspectRatio: CGFloat {
-        isVideo ? (9.0 / 16.0) : (3.0 / 4.0)
-    }
     var viewfinderSize: CGSize {
         let widthLimit = max(1, availableSize.width - 12)
         let heightLimit = max(1, availableSize.height - 44 - topVerticalPadding -
                               topBottomPadding - controlDeckHeight - bottomComfort - minimumGap)
-        if isVideo {
-            let height = min(widthLimit * 16.0 / 9.0, heightLimit)
-            return CGSize(width: height * 9.0 / 16.0, height: height)
-        } else {
-            let height = min(widthLimit * 4.0 / 3.0, heightLimit)
-            return CGSize(width: height * 3.0 / 4.0, height: height)
-        }
+        let height = min(widthLimit * 4.0 / 3.0, heightLimit)
+        return CGSize(width: height * 3.0 / 4.0, height: height)
     }
     var histogramWidth: CGFloat {
         max(70, min(100, availableSize.width * 0.22))
@@ -84,10 +76,9 @@ public struct CameraMainView: View {
 
                         Spacer(minLength: layout.minimumGap / 2)
 
-                        // 3. Adaptive High-End Viewfinder (3:4 Photo, 9:16 Video)
+                        // 3. High-End Viewfinder (Consistent Full-Width in Photo & Video)
                         ZStack {
                             CameraPreviewView(viewModel: viewModel)
-                                .aspectRatio(layout.viewfinderAspectRatio, contentMode: .fit)
 
                             // Realtime Film Atmosphere Overlay
                             if viewModel.isFilmSimulationActive {
@@ -157,14 +148,12 @@ public struct CameraMainView: View {
                         }
                         .frame(width: layout.viewfinderSize.width,
                                height: layout.viewfinderSize.height)
-                        .aspectRatio(layout.viewfinderAspectRatio, contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 20, style: .continuous)
                                 .stroke(Color(red: 0.15, green: 0.16, blue: 0.20), lineWidth: 1.0)
                         }
                         .shadow(color: Color.black.opacity(0.60), radius: 12, y: 4)
-                        .animation(.easeInOut(duration: 0.25), value: viewModel.captureMode.isVideo)
                         // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
                         .overlay(alignment: .topLeading) {
                             if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating {

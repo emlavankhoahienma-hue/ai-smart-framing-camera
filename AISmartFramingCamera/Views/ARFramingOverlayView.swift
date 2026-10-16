@@ -37,8 +37,8 @@ public struct ARFramingOverlayView: View {
                         .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive)
                 }
 
-                // 2. Detected Faces & Multi-Object Preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm)
-                if viewModel.showDetectionBoxes {
+                // 2. Detected Faces & Multi-Object Preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm và ở chế độ Ảnh)
+                if viewModel.showDetectionBoxes && !viewModel.captureMode.isVideo {
                     let unpinnedEntities = viewModel.liveDetectedEntities.filter { entity in
                         guard let target = viewModel.currentTargetPoint else { return true }
                         return !entity.rect.insetBy(dx: -0.04, dy: -0.04).contains(target)

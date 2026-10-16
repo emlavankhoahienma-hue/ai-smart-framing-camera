@@ -18,6 +18,8 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var focusPeakingColor: FocusPeakingColor = .green
     var isRecordingVideo = false
     var showHistogramInViewfinder = true
+    var isVideo = false
+    var isAIVideoDirectorActive = false
 }
 
 /// Owns frame-rate work on AVFoundation's serial sample-buffer queue. UI state is
@@ -69,9 +71,40 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         let snapshot = configuration
         stateLock.unlock()
 
-        // Zero-Cost Gate: Khi đang ngủ đông hoặc đang quay video,
+        // Zero-Cost Gate 1: Khi đang ngủ đông hoặc đang quay video,
         // lập tức thoát ngay mà không chạy bất kỳ tác vụ AI Vision, YOLO, Optical Flow, Histogram hay Peaking nào!
         guard !snapshot.isHibernating && !snapshot.isRecordingVideo else { return }
+
+        // Zero-Cost Gate 2: Trong chế độ Video chuẩn (không bật AI Video Director),
+        // TUYỆT ĐỐI KHÔNG nạp VisionFramingEngine, YOLOv12 hay tracking để đạt 60 FPS cứng, hoàn toàn không giật lag!
+        if snapshot.isVideo && !snapshot.isAIVideoDirectorActive {
+            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+            stateLock.lock()
+            latestPixelBuffer = pixelBuffer
+            stateLock.unlock()
+
+            guard !snapshot.isSettingsVisible else { return }
+            let now = CACurrentMediaTime()
+
+            if snapshot.isFocusPeakingEnabled, now - lastFocusPeakingComputeTime >= 0.05 {
+                lastFocusPeakingComputeTime = now
+                let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+                FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: snapshot.focusPeakingColor) { [weak self] cgImage in
+                    DispatchQueue.main.async {
+                        self?.owner?.focusPeakingCGImage = cgImage
+                    }
+                }
+            }
+
+            if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.10 {
+                lastHistogramComputeTime = now
+                let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
+                DispatchQueue.main.async { [weak self] in
+                    self?.owner?.histogramBars = bars
+                }
+            }
+            return
+        }
 
         let frame = TrackingFrameContext.read(sampleBuffer,
             zoom: SpatialTrackingEngine.shared.currentDisplayZoom)
@@ -224,6 +257,14 @@ public final class CameraViewModel: ObservableObject {
                 proVideoService.resetToFullAuto()
             } else if captureMode == .proVideo {
                 proVideoService.syncHardwareCapabilities()
+            }
+            updateFrameProcessingConfiguration()
+            if let connection = previewLayer?.connection {
+                if #available(iOS 17.0, *), connection.isVideoRotationAngleSupported(90) {
+                    connection.videoRotationAngle = 90
+                } else if connection.isVideoOrientationSupported {
+                    connection.videoOrientation = .portrait
+                }
             }
         }
     }
@@ -547,7 +588,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var aiSuggestedZoom: CGFloat? = nil
 
     // MARK: - AI Video Cinematography Director State (Cloud OpenRouter)
-    @Published public var isAIVideoDirectorActive: Bool = false
+    @Published public var isAIVideoDirectorActive: Bool = false {
+        didSet { updateFrameProcessingConfiguration() }
+    }
     @Published public var isAIVideoDirectorAnalyzing: Bool = false
     @Published public var activeVideoGuidance: AIVideoDirectorGuidance? = nil
     private var videoDirectorGeneration: UInt64 = 0
@@ -957,7 +1000,9 @@ public final class CameraViewModel: ObservableObject {
                 isFocusPeakingEnabled: isFocusPeakingEnabled,
                 focusPeakingColor: focusPeakingColor,
                 isRecordingVideo: isRecordingVideo,
-                showHistogramInViewfinder: showHistogramInViewfinder
+                showHistogramInViewfinder: showHistogramInViewfinder,
+                isVideo: captureMode.isVideo,
+                isAIVideoDirectorActive: isAIVideoDirectorActive
             )
         )
     }
