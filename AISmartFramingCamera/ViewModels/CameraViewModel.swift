@@ -341,7 +341,8 @@ public final class CameraViewModel: ObservableObject {
     @Published public var displayZoom: CGFloat = 1.0
     @Published public var selectedZoomPreset: CGFloat = 1.0
     public var availableDisplayZoomOptions: [CGFloat] {
-        return [1.0, 2.0, 3.0]
+        let opts = cameraService.availableDisplayZoomOptions
+        return opts.isEmpty ? [1.0, 2.0, 3.0] : opts
     }
     @Published public var activeZoomHUDText: String? = nil
     @Published public var isZoomHUDVisible: Bool = false
@@ -656,10 +657,12 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
+    @Published public var windowedZoomNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
     @Published public var isAIWindowedFocalRecommended: Bool = false
     @Published public var lastRecordedVideoWindowedFocal: Double? = nil
     @Published public var lastRecordedVideoWindowedAspect: WindowedZoomAspectRatio? = nil
     @Published public var lastRecordedVideoWindowedBaseZoom: CGFloat = 1.0
+    @Published public var lastRecordedVideoWindowedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
 
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
@@ -2820,68 +2823,32 @@ public final class CameraViewModel: ObservableObject {
         let focal = windowedZoomFocalLength
         let requestedDisplayZoom = focal / 24.0
         let targetDisplayZoom: CGFloat
-        let targetDeviceZoom: CGFloat
         let teleOpticalDisplay = cameraService.telephotoOpticalDisplayZoom ?? 2.0
 
         if cameraService.hasPhysicalTelephotoLens && requestedDisplayZoom >= (teleOpticalDisplay - 0.1) {
             // Tieu cu tuong duong telephoto quang hoc: kich hoat truc tiep cam Telephoto vat ly
             targetDisplayZoom = teleOpticalDisplay
-            targetDeviceZoom = cameraService.telephotoThresholdDeviceZoom ?? cameraService.convertDisplayZoomToDeviceZoom(teleOpticalDisplay)
         } else {
             // Tieu cu goc rong: Dung cam Chinh Wide
             targetDisplayZoom = 1.0
-            targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(1.0)
         }
 
-        if abs(cameraService.currentZoom - targetDeviceZoom) > 0.05 {
-            cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: 4.5)
-        }
+        cameraService.applyDisplayZoomWithPhysicalLensSwitching(targetDisplayZoom, smooth: true, rate: 4.5)
         presentZoomChangeHUD(displayZoom: targetDisplayZoom)
     }
 
     private func requestManualZoom(_ displayZoomVal: CGFloat, smooth: Bool = false) {
-        let deviceZoom: CGFloat
-        let teleOpticalDisplay = cameraService.telephotoOpticalDisplayZoom ?? 2.0
-        if displayZoomVal >= (teleOpticalDisplay - 0.05),
-           let teleDevice = cameraService.telephotoOpticalDeviceZoom,
-           cameraService.hasPhysicalTelephotoLens {
-            // Khi nguoi dung chon zoom bang hoac tren nguong telephoto quang hoc:
-            // Kich hoat dut khoat cam Telephoto vat ly bang threshold vuot nhe qua switchover
-            let threshold = cameraService.telephotoThresholdDeviceZoom ?? teleDevice
-            if displayZoomVal <= (teleOpticalDisplay + 0.05) {
-                deviceZoom = threshold
-            } else {
-                let standardDev = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
-                deviceZoom = max(threshold, standardDev)
-            }
-        } else {
-            deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
-        }
         presentZoomChangeHUD(displayZoom: displayZoomVal)
-
         let requestID = UUID()
         manualZoomRequestID = requestID
-        pendingManualZoomTarget = deviceZoom
         manualZoomSettledAt = CACurrentMediaTime()
-        if smooth {
-            cameraService.smoothZoomFactor(to: deviceZoom, rate: 4.5)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                guard let self, self.manualZoomRequestID == requestID else { return }
-                self.manualZoomRequestID = nil
-                self.pendingManualZoomTarget = nil
-                self.manualZoomSettledAt = CACurrentMediaTime()
-                self.zoomVerified = true
-                self.alignmentGate.reset()
-            }
-        } else {
-            cameraService.setZoomFactor(deviceZoom) { [weak self] actualZoom in
-                guard let self, self.manualZoomRequestID == requestID else { return }
-                self.manualZoomRequestID = nil
-                self.pendingManualZoomTarget = nil
-                self.manualZoomSettledAt = CACurrentMediaTime()
-                self.zoomVerified = actualZoom != nil
-                self.alignmentGate.reset()
-            }
+        cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: smooth, rate: 4.5) { [weak self] actualDeviceZoom in
+            guard let self, self.manualZoomRequestID == requestID else { return }
+            self.manualZoomRequestID = nil
+            self.pendingManualZoomTarget = nil
+            self.manualZoomSettledAt = CACurrentMediaTime()
+            self.zoomVerified = actualDeviceZoom != nil
+            self.alignmentGate.reset()
         }
     }
 
@@ -2897,26 +2864,11 @@ public final class CameraViewModel: ObservableObject {
         guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
         selectedZoomPreset = resolveClosestZoomPreset(for: displayZoomVal)
-        let deviceZoom: CGFloat
-        let teleOpticalDisplay = cameraService.telephotoOpticalDisplayZoom ?? 2.0
-        if displayZoomVal >= (teleOpticalDisplay - 0.05),
-           let teleDevice = cameraService.telephotoOpticalDeviceZoom,
-           cameraService.hasPhysicalTelephotoLens {
-            let threshold = cameraService.telephotoThresholdDeviceZoom ?? teleDevice
-            if displayZoomVal <= (teleOpticalDisplay + 0.05) {
-                deviceZoom = threshold
-            } else {
-                let standardDev = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
-                deviceZoom = max(threshold, standardDev)
-            }
-        } else {
-            deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(displayZoomVal)
-        }
         let now = CACurrentMediaTime()
-        if now - lastContinuousZoomTime >= 0.025 || abs(deviceZoom - lastContinuousAppliedZoom) > 0.08 {
+        if now - lastContinuousZoomTime >= 0.025 || abs(displayZoomVal - lastContinuousAppliedZoom) > 0.08 {
             lastContinuousZoomTime = now
-            lastContinuousAppliedZoom = deviceZoom
-            cameraService.setZoomFactor(deviceZoom)
+            lastContinuousAppliedZoom = displayZoomVal
+            cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: false)
         }
     }
 
@@ -2929,24 +2881,9 @@ public final class CameraViewModel: ObservableObject {
         guard finalDisplayZoom.isFinite else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
         selectedZoomPreset = resolveClosestZoomPreset(for: finalDisplayZoom)
-        let teleOpticalDisplay = cameraService.telephotoOpticalDisplayZoom ?? 2.0
-        let deviceZoom: CGFloat
-        if finalDisplayZoom >= (teleOpticalDisplay - 0.05),
-           let teleDevice = cameraService.telephotoOpticalDeviceZoom,
-           cameraService.hasPhysicalTelephotoLens {
-            let threshold = cameraService.telephotoThresholdDeviceZoom ?? teleDevice
-            if finalDisplayZoom <= (teleOpticalDisplay + 0.05) {
-                deviceZoom = threshold
-            } else {
-                let standardDev = cameraService.convertDisplayZoomToDeviceZoom(finalDisplayZoom)
-                deviceZoom = max(threshold, standardDev)
-            }
-        } else {
-            deviceZoom = cameraService.convertDisplayZoomToDeviceZoom(finalDisplayZoom)
-        }
-        lastContinuousAppliedZoom = deviceZoom
+        lastContinuousAppliedZoom = finalDisplayZoom
         isPinchingZoom = false
-        requestManualZoom(finalDisplayZoom)
+        requestManualZoom(finalDisplayZoom, smooth: true)
         haptics.triggerSelectionChange()
     }
 
@@ -3106,10 +3043,12 @@ public final class CameraViewModel: ObservableObject {
                 lastRecordedVideoWindowedFocal = windowedZoomFocalLength
                 lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
                 lastRecordedVideoWindowedBaseZoom = displayZoom
+                lastRecordedVideoWindowedCenter = windowedZoomNormalizedCenter
             } else {
                 lastRecordedVideoWindowedFocal = nil
                 lastRecordedVideoWindowedAspect = nil
                 lastRecordedVideoWindowedBaseZoom = 1.0
+                lastRecordedVideoWindowedCenter = CGPoint(x: 0.5, y: 0.5)
             }
             haptics.triggerShutterClick()
             cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
@@ -3812,12 +3751,21 @@ extension CameraViewModel: CameraServiceDelegate {
             if isWindowed {
                 let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: windowBaseZoom)
                 if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
+                    let normCenter = self.windowedZoomNormalizedCenter
                     let origW = CGFloat(photo.width)
                     let origH = CGFloat(photo.height)
                     let cropW = round(origW * fractions.widthFraction)
                     let cropH = round(origH * fractions.heightFraction)
-                    let cropX = round((origW - cropW) / 2.0)
-                    let cropY = round((origH - cropH) / 2.0)
+                    let centerX = origW * normCenter.x
+                    let centerY = origH * normCenter.y
+                    let minCenterX = cropW / 2.0
+                    let maxCenterX = origW - cropW / 2.0
+                    let minCenterY = cropH / 2.0
+                    let maxCenterY = origH - cropH / 2.0
+                    let clampedCenterX = max(minCenterX, min(centerX, maxCenterX))
+                    let clampedCenterY = max(minCenterY, min(centerY, maxCenterY))
+                    let cropX = round(clampedCenterX - cropW / 2.0)
+                    let cropY = round(clampedCenterY - cropH / 2.0)
                     let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
                     effectiveSourcePhoto = photo.cropping(to: cropRect) ?? photo
                     CameraLogger.info("Windowed Zoom Crop: \(photo.width)x\(photo.height) -> \(effectiveSourcePhoto.width)x\(effectiveSourcePhoto.height) (\(Int(windowFocal))mm, \(windowAspect.rawValue))", category: .capture)

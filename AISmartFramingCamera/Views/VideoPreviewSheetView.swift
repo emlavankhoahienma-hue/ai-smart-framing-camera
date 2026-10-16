@@ -140,6 +140,9 @@ public struct VideoPreviewSheetView: View {
             )
             .onAppear {
                 player = AVPlayer(url: videoURL)
+                if let focal = viewModel.lastRecordedVideoWindowedFocal, focal > 24.5 {
+                    applyWindowedZoomCrop()
+                }
             }
             .onDisappear {
                 player?.pause()
@@ -156,13 +159,20 @@ public struct VideoPreviewSheetView: View {
         let asset = AVAsset(url: processedVideoURL ?? videoURL)
 
         let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom)
+        let normCenter = viewModel.lastRecordedVideoWindowedCenter
         let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
             let source = request.sourceImage.clampedToExtent()
             let origExtent = request.sourceImage.extent
             let cropW = origExtent.width * fractions.widthFraction
             let cropH = origExtent.height * fractions.heightFraction
-            let cropX = origExtent.origin.x + (origExtent.width - cropW) / 2.0
-            let cropY = origExtent.origin.y + (origExtent.height - cropH) / 2.0
+            let ciCenterX = origExtent.origin.x + origExtent.width * normCenter.x
+            let ciCenterY = origExtent.origin.y + origExtent.height * (1.0 - normCenter.y)
+            let minCIX = origExtent.origin.x + cropW / 2.0
+            let maxCIX = origExtent.origin.x + origExtent.width - cropW / 2.0
+            let minCIY = origExtent.origin.y + cropH / 2.0
+            let maxCIY = origExtent.origin.y + origExtent.height - cropH / 2.0
+            let cropX = max(minCIX, min(ciCenterX, maxCIX)) - cropW / 2.0
+            let cropY = max(minCIY, min(ciCenterY, maxCIY)) - cropH / 2.0
             let cropped = source.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
             request.finish(with: cropped, context: nil)
         })
@@ -221,11 +231,18 @@ public struct VideoPreviewSheetView: View {
             if let wf = windowFocal, let wa = windowAspect, wf > 24.5 {
                 let fractions = wa.windowFractions(focalLength: wf, baseOpticalZoom: windowBaseZoom)
                 if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
+                    let normCenter = self.viewModel.lastRecordedVideoWindowedCenter
                     let origExtent = request.sourceImage.extent
                     let cropW = origExtent.width * fractions.widthFraction
                     let cropH = origExtent.height * fractions.heightFraction
-                    let cropX = origExtent.origin.x + (origExtent.width - cropW) / 2.0
-                    let cropY = origExtent.origin.y + (origExtent.height - cropH) / 2.0
+                    let ciCenterX = origExtent.origin.x + origExtent.width * normCenter.x
+                    let ciCenterY = origExtent.origin.y + origExtent.height * (1.0 - normCenter.y)
+                    let minCIX = origExtent.origin.x + cropW / 2.0
+                    let maxCIX = origExtent.origin.x + origExtent.width - cropW / 2.0
+                    let minCIY = origExtent.origin.y + cropH / 2.0
+                    let maxCIY = origExtent.origin.y + origExtent.height - cropH / 2.0
+                    let cropX = max(minCIX, min(ciCenterX, maxCIX)) - cropW / 2.0
+                    let cropY = max(minCIY, min(ciCenterY, maxCIY)) - cropH / 2.0
                     output = output.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
                 }
             } else {

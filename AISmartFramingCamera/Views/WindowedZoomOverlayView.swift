@@ -27,13 +27,24 @@ public struct WindowedZoomOverlayView: View {
         viewModel.windowedZoomFocalLength <= 24.5
     }
 
+    @State private var dragStartNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    @State private var isDraggingWindow: Bool = false
+
     // MARK: - Window Dimensions Calculation
     private var windowRect: CGRect {
         let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength, baseOpticalZoom: viewModel.displayZoom)
         let w = containerSize.width * fractions.widthFraction
         let h = containerSize.height * fractions.heightFraction
-        let x = (containerSize.width - w) / 2.0
-        let y = (containerSize.height - h) / 2.0
+        let halfW = w / 2.0
+        let halfH = h / 2.0
+        let minCenterX = halfW
+        let maxCenterX = max(halfW, containerSize.width - halfW)
+        let minCenterY = halfH
+        let maxCenterY = max(halfH, containerSize.height - halfH)
+        let centerX = max(minCenterX, min(containerSize.width * viewModel.windowedZoomNormalizedCenter.x, maxCenterX))
+        let centerY = max(minCenterY, min(containerSize.height * viewModel.windowedZoomNormalizedCenter.y, maxCenterY))
+        let x = centerX - halfW
+        let y = centerY - halfH
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
@@ -48,20 +59,60 @@ public struct WindowedZoomOverlayView: View {
                     .transition(.opacity)
             }
 
-            // 2. Khung ngam chinh voi vien bo tron nhe 14pt & so mm tren dinh
+            // 2. Khung ngam chinh voi vien bo tron nhe 14pt, tam keo va so mm tren dinh
             if !isFull {
                 ZStack(alignment: .top) {
                     RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
+                        .stroke(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.85), lineWidth: isDraggingWindow ? 2.0 : 1.5)
+                        .background(Color.white.opacity(0.001))
                         .frame(width: windowRect.width, height: windowRect.height)
+
+                    // Drag Indicator & Optical Crosshair
+                    ZStack {
+                        Circle()
+                            .stroke(Color.white.opacity(0.45), lineWidth: 1)
+                            .frame(width: 14, height: 14)
+                        Circle()
+                            .fill(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.65))
+                            .frame(width: 4, height: 4)
+                    }
+                    .position(x: windowRect.width / 2.0, y: windowRect.height / 2.0)
 
                     Text(viewModel.displayZoom >= 1.95 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE OPTICAL" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundColor(viewModel.isAIWindowedFocalRecommended ? AlignTheme.electricCyan : .white)
+                        .foregroundColor(viewModel.isAIWindowedFocalRecommended || isDraggingWindow ? AlignTheme.electricCyan : .white)
                         .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
                         .offset(y: -22)
                 }
                 .position(x: windowRect.midX, y: windowRect.midY)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 2, coordinateSpace: .named("windowed_container"))
+                        .onChanged { value in
+                            if !isDraggingWindow {
+                                isDraggingWindow = true
+                                dragStartNormalizedCenter = viewModel.windowedZoomNormalizedCenter
+                            }
+                            let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength, baseOpticalZoom: viewModel.displayZoom)
+                            let halfWFrac = fractions.widthFraction / 2.0
+                            let halfHFrac = fractions.heightFraction / 2.0
+                            let rawX = value.location.x / containerSize.width
+                            let rawY = value.location.y / containerSize.height
+                            let clampedX = max(halfWFrac, min(rawX, 1.0 - halfWFrac))
+                            let clampedY = max(halfHFrac, min(rawY, 1.0 - halfHFrac))
+                            viewModel.windowedZoomNormalizedCenter = CGPoint(x: clampedX, y: clampedY)
+                        }
+                        .onEnded { _ in
+                            isDraggingWindow = false
+                            viewModel.haptics.triggerSelectionChange()
+                        }
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        viewModel.windowedZoomNormalizedCenter = CGPoint(x: 0.5, y: 0.5)
+                    }
+                    viewModel.haptics.triggerSelectionChange()
+                }
                 .transition(.opacity)
             }
 
@@ -73,6 +124,7 @@ public struct WindowedZoomOverlayView: View {
             }
         }
         .frame(width: containerSize.width, height: containerSize.height)
+        .coordinateSpace(name: "windowed_container")
         .contentShape(Rectangle())
         .gesture(
             MagnificationGesture()
