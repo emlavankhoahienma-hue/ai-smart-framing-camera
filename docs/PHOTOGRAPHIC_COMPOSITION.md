@@ -109,8 +109,9 @@ The HUD renders a single hero/group bracket with restrained champagne accents,
 thin contrast-backed strokes and a damped spring on detection rectangles. Once
 a target is pinned, incidental detection boxes disappear. Projected target
 position, docking, hit testing and the transaction disabling position animation
-remain byte-for-byte equivalent after newline normalization. The reticle's
-stroke styling changes without adding lag or a new filter to target motion.
+remain byte-for-byte equivalent after newline normalization. The complete reticle
+view is restored to its original circle, central crosshair, colors, dimensions
+and pulse, as requested. Its source is protected by the baseline hash manifest.
 
 ## Verification
 
