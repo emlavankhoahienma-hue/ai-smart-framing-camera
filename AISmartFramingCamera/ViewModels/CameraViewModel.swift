@@ -3285,17 +3285,19 @@ public final class CameraViewModel: ObservableObject {
         let now = CACurrentMediaTime()
         guard captureMode != .proVideo || proVideoService.isAutoFocus else { return }
         guard now >= manualFocusLockUntil, !isAEAFLocked else { return }
-        guard now - lastForcedResetTime >= 1.5 else {
-            CameraLogger.info("Bỏ qua subject area change - vừa reset gần đây, tránh vòng lặp phơi sáng", category: .general)
+        guard now - lastForcedResetTime >= 1.2 else {
             return
         }
         lastForcedResetTime = now
 
-        // Cảnh vật hoặc chủ thể di chuyển -> Kích hoạt lấy nét lại ngay lập tức
+        // Cảnh vật hoặc chủ thể di chuyển -> Tự động trả về tâm và lấy nét liên tục chuẩn Apple Camera
         if showTargetCircle, let target = currentTargetPoint {
             applyFocusAndExposure(to: target, source: .aiTarget, force: true)
         } else {
-            applyFocusAndExposure(to: lastFocusPoint, source: .center, force: true)
+            lastFocusPoint = CGPoint(x: 0.5, y: 0.5)
+            cameraService.resetFocusAndExposureToCenter()
+            activeFocusSquarePoint = nil
+            isShowingSunSlider = false
         }
     }
 
@@ -3462,7 +3464,9 @@ public final class CameraViewModel: ObservableObject {
             lastFocusPoint = point
             let devicePoint = CameraService.convertUIPointToDevicePoint(point)
             cameraService.setSmartFocusAndExposure(at: devicePoint)
-            triggerFocusSquareAnimation(at: point)
+            if !captureMode.isVideo && !isRecordingVideo {
+                triggerFocusSquareAnimation(at: point)
+            }
         }
     }
 

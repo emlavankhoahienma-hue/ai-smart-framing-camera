@@ -184,12 +184,11 @@ public final class CameraService: NSObject {
     // Callback thong bao do phan giai va FPS video phan cung
     public var onActiveVideoFormatChanged: ((String) -> Void)?
 
-    public func isVideoFormatSupportedByHardware(_ option: VideoFormatOption) -> Bool {
-        guard let camera = activeCamera else { return false }
+    public static func findCandidateVideoFormats(for camera: AVCaptureDevice, option: VideoFormatOption) -> [AVCaptureDevice.Format] {
         let targetWidth = option.width
         let targetHeight = option.height
         let targetFPS = option.fps
-        return camera.formats.contains { format in
+        return camera.formats.filter { format in
             let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             let maxDim = max(dims.width, dims.height)
             let minDim = min(dims.width, dims.height)
@@ -197,9 +196,22 @@ public final class CameraService: NSObject {
                              (minDim >= targetHeight && maxDim >= targetWidth && targetWidth >= 3840)
             guard matchesRes else { return false }
             return format.videoSupportedFrameRateRanges.contains { range in
-                range.minFrameRate <= targetFPS && targetFPS <= range.maxFrameRate
+                range.minFrameRate <= (targetFPS + 1.5) && range.maxFrameRate >= (targetFPS - 1.5)
             }
         }
+    }
+
+    public func isVideoFormatSupportedByHardware(_ option: VideoFormatOption) -> Bool {
+        if let camera = activeCamera {
+            let candidates = Self.findCandidateVideoFormats(for: camera, option: option)
+            if !candidates.isEmpty { return true }
+        }
+        if currentCameraPosition == .back,
+           let wideCam = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) {
+            let wideCandidates = Self.findCandidateVideoFormats(for: wideCam, option: option)
+            if !wideCandidates.isEmpty { return true }
+        }
+        return false
     }
 
     public var supportedVideoFormatOptions: [VideoFormatOption] {
@@ -263,6 +275,7 @@ public final class CameraService: NSObject {
     }
 
     private func reportRecordingFailure(_ error: Error) {
+        self.videoDataOutput.connection(with: .video)?.isEnabled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.delegate?.cameraService(self, didFailRecordingWithError: error)
@@ -582,10 +595,14 @@ public final class CameraService: NSObject {
 
                 let subjectAreaObserver = NotificationCenter.default.addObserver(
                     forName: AVCaptureDevice.subjectAreaDidChangeNotification,
-                    object: camera,
+                    object: nil,
                     queue: .main
-                ) { [weak self] _ in
-                    self?.onSubjectAreaDidChange?()
+                ) { [weak self] notification in
+                    guard let self = self else { return }
+                    if let device = notification.object as? AVCaptureDevice,
+                       device == self.activeCamera {
+                        self.onSubjectAreaDidChange?()
+                    }
                 }
 
                 // Session Interruption Observers (Tự động phục hồi camera preview khi hết gián đoạn)
@@ -726,6 +743,16 @@ public final class CameraService: NSObject {
                 if targetPosition == .back {
                     self.configureConstituentDeviceSwitching(for: newCamera)
                 }
+                if newCamera.isFocusModeSupported(.continuousAutoFocus) {
+                    newCamera.focusMode = .continuousAutoFocus
+                }
+                if newCamera.isExposureModeSupported(.continuousAutoExposure) {
+                    newCamera.exposureMode = .continuousAutoExposure
+                }
+                if newCamera.isSmoothAutoFocusSupported {
+                    newCamera.isSmoothAutoFocusEnabled = true
+                }
+                newCamera.isSubjectAreaChangeMonitoringEnabled = true
                 newCamera.unlockForConfiguration()
                 if self.captureSession.canAddInput(newInput) {
                     self.captureSession.addInput(newInput)
@@ -1000,17 +1027,58 @@ public final class CameraService: NSObject {
                     x: max(0.01, min(0.99, devicePoint.x)),
                     y: max(0.01, min(0.99, devicePoint.y))
                 )
-                if camera.isFocusPointOfInterestSupported && camera.isFocusModeSupported(.autoFocus) {
+                if camera.isFocusPointOfInterestSupported {
                     camera.focusPointOfInterest = clampedPoint
+                }
+                if camera.isFocusModeSupported(.continuousAutoFocus) {
+                    camera.focusMode = .continuousAutoFocus
+                } else if camera.isFocusModeSupported(.autoFocus) {
                     camera.focusMode = .autoFocus
                 }
-                if camera.isExposurePointOfInterestSupported && camera.isExposureModeSupported(.autoExpose) {
+                if camera.isExposurePointOfInterestSupported {
                     camera.exposurePointOfInterest = clampedPoint
+                }
+                if camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposureMode = .continuousAutoExposure
+                } else if camera.isExposureModeSupported(.autoExpose) {
                     camera.exposureMode = .autoExpose
                 }
+                if camera.isSmoothAutoFocusSupported {
+                    camera.isSmoothAutoFocusEnabled = true
+                }
+                camera.isSubjectAreaChangeMonitoringEnabled = true
                 camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error setting focus and exposure", error: error, category: .capture)
+            }
+        }
+    }
+
+    public func resetFocusAndExposureToCenter() {
+        sessionQueue.async { [weak self] in
+            guard let self = self, let camera = self.activeCamera else { return }
+            do {
+                try camera.lockForConfiguration()
+                let center = CGPoint(x: 0.5, y: 0.5)
+                if camera.isFocusPointOfInterestSupported {
+                    camera.focusPointOfInterest = center
+                }
+                if camera.isFocusModeSupported(.continuousAutoFocus) {
+                    camera.focusMode = .continuousAutoFocus
+                }
+                if camera.isExposurePointOfInterestSupported {
+                    camera.exposurePointOfInterest = center
+                }
+                if camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposureMode = .continuousAutoExposure
+                }
+                if camera.isSmoothAutoFocusSupported {
+                    camera.isSmoothAutoFocusEnabled = true
+                }
+                camera.isSubjectAreaChangeMonitoringEnabled = true
+                camera.unlockForConfiguration()
+            } catch {
+                CameraLogger.error("CameraService: Error resetting focus/exposure to center", error: error, category: .capture)
             }
         }
     }
@@ -1118,7 +1186,7 @@ public final class CameraService: NSObject {
         let effectiveOption = appliedVideoFormatOption ?? selectedVideoFormatOption
         let targetFPS = effectiveOption.fps
         let matchingRange = camera.activeFormat.videoSupportedFrameRateRanges.first(where: {
-            $0.minFrameRate <= targetFPS && targetFPS <= $0.maxFrameRate
+            $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
         })
         guard let validRange = matchingRange else {
             CameraLogger.error("CameraService: Active format khong ho tro target FPS \(targetFPS)", category: .capture)
@@ -1132,9 +1200,16 @@ public final class CameraService: NSObject {
             let frameDuration = validRange.minFrameDuration
             camera.activeVideoMinFrameDuration = frameDuration
             camera.activeVideoMaxFrameDuration = frameDuration
+            if camera.isFocusModeSupported(.continuousAutoFocus) {
+                camera.focusMode = .continuousAutoFocus
+            }
+            if camera.isExposureModeSupported(.continuousAutoExposure) {
+                camera.exposureMode = .continuousAutoExposure
+            }
             if camera.isSmoothAutoFocusSupported {
                 camera.isSmoothAutoFocusEnabled = true
             }
+            camera.isSubjectAreaChangeMonitoringEnabled = true
             if camera.isLowLightBoostSupported {
                 camera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
@@ -1215,29 +1290,91 @@ public final class CameraService: NSObject {
         }
     }
 
-    private func findCandidateVideoFormats(camera: AVCaptureDevice, option: VideoFormatOption) -> [AVCaptureDevice.Format] {
-        let targetWidth = option.width
-        let targetHeight = option.height
-        let targetFPS = option.fps
-        return camera.formats.filter { format in
-            let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-            let maxDim = max(dims.width, dims.height)
-            let minDim = min(dims.width, dims.height)
-            let matchesRes = (minDim == targetHeight && maxDim == targetWidth) ||
-                             (minDim >= targetHeight && maxDim >= targetWidth && targetWidth >= 3840)
-            guard matchesRes else { return false }
-            return format.videoSupportedFrameRateRanges.contains { range in
-                range.minFrameRate <= targetFPS && targetFPS <= range.maxFrameRate
+    @discardableResult
+    private func switchInputDeviceInternal(to newCamera: AVCaptureDevice) -> Bool {
+        guard self.recordingState == .idle, !self.movieFileOutput.isRecording else { return false }
+        if self.activeCamera == newCamera { return true }
+        do {
+            let newInput = try AVCaptureDeviceInput(device: newCamera)
+            captureSession.beginConfiguration()
+            if let oldInput = self.videoDeviceInput {
+                captureSession.removeInput(oldInput)
             }
+            guard captureSession.canAddInput(newInput) else {
+                if let oldInput = self.videoDeviceInput {
+                    captureSession.addInput(oldInput)
+                }
+                captureSession.commitConfiguration()
+                return false
+            }
+            captureSession.addInput(newInput)
+            self.videoDeviceInput = newInput
+            self.activeCamera = newCamera
+            self.minZoom = newCamera.minAvailableVideoZoomFactor
+            self.maxZoom = min(newCamera.maxAvailableVideoZoomFactor, 10.0)
+
+            self.zoomObservation?.invalidate()
+            self.zoomObservation = newCamera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
+                guard let newValue = change.newValue else { return }
+                DispatchQueue.main.async {
+                    self?.onLiveZoomFactorChanged?(newValue)
+                }
+            }
+
+            if let connection = videoDataOutput.connection(with: .video) {
+                configureTrackingConnection(connection)
+                if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+            }
+            if let connection = movieFileOutput.connection(with: .video) {
+                if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+                if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
+            }
+
+            try newCamera.lockForConfiguration()
+            if newCamera.isFocusModeSupported(.continuousAutoFocus) {
+                newCamera.focusMode = .continuousAutoFocus
+            }
+            if newCamera.isExposureModeSupported(.continuousAutoExposure) {
+                newCamera.exposureMode = .continuousAutoExposure
+            }
+            if newCamera.isSmoothAutoFocusSupported {
+                newCamera.isSmoothAutoFocusEnabled = true
+            }
+            newCamera.isSubjectAreaChangeMonitoringEnabled = true
+            newCamera.unlockForConfiguration()
+
+            captureSession.commitConfiguration()
+            return true
+        } catch {
+            CameraLogger.error("CameraService: Khong the chuyen sang thiet bi \(newCamera.localizedName)", error: error, category: .capture)
+            return false
         }
     }
 
     private func configureVideoFormatInternal(option: VideoFormatOption) {
         appliedVideoFormatOption = nil
-        guard let camera = self.activeCamera else { return }
+        guard let currentCamera = self.activeCamera else { return }
 
+        var targetCamera = currentCamera
         var effectiveOption = option
-        var candidates = findCandidateVideoFormats(camera: camera, option: effectiveOption)
+        var candidates = Self.findCandidateVideoFormats(for: targetCamera, option: effectiveOption)
+
+        // Neu format khong ho tro tren camera hien tai (nhu 4K60 tren DualCamera cua iPhone XS),
+        // nhung camera goc rong vat ly (.builtInWideAngleCamera) co ho tro:
+        // Tu dong chuyen input sang camera goc rong vat ly de quay 4K 60FPS muot ma nhat!
+        if candidates.isEmpty && currentCameraPosition == .back {
+            if let wideCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+               wideCamera != targetCamera {
+                let wideCandidates = Self.findCandidateVideoFormats(for: wideCamera, option: effectiveOption)
+                if !wideCandidates.isEmpty {
+                    CameraLogger.info("CameraService: Chuyen sang camera goc rong vat ly (.builtInWideAngleCamera) de ho tro \(effectiveOption.rawValue) tren iPhone XS", category: .capture)
+                    if switchInputDeviceInternal(to: wideCamera) {
+                        targetCamera = wideCamera
+                        candidates = wideCandidates
+                    }
+                }
+            }
+        }
 
         // Tu dong tim format tot nhat duoc phan cung thiet bi thuc te ho tro
         if candidates.isEmpty {
@@ -1251,7 +1388,7 @@ public final class CameraService: NSObject {
             if let fallback = fallbackOrder.first(where: { isVideoFormatSupportedByHardware($0) }) {
                 CameraLogger.warning("CameraService: Phan cung khong ho tro \(option.rawValue), tu dong chuyen fallback sang \(fallback.rawValue)", category: .capture)
                 effectiveOption = fallback
-                candidates = findCandidateVideoFormats(camera: camera, option: fallback)
+                candidates = Self.findCandidateVideoFormats(for: targetCamera, option: fallback)
                 self.selectedVideoFormatOption = fallback
                 DispatchQueue.main.async { [weak self] in
                     self?.onSelectedVideoFormatFallback?(fallback)
@@ -1273,8 +1410,8 @@ public final class CameraService: NSObject {
 
             let maxFPS1 = f1.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0
             let maxFPS2 = f2.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0
-            if (maxFPS1 >= targetFPS) != (maxFPS2 >= targetFPS) {
-                return maxFPS1 >= targetFPS
+            if (maxFPS1 >= (targetFPS - 1.5)) != (maxFPS2 >= (targetFPS - 1.5)) {
+                return maxFPS1 >= (targetFPS - 1.5)
             }
 
             let sub1 = CMFormatDescriptionGetMediaSubType(f1.formatDescription)
@@ -1292,35 +1429,42 @@ public final class CameraService: NSObject {
         }
 
         do {
-            try camera.lockForConfiguration()
+            try targetCamera.lockForConfiguration()
             self.captureSession.beginConfiguration()
             self.captureSession.sessionPreset = .inputPriority
-            camera.activeFormat = targetFormat
+            targetCamera.activeFormat = targetFormat
 
             if let videoMaxPhotoDim = targetFormat.supportedMaxPhotoDimensions.first {
                 self.photoOutput.maxPhotoDimensions = videoMaxPhotoDim
             }
 
             let matchingRange = targetFormat.videoSupportedFrameRateRanges.first(where: {
-                $0.minFrameRate <= targetFPS && targetFPS <= $0.maxFrameRate
+                $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
             })
             let frameDuration = matchingRange?.minFrameDuration ?? CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
-            camera.activeVideoMinFrameDuration = frameDuration
-            camera.activeVideoMaxFrameDuration = frameDuration
+            targetCamera.activeVideoMinFrameDuration = frameDuration
+            targetCamera.activeVideoMaxFrameDuration = frameDuration
 
-            if camera.isSmoothAutoFocusSupported {
-                camera.isSmoothAutoFocusEnabled = true
+            if targetCamera.isFocusModeSupported(.continuousAutoFocus) {
+                targetCamera.focusMode = .continuousAutoFocus
             }
+            if targetCamera.isExposureModeSupported(.continuousAutoExposure) {
+                targetCamera.exposureMode = .continuousAutoExposure
+            }
+            if targetCamera.isSmoothAutoFocusSupported {
+                targetCamera.isSmoothAutoFocusEnabled = true
+            }
+            targetCamera.isSubjectAreaChangeMonitoringEnabled = true
 
-            if camera.isLowLightBoostSupported {
-                camera.automaticallyEnablesLowLightBoostWhenAvailable = false
+            if targetCamera.isLowLightBoostSupported {
+                targetCamera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
-            if camera.activeFormat.isVideoHDRSupported {
-                camera.automaticallyAdjustsVideoHDREnabled = false
+            if targetCamera.activeFormat.isVideoHDRSupported {
+                targetCamera.automaticallyAdjustsVideoHDREnabled = false
             }
 
             self.captureSession.commitConfiguration()
-            camera.unlockForConfiguration()
+            targetCamera.unlockForConfiguration()
 
             appliedVideoFormatOption = effectiveOption
             selectedVideoFormatOption = effectiveOption
@@ -1402,6 +1546,17 @@ public final class CameraService: NSObject {
             configureVideoFormatInternal(option: selectedVideoFormatOption)
             pendingVideoFormatChange = false
         } else {
+            if currentCameraPosition == .back, activeCamera?.deviceType == .builtInWideAngleCamera {
+                let dualDiscovery = AVCaptureDevice.DiscoverySession(
+                    deviceTypes: [.builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera],
+                    mediaType: .video,
+                    position: .back
+                )
+                if let multiCam = dualDiscovery.devices.first, multiCam != activeCamera {
+                    CameraLogger.info("CameraService: Khoi phuc multi-camera cho che do Chup anh", category: .capture)
+                    _ = switchInputDeviceInternal(to: multiCam)
+                }
+            }
             if captureSession.outputs.contains(movieFileOutput) {
                 captureSession.removeOutput(movieFileOutput)
             }

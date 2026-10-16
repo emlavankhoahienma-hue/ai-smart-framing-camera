@@ -23,8 +23,21 @@ struct CameraFormFactorLayout {
         let widthLimit = max(1, availableSize.width - 12)
         let heightLimit = max(1, availableSize.height - 44 - topVerticalPadding -
                               topBottomPadding - controlDeckHeight - bottomComfort - minimumGap)
-        let height = min(widthLimit * 4.0 / 3.0, heightLimit)
-        return CGSize(width: height * 3.0 / 4.0, height: height)
+        if isVideo {
+            // Chuẩn khung hình điện ảnh 16:9 chiều dọc (9:16 = 0.5625)
+            // Khớp 100% tỷ lệ cảm biến 4K/1080P, tuyệt đối không bị vuông, không bị crop méo
+            let targetAspect: CGFloat = 9.0 / 16.0
+            var height = min(widthLimit / targetAspect, heightLimit)
+            var width = height * targetAspect
+            if width > widthLimit {
+                width = widthLimit
+                height = width / targetAspect
+            }
+            return CGSize(width: width, height: height)
+        } else {
+            let height = min(widthLimit * 4.0 / 3.0, heightLimit)
+            return CGSize(width: height * 3.0 / 4.0, height: height)
+        }
     }
     var histogramWidth: CGFloat {
         max(70, min(100, availableSize.width * 0.22))
@@ -148,6 +161,7 @@ public struct CameraMainView: View {
                         }
                         .frame(width: layout.viewfinderSize.width,
                                height: layout.viewfinderSize.height)
+                        .animation(.easeInOut(duration: 0.28), value: viewModel.captureMode.isVideo)
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 20, style: .continuous)
