@@ -174,7 +174,12 @@ public struct VideoPreviewSheetView: View {
             let cropX = max(minCIX, min(ciCenterX, maxCIX)) - cropW / 2.0
             let cropY = max(minCIY, min(ciCenterY, maxCIY)) - cropH / 2.0
             let cropped = source.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
-            request.finish(with: cropped, context: nil)
+            let translated = cropped.transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
+            let scaleX = origExtent.width / max(1.0, cropW)
+            let scaleY = origExtent.height / max(1.0, cropH)
+            let scaled = translated.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+            let finalImage = scaled.cropped(to: origExtent)
+            request.finish(with: finalImage, context: nil)
         })
 
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("cropped_\(UUID().uuidString).mov")
@@ -244,7 +249,12 @@ public struct VideoPreviewSheetView: View {
                     let maxCIY = origExtent.origin.y + origExtent.height - cropH / 2.0
                     let cropX = max(minCIX, min(ciCenterX, maxCIX)) - cropW / 2.0
                     let cropY = max(minCIY, min(ciCenterY, maxCIY)) - cropH / 2.0
-                    output = output.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
+                    let cropped = output.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
+                    let translated = cropped.transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
+                    let scaleX = origExtent.width / max(1.0, cropW)
+                    let scaleY = origExtent.height / max(1.0, cropH)
+                    let scaled = translated.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                    output = scaled.cropped(to: origExtent)
                 }
             } else {
                 output = output.cropped(to: request.sourceImage.extent)

@@ -144,10 +144,42 @@ public final class CameraService: NSObject {
     public private(set) var telephotoOpticalDisplayZoom: CGFloat? = nil
     public private(set) var telephotoOpticalDeviceZoom: CGFloat? = nil
 
-    /// Nguong zoom phan cung de kich hoat dut khoat ong kinh telephoto vat ly
+    // MARK: - Intelligent Optical Lens State Machine (Hysteresis & Google Pixel-style Switching)
+    public enum OpticalLensTarget: Equatable {
+        case wide
+        case telephoto
+    }
+
+    public private(set) var currentOpticalLensTarget: OpticalLensTarget = .wide
+
+    /// Thuat toan xac dinh muc tieu ong kinh quang hoc dua tren nguyen ly Tre Luong Nguong (Hysteresis Band)
+    /// Ngan ngua hoan toan hien tuong rung giat (chattering/hunting) khi zoom xoay quanh nguong 2.0x
+    public func resolveOpticalLensTarget(for displayZoom: CGFloat) -> OpticalLensTarget {
+        guard hasPhysicalTelephotoLens, telephotoCameraDevice != nil else { return .wide }
+        let teleOptical = telephotoOpticalDisplayZoom ?? 2.0
+
+        // Nguong kich hoat Telephoto: zoom dat tu nguong quang hoc tro len (>= 1.98x)
+        let teleSwitchInThreshold = teleOptical - 0.02
+        // Nguong tra ve Wide: zoom giam han xuong duoi dai tre (< 1.65x)
+        let wideSwitchBackThreshold = max(1.0, teleOptical - 0.35)
+
+        switch currentOpticalLensTarget {
+        case .wide:
+            if displayZoom >= teleSwitchInThreshold {
+                return .telephoto
+            }
+            return .wide
+        case .telephoto:
+            if displayZoom < wideSwitchBackThreshold {
+                return .wide
+            }
+            return .telephoto
+        }
+    }
+
     public var telephotoThresholdDeviceZoom: CGFloat? {
         guard hasPhysicalTelephotoLens, let teleDevice = telephotoOpticalDeviceZoom else { return nil }
-        return max(teleDevice * 1.01, teleDevice + 0.02)
+        return teleDevice
     }
 
     public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
@@ -161,14 +193,7 @@ public final class CameraService: NSObject {
         }
         let devZoom = displayZoom * displayMultiplier
         guard devZoom.isFinite else { return max(minZoom, min(defaultDisplayZoom, maxZoom)) }
-        var result = max(minZoom, min(devZoom, maxZoom))
-        if let teleDevice = telephotoOpticalDeviceZoom, hasPhysicalTelephotoLens,
-           let teleDisplay = telephotoOpticalDisplayZoom,
-           displayZoom >= (teleDisplay - 0.05) {
-            let threshold = max(teleDevice * 1.01, teleDevice + 0.02)
-            result = max(threshold, result)
-        }
-        return max(minZoom, min(result, maxZoom))
+        return max(minZoom, min(devZoom, maxZoom))
     }
 
     public func convertDeviceZoomToDisplayZoom(_ deviceZoom: CGFloat) -> CGFloat {
@@ -179,13 +204,6 @@ public final class CameraService: NSObject {
         }
         guard displayMultiplier.isFinite, displayMultiplier > 0 else {
             return defaultDisplayZoom
-        }
-        if let teleDevice = telephotoOpticalDeviceZoom, hasPhysicalTelephotoLens,
-           let teleDisplay = telephotoOpticalDisplayZoom {
-            let threshold = max(teleDevice * 1.01, teleDevice + 0.02)
-            if deviceZoom >= teleDevice && deviceZoom <= threshold + 0.015 {
-                return teleDisplay
-            }
         }
         return deviceZoom / displayMultiplier
     }
@@ -397,7 +415,12 @@ public final class CameraService: NSObject {
             self.activeCamera = camera
             self.currentCameraPosition = .back
             self.wideCameraDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
-            self.telephotoCameraDevice = AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back)
+            let teleDiscovery = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInTelephotoCamera],
+                mediaType: .video,
+                position: .back
+            )
+            self.telephotoCameraDevice = teleDiscovery.devices.first ?? AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back)
             self.multiCameraDevice = (camera.deviceType != .builtInWideAngleCamera && camera.deviceType != .builtInTelephotoCamera) ? camera : AVCaptureDevice.DiscoverySession(
                 deviceTypes: [.builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera],
                 mediaType: .video,
@@ -436,15 +459,17 @@ public final class CameraService: NSObject {
                     self.telephotoOpticalDeviceZoom = teleDeviceZoom
                     self.telephotoOpticalDisplayZoom = teleDisplay
                     self.hasPhysicalTelephotoLens = true
-                    if teleDisplay > 2.0 {
-                        options.append(teleDisplay)
-                    } else if !options.contains(teleDisplay) {
+                    if !options.contains(teleDisplay) {
                         options.append(teleDisplay)
                     }
-                } else if self.maxZoom >= wideBase * 3.0 {
+                }
+                if self.maxZoom >= wideBase * 3.0 && !options.contains(3.0) {
                     options.append(3.0)
                 }
-                options = options.filter { $0 < 4.9 }
+                if self.maxZoom >= wideBase * 5.0 && !options.contains(5.0) {
+                    options.append(5.0)
+                }
+                options = options.filter { ($0 * wideBase) <= self.maxZoom && $0 <= 10.0 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
                 CameraLogger.info("CameraService: Khoi tao Triple Camera Apple (Wide Base: \(wideBase), Tele Options: \(options))", category: .capture)
             } else if camera.deviceType == .builtInDualCamera, let teleSwitch = switchFactors.first {
@@ -456,8 +481,9 @@ public final class CameraService: NSObject {
                 self.hasUltraWideLens = false
                 self.defaultDisplayZoom = 1.0
                 var options: [CGFloat] = [1.0, teleZoom]
-                if self.maxZoom >= 3.0 && teleZoom != 3.0 { options.append(3.0) }
-                options = options.filter { $0 < 4.9 }
+                if self.maxZoom >= 3.0 && !options.contains(3.0) { options.append(3.0) }
+                if self.maxZoom >= 5.0 && !options.contains(5.0) { options.append(5.0) }
+                options = options.filter { $0 <= self.maxZoom && $0 <= 10.0 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
                 CameraLogger.info("CameraService: Khoi tao Dual Camera Wide+Tele (Tele Zoom: \(teleZoom), Options: \(options))", category: .capture)
             } else if camera.deviceType == .builtInDualWideCamera, let firstSwitch = switchFactors.first {
@@ -466,8 +492,9 @@ public final class CameraService: NSObject {
                 self.hasUltraWideLens = true
                 self.defaultDisplayZoom = 1.0
                 var options: [CGFloat] = [0.5, 1.0, 2.0]
-                if self.maxZoom >= wideBase * 3.0 { options.append(3.0) }
-                options = options.filter { $0 < 4.9 }
+                if self.maxZoom >= wideBase * 3.0 && !options.contains(3.0) { options.append(3.0) }
+                if self.maxZoom >= wideBase * 5.0 && !options.contains(5.0) { options.append(5.0) }
+                options = options.filter { ($0 * wideBase) <= self.maxZoom && $0 <= 10.0 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
                 CameraLogger.info("CameraService: Khoi tao Dual Wide Camera (Wide Base: \(wideBase), Options: \(options))", category: .capture)
             } else {
@@ -475,9 +502,10 @@ public final class CameraService: NSObject {
                 self.hasUltraWideLens = false
                 self.defaultDisplayZoom = 1.0
                 var options: [CGFloat] = [1.0, 2.0]
-                if self.maxZoom >= 3.0 { options.append(3.0) }
-                options = options.filter { $0 < 4.9 }
-                self.availableDisplayZoomOptions = options
+                if self.maxZoom >= 3.0 && !options.contains(3.0) { options.append(3.0) }
+                if self.maxZoom >= 5.0 && !options.contains(5.0) { options.append(5.0) }
+                options = options.filter { $0 <= self.maxZoom && $0 <= 10.0 }
+                self.availableDisplayZoomOptions = Array(Set(options)).sorted()
             }
 
             if self.telephotoCameraDevice != nil {
@@ -842,7 +870,12 @@ public final class CameraService: NSObject {
 
                     if targetPosition == .back {
                         self.wideCameraDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
-                        self.telephotoCameraDevice = AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back)
+                        let teleDiscovery = AVCaptureDevice.DiscoverySession(
+                            deviceTypes: [.builtInTelephotoCamera],
+                            mediaType: .video,
+                            position: .back
+                        )
+                        self.telephotoCameraDevice = teleDiscovery.devices.first ?? AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back)
                         self.multiCameraDevice = (newCamera.deviceType != .builtInWideAngleCamera && newCamera.deviceType != .builtInTelephotoCamera) ? newCamera : AVCaptureDevice.DiscoverySession(
                             deviceTypes: [.builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera],
                             mediaType: .video,
@@ -999,11 +1032,12 @@ public final class CameraService: NSObject {
 
     // MARK: - Physical Telephoto Hardware Zoom Switching
     /// Tu dong chuyen doi sang camera Telephoto vat ly (.builtInTelephotoCamera) khi zoom >= 2x (hoac nguong quang hoc tele)
-    /// Dam bao 100% dung sensor telephoto quang hoc trong moi dieu kien anh sang, video, windowed zoom va anh tinh
+    /// Su dung thuat toan Hysteresis (Trễ Lưỡng Ngưỡng) phong cach Google Camera giup chuyen cam cuc ky em ai, khong bi giat lag hay rung hinh
     public func applyDisplayZoomWithPhysicalLensSwitching(
         _ displayZoom: CGFloat,
         smooth: Bool = false,
         rate: Float = 4.5,
+        allowPhysicalSwitch: Bool = true,
         completion: (@MainActor (CGFloat?) -> Void)? = nil
     ) {
         sessionQueue.async { [weak self] in
@@ -1030,13 +1064,13 @@ public final class CameraService: NSObject {
             }
 
             let teleOptical = self.telephotoOpticalDisplayZoom ?? 2.0
-            let isTelephotoTarget = self.hasPhysicalTelephotoLens && self.telephotoCameraDevice != nil && displayZoom >= (teleOptical - 0.05)
-            let canSwitchDevice = self.recordingState == .idle && !self.movieFileOutput.isRecording
+            let canSwitchDevice = self.recordingState == .idle && !self.movieFileOutput.isRecording && allowPhysicalSwitch
+            let targetLens = self.resolveOpticalLensTarget(for: displayZoom)
 
-            if isTelephotoTarget, let teleCamera = self.telephotoCameraDevice {
+            if targetLens == .telephoto, let teleCamera = self.telephotoCameraDevice {
                 if self.activeCamera != teleCamera && canSwitchDevice {
                     CameraLogger.info("CameraService: Chuyen input session sang camera Telephoto vat ly (.builtInTelephotoCamera) cho zoom \(displayZoom)x", category: .capture)
-                    if self.switchInputDeviceInternal(to: teleCamera) {
+                    if self.switchInputDeviceInternal(to: teleCamera, initialDisplayZoom: displayZoom) {
                         if self.currentCaptureMode.isVideo {
                             self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
                         }
@@ -1055,7 +1089,8 @@ public final class CameraService: NSObject {
                     try currentCam.lockForConfiguration()
                     defer { currentCam.unlockForConfiguration() }
                     if smooth {
-                        currentCam.ramp(toVideoZoomFactor: targetDevZoom, withRate: rate)
+                        let adaptiveRate = max(3.5, min(9.0, rate))
+                        currentCam.ramp(toVideoZoomFactor: targetDevZoom, withRate: adaptiveRate)
                     } else {
                         currentCam.videoZoomFactor = targetDevZoom
                     }
@@ -1066,7 +1101,7 @@ public final class CameraService: NSObject {
                         completion?(actualDevZoom)
                     }
                 } catch {
-                    CameraLogger.error("CameraService: Error setting zoom on telephoto camera", error: error, category: .capture)
+                    CameraLogger.error("CameraService: Loi cai dat zoom telephoto", error: error, category: .capture)
                     rejected()
                 }
             } else {
@@ -1085,7 +1120,7 @@ public final class CameraService: NSObject {
 
                 if let wideCam = targetWideCamera, self.activeCamera != wideCam && canSwitchDevice {
                     CameraLogger.info("CameraService: Chuyen input session tro lai camera Wide/MultiCamera cho zoom \(displayZoom)x", category: .capture)
-                    if self.switchInputDeviceInternal(to: wideCam) {
+                    if self.switchInputDeviceInternal(to: wideCam, initialDisplayZoom: displayZoom) {
                         if self.currentCaptureMode.isVideo {
                             self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
                         }
@@ -1093,13 +1128,19 @@ public final class CameraService: NSObject {
                 }
 
                 guard let currentCam = self.activeCamera else { rejected(); return }
-                let targetDevZoom = self.convertDisplayZoomToDeviceZoom(displayZoom)
+                let targetDevZoom: CGFloat
+                if currentCam.deviceType == .builtInTelephotoCamera {
+                    targetDevZoom = max(1.0, min(displayZoom / teleOptical, currentCam.maxAvailableVideoZoomFactor))
+                } else {
+                    targetDevZoom = self.convertDisplayZoomToDeviceZoom(displayZoom)
+                }
 
                 do {
                     try currentCam.lockForConfiguration()
                     defer { currentCam.unlockForConfiguration() }
                     if smooth {
-                        currentCam.ramp(toVideoZoomFactor: targetDevZoom, withRate: rate)
+                        let adaptiveRate = max(3.5, min(9.0, rate))
+                        currentCam.ramp(toVideoZoomFactor: targetDevZoom, withRate: adaptiveRate)
                     } else {
                         currentCam.videoZoomFactor = targetDevZoom
                     }
@@ -1110,7 +1151,7 @@ public final class CameraService: NSObject {
                         completion?(actualDevZoom)
                     }
                 } catch {
-                    CameraLogger.error("CameraService: Error setting zoom on wide camera", error: error, category: .capture)
+                    CameraLogger.error("CameraService: Loi cai dat zoom wide", error: error, category: .capture)
                     rejected()
                 }
             }
@@ -1494,7 +1535,7 @@ public final class CameraService: NSObject {
     }
 
     @discardableResult
-    private func switchInputDeviceInternal(to newCamera: AVCaptureDevice) -> Bool {
+    private func switchInputDeviceInternal(to newCamera: AVCaptureDevice, initialDisplayZoom: CGFloat? = nil) -> Bool {
         guard self.recordingState == .idle, !self.movieFileOutput.isRecording else { return false }
         if self.activeCamera == newCamera { return true }
         do {
@@ -1551,9 +1592,31 @@ public final class CameraService: NSObject {
                 newCamera.activeColorSpace = .P3_D65
             }
             newCamera.isSubjectAreaChangeMonitoringEnabled = true
+
+            // Set initial zoom factor BEFORE committing configuration so that the very first frame
+            // rendered by the new input device matches the current target field of view seamlessly!
+            if let targetDisplayZoom = initialDisplayZoom, targetDisplayZoom.isFinite {
+                let initialDeviceZoom: CGFloat
+                if newCamera.deviceType == .builtInTelephotoCamera {
+                    let teleOptical = telephotoOpticalDisplayZoom ?? 2.0
+                    initialDeviceZoom = max(1.0, min(targetDisplayZoom / teleOptical, newCamera.maxAvailableVideoZoomFactor))
+                } else {
+                    initialDeviceZoom = convertDisplayZoomToDeviceZoom(targetDisplayZoom)
+                }
+                newCamera.videoZoomFactor = initialDeviceZoom
+                self.currentZoom = initialDeviceZoom
+            }
+
             newCamera.unlockForConfiguration()
 
             captureSession.commitConfiguration()
+
+            if newCamera.deviceType == .builtInTelephotoCamera {
+                self.currentOpticalLensTarget = .telephoto
+            } else {
+                self.currentOpticalLensTarget = .wide
+            }
+
             return true
         } catch {
             CameraLogger.error("CameraService: Khong the chuyen sang thiet bi \(newCamera.localizedName)", error: error, category: .capture)

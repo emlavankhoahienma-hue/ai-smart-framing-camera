@@ -1206,6 +1206,8 @@ public final class CameraViewModel: ObservableObject {
         // Tuyet doi khong xoa AI session, targetPoint hoac mang bounding box khi zoom 1x <-> 2x
         targetPinGeneration &+= 1
         alignmentGate.reset()
+        pinchSettleWorkItem?.cancel()
+        pinchSettleWorkItem = nil
         pinZoomPlanTask?.cancel()
         pinZoomPlanTask = nil
         isPreparingPinZoom = false
@@ -2805,10 +2807,13 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Actions
     private var lastContinuousZoomTime: CFTimeInterval = 0
     private var lastContinuousAppliedZoom: CGFloat = 1.0
+    private var pinchSettleWorkItem: DispatchWorkItem?
 
     public func beginManualZoomGesture() {
         guard !isPinchingZoom, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         cancelAIZoomForGesture()
+        pinchSettleWorkItem?.cancel()
+        pinchSettleWorkItem = nil
         isPinchingZoom = true
     }
 
@@ -2838,7 +2843,7 @@ public final class CameraViewModel: ObservableObject {
             targetDisplayZoom = 1.0
         }
 
-        cameraService.applyDisplayZoomWithPhysicalLensSwitching(targetDisplayZoom, smooth: true, rate: 4.5)
+        cameraService.applyDisplayZoomWithPhysicalLensSwitching(targetDisplayZoom, smooth: true, rate: 4.5, allowPhysicalSwitch: true)
         presentZoomChangeHUD(displayZoom: targetDisplayZoom)
     }
 
@@ -2847,7 +2852,7 @@ public final class CameraViewModel: ObservableObject {
         let requestID = UUID()
         manualZoomRequestID = requestID
         manualZoomSettledAt = CACurrentMediaTime()
-        cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: smooth, rate: 4.5) { [weak self] actualDeviceZoom in
+        cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: smooth, rate: 4.5, allowPhysicalSwitch: true) { [weak self] actualDeviceZoom in
             guard let self, self.manualZoomRequestID == requestID else { return }
             self.manualZoomRequestID = nil
             self.pendingManualZoomTarget = nil
@@ -2864,7 +2869,9 @@ public final class CameraViewModel: ObservableObject {
     }
 
     /// Zoom lien tuc muot ma khi nguoi dung vuot/pinch bang hai ngon tay
-    /// Tu dong throttle AVFoundation calls (25ms) de chong nghen hang doi camera phan cung
+    /// Thuat toan tach pha cu chi (Gesture-Phase Decoupling) phong cach Google Camera / GCam:
+    /// - Khi hai ngon tay dang di chuyen: KHONG reconfigure captureSession de giu pipeline 60 FPS cuc ky muot ma (allowPhysicalSwitch = false).
+    /// - Khi dung tay 160ms (debounced settle) hoac nhac tay (finishZoomGesture): Kich hoat switch sang camera Telephoto vat ly voi allowPhysicalSwitch = true.
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
         guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
@@ -2873,12 +2880,22 @@ public final class CameraViewModel: ObservableObject {
         if now - lastContinuousZoomTime >= 0.025 || abs(displayZoomVal - lastContinuousAppliedZoom) > 0.08 {
             lastContinuousZoomTime = now
             lastContinuousAppliedZoom = displayZoomVal
-            cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: false)
+            cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: false, allowPhysicalSwitch: false)
         }
+
+        pinchSettleWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self, self.isPinchingZoom else { return }
+            self.cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: false, allowPhysicalSwitch: true)
+        }
+        pinchSettleWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: workItem)
     }
 
     /// Chot zoom cuoi cung khi nguoi dung nhac ngon tay ket thuc pinch
     public func finishZoomGesture(_ finalDisplayZoom: CGFloat) {
+        pinchSettleWorkItem?.cancel()
+        pinchSettleWorkItem = nil
         guard isCameraReady, !isShutterPressing, !isCameraHibernating else {
             isPinchingZoom = false
             return
@@ -2914,7 +2931,7 @@ public final class CameraViewModel: ObservableObject {
         isAEAFLocked = true
         isShowingSunSlider = true
         cameraService.lockFocusAndExposure(at: devicePoint)
-        CameraLogger.info("\u{1f512} ĐÃ KHÓA AE/AF tại (\(String(format: "%.2f", normalizedPoint.x)), \(String(format: "%.2f", normalizedPoint.y)))", category: .capture)
+        CameraLogger.info("[LOCK] DA KHOA AE/AF tai (\(String(format: "%.2f", normalizedPoint.x)), \(String(format: "%.2f", normalizedPoint.y)))", category: .capture)
     }
 
     public func unlockAEAF() {
@@ -2929,7 +2946,7 @@ public final class CameraViewModel: ObservableObject {
         withAnimation(.easeOut(duration: 0.25)) {
             self.activeFocusSquarePoint = nil
         }
-        CameraLogger.info("\u{1f513} ĐÃ MỞ KHÓA AE/AF", category: .capture)
+        CameraLogger.info("[UNLOCK] DA MO KHOA AE/AF", category: .capture)
     }
 
     public func toggleFlash() {
