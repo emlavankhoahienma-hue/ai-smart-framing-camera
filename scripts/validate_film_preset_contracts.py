@@ -16,7 +16,7 @@ FILM_CORE_PATH = ROOT / "AISmartFramingCamera/Services/FilmSimulations/FilmSimul
 KODAK_SIM_PATH = ROOT / "AISmartFramingCamera/Services/FilmSimulations/KodakFilmSimulations.swift"
 DV_SIM_PATH = ROOT / "AISmartFramingCamera/Services/FilmSimulations/AnalogDVSimulations.swift"
 INSTAX_SIM_PATH = ROOT / "AISmartFramingCamera/Services/FilmSimulations/InstantPolaroidSimulations.swift"
-HISTORIC_SIM_PATH = ROOT / "AISmartFramingCamera/Services/FilmSimulations/HistoricAndCreativeSimulations.swift"
+HISTORIC_SIM_PATH = ROOT / "AISmartFramingCamera/Services/FilmSimulations/CinemaAndStudioSimulations.swift"
 
 class TestColorPresetContracts(unittest.TestCase):
 

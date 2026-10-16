@@ -178,3 +178,98 @@ public enum CinemaAndStudioSimulations {
         return FilmSimulationCore.applyVignette(out, intensity: 0.32, radius: 1.8)
     }
 }
+
+// MARK: - Historic and Creative Simulations (Cyanotype, GR Negative, Bleach Bypass)
+public enum HistoricAndCreativeSimulations {
+
+    public static func apply(_ input: CIImage, preset: FilmPreset) -> CIImage? {
+        switch preset {
+        case .cyanotype:
+            return applyCyanotype(input)
+        case .grNegative:
+            return applyGRNegative(input)
+        case .bleachBypass:
+            return applyBleachBypass(input)
+        default:
+            return input
+        }
+    }
+
+    // MARK: - 1. Cyanotype Print (Ban in don sac xanh Pho Prussian Blue 1842)
+    private static func applyCyanotype(_ input: CIImage) -> CIImage {
+        let mono = FilmSimulationCore.applyColorControls(input, contrast: 1.18, saturation: 0.0)
+
+        var out = FilmSimulationCore.applyColorMatrix(
+            mono,
+            red: CIVector(x: 0.14, y: 0, z: 0, w: 0),
+            green: CIVector(x: 0.38, y: 0, z: 0, w: 0),
+            blue: CIVector(x: 0.68, y: 0, z: 0, w: 0),
+            bias: CIVector(x: 0.04, y: 0.09, z: 0.22, w: 0)
+        )
+
+        out = FilmSimulationCore.applyToneCurve(
+            out,
+            p0: CGPoint(x: 0.00, y: 0.05),
+            p1: CGPoint(x: 0.25, y: 0.22),
+            p2: CGPoint(x: 0.50, y: 0.49),
+            p3: CGPoint(x: 0.75, y: 0.78),
+            p4: CGPoint(x: 1.00, y: 0.95)
+        )
+
+        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.16, grainSize: 1.4)
+        return FilmSimulationCore.applyVignette(out, intensity: 0.25, radius: 2.2)
+    }
+
+    // MARK: - 2. Ricoh GR Negative Film (Chat film am ban duong pho GR III huyen thoai)
+    private static func applyGRNegative(_ input: CIImage) -> CIImage {
+        var out = FilmSimulationCore.applyColorMatrix(
+            input,
+            red: CIVector(x: 1.06, y: -0.02, z: -0.02, w: 0),
+            green: CIVector(x: -0.03, y: 0.97, z: 0.02, w: 0),
+            blue: CIVector(x: -0.05, y: 0.02, z: 1.08, w: 0),
+            bias: CIVector(x: 0.01, y: 0.00, z: 0.02, w: 0)
+        )
+
+        out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6380, targetTint: -1.2)
+        out = FilmSimulationCore.applyColorControls(out, contrast: 1.18, saturation: 0.92)
+
+        out = FilmSimulationCore.applyToneCurve(
+            out,
+            p0: CGPoint(x: 0.00, y: 0.01),
+            p1: CGPoint(x: 0.25, y: 0.19),
+            p2: CGPoint(x: 0.50, y: 0.49),
+            p3: CGPoint(x: 0.75, y: 0.81),
+            p4: CGPoint(x: 1.00, y: 0.98)
+        )
+
+        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.18, grainSize: 1.3)
+        return FilmSimulationCore.applyVignette(out, intensity: 0.26, radius: 2.0)
+    }
+
+    // MARK: - 3. Silver Bleach Bypass (Giu tinh the bac dien anh, tuong phan gat, khu bao hoa)
+    private static func applyBleachBypass(_ input: CIImage) -> CIImage {
+        let monoLuminance = FilmSimulationCore.applyColorControls(input, contrast: 1.32, saturation: 0.0)
+        let desaturated = FilmSimulationCore.applyColorControls(input, contrast: 1.10, saturation: 0.38)
+
+        guard let blend = CIFilter(name: "CISoftLightBlendMode") else {
+            return desaturated
+        }
+        blend.setValue(monoLuminance, forKey: kCIInputImageKey)
+        blend.setValue(desaturated, forKey: kCIInputBackgroundImageKey)
+        let blended = blend.outputImage?.cropped(to: input.extent) ?? desaturated
+
+        var out = FilmSimulationCore.applyToneCurve(
+            blended,
+            p0: CGPoint(x: 0.00, y: 0.02),
+            p1: CGPoint(x: 0.25, y: 0.18),
+            p2: CGPoint(x: 0.50, y: 0.50),
+            p3: CGPoint(x: 0.75, y: 0.84),
+            p4: CGPoint(x: 1.00, y: 0.99)
+        )
+
+        out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6300, targetTint: -0.6)
+        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.28, grainSize: 1.7)
+        return FilmSimulationCore.applyVignette(out, intensity: 0.28, radius: 1.9)
+    }
+}
+
