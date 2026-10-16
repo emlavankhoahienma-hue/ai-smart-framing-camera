@@ -169,7 +169,7 @@ jobs:
           git add BUILD_ERROR.txt
           git commit -qm "ci: build report"
           git push -fq origin HEAD:refs/heads/arena/build-report
-          echo "✓ Đã push BUILD_ERROR.txt lên branch arena/build-report"
+          echo " Đã push BUILD_ERROR.txt lên branch arena/build-report"
 
       - name: Create Payload directory
         run: |
@@ -181,7 +181,7 @@ jobs:
           cp -r yolo12s.mlmodelc Payload/AISmartFramingCamera.app/
           if [ -f "AISmartFramingCamera/Services/RobustTargetEmbedder.bin" ]; then
             cp AISmartFramingCamera/Services/RobustTargetEmbedder.bin Payload/AISmartFramingCamera.app/
-            echo "✓ Đã tích hợp thành công RobustTargetEmbedder.bin vào App Bundle!"
+            echo " Đã tích hợp thành công RobustTargetEmbedder.bin vào App Bundle!"
           fi
           test -d Payload/AISmartFramingCamera.app/yolo12n.mlmodelc
           test -d Payload/AISmartFramingCamera.app/yolo12s.mlmodelc
@@ -225,15 +225,15 @@ jobs:
             --title "AI Smart Framing Camera $TAG" \
             --notes "Unsigned IPA build for Sideloadly / AltStore / TrollStore installation.
 
-          ### 🚀 Link tải tốc độ cao (Tối ưu cho Việt Nam / Chống bóp băng thông):
+          ###  Link tải tốc độ cao (Tối ưu cho Việt Nam / Chống bóp băng thông):
           - **[Tải trực tiếp tốc độ cao qua Cloudflare HK CDN]($FAST_URL)** (Khuyến nghị cho mạng VNPT/Viettel/FPT, hỗ trợ tải tiếp khi rớt mạng).
 
           ## Features
-          - 🎯 Real-time AI Subject & Face Tracking (Neural Engine accelerated)
-          - 📐 Rule of Thirds & Golden Ratio Framing Guides
-          - ⚡ Magnetic Snap Haptics & Auto-Alignment Crosshair
-          - 🎨 CoreImage Film Simulation Recipes (Fuji Pro 400H, Kodak Portra, Cine Teal/Orange)
-          - 🔍 Dynamic Auto-Zoom Adjustment
+          -  Real-time AI Subject & Face Tracking (Neural Engine accelerated)
+          -  Rule of Thirds & Golden Ratio Framing Guides
+          -  Magnetic Snap Haptics & Auto-Alignment Crosshair
+          -  CoreImage Film Simulation Recipes (Fuji Pro 400H, Kodak Portra, Cine Teal/Orange)
+          -  Dynamic Auto-Zoom Adjustment
 
           ## Installation via Sideloadly
           1. Download \`AISmartFramingCamera.ipa\` from this release
