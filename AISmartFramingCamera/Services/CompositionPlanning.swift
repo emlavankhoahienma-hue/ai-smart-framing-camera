@@ -246,6 +246,14 @@ struct CompositionProposal: Sendable {
     let explanation: String
     let usesCenter: Bool
 
+    var isUnchangedView: Bool {
+        let original = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),
+                        CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
+        return sourceCorners.count == 4 && zip(sourceCorners, original).allSatisfy {
+            hypot($0.x - $1.x, $0.y - $1.y) < 0.00001
+        }
+    }
+
     var preferenceKey: String {
         let x = min(2, max(0, Int(expectedSubjectRect.midX * 3)))
         let size = min(3, max(0, Int(expectedSubjectRect.width * expectedSubjectRect.height * 8)))
@@ -264,6 +272,7 @@ enum CompositionPlanner {
                           raster: CompositionRaster, calibration: TrackingCalibration,
                           currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
                           incidentalBounds: [CGRect] = [],
+                          proposalLimit: Int = 6, refining: [CompositionProposal] = [],
                           isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         guard raster.isValid, calibration.isValid, currentZoom.isFinite, currentZoom > 0 else { return [] }
         let horizonHint = raster.horizon
@@ -357,6 +366,26 @@ enum CompositionPlanner {
                             cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0),
                         usesCenter: abs(destination.x - 0.5) < 0.055)
                 }
+                if !refining.isEmpty {
+                    for seed in refining where seed.subjectIndex == subject.index && seed.intent == intent {
+                        let ratio = Double(seed.zoom / currentZoom)
+                        let future = TrackingCalibration(fx: calibration.fx * ratio, fy: calibration.fy * ratio,
+                            cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
+                        let p = future.project(deviceRay: seed.rotation.inverse.act(calibration.deviceRay(at: subject.anchor)))
+                        guard p.isInFront else { continue }
+                        // Score neighbours with the learned model on the next pass.
+                        // A slightly wider crop is a real alternative, not an
+                        // assumption that more zoom always improves a photograph.
+                        for axis in 0..<3 { for sign in [-1.0, 1.0] {
+                            if isCancelled() { return [] }
+                            let destination = CGPoint(x: p.point.x + (axis == 0 ? sign * 0.018 : 0),
+                                                      y: p.point.y + (axis == 1 ? sign * 0.018 : 0))
+                            let zoom = axis == 2 ? seed.zoom * CGFloat(exp(sign * 0.045)) : seed.zoom
+                            if let neighbour = evaluate(destination, zoom: zoom) { result.append(neighbour) }
+                        } }
+                    }
+                    continue
+                }
                 var seeds: [CompositionProposal] = []
                 var placements = [subject.anchor, desired, CGPoint(x: 0.5, y: 0.5)]
                 for y in 0...4 { for x in 0...4 {
@@ -387,10 +416,44 @@ enum CompositionPlanner {
                     }
                     result.append(best)
                 }
-                result.append(contentsOf: seeds.sorted { $0.score > $1.score }.prefix(6))
+                if proposalLimit > 6 {
+                    result.append(contentsOf: seeds)
+                } else {
+                    result.append(contentsOf: seeds.sorted { $0.score > $1.score }.prefix(6))
+                }
             }
         }
-        return isCancelled() ? [] : diverse(result, limit: 6)
+        guard !isCancelled() else { return [] }
+        if !refining.isEmpty {
+            return diverse(result, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
+        }
+        guard proposalLimit > 6 else { return diverse(result, limit: proposalLimit) }
+        // Preserve a no-change baseline and explore several focal lengths and
+        // directions, including crops that do not match the heuristic's favourite.
+        var selected = result.filter(\.isUnchangedView).prefix(1).map { $0 }
+        selected += diverse(result, limit: proposalLimit / 3, raySeparation: 0.035, zoomSeparation: 0.07)
+        var buckets: [String: CompositionProposal] = [:]
+        for proposal in result {
+            let z = Int((log(Double(proposal.zoom / currentZoom)) * 12).rounded())
+            let x = Int((proposal.aimPoint.x * 6).rounded())
+            let y = Int((proposal.aimPoint.y * 6).rounded())
+            let key = "\(z)|\(x)|\(y)|\(proposal.intent.rawValue)"
+            if proposal.score > (buckets[key]?.score ?? -.infinity) { buckets[key] = proposal }
+        }
+        let explored = buckets.keys.sorted().compactMap { buckets[$0] }
+        if !explored.isEmpty {
+            for index in 0..<proposalLimit {
+                selected.append(explored[min(explored.count - 1, index * explored.count / proposalLimit)])
+            }
+        }
+        // Keep exploration in the shortlist even when its heuristic score is low.
+        var unique: [CompositionProposal] = []
+        for proposal in selected + result.sorted(by: { $0.score > $1.score }) {
+            if !unique.contains(where: { hypot($0.aimPoint.x - proposal.aimPoint.x, $0.aimPoint.y - proposal.aimPoint.y) < 0.025 &&
+                abs(log(Double($0.zoom / proposal.zoom))) < 0.055 }) { unique.append(proposal) }
+            if unique.count == proposalLimit { break }
+        }
+        return unique
     }
 
     private static func preferredPlacement(subject: CompositionSubject, intent: LocalCompositionIntent,
@@ -416,15 +479,16 @@ enum CompositionPlanner {
     }
 
 
-    static func diverse(_ proposals: [CompositionProposal], limit: Int) -> [CompositionProposal] {
+    static func diverse(_ proposals: [CompositionProposal], limit: Int,
+                        raySeparation: CGFloat = 0.065, zoomSeparation: Double = 0.15) -> [CompositionProposal] {
         guard limit > 0 else { return [] }
         var selected: [CompositionProposal] = []
         for proposal in proposals.filter({ $0.score.isFinite }).sorted(by: { $0.score > $1.score }) {
             let duplicate = selected.contains { previous in
                 let rayDistance = hypot(previous.aimPoint.x - proposal.aimPoint.x,
                                         previous.aimPoint.y - proposal.aimPoint.y)
-                return previous.subjectIndex == proposal.subjectIndex && rayDistance < 0.065 &&
-                    abs(log(Double(previous.zoom / proposal.zoom))) < 0.15
+                return previous.subjectIndex == proposal.subjectIndex && rayDistance < raySeparation &&
+                    abs(log(Double(previous.zoom / proposal.zoom))) < zoomSeparation
             }
             if !duplicate { selected.append(proposal) }
             if selected.count == limit { break }

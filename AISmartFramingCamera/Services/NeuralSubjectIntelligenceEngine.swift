@@ -74,15 +74,6 @@ private final class SemanticCropRanker: @unchecked Sendable {
         return affinities(model: model, handler: handler, cancellation: cancellation)
     }
 
-    func affinity(image: CGImage, intent: LocalCompositionIntent,
-                  cancellation: CompositionAnalysisCancellation) -> Double? {
-        guard let model, !prompts.isEmpty, !cancellation.isCancelled else { return nil }
-        let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
-        let scores = affinities(model: model, handler: handler, cancellation: cancellation)
-        let keys = intent == .closeUp ? ["flower", "foliage", "macro"] : [intent.promptKey]
-        return keys.compactMap { scores[$0] }.max()
-    }
-
     private func affinities(model: VNCoreMLModel, handler: VNImageRequestHandler,
                             cancellation: CompositionAnalysisCancellation) -> [String: Double] {
         let request = VNCoreMLRequest(model: model)
@@ -189,6 +180,9 @@ struct LocalCompositionAnalysis: Sendable {
     let detection: NeuralAnalysisOutput
     let choices: [LocalCompositionChoice]
     let fallbackCandidates: [NeuralSubjectCandidate]
+    var assessedCompositionCount = 0
+    var usedCompositionModel = false
+    var canAutoselectComposition = false
 }
 
 /// Expensive interpretation runs only on the serialized one-shot worker.
@@ -202,7 +196,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     func analyzeComposition(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
                             pose: simd_quatd, allowedZooms: [CGFloat],
                             preferences: [String: Double],
-                            cancellation: CompositionAnalysisCancellation) -> LocalCompositionAnalysis? {
+                            cancellation: CompositionAnalysisCancellation,
+                            progress: @Sendable (String) -> Void = { _ in }) -> LocalCompositionAnalysis? {
         guard !cancellation.isCancelled else { return nil }
         analysisLock.lock()
         defer { SemanticCropRanker.shared.endAnalysis(); analysisLock.unlock() }
@@ -221,43 +216,40 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             anchor: hero.eyePosition ?? hero.center, kind: hero.isGroup ? .group : kind(hero.category),
             confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
         let intents = compositionIntents(output, hero: hero)
-        let proposals = CompositionPlanner.proposals(subjects: [subject], intents: intents,
-            raster: raster, calibration: frame.calibration, currentZoom: CGFloat(frame.displayZoom),
-            allowedZooms: allowedZooms, protectedBounds: hero.companionBounds,
-            incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) },
-            isCancelled: { cancellation.isCancelled })
-        let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
-        var rendered: [(CompositionProposal, CGImage)] = []
-        for var proposal in proposals {
-            if cancellation.isCancelled { return nil }
-            guard let preview = renderer.preview(image: image, corners: proposal.sourceCorners,
-                                                  aspect: frame.calibration.aspect) else { continue }
-            if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
-                proposal.score += aesthetic * 0.075
-            }
-            if let affinity = SemanticCropRanker.shared.affinity(image: preview, intent: proposal.intent,
-                                                               cancellation: cancellation) {
-                let baseline = output.semanticAffinities[proposal.intent.promptKey] ?? affinity
-                proposal.score += min(0.025, max(-0.025, (affinity - baseline) * 0.35))
-            }
-            proposal.score += min(0.025, max(-0.025, preferences[proposal.preferenceKey] ?? 0))
-            rendered.append((proposal, preview))
+        // Release the semantic encoder before loading the composition specialist,
+        // especially on iPhone XS. Detection and group membership remain unchanged.
+        SemanticCropRanker.shared.endAnalysis()
+        let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
+            ProcessInfo.processInfo.thermalState == .serious
+        func proposals(refining seeds: [CompositionProposal] = []) -> [CompositionProposal] {
+            CompositionPlanner.proposals(subjects: [subject], intents: intents,
+                raster: raster, calibration: frame.calibration, currentZoom: CGFloat(frame.displayZoom),
+                allowedZooms: allowedZooms, protectedBounds: hero.companionBounds,
+                incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) },
+                proposalLimit: seeds.isEmpty ? (constrained ? 24 : 36) : 18, refining: seeds,
+                isCancelled: { cancellation.isCancelled })
         }
-        guard !cancellation.isCancelled else { return nil }
-        let choices = CompositionPlanner.diverse(rendered.map(\.0), limit: 3).compactMap { proposal -> LocalCompositionChoice? in
-            guard let preview = rendered.first(where: {
-                $0.0.zoom == proposal.zoom && $0.0.intent == proposal.intent && $0.0.sourceCorners == proposal.sourceCorners
-            })?.1 else { return nil }
+        progress("Đang đánh giá bố cục bằng mô hình trên máy…")
+        let search = CompositionAestheticSearch(renderer: renderer)
+        guard let result = search.run(proposals: proposals(),
+            image: CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation),
+            aspect: frame.calibration.aspect, preferences: preferences,
+            modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
+            cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) }) else { return nil }
+        let choices = result.views.map { view -> LocalCompositionChoice in
+            let proposal = view.proposal
             let plan = LocalFramingPlan(subjectPoint: hero.trackingPoint ?? proposal.subjectPoint, subjectRect: hero.boundingBox,
                 aimPointInSource: proposal.aimPoint, aimWorldRay: pose.act(proposal.rotation.act(SIMD3(0, 0, -1))),
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
                     scene: output.detectedScene, category: hero.category) ?? 1),
-                intent: proposal.intent, score: proposal.score, explanation: proposal.explanation,
+                intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + (result.usedSpecialist ? " Đã so sánh bố cục và mức zoom bằng SAMP-Net." : " Chưa có điểm từ mô hình bố cục; hãy kiểm tra khung trước khi chọn."),
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey)
-            return LocalCompositionChoice(candidate: hero, plan: plan, preview: preview)
+            return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image)
         }
-        return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: [hero])
+        return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: [hero],
+            assessedCompositionCount: result.assessedCount, usedCompositionModel: result.usedSpecialist,
+            canAutoselectComposition: result.canAutoselect)
     }
 
     private func compositionIntents(_ output: NeuralAnalysisOutput, hero: NeuralSubjectCandidate) -> [LocalCompositionIntent] {

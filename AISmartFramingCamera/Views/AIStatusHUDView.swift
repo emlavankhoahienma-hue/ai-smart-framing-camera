@@ -143,7 +143,7 @@ public struct AIStatusHUDView: View {
             if viewModel.localCompositionChoices.isEmpty, viewModel.localSelectionMessage != nil {
                 return "Chưa có khung để chọn"
             }
-            return viewModel.localCompositionChoices.isEmpty ? "Đang so sánh bố cục…" : "Chọn phương án bố cục"
+            return viewModel.localCompositionChoices.isEmpty ? viewModel.localAnalysisProgress : "Chọn phương án bố cục"
         case .targetPlaced, .alignmentPerfect:
             return viewModel.alignmentStatusText
         case .capturing:

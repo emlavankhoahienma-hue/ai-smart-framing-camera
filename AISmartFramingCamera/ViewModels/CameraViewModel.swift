@@ -178,6 +178,7 @@ public final class CameraViewModel: ObservableObject {
     private var localAnalysisFinished = false
     @Published public private(set) var localSuggestionRects: [CGRect] = []
     @Published public private(set) var localSelectionMessage: String? = nil
+    @Published public private(set) var localAnalysisProgress = "Đang đọc ảnh và nhận diện chủ thể…"
     private var allowsAutoCaptureForCurrentTarget = true
     // MARK: - Services
     public let cameraService = CameraService.shared
@@ -2024,6 +2025,7 @@ public final class CameraViewModel: ObservableObject {
         localTrackingSource = source
         localAnalysisExpired = false
         localAnalysisFinished = false
+        localAnalysisProgress = "Đang đọc ảnh và nhận diện chủ thể…"
         let generation = aiSessionGeneration
         let zooms = cameraService.availableDisplayZoomOptions
         localAnalysisTask = Task { [weak self] in
@@ -2033,7 +2035,15 @@ public final class CameraViewModel: ObservableObject {
                 await Task.detached(priority: .userInitiated) {
                     NeuralSubjectIntelligenceEngine.shared.analyzeComposition(
                         pixelBuffer: source.buffer, frame: source.frame, pose: source.pose,
-                        allowedZooms: zooms, preferences: preferences, cancellation: cancellation)
+                        allowedZooms: zooms, preferences: preferences, cancellation: cancellation,
+                        progress: { [weak self] message in
+                            Task { @MainActor [weak self] in
+                                guard let self, self.aiSessionGeneration == generation,
+                                      self.aiSessionState == .analyzing, !self.localAnalysisFinished,
+                                      !cancellation.isCancelled else { return }
+                                self.localAnalysisProgress = message
+                            }
+                        })
                 }.value
             } onCancel: {
                 cancellation.cancel()
@@ -2078,7 +2088,9 @@ public final class CameraViewModel: ObservableObject {
             localSuggestionRects = localEvidenceCandidates.map { _ in CGRect.zero }
         }
         detectedSubjectRects = localSuggestionRects
-        if output.usedSemanticModel {
+        if analysis.usedCompositionModel {
+            activeEngineSource = .compositionLocal(label: output.detectedScene.localizedName)
+        } else if output.usedSemanticModel {
             activeEngineSource = .semanticLocal(label: output.detectedScene.localizedName)
         } else if YOLODetectionEngine.shared.hasYOLOModel {
             activeEngineSource = .yoloNeural(label: output.detectedScene.localizedName)
@@ -2087,14 +2099,17 @@ public final class CameraViewModel: ObservableObject {
         }
         // Detector certainty and layout ranking are separate. Close alternatives
         // require an explicit choice; a high semantic score cannot authorize a shot.
-        if let first = localCompositionChoices.first,
+        if analysis.canAutoselectComposition, let first = localCompositionChoices.first,
+           CACurrentMediaTime() - source.frame.timestamp <= 30,
            first.plan.confidence >= first.plan.minimumAutoselectConfidence, first.plan.score >= 0.6,
            localCompositionChoices.count == 1 ||
                 first.plan.score - localCompositionChoices[1].plan.score >= 0.06 {
             acceptLocalPlan(first.plan, source: source)
         } else if !localCompositionChoices.isEmpty {
             allowsAutoCaptureForCurrentTarget = false
-            localSelectionMessage = "Chọn khung bạn muốn chụp."
+            localSelectionMessage = analysis.usedCompositionModel ?
+                "Đã đánh giá \(analysis.assessedCompositionCount) khung và mức zoom. Chọn ảnh bạn thích." :
+                "Mô hình bố cục chưa khả dụng. Kiểm tra và chọn khung thủ công."
             showCompositionPreviews()
         } else if !localEvidenceCandidates.isEmpty {
             allowsAutoCaptureForCurrentTarget = false

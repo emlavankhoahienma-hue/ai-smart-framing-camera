@@ -72,6 +72,8 @@
 		C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005B /* AnalogDVSimulations.swift */; };
 		C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005C /* CinemaAndStudioSimulations.swift */; };
 		C2000000000000000000005D /* LiveEntityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005D /* LiveEntityTracker.swift */; };
+		C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000060 /* PhotographicCompositionModel.swift */; };
+		C20000000000000000000061 /* CompositionAestheticSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000061 /* CompositionAestheticSearch.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -142,6 +144,8 @@
 		C1000000000000000000005B /* AnalogDVSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalogDVSimulations.swift; sourceTree = "<group>"; };
 		C1000000000000000000005C /* CinemaAndStudioSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CinemaAndStudioSimulations.swift; sourceTree = "<group>"; };
 		C1000000000000000000005D /* LiveEntityTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveEntityTracker.swift; sourceTree = "<group>"; };
+		C10000000000000000000060 /* PhotographicCompositionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicCompositionModel.swift; sourceTree = "<group>"; };
+		C10000000000000000000061 /* CompositionAestheticSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionAestheticSearch.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -223,6 +227,8 @@
 				B100000000000000000000028 /* ProVideoManualControlsService.swift */,
 				B100000000000000000000031 /* RobustTargetEmbedder.bin */,
 				C1000000000000000000005D /* LiveEntityTracker.swift */,
+				C10000000000000000000061 /* CompositionAestheticSearch.swift */,
+				C10000000000000000000060 /* PhotographicCompositionModel.swift */,
 				C30000000000000000000001 /* FilmSimulations */,
 			);
 			path = Services;
@@ -433,6 +439,8 @@
 				C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */,
 				C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */,
 				C2000000000000000000005D /* LiveEntityTracker.swift in Sources */,
+				C20000000000000000000061 /* CompositionAestheticSearch.swift in Sources */,
+				C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

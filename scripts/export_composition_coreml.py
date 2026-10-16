@@ -27,6 +27,12 @@ def fixed_shape_pooling():
     """
     functional = torch.nn.functional
     original1, original2 = functional.adaptive_max_pool1d, functional.adaptive_max_pool2d
+    original_upper, original_lower = torch.triu_indices, torch.tril_indices
+
+    def triangle(row, col, offset=0, dtype=torch.long, device=None, layout=torch.strided, *, upper):
+        pairs = [(y, x) for y in range(int(row)) for x in range(int(col))
+                 if (x - y >= int(offset) if upper else x - y <= int(offset))]
+        return torch.tensor([[y for y, _ in pairs], [x for _, x in pairs]], dtype=dtype, device=device)
 
     def axis(value, dimension, target):
         source = int(value.shape[dimension])
@@ -53,10 +59,13 @@ def fixed_shape_pooling():
         return axis(axis(value, 2, h), 3, w)
 
     functional.adaptive_max_pool1d, functional.adaptive_max_pool2d = one, two
+    torch.triu_indices = lambda *a, **kw: triangle(*a, **kw, upper=True)
+    torch.tril_indices = lambda *a, **kw: triangle(*a, **kw, upper=False)
     try:
         yield
     finally:
         functional.adaptive_max_pool1d, functional.adaptive_max_pool2d = original1, original2
+        torch.triu_indices, torch.tril_indices = original_upper, original_lower
 
 
 def main() -> None:
