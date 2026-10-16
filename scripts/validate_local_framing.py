@@ -41,6 +41,8 @@ class LocalFramingTests(unittest.TestCase):
         self.assertAlmostEqual(final_subject, desired, places=9)
         self.assertIn("simd_quatd(from: future.deviceRay(at: destination)", PLANNER)
         self.assertIn("trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay", VM)
+        self.assertIn("subjectPoint: hero.trackingPoint ?? proposal.subjectPoint", NEURAL)
+        self.assertIn("group.trackingPoint = hero.eyePosition ?? hero.center", NEURAL)
 
     def test_pan_right_moves_guide_left(self):
         original = aim_x(0.66, 0.38, 0.75, 1.0)

@@ -136,6 +136,7 @@ public struct NeuralSubjectCandidate: Identifiable, Sendable {
     var gaze: CGFloat = 0
     var companionBounds: [CGRect] = []
     var faceBounds: [CGRect] = []
+    var trackingPoint: CGPoint? = nil
     var isGroup = false
     
     public var center: CGPoint {
@@ -247,7 +248,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             guard let preview = rendered.first(where: {
                 $0.0.zoom == proposal.zoom && $0.0.intent == proposal.intent && $0.0.sourceCorners == proposal.sourceCorners
             })?.1 else { return nil }
-            let plan = LocalFramingPlan(subjectPoint: proposal.subjectPoint, subjectRect: hero.boundingBox,
+            let plan = LocalFramingPlan(subjectPoint: hero.trackingPoint ?? proposal.subjectPoint, subjectRect: hero.boundingBox,
                 aimPointInSource: proposal.aimPoint, aimWorldRay: pose.act(proposal.rotation.act(SIMD3(0, 0, -1))),
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
@@ -433,6 +434,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                                         y: eyes.reduce(0) { $0 + $1.y } / CGFloat(eyes.count))
         }
         group.isGroup = true
+        // Group layout uses the group's eye line. Optical tracking must seed
+        // a real member, never the empty space between two people's faces.
+        group.trackingPoint = hero.eyePosition ?? hero.center
         group.companionBounds = members.flatMap { [$0.boundingBox] + $0.companionBounds }
         group.faceBounds = members.flatMap(\.faceBounds)
         return group
