@@ -9,6 +9,7 @@ final class CompositionAestheticSearch {
         var proposal: CompositionProposal
         let image: CGImage
         let assessment: PhotographicCompositionModel.Assessment?
+        let geometryScore: Double
     }
 
     struct Result {
@@ -44,7 +45,8 @@ final class CompositionAestheticSearch {
                     proposal.score += aesthetic * 0.075
                 }
                 proposal.score += min(0.01, max(-0.01, preferences[proposal.preferenceKey] ?? 0))
-                result.append(View(proposal: proposal, image: preview, assessment: assessment))
+                result.append(View(proposal: proposal, image: preview, assessment: assessment,
+                                   geometryScore: candidate.score))
                 progress("Đang so sánh bố cục và zoom \(index + 1)/\(candidates.count)…")
             }
             return result
@@ -56,13 +58,19 @@ final class CompositionAestheticSearch {
         let neighbours = evaluate(refine(initial))
         evaluated.append(contentsOf: neighbours)
         guard !cancellation.isCancelled else { return nil }
+        let usedSpecialist = !evaluated.isEmpty && assessedCount == evaluated.count
+        if specialist != nil && !usedSpecialist {
+            // Never compare learned 1-to-5 ratings against unrelated fallback
+            // scores if a request fails partway through the comparison.
+            for index in evaluated.indices { evaluated[index].proposal.score = evaluated[index].geometryScore }
+        }
         let baseline = evaluated.first { $0.proposal.isUnchangedView }
         let baselineMean = baseline?.assessment?.mean
         let originalZoom = baseline?.proposal.zoom
         // The unchanged frame competes with every crop. Avoid trading away
         // image area for gains smaller than the model-conversion tolerance.
         let eligible = evaluated.filter { view in
-            guard let baselineMean, let originalZoom, let assessment = view.assessment else { return true }
+            guard usedSpecialist, let baselineMean, let originalZoom, let assessment = view.assessment else { return true }
             return view.proposal.isUnchangedView || view.proposal.zoom <= originalZoom * 1.08 ||
                 assessment.mean >= baselineMean + 0.10
         }
@@ -70,7 +78,6 @@ final class CompositionAestheticSearch {
             eligible.first { $0.proposal.sourceCorners == proposal.sourceCorners &&
                 $0.proposal.intent == proposal.intent && $0.proposal.zoom == proposal.zoom }
         }
-        let usedSpecialist = !evaluated.isEmpty && assessedCount == evaluated.count
         var robust = false
         if usedSpecialist, let best = selected.first, let rating = best.assessment?.mean {
             if best.proposal.isUnchangedView {
@@ -86,6 +93,6 @@ final class CompositionAestheticSearch {
             }
         }
         return Result(views: selected, assessedCount: assessedCount,
-                      canAutoselect: usedSpecialist && robust, usedSpecialist: usedSpecialist)
+                      canAutoselect: usedSpecialist && robust && assessedCount >= 12, usedSpecialist: usedSpecialist)
     }
 }

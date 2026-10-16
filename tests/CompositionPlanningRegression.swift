@@ -54,6 +54,55 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("learned shortlist explores zoom while retaining the unchanged view") {
+            let plans = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait, .environmentalPortrait],
+                raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], proposalLimit: 36)
+            try require(plans.count > 6 && plans.count <= 36, "trained model received only the old small shortlist")
+            try require(plans.contains(where: \.isUnchangedView), "unchanged baseline omitted")
+            try require((plans.map(\.zoom).max() ?? 1) > 1.25, "focal-length exploration collapsed")
+        }
+        try run("learned local refinement keeps every member in a five-person group") {
+            let members = (0..<5).map { CGRect(x: 0.15 + Double($0) * 0.13, y: 0.22, width: 0.11, height: 0.55) }
+            let union = members.dropFirst().reduce(members[0]) { $0.union($1) }
+            let hero = subject(rect: union, kind: .group)
+            let broad = CompositionPlanner.proposals(subjects: [hero], intents: [.group], raster: raster(),
+                calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], protectedBounds: members, proposalLimit: 36)
+            let refined = CompositionPlanner.proposals(subjects: [hero], intents: [.group], raster: raster(),
+                calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], protectedBounds: members,
+                proposalLimit: 18, refining: Array(broad.prefix(3)))
+            try require(!refined.isEmpty && refined.count <= 18, "missing bounded refinement")
+            for plan in refined {
+                let k = TrackingCalibration.fallback()
+                let future = TrackingCalibration(fx: k.fx * Double(plan.zoom), fy: k.fy * Double(plan.zoom),
+                    cx: k.cx, cy: k.cy, aspect: k.aspect)
+                for member in members {
+                    let projected = CompositionPlanner.project(member, from: k, to: future, rotation: plan.rotation)
+                    try require(projected.map { CompositionPlanner.visibleFraction($0) > 0.98 } == true, "refinement cut a group member")
+                }
+            }
+        }
+        try run("missing composition weights never authorize an automatic target") {
+            let renderer = CompositionImageRenderer()
+            let ci = CIImage(color: CIColor(red: 0.4, green: 0.5, blue: 0.6))
+                .cropped(to: CGRect(x: 0, y: 0, width: 216, height: 288))
+            let result = CompositionAestheticSearch(renderer: renderer).run(proposals: proposals([subject()], [.portrait]),
+                image: ci, aspect: 0.75, preferences: [:], modelURL: nil,
+                cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { _ in [] })
+            try require(result?.canAutoselect == false && result?.usedSpecialist == false,
+                        "fallback promoted geometry to pretrained composition evidence")
+            try require(result?.assessedCount == 0, "invented model assessments")
+        }
+        try run("spectral preprocessing remains finite on flat and black images") {
+            let context = CIContext()
+            let spectral = SpectralCompositionSaliency()
+            for value in [0.0, 0.02, 1.0] {
+                let ci = CIImage(color: CIColor(red: value, green: value, blue: value))
+                let image = context.createCGImage(ci, from: CGRect(x: 0, y: 0, width: 216, height: 288))!
+                guard let map = spectral.map(image: image) else { throw Failure(description: "flat input failed") }
+                try require(map.count == 224 * 224 && map.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1.00001 },
+                            "spectral saliency diverged on flat input")
+            }
+        }
         try run("background faces are retained whole or excluded whole") {
             let face = CGRect(x: 0.79, y: 0.25, width: 0.1, height: 0.14)
             let k = TrackingCalibration.fallback()

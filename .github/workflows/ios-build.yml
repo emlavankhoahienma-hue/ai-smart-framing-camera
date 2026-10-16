@@ -51,6 +51,8 @@ jobs:
             AISmartFramingCamera/Services/TrackingGeometry.swift \
             AISmartFramingCamera/Services/CompositionPlanning.swift \
             AISmartFramingCamera/Services/CompositionImageEvidence.swift \
+            AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
+            AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
             tests/CompositionPlanningRegression.swift \
             -o "$RUNNER_TEMP/composition-regressions"
           "$RUNNER_TEMP/composition-regressions"
@@ -113,6 +115,43 @@ jobs:
           test -d SigLIPBaseImage.mlmodelc
           test -s SigLIPPrompts.json
           test -s SigLIPModelManifest.json
+
+      - name: Cache photographic model and evaluation data
+        uses: actions/cache@v5
+        with:
+          path: .model-cache
+          key: composition-cadb-samp-v1
+
+      - name: Export and verify pretrained SAMP-Net composition specialist
+        run: |
+          pip install "torch==2.5.1" "torchvision==0.20.1" "numpy==1.26.4" \
+            "coremltools==9.0" "opencv-python-headless==4.11.0.86" \
+            "einops==0.8.1" "Pillow==11.0.0"
+          python scripts/prepare_composition_photos.py
+          python scripts/export_composition_coreml.py --photos validation/photos
+          xcrun coremlc compile SAMPComposition.mlpackage .
+          test -d SAMPComposition.mlmodelc
+
+      - name: Validate Swift photographic model and crop safety on real images
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/TrackingGeometry.swift \
+            AISmartFramingCamera/Services/CompositionPlanning.swift \
+            AISmartFramingCamera/Services/CompositionImageEvidence.swift \
+            AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
+            AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
+            tests/CompositionModelValidation.swift -o "$RUNNER_TEMP/photo-validation"
+          "$RUNNER_TEMP/photo-validation" validation/photos SAMPComposition.mlmodelc validation/swift
+
+      - name: Upload photographic model validation
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Photographic-Composition-Validation
+          path: |
+            SAMPModelManifest.json
+            validation/swift/
+            validation/photos/manifest.json
 
       - name: Build for iOS (unsigned)
         run: |
@@ -188,6 +227,10 @@ jobs:
           test -d SigLIPBaseImage.mlmodelc
           cp -r SigLIPBaseImage.mlmodelc Payload/AISmartFramingCamera.app/
           cp SigLIPPrompts.json SigLIPModelManifest.json Payload/AISmartFramingCamera.app/
+          test -d SAMPComposition.mlmodelc
+          cp -r SAMPComposition.mlmodelc Payload/AISmartFramingCamera.app/
+          cp SAMPModelManifest.json Payload/AISmartFramingCamera.app/
+          cp models/SAMP-Net-LICENSE.txt Payload/AISmartFramingCamera.app/
           if [ -s AISmartFramingCamera/Resources/LocalAutoselectThresholds.json ]; then
             cp AISmartFramingCamera/Resources/LocalAutoselectThresholds.json Payload/AISmartFramingCamera.app/
           fi

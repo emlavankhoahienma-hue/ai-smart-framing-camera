@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import json
 import math
 import platform
@@ -15,6 +16,31 @@ from PIL import Image
 
 from composition_model import (ExportModel, PAPER, REPOSITORY, REVISION,
                                WEIGHTS_SHA256, inputs, load_model)
+
+
+class StaticSurround(torch.nn.Module):
+    """The author's fixed 7x7 / 56x56 surround masks, without tensor mutation."""
+    def __init__(self):
+        super().__init__()
+        for side, prefix in ((7, "feature"), (56, "saliency")):
+            start, end = int(side / 2 - side / 4), int(side / 2 + side / 4)
+            inside, outside = [], []
+            for y in range(side):
+                for x in range(side):
+                    (inside if start <= x < end and start <= y < end else outside).append(y * side + x)
+            self.register_buffer(prefix + "_inside", torch.tensor(inside), persistent=False)
+            self.register_buffer(prefix + "_outside", torch.tensor(outside), persistent=False)
+
+    def forward(self, features, saliency):
+        features = features.flatten(2)
+        inner = features.index_select(2, self.feature_inside).mean(2)
+        outer = features.index_select(2, self.feature_outside).mean(2)
+        feature = torch.stack((inner, outer), dim=2).unsqueeze(3)
+        saliency = saliency.flatten(2)
+        inner_saliency = saliency.index_select(2, self.saliency_inside).flatten(1)
+        outer_saliency = saliency.index_select(2, self.saliency_outside).flatten(1)
+        outer_saliency = outer_saliency.reshape(1, 784, 3).amax(2)
+        return feature, torch.stack((inner_saliency, outer_saliency), dim=2).unsqueeze(3)
 
 
 @contextlib.contextmanager
@@ -76,7 +102,10 @@ def main() -> None:
     args = parser.parse_args()
     torch.set_num_threads(2)
     model = load_model(args.cache)
-    wrapped = ExportModel(model).eval()
+    portable_model = copy.deepcopy(model)
+    portable_model.pattern_module.pool_list[4] = StaticSurround()
+    wrapped = ExportModel(portable_model).eval()
+    author_reference = ExportModel(model).eval()
     example = (torch.rand(1, 3, 224, 224), torch.rand(1, 1, 224, 224))
     with torch.inference_mode(), fixed_shape_pooling():
         traced = torch.jit.trace(wrapped, example, strict=True)
@@ -85,7 +114,7 @@ def main() -> None:
         for seed in range(4):
             torch.manual_seed(seed)
             sample = (torch.rand_like(example[0]), torch.rand_like(example[1]))
-            if not torch.allclose(wrapped(*sample), traced(*sample), atol=1e-5, rtol=1e-4):
+            if not torch.allclose(author_reference(*sample), traced(*sample), atol=1e-5, rtol=1e-4):
                 raise RuntimeError("Static pooling rewrite changed the author network")
     converted = ct.convert(traced, convert_to="mlprogram", minimum_deployment_target=ct.target.iOS17,
         compute_precision=ct.precision.FLOAT16,

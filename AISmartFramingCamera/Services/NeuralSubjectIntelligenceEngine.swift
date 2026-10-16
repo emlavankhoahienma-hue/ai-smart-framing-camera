@@ -260,6 +260,11 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         if hero.category == .animal { return [.animal] }
         if hero.category == .general { return [.landscape] }
+        if output.detectedScene == .general,
+           let landscape = output.semanticAffinities["landscape"], landscape > 0.30,
+           landscape > (output.semanticAffinities["object"] ?? 0) + 0.025 {
+            return [.landscape, .object]
+        }
         switch output.detectedScene {
         case .food: return [.food]
         case .macro, .foliage: return [.closeUp]

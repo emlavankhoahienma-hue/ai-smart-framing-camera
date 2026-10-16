@@ -30,6 +30,18 @@ def tree_hash(directory: Path) -> str:
 
 def main() -> None:
     bundle = Path(sys.argv[1])
+    composition = tree_hash(bundle / "SAMPComposition.mlmodelc")
+    composition_manifest_path = bundle / "SAMPModelManifest.json"
+    composition_manifest = json.loads(composition_manifest_path.read_text(encoding="utf-8"))
+    if composition_manifest.get("weightsSHA256") != "d3d02f36967734fd6f0d2770380a04b777b5cd800a9ba68d4ccc9656f6fef603":
+        raise RuntimeError("Invalid SAMP-Net weight provenance")
+    parity = composition_manifest.get("parity") or {}
+    if parity.get("images", 0) < 24 or parity.get("maxMeanScoreError", 1) > 0.04:
+        raise RuntimeError("SAMP-Net has not passed real-photo Core ML parity")
+    if not (bundle / "SAMP-Net-LICENSE.txt").is_file():
+        raise RuntimeError("Missing SAMP-Net license")
+    composition_manifest["compiledSHA256"] = composition
+    composition_manifest_path.write_text(json.dumps(composition_manifest, indent=2), encoding="utf-8")
     siglip = tree_hash(bundle / "SigLIPBaseImage.mlmodelc")
     yolo = {name: tree_hash(bundle / f"{name}.mlmodelc")
             for name in YOLO_WEIGHTS_SHA256}
@@ -58,6 +70,7 @@ def main() -> None:
     (bundle / "YOLOModelManifest.json").write_text(json.dumps(yolo_manifest_data, indent=2), encoding="utf-8")
     print(f"SigLIP compiled SHA256: {siglip}")
     print(f"YOLO compiled SHA256: {yolo}")
+    print(f"SAMP-Net compiled SHA256: {composition}")
 
 
 if __name__ == "__main__":
