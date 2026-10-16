@@ -725,9 +725,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func handleScenePhaseChange(_ phase: ScenePhase) {
-        isAppInBackground = phase != .active
+        let isBackground = (phase == .background)
+        isAppInBackground = isBackground
         updateCameraHibernationState()
-        if phase != .active {
+        if isBackground {
             isCameraReady = false
             if wantsVideoRecording || recordingState != .idle {
                 wantsVideoRecording = false
@@ -736,12 +737,16 @@ public final class CameraViewModel: ObservableObject {
             if isAIVideoDirectorActive { dismissAIVideoDirector() }
             suspendSpatialTracking()
             cameraService.stop()
-        } else {
+        } else if phase == .active {
             SpatialTrackingEngine.shared.prepare()
             guard hasCameraPermission else { return }
-            cameraService.start { [weak self] running in
-                self?.isCameraReady = running
-                if running { self?.applyPendingCaptureModeIfPossible() }
+            if !cameraService.isSessionRunning {
+                cameraService.start { [weak self] running in
+                    self?.isCameraReady = running
+                    if running { self?.applyPendingCaptureModeIfPossible() }
+                }
+            } else {
+                isCameraReady = true
             }
         }
     }
