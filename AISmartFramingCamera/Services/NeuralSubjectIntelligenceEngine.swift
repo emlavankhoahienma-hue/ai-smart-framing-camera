@@ -228,6 +228,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             if cancellation.isCancelled { return nil }
             guard let preview = renderer.preview(image: image, corners: proposal.sourceCorners,
                                                   aspect: frame.calibration.aspect) else { continue }
+            if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
+                proposal.score += aesthetic * 0.075
+            }
             if let affinity = SemanticCropRanker.shared.affinity(image: preview, intent: proposal.intent,
                                                                cancellation: cancellation) {
                 let baseline = output.semanticAffinities[proposal.intent.promptKey] ?? affinity

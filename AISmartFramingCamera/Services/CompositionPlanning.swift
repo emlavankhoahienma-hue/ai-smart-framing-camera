@@ -263,7 +263,7 @@ enum CompositionPlanner {
                 if isCancelled() { return [] }
                 let desired = preferredPlacement(subject: subject, intent: intent, raster: raster)
                 func evaluate(_ destination: CGPoint, zoom: CGFloat) -> CompositionProposal? {
-                    guard !isCancelled(), inside(destination, margin: 0.04), zoom.isFinite,
+                    guard inside(destination, margin: 0.04), zoom.isFinite,
                           zoom >= currentZoom, zoom <= maxZoom else { return nil }
                     let ratio = Double(zoom / currentZoom)
                     let future = TrackingCalibration(fx: calibration.fx * ratio, fy: calibration.fy * ratio,
@@ -367,7 +367,8 @@ enum CompositionPlanner {
 
     private static func preferredPlacement(subject: CompositionSubject, intent: LocalCompositionIntent,
                                            raster: CompositionRaster) -> CGPoint {
-        if intent == .group || intent == .architecture || intent == .food { return CGPoint(x: 0.5, y: 0.5) }
+        if intent == .group { return CGPoint(x: 0.5, y: 0.36) }
+        if intent == .architecture || intent == .food { return CGPoint(x: 0.5, y: 0.5) }
         let person = subject.kind == .person || subject.kind == .face
         let lead = min(1, max(-1, Double(subject.gaze)))
         // Positive gaze means image-right: subject belongs left of centre.

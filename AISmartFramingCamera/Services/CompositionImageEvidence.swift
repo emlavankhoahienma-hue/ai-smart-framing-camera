@@ -38,6 +38,22 @@ final class CompositionAnalysisCancellation: @unchecked Sendable {
 final class CompositionImageRenderer {
     private let context = CIContext(options: [.cacheIntermediates: false])
 
+    /// Apple's pretrained aesthetic assessment complements geometry on iOS 18+.
+    /// A model failure or unsupported OS simply contributes no ranking evidence.
+    func aestheticScore(image: CGImage, cancellation: CompositionAnalysisCancellation) -> Double? {
+        guard !cancellation.isCancelled else { return nil }
+        if #available(iOS 18.0, macOS 15.0, *) {
+            let request = VNCalculateImageAestheticsScoresRequest()
+            let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
+            guard (try? cancellation.perform(request, with: handler)) != nil,
+                  let result = request.results?.first, result.overallScore.isFinite else { return nil }
+            // Utility classification is not a reason to reject a deliberate
+            // product/food photograph. Only compare actual aesthetic scores.
+            return min(1, max(-1, Double(result.overallScore)))
+        }
+        return nil
+    }
+
     func raster(image: CIImage, saliency: CVPixelBuffer?, objectness: CVPixelBuffer? = nil) -> CompositionRaster? {
         let side = 32
         guard let small = render(image, size: CGSize(width: side, height: side)) else { return nil }
