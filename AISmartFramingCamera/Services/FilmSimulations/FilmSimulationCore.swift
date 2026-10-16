@@ -171,21 +171,24 @@ public enum FilmSimulationCore {
     ) -> CIImage {
         guard intensity > 0.01 else { return input }
         let extent = input.extent
+        let dim = max(extent.width, extent.height)
+        let scaleFactor = max(0.2, min(8.0, dim / 1000.0))
+        let effectiveRadius = radius * Float(scaleFactor)
 
-        // Trich xuat vung sang cao (Highlights thresholding)
+        // Trich xuat vung sang cao thuc su (Specular highlights thresholding khong an vao ao do ban ngay)
         guard let threshold = CIFilter(name: "CIColorMatrix") else { return input }
         threshold.setValue(input, forKey: kCIInputImageKey)
-        threshold.setValue(CIVector(x: 2.4, y: 0, z: 0, w: 0), forKey: "inputRVector")
-        threshold.setValue(CIVector(x: 0, y: 1.1, z: 0, w: 0), forKey: "inputGVector")
-        threshold.setValue(CIVector(x: 0, y: 0, z: 0.3, w: 0), forKey: "inputBVector")
+        threshold.setValue(CIVector(x: 1.6, y: 0.6, z: 0.2, w: 0), forKey: "inputRVector")
+        threshold.setValue(CIVector(x: 0.4, y: 1.4, z: 0.4, w: 0), forKey: "inputGVector")
+        threshold.setValue(CIVector(x: 0.2, y: 0.4, z: 1.2, w: 0), forKey: "inputBVector")
         threshold.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
-        threshold.setValue(CIVector(x: -0.88, y: -0.88, z: -0.88, w: 0), forKey: "inputBiasVector")
+        threshold.setValue(CIVector(x: -1.65, y: -1.65, z: -1.65, w: 0), forKey: "inputBiasVector")
         guard let brightHighlights = threshold.outputImage else { return input }
 
-        // Lam mo quang hoc quang do
+        // Lam mo quang hoc quang do voi ban kinh thich ung kich thuoc anh
         guard let blur = CIFilter(name: "CIGaussianBlur") else { return input }
         blur.setValue(brightHighlights, forKey: kCIInputImageKey)
-        blur.setValue(radius, forKey: kCIInputRadiusKey)
+        blur.setValue(effectiveRadius, forKey: kCIInputRadiusKey)
         guard let blurredHalation = blur.outputImage?.cropped(to: extent) else { return input }
 
         // Nhuom do cam ruc ro dac trung lop than Remjet bi boc tren phim nhua chieu bong
@@ -211,11 +214,14 @@ public enum FilmSimulationCore {
     ) -> CIImage {
         guard intensity > 0.01 else { return input }
         let extent = input.extent
+        let dim = max(extent.width, extent.height)
+        let scaleFactor = max(0.2, min(8.0, dim / 1000.0))
+        let effectiveRadius = radius * Float(scaleFactor)
 
         guard let bloomFilter = CIFilter(name: "CIBloom") else { return input }
         bloomFilter.setValue(input, forKey: kCIInputImageKey)
         bloomFilter.setValue(intensity, forKey: kCIInputIntensityKey)
-        bloomFilter.setValue(radius, forKey: kCIInputRadiusKey)
+        bloomFilter.setValue(effectiveRadius, forKey: kCIInputRadiusKey)
         return bloomFilter.outputImage?.cropped(to: extent) ?? input
     }
 
@@ -227,10 +233,13 @@ public enum FilmSimulationCore {
     ) -> CIImage {
         guard intensity > 0.01 else { return input }
         let extent = input.extent
+        let dim = max(extent.width, extent.height)
+        let scaleFactor = max(0.2, min(8.0, dim / 1000.0))
+        let effectiveRadius = radius * Float(scaleFactor)
 
         guard let blur = CIFilter(name: "CIGaussianBlur") else { return input }
         blur.setValue(input, forKey: kCIInputImageKey)
-        blur.setValue(radius, forKey: kCIInputRadiusKey)
+        blur.setValue(effectiveRadius, forKey: kCIInputRadiusKey)
         guard let blurred = blur.outputImage?.cropped(to: extent) else { return input }
 
         guard let opacity = CIFilter(name: "CIColorMatrix") else { return input }
@@ -247,17 +256,51 @@ public enum FilmSimulationCore {
         return screen.outputImage?.cropped(to: extent) ?? input
     }
 
-    // MARK: - 6. Chroma Bleed (Lech pha mau ngang dac trung giai ma bang tu MiniDV / VHS)
+    // MARK: - 6. Chroma Bleed (Lech pha sac do kenh mau ngang U/V dac trung giai ma bang tu MiniDV / VHS)
     public static func applyChromaBleed(_ input: CIImage, shiftX: CGFloat = 2.5) -> CIImage {
         guard abs(shiftX) > 0.5 else { return input }
         let extent = input.extent
-        let transform = CGAffineTransform(translationX: shiftX, y: 0)
-        let shifted = input.transformed(by: transform).cropped(to: extent)
+        let dim = max(extent.width, extent.height)
+        let scaleFactor = max(0.4, min(4.0, dim / 1000.0))
+        let effectiveShift = shiftX * scaleFactor
 
-        guard let blend = CIFilter(name: "CILightenBlendMode") else { return input }
-        blend.setValue(shifted, forKey: kCIInputImageKey)
-        blend.setValue(input, forKey: kCIInputBackgroundImageKey)
-        return blend.outputImage?.cropped(to: extent) ?? input
+        // Tach rieng 3 kenh mau: Do (R), Luc (G), Lam (B)
+        // Kenh G giu nguyen tai vi tri goc (dai dien 70% do sang chi tiet Y)
+        guard let greenFilter = CIFilter(name: "CIColorMatrix") else { return input }
+        greenFilter.setValue(input, forKey: kCIInputImageKey)
+        greenFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        greenFilter.setValue(CIVector(x: 0, y: 1, z: 0, w: 0), forKey: "inputGVector")
+        greenFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputBVector")
+        guard let greenChannel = greenFilter.outputImage?.cropped(to: extent) else { return input }
+
+        // Kenh R lech phai theo phuong ngang
+        guard let redFilter = CIFilter(name: "CIColorMatrix") else { return input }
+        redFilter.setValue(input, forKey: kCIInputImageKey)
+        redFilter.setValue(CIVector(x: 1, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        redFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputGVector")
+        redFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputBVector")
+        guard let redRaw = redFilter.outputImage else { return input }
+        let shiftedRed = redRaw.transformed(by: CGAffineTransform(translationX: effectiveShift, y: 0)).cropped(to: extent)
+
+        // Kenh B lech trai nhe theo phuong ngang
+        guard let blueFilter = CIFilter(name: "CIColorMatrix") else { return input }
+        blueFilter.setValue(input, forKey: kCIInputImageKey)
+        blueFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        blueFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputGVector")
+        blueFilter.setValue(CIVector(x: 0, y: 0, z: 1, w: 0), forKey: "inputBVector")
+        guard let blueRaw = blueFilter.outputImage else { return input }
+        let shiftedBlue = blueRaw.transformed(by: CGAffineTransform(translationX: -effectiveShift * 0.6, y: 0)).cropped(to: extent)
+
+        // Tai hop nhat cac kenh mau roi ruyet bang Addition Compositing (R + G + B = RGB chinh xac)
+        guard let addRG = CIFilter(name: "CIAdditionCompositing") else { return input }
+        addRG.setValue(shiftedRed, forKey: kCIInputImageKey)
+        addRG.setValue(greenChannel, forKey: kCIInputBackgroundImageKey)
+        guard let rgComposited = addRG.outputImage else { return input }
+
+        guard let addRGB = CIFilter(name: "CIAdditionCompositing") else { return input }
+        addRGB.setValue(shiftedBlue, forKey: kCIInputImageKey)
+        addRGB.setValue(rgComposited, forKey: kCIInputBackgroundImageKey)
+        return addRGB.outputImage?.cropped(to: extent) ?? input
     }
 
     // MARK: - 7. Corner Light Leak (Vet ro sang quang hoc o goc cua may co / do choi)
@@ -280,21 +323,45 @@ public enum FilmSimulationCore {
         return screen.outputImage?.cropped(to: extent) ?? input
     }
 
-    // MARK: - 8. Nokia 3310 LCD Matrix Dither (Don sac xanh luc LCD 84x48)
+    // MARK: - 8. Nokia 3310 LCD Matrix Dither (Don sac xanh reu LCD ma tran 84x48 co pixelation va luong tu hoa)
     public static func applyDitherLCD(_ input: CIImage) -> CIImage {
-        guard let mono = CIFilter(name: "CIColorControls") else { return input }
-        mono.setValue(input, forKey: kCIInputImageKey)
-        mono.setValue(0.0, forKey: kCIInputSaturationKey)
-        mono.setValue(1.50, forKey: kCIInputContrastKey)
-        guard let monoImage = mono.outputImage else { return input }
+        let extent = input.extent
+        let dim = max(extent.width, extent.height)
 
-        guard let matrix = CIFilter(name: "CIColorMatrix") else { return monoImage }
-        matrix.setValue(monoImage, forKey: kCIInputImageKey)
-        matrix.setValue(CIVector(x: 0.40, y: 0, z: 0, w: 0), forKey: "inputRVector")
-        matrix.setValue(CIVector(x: 0, y: 0.56, z: 0, w: 0), forKey: "inputGVector")
-        matrix.setValue(CIVector(x: 0, y: 0, z: 0.20, w: 0), forKey: "inputBVector")
-        matrix.setValue(CIVector(x: 0.14, y: 0.24, z: 0.08, w: 0), forKey: "inputBiasVector")
-        return matrix.outputImage?.cropped(to: input.extent) ?? monoImage
+        // Tinh toan quy mo luoi pixel LCD (khoang 100-140 diem anh tren chieu dai)
+        let pixelScale = max(3.0, dim / 130.0)
+
+        // 1. Luoi diem anh LCD (Pixelation)
+        guard let pixellate = CIFilter(name: "CIPixellate") else { return input }
+        pixellate.setValue(input, forKey: kCIInputImageKey)
+        pixellate.setValue(CIVector(x: extent.midX, y: extent.midY), forKey: kCIInputCenterKey)
+        pixellate.setValue(pixelScale, forKey: kCIInputScaleKey)
+        guard let pixelated = pixellate.outputImage?.cropped(to: extent) else { return input }
+
+        // 2. Chuyen sang don sac do sang cao
+        guard let mono = CIFilter(name: "CIColorControls") else { return pixelated }
+        mono.setValue(pixelated, forKey: kCIInputImageKey)
+        mono.setValue(0.0, forKey: kCIInputSaturationKey)
+        mono.setValue(1.40, forKey: kCIInputContrastKey)
+        mono.setValue(-0.04, forKey: kCIInputBrightnessKey)
+        guard let monoImage = mono.outputImage else { return pixelated }
+
+        // 3. Luong tu hoa cac muc xam tinh the long (Posterize ve 4 cap do sac thai)
+        guard let posterize = CIFilter(name: "CIColorPosterize") else { return monoImage }
+        posterize.setValue(monoImage, forKey: kCIInputImageKey)
+        posterize.setValue(4.0, forKey: "inputLevels")
+        guard let quantized = posterize.outputImage else { return monoImage }
+
+        // 4. Anh xa bang mau 2 mau LCD Nokia 3310:
+        // Dark pixels -> Xanh den reu dam (#25351E: R:0.15, G:0.21, B:0.12)
+        // Bright pixels -> Xanh vang reu phan quang (#A8B971: R:0.66, G:0.73, B:0.44)
+        guard let matrix = CIFilter(name: "CIColorMatrix") else { return quantized }
+        matrix.setValue(quantized, forKey: kCIInputImageKey)
+        matrix.setValue(CIVector(x: 0.51, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        matrix.setValue(CIVector(x: 0, y: 0.52, z: 0, w: 0), forKey: "inputGVector")
+        matrix.setValue(CIVector(x: 0, y: 0, z: 0.32, w: 0), forKey: "inputBVector")
+        matrix.setValue(CIVector(x: 0.15, y: 0.21, z: 0.12, w: 0), forKey: "inputBiasVector")
+        return matrix.outputImage?.cropped(to: extent) ?? quantized
     }
 
     // MARK: - 9. Intensity Blend (Hoa tron anh goc va anh gia lap theo cuong do)

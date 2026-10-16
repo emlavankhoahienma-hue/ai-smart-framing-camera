@@ -95,34 +95,55 @@ public enum InstantPolaroidSimulations {
         return FilmSimulationCore.applyVignette(out, intensity: 0.20, radius: 2.1)
     }
 
-    // MARK: - 4. Instax Wide 300 (Kho phim rong, chuyen vung tu nhien, mau can bang)
+    // MARK: - 4. Instax Wide 300 (Kho phim rong quang hoc analog, thau kinh mem mai, mau am can bang)
     private static func applyInstaxWide(_ input: CIImage) -> CIImage {
-        var out = FilmSimulationCore.applyColorControls(input, contrast: 1.10, saturation: 1.08)
+        var out = FilmSimulationCore.applyColorMatrix(
+            input,
+            red: CIVector(x: 1.03, y: 0.00, z: -0.01, w: 0),
+            green: CIVector(x: 0.01, y: 1.02, z: 0.00, w: 0),
+            blue: CIVector(x: -0.02, y: 0.01, z: 1.01, w: 0),
+            bias: CIVector(x: 0.01, y: 0.01, z: 0.00, w: 0)
+        )
+        // Can bang nhiet do ban ngay am nhe tu nhien
+        out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6650, targetTint: 1.2)
+        out = FilmSimulationCore.applyColorControls(out, contrast: 1.04, saturation: 1.02)
+        // Duong cong analog muot ma: Toe duoc nang nhe, Shoulder khong bi gat
         out = FilmSimulationCore.applyToneCurve(
             out,
-            p0: CGPoint(x: 0.00, y: 0.04),
-            p1: CGPoint(x: 0.25, y: 0.24),
+            p0: CGPoint(x: 0.00, y: 0.06),
+            p1: CGPoint(x: 0.25, y: 0.26),
             p2: CGPoint(x: 0.50, y: 0.51),
-            p3: CGPoint(x: 0.75, y: 0.78),
-            p4: CGPoint(x: 1.00, y: 0.97)
+            p3: CGPoint(x: 0.75, y: 0.76),
+            p4: CGPoint(x: 1.00, y: 0.94)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.2)
-        return FilmSimulationCore.applyVignette(out, intensity: 0.18, radius: 2.3)
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.10, radius: 6.0)
+        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.10, grainSize: 1.2)
+        return FilmSimulationCore.applyVignette(out, intensity: 0.16, radius: 2.4)
     }
 
-    // MARK: - 5. Instax SQ10 (Kho vuong hien dai, ruc ro sac net, vung sang muot ma)
+    // MARK: - 5. Instax SQ10 (May lai ky thuat so SQ10, cam bien so sac net, tuong phan cao, den sau)
     private static func applyInstaxSquare(_ input: CIImage) -> CIImage {
-        var out = FilmSimulationCore.applyColorControls(input, contrast: 1.12, saturation: 1.10)
+        // Pho mau so ruc ro, do va lam noi bat
+        var out = FilmSimulationCore.applyColorMatrix(
+            input,
+            red: CIVector(x: 1.06, y: -0.02, z: -0.02, w: 0),
+            green: CIVector(x: -0.02, y: 1.06, z: -0.02, w: 0),
+            blue: CIVector(x: -0.02, y: -0.02, z: 1.10, w: 0)
+        )
+        // Tone ky thuat so hoi lanh, trung tinh sac sao
+        out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6420, targetTint: -0.8)
+        out = FilmSimulationCore.applyColorControls(out, contrast: 1.18, saturation: 1.15)
+        // Duong cong tuong phan ky thuat so: Vung toi ep sat den tuyen, vung sang ruc
         out = FilmSimulationCore.applyToneCurve(
             out,
-            p0: CGPoint(x: 0.00, y: 0.04),
-            p1: CGPoint(x: 0.25, y: 0.23),
-            p2: CGPoint(x: 0.50, y: 0.51),
-            p3: CGPoint(x: 0.75, y: 0.79),
-            p4: CGPoint(x: 1.00, y: 0.97)
+            p0: CGPoint(x: 0.00, y: 0.01),
+            p1: CGPoint(x: 0.25, y: 0.20),
+            p2: CGPoint(x: 0.50, y: 0.50),
+            p3: CGPoint(x: 0.75, y: 0.82),
+            p4: CGPoint(x: 1.00, y: 0.99)
         )
-        out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.14, grainSize: 1.3)
-        return FilmSimulationCore.applyVignette(out, intensity: 0.22, radius: 2.0)
+        out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.14)
+        return FilmSimulationCore.applyVignette(out, intensity: 0.25, radius: 1.8)
     }
 
     // MARK: - 6. Polaroid Spectra (Kho phim rong chuyen nghiep, sac do trung tinh, giau chi tiet)

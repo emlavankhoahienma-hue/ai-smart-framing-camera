@@ -74,26 +74,32 @@ public enum AnalogDVSimulations {
         return FilmSimulationCore.applyVignette(out, intensity: 0.26, radius: 1.9)
     }
 
-    // MARK: - 3. DCR-DVD (Handycam ghi truc tiep dia mini-DVD dau nhung nam 2000, sac net ky thuat so)
+    // MARK: - 3. DCR-DVD (Handycam mini-DVD dau 2000s, video gamma gat, am ap nịnh mat gia dinh)
     private static func applyDCRDVD(_ input: CIImage) -> CIImage {
+        // Pho mau am vang cam nhe dac trung Sony Handycam tieu dung
         var out = FilmSimulationCore.applyColorMatrix(
             input,
-            red: CIVector(x: 1.04, y: 0.00, z: -0.01, w: 0),
-            green: CIVector(x: -0.01, y: 1.03, z: 0.01, w: 0),
-            blue: CIVector(x: -0.02, y: 0.01, z: 1.02, w: 0),
-            bias: CIVector(x: 0.01, y: 0.01, z: 0.01, w: 0)
+            red: CIVector(x: 1.07, y: 0.01, z: -0.02, w: 0),
+            green: CIVector(x: 0.01, y: 1.04, z: 0.00, w: 0),
+            blue: CIVector(x: -0.04, y: 0.01, z: 0.98, w: 0),
+            bias: CIVector(x: 0.03, y: 0.02, z: 0.00, w: 0)
         )
-        out = FilmSimulationCore.applyColorControls(out, contrast: 1.10, saturation: 1.02)
+        // Can bang nhiet do am ap gia dinh
+        out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6850, targetTint: 1.8)
+        out = FilmSimulationCore.applyColorControls(out, contrast: 1.15, saturation: 1.10)
+        // Duong cong tuong phan video tieu dung: Shadow ep sau, Highlight bat sang manh
         out = FilmSimulationCore.applyToneCurve(
             out,
-            p0: CGPoint(x: 0.00, y: 0.04),
-            p1: CGPoint(x: 0.25, y: 0.24),
+            p0: CGPoint(x: 0.00, y: 0.02),
+            p1: CGPoint(x: 0.25, y: 0.20),
             p2: CGPoint(x: 0.50, y: 0.50),
-            p3: CGPoint(x: 0.75, y: 0.75),
-            p4: CGPoint(x: 1.00, y: 0.96)
+            p3: CGPoint(x: 0.75, y: 0.80),
+            p4: CGPoint(x: 1.00, y: 0.98)
         )
-        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.14, radius: 5.0)
-        return FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
+        // Tran sang CCD 1/6 inch tieu dung khi quay nguon sang
+        out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.18, radius: 5.5)
+        out = FilmSimulationCore.applyChromaBleed(out, shiftX: 1.5)
+        return FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.16)
     }
 
     // MARK: - 4. DVX100 24p (May quay phim doc lap huyen thoai cua Panasonic, CineGamma dam da)
@@ -141,25 +147,29 @@ public enum AnalogDVSimulations {
         return FilmSimulationCore.applyVignette(out, intensity: 0.32, radius: 1.8)
     }
 
-    // MARK: - 6. HDV 1080i (Ky nguyen Sony HDR-FX1 / Z1, do phan giai cao dau tien, sac mau ruc ro)
+    // MARK: - 6. HDV 1080i (May quay truyen hinh Sony HDR-FX1 / Z1, chuan muc phat song, dai sang rong)
     private static func applyHDV1080i(_ input: CIImage) -> CIImage {
+        // Mau sac trung thuc chuan truyen hinh Rec.709
         var out = FilmSimulationCore.applyColorMatrix(
             input,
-            red: CIVector(x: 1.03, y: 0.00, z: -0.01, w: 0),
-            green: CIVector(x: -0.01, y: 1.04, z: 0.01, w: 0),
-            blue: CIVector(x: -0.02, y: 0.01, z: 1.04, w: 0),
-            bias: CIVector(x: 0.01, y: 0.01, z: 0.01, w: 0)
+            red: CIVector(x: 1.01, y: 0.00, z: 0.00, w: 0),
+            green: CIVector(x: 0.00, y: 1.01, z: 0.00, w: 0),
+            blue: CIVector(x: 0.00, y: 0.00, z: 1.01, w: 0)
         )
-        out = FilmSimulationCore.applyColorControls(out, contrast: 1.10, saturation: 1.02)
+        // Can bang trang trung tinh 6500K
+        out = FilmSimulationCore.applyTempTint(out, neutralTemp: 6500, targetTemp: 6500, targetTint: 0.0)
+        out = FilmSimulationCore.applyColorControls(out, contrast: 1.04, saturation: 1.00)
+        // Duong cong CineGamma truyen hinh: Dai dong rong, giu chi tiet highlight va shadow
         out = FilmSimulationCore.applyToneCurve(
             out,
-            p0: CGPoint(x: 0.00, y: 0.03),
-            p1: CGPoint(x: 0.25, y: 0.24),
+            p0: CGPoint(x: 0.00, y: 0.04),
+            p1: CGPoint(x: 0.25, y: 0.25),
             p2: CGPoint(x: 0.50, y: 0.50),
             p3: CGPoint(x: 0.75, y: 0.76),
-            p4: CGPoint(x: 1.00, y: 0.97)
+            p4: CGPoint(x: 1.00, y: 0.96)
         )
-        return FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.10)
+        out = FilmSimulationCore.applyLensDiffusion(out, intensity: 0.06, radius: 4.0)
+        return FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.05)
     }
 
     // MARK: - 7. HK Cinema 90s (Dien anh Hong Kong thap nien 90, Vuong Gia Ve, xanh ngoc luc bao va vang am)

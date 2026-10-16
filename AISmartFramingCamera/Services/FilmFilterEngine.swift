@@ -105,6 +105,10 @@ public final class FilmFilterEngine {
         case .studioNatural:
             fullSimulated = CinemaAndStudioSimulations.apply(inputImage, preset: preset)
 
+        // 12. Historic & Creative Additions
+        case .cyanotype, .grNegative, .bleachBypass:
+            fullSimulated = HistoricAndCreativeSimulations.apply(inputImage, preset: preset)
+
         // Legacy Compatibility Presets
         case .cinemaTealOrange, .sunsetGlow, .leicaMonochrom, .monochromeNoir, .nordicCold, .neonCyberpunk:
             fullSimulated = CinemaAndStudioSimulations.apply(inputImage, preset: preset)
