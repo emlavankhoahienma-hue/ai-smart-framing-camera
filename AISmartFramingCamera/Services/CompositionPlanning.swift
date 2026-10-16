@@ -263,6 +263,7 @@ enum CompositionPlanner {
     static func proposals(subjects: [CompositionSubject], intents: [LocalCompositionIntent],
                           raster: CompositionRaster, calibration: TrackingCalibration,
                           currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
+                          incidentalBounds: [CGRect] = [],
                           isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         guard raster.isValid, calibration.isValid, currentZoom.isFinite, currentZoom > 0 else { return [] }
         let horizonHint = raster.horizon
@@ -272,6 +273,7 @@ enum CompositionPlanner {
         }
         let protectedPeople = validSubjects.filter { $0.kind == .person || $0.kind == .face || $0.kind == .group }
         let protectedRects = protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) }
+        let incidentalRects = incidentalBounds.filter { valid($0) }
         let hardwareMax = allowedZooms.filter { $0.isFinite && $0 > 0 }.max() ?? currentZoom
         // Avoid throwing away excessive source resolution. Lens availability is
         // supplied by CameraService; existing long telephoto framing remains valid.
@@ -301,6 +303,10 @@ enum CompositionPlanner {
                           protectedRects.allSatisfy({ original in
                               guard let rect = project(original, from: calibration, to: future, rotation: rotation) else { return false }
                               return safe(rect, original: original)
+                          }), incidentalRects.allSatisfy({ original in
+                              guard let rect = project(original, from: calibration, to: future, rotation: rotation) else { return true }
+                              let fraction = visibleFraction(rect)
+                              return fraction <= 0.02 || fraction >= 0.98
                           }) else { return nil }
                     let aim = calibration.project(deviceRay: rotation.act(SIMD3(0, 0, -1)))
                     guard aim.isInFront, inside(aim.point, margin: 0) else { return nil }
@@ -424,6 +430,13 @@ enum CompositionPlanner {
             if selected.count == limit { break }
         }
         return selected
+    }
+
+    static func visibleFraction(_ rect: CGRect) -> Double {
+        guard rect.width.isFinite, rect.height.isFinite, rect.width > 0, rect.height > 0 else { return 0 }
+        let overlap = rect.intersection(frame)
+        guard !overlap.isNull, !overlap.isEmpty else { return 0 }
+        return min(1, max(0, Double(overlap.width * overlap.height / (rect.width * rect.height))))
     }
 
     private static func applicableIntents(subject: CompositionSubject,

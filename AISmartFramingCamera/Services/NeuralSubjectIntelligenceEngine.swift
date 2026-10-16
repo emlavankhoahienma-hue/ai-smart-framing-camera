@@ -135,6 +135,7 @@ public struct NeuralSubjectCandidate: Identifiable, Sendable {
     var eyePosition: CGPoint? = nil
     var gaze: CGFloat = 0
     var companionBounds: [CGRect] = []
+    var faceBounds: [CGRect] = []
     var isGroup = false
     
     public var center: CGPoint {
@@ -156,6 +157,7 @@ public struct NeuralAnalysisOutput: Sendable {
     public let usedSemanticModel: Bool
     var compositionRaster: CompositionRaster?
     var semanticAffinities: [String: Double] = [:]
+    var primaryFaceCount: Int { allCandidates.first?.faceBounds.count ?? 0 }
 
     public init(
         allCandidates: [NeuralSubjectCandidate],
@@ -221,6 +223,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let proposals = CompositionPlanner.proposals(subjects: [subject], intents: intents,
             raster: raster, calibration: frame.calibration, currentZoom: CGFloat(frame.displayZoom),
             allowedZooms: allowedZooms, protectedBounds: hero.companionBounds,
+            incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) },
             isCancelled: { cancellation.isCancelled })
         let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
         var rendered: [(CompositionProposal, CGImage)] = []
@@ -312,6 +315,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             for face in faces.results ?? [] where face.confidence >= 0.40 {
                 guard var c = candidate(visionRect: face.boundingBox, category: .face,
                                         confidence: face.confidence, label: "Khuôn mặt") else { continue }
+                c.faceBounds = [c.boundingBox]
                 let eyes = [face.landmarks?.leftEye, face.landmarks?.rightEye].compactMap { $0 }
                     .flatMap { $0.normalizedPoints }
                 if !eyes.isEmpty {
@@ -350,6 +354,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 candidates[i].eyePosition = face.eyePosition ?? face.center
                 candidates[i].gaze = face.gaze
                 candidates[i].companionBounds = [face.boundingBox]
+                candidates[i].faceBounds = [face.boundingBox]
             }
         }
         candidates.append(contentsOf: faceCandidates.filter { face in
@@ -429,6 +434,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         group.isGroup = true
         group.companionBounds = members.flatMap { [$0.boundingBox] + $0.companionBounds }
+        group.faceBounds = members.flatMap(\.faceBounds)
         return group
     }
 

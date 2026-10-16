@@ -2059,7 +2059,7 @@ public final class CameraViewModel: ObservableObject {
         let output = analysis.detection
         detectedScene = output.detectedScene
         detectedFaceRects = output.allFaceRects
-        postZoomFaceCount = output.allFaceRects.count
+        postZoomFaceCount = output.primaryFaceCount
         let localPreset = output.detectedScene.recommendedFilter
         aiRecommendedPreset = localPreset
         aiPresetMatchReason = "\(localPreset.displayName) — Gợi ý theo bối cảnh \(output.detectedScene.localizedName)"

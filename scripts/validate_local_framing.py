@@ -84,6 +84,7 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("localSuggestionRects = localEvidenceCandidates.map", VM)
         self.assertIn("reprojectSuggestion($0.boundingBox, from: source", VM)
         self.assertIn("allowsAutoCaptureForCurrentTarget = false", VM)
+        self.assertIn("postZoomFaceCount = output.primaryFaceCount", VM)
         self.assertNotIn("consolidateLocalAnalysisAndLockTarget", VM)
 
     def test_cancel_capture_during_zoom_ramp(self):

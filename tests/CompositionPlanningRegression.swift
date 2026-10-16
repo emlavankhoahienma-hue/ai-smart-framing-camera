@@ -54,6 +54,20 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("background faces are retained whole or excluded whole") {
+            let face = CGRect(x: 0.79, y: 0.25, width: 0.1, height: 0.14)
+            let k = TrackingCalibration.fallback()
+            let plans = CompositionPlanner.proposals(subjects: [subject(kind: .object)], intents: [.object],
+                raster: raster(), calibration: k, currentZoom: 1, allowedZooms: [1, 2, 3], incidentalBounds: [face])
+            try require(!plans.isEmpty, "lost current uncut image")
+            for plan in plans {
+                let future = TrackingCalibration(fx: k.fx * Double(plan.zoom), fy: k.fy * Double(plan.zoom),
+                    cx: k.cx, cy: k.cy, aspect: k.aspect)
+                guard let rect = CompositionPlanner.project(face, from: k, to: future, rotation: plan.rotation) else { continue }
+                let fraction = CompositionPlanner.visibleFraction(rect)
+                try require(fraction <= 0.02 || fraction >= 0.98, "bisected a background face")
+            }
+        }
         try run("overlapping people keep distinct face identities") {
             let a = CGRect(x: 0.20, y: 0.20, width: 0.4, height: 0.7)
             let b = CGRect(x: 0.30, y: 0.20, width: 0.4, height: 0.7)
