@@ -1,0 +1,38 @@
+name: Photographic composition model validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v5
+        with:
+          path: .model-cache
+          key: composition-cadb-samp-v1
+      - name: Install pinned conversion dependencies
+        run: |
+          pip install torch==2.5.1 torchvision==0.20.1 numpy==1.26.4 \
+            coremltools==9.0 opencv-python-headless==4.11.0.86 einops==0.8.1 \
+            scipy==1.15.3 Pillow==11.0.0
+      - name: Prepare real photographs from the author test split
+        run: python scripts/prepare_composition_photos.py
+      - name: Convert and verify Core ML on real photographs
+        run: |
+          python scripts/export_composition_coreml.py --photos validation/photos
+          xcrun coremlc compile SAMPComposition.mlpackage .
+      - name: Upload conversion evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: photographic-model-validation
+          path: |
+            SAMPModelManifest.json
+            SAMPComposition.mlpackage
+            validation/
