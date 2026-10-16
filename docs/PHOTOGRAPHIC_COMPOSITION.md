@@ -33,10 +33,11 @@ contrast, detail and exposure. A small confident background person does not
 automatically outrank a prominent object. Confidence is never increased by
 saliency, semantic similarity, preference feedback or aesthetic scores.
 
-Faces attach to the body containing their centre. The largest associated face
-supplies that body's eye anchor and yaw, so the first face returned by Vision
+Faces attach to a containing body using normalized head-position affinity.
+The best associated face supplies that body's eye anchor and yaw, so the first face returned by Vision
 cannot accidentally steer somebody else's composition. Overlapping body/object
-proposals collapse before layout search. Comparable-scale nearby people form a
+proposals collapse before layout search; overlapping people with distinct eye
+anchors retain separate identities. Comparable-scale nearby people form a
 connected group. Distant small people do not enlarge the hero's protected crop.
 
 One-shot analysis freezes identity and does not continuously replace a pinned

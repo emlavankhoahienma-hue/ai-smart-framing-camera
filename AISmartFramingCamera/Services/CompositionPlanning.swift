@@ -65,6 +65,25 @@ struct SubjectVisualEvidence: Sendable {
 }
 
 enum HeroSubjectPolicy {
+    static func faceAffinity(face: CGRect, body: CGRect) -> Double? {
+        guard body.width > 0, body.height > 0,
+              body.insetBy(dx: -0.025, dy: -0.025).contains(CGPoint(x: face.midX, y: face.midY)) else { return nil }
+        let x = Double((face.midX - body.midX) / body.width)
+        let y = Double((face.midY - body.minY) / body.height)
+        guard x.isFinite, y.isFinite, y < 0.6 else { return nil }
+        return exp(-4 * x * x - 6 * pow(y - 0.16, 2))
+    }
+
+    static func duplicate(_ a: CGRect, _ b: CGRect, eyeA: CGPoint?, eyeB: CGPoint?) -> Bool {
+        let intersection = a.intersection(b)
+        guard !intersection.isNull, !intersection.isEmpty else { return false }
+        // Two overlapping people with distinct face anchors are two subjects.
+        if let eyeA, let eyeB,
+           hypot(eyeA.x - eyeB.x, eyeA.y - eyeB.y) > min(a.width, b.width) * 0.22 { return false }
+        let small = min(a.width * a.height, b.width * b.height)
+        return intersection.width * intersection.height / max(0.0001, small) > 0.65
+    }
+
     static func score(bounds: CGRect, kind: CompositionSubjectKind, confidence: Double,
                       evidence: SubjectVisualEvidence?, hasFace: Bool = false) -> Double {
         guard [bounds.minX, bounds.minY, bounds.width, bounds.height].allSatisfy(\.isFinite),

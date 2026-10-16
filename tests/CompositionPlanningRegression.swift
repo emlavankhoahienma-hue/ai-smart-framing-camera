@@ -54,6 +54,21 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("overlapping people keep distinct face identities") {
+            let a = CGRect(x: 0.20, y: 0.20, width: 0.4, height: 0.7)
+            let b = CGRect(x: 0.30, y: 0.20, width: 0.4, height: 0.7)
+            let eyeA = CGPoint(x: 0.35, y: 0.3), eyeB = CGPoint(x: 0.55, y: 0.3)
+            try require(!HeroSubjectPolicy.duplicate(a, b, eyeA: eyeA, eyeB: eyeB), "merged two people")
+            try require(HeroSubjectPolicy.duplicate(a, a, eyeA: eyeA, eyeB: eyeA), "duplicate detector box survived")
+        }
+        try run("face association follows head geometry instead of request order or face size") {
+            let body = CGRect(x: 0.3, y: 0.2, width: 0.4, height: 0.7)
+            let ownFace = CGRect(x: 0.43, y: 0.25, width: 0.1, height: 0.12)
+            let incidental = CGRect(x: 0.29, y: 0.44, width: 0.18, height: 0.18)
+            let own = HeroSubjectPolicy.faceAffinity(face: ownFace, body: body) ?? 0
+            let other = HeroSubjectPolicy.faceAffinity(face: incidental, body: body) ?? 0
+            try require(own > other, "largest incidental face captured the body")
+        }
         try run("hero ranking suppresses tiny background people and survives invalid input") {
             let hero = CGRect(x: 0.32, y: 0.20, width: 0.35, height: 0.65)
             let background = CGRect(x: 0.08, y: 0.32, width: 0.04, height: 0.08)

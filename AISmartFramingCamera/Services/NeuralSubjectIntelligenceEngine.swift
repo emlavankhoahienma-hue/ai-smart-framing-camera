@@ -343,8 +343,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // eye line and head direction rather than the first face in request order.
         for i in candidates.indices where candidates[i].category == .human {
             let box = candidates[i].boundingBox
-            let face = faceCandidates.filter { box.insetBy(dx: -0.025, dy: -0.025).contains($0.center) }
-                .max { $0.areaRatio < $1.areaRatio }
+            let face = faceCandidates.compactMap { face -> (NeuralSubjectCandidate, Double)? in
+                HeroSubjectPolicy.faceAffinity(face: face.boundingBox, body: box).map { (face, $0) }
+            }.max { $0.1 < $1.1 }?.0
             if let face {
                 candidates[i].eyePosition = face.eyePosition ?? face.center
                 candidates[i].gaze = face.gaze
@@ -390,10 +391,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         var result: [NeuralSubjectCandidate] = []
         for c in ranked where c.prominenceScore >= 0.12 {
             let duplicate = result.contains { other in
-                let overlap = c.boundingBox.intersection(other.boundingBox)
-                guard !overlap.isNull, !overlap.isEmpty else { return false }
-                let containment = Double(overlap.width * overlap.height) / max(0.0001, min(c.areaRatio, other.areaRatio))
-                return containment > 0.65
+                HeroSubjectPolicy.duplicate(c.boundingBox, other.boundingBox,
+                    eyeA: c.eyePosition, eyeB: other.eyePosition)
             }
             if !duplicate { result.append(c) }
             if result.count == 12 { break }
