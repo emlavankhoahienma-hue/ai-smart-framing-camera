@@ -283,9 +283,9 @@ public final class CameraService: NSObject {
 
     private func configureConstituentDeviceSwitching(for camera: AVCaptureDevice) {
         if #available(iOS 15.0, *) {
-            if camera.isPrimaryConstituentDeviceSwitchingBehaviorSupported(.unrestricted) {
-                camera.setPrimaryConstituentDeviceSwitchingBehavior(.unrestricted, restrictedSwitchingBehaviorConditions: [])
-                CameraLogger.info("CameraService: Da kich hoat .unrestricted constituent switching cho telephoto", category: .capture)
+            if camera.activePrimaryConstituentDeviceSwitchingBehavior != .unsupported {
+                camera.setPrimaryConstituentDeviceSwitchingBehavior(.auto, restrictedSwitchingBehaviorConditions: [])
+                CameraLogger.info("CameraService: Da kich hoat .auto constituent switching cho telephoto", category: .capture)
             }
         }
     }
@@ -377,7 +377,7 @@ public final class CameraService: NSObject {
             }
             if #available(iOS 15.0, *) {
                 self.constituentObservation?.invalidate()
-                self.constituentObservation = camera.observe(\.activePrimaryConstituentDevice, options: [.initial, .new]) { _, change in
+                self.constituentObservation = camera.observe(\.activePrimaryConstituent, options: [.initial, .new]) { _, change in
                     if let device = change.newValue as? AVCaptureDevice {
                         CameraLogger.info("CameraService: Cam vat ly hoat dong: \(device.localizedName)", category: .capture)
                     }
@@ -778,7 +778,7 @@ public final class CameraService: NSObject {
                     if #available(iOS 15.0, *) {
                         self.constituentObservation?.invalidate()
                         if targetPosition == .back {
-                            self.constituentObservation = newCamera.observe(\.activePrimaryConstituentDevice, options: [.initial, .new]) { _, change in
+                            self.constituentObservation = newCamera.observe(\.activePrimaryConstituent, options: [.initial, .new]) { _, change in
                                 if let device = change.newValue as? AVCaptureDevice {
                                     CameraLogger.info("CameraService: Cam vat ly hoat dong: \(device.localizedName)", category: .capture)
                                 }
