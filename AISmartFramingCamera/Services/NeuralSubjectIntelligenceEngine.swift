@@ -174,6 +174,8 @@ struct LocalCompositionChoice: Identifiable, @unchecked Sendable {
     let candidate: NeuralSubjectCandidate
     let plan: LocalFramingPlan
     let preview: CGImage
+    var preservesOriginalFrame = false
+    var title: String { preservesOriginalFrame ? "Giữ khung hiện tại" : plan.intent.title }
 }
 
 struct LocalCompositionAnalysis: Sendable {
@@ -245,7 +247,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     scene: output.detectedScene, category: hero.category) ?? 1),
                 intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + (result.usedSpecialist ? " Đã so sánh bố cục và mức zoom bằng SAMP-Net." : " Chưa có điểm từ mô hình bố cục; hãy kiểm tra khung trước khi chọn."),
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey)
-            return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image)
+            return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image,
+                                          preservesOriginalFrame: proposal.isUnchangedView)
         }
         return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: [hero],
             assessedCompositionCount: result.assessedCount, usedCompositionModel: result.usedSpecialist,

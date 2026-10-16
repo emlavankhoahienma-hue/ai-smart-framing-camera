@@ -81,7 +81,8 @@ def main() -> None:
     sheets = []
     with torch.inference_mode():
         for index, fixture in enumerate(fixtures):
-            image = Image.open(args.photos / fixture["file"]).convert("RGB")
+            image = Image.open(args.photos / "source" / fixture["file"]).convert("RGB")
+            preview_size = (round(image.width * 288 / image.height), 288)
             boxes = [(0, 0, image.width, image.height)]
             for scale in (0.9, 0.8, 0.7):
                 width, height = round(image.width * scale), round(image.height * scale)
@@ -91,7 +92,7 @@ def main() -> None:
                         boxes.append((left, top, left + width, top + height))
             means = []
             for offset in range(0, len(boxes), 4):
-                batch = [inputs(image.crop(box).resize((image.width, image.height), Image.Resampling.BILINEAR))
+                batch = [inputs(image.crop(box).resize(preview_size, Image.Resampling.BILINEAR))
                          for box in boxes[offset:offset + 4]]
                 distributions = model(torch.cat([pair[0] for pair in batch]),
                                       torch.cat([pair[1] for pair in batch]))[2].numpy()
@@ -120,6 +121,7 @@ def main() -> None:
         sheet.save(args.output / f"model-preference-diagnostic-{page + 1}.jpg", quality=90)
     (args.output / "crop-diagnostics.json").write_text(json.dumps({
         "images": len(crop_records), "crops": sum(r["candidates"] for r in crop_records),
+        "input": "Crops sampled from original full-resolution source; resize after cropping",
         "scope": "Model preferences only; production crop safety is tested separately", "records": crop_records}, indent=2), encoding="utf-8")
     if report["metrics"]["spearman"] < 0.45:
         raise RuntimeError("Author test-split correlation is unexpectedly weak; do not ship this conversion")

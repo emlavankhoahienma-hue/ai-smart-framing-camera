@@ -25,6 +25,7 @@ def prepare(archive: Path, output: Path, per_scene: int = 16) -> dict:
     if digest != DATA_SHA256:
         raise RuntimeError(f"CADB archive checksum mismatch: {digest}")
     output.mkdir(parents=True, exist_ok=True)
+    (output / "source").mkdir(exist_ok=True)
     with zipfile.ZipFile(archive) as data:
         prefix = "CADB_Dataset/"
         split = json.loads(data.read(prefix + "split.json"))
@@ -38,6 +39,7 @@ def prepare(archive: Path, output: Path, per_scene: int = 16) -> dict:
                 continue
             counts[scene] += 1
             source = data.read(prefix + "images/" + name)
+            (output / "source" / name).write_bytes(source)
             image = Image.open(io.BytesIO(source)).convert("RGB")
             # Preserve the complete frame; a bounded size is also used by the app's
             # candidate previews. This file is an evaluation fixture, not a label.
@@ -52,6 +54,7 @@ def prepare(archive: Path, output: Path, per_scene: int = 16) -> dict:
     manifest = {"dataset": "CADB", "source": DATA_URL, "archiveSHA256": digest,
                 "split": "author test (not training)", "testPopulation": len(split["test"]),
                 "selection": "SHA256 filename order, at most N per scene; no score-based selection",
+                "nativeSearchInput": "unmodified full-resolution source bytes in source/",
                 "perSceneLimit": per_scene, "scenes": dict(counts), "images": records}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest

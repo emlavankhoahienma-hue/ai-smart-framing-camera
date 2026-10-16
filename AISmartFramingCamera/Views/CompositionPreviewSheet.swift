@@ -40,10 +40,10 @@ struct CompositionPreviewSheet: View {
                                 .frame(maxWidth: .infinity)
                                 .frame(height: min(300, geometry.size.height * (compactHeight ? 0.28 : 0.38)))
                                 .background(Color.black, in: RoundedRectangle(cornerRadius: 16))
-                                .accessibilityLabel("Xem trước bố cục \(choice.plan.intent.title)")
+                                .accessibilityLabel("Xem trước bố cục \(choice.title)")
 
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(choice.plan.intent.title)
+                                Text(choice.title)
                                     .font(.title3.weight(.semibold))
                                 Text(choice.plan.explanation)
                                     .font(.subheadline)
@@ -117,7 +117,7 @@ struct CompositionPreviewSheet: View {
                     .frame(height: imageHeight)
                     .frame(maxWidth: .infinity)
                     .background(Color.black, in: RoundedRectangle(cornerRadius: 8))
-                Text("\(number). \(choice.plan.intent.title)")
+                Text("\(number). \(choice.title)")
                     .font(.caption.weight(.medium))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, minHeight: 32, alignment: .top)
@@ -131,7 +131,7 @@ struct CompositionPreviewSheet: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)
-        .accessibilityLabel("Phương án \(number), \(choice.plan.intent.title)")
+        .accessibilityLabel("Phương án \(number), \(choice.title)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

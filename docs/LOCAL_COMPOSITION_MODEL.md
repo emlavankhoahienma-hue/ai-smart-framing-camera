@@ -56,7 +56,8 @@ not a substitute for composition training.
 6. Automatic selection requires complete specialist evidence, at least 12 model
    assessments, neighbourhood support and the existing detector confidence,
    ranking-margin and capture policies. Ambiguous alternatives appear as real
-   preview choices. Missing/failed weights cannot silently authorize a target.
+   preview choices, always retaining the unchanged frame as an option when feasible.
+   Missing/failed weights cannot silently authorize a target.
 
 The existing camera hardware zoom limits and 2.4x-relative / 5x-absolute quality
 cap remain. The recommendation flows through the original zoom ramp,
@@ -119,7 +120,10 @@ recorded SHA-256 digests. Test photos are not packaged in the app.
 The model conversion compares 32 of those photos against PyTorch. The native
 Swift validation checks RGB, saliency and rating parity, then runs production
 candidate generation, perspective rendering, trained scoring and crop safety on
-the selected photographs. Its people boxes come from Vision in the macOS test
+the original full-resolution photographs; resizing occurs after candidate
+projection/cropping. Pre-resizing the source would artificially blur zoomed
+previews, so bounded fixtures are only used for numerical conversion parity.
+Its people boxes come from Vision in the macOS test
 harness; this is not a full iPhone YOLO/camera test. A separate diagnostic scores
 28 unconstrained crops per photo and generates contact sheets. Those preferences
 are model outputs, not human ground truth; unsafe diagnostic crops are not app

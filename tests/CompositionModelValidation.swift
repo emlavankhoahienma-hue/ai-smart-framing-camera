@@ -68,7 +68,7 @@ enum CompositionModelValidation {
         var searches: [[String: Any]] = []
         for file in files {
             try autoreleasepool {
-                let source = try image(file)
+                let source = try image(photos.appendingPathComponent("source").appendingPathComponent(file.lastPathComponent))
                 let request = VNGenerateAttentionBasedSaliencyImageRequest()
                 let people = VNDetectHumanRectanglesRequest()
                 people.upperBodyOnly = false
@@ -116,6 +116,7 @@ enum CompositionModelValidation {
                     }
                 }
                 let row: [String: Any] = ["file": file.lastPathComponent, "detectedPeople": bodies.count,
+                    "sourceWidth": source.width, "sourceHeight": source.height,
                     "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
                     "compositionRating": bestAssessment.mean,
                     "secondsMac": ProcessInfo.processInfo.systemUptime - started,
@@ -130,6 +131,7 @@ enum CompositionModelValidation {
             }
         }
         let report: [String: Any] = ["images": searches.count, "searches": searches,
+            "input": "Original full-resolution source files; only candidate previews are resized",
             "scope": "Production composition search and Core ML; Vision boxes provided by harness. Not a physical-iPhone FPS test or full YOLO pipeline benchmark."]
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("real-photo-search.json"))

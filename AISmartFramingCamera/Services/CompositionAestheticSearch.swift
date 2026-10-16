@@ -74,9 +74,12 @@ final class CompositionAestheticSearch {
             return view.proposal.isUnchangedView || view.proposal.zoom <= originalZoom * 1.08 ||
                 assessment.mean >= baselineMean + 0.10
         }
-        let selected = CompositionPlanner.diverse(eligible.map(\.proposal), limit: 3).compactMap { proposal in
+        var selected = CompositionPlanner.diverse(eligible.map(\.proposal), limit: 3).compactMap { proposal in
             eligible.first { $0.proposal.sourceCorners == proposal.sourceCorners &&
                 $0.proposal.intent == proposal.intent && $0.proposal.zoom == proposal.zoom }
+        }
+        if let baseline, !selected.contains(where: { $0.proposal.isUnchangedView }) {
+            selected = Array(selected.prefix(2)) + [baseline]
         }
         var robust = false
         if usedSpecialist, let best = selected.first, let rating = best.assessment?.mean {
