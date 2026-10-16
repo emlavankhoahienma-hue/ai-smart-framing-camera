@@ -524,7 +524,7 @@ struct PhotoCaptureSettingsSection: View {
                     selectedValueString: viewModel.selectedVideoFormatOption.rawValue
                 ) {
                     Picker("", selection: $viewModel.selectedVideoFormatOption) {
-                        ForEach(VideoFormatOption.allCases) { opt in
+                        ForEach(viewModel.supportedVideoFormatOptions) { opt in
                             Text(opt.rawValue).tag(opt)
                         }
                     }

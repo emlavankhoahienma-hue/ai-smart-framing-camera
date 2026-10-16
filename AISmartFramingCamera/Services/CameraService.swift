@@ -110,7 +110,9 @@ public final class CameraService: NSObject {
 
     private var activeCamera: AVCaptureDevice?
     private var zoomObservation: NSKeyValueObservation?
+    private var constituentObservation: NSKeyValueObservation?
     public var onLiveZoomFactorChanged: ((CGFloat) -> Void)?
+    public var onSelectedVideoFormatFallback: ((VideoFormatOption) -> Void)?
     private var videoDeviceInput: AVCaptureDeviceInput?
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let audioDataOutput = AVCaptureAudioDataOutput()
@@ -137,18 +139,38 @@ public final class CameraService: NSObject {
     public private(set) var telephotoOpticalDisplayZoom: CGFloat? = nil
     public private(set) var telephotoOpticalDeviceZoom: CGFloat? = nil
 
+    /// Nguong zoom phan cung de kich hoat dut khoat ong kinh telephoto vat ly
+    public var telephotoThresholdDeviceZoom: CGFloat? {
+        guard hasPhysicalTelephotoLens, let teleDevice = telephotoOpticalDeviceZoom else { return nil }
+        return max(teleDevice * 1.01, teleDevice + 0.02)
+    }
+
     public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
         guard displayZoom.isFinite, displayMultiplier.isFinite, displayMultiplier > 0 else {
             return max(minZoom, min(defaultDisplayZoom, maxZoom))
         }
         let devZoom = displayZoom * displayMultiplier
         guard devZoom.isFinite else { return max(minZoom, min(defaultDisplayZoom, maxZoom)) }
-        return max(minZoom, min(devZoom, maxZoom))
+        var result = max(minZoom, min(devZoom, maxZoom))
+        if let teleDevice = telephotoOpticalDeviceZoom, hasPhysicalTelephotoLens,
+           let teleDisplay = telephotoOpticalDisplayZoom,
+           displayZoom >= (teleDisplay - 0.05) {
+            let threshold = max(teleDevice * 1.01, teleDevice + 0.02)
+            result = max(threshold, result)
+        }
+        return max(minZoom, min(result, maxZoom))
     }
 
     public func convertDeviceZoomToDisplayZoom(_ deviceZoom: CGFloat) -> CGFloat {
         guard deviceZoom.isFinite, displayMultiplier.isFinite, displayMultiplier > 0 else {
             return defaultDisplayZoom
+        }
+        if let teleDevice = telephotoOpticalDeviceZoom, hasPhysicalTelephotoLens,
+           let teleDisplay = telephotoOpticalDisplayZoom {
+            let threshold = max(teleDevice * 1.01, teleDevice + 0.02)
+            if deviceZoom >= teleDevice && deviceZoom <= threshold + 0.015 {
+                return teleDisplay
+            }
         }
         return deviceZoom / displayMultiplier
     }
@@ -159,8 +181,32 @@ public final class CameraService: NSObject {
     public private(set) var selectedVideoCodec: VideoCodec = .hevc
     public private(set) var currentCaptureMode: CameraCaptureMode = .photo
 
-    // Callback thông báo độ phân giải và FPS video phần cứng
+    // Callback thong bao do phan giai va FPS video phan cung
     public var onActiveVideoFormatChanged: ((String) -> Void)?
+
+    public func isVideoFormatSupportedByHardware(_ option: VideoFormatOption) -> Bool {
+        guard let camera = activeCamera else { return false }
+        let targetWidth = option.width
+        let targetHeight = option.height
+        let targetFPS = option.fps
+        return camera.formats.contains { format in
+            let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            let maxDim = max(dims.width, dims.height)
+            let minDim = min(dims.width, dims.height)
+            let matchesRes = (minDim == targetHeight && maxDim == targetWidth) ||
+                             (minDim >= targetHeight && maxDim >= targetWidth && targetWidth >= 3840)
+            guard matchesRes else { return false }
+            return format.videoSupportedFrameRateRanges.contains { range in
+                range.minFrameRate <= targetFPS && targetFPS <= range.maxFrameRate
+            }
+        }
+    }
+
+    public var supportedVideoFormatOptions: [VideoFormatOption] {
+        guard let _ = activeCamera else { return VideoFormatOption.allCases }
+        let supported = VideoFormatOption.allCases.filter { isVideoFormatSupportedByHardware($0) }
+        return supported.isEmpty ? [.hd30] : supported
+    }
 
     // All capture state belongs to sessionQueue. RAW and its processed preview
     // are delivered separately and may arrive in either order.
@@ -232,6 +278,16 @@ public final class CameraService: NSObject {
     deinit {
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
         zoomObservation?.invalidate()
+        constituentObservation?.invalidate()
+    }
+
+    private func configureConstituentDeviceSwitching(for camera: AVCaptureDevice) {
+        if #available(iOS 15.0, *) {
+            if camera.isPrimaryConstituentDeviceSwitchingBehaviorSupported(.unrestricted) {
+                camera.setPrimaryConstituentDeviceSwitchingBehavior(.unrestricted, restrictedSwitchingBehaviorConditions: [])
+                CameraLogger.info("CameraService: Da kich hoat .unrestricted constituent switching cho telephoto", category: .capture)
+            }
+        }
     }
 
     /// Runs all direct `AVCaptureDevice` access on the camera session queue.
@@ -319,10 +375,18 @@ public final class CameraService: NSObject {
                     self?.onLiveZoomFactorChanged?(newValue)
                 }
             }
+            if #available(iOS 15.0, *) {
+                self.constituentObservation?.invalidate()
+                self.constituentObservation = camera.observe(\.activePrimaryConstituentDevice, options: [.initial, .new]) { _, change in
+                    if let device = change.newValue as? AVCaptureDevice {
+                        CameraLogger.info("CameraService: Cam vat ly hoat dong: \(device.localizedName)", category: .capture)
+                    }
+                }
+            }
             self.minZoom = camera.minAvailableVideoZoomFactor
             self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
 
-            // Cấu hình tỷ lệ zoom chuẩn phong cách Apple Camera App
+            // Cau hinh ty le zoom chuan phong cach Apple Camera App
             let switchFactors = camera.virtualDeviceSwitchOverVideoZoomFactors
             if camera.deviceType == .builtInTripleCamera, let firstSwitch = switchFactors.first {
                 let wideBase = CGFloat(firstSwitch.doubleValue)
@@ -347,7 +411,7 @@ public final class CameraService: NSObject {
                 }
                 options = options.filter { $0 < 4.9 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
-                CameraLogger.info("CameraService: Khởi tạo Triple Camera Apple (Wide Base: \(wideBase), Tele Options: \(options))", category: .capture)
+                CameraLogger.info("CameraService: Khoi tao Triple Camera Apple (Wide Base: \(wideBase), Tele Options: \(options))", category: .capture)
             } else if camera.deviceType == .builtInDualCamera, let teleSwitch = switchFactors.first {
                 let teleZoom = CGFloat(teleSwitch.doubleValue)
                 self.telephotoOpticalDeviceZoom = teleZoom
@@ -360,7 +424,7 @@ public final class CameraService: NSObject {
                 if self.maxZoom >= 3.0 && teleZoom != 3.0 { options.append(3.0) }
                 options = options.filter { $0 < 4.9 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
-                CameraLogger.info("CameraService: Khởi tạo Dual Camera Wide+Tele (Tele Zoom: \(teleZoom), Options: \(options))", category: .capture)
+                CameraLogger.info("CameraService: Khoi tao Dual Camera Wide+Tele (Tele Zoom: \(teleZoom), Options: \(options))", category: .capture)
             } else if camera.deviceType == .builtInDualWideCamera, let firstSwitch = switchFactors.first {
                 let wideBase = CGFloat(firstSwitch.doubleValue)
                 self.displayMultiplier = wideBase
@@ -370,7 +434,7 @@ public final class CameraService: NSObject {
                 if self.maxZoom >= wideBase * 3.0 { options.append(3.0) }
                 options = options.filter { $0 < 4.9 }
                 self.availableDisplayZoomOptions = Array(Set(options)).sorted()
-                CameraLogger.info("CameraService: Khởi tạo Dual Wide Camera (Wide Base: \(wideBase), Options: \(options))", category: .capture)
+                CameraLogger.info("CameraService: Khoi tao Dual Wide Camera (Wide Base: \(wideBase), Options: \(options))", category: .capture)
             } else {
                 self.displayMultiplier = 1.0
                 self.hasUltraWideLens = false
@@ -387,26 +451,27 @@ public final class CameraService: NSObject {
                 self.telephotoOpticalDeviceZoom = self.convertDisplayZoomToDeviceZoom(2.0)
             }
 
-            // Đặt mức zoom khởi động mặc định là 1.0x (Cảm biến chính Wide sắc nét chuẩn xác)
+            // Dat muc zoom khoi dong mac dinh la 1.0x (Cam bien chinh Wide sac net chuan xac)
             let initialDeviceZoom = self.convertDisplayZoomToDeviceZoom(1.0)
             self.currentZoom = initialDeviceZoom
 
             do {
                 try camera.lockForConfiguration()
+                self.configureConstituentDeviceSwitching(for: camera)
                 camera.videoZoomFactor = initialDeviceZoom
                 if camera.activeFormat.isVideoHDRSupported {
                     camera.automaticallyAdjustsVideoHDREnabled = true
                 }
                 if camera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
                     camera.activeColorSpace = .P3_D65
-                    CameraLogger.info("CameraService: Đã kích hoạt Apple Wide Color P3 (.P3_D65) cho Live View và Chụp ảnh", category: .capture)
+                    CameraLogger.info("CameraService: Da kich hoat Apple Wide Color P3 (.P3_D65) cho Live View va Chup anh", category: .capture)
                 }
                 if camera.isLowLightBoostSupported {
                     camera.automaticallyEnablesLowLightBoostWhenAvailable = false
                 }
                 camera.unlockForConfiguration()
             } catch {
-                CameraLogger.error("Không thể bật HDR/LowLightBoost/P3/Zoom", error: error, category: .capture)
+                CameraLogger.error("Khong the bat HDR/LowLightBoost/P3/Zoom/Constituent", error: error, category: .capture)
             }
 
             do {
@@ -658,6 +723,9 @@ public final class CameraService: NSObject {
                 let newMaxZoom = max(newMinZoom, min(newCamera.maxAvailableVideoZoomFactor, wideBase * 5))
                 try newCamera.lockForConfiguration()
                 newCamera.videoZoomFactor = min(newMaxZoom, max(newMinZoom, wideBase))
+                if targetPosition == .back {
+                    self.configureConstituentDeviceSwitching(for: newCamera)
+                }
                 newCamera.unlockForConfiguration()
                 if self.captureSession.canAddInput(newInput) {
                     self.captureSession.addInput(newInput)
@@ -705,6 +773,16 @@ public final class CameraService: NSObject {
                         guard let newValue = change.newValue else { return }
                         DispatchQueue.main.async {
                             self?.onLiveZoomFactorChanged?(newValue)
+                        }
+                    }
+                    if #available(iOS 15.0, *) {
+                        self.constituentObservation?.invalidate()
+                        if targetPosition == .back {
+                            self.constituentObservation = newCamera.observe(\.activePrimaryConstituentDevice, options: [.initial, .new]) { _, change in
+                                if let device = change.newValue as? AVCaptureDevice {
+                                    CameraLogger.info("CameraService: Cam vat ly hoat dong: \(device.localizedName)", category: .capture)
+                                }
+                            }
                         }
                     }
 
@@ -1018,23 +1096,32 @@ public final class CameraService: NSObject {
     // All recording intent and hardware transitions run on sessionQueue.
     private func startRecordingInternal() {
         guard wantsRecording, recordingState == .idle else { return }
+
+        // Tu dong cau hinh / khoi phuc format neu chua ap dung
+        if appliedVideoFormatOption == nil || appliedVideoFormatOption != selectedVideoFormatOption {
+            configureVideoFormatInternal(option: selectedVideoFormatOption)
+        }
+
         guard desiredCaptureMode.isVideo, currentCaptureMode.isVideo,
-              appliedVideoFormatOption == selectedVideoFormatOption,
+              appliedVideoFormatOption != nil,
               !isPhotoCaptureInFlight, captureSession.isRunning, !captureSession.isInterrupted,
               captureSession.outputs.contains(movieFileOutput),
               let camera = activeCamera,
               let connection = movieFileOutput.connection(with: .video), connection.isActive else {
+            CameraLogger.error("CameraService: Chua san sang quay video (desired: \(desiredCaptureMode.rawValue), current: \(currentCaptureMode.rawValue), applied: \(String(describing: appliedVideoFormatOption?.rawValue)), running: \(captureSession.isRunning))", category: .capture)
             wantsRecording = false
             publishRecordingState(.idle, force: true)
             reportRecordingFailure(CameraServiceError.recordingUnavailable)
             return
         }
 
-        let targetFPS = selectedVideoFormatOption.fps
+        let effectiveOption = appliedVideoFormatOption ?? selectedVideoFormatOption
+        let targetFPS = effectiveOption.fps
         let matchingRange = camera.activeFormat.videoSupportedFrameRateRanges.first(where: {
             $0.minFrameRate <= targetFPS && targetFPS <= $0.maxFrameRate
         })
         guard let validRange = matchingRange else {
+            CameraLogger.error("CameraService: Active format khong ho tro target FPS \(targetFPS)", category: .capture)
             wantsRecording = false
             publishRecordingState(.idle, force: true)
             reportRecordingFailure(CameraServiceError.recordingUnavailable)
@@ -1117,31 +1204,22 @@ public final class CameraService: NSObject {
             let formatStr: String
             if self.recordingState != .idle {
                 self.pendingVideoFormatChange = true
-                formatStr = "\(option.rawValue) · Sẽ áp dụng sau khi quay"
+                formatStr = "\(option.rawValue) · Se ap dung sau khi quay"
+                DispatchQueue.main.async { self.onActiveVideoFormatChanged?(formatStr) }
             } else if self.currentCaptureMode.isVideo {
                 self.configureVideoFormatInternal(option: option)
-                formatStr = self.appliedVideoFormatOption == option
-                    ? self.getActiveVideoResolutionAndFPS()
-                    : "Không hỗ trợ \(option.rawValue) trên camera hiện tại"
             } else {
-                formatStr = "\(option.rawValue) · Sẽ áp dụng khi quay video"
-            }
-            DispatchQueue.main.async {
-                self.onActiveVideoFormatChanged?(formatStr)
+                formatStr = "\(option.rawValue) · Se ap dung khi quay video"
+                DispatchQueue.main.async { self.onActiveVideoFormatChanged?(formatStr) }
             }
         }
     }
 
-    private func configureVideoFormatInternal(option: VideoFormatOption) {
-        appliedVideoFormatOption = nil
-        guard let camera = self.activeCamera else { return }
-
-        let targetWidth = option.width   // 3840 or 1920
-        let targetHeight = option.height // 2160 or 1080
-        let targetFPS = option.fps       // 60.0 or 30.0
-
-        // Find candidate formats matching resolution and supporting targetFPS
-        let candidates = camera.formats.filter { format in
+    private func findCandidateVideoFormats(camera: AVCaptureDevice, option: VideoFormatOption) -> [AVCaptureDevice.Format] {
+        let targetWidth = option.width
+        let targetHeight = option.height
+        let targetFPS = option.fps
+        return camera.formats.filter { format in
             let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             let maxDim = max(dims.width, dims.height)
             let minDim = min(dims.width, dims.height)
@@ -1152,10 +1230,40 @@ public final class CameraService: NSObject {
                 range.minFrameRate <= targetFPS && targetFPS <= range.maxFrameRate
             }
         }
+    }
 
-        // Pick optimal format for sustained, jitter-free 60.0 FPS:
-        // 1. Exact resolution match
-        // 2. Hardware YUV 420
+    private func configureVideoFormatInternal(option: VideoFormatOption) {
+        appliedVideoFormatOption = nil
+        guard let camera = self.activeCamera else { return }
+
+        var effectiveOption = option
+        var candidates = findCandidateVideoFormats(camera: camera, option: effectiveOption)
+
+        // Tu dong tim format tot nhat duoc phan cung thiet bi thuc te ho tro
+        if candidates.isEmpty {
+            let fallbackOrder: [VideoFormatOption]
+            switch option {
+            case .uhd60: fallbackOrder = [.uhd30, .hd60, .hd30]
+            case .uhd30: fallbackOrder = [.hd60, .hd30]
+            case .hd60:  fallbackOrder = [.hd30, .uhd30]
+            case .hd30:  fallbackOrder = [.hd60, .uhd30]
+            }
+            if let fallback = fallbackOrder.first(where: { isVideoFormatSupportedByHardware($0) }) {
+                CameraLogger.warning("CameraService: Phan cung khong ho tro \(option.rawValue), tu dong chuyen fallback sang \(fallback.rawValue)", category: .capture)
+                effectiveOption = fallback
+                candidates = findCandidateVideoFormats(camera: camera, option: fallback)
+                self.selectedVideoFormatOption = fallback
+                DispatchQueue.main.async { [weak self] in
+                    self?.onSelectedVideoFormatFallback?(fallback)
+                }
+            }
+        }
+
+        let targetWidth = effectiveOption.width
+        let targetHeight = effectiveOption.height
+        let targetFPS = effectiveOption.fps
+
+        // Chon format phan cung chuan sac net, YUV 420, khong giat lag
         let selectedFormat = candidates.sorted { f1, f2 in
             let dims1 = CMVideoFormatDescriptionGetDimensions(f1.formatDescription)
             let dims2 = CMVideoFormatDescriptionGetDimensions(f2.formatDescription)
@@ -1179,7 +1287,7 @@ public final class CameraService: NSObject {
         }.first
 
         guard let targetFormat = selectedFormat else {
-            CameraLogger.warning("CameraService: Không tìm thấy format video phần cứng cho \(option.rawValue)", category: .capture)
+            CameraLogger.warning("CameraService: Khong tim thay format video phan cung cho \(effectiveOption.rawValue)", category: .capture)
             return
         }
 
@@ -1189,8 +1297,6 @@ public final class CameraService: NSObject {
             self.captureSession.sessionPreset = .inputPriority
             camera.activeFormat = targetFormat
 
-            // In Video mode: do NOT set photoOutput.maxPhotoDimensions to 48MP!
-            // Limit photoOutput max dimensions to video dimensions to avoid stealing 4K 60fps ISP memory
             if let videoMaxPhotoDim = targetFormat.supportedMaxPhotoDimensions.first {
                 self.photoOutput.maxPhotoDimensions = videoMaxPhotoDim
             }
@@ -1206,7 +1312,6 @@ public final class CameraService: NSObject {
                 camera.isSmoothAutoFocusEnabled = true
             }
 
-            // Disable auto HDR adjustments and low-light frame rate drops
             if camera.isLowLightBoostSupported {
                 camera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
@@ -1217,11 +1322,16 @@ public final class CameraService: NSObject {
             self.captureSession.commitConfiguration()
             camera.unlockForConfiguration()
 
-            appliedVideoFormatOption = option
+            appliedVideoFormatOption = effectiveOption
+            selectedVideoFormatOption = effectiveOption
 
-            CameraLogger.info("CameraService: Khóa cứng phần cứng video thành công \(option.rawValue) @ \(targetFPS) FPS", category: .capture)
+            let formatStr = getActiveVideoResolutionAndFPS()
+            DispatchQueue.main.async { [weak self] in
+                self?.onActiveVideoFormatChanged?(formatStr)
+            }
+            CameraLogger.info("CameraService: Khoa cung phan cung video thanh cong \(effectiveOption.rawValue) @ \(targetFPS) FPS", category: .capture)
         } catch {
-            CameraLogger.error("CameraService: Lỗi cấu hình video format \(option.rawValue)", error: error, category: .capture)
+            CameraLogger.error("CameraService: Loi cau hinh video format \(effectiveOption.rawValue)", error: error, category: .capture)
         }
     }
 
@@ -1259,9 +1369,9 @@ public final class CameraService: NSObject {
             if pendingVideoFormatChange && mode.isVideo {
                 configureVideoFormatInternal(option: selectedVideoFormatOption)
                 pendingVideoFormatChange = false
-                let formatStr = appliedVideoFormatOption == selectedVideoFormatOption
+                let formatStr = appliedVideoFormatOption != nil
                     ? getActiveVideoResolutionAndFPS()
-                    : "Không hỗ trợ \(selectedVideoFormatOption.rawValue) trên camera hiện tại"
+                    : "Khong ho tro \(selectedVideoFormatOption.rawValue) tren camera hien tai"
                 DispatchQueue.main.async { [weak self] in self?.onActiveVideoFormatChanged?(formatStr) }
             }
             completePendingMode(true)
@@ -1307,7 +1417,7 @@ public final class CameraService: NSObject {
                         camera.activeColorSpace = .P3_D65
                     }
                 } catch {
-                    CameraLogger.error("CameraService: Không thể khôi phục P3 color space", error: error, category: .capture)
+                    CameraLogger.error("CameraService: Khong the khoi phuc P3 color space", error: error, category: .capture)
                 }
             }
             captureSession.commitConfiguration()
@@ -1317,12 +1427,12 @@ public final class CameraService: NSObject {
             appliedVideoFormatOption = nil
         }
         currentCaptureMode = mode
-        let formatStr = mode.isVideo && appliedVideoFormatOption != selectedVideoFormatOption
-            ? "Không hỗ trợ \(selectedVideoFormatOption.rawValue) trên camera hiện tại"
+        let formatStr = mode.isVideo && appliedVideoFormatOption == nil
+            ? "Khong ho tro \(selectedVideoFormatOption.rawValue) tren camera hien tai"
             : getActiveVideoResolutionAndFPS()
         DispatchQueue.main.async { [weak self] in self?.onActiveVideoFormatChanged?(formatStr) }
         completePendingMode(true)
-        CameraLogger.info("Đã chuyển chế độ: \(mode.rawValue) (\(formatStr))", category: .capture)
+        CameraLogger.info("Da chuyen che do: \(mode.rawValue) (\(formatStr))", category: .capture)
     }
 
     // MARK: - Video Hardware Resolution & Frame Rate Query (Read-Only từ Cài đặt Camera iOS)
