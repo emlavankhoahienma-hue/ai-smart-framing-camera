@@ -117,6 +117,8 @@ public final class CameraService: NSObject {
     public var onLiveZoomFactorChanged: ((CGFloat) -> Void)?
     public var onSelectedVideoFormatFallback: ((VideoFormatOption) -> Void)?
     private var videoDeviceInput: AVCaptureDeviceInput?
+    private var audioDeviceInput: AVCaptureDeviceInput?
+    private var isAudioInputDisabledForCall = false
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private let audioDataOutput = AVCaptureAudioDataOutput()
     private let photoOutput = AVCapturePhotoOutput()
@@ -521,21 +523,11 @@ public final class CameraService: NSObject {
                     self.videoDeviceInput = videoInput
                 }
 
-                // Configure AVAudioSession for true multi-microphone stereo capture
-                self.configureAudioSessionForStereoCapture()
-
-                // Add Audio Input for Video Recording
-                if let audioDevice = AVCaptureDevice.default(for: .audio) {
-                    if let audioInput = try? AVCaptureDeviceInput(device: audioDevice),
-                       self.captureSession.canAddInput(audioInput) {
-                        self.captureSession.addInput(audioInput)
-                    }
-                }
-
-                // Audio Data Output for Real-time VU Meter
-                if self.captureSession.canAddOutput(self.audioDataOutput) {
-                    self.captureSession.addOutput(self.audioDataOutput)
-                    self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataQueue)
+                // Audio input va Audio data output chi them vao session khi o che do Video
+                // (O che do Chup anh khong can microphone de tranh tuyet doi xung dot voi cuoc goi dien / VoIP)
+                if self.desiredCaptureMode.isVideo {
+                    self.addAudioInputAndOutputInternal()
+                    self.configureAudioSessionForStereoCapture()
                 }
 
                 // Video Data Output for Real-time Vision
@@ -632,20 +624,41 @@ public final class CameraService: NSObject {
                     }
                 }
 
-                // Session Interruption Observers (Tự động phục hồi camera preview khi hết gián đoạn)
+                // Session Interruption Observers (Tu dong phuc hoi camera preview khi het gian doan hoac khi co cuoc goi)
                 let interruptedObserver = NotificationCenter.default.addObserver(
                     forName: AVCaptureSession.wasInterruptedNotification,
                     object: self.captureSession,
                     queue: nil
-                ) { [weak self] _ in
+                ) { [weak self] notification in
                     self?.sessionQueue.async { [weak self] in
                         guard let self else { return }
+                        let rawReason = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int
+                        let reason = rawReason.flatMap { AVCaptureSession.InterruptionReason(rawValue: $0) }
+                        CameraLogger.warning("CameraService: AVCaptureSession was interrupted. Ly do: \(String(describing: reason)) (raw: \(rawReason ?? -1))", category: .capture)
+
+                        if reason == .audioDeviceInUseByAnotherClient {
+                            CameraLogger.warning("CameraService: Micro dang duoc su dung boi cuoc goi (Phone/VoIP/Zalo/Messenger). Go bo audio input de tiep tuc duy tri camera preview va chup anh.", category: .capture)
+                            self.isAudioInputDisabledForCall = true
+                            if self.recordingState != .idle {
+                                self.recordingInterruptionError = CameraServiceError.recordingInterrupted
+                                self.stopRecordingInternal()
+                            }
+                            self.removeAudioInputAndOutputInternal()
+
+                            // Sau khi go bo audioInput, AVFoundation lap tuc huy gian doan cho luong video
+                            let stillInterrupted = self.captureSession.isInterrupted
+                            let isRunning = self.captureSession.isRunning
+                            if !stillInterrupted && isRunning && self.wantsSessionRunning {
+                                self.publishSessionRunning(true)
+                                return
+                            }
+                        }
+
                         self.publishSessionRunning(false)
                         if self.recordingState != .idle {
                             self.recordingInterruptionError = CameraServiceError.recordingInterrupted
                             self.stopRecordingInternal()
                         }
-                        CameraLogger.warning("CameraService: AVCaptureSession was interrupted", category: .capture)
                     }
                 }
 
@@ -656,11 +669,37 @@ public final class CameraService: NSObject {
                 ) { [weak self] _ in
                     self?.sessionQueue.async { [weak self] in
                         guard let self else { return }
+                        CameraLogger.info("CameraService: AVCaptureSession interruption ended", category: .capture)
+                        self.isAudioInputDisabledForCall = false
                         if self.wantsSessionRunning && !self.captureSession.isRunning {
                             self.captureSession.startRunning()
                         }
+                        if self.currentCaptureMode.isVideo {
+                            self.addAudioInputAndOutputInternal()
+                            self.configureAudioSessionForStereoCapture()
+                        }
                         self.publishSessionRunning(self.wantsSessionRunning && self.captureSession.isRunning && !self.captureSession.isInterrupted)
-                        CameraLogger.info("CameraService: AVCaptureSession interruption ended", category: .capture)
+                    }
+                }
+
+                let audioInterruptionObserver = NotificationCenter.default.addObserver(
+                    forName: AVAudioSession.interruptionNotification,
+                    object: nil,
+                    queue: nil
+                ) { [weak self] notification in
+                    guard let userInfo = notification.userInfo,
+                          let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+                          let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+                    self?.sessionQueue.async { [weak self] in
+                        guard let self else { return }
+                        if type == .ended {
+                            CameraLogger.info("CameraService: Cuoc goi ket thuc, phuc hoi san sang cho audio capture", category: .capture)
+                            self.isAudioInputDisabledForCall = false
+                            if self.currentCaptureMode.isVideo {
+                                self.addAudioInputAndOutputInternal()
+                                self.configureAudioSessionForStereoCapture()
+                            }
+                        }
                     }
                 }
 
@@ -687,7 +726,7 @@ public final class CameraService: NSObject {
                         }
                     }
                 }
-                self.notificationObservers = [subjectAreaObserver, interruptedObserver, interruptionEndedObserver, runtimeErrorObserver]
+                self.notificationObservers = [subjectAreaObserver, interruptedObserver, interruptionEndedObserver, audioInterruptionObserver, runtimeErrorObserver]
 
                 self.captureSession.commitConfiguration()
                 DispatchQueue.main.async { completion(true) }
@@ -706,7 +745,13 @@ public final class CameraService: NSObject {
                 return
             }
             self.wantsSessionRunning = true
-            self.configureAudioSessionForStereoCapture()
+            if self.currentCaptureMode.isVideo {
+                self.configureAudioSessionForStereoCapture()
+            }
+            // Neu session dang bi gian doan do audioInput khi dang trong cuoc goi, go bo audioInput de khoi phuc video preview
+            if self.captureSession.isInterrupted, self.audioDeviceInput != nil {
+                self.removeAudioInputAndOutputInternal()
+            }
             if self.videoDeviceInput != nil && !self.captureSession.isRunning && !self.captureSession.isInterrupted {
                 self.captureSession.startRunning()
             }
@@ -885,7 +930,7 @@ public final class CameraService: NSObject {
                 }
             }
             self.captureSession.commitConfiguration()
-            if didSwitch {
+            if didSwitch && self.currentCaptureMode.isVideo {
                 self.configureAudioSessionForStereoCapture()
             }
             if didSwitch && self.currentCaptureMode.isVideo {
@@ -1708,6 +1753,8 @@ public final class CameraService: NSObject {
             }
             captureSession.sessionPreset = .inputPriority
             captureSession.commitConfiguration()
+            self.addAudioInputAndOutputInternal()
+            self.configureAudioSessionForStereoCapture()
             configureVideoFormatInternal(option: selectedVideoFormatOption)
             pendingVideoFormatChange = false
         } else {
@@ -1725,6 +1772,7 @@ public final class CameraService: NSObject {
             if captureSession.outputs.contains(movieFileOutput) {
                 captureSession.removeOutput(movieFileOutput)
             }
+            self.removeAudioInputAndOutputInternal()
             if photoOutput.isLivePhotoCaptureSupported {
                 photoOutput.isLivePhotoCaptureEnabled = isLivePhotoMode
             }
@@ -1923,11 +1971,50 @@ public final class CameraService: NSObject {
         }
     }
 
+    // MARK: - Dynamic Audio Input & Output Management
+    private func addAudioInputAndOutputInternal() {
+        guard audioDeviceInput == nil, !isAudioInputDisabledForCall else { return }
+        guard let audioDevice = AVCaptureDevice.default(for: .audio) else { return }
+        do {
+            let audioInput = try AVCaptureDeviceInput(device: audioDevice)
+            captureSession.beginConfiguration()
+            defer { captureSession.commitConfiguration() }
+            if captureSession.canAddInput(audioInput) {
+                captureSession.addInput(audioInput)
+                self.audioDeviceInput = audioInput
+                CameraLogger.info("CameraService: Da them audioInput vao captureSession", category: .capture)
+            }
+            if !captureSession.outputs.contains(audioDataOutput), captureSession.canAddOutput(audioDataOutput) {
+                captureSession.addOutput(audioDataOutput)
+                audioDataOutput.setSampleBufferDelegate(self, queue: audioDataQueue)
+            }
+        } catch {
+            CameraLogger.warning("CameraService: Khong the them audioInput (co the microphone dang duoc dung boi cuoc goi): \(error.localizedDescription)", category: .capture)
+        }
+    }
+
+    private func removeAudioInputAndOutputInternal() {
+        captureSession.beginConfiguration()
+        defer { captureSession.commitConfiguration() }
+        if let audioInput = self.audioDeviceInput {
+            if captureSession.inputs.contains(audioInput) {
+                captureSession.removeInput(audioInput)
+            }
+            self.audioDeviceInput = nil
+            CameraLogger.info("CameraService: Da go bo audioInput khoi captureSession", category: .capture)
+        }
+        if captureSession.outputs.contains(audioDataOutput) {
+            captureSession.removeOutput(audioDataOutput)
+            audioDataOutput.setSampleBufferDelegate(nil, queue: nil)
+        }
+    }
+
     // MARK: - Audio Session Configuration for Stereo Multi-Mic Capture
     public func configureAudioSessionForStereoCapture() {
+        guard currentCaptureMode.isVideo else { return }
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers])
 
             if let builtInMic = audioSession.availableInputs?.first(where: { $0.portType == .builtInMic }) {
                 try audioSession.setPreferredInput(builtInMic)
@@ -1959,7 +2046,7 @@ public final class CameraService: NSObject {
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
             CameraLogger.info("CameraService: AudioSession configured for stereo capture with \(audioSession.inputNumberOfChannels) channels", category: .capture)
         } catch {
-            CameraLogger.error("CameraService: Failed to configure stereo audio session", error: error, category: .capture)
+            CameraLogger.warning("CameraService: AudioSession khong the kich hoat doc quyen (co the dang co cuoc goi / nhac nen): \(error.localizedDescription)", category: .capture)
         }
     }
 }

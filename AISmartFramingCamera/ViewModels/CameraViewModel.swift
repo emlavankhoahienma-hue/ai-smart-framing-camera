@@ -2883,7 +2883,7 @@ public final class CameraViewModel: ObservableObject {
         selectedZoomPreset = resolveClosestZoomPreset(for: finalDisplayZoom)
         lastContinuousAppliedZoom = finalDisplayZoom
         isPinchingZoom = false
-        requestManualZoom(finalDisplayZoom, smooth: true)
+        requestManualZoom(finalDisplayZoom)
         haptics.triggerSelectionChange()
     }
 
