@@ -141,7 +141,9 @@ struct CompositionRaster: Sendable {
     var isValid: Bool {
         (8...64).contains(side) && luminance.count == side * side &&
         attention.count == luminance.count && edges.count == luminance.count &&
-        (luminance + attention + edges).allSatisfy { $0.isFinite && (0...1).contains($0) }
+        luminance.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
+        attention.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
+        edges.allSatisfy { $0.isFinite && (0...1).contains($0) }
     }
 
     func value(_ values: [Double], at point: CGPoint) -> Double {
@@ -244,6 +246,7 @@ enum CompositionPlanner {
                           currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
                           isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         guard raster.isValid, calibration.isValid, currentZoom.isFinite, currentZoom > 0 else { return [] }
+        let horizonHint = raster.horizon
         let validSubjects = subjects.filter {
             valid($0.bounds) && inside($0.anchor, margin: 0) && $0.bounds.contains($0.anchor) &&
                 $0.confidence.isFinite && $0.importance.isFinite && $0.gaze.isFinite
@@ -307,7 +310,7 @@ enum CompositionPlanner {
                     let margin = min(box.minX, box.minY, 1 - box.maxX, 1 - box.maxY)
                     let edgeSafety = min(1, max(0, Double(margin) / 0.07))
                     var horizonFit = 1.0
-                    if intent == .landscape, let horizon = raster.horizon {
+                    if intent == .landscape, let horizon = horizonHint {
                         let p = future.project(deviceRay: rotation.inverse.act(calibration.deviceRay(at: CGPoint(x: 0.5, y: horizon.y))))
                         if p.isInFront {
                             let distance = min(abs(Double(p.point.y) - 0.382), abs(Double(p.point.y) - 0.618))

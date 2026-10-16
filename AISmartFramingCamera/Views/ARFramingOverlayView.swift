@@ -55,7 +55,8 @@ public struct ARFramingOverlayView: View {
                 if case .analyzing = viewModel.aiSessionState {
                     ForEach(0..<viewModel.localSuggestionRects.count, id: \.self) { index in
                         let sourceRect = viewModel.localSuggestionRects[index]
-                        if !sourceRect.isEmpty, sourceRect.maxX > 0, sourceRect.maxY > 0,
+                        if !viewModel.localSuggestionRects.prefix(index).contains(sourceRect),
+                           !sourceRect.isEmpty, sourceRect.maxX > 0, sourceRect.maxY > 0,
                            sourceRect.minX < 1, sourceRect.minY < 1 {
                             let rect = viewModel.convertMetadataRectToLayerRect(sourceRect, in: size)
                             CornerBracketsShape(bracketLength: 16)

@@ -41,7 +41,9 @@ final class CompositionImageRenderer {
     /// Apple's pretrained aesthetic assessment complements geometry on iOS 18+.
     /// A model failure or unsupported OS simply contributes no ranking evidence.
     func aestheticScore(image: CGImage, cancellation: CompositionAnalysisCancellation) -> Double? {
-        guard !cancellation.isCancelled else { return nil }
+        guard !cancellation.isCancelled,
+              ProcessInfo.processInfo.thermalState != .serious,
+              ProcessInfo.processInfo.thermalState != .critical else { return nil }
         if #available(iOS 18.0, macOS 15.0, *) {
             let request = VNCalculateImageAestheticsScoresRequest()
             let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
