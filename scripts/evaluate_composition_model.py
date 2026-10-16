@@ -31,6 +31,7 @@ def main() -> None:
     parser.add_argument("--cache", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--photos", type=Path, required=True)
+    parser.add_argument("--crop-only", action="store_true", help="Resume crop diagnostics after a completed expert-rating run")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(2)
@@ -43,7 +44,7 @@ def main() -> None:
         scenes = json.loads(archive.read(prefix + "scene_categories.json"))
         scores = json.loads(archive.read(prefix + "composition_scores.json"))
         # Every image in the author's test split, in filename order.
-        for name in sorted(split["test"]):
+        for name in ([] if args.crop_only else sorted(split["test"])):
             image = Image.open(io.BytesIO(archive.read(prefix + "images/" + name))).convert("RGB")
             distribution = model(*inputs(image))[2].numpy().reshape(-1)
             mean = float(np.dot(distribution, np.arange(1, 6)))
@@ -57,12 +58,17 @@ def main() -> None:
     for row in records:
         by_scene[row["scene"]].append(row)
     report = {"model": "SAMP-Net, author checkpoint", "weightsSHA256": WEIGHTS_SHA256,
-              "split": "CADB official test; not used to tune this app", "metrics": metrics(records),
+              "split": "CADB official test; not used to tune this app", "metrics": metrics(records) if records else {},
               "scenes": {scene: metrics(rows) for scene, rows in sorted(by_scene.items())},
               "secondsCPU": time.perf_counter() - started,
               "scope": "Expert scores assess whole-image composition. This is not a human preference test of app crops.",
               "records": records}
-    (args.output / "expert-ratings.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if args.crop_only:
+        report = json.loads((args.output / "expert-ratings.json").read_text())
+        if report["weightsSHA256"] != WEIGHTS_SHA256 or report["metrics"]["images"] != len(split["test"]):
+            raise RuntimeError("Cannot resume mismatched expert-rating evidence")
+    else:
+        (args.output / "expert-ratings.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps({"metrics": report["metrics"], "scenes": report["scenes"]}, indent=2), flush=True)
     # A broad model-preference diagnostic, with the original always a candidate.
     # No fabricated human labels or claim that maximizing this score proves beauty.
@@ -80,11 +86,12 @@ def main() -> None:
                         left, top = round((image.width - width) * x), round((image.height - height) * y)
                         boxes.append((left, top, left + width, top + height))
             means = []
-            for box in boxes:
-                crop = image.crop(box)
-                crop = crop.resize((image.width, image.height), Image.Resampling.BILINEAR)
-                distribution = model(*inputs(crop))[2].numpy().reshape(-1)
-                means.append(float(np.dot(distribution, np.arange(1, 6))))
+            for offset in range(0, len(boxes), 4):
+                batch = [inputs(image.crop(box).resize((image.width, image.height), Image.Resampling.BILINEAR))
+                         for box in boxes[offset:offset + 4]]
+                distributions = model(torch.cat([pair[0] for pair in batch]),
+                                      torch.cat([pair[1] for pair in batch]))[2].numpy()
+                means.extend((distributions @ np.arange(1, 6)).tolist())
             best = int(np.argmax(means))
             crop_records.append({"file": fixture["file"], "scene": fixture["scene"],
                                  "candidates": len(boxes), "originalScore": means[0],

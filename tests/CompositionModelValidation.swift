@@ -45,9 +45,16 @@ enum CompositionModelValidation {
             }
             let targetMean = zip(reference.distribution, 1...5).reduce(0) { $0 + $1.0 * Double($1.1) }
             let meanError = abs(assessment.mean - targetMean)
-            parity.append(["file": reference.file, "saliencyMAE": saliencyError, "meanScoreError": meanError])
-            print("Swift parity: \(reference.file), saliency MAE \(saliencyError), rating error \(meanError)")
-            if saliencyError > 0.01 || meanError > 0.08 {
+            let expectedRGB = try Data(contentsOf: photos.appendingPathComponent(reference.file)
+                .deletingPathExtension().appendingPathExtension("rgb.u8"))
+            guard let rgb = CompositionPhotoPixels.resizedRGB(image: source, side: 224), rgb.count == expectedRGB.count else {
+                throw Failure(message: "Missing RGB preprocessing evidence")
+            }
+            let rgbError = zip(rgb, expectedRGB).reduce(0.0) { $0 + abs(Double($1.0) - Double($1.1)) } / Double(rgb.count)
+            parity.append(["file": reference.file, "saliencyMAE": saliencyError, "meanScoreError": meanError, "rgbMAE255": rgbError])
+            print("Swift parity: \(reference.file), RGB MAE \(rgbError), saliency MAE \(saliencyError), rating error \(meanError)")
+            fflush(stdout)
+            if saliencyError > 0.01 || meanError > 0.08 || rgbError > 1.2 {
                 let failureData = try JSONSerialization.data(withJSONObject: parity, options: [.prettyPrinted, .sortedKeys])
                 try failureData.write(to: output.appendingPathComponent("swift-parity.json"))
                 throw Failure(message: "Swift preprocessing differs from author input: \(reference.file)")

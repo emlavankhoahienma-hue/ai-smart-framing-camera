@@ -1,7 +1,6 @@
 import Foundation
 import CoreGraphics
 import CoreML
-import CoreVideo
 import Accelerate
 
 /// SAMP-Net (BMVC 2021), author checkpoint trained on expert CADB composition ratings.
@@ -15,40 +14,33 @@ final class PhotographicCompositionModel {
     private let model: MLModel
     private let saliency = SpectralCompositionSaliency()
     private let input: MLMultiArray
-    private let context: CGContext
-    private let bitmap: UnsafeMutablePointer<UInt8>
+    private let imageInput: MLMultiArray
 
     init(url: URL) throws {
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndNeuralEngine
         model = try MLModel(contentsOf: url, configuration: configuration)
-        input = try MLMultiArray(shape: [1, 1, 224, 224], dataType: .float32)
-        bitmap = .allocate(capacity: 224 * 224 * 4)
-        guard let canvas = CGContext(data: bitmap, width: 224, height: 224, bitsPerComponent: 8,
-            bytesPerRow: 224 * 4, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            bitmap.deallocate()
+        guard model.modelDescription.inputDescriptionsByName["image"]?.multiArrayConstraint?.shape.map(\.intValue) == [1, 3, 224, 224] else {
             throw CocoaError(.coderInvalidValue)
         }
-        context = canvas
+        input = try MLMultiArray(shape: [1, 1, 224, 224], dataType: .float32)
+        imageInput = try MLMultiArray(shape: [1, 3, 224, 224], dataType: .float32)
     }
-
-    deinit { bitmap.deallocate() }
 
     func assess(_ image: CGImage, cancellation: CompositionAnalysisCancellation) -> Assessment? {
         guard !cancellation.isCancelled, image.width >= 6, image.height >= 6,
               max(image.width, image.height) <= 1024,
               ProcessInfo.processInfo.thermalState != .critical,
-              let map = saliency.map(image: image) else { return nil }
+              let map = saliency.map(image: image),
+              let rgb = CompositionPhotoPixels.resizedRGB(image: image, side: 224) else { return nil }
         let values = input.dataPointer.assumingMemoryBound(to: Float.self)
         for index in map.indices { values[index] = Float(map[index]) }
-        context.interpolationQuality = .high
-        context.draw(image, in: CGRect(x: 0, y: 0, width: 224, height: 224))
-        guard let resized = context.makeImage(),
-              let imageValue = try? MLFeatureValue(cgImage: resized, pixelsWide: 224, pixelsHigh: 224,
-                  pixelFormatType: kCVPixelFormatType_32BGRA, options: nil),
-              let provider = try? MLDictionaryFeatureProvider(dictionary: [
-                "image": imageValue, "saliency": MLFeatureValue(multiArray: input)]),
+        let pixels = imageInput.dataPointer.assumingMemoryBound(to: Float.self)
+        for index in 0..<(224 * 224) { for channel in 0..<3 {
+            pixels[channel * 224 * 224 + index] = Float(rgb[index * 3 + channel]) / 255
+        } }
+        guard let provider = try? MLDictionaryFeatureProvider(dictionary: [
+                "image": MLFeatureValue(multiArray: imageInput), "saliency": MLFeatureValue(multiArray: input)]),
               !cancellation.isCancelled,
               let result = try? model.prediction(from: provider),
               !cancellation.isCancelled,
@@ -62,6 +54,54 @@ final class PhotographicCompositionModel {
     }
 }
 
+/// Pillow-compatible bilinear antialiasing with an 8-bit intermediate pass.
+/// Supplying RGB tensors also avoids Core ML image-feature colour conversions.
+enum CompositionPhotoPixels {
+    static func rgba(image: CGImage) -> [UInt8]? {
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { storage -> Bool in
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let canvas = CGContext(data: storage.baseAddress, width: image.width, height: image.height,
+                    bitsPerComponent: 8, bytesPerRow: image.width * 4, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            canvas.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return true
+        }
+        return drawn ? bytes : nil
+    }
+
+    static func resizedRGB(image: CGImage, side: Int) -> [UInt8]? {
+        guard let bytes = rgba(image: image) else { return nil }
+        func weights(source: Int) -> [[(Int, Int)]] {
+            let scale = Double(source) / Double(side), filter = max(1, scale)
+            return (0..<side).map { destination in
+                let center = (Double(destination) + 0.5) * scale
+                let start = max(0, Int(center - filter + 0.5))
+                let end = min(source, Int(center + filter + 0.5))
+                let coefficients = (start..<end).map { max(0, 1 - abs((Double($0) - center + 0.5) / filter)) }
+                let total = coefficients.reduce(0, +)
+                return coefficients.enumerated().map { (start + $0.offset, Int(($0.element / total * 4_194_304 + 0.5).rounded(.down))) }
+            }
+        }
+        let horizontalWeights = weights(source: image.width), verticalWeights = weights(source: image.height)
+        var horizontal = [UInt8](repeating: 0, count: side * image.height * 3)
+        for y in 0..<image.height { for x in 0..<side { for channel in 0..<3 {
+            let total = horizontalWeights[x].reduce(2_097_152) {
+                $0 + Int(bytes[(y * image.width + $1.0) * 4 + channel]) * $1.1
+            }
+            horizontal[(y * side + x) * 3 + channel] = UInt8(clamping: total >> 22)
+        } } }
+        var output = [UInt8](repeating: 0, count: side * side * 3)
+        for y in 0..<side { for x in 0..<side { for channel in 0..<3 {
+            let total = verticalWeights[y].reduce(2_097_152) {
+                $0 + Int(horizontal[($1.0 * side + x) * 3 + channel]) * $1.1
+            }
+            output[(y * side + x) * 3 + channel] = UInt8(clamping: total >> 22)
+        } } }
+        return output
+    }
+}
+
 /// Port of the author's spectral-residual preprocessing, not Vision saliency.
 /// Arbitrary image dimensions use separable DFT matrices and Accelerate, avoiding
 /// power-of-two padding that would change the checkpoint's expected input.
@@ -71,15 +111,7 @@ final class SpectralCompositionSaliency {
     func map(image: CGImage) -> [Double]? {
         let width = image.width, height = image.height
         guard width >= 6, height >= 6, max(width, height) <= 1024 else { return nil }
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        let drawn = bytes.withUnsafeMutableBytes { storage -> Bool in
-            guard let canvas = CGContext(data: storage.baseAddress, width: width, height: height,
-                bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
-            canvas.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
-        }
-        guard drawn else { return nil }
+        guard let bytes = CompositionPhotoPixels.rgba(image: image) else { return nil }
         let gray = (0..<(width * height)).map { index -> Double in
             let offset = index * 4
             let value = Int(bytes[offset]) * 4899 + Int(bytes[offset + 1]) * 9617 + Int(bytes[offset + 2]) * 1868

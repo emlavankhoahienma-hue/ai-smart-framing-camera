@@ -2023,6 +2023,7 @@ public final class CameraViewModel: ObservableObject {
         let cancellation = CompositionAnalysisCancellation()
         localAnalysisCancellation = cancellation
         localTrackingSource = source
+        localSelectionMessage = nil
         localAnalysisExpired = false
         localAnalysisFinished = false
         localAnalysisProgress = "Đang đọc ảnh và nhận diện chủ thể…"

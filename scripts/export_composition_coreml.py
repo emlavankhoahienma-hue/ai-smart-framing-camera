@@ -118,8 +118,7 @@ def main() -> None:
                 raise RuntimeError("Static pooling rewrite changed the author network")
     converted = ct.convert(traced, convert_to="mlprogram", minimum_deployment_target=ct.target.iOS17,
         compute_precision=ct.precision.FLOAT16,
-        inputs=[ct.ImageType(name="image", shape=(1, 3, 224, 224), scale=1 / 255.0,
-                             color_layout=ct.colorlayout.RGB),
+        inputs=[ct.TensorType(name="image", shape=(1, 3, 224, 224), dtype=np.float32),
                 ct.TensorType(name="saliency", shape=(1, 1, 224, 224), dtype=np.float32)],
         outputs=[ct.TensorType(name="compositionDistribution", dtype=np.float32)])
     converted.author = "Bo Zhang, Li Niu, Liqing Zhang; Core ML conversion by this project"
@@ -132,6 +131,7 @@ def main() -> None:
                 "revision": REVISION, "weightsSHA256": WEIGHTS_SHA256,
                 "trainingDataset": "CADB", "ratingScale": [1, 2, 3, 4, 5],
                 "preprocessing": "RGB/ImageNet normalization + author spectral-residual saliency",
+                "imageInput": "RGB float32 NCHW [0,1]; Pillow antialiased bilinear",
                 "precision": "FP16", "minimumOS": "iOS 17", "parity": None}
     if not args.skip_predict:
         if platform.system() != "Darwin" or args.photos is None:
@@ -146,7 +146,8 @@ def main() -> None:
             image_tensor, saliency = inputs(image)
             with torch.inference_mode():
                 expected = model(image_tensor, saliency)[2].numpy().reshape(-1)
-            actual = converted.predict({"image": image.resize((224, 224), Image.Resampling.BILINEAR),
+            rgb = np.asarray(image.resize((224, 224), Image.Resampling.BILINEAR), dtype=np.float32).transpose(2, 0, 1)[None] / 255
+            actual = converted.predict({"image": rgb,
                                         "saliency": saliency.numpy()})["compositionDistribution"].reshape(-1)
             error = float(np.max(np.abs(expected - actual)))
             score_error = float(abs(np.dot(actual - expected, np.arange(1, 6))))
@@ -154,6 +155,7 @@ def main() -> None:
                 raise RuntimeError(f"Core ML parity failed: {photo.name}, probability {error}, mean {score_error}")
             errors.append({"image": photo.name, "maxProbabilityError": error, "meanScoreError": score_error})
             saliency.numpy().astype("<f4").tofile(args.photos / f"{photo.stem}.saliency.f32")
+            np.asarray(image.resize((224, 224), Image.Resampling.BILINEAR), dtype=np.uint8).tofile(args.photos / f"{photo.stem}.rgb.u8")
             references.append({"file": photo.name, "distribution": expected.tolist()})
         (args.photos / "parity-references.json").write_text(json.dumps(references, indent=2), encoding="utf-8")
         manifest["parity"] = {"images": len(errors), "maxProbabilityError": max(x["maxProbabilityError"] for x in errors),
