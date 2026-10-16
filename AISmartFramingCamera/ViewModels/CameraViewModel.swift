@@ -259,12 +259,8 @@ public final class CameraViewModel: ObservableObject {
                 proVideoService.syncHardwareCapabilities()
             }
             updateFrameProcessingConfiguration()
-            if let connection = previewLayer?.connection {
-                if #available(iOS 17.0, *), connection.isVideoRotationAngleSupported(90) {
-                    connection.videoRotationAngle = 90
-                } else if connection.isVideoOrientationSupported {
-                    connection.videoOrientation = .portrait
-                }
+            if let connection = previewLayer?.connection, connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90
             }
         }
     }

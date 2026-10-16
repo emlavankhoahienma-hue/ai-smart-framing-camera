@@ -300,10 +300,8 @@ public class PreviewContainerView: UIView {
 
     public func updateOrientation() {
         guard let connection = previewLayer?.connection else { return }
-        if #available(iOS 17.0, *), connection.isVideoRotationAngleSupported(90) {
+        if connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90
-        } else if connection.isVideoOrientationSupported {
-            connection.videoOrientation = .portrait
         }
     }
 
