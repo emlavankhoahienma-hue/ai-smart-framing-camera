@@ -1,5 +1,12 @@
 # Runtime model provenance
 
+`scripts/export_composition_coreml.py` converts the author-released SAMP-Net
+checkpoint from the BMVC 2021 composition-assessment paper. Source and weight
+hashes are pinned, all weights load strictly, and release builds verify real-photo
+PyTorch/Core ML parity plus production Swift preprocessing and crop safety.
+`SAMPComposition.mlmodelc`, its manifest and MIT license are required in the IPA.
+See [local composition model and evaluation](../docs/LOCAL_COMPOSITION_MODEL.md).
+
 The iOS workflow downloads official pretrained `yolo12n.pt` and `yolo12s.pt`
 from the Ultralytics v8.3.0 asset release, checks their SHA-256 digests, exports
 FP16 Core ML models with NMS, and compiles them into the IPA. Package versions

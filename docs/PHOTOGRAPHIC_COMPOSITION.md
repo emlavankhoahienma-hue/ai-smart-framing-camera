@@ -17,8 +17,8 @@ Detached camera image + capture pose + calibration
   -> freeze one primary subject or group
   -> constrained pan / tilt / continuous focal-length search
   -> perspective-correct previews
-  -> Apple aesthetic model (iOS 18+) and SigLIP semantic comparison
-  -> existing choice / confidence policy
+  -> SAMP-Net pretrained composition scoring and neighbouring zoom comparisons
+  -> specialist-evidence gate plus existing choice / confidence policy
   -> existing pinTargetAndStartMotion contract, unchanged
 ```
 
@@ -69,11 +69,13 @@ telephoto frame remains available. This limit avoids optimizing aesthetics by
 discarding excessive source resolution. Actual hardware motion, crop verification
 and post-zoom capture safety continue through the original implementation.
 
-Apple's pretrained aesthetic assessment contributes at most 0.075 rank to each
-already safe preview. SigLIP contributes a bounded semantic correction; it is
-not described as an aesthetic model. Utility-image classification does not veto
-intentional food or product photographs. User preferences only nudge safe choices.
-Neither learned model can authorize capture or rescue an invalid crop.
+The author-released SAMP-Net composition model ranks a broader safe shortlist
+and nearby focal lengths. The unchanged frame remains a candidate. Low-gain
+zoom and isolated score peaks do not force an automatic recommendation.
+SigLIP still interprets scene content; Apple's aesthetic request is a manual
+fallback when the composition specialist is unavailable. User preferences only
+nudge safe choices. See [model provenance, exact preprocessing and real-photo
+evaluation](LOCAL_COMPOSITION_MODEL.md) for this stage's numerical policies.
 
 ## Device and runtime policy
 
@@ -81,7 +83,8 @@ Neither learned model can authorize capture or rescue an invalid crop.
 | --- | --- |
 | iPhone XS and later, iOS 17+ | YOLO12s for a requested still analysis, native Vision and bounded geometric search |
 | At least 4 GB RAM, normal thermal state, Low Power Mode off | Pinned SigLIP encoder and semantic prompt bank, released when analysis finishes |
-| iOS 18+ and aesthetic request succeeds | Apple pretrained aesthetic preview ranking |
+| iOS 17+, bundled specialist available | SAMP-Net FP16 still-image composition and zoom comparison |
+| iOS 18+, specialist unavailable and aesthetic request succeeds | Apple aesthetic preview ranking; manual selection |
 | Serious/critical thermal state or Low Power Mode | Existing lightweight detector path; skip SigLIP |
 | Missing/failed Core ML assets | Independent native Vision evidence; weak or empty evidence cannot force a target |
 
@@ -128,6 +131,7 @@ preference evaluation.
 ## Primary references
 
 - [Apple face landmarks](https://developer.apple.com/documentation/vision/vndetectfacelandmarksrequest)
+- [SAMP-Net paper and expert composition dataset](https://arxiv.org/abs/2104.03133)
 - [Apple attention saliency](https://developer.apple.com/documentation/vision/vngenerateattentionbasedsaliencyimagerequest)
 - [Apple objectness saliency](https://developer.apple.com/documentation/vision/vngenerateobjectnessbasedsaliencyimagerequest)
 - [Apple aesthetic scoring](https://developer.apple.com/documentation/vision/vncalculateimageaestheticsscoresrequest)

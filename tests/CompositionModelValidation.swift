@@ -81,7 +81,8 @@ enum CompositionModelValidation {
                 let bodies = (people.results ?? []).filter { $0.confidence >= 0.4 }.map {
                     CGRect(x: $0.boundingBox.minX, y: 1 - $0.boundingBox.maxY,
                            width: $0.boundingBox.width, height: $0.boundingBox.height)
-                }
+                        .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+                }.filter { !$0.isNull && !$0.isEmpty && $0.width > 0.01 && $0.height > 0.01 }
                 let isGroup = bodies.count >= 2
                 let bounds = bodies.dropFirst().reduce(bodies.first ?? CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)) { $0.union($1) }
                 let kind: CompositionSubjectKind = isGroup ? .group : (bodies.isEmpty ? .scenery : .person)
@@ -96,11 +97,13 @@ enum CompositionModelValidation {
                         proposalLimit: seeds.isEmpty ? 36 : 18, refining: seeds)
                 }
                 let started = ProcessInfo.processInfo.systemUptime
-                guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: proposals(),
+                let broad = proposals()
+                guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: broad,
                     image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
                     cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { proposals($0) }),
-                    !result.views.isEmpty, result.usedSpecialist else {
-                    throw Failure(message: "Real-photo search failed: \(file.lastPathComponent)")
+                    !result.views.isEmpty, result.usedSpecialist,
+                    let best = result.views.first, let bestAssessment = best.assessment else {
+                    throw Failure(message: "Real-photo search failed: \(file.lastPathComponent), proposals \(broad.count), bounds \(bounds), people \(bodies)")
                 }
                 for view in result.views {
                     let future = TrackingCalibration(fx: calibration.fx * Double(view.proposal.zoom),
@@ -113,12 +116,13 @@ enum CompositionModelValidation {
                     }
                 }
                 let row: [String: Any] = ["file": file.lastPathComponent, "detectedPeople": bodies.count,
-                    "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(result.views[0].proposal.zoom),
-                    "compositionRating": result.views[0].assessment?.mean ?? 0,
+                    "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
+                    "compositionRating": bestAssessment.mean,
                     "secondsMac": ProcessInfo.processInfo.systemUptime - started,
                     "automaticSelectionAllowed": result.canAutoselect]
                 searches.append(row)
                 print("Search \(searches.count)/\(files.count): \(row)")
+                fflush(stdout)
                 let destination = CGImageDestinationCreateWithURL(output.appendingPathComponent(file.lastPathComponent) as CFURL,
                     "public.jpeg" as CFString, 1, nil)!
                 CGImageDestinationAddImage(destination, result.views[0].image, nil)
