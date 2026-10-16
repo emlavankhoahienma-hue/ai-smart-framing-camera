@@ -3739,6 +3739,7 @@ extension CameraViewModel: CameraServiceDelegate {
         let windowFocal = settings.focalLength
         let windowAspect = settings.aspect
         let windowBaseZoom = settings.baseOpticalZoom
+        let windowCenter = self.windowedZoomNormalizedCenter
         let hasColorEdits = isFilmActive && (effectivePreset != .standard || finalColorParams != nil)
         let appliedIntensity = Float(self.filmSimulationIntensity)
 
@@ -3751,7 +3752,7 @@ extension CameraViewModel: CameraServiceDelegate {
             if isWindowed {
                 let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: windowBaseZoom)
                 if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
-                    let normCenter = self.windowedZoomNormalizedCenter
+                    let normCenter = windowCenter
                     let origW = CGFloat(photo.width)
                     let origH = CGFloat(photo.height)
                     let cropW = round(origW * fractions.widthFraction)
