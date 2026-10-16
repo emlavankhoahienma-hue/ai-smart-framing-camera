@@ -54,6 +54,64 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("hero ranking suppresses tiny background people and survives invalid input") {
+            let hero = CGRect(x: 0.32, y: 0.20, width: 0.35, height: 0.65)
+            let background = CGRect(x: 0.08, y: 0.32, width: 0.04, height: 0.08)
+            let main = HeroSubjectPolicy.score(bounds: hero, kind: .person, confidence: 0.85, evidence: nil, hasFace: true)
+            let noise = HeroSubjectPolicy.score(bounds: background, kind: .person, confidence: 0.99, evidence: nil)
+            try require(main > noise * 2, "tiny confident passer-by defeated the hero")
+            try require(HeroSubjectPolicy.score(bounds: hero, kind: .object, confidence: .nan, evidence: nil) == 0, "NaN rank")
+        }
+        try run("saliency and local separation can select an object over an incidental person") {
+            let strong = SubjectVisualEvidence(attentionDensity: 0.95, attentionShare: 0.75,
+                separation: 0.9, detail: 0.8, exposure: 0.9)
+            let weak = SubjectVisualEvidence(attentionDensity: 0.05, attentionShare: 0.01,
+                separation: 0.1, detail: 0.2, exposure: 0.9)
+            let object = HeroSubjectPolicy.score(bounds: CGRect(x: 0.25, y: 0.3, width: 0.45, height: 0.4),
+                kind: .object, confidence: 0.9, evidence: strong)
+            let person = HeroSubjectPolicy.score(bounds: CGRect(x: 0.05, y: 0.3, width: 0.08, height: 0.18),
+                kind: .person, confidence: 0.95, evidence: weak)
+            try require(object > person, "semantic class overrode foreground evidence")
+        }
+        try run("presentation identity hysteresis needs sustained superiority") {
+            var selector = HeroIdentitySelector()
+            let a = UUID(), b = UUID()
+            try require(selector.select([(a, 0.6), (b, 0.58)], timestamp: 1) == a, "initial identity")
+            try require(selector.select([(a, 0.60), (b, 0.63)], timestamp: 1.1) == a, "rank flicker")
+            try require(selector.select([(a, 0.50), (b, 0.85)], timestamp: 1.2) == a, "immediate switch")
+            try require(selector.select([(a, 0.50), (b, 0.85)], timestamp: 1.8) == b, "never switches")
+            try require(selector.select([], timestamp: 1.9) == nil, "stale hero on empty frame")
+        }
+        try run("five comparable people form a group but a distant bystander does not") {
+            let people = (0..<5).map { CGRect(x: 0.05 + Double($0) * 0.18, y: 0.25, width: 0.15, height: 0.55) }
+            for i in 1..<people.count { try require(HeroSubjectPolicy.coherent(people[i - 1], people[i]), "split group") }
+            let distant = CGRect(x: 0.88, y: 0.4, width: 0.03, height: 0.08)
+            try require(!HeroSubjectPolicy.coherent(people[4], distant), "group includes background person")
+        }
+        try run("blank and low-light rasters do not manufacture detailed subjects") {
+            let blank = CompositionRaster(side: 8, luminance: Array(repeating: 0.01, count: 64),
+                attention: Array(repeating: 0, count: 64), edges: Array(repeating: 0, count: 64), hasAttention: false)
+            try require(blank.sceneryAnchor == nil && blank.horizon == nil, "blank scene invented evidence")
+            guard let e = blank.evidence(in: CGRect(x: 0.2, y: 0.2, width: 0.6, height: 0.6)) else {
+                throw Failure(description: "missing valid black raster measurements")
+            }
+            try require(e.detail == 0 && e.exposure < 0.1 && e.attentionShare == 0, "dark evidence amplified")
+            try require(proposals([], [.object], blank).isEmpty, "empty frame returned a target")
+        }
+        try run("gaze changes the solved pan direction and leaves looking room") {
+            let left = proposals([subject(gaze: -0.9)], [.portrait])
+            let right = proposals([subject(gaze: 0.9)], [.portrait])
+            guard let a = left.first, let b = right.first else { throw Failure(description: "missing gaze plans") }
+            try require(a.expectedSubjectRect.midX > b.expectedSubjectRect.midX, "looking room reversed")
+            try require(a.aimPoint.x < b.aimPoint.x, "guide bearing reversed")
+        }
+        try run("continuous focal-length solution respects source resolution and hardware") {
+            let plans = CompositionPlanner.proposals(subjects: [subject(kind: .object)], intents: [.object],
+                raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 1.7])
+            try require(!plans.isEmpty && plans.allSatisfy { $0.zoom >= 1 && $0.zoom <= 1.7 }, "zoom exceeds lens range")
+            try require(plans.contains { abs($0.zoom - 1) > 0.01 && abs($0.zoom - 1.7) > 0.01 }, "only discrete focal lengths")
+            try require(CompositionPlanner.diverse(plans, limit: 0).isEmpty, "zero alternatives ignored")
+        }
         try run("every offered frame uses only observed source pixels") {
             let plans = proposals([subject(gaze: 0.8)], [.portrait])
             try require(!plans.isEmpty, "no portrait plans")

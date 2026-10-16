@@ -38,7 +38,7 @@ final class CompositionAnalysisCancellation: @unchecked Sendable {
 final class CompositionImageRenderer {
     private let context = CIContext(options: [.cacheIntermediates: false])
 
-    func raster(image: CIImage, saliency: CVPixelBuffer?) -> CompositionRaster? {
+    func raster(image: CIImage, saliency: CVPixelBuffer?, objectness: CVPixelBuffer? = nil) -> CompositionRaster? {
         let side = 32
         guard let small = render(image, size: CGSize(width: side, height: side)) else { return nil }
         var bytes = [UInt8](repeating: 0, count: side * side * 4)
@@ -68,12 +68,16 @@ final class CompositionImageRenderer {
             }
         }
         let measured = saliency.flatMap { attentionMap($0, side: side) }
+        let foreground = objectness.flatMap { attentionMap($0, side: side) }
         let mean = luma.reduce(0, +) / Double(luma.count)
-        let attention = measured ?? luma.enumerated().map { index, value in
-            min(1, 0.7 * edges[index] + 0.3 * abs(value - mean))
+        let attention = luma.enumerated().map { index, value in
+            if let measured, let foreground { return measured[index] * 0.7 + foreground[index] * 0.3 }
+            if let measured { return measured[index] }
+            if let foreground { return foreground[index] }
+            return min(1, 0.7 * edges[index] + 0.3 * abs(value - mean))
         }
         return CompositionRaster(side: side, luminance: luma, attention: attention,
-                                 edges: edges, hasAttention: measured != nil)
+                                 edges: edges, hasAttention: measured != nil || foreground != nil)
     }
 
     func preview(image: CIImage, corners: [CGPoint], aspect: Double) -> CGImage? {

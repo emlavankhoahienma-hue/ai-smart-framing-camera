@@ -562,7 +562,50 @@ public final class CameraViewModel: ObservableObject {
     @Published public var detectedScene: DetectedSceneType = .general
     @Published public var detectedSubjectRects: [CGRect] = []
     @Published public var detectedFaceRects: [CGRect] = []
-    @Published public var liveDetectedEntities: [LiveDetectedEntity] = []
+    @Published public var liveDetectedEntities: [LiveDetectedEntity] = [] {
+        didSet { updateHeroPresentation() }
+    }
+    @Published public private(set) var heroDetectedEntities: [LiveDetectedEntity] = []
+    private var heroIdentity = HeroIdentitySelector()
+
+    private func updateHeroPresentation() {
+        let now = CACurrentMediaTime()
+        let candidates = liveDetectedEntities.filter { entity in
+            guard entity.confidence.isFinite, entity.confidence >= 0.48,
+                  now - entity.lastSeen < 0.35 else { return false }
+            return entity.category != .face || !liveDetectedEntities.contains {
+                $0.category == .human && $0.rect.contains(CGPoint(x: entity.rect.midX, y: entity.rect.midY))
+            }
+        }
+        let scores = candidates.map { entity -> (UUID, Double) in
+            let kind: CompositionSubjectKind
+            switch entity.category {
+            case .human: kind = .person
+            case .face: kind = .face
+            case .animal: kind = .animal
+            case .foregroundObject: kind = .object
+            case .general: kind = .scenery
+            }
+            let hasFace = liveDetectedEntities.contains {
+                $0.category == .face && entity.rect.contains(CGPoint(x: $0.rect.midX, y: $0.rect.midY))
+            }
+            return (entity.id, HeroSubjectPolicy.score(bounds: entity.rect, kind: kind,
+                confidence: Double(entity.confidence), evidence: nil, hasFace: hasFace))
+        }
+        let selected = heroIdentity.select(scores, timestamp: now)
+        guard var hero = candidates.first(where: { $0.id == selected }) else {
+            heroDetectedEntities = []; return
+        }
+        if hero.category == .human {
+            let members = candidates.filter { $0.category == .human &&
+                ($0.id == hero.id || HeroSubjectPolicy.coherent(hero.rect, $0.rect)) }
+            if members.count > 1 {
+                hero.rect = members.dropFirst().reduce(hero.rect) { $0.union($1.rect) }
+                hero.label = "Nhóm \(members.count) người"
+            }
+        }
+        heroDetectedEntities = [hero]
+    }
     private let liveEntitySmoother = LiveDetectedEntitySmoother()
     private var latestSubjectDetectionResult: SubjectDetectionResult? = nil
 

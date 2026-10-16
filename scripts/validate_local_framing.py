@@ -74,7 +74,9 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("guard let model, !prompts.isEmpty, !cancellation.isCancelled else { return [:] }", NEURAL)
         self.assertIn("physicalMemory >= 4_000_000_000", NEURAL)
         self.assertIn("VNGenerateAttentionBasedSaliencyImageRequest", NEURAL)
-        self.assertIn("YOLODetectionEngine.shared.detectObjects", NEURAL)
+        self.assertIn("YOLODetectionEngine.shared.detectPhotographicObjects", NEURAL)
+        quality = YOLO.split("func detectPhotographicObjects", 1)[1].split("private func detectWithVisionCoreML", 1)[0]
+        self.assertIn("return detectObjects", quality)
 
     def test_ambiguous_result_requires_selection(self):
         self.assertIn("if result.count == 12 { break }", NEURAL)
