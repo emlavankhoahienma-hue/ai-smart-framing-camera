@@ -173,7 +173,7 @@ struct CompositionRaster: Sendable {
         return SubjectVisualEvidence(attentionDensity: mass / count,
             attentionShare: mass / max(0.001, attention.reduce(0, +)),
             separation: min(1, abs(mean - outside / max(1, outsideCount)) * 3),
-            detail: min(1, (detail / count + contrast) * 2), exposure: exposure)
+            detail: min(1, (max(0, detail / count - 0.015) + max(0, contrast - 0.01)) * 2), exposure: exposure)
     }
 
     /// A line needs edge support across the image, not just a local bright patch.
