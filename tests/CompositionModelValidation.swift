@@ -71,9 +71,10 @@ enum CompositionModelValidation {
                 let source = try image(photos.appendingPathComponent("source").appendingPathComponent(file.lastPathComponent))
                 let request = VNGenerateAttentionBasedSaliencyImageRequest()
                 let people = VNDetectHumanRectanglesRequest()
+                let animals = VNRecognizeAnimalsRequest()
                 people.upperBodyOnly = false
                 let handler = VNImageRequestHandler(cgImage: source, orientation: .up)
-                try handler.perform([request, people])
+                try handler.perform([request, people, animals])
                 let ci = CIImage(cgImage: source)
                 guard let raster = renderer.raster(image: ci, saliency: request.results?.first?.pixelBuffer) else {
                     throw Failure(message: "Missing raster")
@@ -83,17 +84,26 @@ enum CompositionModelValidation {
                            width: $0.boundingBox.width, height: $0.boundingBox.height)
                         .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
                 }.filter { !$0.isNull && !$0.isEmpty && $0.width > 0.01 && $0.height > 0.01 }
+                let pets = (animals.results ?? []).filter { $0.confidence >= 0.4 }.map {
+                    CGRect(x: $0.boundingBox.minX, y: 1 - $0.boundingBox.maxY,
+                           width: $0.boundingBox.width, height: $0.boundingBox.height)
+                        .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+                }.filter { !$0.isNull && !$0.isEmpty && $0.width > 0.01 && $0.height > 0.01 }
+                    .sorted { $0.width * $0.height > $1.width * $1.height }
                 let isGroup = bodies.count >= 2
-                let bounds = bodies.dropFirst().reduce(bodies.first ?? CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)) { $0.union($1) }
-                let kind: CompositionSubjectKind = isGroup ? .group : (bodies.isEmpty ? .scenery : .person)
+                let bounds = bodies.dropFirst().reduce(bodies.first ?? pets.first ?? CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)) { $0.union($1) }
+                let kind: CompositionSubjectKind = isGroup ? .group : (!bodies.isEmpty ? .person : (pets.isEmpty ? .scenery : .animal))
+                let incidentalPets = bodies.isEmpty ? Array(pets.dropFirst()) : pets
+                let primaryBounds = bodies.isEmpty ? Array(pets.prefix(1)) : bodies
                 let subject = CompositionSubject(index: 0, bounds: bounds,
                     anchor: CGPoint(x: bounds.midX, y: bounds.midY), kind: kind,
                     confidence: 0.9, importance: 1, gaze: 0)
-                let intents: [LocalCompositionIntent] = isGroup ? [.group] : (bodies.isEmpty ? [.landscape] : [.portrait, .environmentalPortrait])
+                let intents: [LocalCompositionIntent] = isGroup ? [.group] : (!bodies.isEmpty ? [.portrait, .environmentalPortrait] : (pets.isEmpty ? [.landscape] : [.animal]))
                 let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
                 func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
                     CompositionPlanner.proposals(subjects: [subject], intents: intents, raster: raster,
-                        calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3], protectedBounds: bodies,
+                        calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3], protectedBounds: primaryBounds,
+                        incidentalBounds: incidentalPets,
                         proposalLimit: seeds.isEmpty ? 36 : 18, refining: seeds)
                 }
                 let started = ProcessInfo.processInfo.systemUptime
@@ -108,14 +118,23 @@ enum CompositionModelValidation {
                 for view in result.views {
                     let future = TrackingCalibration(fx: calibration.fx * Double(view.proposal.zoom),
                         fy: calibration.fy * Double(view.proposal.zoom), cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
-                    for body in bodies {
+                    for body in primaryBounds {
                         guard let projected = CompositionPlanner.project(body, from: calibration, to: future,
                             rotation: view.proposal.rotation), CompositionPlanner.visibleFraction(projected) > 0.98 else {
                             throw Failure(message: "Search cropped a protected person: \(file.lastPathComponent)")
                         }
                     }
+                    for pet in incidentalPets {
+                        guard let projected = CompositionPlanner.project(pet, from: calibration, to: future,
+                            rotation: view.proposal.rotation) else { continue }
+                        let fraction = CompositionPlanner.visibleFraction(projected)
+                        guard fraction <= 0.02 || fraction >= 0.98 else {
+                            throw Failure(message: "Search bisected a background animal: \(file.lastPathComponent)")
+                        }
+                    }
                 }
                 let row: [String: Any] = ["file": file.lastPathComponent, "detectedPeople": bodies.count,
+                    "detectedAnimals": pets.count,
                     "sourceWidth": source.width, "sourceHeight": source.height,
                     "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
                     "compositionRating": bestAssessment.mean,
@@ -132,7 +151,7 @@ enum CompositionModelValidation {
         }
         let report: [String: Any] = ["images": searches.count, "searches": searches,
             "input": "Original full-resolution source files; only candidate previews are resized",
-            "scope": "Production composition search and Core ML; Vision boxes provided by harness. Not a physical-iPhone FPS test or full YOLO pipeline benchmark."]
+            "scope": "Production composition search and Core ML; Vision person/animal boxes provided by harness. Not a physical-iPhone FPS test or full YOLO pipeline benchmark."]
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("real-photo-search.json"))
         print("PASS: \(parity.count) author-to-Swift parity photos; \(searches.count) production composition searches")
