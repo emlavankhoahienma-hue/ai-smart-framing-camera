@@ -81,6 +81,9 @@ final class CompositionAestheticSearch {
         if let baseline, !selected.contains(where: { $0.proposal.isUnchangedView }) {
             selected = Array(selected.prefix(2)) + [baseline]
         }
+        // The view model compares the leading two scores before auto-selection.
+        // Restoring the original frame must not leave a stronger runner-up third.
+        selected.sort { $0.proposal.score > $1.proposal.score }
         var robust = false
         if usedSpecialist, let best = selected.first, let rating = best.assessment?.mean {
             if best.proposal.isUnchangedView {

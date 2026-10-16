@@ -54,6 +54,31 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("restored original view participates in the automatic-selection margin") {
+            let broad = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait],
+                raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], proposalLimit: 36)
+            guard let original = broad.first(where: \.isUnchangedView),
+                  let near = broad.first(where: { !$0.isUnchangedView && abs(log(Double($0.zoom))) < 0.15 &&
+                    hypot($0.aimPoint.x - 0.5, $0.aimPoint.y - 0.5) < 0.065 }) else {
+                throw Failure(description: "missing near-original photo fixture")
+            }
+            let candidates = broad.map { proposal -> CompositionProposal in
+                var copy = proposal
+                copy.score = proposal.sourceCorners == near.sourceCorners ? 0.94 :
+                    (proposal.sourceCorners == original.sourceCorners ? 0.92 : 0.5)
+                return copy
+            }
+            let ci = CIImage(color: CIColor(red: 0.4, green: 0.5, blue: 0.6))
+                .cropped(to: CGRect(x: 0, y: 0, width: 216, height: 288))
+            guard let result = CompositionAestheticSearch(renderer: CompositionImageRenderer()).run(
+                proposals: candidates, image: ci, aspect: 0.75, preferences: [:], modelURL: nil,
+                cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { _ in [] }) else {
+                throw Failure(description: "missing selection result")
+            }
+            let scores = result.views.map { $0.proposal.score }
+            try require(result.views.contains { $0.proposal.isUnchangedView }, "original option was discarded")
+            try require(scores == scores.sorted(by: >), "runner-up margin compared the wrong alternative")
+        }
         try run("learned shortlist explores zoom while retaining the unchanged view") {
             let plans = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait, .environmentalPortrait],
                 raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], proposalLimit: 36)
