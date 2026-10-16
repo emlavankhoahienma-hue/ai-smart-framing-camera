@@ -64,6 +64,12 @@
       "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
       "end": "                // Optical centre is always fixed",
       "sha256": "d1bc90c0ac5188a0644dc8c7b399a8f2f4f41312c3ab25cef9be235745a667a6"
+    },
+    {
+      "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
+      "start": "struct TargetCircleView: View {",
+      "end": "// MARK: - Guidance Ray",
+      "sha256": "40c9d4289d260a38ef492c6ba4d3536ef31387c22b1db3db0102b8187d118b59"
     }
   ]
 }

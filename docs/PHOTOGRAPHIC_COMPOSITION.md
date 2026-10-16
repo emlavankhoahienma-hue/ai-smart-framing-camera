@@ -4,7 +4,7 @@ This revision changes interpretation, composition search and viewfinder styling.
 It leaves the pinned target's optical tracking, motion fusion, recovery, zoom
 verification, alignment gate and photo/video/PhotoKit pipeline intact.
 `scripts/verify_tracking_boundary.py` checks normalized SHA-256 hashes of ten
-complete source files, three view-model regions and the projected target layer
+complete source files, three view-model regions, the projected target layer and the original reticle view
 against commit `49f3ef3a2938bf5f36c2e8e47e9fdf5980875abf`.
 
 ## Data flow

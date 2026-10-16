@@ -433,9 +433,8 @@ struct TargetCircleView: View {
         }
         switch trackingQuality {
         case .locked, .predicting, .reacquiring:
-            return LinearGradient(colors: [Color(red: 1, green: 0.93, blue: 0.72),
-                                           Color(red: 0.78, green: 0.66, blue: 0.42)],
-                                  startPoint: .top, endPoint: .bottom)
+            // Logo app gradient: Electric Cyan (#28B6F2) -> Iris Violet (#7863F2)
+            return AlignTheme.signatureGradient
         case .lost:
             return LinearGradient(
                 colors: [Color.red, Color.orange],
@@ -448,7 +447,7 @@ struct TargetCircleView: View {
     private var shadowGlowColor: Color {
         if isAligned { return Color.green }
         switch trackingQuality {
-        case .locked, .predicting, .reacquiring: return Color(red: 0.92, green: 0.82, blue: 0.56)
+        case .locked, .predicting, .reacquiring: return AlignTheme.electricCyan
         case .lost: return Color.red
         }
     }
@@ -457,30 +456,24 @@ struct TargetCircleView: View {
         ZStack {
             if !isAligned {
                 Circle()
-                    .stroke(ringGradient.opacity(0.12 + radarOpacity * 0.15), lineWidth: 0.7)
-                    .frame(width: 34 + (radarPulse - 1) * 4, height: 34 + (radarPulse - 1) * 4)
+                    .stroke(ringGradient.opacity(radarOpacity * 0.6), lineWidth: 1.2)
+                    .frame(width: 28 * radarPulse, height: 28 * radarPulse)
             }
             Circle()
-                .stroke(Color.black.opacity(0.65), lineWidth: 3.2)
+                .stroke(ringGradient, lineWidth: isAligned ? 2.4 : 1.8)
                 .frame(width: 28, height: 28)
-            Circle()
-                .stroke(ringGradient, lineWidth: isAligned ? 1.8 : 1.15)
-                .frame(width: 28, height: 28)
-                .shadow(color: shadowGlowColor.opacity(0.18), radius: 2)
+                .shadow(color: Color.black.opacity(0.5), radius: 2)
+                .shadow(color: shadowGlowColor.opacity(isAligned ? 0.85 : 0.50), radius: isAligned ? 8 : 4)
 
             PlusCrosshairShape()
-                .stroke(ringGradient, lineWidth: 0.8)
-                .frame(width: 36, height: 36)
-
-            PlusCrosshairShape()
-                .stroke(isAligned ? Color.green : Color.white, lineWidth: 1.0)
-                .frame(width: 7, height: 7)
+                .stroke(isAligned ? Color.green : Color.white, lineWidth: isAligned ? 2.0 : 1.5)
+                .frame(width: 9, height: 9)
                 .shadow(color: Color.black.opacity(0.5), radius: 1)
 
             if isAligned {
                 Circle()
-                    .stroke(Color.green.opacity(0.3), lineWidth: 0.7)
-                    .frame(width: 34, height: 34)
+                    .stroke(Color.green.opacity(0.4), lineWidth: 3.5)
+                    .frame(width: 36, height: 36)
             }
         }
         .frame(width: 36, height: 36)
