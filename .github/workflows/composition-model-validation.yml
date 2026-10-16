@@ -1,13 +1,6 @@
 name: Photographic composition model validation
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/composition-model-validation.yml'
-      - 'scripts/composition_model.py'
-      - 'scripts/export_composition_coreml.py'
-      - 'AISmartFramingCamera/Services/PhotographicCompositionModel.swift'
   workflow_dispatch:
 
 jobs:

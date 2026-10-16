@@ -35,6 +35,8 @@ def main() -> None:
     composition_manifest = json.loads(composition_manifest_path.read_text(encoding="utf-8"))
     if composition_manifest.get("weightsSHA256") != "d3d02f36967734fd6f0d2770380a04b777b5cd800a9ba68d4ccc9656f6fef603":
         raise RuntimeError("Invalid SAMP-Net weight provenance")
+    if composition_manifest.get("imageInput") != "RGB float32 NCHW [0,1]; Pillow antialiased bilinear":
+        raise RuntimeError("SAMP-Net input profile does not match Swift preprocessing")
     parity = composition_manifest.get("parity") or {}
     if parity.get("images", 0) < 24 or parity.get("maxMeanScoreError", 1) > 0.04:
         raise RuntimeError("SAMP-Net has not passed real-photo Core ML parity")

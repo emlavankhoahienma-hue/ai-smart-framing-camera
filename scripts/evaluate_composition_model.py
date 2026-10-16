@@ -14,7 +14,8 @@ import torch
 from PIL import Image, ImageDraw
 from scipy.stats import spearmanr
 
-from composition_model import WEIGHTS_SHA256, inputs, load_model
+from composition_model import WEIGHTS_SHA256, inputs, load_model, sha256
+from prepare_composition_photos import DATA_SHA256, DATA_URL
 
 
 def metrics(rows: list[dict]) -> dict:
@@ -33,6 +34,8 @@ def main() -> None:
     parser.add_argument("--photos", type=Path, required=True)
     parser.add_argument("--crop-only", action="store_true", help="Resume crop diagnostics after a completed expert-rating run")
     args = parser.parse_args()
+    if sha256(args.archive) != DATA_SHA256:
+        raise RuntimeError("Evaluation archive does not match the author dataset")
     args.output.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(2)
     model = load_model(args.cache)
@@ -58,6 +61,7 @@ def main() -> None:
     for row in records:
         by_scene[row["scene"]].append(row)
     report = {"model": "SAMP-Net, author checkpoint", "weightsSHA256": WEIGHTS_SHA256,
+              "datasetSource": DATA_URL, "archiveSHA256": DATA_SHA256,
               "split": "CADB official test; not used to tune this app", "metrics": metrics(records) if records else {},
               "scenes": {scene: metrics(rows) for scene, rows in sorted(by_scene.items())},
               "secondsCPU": time.perf_counter() - started,
