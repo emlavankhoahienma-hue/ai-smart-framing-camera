@@ -35,3 +35,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Downloaded pretrained weights and generated Core ML models
+.model-cache/
+*.mlpackage/
+*.mlmodelc/
+SAMPModelManifest.json
+SigLIPModelManifest.json
+SigLIPPrompts.json
+

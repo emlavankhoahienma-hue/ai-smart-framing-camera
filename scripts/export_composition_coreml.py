@@ -80,9 +80,6 @@ def main() -> None:
     example = (torch.rand(1, 3, 224, 224), torch.rand(1, 1, 224, 224))
     with torch.inference_mode(), fixed_shape_pooling():
         traced = torch.jit.trace(wrapped, example, strict=True)
-        traced = torch.jit.freeze(traced)
-        torch._C._jit_pass_peephole(traced.graph, False)
-        torch._C._jit_pass_constant_propagation(traced.graph)
     # Validate the operator rewrite against the unmodified author implementation.
     with torch.inference_mode():
         for seed in range(4):
@@ -114,6 +111,7 @@ def main() -> None:
         if len(photos) < 24:
             raise RuntimeError("At least 24 real-photo conversion fixtures are required")
         errors = []
+        references = []
         for photo in photos:
             image = Image.open(photo).convert("RGB")
             image_tensor, saliency = inputs(image)
@@ -126,6 +124,9 @@ def main() -> None:
             if error > 0.02 or score_error > 0.04 or not np.isfinite(actual).all():
                 raise RuntimeError(f"Core ML parity failed: {photo.name}, probability {error}, mean {score_error}")
             errors.append({"image": photo.name, "maxProbabilityError": error, "meanScoreError": score_error})
+            saliency.numpy().astype("<f4").tofile(args.photos / f"{photo.stem}.saliency.f32")
+            references.append({"file": photo.name, "distribution": expected.tolist()})
+        (args.photos / "parity-references.json").write_text(json.dumps(references, indent=2), encoding="utf-8")
         manifest["parity"] = {"images": len(errors), "maxProbabilityError": max(x["maxProbabilityError"] for x in errors),
                               "maxMeanScoreError": max(x["meanScoreError"] for x in errors), "details": errors}
         print(json.dumps(manifest["parity"], indent=2))

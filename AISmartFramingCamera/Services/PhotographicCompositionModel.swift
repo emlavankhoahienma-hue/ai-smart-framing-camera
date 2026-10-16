@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import CoreML
+import CoreVideo
 import Accelerate
 
 /// SAMP-Net (BMVC 2021), author checkpoint trained on expert CADB composition ratings.
@@ -140,10 +141,10 @@ final class SpectralCompositionSaliency {
         let x = basis(width), y = basis(height)
         let sign = inverse ? 1.0 : -1.0
         let rc = multiply(real, x.cosine, rows: height, columns: width, inner: width)
-        let `is` = multiply(imaginary, x.sine, rows: height, columns: width, inner: width)
+        let imaginarySine = multiply(imaginary, x.sine, rows: height, columns: width, inner: width)
         let rs = multiply(real, x.sine, rows: height, columns: width, inner: width)
         let ic = multiply(imaginary, x.cosine, rows: height, columns: width, inner: width)
-        let rowReal = zip(rc, `is`).map { $0 - sign * $1 }
+        let rowReal = zip(rc, imaginarySine).map { $0 - sign * $1 }
         let rowImaginary = zip(rs, ic).map { sign * $0 + $1 }
         let cr = multiply(y.cosine, rowReal, rows: height, columns: width, inner: height)
         let si = multiply(y.sine, rowImaginary, rows: height, columns: width, inner: height)

@@ -34,6 +34,16 @@ jobs:
         run: |
           python scripts/export_composition_coreml.py --photos validation/photos
           xcrun coremlc compile SAMPComposition.mlpackage .
+      - name: Validate production Swift preprocessing and photographic search
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/TrackingGeometry.swift \
+            AISmartFramingCamera/Services/CompositionPlanning.swift \
+            AISmartFramingCamera/Services/CompositionImageEvidence.swift \
+            AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
+            AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
+            tests/CompositionModelValidation.swift -o "$RUNNER_TEMP/photo-validation"
+          "$RUNNER_TEMP/photo-validation" validation/photos SAMPComposition.mlmodelc validation/swift
       - name: Upload conversion evidence
         if: always()
         uses: actions/upload-artifact@v6
