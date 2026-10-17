@@ -83,6 +83,9 @@ projected photographic aim drives both the visible dot and alignment admission.
   remain finite. FCDB's same 300 published human crop-pair votes are checked;
   dataset training overlap is not established, so this is not claimed as an
   untouched benchmark or overall photo-quality accuracy.
+  The 30 original photo inputs are fixed under `tests/fixtures/fcdb/` with
+  their published URLs and SHA-256 values in `SOURCES.json`; runner evaluation
+  does not depend on Flickr allowing that runner's IP address.
 - The production detector and composition search run on the same 160 full source
   images, plus the remaining 326 human-scene test photos, covering all 342 human
   photos in the author test split. A further 36 virtual camera windows test different initial framing.
