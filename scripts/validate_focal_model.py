@@ -3,6 +3,9 @@ from pathlib import Path
 import hashlib
 import json
 import subprocess
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -26,11 +29,30 @@ for row in baseline["records"]:
     groups.setdefault(row["id"], []).append(row)
 
 
+def fetch_photo(url, expected):
+    parsed = urllib.parse.urlsplit(url)
+    mirrors = [urllib.parse.urlunsplit(("https", "live.staticflickr.com", parsed.path, "", "")), url]
+    last_error = None
+    for attempt in range(5):
+        for mirror in dict.fromkeys(mirrors):
+            try:
+                request = urllib.request.Request(mirror, headers={"User-Agent": "AI-Smart-Framing-Model-Validation/1.0"})
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    data = response.read()
+                if hashlib.sha256(data).hexdigest() != expected:
+                    raise RuntimeError(f"FCDB photograph bytes changed: {url}")
+                return data
+            except (urllib.error.URLError, TimeoutError) as error:
+                last_error = error
+        time.sleep(min(16, 2 ** attempt))
+    raise RuntimeError(f"Cannot retrieve verified FCDB photo: {url}") from last_error
+
+
 def prepare(item):
     key, rows = item
     path = annotations.parent / f"{key}.jpg"
     if not path.exists():
-        path.write_bytes(urllib.request.urlopen(rows[0]["sourceURL"], timeout=60).read())
+        path.write_bytes(fetch_photo(rows[0]["sourceURL"], rows[0]["sourceSHA256"]))
     assert hashlib.sha256(path.read_bytes()).hexdigest() == rows[0]["sourceSHA256"], key
     from PIL import Image
     with Image.open(path) as image:
@@ -45,7 +67,7 @@ def prepare(item):
     return dict(file=str(path), regions=boxes), rows
 
 
-with ThreadPoolExecutor(max_workers=6) as executor:
+with ThreadPoolExecutor(max_workers=2) as executor:
     pairs = list(executor.map(prepare, groups.items()))
 fixtures.extend(fixture for fixture, _ in pairs)
 assert len(pairs) == 30 and sum(len(rows) for _, rows in pairs) == 300
