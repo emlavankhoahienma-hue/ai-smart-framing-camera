@@ -690,7 +690,7 @@ struct ZoomRevealOverlay: View {
                 .transaction { $0.animation = nil }
                 .overlay(alignment: .bottom) {
                     HStack(spacing: 7) {
-                        Text(isRamping ? (geometry.isZoomingOut ? "Mở rộng góc chụp" : "AI zoom") : "Khung sẽ chụp")
+                        Text(geometry.isZoomingOut ? "Mở rộng góc chụp" : (isRamping ? "AI zoom" : "Khung sẽ chụp"))
                         Text("\(actualZoom, specifier: "%.1f")× → \(geometry.targetZoom, specifier: "%.1f")×")
                             .monospacedDigit()
                     }
