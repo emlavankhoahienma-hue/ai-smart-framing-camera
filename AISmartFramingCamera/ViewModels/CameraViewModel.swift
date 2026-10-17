@@ -2901,6 +2901,11 @@ public final class CameraViewModel: ObservableObject {
             if postZoomFaceMinimumTimestamp.isFinite { restoreOriginalZoomAfterVerificationFailure() }
             return false
         }
+        guard let current = frameProcessor.latestTrackingFrameSnapshot()?.1,
+              CaptureReadinessPolicy.isFresh(current.timestamp, now: CACurrentMediaTime()),
+              let currentPose = SpatialTrackingEngine.shared.pose(at: current.timestamp),
+              CompositionSceneFreshness.accepts(sourcePose: pose, currentPose: currentPose,
+                  sourceZoom: frame.displayZoom, currentZoom: current.displayZoom) else { return false }
         finalFramingPose = pose
         finalFramingTimestamp = frame.timestamp
         finalFramingZoom = frame.displayZoom
