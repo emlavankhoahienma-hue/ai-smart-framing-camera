@@ -223,7 +223,7 @@ class GeometryTests(unittest.TestCase):
         self.assertNotIn('self.currentZoom = targetDeviceZoom', zoom_method)
         self.assertIn('zoomAwaitingVerification = true', zoom_method)
         self.assertIn('latestOpticalFrameTimestamp >', vm)
-        self.assertIn('(reachedAt ?? .infinity) + 0.05', vm)
+        self.assertIn('hasSettledZoomEvidence(since: settledAt)', vm)
         self.assertIn('public func beginManualZoomGesture()', vm)
         continuous = vm.split('public func setZoomContinuous', 1)[1].split('public func finishZoomGesture', 1)[0]
         self.assertNotIn('cancelAIZoomForGesture()', continuous)

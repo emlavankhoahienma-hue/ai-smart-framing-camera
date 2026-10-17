@@ -169,11 +169,13 @@ enum CompositionModelValidation {
         subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention && bounds.width * bounds.height > 0.45
         let ci = CIImage(cvPixelBuffer: pixels)
         let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
+        let budget = CompositionSearchBudget(complexScene: CompositionSearchBudget.isComplex(
+            group: hero.isGroup, intents: intents), constrained: false)
         func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
             CompositionPlanner.photographicProposals(subject: subject, intents: intents, portraitBounds: portraitBounds,
                 raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
                 protectedBounds: hero.companionBounds, incidentalBounds: incidentalPets + incidentalFaces,
-                proposalLimit: seeds.isEmpty ? 36 : 18, refining: seeds)
+                proposalLimit: seeds.isEmpty ? budget.coarse : budget.refinement, refining: seeds)
         }
         let started = ProcessInfo.processInfo.systemUptime
         let broad = proposals()
@@ -181,7 +183,7 @@ enum CompositionModelValidation {
             image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
             aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
             positionURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmPositionEmbedding.bin"),
-            requiresModernModel: true,
+            requiresModernModel: true, aestheticLimit: budget.aesthetics,
             cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { proposals($0) }),
             !result.views.isEmpty, result.usedSpecialist,
             let best = result.views.first, let bestAssessment = best.assessment, let bestAesthetics = best.aesthetics else {

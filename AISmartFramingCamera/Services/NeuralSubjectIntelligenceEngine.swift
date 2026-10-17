@@ -245,7 +245,10 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // especially on iPhone XS. Detection and group membership remain unchanged.
         SemanticCropRanker.shared.endAnalysis()
         let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
-            ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.physicalMemory < 6_000_000_000
+            ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical ||
+            ProcessInfo.processInfo.physicalMemory < 6_000_000_000
+        let budget = CompositionSearchBudget(complexScene: CompositionSearchBudget.isComplex(
+            group: hero.isGroup, intents: intents), constrained: constrained)
         func proposals(refining seeds: [CompositionProposal] = []) -> [CompositionProposal] {
             CompositionPlanner.photographicProposals(subject: subject, intents: intents,
                 portraitBounds: portraitBounds, raster: raster, calibration: frame.calibration,
@@ -253,7 +256,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 protectedBounds: hero.companionBounds,
                 incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) } +
                     output.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox),
-                proposalLimit: seeds.isEmpty ? (constrained ? 24 : 36) : 18, refining: seeds,
+                proposalLimit: seeds.isEmpty ? budget.coarse : budget.refinement, refining: seeds,
                 isCancelled: { cancellation.isCancelled })
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
@@ -264,7 +267,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
             aestheticModelURL: Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
             positionURL: Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
-            requiresModernModel: true,
+            requiresModernModel: true, aestheticLimit: budget.aesthetics,
             cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) }) else { return nil }
         let choices = result.views.map { view -> LocalCompositionChoice in
             let proposal = view.proposal

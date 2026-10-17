@@ -2063,37 +2063,17 @@ public final class CameraViewModel: ObservableObject {
         } else {
             activeEngineSource = .appleNeuralEngine(scene: output.detectedScene.localizedName)
         }
-        // AI decides the best photographic composition and zoom; accept the top plan directly
-        if let first = localCompositionChoices.first,
-           CACurrentMediaTime() - source.frame.timestamp <= 30,
+        // Automatic targets must come from a completed comparison by both models.
+        // When inference fails, retain measured suggestions for explicit selection.
+        if let first = localCompositionChoices.first, analysis.usedCompositionModel,
+           receipt.modernAssessments > 0, CACurrentMediaTime() - source.frame.timestamp <= 30,
            first.plan.confidence >= first.plan.minimumAutoselectConfidence {
             acceptLocalPlan(first.plan, source: source)
-        } else if let first = localCompositionChoices.first,
-                  CACurrentMediaTime() - source.frame.timestamp <= 30 {
-            acceptLocalPlan(first.plan, source: source)
-        } else if let first = localEvidenceCandidates.first {
-            let area = first.boundingBox.width * first.boundingBox.height
-            if area < 0.16 {
-                let zoomOptions = cameraService.availableDisplayZoomOptions.filter { $0 > displayZoom && $0 <= displayZoom * 2.5 }
-                pendingSuggestedZoom = zoomOptions.first ?? (displayZoom * 1.5)
-            } else {
-                pendingSuggestedZoom = displayZoom
-            }
-            allowsAutoCaptureForCurrentTarget = true
-            let aimPoint: CGPoint
-            if first.center.x < 0.46 {
-                aimPoint = CGPoint(x: 0.382, y: first.center.y < 0.46 ? 0.382 : 0.5)
-            } else if first.center.x > 0.54 {
-                aimPoint = CGPoint(x: 0.618, y: first.center.y < 0.46 ? 0.382 : 0.5)
-            } else {
-                aimPoint = first.center
-            }
-            pinTargetAndStartMotion(at: aimPoint, subjectRect: first.boundingBox, source: source)
-            localTrackingSource = nil
-            localSelectionMessage = nil
         } else {
             allowsAutoCaptureForCurrentTarget = false
-            localSelectionMessage = "Chưa có mốc rõ để căn máy. Thử hướng máy sang vùng có chi tiết hoặc chụp tay."
+            localSelectionMessage = localEvidenceCandidates.isEmpty ?
+                "Chưa có chủ thể rõ. Thử hướng máy sang vùng có chi tiết hoặc chụp tay." :
+                "Chưa hoàn tất mô hình bố cục. Chạm chủ thể để chọn hoặc bấm AI thử lại."
         }
     }
 
@@ -2176,6 +2156,12 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func acceptLocalPlan(_ plan: LocalFramingPlan, source: AITrackingSource) {
+        guard let aim = CompositionAimGeometry(subject: plan.subjectPoint,
+            calibration: source.frame.calibration, sourcePose: source.pose,
+            aimWorldRay: plan.aimWorldRay) else {
+            localSelectionMessage = "Không xác nhận được hướng bố cục. Hãy phân tích lại khung."
+            return
+        }
         let dx = plan.aimPointInSource.x - 0.5
         let dy = plan.aimPointInSource.y - 0.5
         let distance = hypot(dx, dy)
@@ -2200,26 +2186,38 @@ public final class CameraViewModel: ObservableObject {
         localSuggestionRects = []
         detectedSubjectRects = []
         localSelectionMessage = nil
-        // Unified reticle tracks the photographic composition aim directly.
-        // Legacy: trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay
+        // Track the measured subject, which can differ from the composition aim.
+        // The same projected aim drives both the visible dot and shutter admission.
         pinTargetAndStartMotion(at: plan.aimPointInSource,
             subjectRect: plan.subjectRect, source: source,
-            trackedPoint: nil, pinnedGuideRay: plan.aimWorldRay)
+            trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay)
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
-        localCompositionAim = nil
-        localCompositionAimPoint = nil
+        localCompositionAim = aim
+        localCompositionAimPoint = currentTargetPoint.flatMap { compositionAlignmentPoint(fallback: $0) }
         localTrackingSource = nil
     }
 
-    private func compositionAlignmentPoint(fallback: CGPoint) -> CGPoint {
-        return fallback
+    var viewfinderTargetPoint: CGPoint? {
+        localCompositionAim == nil ? currentTargetPoint : localCompositionAimPoint
     }
 
-    var localCompositionNeedsLevel: Bool {
-        (localCompositionIntent == .landscape || localCompositionIntent == .architecture ||
-         localCompositionIntent == .environmentalPortrait) && abs(currentRollDegrees) > 3
+    private func compositionAlignmentPoint(fallback: CGPoint) -> CGPoint? {
+        guard let aim = localCompositionAim else { return fallback }
+        let spatial = SpatialTrackingEngine.shared
+        guard let frame = frameProcessor.latestTrackingFrameSnapshot()?.1,
+              CaptureReadinessPolicy.isFresh(frame.timestamp, now: CACurrentMediaTime()),
+              let pose = spatial.pose(at: frame.timestamp),
+              let subject = spatial.projection(at: frame.timestamp, calibration: frame.calibration),
+              subject.isInFront,
+              let guide = aim.projection(subject: subject.point, calibration: frame.calibration, pose: pose),
+              guide.isInFront, guide.point.x.isFinite, guide.point.y.isFinite else {
+            localCompositionAimPoint = nil
+            return nil
+        }
+        localCompositionAimPoint = guide.point
+        return guide.point
     }
 
     var needsManualShutter: Bool {
@@ -2237,7 +2235,6 @@ public final class CameraViewModel: ObservableObject {
         }
         if !zoomVerified { return "Chưa xác nhận được zoom · Có thể bấm chụp tay" }
         if !hasFreshOpticalLock { return "Đang xác nhận lại chủ thể trong ảnh…" }
-        if localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
         if autoCaptureTask != nil { return "Đang kiểm tra khung trước khi chụp…" }
         return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" : "Di chuyển máy để đưa chấm trắng vào vòng giữa"
     }
@@ -2571,23 +2568,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private var hasFreshOpticalLock: Bool {
-        let age = CACurrentMediaTime() - latestOpticalFrameTimestamp
-        guard pendingManualZoomTarget == nil,
-              latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05 else { return false }
-        if ((0...0.35).contains(age) || (0...0.55).contains(age)),
-           latestOpticalCalibration?.isValid == true,
-           let point = latestOpticalPoint,
-           (0...1).contains(point.x), (0...1).contains(point.y) {
-            return true
-        }
-        // Fallback: If Spatial Fusion has confirmed lock and target is on-screen
-        let spatial = SpatialTrackingEngine.shared
-        if spatial.isTrackingActive && (trackingQuality == .locked || trackingQuality == .predicting),
-           let current = currentTargetPoint,
-           (0...1).contains(current.x), (0...1).contains(current.y) {
-            return true
-        }
-        return false
+        CaptureReadinessPolicy.hasOpticalLock(timestamp: latestOpticalFrameTimestamp,
+            now: CACurrentMediaTime(), point: latestOpticalPoint,
+            calibrationValid: latestOpticalCalibration?.isValid == true,
+            manualZoomPending: pendingManualZoomTarget != nil, settledAt: manualZoomSettledAt)
     }
 
     private func canZoomCurrentSubject(to target: CGFloat) -> Bool {
@@ -2610,35 +2594,30 @@ public final class CameraViewModel: ObservableObject {
 
     private func evaluateAlignment(at point: CGPoint) {
         guard !captureMode.isVideo, !isCameraHibernating, !isShutterPressing else { return }
-        if zoomFallbackAfter.isFinite, CACurrentMediaTime() - zoomFallbackAfter > 1.8 {
-            zoomFallbackAfter = .infinity
-            zoomVerified = true
-            allowsAutoCaptureForCurrentTarget = true
-            localSelectionMessage = nil
+        guard let aim = compositionAlignmentPoint(fallback: point) else {
+            alignmentGate.reset()
+            isPerfectAlignment = false
+            autoCaptureTask?.cancel(); autoCaptureTask = nil
+            aiSessionState = .targetPlaced(locked: false)
+            return
         }
-        let aim = compositionAlignmentPoint(fallback: point)
         let dx = aim.x - 0.5, dy = aim.y - 0.5
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
         let distance = hypot(dx, dy / aspect)
         alignmentDistance = distance
         let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),
             radius: Double(alignmentRadius), freshEvidence: hasFreshOpticalLock && !isPinchingZoom)
-        isPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
+        isPerfectAlignment = alignmentGate.isAligned
         guard state != .outside else {
             autoCaptureTask?.cancel(); autoCaptureTask = nil
             lastFailedCaptureOpticalTimestamp = -.infinity
             lastFailedCaptureAttemptTime = -.infinity
-            if !zoomAwaitingVerification && pendingManualZoomTarget == nil {
+            if !zoomAwaitingVerification && !zoomFallbackAfter.isFinite && pendingManualZoomTarget == nil {
                 zoomVerified = true
             }
             aiSessionState = .targetPlaced(locked: hasFreshOpticalLock)
             let angle = atan2(dy, dx) * 180 / .pi
             alignmentState = .guiding(distance: distance, angle: angle < 0 ? angle + 360 : angle)
-            return
-        }
-        if localCompositionNeedsLevel {
-            aiSessionState = .targetPlaced(locked: hasFreshOpticalLock)
-            alignmentState = .guiding(distance: distance, angle: 0)
             return
         }
         aiSessionState = .alignmentPerfect
@@ -2667,7 +2646,7 @@ public final class CameraViewModel: ObservableObject {
                 hasExecutedAutoZoomForSession = true
             }
         }
-        guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
+        guard zoomVerified, !zoomFallbackAfter.isFinite, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
               autoCaptureTask == nil,
               (latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp || CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.20) else { return }
         verifyAndCaptureWhenReady()
@@ -2693,7 +2672,8 @@ public final class CameraViewModel: ObservableObject {
                 !self.zoomAwaitingVerification && self.zoomVerified &&
                 !self.isPinchingZoom && !self.isPreparingPinZoom &&
                 self.allowsAutoCaptureForCurrentTarget && self.isAutoCaptureOnAlignEnabled &&
-                !self.localCompositionNeedsLevel && cropSafe {
+                !self.zoomFallbackAfter.isFinite && self.currentAimRemainsAligned && cropSafe &&
+                CaptureReadinessPolicy.preservesSubject(self.currentSubjectCropBox) {
                 self.executeCapture()
             } else {
                 self.lastFailedCaptureOpticalTimestamp = self.latestOpticalFrameTimestamp
@@ -2702,46 +2682,55 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    private var currentAimRemainsAligned: Bool {
+        guard let subject = currentTargetPoint,
+              let aim = compositionAlignmentPoint(fallback: subject) else { return false }
+        let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
+        return hypot(aim.x - 0.5, (aim.y - 0.5) / aspect) <= alignmentRadius * 1.6
+    }
+
+    private func hasSettledZoomEvidence(since reachedAt: TimeInterval) -> Bool {
+        guard hasFreshOpticalLock, let frame = frameProcessor.latestTrackingFrameSnapshot()?.1 else { return false }
+        return CaptureReadinessPolicy.hasSettledZoom(target: Double(pendingTargetZoomForReveal),
+            hardware: Double(displayZoom), frameZoom: frame.displayZoom,
+            frameTimestamp: frame.timestamp, opticalTimestamp: latestOpticalFrameTimestamp,
+            reachedAt: reachedAt, now: CACurrentMediaTime())
+    }
+
     private func verifyZoomAfterRamp(pinGeneration: UInt64) async {
-        let deadline = CACurrentMediaTime() + 3.8
+        let deadline = CACurrentMediaTime() + 6.0
         var reachedAt: TimeInterval?
         while CACurrentMediaTime() < deadline {
             do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
             guard !Task.isCancelled, targetPinGeneration == pinGeneration,
                   !isPinchingZoom else { return }
-            let reached = abs(displayZoom - pendingTargetZoomForReveal) <= 0.08
-            if reached {
-                if reachedAt == nil { reachedAt = CACurrentMediaTime() }
-                if latestOpticalFrameTimestamp > (reachedAt ?? .infinity) + 0.05 || CACurrentMediaTime() - (reachedAt ?? 0) >= 0.12 {
-                    guard await verifyPostZoomFaces(after: (reachedAt ?? CACurrentMediaTime())) else {
-                        restoreOriginalZoomAfterVerificationFailure()
-                        return
-                    }
-                    // Zoom reached target and settled
-                    zoomVerified = true
-                    zoomAwaitingVerification = false
-                    zoomFallbackAfter = .infinity
-                    localSelectionMessage = nil
-
-                    let point = currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
-                    latestOpticalPoint = point
-                    latestOpticalFrameTimestamp = CACurrentMediaTime()
-                    latestOpticalBox = CGRect(x: max(0, point.x - 0.08), y: max(0, point.y - 0.08), width: 0.16, height: 0.16)
-                    latestOpticalCalibration = latestOpticalCalibration ?? TrackingCalibration.fallback(zoom: Double(displayZoom))
-                    alignmentGate.reset()
-                    lastFailedCaptureOpticalTimestamp = -.infinity
-                    lastFailedCaptureAttemptTime = -.infinity
-
-                    withAnimation(.easeOut(duration: 0.35)) {
-                        self.isRevealingZoomTarget = false
-                        self.isZoomRampPhase = false
-                    }
-                    selectedZoomPreset = resolveClosestZoomPreset(for: displayZoom)
-                    return
-                }
-            } else {
+            guard abs(displayZoom - pendingTargetZoomForReveal) <= 0.08 else {
                 reachedAt = nil
+                continue
             }
+            if reachedAt == nil { reachedAt = CACurrentMediaTime() }
+            guard let settledAt = reachedAt, hasSettledZoomEvidence(since: settledAt) else { continue }
+            let facesSafe = await verifyPostZoomFaces(after: settledAt)
+            guard !Task.isCancelled, targetPinGeneration == pinGeneration, !isPinchingZoom else { return }
+            guard facesSafe else {
+                restoreOriginalZoomAfterVerificationFailure()
+                return
+            }
+            guard hasSettledZoomEvidence(since: settledAt) else { continue }
+            zoomVerified = true
+            zoomAwaitingVerification = false
+            zoomFallbackAfter = .infinity
+            postZoomFaceMinimumTimestamp = settledAt
+            localSelectionMessage = nil
+            alignmentGate.reset()
+            lastFailedCaptureOpticalTimestamp = -.infinity
+            lastFailedCaptureAttemptTime = -.infinity
+            withAnimation(.easeOut(duration: 0.35)) {
+                self.isRevealingZoomTarget = false
+                self.isZoomRampPhase = false
+            }
+            selectedZoomPreset = resolveClosestZoomPreset(for: displayZoom)
+            return
         }
         guard !Task.isCancelled, targetPinGeneration == pinGeneration else { return }
         restoreOriginalZoomAfterVerificationFailure()
@@ -2775,7 +2764,8 @@ public final class CameraViewModel: ObservableObject {
     private func verifyPostZoomFaces(after minimumTimestamp: TimeInterval) async -> Bool {
         guard postZoomFaceCount > 0 else { return true }
         guard let snapshot = frameProcessor.latestTrackingFrameSnapshot(),
-              snapshot.1.timestamp > max(minimumTimestamp - 0.25, latestOpticalFrameTimestamp - 0.5) else {
+              snapshot.1.timestamp > minimumTimestamp,
+              CaptureReadinessPolicy.isFresh(snapshot.1.timestamp, now: CACurrentMediaTime()) else {
             return false
         }
         let frame = FaceVerificationFrame(buffer: snapshot.0)
@@ -2811,25 +2801,18 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private var currentSubjectCropBox: CGRect? {
-        let box = latestOpticalBox ?? (latestOpticalPoint ?? currentTargetPoint).map {
-            CGRect(x: max(0, $0.x - 0.08), y: max(0, $0.y - 0.08), width: 0.16, height: 0.16)
-        }
-        guard let b = box else { return nil }
-        guard let relative = subjectBoundsInTrackingBox else { return b }
-        return CGRect(x: b.minX + relative.minX * b.width,
-                      y: b.minY + relative.minY * b.height,
-                      width: relative.width * b.width, height: relative.height * b.height)
-    }
-
-    private var currentSubjectBoxIsSafe: Bool {
-        guard let box = currentSubjectCropBox,
-              box.minX >= 0.02, box.maxX <= 0.98,
-              box.minY >= 0.02, box.maxY <= 0.98 else { return false }
-        return true
+        guard let box = latestOpticalBox else { return nil }
+        guard let relative = subjectBoundsInTrackingBox else { return box }
+        return CGRect(x: box.minX + relative.minX * box.width,
+                      y: box.minY + relative.minY * box.height,
+                      width: relative.width * box.width, height: relative.height * box.height)
     }
 
     private func currentCropSafeForCapture() async -> Bool {
-        guard hasFreshOpticalLock else { return false }
+        guard hasFreshOpticalLock, CaptureReadinessPolicy.preservesSubject(currentSubjectCropBox) else { return false }
+        if postZoomFaceMinimumTimestamp.isFinite {
+            return await verifyPostZoomFaces(after: postZoomFaceMinimumTimestamp)
+        }
         return true
     }
 

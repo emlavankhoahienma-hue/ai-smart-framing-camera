@@ -89,6 +89,7 @@ jobs:
         run: |
           xcrun swiftc -O -warnings-as-errors \
             AISmartFramingCamera/Services/TrackingGeometry.swift \
+            AISmartFramingCamera/Services/CaptureReadinessPolicy.swift \
             tests/CaptureTransitionRegression.swift \
             -o "$RUNNER_TEMP/capture-transition-regressions"
           "$RUNNER_TEMP/capture-transition-regressions"

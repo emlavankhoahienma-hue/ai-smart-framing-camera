@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		C20000000000000000000064 /* ViewfinderPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000064 /* ViewfinderPresentation.swift */; };
+		C20000000000000000000065 /* CaptureReadinessPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000065 /* CaptureReadinessPolicy.swift */; };
 		C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000063 /* PortraitFramingEvidence.swift */; };
 		C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000062 /* CharmPhotographicModel.swift */; };
 		B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* AISmartFramingCameraApp.swift */; };
@@ -81,6 +82,7 @@
 
 /* Begin PBXFileReference section */
 		C10000000000000000000064 /* ViewfinderPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewfinderPresentation.swift; sourceTree = "<group>"; };
+		C10000000000000000000065 /* CaptureReadinessPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureReadinessPolicy.swift; sourceTree = "<group>"; };
 		C10000000000000000000063 /* PortraitFramingEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortraitFramingEvidence.swift; sourceTree = "<group>"; };
 		C10000000000000000000062 /* CharmPhotographicModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharmPhotographicModel.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* AISmartFramingCameraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISmartFramingCameraApp.swift; sourceTree = "<group>"; };
@@ -221,6 +223,7 @@
 				C10000000000000000000041 /* NeuralTargetTracker.swift */,
 				C10000000000000000000040 /* TrackingGeometry.swift */,
 				C10000000000000000000064 /* ViewfinderPresentation.swift */,
+				C10000000000000000000065 /* CaptureReadinessPolicy.swift */,
 				C10000000000000000000045 /* TargetPatchFlow.swift */,
 				C10000000000000000000046 /* SuperResolutionMetalShaders.swift */,
 				C10000000000000000000047 /* SuperResolutionRAWEngine.swift */,
@@ -418,6 +421,7 @@
 				C20000000000000000000041 /* NeuralTargetTracker.swift in Sources */,
 				C20000000000000000000040 /* TrackingGeometry.swift in Sources */,
 				C20000000000000000000064 /* ViewfinderPresentation.swift in Sources */,
+				C20000000000000000000065 /* CaptureReadinessPolicy.swift in Sources */,
 				B20000000000000000000016 /* NeuralSubjectIntelligenceEngine.swift in Sources */,
 				B20000000000000000000017 /* YOLODetectionEngine.swift in Sources */,
 				B20000000000000000000018 /* VisualOdometryEngine.swift in Sources */,

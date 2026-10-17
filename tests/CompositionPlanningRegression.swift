@@ -482,6 +482,49 @@ enum CompositionPlanningRegression {
                 throw Failure(description: "cancelled request executed")
             } catch is CancellationError { }
         }
+        try run("visible composition aim unlocks alignment while physical subject remains off center") {
+            let k = TrackingCalibration.fallback()
+            let physical = CGPoint(x: 0.32, y: 0.41)
+            let requested = CGPoint(x: 0.57, y: 0.48)
+            let ray = k.deviceRay(at: requested)
+            let pose = simd_quatd(from: SIMD3(0, 0, -1), to: ray)
+            guard let geometry = CompositionAimGeometry(subject: physical, calibration: k,
+                sourcePose: simd_quatd(angle: 0, axis: SIMD3(0, 1, 0)), aimWorldRay: ray),
+                  let guide = geometry.projection(subject: k.project(deviceRay: pose.inverse.act(k.deviceRay(at: physical))).point,
+                                                  calibration: k, pose: pose) else {
+                throw Failure(description: "Missing measured subject/aim projection")
+            }
+            let subject = k.project(deviceRay: pose.inverse.act(k.deviceRay(at: physical)))
+            let distance = hypot(guide.point.x - 0.5, (guide.point.y - 0.5) / CGFloat(k.aspect))
+            try require(distance < 0.00001, "Visible aim did not reach the fixed center ring")
+            try require(hypot(subject.point.x - 0.5, subject.point.y - 0.5) > 0.1,
+                        "Fixture silently centered the subject instead of the photographic aim")
+            var gate = AlignmentCaptureGate()
+            for i in 0...30 {
+                _ = gate.update(time: Double(i) / 60, distance: Double(distance), radius: 0.038, freshEvidence: true)
+            }
+            try require(gate.isAligned, "Displayed aim and admission disagreed")
+        }
+        try run("scene budgets retain original views and bounded refinement") {
+            for complex in [false, true] {
+                for constrained in [false, true] {
+                    let budget = CompositionSearchBudget(complexScene: complex, constrained: constrained)
+                    let broad = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait],
+                        raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3],
+                        proposalLimit: budget.coarse)
+                    try require(broad.contains(where: \.isUnchangedView), "Faster search omitted original baseline")
+                    try require(broad.count >= 12 && broad.count <= budget.coarse, "Invalid coarse search coverage")
+                    let refined = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait],
+                        raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3],
+                        proposalLimit: budget.refinement, refining: Array(broad.prefix(3)))
+                    try require(refined.count <= budget.refinement, "Refinement exceeded budget")
+                    try require(budget.coarse + budget.refinement < 54 && budget.aesthetics < 18,
+                                "New budget does not reduce real model work")
+                }
+            }
+            try require(CompositionSearchBudget.isComplex(group: true, intents: [.group]), "Group lost its larger search")
+            try require(CompositionSearchBudget.isComplex(group: false, intents: [.landscape]), "Landscape lost its larger search")
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

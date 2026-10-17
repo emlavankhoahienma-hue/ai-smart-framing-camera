@@ -2,6 +2,22 @@ import Foundation
 import CoreGraphics
 import CoreImage
 
+struct CompositionSearchBudget {
+    let coarse: Int
+    let refinement: Int
+    let aesthetics: Int
+
+    init(complexScene: Bool, constrained: Bool) {
+        coarse = complexScene ? (constrained ? 24 : 32) : (constrained ? 18 : 24)
+        refinement = complexScene && !constrained ? 12 : 8
+        aesthetics = complexScene ? (constrained ? 10 : 12) : (constrained ? 8 : 10)
+    }
+
+    static func isComplex(group: Bool, intents: [LocalCompositionIntent]) -> Bool {
+        group || intents.contains { $0 == .landscape || $0 == .architecture || $0 == .environmentalPortrait }
+    }
+}
+
 /// Two passes over feasible camera views. The trained composition model ranks
 /// photographic layout and focal length; the planner enforces subject safety.
 final class CompositionAestheticSearch {
@@ -27,7 +43,7 @@ final class CompositionAestheticSearch {
     func run(proposals: [CompositionProposal], image: CIImage, aspect: Double,
              preferences: [String: Double], modelURL: URL?,
              aestheticModelURL: URL? = nil, positionURL: URL? = nil, requiresModernModel: Bool = false,
-             cancellation: CompositionAnalysisCancellation,
+             aestheticLimit: Int = 18, cancellation: CompositionAnalysisCancellation,
              progress: @Sendable (String) -> Void,
              refine: ([CompositionProposal]) -> [CompositionProposal]) -> Result? {
         guard !cancellation.isCancelled else { return nil }
@@ -77,6 +93,14 @@ final class CompositionAestheticSearch {
             let leaders = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: 3)
             for leader in leaders {
                 if let index = evaluated.firstIndex(where: { $0.proposal.sourceCorners == leader.sourceCorners }) { include(index) }
+            }
+            let sourceZoom = evaluated.first(where: { $0.proposal.isUnchangedView })?.proposal.zoom ?? 1
+            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 }
+                .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
+            // Reserve tighter alternatives before allocating neighbouring views.
+            // The smaller second-model budget must still compare focal lengths.
+            for index in zoomed.prefix(2) { include(index) }
+            for leader in leaders {
                 let nearby = evaluated.indices.filter {
                     hypot(evaluated[$0].proposal.aimPoint.x - leader.aimPoint.x,
                           evaluated[$0].proposal.aimPoint.y - leader.aimPoint.y) < 0.055 &&
@@ -86,13 +110,11 @@ final class CompositionAestheticSearch {
             }
             // A strong tighter view must reach the second model even when the
             // old whole-image composition scorer slightly prefers the wide view.
-            let sourceZoom = evaluated.first(where: { $0.proposal.isUnchangedView })?.proposal.zoom ?? 1
-            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 }
-                .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
             for index in zoomed.prefix(4) { include(index) }
             let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
-                ProcessInfo.processInfo.physicalMemory < 6_000_000_000 || ProcessInfo.processInfo.thermalState == .serious
-            let budget = constrained ? 12 : 18
+                ProcessInfo.processInfo.physicalMemory < 6_000_000_000 ||
+                ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical
+            let budget = max(4, min(constrained ? 12 : 18, aestheticLimit))
             for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
                 if indices.count >= budget { break }
                 include(index)

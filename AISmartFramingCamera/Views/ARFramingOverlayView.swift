@@ -83,9 +83,9 @@ public struct ARFramingOverlayView: View {
                     .allowsHitTesting(false)
                 }
 
-                // The existing tracker owns the bearing. Only the drawing changes.
+                // The displayed photographic aim also drives alignment admission.
                 if viewModel.showTargetCircle, !viewModel.isRevealingZoomTarget,
-                   let targetPoint = viewModel.currentTargetPoint {
+                   let targetPoint = viewModel.viewfinderTargetPoint {
                     let projectedScreen = convertBufferPointToScreen(targetPoint, in: size)
                     let targetScreen = TrackingGeometry.dock(projectedScreen, size: size)
                     let isDocked = hypot(projectedScreen.x - targetScreen.x,
@@ -239,7 +239,7 @@ public struct ARFramingOverlayView: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 4)
                     .onChanged { val in
-                        guard viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint else { return }
+                        guard viewModel.showTargetCircle, let targetPoint = viewModel.viewfinderTargetPoint else { return }
                         let currentScreen = convertBufferPointToScreen(targetPoint, in: size)
                         let dist = hypot(val.startLocation.x - currentScreen.x, val.startLocation.y - currentScreen.y)
                         if dist <= 44 {

@@ -158,7 +158,8 @@ class StabilityTests(unittest.TestCase):
         self.assertIn('zoomVerified = false', timeout)
         self.assertNotIn('zoomVerified = true', timeout)
         self.assertIn('pendingTargetZoomForReveal', verify)
-        self.assertIn('guard await verifyPostZoomFaces', verify)
+        self.assertIn('let facesSafe = await verifyPostZoomFaces', verify)
+        self.assertIn('guard facesSafe else', verify)
 
     def test_manual_zoom_cancels_both_delayed_ramp_and_shutter(self):
         manual = VM.split('public func beginManualZoomGesture()', 1)[1].split('private func requestManualZoom', 1)[0]
