@@ -1,12 +1,10 @@
 name: Photographic composition model validation
-
 on:
   workflow_dispatch:
-
 jobs:
-  validate:
+  pose-diagnostic:
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -17,32 +15,16 @@ jobs:
           path: .model-cache
           key: composition-cadb-samp-charm-v2
           restore-keys: composition-cadb-samp-v1
-      - name: Install pinned conversion dependencies
+      - name: Prepare all human test photos
         run: |
-          pip install torch==2.5.1 torchvision==0.20.1 numpy==1.26.4 \
-            coremltools==9.0 opencv-python-headless==4.11.0.86 einops==0.8.1 \
-            scipy==1.15.3 Pillow==11.0.0
-      - name: Prepare real photographs from the author test split
-        run: python scripts/prepare_composition_photos.py
-      - name: Convert and verify Core ML on real photographs
+          pip install Pillow==11.0.0
+          python scripts/prepare_pose_photos.py
+      - name: Diagnose actual Vision pose evidence
         run: |
-          python scripts/export_composition_coreml.py --photos validation/photos
-          xcrun coremlc compile SAMPComposition.mlpackage .
-          pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
-          python scripts/export_charm_coreml.py --photos validation/photos
-          xcrun coremlc compile CharmAesthetics.mlpackage .
-      - name: Validate production Swift preprocessing and photographic search
-        run: |
-          python scripts/validate_composition_photos.py --parity-only
-      - name: Upload conversion evidence
+          xcrun swiftc -O -warnings-as-errors AISmartFramingCamera/Services/PortraitFramingEvidence.swift tests/PortraitPoseDiagnostic.swift -o "$RUNNER_TEMP/pose-diagnostic"
+          "$RUNNER_TEMP/pose-diagnostic" validation/pose/photos validation/pose-report.json
+      - uses: actions/upload-artifact@v6
         if: always()
-        uses: actions/upload-artifact@v6
         with:
-          name: photographic-model-validation
-          path: |
-            SAMPModelManifest.json
-            CharmModelManifest.json
-            SAMPComposition.mlpackage
-            CharmAesthetics.mlpackage
-            CharmPositionEmbedding.bin
-            validation/
+          name: Portrait-Pose-Diagnostic
+          path: validation/pose-report.json
