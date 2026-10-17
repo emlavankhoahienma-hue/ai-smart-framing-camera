@@ -706,7 +706,6 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
     @Published public var windowedZoomNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
-    @Published public var isAIWindowedFocalRecommended: Bool = false
     @Published public var lastRecordedVideoWindowedFocal: Double? = nil
     @Published public var lastRecordedVideoWindowedAspect: WindowedZoomAspectRatio? = nil
     @Published public var lastRecordedVideoWindowedBaseZoom: CGFloat = 1.0
@@ -1501,6 +1500,7 @@ public final class CameraViewModel: ObservableObject {
               isCameraReady, !isCameraHibernating,
               !isShutterPressing, recordingState == .idle,
               (aiSessionState == .idle || aiSessionState == .done) else { return }
+        if isWindowedZoomActive { isWindowedZoomActive = false }
         targetPinGeneration &+= 1
         alignmentGate.reset()
         pinZoomPlanTask?.cancel()
@@ -1697,48 +1697,6 @@ public final class CameraViewModel: ObservableObject {
         liveEntitySmoother.reset()
         liveDetectedEntities = []
         if aiSessionState != .capturing { aiSessionState = .idle }
-    }
-
-    // MARK: - AI Windowed Focal Length Auto-Framing
-    public func applyAIWindowedFocalLengthRecommendation() {
-        let targetMm: Double
-
-        if let face = detectedFaceRects.first {
-            // Có khuôn mặt trong khung hình -> Đánh giá kích thước/khoảng cách
-            let faceHeight = face.height
-            if faceHeight < 0.20 {
-                // Mặt nhỏ, chủ thể ở xa -> Tiêu cự chân dung nén viền 85mm
-                targetMm = 85.0
-            } else if faceHeight < 0.35 {
-                // Mặt cỡ vừa -> Tiêu cự mắt người chuẩn 50mm
-                targetMm = 50.0
-            } else {
-                // Cận cảnh lớn -> Tiêu cự đời thường 35mm
-                targetMm = 35.0
-            }
-        } else {
-            switch detectedScene {
-            case .portrait:
-                targetMm = 85.0
-            case .macro, .food:
-                targetMm = 50.0
-            case .street, .pet:
-                targetMm = 50.0
-            case .landscape, .sunset, .architecture, .sky, .water, .foliage:
-                targetMm = 28.0
-            case .night:
-                targetMm = 35.0
-            case .general:
-                targetMm = 35.0
-            }
-        }
-
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.74)) {
-            self.windowedZoomFocalLength = targetMm
-            self.isAIWindowedFocalRecommended = true
-        }
-        self.haptics.triggerSuccess()
-        CameraLogger.info("AI Windowed Zoom đề xuất tiêu cự: \(Int(targetMm))mm cho bối cảnh \(self.detectedScene.rawValue)", category: .ai)
     }
 
     // MARK: - Vision & Gemini One-Shot Handling
@@ -2001,9 +1959,9 @@ public final class CameraViewModel: ObservableObject {
                       self.aiSessionState == .analyzing, !self.isOneShotCaptured else { return }
                 self.visionEngine.capturedGeminiFrame = nil
                 let now = CACurrentMediaTime()
-                guard let frame,
+                guard self.manualZoomRequestID == nil, !self.isPinchingZoom, let frame,
                       CompositionAnalysisReceipt.acceptsFrame(timestamp: frame.timestamp,
-                          requestedAt: requestedAt, now: now) else {
+                          requestedAt: max(requestedAt, self.manualZoomSettledAt), now: now) else {
                     if now - requestedAt < 5 {
                         self.requestFreshAIFrame(generation: generation, requestedAt: requestedAt, completion: completion)
                         self.visionEngine.captureNextFrameForGemini = true

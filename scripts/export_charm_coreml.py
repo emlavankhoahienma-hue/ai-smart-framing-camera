@@ -82,7 +82,7 @@ def main():
         "checkpointRevision": HF_REVISION, "weightsSHA256": WEIGHTS_SHA256,
         "positionSourceSHA256": POSITION_SHA256, "positionBinarySHA256": hashlib.sha256(position_data).hexdigest(),
         "parameters": 21_538_185, "trainingDataset": "PARA", "ratingScale": scale.tolist(),
-        "inputProfile": "Author normal_flow; RGB [0,1]; zero-pad right/bottom to 14; no token dropping; <=1024 patches",
+        "inputProfile": "Pillow bilinear <=336 long edge; author normal_flow; RGB [0,1]; zero-pad right/bottom to 14; no token dropping; <=1024 patches",
         "precision": "FP16", "parity": {"images": len(errors),
             "maxMeanScoreError": max(x["meanScoreError"] for x in errors), "details": errors}}
     Path("CharmModelManifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

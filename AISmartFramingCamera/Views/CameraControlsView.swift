@@ -575,8 +575,6 @@ struct AIViewfinderButton: View {
                 } else {
                     viewModel.requestAIVideoCinematographyGuidance()
                 }
-            } else if viewModel.isWindowedZoomActive {
-                viewModel.applyAIWindowedFocalLengthRecommendation()
             } else {
                 if viewModel.aiSessionState.isSessionActive {
                     viewModel.cancelAISession()
@@ -619,9 +617,6 @@ struct AIViewfinderButton: View {
     private var isPulsing: Bool {
         if viewModel.captureMode.isVideo {
             return viewModel.isAIVideoDirectorActive
-        }
-        if viewModel.isWindowedZoomActive {
-            return viewModel.isAIWindowedFocalRecommended
         }
         switch viewModel.aiSessionState {
         case .analyzing, .targetPlaced, .alignmentPerfect:

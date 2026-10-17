@@ -41,7 +41,7 @@ enum CompositionModelValidation {
             let expected = try Data(contentsOf: photos.appendingPathComponent(reference.file)
                 .deletingPathExtension().appendingPathExtension("charm-position.f32"))
             guard expected.count == inputs.positions.count * MemoryLayout<Float>.size else {
-                throw Failure(message: "Charm position shape differs from author")
+                throw Failure(message: "Charm position shape differs from author: \(reference.file), expected bytes \(expected.count), Swift \(inputs.positions.count * 4)")
             }
             let positions = inputs.positions.dataPointer.assumingMemoryBound(to: Float.self)
             let positionError = expected.withUnsafeBytes { data -> Double in

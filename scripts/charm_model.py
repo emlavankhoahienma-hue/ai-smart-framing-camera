@@ -48,9 +48,16 @@ def load_model(cache: Path):
     return model, torch.load(position, map_location="cpu", weights_only=True).detach()
 
 
+def bounded_image(image: Image.Image) -> Image.Image:
+    image = image.convert("RGB")
+    scale = min(1, 336 / max(image.size))
+    size = (max(1, int(image.width * scale)), max(1, int(image.height * scale)))
+    return image.resize(size, Image.Resampling.BILINEAR) if size != image.size else image
+
+
 def tokens(image: Image.Image, position: torch.Tensor):
     """The author's normal_flow for <=1024 image patches; no spatial distortion."""
-    rgb = np.asarray(image.convert("RGB"), dtype=np.float32) / 255
+    rgb = np.asarray(bounded_image(image), dtype=np.float32) / 255
     h, w = rgb.shape[:2]
     rows, cols = (h + 13) // 14, (w + 13) // 14
     if rows * cols > 1024:
@@ -88,7 +95,9 @@ def author_tokens(cache: Path, image_path: Path):
         tokenizer = processor.Charm_Tokenizer(training_dataset="para", without_pad_or_dropping=True)
     finally:
         processor.hf_hub_download = previous
-    return tokenizer.preprocess(str(image_path))
+    bounded = cache / ("input-" + image_path.stem + ".png")
+    bounded_image(Image.open(image_path)).save(bounded)
+    return tokenizer.preprocess(str(bounded))
 
 
 class MobileCharm(torch.nn.Module):
