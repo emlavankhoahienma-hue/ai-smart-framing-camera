@@ -2004,6 +2004,7 @@ public final class CameraViewModel: ObservableObject {
         let generation = aiSessionGeneration
         let requestID = localAnalysisRequestID
         let zooms = cameraService.availableDisplayZoomOptions
+        let opticalZoom = cameraService.telephotoOpticalDisplayZoom
         localAnalysisTask = Task { [weak self] in
             let preferences = await CompositionPreferenceStore.shared.bonuses()
             guard !Task.isCancelled, !cancellation.isCancelled else { return }
@@ -2011,11 +2012,13 @@ public final class CameraViewModel: ObservableObject {
                 await Task.detached(priority: .userInitiated) {
                     NeuralSubjectIntelligenceEngine.shared.analyzeComposition(
                         pixelBuffer: source.buffer, frame: source.frame, pose: source.pose,
-                        allowedZooms: zooms, preferences: preferences, requestID: requestID, cancellation: cancellation,
+                        allowedZooms: zooms, maximumOpticalZoom: opticalZoom,
+                        preferences: preferences, requestID: requestID, cancellation: cancellation,
                         progress: { [weak self] message in
                             Task { @MainActor [weak self] in
                                 guard let self, self.aiSessionGeneration == generation,
                                       self.aiSessionState == .analyzing, !self.localAnalysisFinished,
+                                      self.localAnalysisCancellation === cancellation,
                                       !cancellation.isCancelled else { return }
                                 self.localAnalysisProgress = message
                             }
@@ -2112,9 +2115,13 @@ public final class CameraViewModel: ObservableObject {
             acceptLocalPlan(first.plan, source: source)
         } else {
             allowsAutoCaptureForCurrentTarget = false
-            localSelectionMessage = localEvidenceCandidates.isEmpty ?
-                "Chưa có chủ thể rõ. Thử hướng máy sang vùng có chi tiết hoặc chụp tay." :
-                "Chưa hoàn tất mô hình bố cục. Chạm chủ thể để chọn hoặc bấm AI thử lại."
+            if localEvidenceCandidates.isEmpty {
+                localSelectionMessage = "Chưa có chủ thể rõ. Thử hướng máy sang vùng có chi tiết hoặc chụp tay."
+            } else if analysis.usedCompositionModel {
+                localSelectionMessage = "Bố cục chưa đủ chắc chắn. Chọn phương án hoặc bấm AI để phân tích lại."
+            } else {
+                localSelectionMessage = "Chưa hoàn tất mô hình bố cục. Chạm chủ thể để chọn hoặc bấm AI thử lại."
+            }
         }
     }
 

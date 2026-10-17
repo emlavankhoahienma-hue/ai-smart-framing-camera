@@ -140,6 +140,34 @@ enum CompositionModelValidation {
             try JSONSerialization.data(withJSONObject: humanReport, options: [.prettyPrinted, .sortedKeys])
                 .write(to: output.appendingPathComponent("human-scene-composition.json"))
         }
+        let profileParents = searches.compactMap { row -> (String, Double)? in
+            guard row["attentionRegion"] as? Bool == false, let confidence = row["heroConfidence"] as? Double,
+                  confidence >= 0.72, let bounds = row["heroBounds"] as? [Double], bounds.count == 4,
+                  let file = row["file"] as? String else { return nil }
+            return (file, bounds[2] * bounds[3])
+        }.sorted { $0.1 < $1.1 }.prefix(12)
+        guard profileParents.count == 12 else { throw Failure(message: "Insufficient physical subjects for optical-profile validation") }
+        let opticalDirectory = output.appendingPathComponent("optical-profiles", isDirectory: true)
+        try FileManager.default.createDirectory(at: opticalDirectory, withIntermediateDirectories: true)
+        var opticalRows: [[String: Any]] = []
+        for optical in [CGFloat(4), CGFloat(5)] {
+            for parent in profileParents {
+                let file = photos.appendingPathComponent("source").appendingPathComponent(parent.0)
+                let row: [String: Any] = try autoreleasepool {
+                    try searchPhoto(file: URL(fileURLWithPath: "optical\(Int(optical))_" + parent.0),
+                        photos: photos, modelURL: modelURL, output: opticalDirectory, renderer: renderer,
+                        sourceOverride: image(file), maximumOpticalZoom: optical)
+                }
+                opticalRows.append(row)
+                print("Optical profile \(opticalRows.count)/24: \(parent.0), lens \(optical)")
+                fflush(stdout)
+            }
+        }
+        let opticalReport: [String: Any] = ["views": opticalRows.count, "sourcePhotos": 12,
+            "opticalProfiles": [4, 5], "scope": "Production search on real photos with advertised 4x/5x optical metadata; not a physical lens test.",
+            "searches": opticalRows]
+        try JSONSerialization.data(withJSONObject: opticalReport, options: [.prettyPrinted, .sortedKeys])
+            .write(to: output.appendingPathComponent("optical-zoom-profiles.json"))
         let replayDirectory = output.appendingPathComponent("camera-replay", isDirectory: true)
         try FileManager.default.createDirectory(at: replayDirectory, withIntermediateDirectories: true)
         var replay: [[String: Any]] = []
@@ -202,7 +230,7 @@ enum CompositionModelValidation {
     static func searchPhoto(file: URL, photos: URL, modelURL: URL, output: URL,
                             renderer: CompositionImageRenderer, sourceOverride: CGImage? = nil,
                             replayParent: CGImage? = nil, replayWindow: CGRect? = nil,
-                            constrained: Bool = false) throws -> [String: Any] {
+                            constrained: Bool = false, maximumOpticalZoom: CGFloat? = nil) throws -> [String: Any] {
         let source: CGImage
         if let sourceOverride { source = sourceOverride }
         else { source = try image(photos.appendingPathComponent("source").appendingPathComponent(file.lastPathComponent)) }
@@ -244,11 +272,13 @@ enum CompositionModelValidation {
         let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
         let budget = CompositionSearchBudget(complexScene: CompositionSearchBudget.isComplex(
             group: hero.isGroup, intents: intents), constrained: constrained)
+        let zooms: [CGFloat] = [1, 2, 3] + (maximumOpticalZoom.map { [$0] } ?? [])
         func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
             CompositionPlanner.photographicProposals(subject: subject, intents: intents, portraitBounds: portraitBounds,
-                raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
+                raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: zooms,
                 protectedBounds: hero.companionBounds, incidentalBounds: incidentalPets + incidentalFaces,
-                proposalLimit: seeds.isEmpty ? budget.coarse : budget.refinement, refining: seeds, allowsCameraPan: true)
+                proposalLimit: seeds.isEmpty ? budget.coarse : budget.refinement, refining: seeds, allowsCameraPan: true,
+                maximumOpticalZoom: maximumOpticalZoom)
         }
         let broad = proposals()
         guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: broad,
@@ -309,6 +339,7 @@ enum CompositionModelValidation {
             "totalAnalysisSecondsMac": ProcessInfo.processInfo.systemUptime - totalStarted,
             "automaticSelectionAllowed": result.canAutoselect]
         var detailed = row
+        if let maximumOpticalZoom { detailed["maximumOpticalZoom"] = Double(maximumOpticalZoom) }
         detailed["choices"] = try result.views.map { view -> [String: Any] in
             guard let composition = view.assessment, let aesthetics = view.aesthetics else {
                 throw Failure(message: "Missing completed specialist scores")

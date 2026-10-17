@@ -509,6 +509,7 @@ enum CompositionPlanner {
         currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
         incidentalBounds: [CGRect] = [], proposalLimit: Int = 36, refining: [CompositionProposal] = [],
         allowsCameraPan: Bool = false,
+        maximumOpticalZoom: CGFloat? = nil,
         isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         let perIntent = max(6, proposalLimit / max(1, intents.count))
         let batches = intents.map { intent -> [CompositionProposal] in
@@ -524,7 +525,8 @@ enum CompositionPlanner {
             return proposals(subjects: [framed], intents: [intent], raster: raster, calibration: calibration,
                 currentZoom: currentZoom, allowedZooms: allowedZooms, protectedBounds: protectedBounds,
                 incidentalBounds: incidentalBounds, proposalLimit: perIntent,
-                refining: refining.filter { $0.intent == intent }, allowsCameraPan: allowsCameraPan, isCancelled: isCancelled)
+                refining: refining.filter { $0.intent == intent }, allowsCameraPan: allowsCameraPan,
+                maximumOpticalZoom: maximumOpticalZoom, isCancelled: isCancelled)
         }
         let candidates = batches.flatMap { $0 }
         var result = diverse(candidates, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
@@ -540,7 +542,8 @@ enum CompositionPlanner {
                           currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
                           incidentalBounds: [CGRect] = [],
                           proposalLimit: Int = 6, refining: [CompositionProposal] = [],
-                          allowsCameraPan: Bool = false, isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
+                          allowsCameraPan: Bool = false, maximumOpticalZoom: CGFloat? = nil,
+                          isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         guard raster.isValid, calibration.isValid, currentZoom.isFinite, currentZoom > 0 else { return [] }
         let horizonHint = raster.horizon
         let validSubjects = subjects.filter {
@@ -551,9 +554,13 @@ enum CompositionPlanner {
         let protectedRects = protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) }
         let incidentalRects = incidentalBounds.filter { valid($0) }
         let hardwareMax = allowedZooms.filter { $0.isFinite && $0 > 0 }.max() ?? currentZoom
-        // Avoid throwing away excessive source resolution. Lens availability is
-        // supplied by CameraService; existing long telephoto framing remains valid.
-        let maxZoom = max(currentZoom, min(5, hardwareMax, max(currentZoom * 2.4, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.2 }.max() ?? currentZoom)))
+        // Digital presets do not prove optical resolution. A separately measured
+        // telephoto factor can extend this budget when the hardware advertises it.
+        let optical = maximumOpticalZoom.flatMap { value -> CGFloat? in
+            value.isFinite && value > 0 && allowedZooms.contains(where: { abs($0 - value) <= 0.02 }) ? value : nil
+        } ?? currentZoom
+        let digitalLimit = max(currentZoom * 2.4, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.2 }.max() ?? currentZoom)
+        let maxZoom = max(currentZoom, min(max(5, optical), hardwareMax, max(digitalLimit, optical)))
         var result: [CompositionProposal] = []
         for subject in validSubjects.prefix(4) {
             let cropAttention = subject.allowsAttentionCrop && subject.kind == .object && raster.hasAttention

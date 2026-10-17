@@ -74,6 +74,12 @@ capture. The existing optical freshness, crop, zoom and post-await alignment gat
 remain in force. The tracker itself still follows the real subject point; one
 projected photographic aim drives both the visible dot and alignment admission.
 
+CameraService's measured telephoto factor is passed separately from display zoom
+presets. A 4x or 5x physical lens can extend the search beyond the old digital
+budget when that factor is also advertised by the camera. A digital 5x button
+alone cannot imply optical resolution or raise that budget. Final lens feedback,
+fresh tracking and capture admission still use the unchanged camera controls.
+
 ## Verification and limits
 
 - Native policies cover one-focal-length pan feasibility, observed support,
@@ -95,6 +101,9 @@ projected photographic aim drives both the visible dot and alignment admission.
   photos in the author test split. A further 36 virtual camera windows test different initial framing.
   Those 36 searches use the constrained device budget, alongside the normal
   budget used for the 486 source photos; neither is a device latency benchmark.
+  Another 24 searches reuse 12 confident physical subjects under 4x/5x optical
+  profiles, with the same model and crop-safety checks. The profiles supply
+  hardware metadata; they do not simulate a physical lens or claim device tests.
   Final replay margins come from real parent-photo pixels, and exercise the
   actual recognition and guide projection. These are planar image replays, not
   physical camera, parallax, shutter or optical-lens tests.

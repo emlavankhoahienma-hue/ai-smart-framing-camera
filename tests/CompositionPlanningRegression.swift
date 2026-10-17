@@ -54,6 +54,17 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("verified telephoto optics extend search while digital presets stay bounded") {
+            let item = subject(rect: CGRect(x: 0.45, y: 0.4, width: 0.1, height: 0.12), kind: .object)
+            func plans(_ optical: CGFloat?) -> [CompositionProposal] {
+                CompositionPlanner.photographicProposals(subject: item, intents: [.object], portraitBounds: nil,
+                    raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3, 5],
+                    proposalLimit: 72, allowsCameraPan: true, maximumOpticalZoom: optical)
+            }
+            try require(plans(nil).allSatisfy { $0.zoom <= 3.0001 }, "a digital preset was mistaken for an optical lens")
+            try require(plans(5).contains { $0.zoom >= 4.5 }, "available telephoto was excluded from safe framing")
+            try require(plans(9).allSatisfy { $0.zoom <= 3.0001 }, "an unadvertised lens exceeded hardware bounds")
+        }
         try run("large attention regions can crop background while physical object outlines stay protected") {
             var region = subject(rect: CGRect(x: 0.01, y: 0.01, width: 0.98, height: 0.98), kind: .object)
             region.allowsAttentionCrop = true

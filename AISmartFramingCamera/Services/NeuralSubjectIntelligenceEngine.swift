@@ -202,7 +202,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public init() {}
 
     func analyzeComposition(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
-                            pose: simd_quatd, allowedZooms: [CGFloat],
+                            pose: simd_quatd, allowedZooms: [CGFloat], maximumOpticalZoom: CGFloat? = nil,
                             preferences: [String: Double], requestID: UUID,
                             cancellation: CompositionAnalysisCancellation,
                             progress: @Sendable (String) -> Void = { _ in }) -> LocalCompositionAnalysis? {
@@ -266,6 +266,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     output.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox),
                 proposalLimit: seeds.isEmpty ? budget.coarse : budget.refinement, refining: seeds,
                 allowsCameraPan: true,
+                maximumOpticalZoom: maximumOpticalZoom,
                 isCancelled: { cancellation.isCancelled })
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
