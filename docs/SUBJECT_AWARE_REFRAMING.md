@@ -45,6 +45,9 @@ preference does not substitute for selecting a photographic objective.
 
 The detector first freezes a measured subject/group. Learned importance enriches
 composition evidence without raising detector confidence or changing membership.
+If an associated eye lies outside its measured body, composition uses that body's
+measured center; the associated face remains separately protected. An inconsistent
+landmark must not silently invalidate every otherwise safe camera view.
 The existing context, gaze, subject size, headroom, edge safety and balance
 measurements define an admissible set near the best safe photographic geometry.
 The trained crop ranker then compares these regions in the full source context;

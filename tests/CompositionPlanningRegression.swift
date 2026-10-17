@@ -92,6 +92,25 @@ enum CompositionPlanningRegression {
                 "one-ULP identity noise invalidated the original crop")
             try require(CompositionViewSupport.containsEntireView(corners), "identity roundoff required a new scene")
         }
+        try run("a face landmark outside the body cannot erase every framing proposal") {
+            let body = CGRect(x: 0.0003662109375, y: 0.1546238687782805,
+                              width: 0.357421875, height: 0.8349830316742081)
+            let face = CGRect(x: 0.31617119908332825, y: 0.23021098226308823,
+                              width: 0.08385621756315231, height: 0.12128356844186783)
+            let preferred = CGPoint(x: face.midX, y: face.midY)
+            try require(!body.contains(preferred), "fixture no longer crosses the body boundary")
+            let anchor = CompositionSubject.framingAnchor(bounds: body, preferred: preferred)
+            let measured = subject(rect: body, kind: .person)
+            let framed = CompositionSubject(index: measured.index, bounds: body, anchor: anchor,
+                kind: measured.kind, confidence: measured.confidence, importance: measured.importance, gaze: measured.gaze)
+            let plans = CompositionPlanner.photographicProposals(subject: framed, intents: [.portrait, .environmentalPortrait],
+                portraitBounds: nil, raster: raster(), calibration: .fallback(), currentZoom: 1,
+                allowedZooms: [1, 2, 3], protectedBounds: [face], proposalLimit: 72, allowsCameraPan: true)
+            try require(plans.contains(where: \.isUnchangedView), "inconsistent eye/body evidence erased the valid source view")
+            let validEye = CGPoint(x: body.midX, y: body.minY + 0.05)
+            try require(CompositionSubject.framingAnchor(bounds: body, preferred: validEye) == validEye,
+                "a valid measured eye was replaced")
+        }
         try run("a thin revealed triangle cannot use full-source preview rendering") {
             // Actual failing footprint from the occluded three-person photo 1565.
             let corners = [CGPoint(x: -0.0006566634113889247, y: 0.23697605745611228),

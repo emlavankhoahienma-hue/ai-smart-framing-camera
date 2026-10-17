@@ -235,7 +235,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         let raster = cropModel.enriching(baseRaster)
         var subject = CompositionSubject(index: 0, bounds: hero.boundingBox,
-            anchor: hero.eyePosition ?? hero.center, kind: hero.isGroup ? .group : kind(hero.category),
+            anchor: CompositionSubject.framingAnchor(bounds: hero.boundingBox, preferred: hero.eyePosition),
+            kind: hero.isGroup ? .group : kind(hero.category),
             confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
         subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention &&
             hero.boundingBox.width * hero.boundingBox.height > 0.45
@@ -322,7 +323,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         guard let output = analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
                                                 cancellation: cancellation), !cancellation.isCancelled else { return false }
         let subjects = output.allCandidates.map {
-            CompositionSubject(index: 0, bounds: $0.boundingBox, anchor: $0.eyePosition ?? $0.center,
+            CompositionSubject(index: 0, bounds: $0.boundingBox,
+                anchor: CompositionSubject.framingAnchor(bounds: $0.boundingBox, preferred: $0.eyePosition),
                 kind: $0.isGroup ? .group : kind($0.category), confidence: Double($0.confidence),
                 importance: $0.prominenceScore, gaze: $0.gaze)
         }

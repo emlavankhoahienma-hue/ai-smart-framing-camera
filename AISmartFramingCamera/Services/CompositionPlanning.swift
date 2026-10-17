@@ -278,6 +278,14 @@ enum LocalCompositionIntent: String, Codable, Sendable {
 enum CompositionSubjectKind: Sendable { case person, face, group, animal, object, scenery }
 
 struct CompositionSubject: Sendable {
+    /// Associated face landmarks can slightly cross a detected body boundary.
+    /// Use the measured body center instead of invalidating every camera view
+    /// or clamping an eye to an invented location on that boundary.
+    static func framingAnchor(bounds: CGRect, preferred: CGPoint?) -> CGPoint {
+        if let preferred, preferred.x.isFinite, preferred.y.isFinite, bounds.contains(preferred) { return preferred }
+        return CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+
     let index: Int
     let bounds: CGRect
     let anchor: CGPoint

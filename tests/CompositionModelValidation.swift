@@ -106,6 +106,7 @@ enum CompositionModelValidation {
         }
         if let option = CommandLine.arguments.firstIndex(of: "--people"), option + 1 < CommandLine.arguments.count {
             regressions.insert(URL(fileURLWithPath: CommandLine.arguments[option + 1]).appendingPathComponent("1565.jpg"), at: 0)
+            regressions.insert(URL(fileURLWithPath: CommandLine.arguments[option + 1]).appendingPathComponent("724.jpg"), at: 0)
         }
         let regressionDirectory = output.appendingPathComponent("critical-regressions", isDirectory: true)
         try FileManager.default.createDirectory(at: regressionDirectory, withIntermediateDirectories: true)
@@ -116,7 +117,7 @@ enum CompositionModelValidation {
                                 renderer: renderer, sourceOverride: image(file))
             }
             regressionRows.append(row)
-            print("Critical photo regression: \(file.lastPathComponent)")
+            print("Critical photo regression: \(file.lastPathComponent), adjusted anchor: \(row["framingAnchorWasAdjusted"] as? Bool ?? false)")
             fflush(stdout)
         }
         try JSONSerialization.data(withJSONObject: ["images": regressionRows.count, "searches": regressionRows], options: [.prettyPrinted, .sortedKeys])
@@ -286,7 +287,7 @@ enum CompositionModelValidation {
             portraitBounds = PortraitFramingEvidence.bounds(body: bounds, faces: ownFaces, observations: pose.results ?? [])
         }
         var subject = CompositionSubject(index: 0, bounds: bounds,
-            anchor: hero.eyePosition ?? hero.center, kind: kind,
+            anchor: CompositionSubject.framingAnchor(bounds: bounds, preferred: hero.eyePosition), kind: kind,
             confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
         subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention && bounds.width * bounds.height > 0.45
         let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
@@ -301,6 +302,10 @@ enum CompositionModelValidation {
                 maximumOpticalZoom: maximumOpticalZoom)
         }
         let broad = proposals()
+        if broad.isEmpty {
+            print("No camera proposals \(file.lastPathComponent): eye=\(String(describing: hero.eyePosition)), anchor=\(subject.anchor), bounds=\(bounds), faces=\(ownFaces), companions=\(hero.companionBounds), intents=\(intents)")
+            fflush(stdout)
+        }
         guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: broad,
             image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
             aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
@@ -347,6 +352,8 @@ enum CompositionModelValidation {
             "primaryFaces": ownFaces.count,
             "attentionRegion": subject.allowsAttentionCrop,
             "heroConfidence": Double(hero.confidence), "group": hero.isGroup,
+            "framingAnchorWasAdjusted": hero.eyePosition.map { $0 != subject.anchor } ?? false,
+            "framingAnchor": [Double(subject.anchor.x), Double(subject.anchor.y)],
             "detectedPeople": detected.allCandidates.filter { $0.category == .human && !$0.isGroup }.count,
             "detectedAnimals": detected.allCandidates.filter { $0.category == .animal }.count,
             "sourceWidth": source.width, "sourceHeight": source.height,
@@ -363,6 +370,7 @@ enum CompositionModelValidation {
             "totalAnalysisSecondsMac": ProcessInfo.processInfo.systemUptime - totalStarted,
             "automaticSelectionAllowed": result.canAutoselect]
         var detailed = row
+        if let eye = hero.eyePosition { detailed["rawEyePoint"] = [Double(eye.x), Double(eye.y)] }
         if let maximumOpticalZoom { detailed["maximumOpticalZoom"] = Double(maximumOpticalZoom) }
         detailed["choices"] = try result.views.map { view -> [String: Any] in
             guard let composition = view.assessment, let aesthetics = view.aesthetics else {
@@ -397,7 +405,8 @@ enum CompositionModelValidation {
                 guard let projected = CompositionPlanner.project(protectedBounds, from: calibration, to: future,
                     rotation: best.proposal.rotation) else { throw Failure(message: "Replay lost its protected subject") }
                 let measured = observed.allCandidates.map {
-                    CompositionSubject(index: 0, bounds: $0.boundingBox, anchor: $0.eyePosition ?? $0.center,
+                    CompositionSubject(index: 0, bounds: $0.boundingBox,
+                        anchor: CompositionSubject.framingAnchor(bounds: $0.boundingBox, preferred: $0.eyePosition),
                         kind: analyzer.subjectKind($0), confidence: Double($0.confidence), importance: $0.prominenceScore, gaze: $0.gaze)
                 }
                 let expectedPeople = hero.isGroup ? hero.companionBounds.filter { !hero.faceBounds.contains($0) }.count :
