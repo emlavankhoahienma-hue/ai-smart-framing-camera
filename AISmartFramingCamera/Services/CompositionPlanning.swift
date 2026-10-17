@@ -102,15 +102,16 @@ enum CompositionViewSupport {
             }
             return true
         }
-        func corners(_ rect: CGRect) -> [CGPoint] {
+        func rectangleVertices(_ rect: CGRect) -> [CGPoint] {
             [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
              CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)]
         }
-        if corners(bounds).allSatisfy(contains) { return bounds }
+        if rectangleVertices(bounds).allSatisfy(contains) { return bounds }
         // An enclosing box can include source pixels outside the proposed view.
         // Rank a contained observed rectangle, without extending image borders.
-        let center = CGPoint(x: polygon.reduce(0) { $0 + $1.x } / CGFloat(polygon.count),
-                             y: polygon.reduce(0) { $0 + $1.y } / CGFloat(polygon.count))
+        let centerX = polygon.reduce(CGFloat.zero) { $0 + $1.x } / CGFloat(polygon.count)
+        let centerY = polygon.reduce(CGFloat.zero) { $0 + $1.y } / CGFloat(polygon.count)
+        let center = CGPoint(x: centerX, y: centerY)
         let halfWidth = min(center.x - bounds.minX, bounds.maxX - center.x)
         let halfHeight = min(center.y - bounds.minY, bounds.maxY - center.y)
         var low: CGFloat = 0, high: CGFloat = 1
@@ -120,7 +121,7 @@ enum CompositionViewSupport {
         }
         for _ in 0..<22 {
             let middle = (low + high) / 2
-            if corners(rectangle(middle)).allSatisfy(contains) { low = middle }
+            if rectangleVertices(rectangle(middle)).allSatisfy(contains) { low = middle }
             else { high = middle }
         }
         let observed = rectangle(low)
