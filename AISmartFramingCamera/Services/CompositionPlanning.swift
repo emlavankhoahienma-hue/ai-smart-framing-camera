@@ -723,13 +723,19 @@ enum CompositionPlanner {
             options.insert(max(currentZoom, min(maxZoom, idealZoom * 1.14)))
         }
 
+        // Subtle near-original crop exploration (enables aesthetic comparison vs uncropped baseline)
+        if maxZoom > currentZoom {
+            let subtle = min(maxZoom, currentZoom * 1.08)
+            options.insert(subtle)
+        }
+
         // Hardware optical zooms within range
         for h in allowedZooms where h.isFinite && h >= currentZoom && h <= maxZoom {
             options.insert(h)
         }
 
         // Continuous intermediate logarithmic steps
-        for step in [0.25, 0.50, 0.75, 1.0] {
+        for step in [0.10, 0.25, 0.50, 0.75, 1.0] {
             let z = currentZoom * CGFloat(exp(log(Double(maxZoom / currentZoom)) * step))
             if z >= currentZoom && z <= maxZoom { options.insert(z) }
         }
