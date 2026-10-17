@@ -225,15 +225,25 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             anchor: hero.eyePosition ?? hero.center, kind: hero.isGroup ? .group : kind(hero.category),
             confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
         let intents = compositionIntents(output, hero: hero)
+        var portraitBounds: CGRect?
+        if hero.category == .human, !hero.isGroup, !hero.faceBounds.isEmpty {
+            let poseRequest = VNDetectHumanBodyPoseRequest()
+            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: frame.orientation, options: [:])
+            if (try? cancellation.perform(poseRequest, with: handler)) != nil {
+                portraitBounds = PortraitFramingEvidence.bounds(body: hero.boundingBox,
+                    faces: hero.faceBounds, observations: poseRequest.results ?? [])
+            }
+        }
         // Release the semantic encoder before loading the composition specialist,
         // especially on iPhone XS. Detection and group membership remain unchanged.
         SemanticCropRanker.shared.endAnalysis()
         let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
-            ProcessInfo.processInfo.thermalState == .serious
+            ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.physicalMemory < 6_000_000_000
         func proposals(refining seeds: [CompositionProposal] = []) -> [CompositionProposal] {
-            CompositionPlanner.proposals(subjects: [subject], intents: intents,
-                raster: raster, calibration: frame.calibration, currentZoom: CGFloat(frame.displayZoom),
-                allowedZooms: allowedZooms, protectedBounds: hero.companionBounds,
+            CompositionPlanner.photographicProposals(subject: subject, intents: intents,
+                portraitBounds: portraitBounds, raster: raster, calibration: frame.calibration,
+                currentZoom: CGFloat(frame.displayZoom), allowedZooms: allowedZooms,
+                protectedBounds: hero.companionBounds,
                 incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) } +
                     output.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox),
                 proposalLimit: seeds.isEmpty ? (constrained ? 24 : 36) : 18, refining: seeds,

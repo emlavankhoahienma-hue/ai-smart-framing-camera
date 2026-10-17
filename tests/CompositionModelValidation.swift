@@ -126,9 +126,11 @@ enum CompositionModelValidation {
         let request = VNGenerateAttentionBasedSaliencyImageRequest()
         let people = VNDetectHumanRectanglesRequest()
         let animals = VNRecognizeAnimalsRequest()
+        let faces = VNDetectFaceRectanglesRequest()
+        let pose = VNDetectHumanBodyPoseRequest()
         people.upperBodyOnly = false
         let handler = VNImageRequestHandler(cgImage: source, orientation: .up)
-        try handler.perform([request, people, animals])
+        try handler.perform([request, people, animals, faces, pose])
         let ci = CIImage(cgImage: source)
         guard let raster = renderer.raster(image: ci, saliency: request.results?.first?.pixelBuffer) else {
             throw Failure(message: "Missing raster")
@@ -137,6 +139,7 @@ enum CompositionModelValidation {
         let petBoxes: [CGRect] = (animals.results ?? []).filter { $0.confidence >= 0.4 }.compactMap { boundedBox($0.boundingBox) }
         let pets: [CGRect] = petBoxes.sorted { lhs, rhs in lhs.width * lhs.height > rhs.width * rhs.height }
         let isGroup = bodies.count >= 2
+        let faceBounds = (faces.results ?? []).compactMap { boundedBox($0.boundingBox) }
         let initialBounds = bodies.first ?? pets.first ?? CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
         let bounds = bodies.dropFirst().reduce(initialBounds) { $0.union($1) }
         let kind: CompositionSubjectKind
@@ -147,14 +150,20 @@ enum CompositionModelValidation {
         else { kind = .scenery; intents = [.landscape] }
         let incidentalPets = bodies.isEmpty ? Array(pets.dropFirst()) : pets
         let primaryBounds = bodies.isEmpty ? Array(pets.prefix(1)) : bodies
+        let ownFaces = faceBounds.filter { bounds.contains(CGPoint(x: $0.midX, y: $0.midY)) }
+        let portraitBounds = bodies.count == 1 ? PortraitFramingEvidence.bounds(body: bounds,
+            faces: ownFaces, observations: pose.results ?? []) : nil
+        let eye = bodies.count == 1 ? ownFaces.max(by: { $0.width * $0.height < $1.width * $1.height })
+            .map { CGPoint(x: $0.midX, y: $0.midY) } : nil
         let subject = CompositionSubject(index: 0, bounds: bounds,
-            anchor: CGPoint(x: bounds.midX, y: bounds.midY), kind: kind,
+            anchor: eye ?? CGPoint(x: bounds.midX, y: bounds.midY), kind: kind,
             confidence: 0.9, importance: 1, gaze: 0)
         let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
         func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
-            CompositionPlanner.proposals(subjects: [subject], intents: intents, raster: raster,
-                calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3], protectedBounds: primaryBounds,
-                incidentalBounds: incidentalPets,
+            CompositionPlanner.photographicProposals(subject: subject, intents: intents, portraitBounds: portraitBounds,
+                raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
+                protectedBounds: isGroup ? primaryBounds : ownFaces,
+                incidentalBounds: incidentalPets + faceBounds.filter { !ownFaces.contains($0) },
                 proposalLimit: seeds.isEmpty ? 36 : 18, refining: seeds)
         }
         let started = ProcessInfo.processInfo.systemUptime
@@ -172,7 +181,8 @@ enum CompositionModelValidation {
         for view in result.views {
             let future = TrackingCalibration(fx: calibration.fx * Double(view.proposal.zoom),
                 fy: calibration.fy * Double(view.proposal.zoom), cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
-            for body in primaryBounds {
+            let requiredBounds = view.proposal.intent == .portrait && portraitBounds != nil ? [portraitBounds!] : primaryBounds
+            for body in requiredBounds + ownFaces {
                 guard let projected = CompositionPlanner.project(body, from: calibration, to: future,
                     rotation: view.proposal.rotation), CompositionPlanner.visibleFraction(projected) > 0.98 else {
                     throw Failure(message: "Search cropped a protected person: \(file.lastPathComponent)")
@@ -193,6 +203,8 @@ enum CompositionModelValidation {
             "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
             "charmAssessedCrops": result.modernAssessmentCount,
             "aestheticRating": bestAesthetics.mean,
+            "poseSupportsTorsoPortrait": portraitBounds != nil,
+            "selectedIntent": best.proposal.intent.rawValue,
             "compositionRating": bestAssessment.mean,
             "secondsMac": ProcessInfo.processInfo.systemUptime - started,
             "automaticSelectionAllowed": result.canAutoselect]

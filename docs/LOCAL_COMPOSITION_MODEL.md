@@ -1,136 +1,137 @@
-# Local pretrained photographic composition assessment
+# Local photographic composition and zoom
 
-This upgrade changes composition and zoom recommendation. The YOLO loader,
-weights, object labels, person/animal/object inference, face association, hero
-ranking and coherent-group construction remain unchanged from `8ee6d56`.
-The existing target tracker and original reticle remain protected against the
-earlier baseline `49f3ef3`. CI verifies both sets of source hashes.
+The local button always captures a new frame and runs real model inference.
+Each result carries a request UUID, source timestamp, measured elapsed time and
+successful assessment counts. An old frame or result cannot authorize a new
+button press. Model load/compilation can make the first run slower than later
+runs; no fixed waiting period is used as evidence of quality. The HUD reports
+actual SAMP-Net frame counts, Charm assessments and elapsed seconds.
 
-## Model and provenance
+## Released models and provenance
 
-**SAMP-Net**, by Bo Zhang, Li Niu and Liqing Zhang, is the composition assessment
-network in [Image Composition Assessment with Saliency-augmented Multi-pattern
-Pooling, BMVC 2021](https://arxiv.org/abs/2104.03133).
-The [author repository](https://github.com/bcmi/Image-Composition-Assessment-Dataset-CADB)
-publishes both code and the pretrained checkpoint. CADB contains 9,497 photos
-rated for composition on a 1–5 scale by five raters with fine-art expertise.
-SAMP-Net combines a ResNet-18 backbone, eight spatial pooling patterns,
-spectral-residual saliency and composition-relevant attribute features.
+The composition scorer remains **SAMP-Net (BMVC 2021)**, using the author's
+[CADB checkpoint](https://github.com/bcmi/Image-Composition-Assessment-Dataset-CADB)
+and [paper](https://arxiv.org/abs/2104.03133).
 
-This project converts the author checkpoint; it does not claim to have trained
-a new model. Source revision, source hashes, checkpoint hash, paper, input
-profile and numerical conversion results are pinned in the export script and
-`SAMPModelManifest.json`. MIT attribution is included in the app bundle.
+The second scorer is **Charm (2025), DINOv2-small trained on PARA photographic
+aesthetic ratings**, from the [author repository](https://github.com/FBehrad/Charm),
+[paper](https://arxiv.org/abs/2504.02522) and
+[released checkpoints](https://huggingface.co/FatemehBehrad/Charm).
+It has 21,538,185 learned parameters. This is the actual released specialist,
+not an untrained DINOv2 encoder or an invented aesthetic head.
 
-The checkpoint SHA-256 is:
+Checkpoint SHA-256:
 
-```text
-d3d02f36967734fd6f0d2770380a04b777b5cd800a9ba68d4ccc9656f6fef603
-```
+| Model | SHA-256 |
+| --- | --- |
+| SAMP-Net | `d3d02f36967734fd6f0d2770380a04b777b5cd800a9ba68d4ccc9656f6fef603` |
+| Charm-PARA | `d7ce85f65ed25fa8c15eeb52f63310e7207cf76fd11ca763f284576d3824a9cb` |
 
-SAMP-Net was selected because its released model directly predicts composition
-quality and can run as a bounded FP16 Core ML still-image scorer on the supported
-phones. It is not claimed to be the newest model or universally best model.
-ProCrop's [author implementation](https://github.com/BWGZK-keke/ProCrop), for
-example, also depends on retrieval references, SAM embeddings and a retrieval
-database. Simply shipping its crop-head checkpoint would not reproduce its
-published method on an iPhone XS. Generic SigLIP remains a scene-content model,
-not a substitute for composition training.
+Author sources, checkpoints and position embeddings are pinned and checked
+before loading. Model exports include manifests, conversion parity and licenses.
+Both run locally through Core ML with CPU/Neural Engine execution requested.
+Execution placement of every operation on the ANE is not guaranteed.
+No inference server or phone-side model download is required.
 
-## Camera recommendations
+## Decision process
 
-1. Keep the existing primary subject/group, bounds, eyes and face direction.
-2. Generate up to 36 geometrically feasible views across pan, tilt and continuous
-   zoom; use 24 when Low Power Mode or serious thermal pressure is active.
-3. Always include the unchanged frame when feasible. Preserve every selected
-   group member and face. Reject unseen source pixels and bisected background
-   faces before scoring.
-4. Score the perspective-rendered previews with SAMP-Net. Compare neighbouring
-   positions and focal lengths around the three leading views (up to 18 further
-   evaluations). Report actual stage progress instead of waiting on a timer.
-5. Combine 78% normalized learned composition rating with 22% geometric layout
-   score. Personal preferences can add at most 0.01. Reject zoom above 1.08 times
-   the original unless it improves the predicted composition rating by at least
-   0.10 on the 1–5 scale. These are conservative app policies, not calibrated
-   probabilities of human preference.
-6. Automatic selection requires complete specialist evidence, at least 12 model
-   assessments, neighbourhood support and the existing detector confidence,
-   ranking-margin and capture policies. Ambiguous alternatives appear as real
-   preview choices, always retaining the unchanged frame as an option when feasible.
-   Missing/failed weights cannot silently authorize a target.
+1. Preserve the existing YOLO detections, face association, hero identity and
+   coherent groups. Detection is unchanged from app revision `8ee6d56`.
+2. Generate up to 36 feasible views, then up to 18 local refinements. Devices
+   with less than 6 GB physical RAM, Low Power Mode or serious thermal pressure
+   use 24 broad proposals. Preserve the unchanged frame as an option.
+3. SAMP-Net evaluates composition for the rendered candidates. Release it before
+   loading Charm, which reranks up to 18 candidates (12 on constrained devices).
+   Include strong tighter views and neighbours, rather than simply rejecting
+   every zoom that does not gain 0.10 SAMP rating points.
+4. Combine normalized SAMP composition, Charm aesthetics and geometric layout
+   with weights 0.45, 0.40 and 0.15. A crop above 1.08 times the source zoom must
+   improve the combined score by at least 0.008. These are app policies, not
+   calibrated probabilities of human preference.
+5. Automatic selection requires complete evidence from both scorers, at least
+   12 SAMP assessments, local support, detector certainty and a useful margin
+   over distinct alternatives. Missing or partial inference uses manual previews;
+   fallback scores are never mixed with learned scores on a different scale.
 
-The existing camera hardware zoom limits and 2.4x-relative / 5x-absolute quality
-cap remain. The recommendation flows through the original zoom ramp,
-post-zoom verification, optical target tracking, alignment and capture code.
-The reticle shape, projected-target rendering, video and photo-save paths are
-unchanged. There is no artificial delay or fabricated model output.
+The camera's existing focal limits, relative 2.4x/absolute 5x quality cap and
+original zoom ramp are retained. Recommendations cannot invent unseen pixels.
+Clutter can be excluded, while detected incidental faces/pets must stay whole
+or be omitted whole. A zoom is not forced when it worsens the measured scores.
 
-## Matching training preprocessing
+## Deliberate portrait framing
 
-Inference uses RGB float tensors in NCHW order, ImageNet normalization inside
-the model, Pillow-compatible antialiased bilinear resizing and the author's
-spectral-residual saliency convention (including 95th-percentile clipping).
-The saliency port uses separable DFT matrices through Accelerate so arbitrary
-preview dimensions do not require zero-padding. Vision saliency still supports
-the existing subject detector; it does not replace SAMP-Net's trained input.
+Previously every portrait crop had to keep the entire detected body, which
+excluded head-and-torso photographs even when a tighter view was appropriate.
+For a single person with an associated face, an additional built-in Vision pose
+request may establish measured shoulders and hips. A torso region is admitted
+only when the neck matches that face, both shoulders and hips are reliable,
+the face and shoulders remain inside, and the lower cut avoids measured elbows
+and wrists. Missing/ambiguous pose evidence retains the complete body.
 
-Core ML export rewrites only fixed-size max-pooling windows and static surround
-indices into supported operators. All learned parameters load strictly.
-Random-input operator equivalence, real-photo PyTorch/Core ML parity and
-independent production Swift RGB/saliency/score parity are separate checks.
-Tensor input avoids implicit image-feature colour conversions. CI fails when
-the model, preprocessing or packaged provenance is inconsistent.
+The environment-portrait option keeps the complete person; groups always retain
+their members. This is a composition constraint, not a change to identity or
+tracking. The original full body remains the tracker's source rectangle.
+The windowed-focal AI shortcut (a 28/35/50/85 mm lookup table) and its obsolete
+state are removed. AI exits that manual mode, waits for actual lens settling and
+requests a fresh image through the same inference path.
 
-## Resource and failure policy
+## Input fidelity
 
-The model is bundled in the IPA and requires no inference server or model
-download on the phone. Heavy work remains on the serialized detached worker.
-The semantic image encoder is released before the photographic model is loaded.
-The model and temporary preview images are released when analysis ends; no new
-camera-buffer queue or continuous per-frame inference is introduced. The model
-requests CPU and Neural Engine execution; ANE placement of every operation is
-not guaranteed. Cancellation is checked between renders/predictions; an already
-running synchronous Core ML prediction finishes before the next cancellation
-check. Critical thermal state prevents further specialist predictions.
+SAMP-Net uses RGB/ImageNet normalization, Pillow-compatible antialiased bilinear
+resizing and the author's spectral-residual saliency. Its conversion is checked
+against the unmodified author implementation and production Swift preprocessing.
 
-Fallback uses available geometric/system evidence for manual preview selection,
-with an explicit message. Partial learned and fallback scores are never mixed
-as though they were on the same scale. Source-frame freshness, generation
-tokens, lens-change checks and existing analysis deadlines still apply.
+Charm uses a bounded preview with aspect ratio preserved, at most 336 pixels
+on the long edge, Pillow antialiased bilinear sampling and the author's
+`normal_flow`: RGB in [0,1], right/bottom zero padding to 14-pixel patches,
+no token dropping, and the exact DINOv2 bicubic position convention. This mobile
+profile does not claim full-resolution multiscale Charm benchmark performance.
+The exported projection is algebraically equivalent to the author's convolution,
+learned scale embedding, encoder and nine-bin PARA aesthetic head. The original
+tokenizer and original model independently verify each export fixture.
 
-## Reproducible evaluation
+## Actual measurements
 
-`scripts/evaluate_composition_model.py` evaluates **all 950 photos in the
-author's CADB test split**, separate from the 8,547 training photos. No images
-or labels from that split are used to fine-tune the checkpoint. Measured CPU
-results for the pinned original model are:
+The prior official SAMP evaluation covers all 950 CADB test photos, separate
+from its 8,547 training photos: Spearman 0.6567, Pearson 0.6711, MAE 0.4866/5.
+Full records remain in `evaluation/samp-cadb-test-950.json`. These numbers measure
+whole-image composition agreement, not crop preference.
 
-| Photos | Count | Spearman | Pearson | Mean absolute error (1–5) |
-| --- | ---: | ---: | ---: | ---: |
-| Entire test split | 950 | 0.6567 | 0.6711 | 0.4866 |
-| Human | 342 | 0.6555 | 0.6690 | 0.4948 |
-| Landscape | 96 | 0.5293 | 0.5000 | 0.5542 |
+An additional published FCDB ranking test selects 32 photo IDs by SHA-256 before
+predictions. Thirty sources remain available; two return HTTP 404 and are reported
+without replacement. On all 300 human-voted crop pairs, SAMP agrees with the
+majority on 169/300 (56.33%), Charm on 172/300 (57.33%), and their fixed weighted
+combination on 173/300 (57.67%). On the 147 pairs with at least four of five votes,
+SAMP and the combination both obtain 91/147 (61.90%). The improvement is modest;
+these data do not establish a universal or statistically significant gain.
+No fine-tuning or score-dependent photo selection was performed.
+See `evaluation/fcdb-crop-preferences-300.json` for URLs, image hashes, human votes,
+model scores, failed downloads and the declared scorer-only scope. The app's
+geometric constraints, capture integration and tracking are not evaluated by
+these pair metrics.
 
-`prepare_composition_photos.py` independently picks 160 test images: 16 each
-from human, landscape, animal, plant, static object, architecture, cityscape,
-indoor, night and other categories. Selection uses filename hashes, without
-looking at aesthetic ratings. The source archive and every selected photo have
-recorded SHA-256 digests. Test photos are not packaged in the app.
+CI separately checks 32 real-photo author/PyTorch/Core ML/Swift inputs and scores,
+then runs production search on 160 original full-resolution CADB photos across
+10 scene categories. Crop/project the original before resizing a candidate.
+The harness uses actual Vision body/face/animal/pose observations and checks
+required body or measured torso regions, faces and incidental pets. This is not
+the entire iPhone camera pipeline. Additional native bundles execute the unchanged
+YOLO12n and YOLO12s production photographic loaders/decoders on those same 160
+photos, a blank frame and cancellation. Detection counts are observations, not
+accuracy against human object-box labels.
 
-The model conversion compares 32 of those photos against PyTorch. The native
-Swift validation checks RGB, saliency and rating parity, then runs production
-candidate generation, perspective rendering, trained scoring and crop safety on
-the original full-resolution photographs; resizing occurs after candidate
-projection/cropping. Pre-resizing the source would artificially blur zoomed
-previews, so bounded fixtures are only used for numerical conversion parity.
-Its people boxes come from Vision in the macOS test
-harness; this is not a full iPhone YOLO/camera test. A separate diagnostic scores
-28 unconstrained crops per photo and generates contact sheets. Those preferences
-are model outputs, not human ground truth; unsafe diagnostic crops are not app
-recommendations.
+## Preserved boundaries and limits
 
-Measured correlation does not prove that every suggested crop is prettier.
-Neither macOS timing nor a successful iOS build establishes physical-phone
-latency, peak memory, temperature, 60 FPS or subjective image preference on XS
-through 17 Pro Max. Those still require physical-device testing. The repository
-keeps these limitations explicit instead of reporting invented device results.
+CI verifies fifteen original target/capture/reticle source boundaries against
+`49f3ef3`, plus the three recognition/group boundaries against `8ee6d56`.
+Tracking, recovery, target projection, reticle shape, zoom verification, photo
+capture, video and saving remain unchanged. Every build compiles iOS Release
+with warnings treated as errors and verifies packaged model hashes.
+
+Heavy inference remains serialized off the main thread; cancellation is checked
+between predictions, and critical thermal state prevents further predictions.
+Source generation, lens settling, analysis deadlines and frame freshness still
+apply. A synchronous prediction cannot be interrupted halfway through.
+No physical XS/17 Pro Max performance, RAM, temperature, 60 FPS or photographic
+preference guarantee is inferred from macOS CI. Inference duration alone does
+not prove whether a recommendation is good or fabricated.

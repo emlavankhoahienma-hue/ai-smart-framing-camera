@@ -34,6 +34,8 @@ def main() -> None:
     charm = json.loads(charm_path.read_text(encoding="utf-8"))
     if charm.get("weightsSHA256") != "d7ce85f65ed25fa8c15eeb52f63310e7207cf76fd11ca763f284576d3824a9cb":
         raise RuntimeError("Invalid Charm-PARA checkpoint provenance")
+    if charm.get("inputProfile") != "Pillow bilinear <=336 long edge; author normal_flow; RGB [0,1]; zero-pad right/bottom to 14; no token dropping; <=1024 patches":
+        raise RuntimeError("Charm input profile does not match production Swift")
     parity = charm.get("parity") or {}
     if parity.get("images", 0) < 24 or parity.get("maxMeanScoreError", 1) > 0.04:
         raise RuntimeError("Charm has not passed real-photo Core ML parity")

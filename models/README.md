@@ -1,4 +1,12 @@
-# Runtime model provenance
+# Local models
+
+`scripts/export_charm_coreml.py` converts the released Charm-PARA (2025) DINOv2-small
+checkpoint and its original learned position embedding. The app uses the exact
+unpadded author token path on bounded previews, not the full-resolution multiscale
+benchmark profile. Conversion checks the author's tokenizer and model, Core ML,
+and independent Swift preprocessing on real photos. Checkpoint and source hashes,
+input profile, license and parity are recorded in `CharmModelManifest.json`.
+`Charm-LICENSE.txt` accompanies the compiled model in the IPA.
 
 `scripts/export_composition_coreml.py` converts the author-released SAMP-Net
 checkpoint from the BMVC 2021 composition-assessment paper. Source and weight

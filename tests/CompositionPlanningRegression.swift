@@ -54,6 +54,33 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("measured torso portrait enables zoom while keeping face and shoulders") {
+            let body = CGRect(x: 0.35, y: 0.10, width: 0.30, height: 0.84)
+            let face = CGRect(x: 0.43, y: 0.11, width: 0.14, height: 0.14)
+            let joints: [VNHumanBodyPoseObservation.JointName: CGPoint] = [
+                .leftShoulder: CGPoint(x: 0.39, y: 0.31), .rightShoulder: CGPoint(x: 0.61, y: 0.31),
+                .leftHip: CGPoint(x: 0.43, y: 0.66), .rightHip: CGPoint(x: 0.57, y: 0.66),
+                .neck: CGPoint(x: 0.50, y: 0.29)]
+            guard let roi = PortraitFramingEvidence.measuredBounds(body: body, face: face, joints: joints) else {
+                throw Failure(description: "reliable torso evidence was discarded")
+            }
+            try require(roi.contains(face) && roi.contains(joints[.leftShoulder]!) && roi.contains(joints[.rightShoulder]!), "portrait cuts face or shoulders")
+            let hero = CompositionSubject(index: 0, bounds: body, anchor: CGPoint(x: face.midX, y: face.midY),
+                kind: .person, confidence: 0.95, importance: 1, gaze: 0)
+            let plans = CompositionPlanner.photographicProposals(subject: hero, intents: [.portrait, .environmentalPortrait],
+                portraitBounds: roi, raster: raster(), calibration: .fallback(), currentZoom: 1,
+                allowedZooms: [1, 2, 3], protectedBounds: [face])
+            try require(plans.contains { $0.intent == .portrait && $0.zoom > 1.4 }, "all useful portrait zoom was forbidden by full-body bounds")
+            try require(plans.contains(where: \.isUnchangedView), "portrait search discarded original frame")
+            var missing = joints
+            missing.removeValue(forKey: .leftHip)
+            try require(PortraitFramingEvidence.measuredBounds(body: body, face: face, joints: missing) == nil, "missing pose invented a torso crop")
+            var crowdedCut = joints
+            crowdedCut[.leftElbow] = CGPoint(x: 0.4, y: 0.527)
+            crowdedCut[.rightElbow] = CGPoint(x: 0.6, y: 0.562)
+            crowdedCut[.leftWrist] = CGPoint(x: 0.4, y: 0.492)
+            try require(PortraitFramingEvidence.measuredBounds(body: body, face: face, joints: crowdedCut) == nil, "crop crosses a measured elbow or wrist")
+        }
         try run("two-model evidence can prefer useful zoom without a SAMP-only veto") {
             let original = CompositionPreferencePolicy.score(composition: 3.4, aesthetics: 3.2, geometry: 0.7)!
             let crop = CompositionPreferencePolicy.score(composition: 3.43, aesthetics: 3.5, geometry: 0.8)!

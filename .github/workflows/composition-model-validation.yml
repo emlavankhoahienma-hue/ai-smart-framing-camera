@@ -15,7 +15,8 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: .model-cache
-          key: composition-cadb-samp-v1
+          key: composition-cadb-samp-charm-v2
+          restore-keys: composition-cadb-samp-v1
       - name: Install pinned conversion dependencies
         run: |
           pip install torch==2.5.1 torchvision==0.20.1 numpy==1.26.4 \
@@ -38,6 +39,7 @@ jobs:
             AISmartFramingCamera/Services/CompositionImageEvidence.swift \
             AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
             AISmartFramingCamera/Services/CharmPhotographicModel.swift \
+            AISmartFramingCamera/Services/PortraitFramingEvidence.swift \
             AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
             tests/CompositionModelValidation.swift -o "$RUNNER_TEMP/photo-validation"
           "$RUNNER_TEMP/photo-validation" validation/photos SAMPComposition.mlmodelc validation/swift

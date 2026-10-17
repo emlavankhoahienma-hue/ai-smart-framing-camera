@@ -289,6 +289,35 @@ enum CompositionPlanner {
     private static let corners = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),
                                   CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
 
+    static func photographicProposals(subject: CompositionSubject, intents: [LocalCompositionIntent],
+        portraitBounds: CGRect?, raster: CompositionRaster, calibration: TrackingCalibration,
+        currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
+        incidentalBounds: [CGRect] = [], proposalLimit: Int = 36, refining: [CompositionProposal] = [],
+        isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
+        let perIntent = max(6, proposalLimit / max(1, intents.count))
+        let batches = intents.map { intent -> [CompositionProposal] in
+            if !refining.isEmpty && !refining.contains(where: { $0.intent == intent }) { return [] }
+            let bounds: CGRect
+            if intent == .portrait, subject.kind == .person, let portraitBounds,
+               subject.bounds.contains(portraitBounds), portraitBounds.contains(subject.anchor) {
+                bounds = portraitBounds
+            } else { bounds = subject.bounds }
+            let framed = CompositionSubject(index: subject.index, bounds: bounds, anchor: subject.anchor,
+                kind: subject.kind, confidence: subject.confidence, importance: subject.importance, gaze: subject.gaze)
+            return proposals(subjects: [framed], intents: [intent], raster: raster, calibration: calibration,
+                currentZoom: currentZoom, allowedZooms: allowedZooms, protectedBounds: protectedBounds,
+                incidentalBounds: incidentalBounds, proposalLimit: perIntent,
+                refining: refining.filter { $0.intent == intent }, isCancelled: isCancelled)
+        }
+        let candidates = batches.flatMap { $0 }
+        var result = diverse(candidates, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
+        if refining.isEmpty, let original = candidates.first(where: \.isUnchangedView),
+           !result.contains(where: \.isUnchangedView) {
+            result = Array(result.prefix(max(0, proposalLimit - 1))) + [original]
+        }
+        return result
+    }
+
     static func proposals(subjects: [CompositionSubject], intents: [LocalCompositionIntent],
                           raster: CompositionRaster, calibration: TrackingCalibration,
                           currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
@@ -536,9 +565,10 @@ enum CompositionPlanner {
             if !others.isEmpty { return [.group] }
             if preferred.contains(.environmentalPortrait) || preferred.contains(.landscape) ||
                 preferred.contains(.architecture) || preferred.contains(.street) {
-                return [.environmentalPortrait, .portrait]
+                let explicit = preferred.filter { $0 == .environmentalPortrait || $0 == .portrait }
+                return explicit.isEmpty ? [.environmentalPortrait, .portrait] : explicit
             }
-            return [.portrait, .environmentalPortrait]
+            return preferred.contains(.portrait) ? [.portrait] : [.portrait, .environmentalPortrait]
         }
         if subject.kind == .animal { return [.animal] }
         let applicable = preferred.filter { [.landscape, .architecture, .closeUp, .food, .street, .object].contains($0) }

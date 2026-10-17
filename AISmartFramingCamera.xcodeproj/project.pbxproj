@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000063 /* PortraitFramingEvidence.swift */; };
 		C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000062 /* CharmPhotographicModel.swift */; };
 		B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* AISmartFramingCameraApp.swift */; };
 		B20000000000000000000002 /* FramingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* FramingModels.swift */; };
@@ -78,6 +79,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C10000000000000000000063 /* PortraitFramingEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortraitFramingEvidence.swift; sourceTree = "<group>"; };
 		C10000000000000000000062 /* CharmPhotographicModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharmPhotographicModel.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* AISmartFramingCameraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISmartFramingCameraApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* FramingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramingModels.swift; sourceTree = "<group>"; };
@@ -231,6 +233,7 @@
 				C1000000000000000000005D /* LiveEntityTracker.swift */,
 				C10000000000000000000061 /* CompositionAestheticSearch.swift */,
 				C10000000000000000000062 /* CharmPhotographicModel.swift */,
+				C10000000000000000000063 /* PortraitFramingEvidence.swift */,
 				C10000000000000000000060 /* PhotographicCompositionModel.swift */,
 				C30000000000000000000001 /* FilmSimulations */,
 			);
@@ -444,6 +447,7 @@
 				C2000000000000000000005D /* LiveEntityTracker.swift in Sources */,
 				C20000000000000000000061 /* CompositionAestheticSearch.swift in Sources */,
 				C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */,
+				C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */,
 				C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

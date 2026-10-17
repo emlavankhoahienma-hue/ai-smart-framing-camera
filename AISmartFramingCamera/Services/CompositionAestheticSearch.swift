@@ -86,10 +86,13 @@ final class CompositionAestheticSearch {
             }
             // A strong tighter view must reach the second model even when the
             // old whole-image composition scorer slightly prefers the wide view.
-            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > (evaluated.first?.proposal.zoom ?? 1) * 1.25 }
+            let sourceZoom = evaluated.first(where: { $0.proposal.isUnchangedView })?.proposal.zoom ?? 1
+            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
             for index in zoomed.prefix(2) { include(index) }
-            let budget = ProcessInfo.processInfo.isLowPowerModeEnabled ? 12 : 18
+            let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
+                ProcessInfo.processInfo.physicalMemory < 6_000_000_000 || ProcessInfo.processInfo.thermalState == .serious
+            let budget = constrained ? 12 : 18
             for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
                 if indices.count >= budget { break }
                 include(index)
@@ -99,16 +102,20 @@ final class CompositionAestheticSearch {
             if let aestheticModelURL, let positionURL {
                 modern = try? CharmPhotographicModel(url: aestheticModelURL, positionURL: positionURL)
             } else { modern = nil }
-            for index in pool.indices {
-                guard !cancellation.isCancelled else { return nil }
-                pool[index].aesthetics = modern?.assess(pool[index].image, cancellation: cancellation)
-                if let composition = pool[index].assessment, let aesthetics = pool[index].aesthetics,
-                   let score = CompositionPreferencePolicy.score(composition: composition.mean,
-                       aesthetics: aesthetics.mean, geometry: pool[index].geometryScore) {
-                    pool[index].proposal.score = score
-                    modernCount += 1
+            if let modern {
+                for index in pool.indices {
+                    guard !cancellation.isCancelled else { return nil }
+                    pool[index].aesthetics = modern.assess(pool[index].image, cancellation: cancellation)
+                    if let composition = pool[index].assessment, let aesthetics = pool[index].aesthetics,
+                       let score = CompositionPreferencePolicy.score(composition: composition.mean,
+                           aesthetics: aesthetics.mean, geometry: pool[index].geometryScore) {
+                        pool[index].proposal.score = score
+                        modernCount += 1
+                    }
+                    progress("Charm 2025 đã chấm \(modernCount)/\(pool.count) khung và mức zoom…")
                 }
-                progress("Charm 2025 đang kiểm tra ảnh và zoom \(index + 1)/\(pool.count)…")
+            } else {
+                progress("Không nạp được Charm. Đang chuẩn bị các khung để chọn thủ công…")
             }
             usedSpecialist = usedSpecialist && !pool.isEmpty && modernCount == pool.count
             evaluated = pool

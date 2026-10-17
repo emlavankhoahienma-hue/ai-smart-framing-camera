@@ -17,7 +17,7 @@ Detached camera image + capture pose + calibration
   -> freeze one primary subject or group
   -> constrained pan / tilt / continuous focal-length search
   -> perspective-correct previews
-  -> SAMP-Net pretrained composition scoring and neighbouring zoom comparisons
+  -> SAMP-Net composition scoring, Charm 2025 aesthetic reranking and neighbouring zoom comparisons
   -> specialist-evidence gate plus existing choice / confidence policy
   -> existing pinTargetAndStartMotion contract, unchanged
 ```
@@ -83,7 +83,7 @@ evaluation](LOCAL_COMPOSITION_MODEL.md) for this stage's numerical policies.
 | --- | --- |
 | iPhone XS and later, iOS 17+ | YOLO12s for a requested still analysis, native Vision and bounded geometric search |
 | At least 4 GB RAM, normal thermal state, Low Power Mode off | Pinned SigLIP encoder and semantic prompt bank, released when analysis finishes |
-| iOS 17+, bundled specialist available | SAMP-Net FP16 still-image composition and zoom comparison |
+| iOS 17+, bundled specialist available | SAMP-Net and Charm-PARA FP16 still-image composition and zoom comparison |
 | iOS 18+, specialist unavailable and aesthetic request succeeds | Apple aesthetic preview ranking; manual selection |
 | Serious/critical thermal state or Low Power Mode | Existing lightweight detector path; skip SigLIP |
 | Missing/failed Core ML assets | Independent native Vision evidence; weak or empty evidence cannot force a target |
