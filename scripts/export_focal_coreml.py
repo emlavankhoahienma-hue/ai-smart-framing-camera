@@ -13,11 +13,11 @@ REVISION = "f3c55aeb5827f302d1bbe9f0f41da38139f3dc36"
 HUB_REVISION = "f114d602b055aa1955f23a591a161336517789c4"
 WEIGHTS_SHA256 = "82c4d695310c220e5f3bcfbf5e64d315a5e826cfd77e945e61e032460014480a"
 SOURCE_HASHES = {
-    "__init__.py": "244726179ee2cc8f2081a6343d8e29e0818fbc3396243577d950f14ca5de3bce",
-    "model.py": "bc23da1e3f3c5af666b11c3e2ff3bb1a4d9eccd3876fefe46b737ab146cc2989",
-    "ranking.py": "d94c37d812861a2b5b38504bf39cf08ccfaf618fb3efba621f00dfda71de05a9",
-    "imaging.py": "791b481afb200ba820a655b179f8408d697a9ed535afd13e65383c04c659062a",
-    "candidates.py": "a4749ac79d59dad793087f6c4c26fe2c4ddce7809d9ed9e55198119daef015c6",
+    "__init__.py": "5258b1c2b4dbf112e4b84dec1395850d265709ed65cbf8e977f6364217b26066",
+    "model.py": "c20a0e301099fb88f626b3064ce08902304a02a0d0d1b729f870f10600ecfa1a",
+    "ranking.py": "7729cc9ac02ee0f9636457e80271d3b32d9b2a85cd3591e6e56086d199ad2b4b",
+    "imaging.py": "a473f6063dddbe151bc41b9da115fc378461f62b205a82b88bb73606edd6eed6",
+    "candidates.py": "962628bba952594831f34d6e4f8487caec3e620749019b097dfb1f2759e9527b",
 }
 
 
@@ -38,7 +38,7 @@ def load_reference(cache=Path(".model-cache/focal")):
         verified_download(f"https://raw.githubusercontent.com/appwrite/focalnet/{REVISION}/src/focalnet/{name}",
                           package / name, digest)
     license_path = verified_download(f"https://raw.githubusercontent.com/appwrite/focalnet/{REVISION}/LICENSE",
-        cache / "FocalNet-LICENSE.txt", "cc37246c63757e98e3fe4460892a44d25088c8493eeb0e6858aab149e1177a05")
+        cache / "FocalNet-LICENSE.txt", "14344218b1fea7cd26df0e463d4ecadd5209d348f7ecf287bdb01f5623ece5a6")
     checkpoint = verified_download(f"https://huggingface.co/appwrite/focalnet/resolve/{HUB_REVISION}/focalnet-human.pt",
                                   cache / "focalnet-human.pt", WEIGHTS_SHA256)
     sys.path.insert(0, str(package.parent.resolve()))
@@ -47,6 +47,29 @@ def load_reference(cache=Path(".model-cache/focal")):
     if network.parameter_count() != 4_757_694 or metadata.get("dataset_name") != "GAICD journal version":
         raise RuntimeError("Unexpected released crop ranker")
     return HumanCropInference(network).eval(), license_path
+
+
+def export_trace(model, arguments):
+    with torch.inference_mode():
+        traced = torch.jit.trace(model, arguments, strict=True)
+    graph = traced.graph
+    torch._C._jit_pass_inline(graph)
+    # PyTorch promotes the author's integer clamp bounds to the float tensor.
+    # Core ML's importer requires that scalar promotion to be explicit.
+    for node in list(graph.nodes()):
+        if node.kind() != "aten::clamp_min":
+            continue
+        inputs = list(node.inputs())
+        bound = inputs[1].toIValue()
+        if isinstance(bound, int) and inputs[0].type().scalarType() == "Float":
+            promoted = graph.insertConstant(float(bound))
+            promoted.node().moveBefore(node)
+            node.replaceInput(1, promoted)
+    torch._C._jit_pass_lint(graph)
+    with torch.inference_mode():
+        for expected, actual in zip(model(*arguments), traced(*arguments), strict=True):
+            torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+    return traced
 
 
 def main():
@@ -59,8 +82,7 @@ def main():
     boxes = np.tile(np.asarray([0, 0, 1, 1], np.float32), (1, 128, 1))
     boxes[0, :len(regions)] = regions
     arguments = (torch.zeros(1, 3, 256, 256), torch.from_numpy(boxes), torch.tensor([[0., .125, 1., .875]]))
-    with torch.inference_mode():
-        traced = torch.jit.trace(model, arguments, strict=True)
+    traced = export_trace(model, arguments)
     converted = ct.convert(traced, inputs=[ct.TensorType(name="image", shape=(1, 3, 256, 256)),
         ct.TensorType(name="boxes", shape=(1, 128, 4)), ct.TensorType(name="content", shape=(1, 4))],
         outputs=[ct.TensorType(name="importance"), ct.TensorType(name="cropScores")],
