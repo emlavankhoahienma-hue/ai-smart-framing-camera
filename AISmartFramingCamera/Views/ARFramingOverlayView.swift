@@ -91,7 +91,7 @@ public struct ARFramingOverlayView: View {
                     let isDocked = hypot(projectedScreen.x - targetScreen.x,
                                          projectedScreen.y - targetScreen.y) > 0.5
 
-                    // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
+                    // Guide from the fixed dot to the moving ring.
                     if viewModel.showGuidanceRay {
                         GuidanceRayLine(
                             from: screenCenter,
@@ -100,7 +100,7 @@ public struct ARFramingOverlayView: View {
                         )
                     }
 
-                    // Target Vàng
+                    // One target at the existing projected bearing.
                     TargetCircleView(
                         isAligned: viewModel.isPerfectAlignment,
                         trackingQuality: viewModel.trackingQuality
@@ -218,7 +218,8 @@ public struct ARFramingOverlayView: View {
                     actualZoom: viewModel.liveZoomFactorForReveal,
                     bufferAspect: SpatialTrackingEngine.shared.currentBufferAspect,
                     isRamping: viewModel.zoomRevealIsRamping,
-                    revealOpacity: viewModel.zoomRevealOpacity
+                    revealOpacity: viewModel.zoomRevealOpacity,
+                    captionBottomInset: bottomChromeInset
                 )
             }
             .contentShape(Rectangle())
@@ -647,6 +648,7 @@ struct ZoomRevealOverlay: View {
     let bufferAspect: CGFloat
     let isRamping: Bool
     let revealOpacity: CGFloat
+    var captionBottomInset: CGFloat = 70
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -691,7 +693,7 @@ struct ZoomRevealOverlay: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(.black.opacity(0.55), in: Capsule())
-                    .padding(.bottom, 14)
+                    .padding(.bottom, captionBottomInset)
                 }
                 .opacity(Double(min(1, max(0, revealOpacity))))
                 .transition(.opacity)
