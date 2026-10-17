@@ -122,6 +122,19 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("hasSettledZoomEvidence", verification)
         self.assertIn("CaptureReadinessPolicy.preservesSubject", VM)
 
+    def test_moved_camera_gets_a_new_model_analysis(self):
+        self.assertIn("CompositionSceneFreshness.accepts(sourcePose: source.pose", VM)
+        self.assertIn("localAnalysisReplans < 2", VM)
+        self.assertIn("self.beginLocalCompositionAnalysis(source: AITrackingSource", VM)
+        self.assertIn("analysis.canAutoselectComposition", VM)
+
+    def test_unobserved_camera_margins_are_verified_before_capture(self):
+        self.assertIn("return await verifyNewlyObservedMargins()", VM)
+        self.assertIn("plan.observedFraction < 0.9999", VM)
+        self.assertIn("verifyFinalFraming(pixelBuffer: held.buffer", VM)
+        self.assertIn("minimumPeople: plan.expectedPeople", VM)
+        self.assertIn("generation == targetPinGeneration", VM)
+
     def test_pinning_cannot_override_manual_only_evidence(self):
         pin = VM.split("private func pinTargetAndStartMotion", 1)[1].split(
             "private func ", 1)[0]

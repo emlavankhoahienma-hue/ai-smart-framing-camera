@@ -18,6 +18,11 @@ struct LocalFramingPlan: Sendable {
     let explanation: String
     let usesCenter: Bool
     let preferenceKey: String
+    var observedFraction: Double = 1
+    var preservesOriginalFrame = false
+    var subjectKind: CompositionSubjectKind = .object
+    var expectedFaces = 0
+    var expectedPeople = 0
 }
 
 

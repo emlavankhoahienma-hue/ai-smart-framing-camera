@@ -116,6 +116,67 @@ enum CompositionModelValidation {
             "scope": "Production YOLO/Vision/SigLIP recognition, hero/group selection and composition search compiled from app source. macOS data adapters omit iOS UI/filter properties; camera/motion/capture and physical-phone performance are not exercised."]
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("real-photo-search.json"))
+        var humanFiles: [URL] = []
+        if let option = CommandLine.arguments.firstIndex(of: "--people"), option + 1 < CommandLine.arguments.count {
+            humanFiles = try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: CommandLine.arguments[option + 1]),
+                includingPropertiesForKeys: nil).filter { $0.pathExtension == "jpg" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            guard humanFiles.count == 342 else { throw Failure(message: "Human-scene author test split is incomplete") }
+            let humanDirectory = output.appendingPathComponent("human-scenes", isDirectory: true)
+            try FileManager.default.createDirectory(at: humanDirectory, withIntermediateDirectories: true)
+            let alreadyTested = Set(files.map(.lastPathComponent))
+            var humanRows: [[String: Any]] = []
+            for file in humanFiles where !alreadyTested.contains(file.lastPathComponent) {
+                let row: [String: Any] = try autoreleasepool {
+                    try searchPhoto(file: file, photos: photos, modelURL: modelURL, output: humanDirectory,
+                        renderer: renderer, sourceOverride: image(file))
+                }
+                humanRows.append(row)
+                print("Human composition \(humanRows.count)/326: \(file.lastPathComponent)")
+                fflush(stdout)
+            }
+            guard humanRows.count == 326 else { throw Failure(message: "Unexpected human-scene overlap") }
+            let humanReport: [String: Any] = ["humanPhotos": 342, "alreadyInMainSweep": 16,
+                "additionalPhotos": humanRows.count, "scope": "All human-scene source files in the official CADB author test split, excluding repeat work for the main sweep; not bounding-box ground truth or physical-phone testing.", "searches": humanRows]
+            try JSONSerialization.data(withJSONObject: humanReport, options: [.prettyPrinted, .sortedKeys])
+                .write(to: output.appendingPathComponent("human-scene-composition.json"))
+        }
+        let replayDirectory = output.appendingPathComponent("camera-replay", isDirectory: true)
+        try FileManager.default.createDirectory(at: replayDirectory, withIntermediateDirectories: true)
+        var replay: [[String: Any]] = []
+        let replayParents = Array(files.prefix(humanFiles.isEmpty ? 12 : 6)).map {
+            photos.appendingPathComponent("source").appendingPathComponent($0.lastPathComponent)
+        } + Array(humanFiles.prefix(6))
+        for file in replayParents {
+            let parent = try image(file)
+            for (index, offset) in [0.05, 0.18, 0.31].enumerated() {
+                try autoreleasepool {
+                    let window = CGRect(x: (Double(parent.width) * offset).rounded(.down),
+                        y: (Double(parent.height) * 0.18).rounded(.down),
+                        width: (Double(parent.width) * 0.64).rounded(.down),
+                        height: (Double(parent.height) * 0.64).rounded(.down))
+                    guard let input = parent.cropping(to: window) else { throw Failure(message: "Invalid real replay window") }
+                    let name = "view\(index)_" + file.lastPathComponent
+                    try save(input, to: replayDirectory.appendingPathComponent("input_" + name))
+                    let row = try searchPhoto(file: URL(fileURLWithPath: name), photos: photos, modelURL: modelURL,
+                        output: replayDirectory, renderer: renderer, sourceOverride: input,
+                        replayParent: parent, replayWindow: window)
+                    replay.append(row)
+                }
+            }
+        }
+        let meaningful = replay.filter { row in
+            guard let aim = row["aim"] as? [Double] else { return false }
+            return hypot(aim[0] - 0.5, aim[1] - 0.5) > 0.025
+        }.count
+        let completeFinalViews = replay.filter { $0["replayHasRealFinalPixels"] as? Bool == true }.count
+        guard meaningful >= 2, completeFinalViews >= 12 else {
+            throw Failure(message: "Camera replay did not exercise real noncentral views: \(meaningful), full final views: \(completeFinalViews)")
+        }
+        let replayReport: [String: Any] = ["views": replay.count, "nonCentralTargets": meaningful,
+            "realFinalViews": completeFinalViews, "scope": "Virtual camera windows within real parent photos; full revealed margins come from real parent pixels. Not a physical iPhone test.", "searches": replay]
+        try JSONSerialization.data(withJSONObject: replayReport, options: [.prettyPrinted, .sortedKeys])
+            .write(to: output.appendingPathComponent("camera-reframing-replay.json"))
+        print("PASS: \(replay.count) real-image camera views; \(meaningful) noncentral targets; \(completeFinalViews) real final images")
         print("PASS: \(parity.count) author-to-Swift parity photos; \(searches.count) production composition searches")
     }
 
@@ -139,18 +200,30 @@ enum CompositionModelValidation {
     }
 
     static func searchPhoto(file: URL, photos: URL, modelURL: URL, output: URL,
-                            renderer: CompositionImageRenderer) throws -> [String: Any] {
-        let source = try image(photos.appendingPathComponent("source").appendingPathComponent(file.lastPathComponent))
+                            renderer: CompositionImageRenderer, sourceOverride: CGImage? = nil,
+                            replayParent: CGImage? = nil, replayWindow: CGRect? = nil) throws -> [String: Any] {
+        let source: CGImage
+        if let sourceOverride { source = sourceOverride }
+        else { source = try image(photos.appendingPathComponent("source").appendingPathComponent(file.lastPathComponent)) }
+        let totalStarted = ProcessInfo.processInfo.systemUptime
         let pixels = try pixelBuffer(source)
         let analyzer = NativeSubjectAnalysis(renderer: renderer)
         guard let detected = analyzer.analyze(pixels) else { throw Failure(message: "Production recognition failed") }
-        guard let hero = detected.allCandidates.first, let raster = detected.compositionRaster else {
+        guard let hero = detected.allCandidates.first, let baseRaster = detected.compositionRaster else {
             try save(source, to: output.appendingPathComponent(file.lastPathComponent))
             return ["file": file.lastPathComponent, "result": "manual-no-subject",
                     "modelAssessedCrops": 0, "charmAssessedCrops": 0, "poseSupportsTorsoPortrait": false,
                     "selectedZoom": 1.0, "automaticSelectionAllowed": false,
                     "detectedPeople": 0, "detectedAnimals": 0]
         }
+        let started = ProcessInfo.processInfo.systemUptime
+        let ci = CIImage(cvPixelBuffer: pixels)
+        guard let reference = renderer.referenceImage(ci) else { throw Failure(message: "Invalid source frame") }
+        let cropModel = try FocalCropModel(url: modelURL.deletingLastPathComponent().appendingPathComponent("FocalCrop.mlmodelc"), image: reference)
+        guard cropModel.assess([CGRect(x: 0, y: 0, width: 1, height: 1)], cancellation: CompositionAnalysisCancellation()) != nil else {
+            throw Failure(message: "Crop importance failed")
+        }
+        let raster = cropModel.enriching(baseRaster)
         let bounds = hero.boundingBox
         let kind = analyzer.subjectKind(hero)
         let intents = analyzer.intents(detected, hero: hero)
@@ -167,7 +240,6 @@ enum CompositionModelValidation {
             anchor: hero.eyePosition ?? hero.center, kind: kind,
             confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
         subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention && bounds.width * bounds.height > 0.45
-        let ci = CIImage(cvPixelBuffer: pixels)
         let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
         let budget = CompositionSearchBudget(complexScene: CompositionSearchBudget.isComplex(
             group: hero.isGroup, intents: intents), constrained: false)
@@ -175,21 +247,25 @@ enum CompositionModelValidation {
             CompositionPlanner.photographicProposals(subject: subject, intents: intents, portraitBounds: portraitBounds,
                 raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
                 protectedBounds: hero.companionBounds, incidentalBounds: incidentalPets + incidentalFaces,
-                proposalLimit: seeds.isEmpty ? budget.coarse : budget.refinement, refining: seeds)
+                proposalLimit: seeds.isEmpty ? budget.coarse : budget.refinement, refining: seeds, allowsCameraPan: true)
         }
-        let started = ProcessInfo.processInfo.systemUptime
         let broad = proposals()
         guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: broad,
             image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
             aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
             positionURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmPositionEmbedding.bin"),
-            requiresModernModel: true, aestheticLimit: budget.aesthetics,
+            requiresModernModel: true, aestheticLimit: budget.aesthetics, cropModel: cropModel,
             cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { proposals($0) }),
             !result.views.isEmpty, result.usedSpecialist,
             let best = result.views.first, let bestAssessment = best.assessment, let bestAesthetics = best.aesthetics else {
             throw Failure(message: "Real-photo search failed: \(file.lastPathComponent), proposals \(broad.count), hero \(hero.label), bounds \(bounds)")
         }
         for view in result.views {
+            guard view.proposal.observedFraction >= 0.78 else { throw Failure(message: "Unobserved scene exceeded the camera-pan budget") }
+            if view.proposal.observedFraction >= 0.9999,
+               view.proposal.sourceCorners.contains(where: { !(-0.00001...1.00001).contains($0.x) || !(-0.00001...1.00001).contains($0.y) }) {
+                throw Failure(message: "A crop reported invented source pixels")
+            }
             let future = TrackingCalibration(fx: calibration.fx * Double(view.proposal.zoom),
                 fy: calibration.fy * Double(view.proposal.zoom), cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
             let protection = CompositionCropProtection.bounds(body: bounds, portrait: portraitBounds,
@@ -223,8 +299,12 @@ enum CompositionModelValidation {
             "sourceWidth": source.width, "sourceHeight": source.height,
             "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
             "charmAssessedCrops": result.modernAssessmentCount, "aestheticRating": bestAesthetics.mean,
+            "cropRankAssessments": result.cropAssessmentCount,
+            "observedFraction": best.proposal.observedFraction,
+            "aim": [Double(best.proposal.aimPoint.x), Double(best.proposal.aimPoint.y)],
             "poseSupportsTorsoPortrait": portraitBounds != nil, "selectedIntent": best.proposal.intent.rawValue,
             "compositionRating": bestAssessment.mean, "secondsMac": ProcessInfo.processInfo.systemUptime - started,
+            "totalAnalysisSecondsMac": ProcessInfo.processInfo.systemUptime - totalStarted,
             "automaticSelectionAllowed": result.canAutoselect]
         var detailed = row
         detailed["choices"] = try result.views.map { view -> [String: Any] in
@@ -235,7 +315,49 @@ enum CompositionModelValidation {
              "intent": view.proposal.intent.rawValue, "score": view.proposal.score,
              "composition": composition.mean, "aesthetics": aesthetics.mean,
              "retainedAttention": view.proposal.retainedAttention,
+             "cropPreference": view.cropPreference, "geometryScore": view.geometryScore,
+             "satisfiesFramingGoal": view.satisfiesFramingGoal,
+             "observedFraction": view.proposal.observedFraction,
+             "aim": [Double(view.proposal.aimPoint.x), Double(view.proposal.aimPoint.y)],
              "sourceCorners": view.proposal.sourceCorners.map { [Double($0.x), Double($0.y)] }]
+        }
+        if let parent = replayParent, let window = replayWindow {
+            let corners = best.proposal.sourceCorners.map {
+                CGPoint(x: (window.minX + $0.x * window.width) / CGFloat(parent.width),
+                        y: (window.minY + $0.y * window.height) / CGFloat(parent.height))
+            }
+            let allObservedInParent = corners.allSatisfy { (0...1).contains($0.x) && (0...1).contains($0.y) }
+            detailed["replayHasRealFinalPixels"] = allObservedInParent
+            if allObservedInParent,
+               let finalImage = renderer.projectedFrame(image: CIImage(cgImage: parent), corners: corners,
+                    size: CGSize(width: CGFloat(source.width), height: CGFloat(source.height))),
+               let observed = analyzer.analyze(try pixelBuffer(finalImage)) {
+                let future = TrackingCalibration(fx: calibration.fx * Double(best.proposal.zoom),
+                    fy: calibration.fy * Double(best.proposal.zoom), cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
+                let protectedBounds = CompositionCropProtection.bounds(body: bounds, portrait: portraitBounds,
+                    intent: best.proposal.intent, anchor: subject.anchor, attentionRegion: subject.allowsAttentionCrop)
+                guard let projected = CompositionPlanner.project(protectedBounds, from: calibration, to: future,
+                    rotation: best.proposal.rotation) else { throw Failure(message: "Replay lost its protected subject") }
+                let measured = observed.allCandidates.map {
+                    CompositionSubject(index: 0, bounds: $0.boundingBox, anchor: $0.eyePosition ?? $0.center,
+                        kind: analyzer.subjectKind($0), confidence: Double($0.confidence), importance: $0.prominenceScore, gaze: $0.gaze)
+                }
+                let expectedPeople = hero.isGroup ? hero.companionBounds.filter { !hero.faceBounds.contains($0) }.count :
+                    (subject.kind == .person ? 1 : 0)
+                detailed["replayFinalSubjectAccepted"] = FinalFramingEvidence.accepts(protectedBounds: projected,
+                    expectedKind: subject.kind, minimumFaces: hero.faceBounds.count, minimumPeople: expectedPeople,
+                    subjects: measured, faces: observed.allFaceRects)
+                let identity = simd_quatd(angle: 0, axis: SIMD3(0, 1, 0))
+                let trackedPoint = hero.trackingPoint ?? best.proposal.subjectPoint
+                guard let aim = CompositionAimGeometry(subject: trackedPoint, calibration: calibration,
+                    sourcePose: identity, aimWorldRay: best.proposal.rotation.act(SIMD3(0, 0, -1))),
+                      let projectedAim = aim.projection(subject: future.project(deviceRay: best.proposal.rotation.inverse.act(
+                        calibration.deviceRay(at: trackedPoint))).point, calibration: future, pose: best.proposal.rotation),
+                      hypot(projectedAim.point.x - 0.5, projectedAim.point.y - 0.5) < 0.00001 else {
+                    throw Failure(message: "Visible aim and simulated final camera disagree")
+                }
+                try save(finalImage, to: output.appendingPathComponent("final_" + file.lastPathComponent))
+            }
         }
         try save(best.image, to: output.appendingPathComponent(file.lastPathComponent))
         return detailed

@@ -73,9 +73,13 @@ with (bundle / "Info.plist").open("wb") as stream:
                    "CFBundlePackageType": "APPL"}, stream)
 files = ["TrackingGeometry.swift", "CompositionPlanning.swift", "CompositionImageEvidence.swift",
          "PhotographicCompositionModel.swift", "CharmPhotographicModel.swift", "PortraitFramingEvidence.swift",
-         "CompositionAestheticSearch.swift", "YOLODetectionEngine.swift", "CameraLogger.swift"]
+         "CompositionAestheticSearch.swift", "FocalCropModel.swift", "YOLODetectionEngine.swift", "CameraLogger.swift"]
 subprocess.run(["xcrun", "swiftc", "-O", "-warnings-as-errors",
                 *[str(root / "AISmartFramingCamera/Services" / name) for name in files], str(generated),
                 str(root / "tests/CompositionModelValidation.swift"), "-o", str(executable)], check=True)
-subprocess.run([str(executable), str(root / "validation/photos"), str(root / "SAMPComposition.mlmodelc"),
-                str(output), *(["--parity-only"] if args.parity_only else [])], check=True)
+command = [str(executable), str(root / "validation/photos"), str(root / "SAMPComposition.mlmodelc"), str(output)]
+if args.parity_only:
+    command.append("--parity-only")
+elif (root / "validation/pose/photos").is_dir():
+    command.extend(["--people", str(root / "validation/pose/photos")])
+subprocess.run(command, check=True)

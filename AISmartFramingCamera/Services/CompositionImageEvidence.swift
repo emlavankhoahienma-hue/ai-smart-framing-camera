@@ -98,8 +98,9 @@ final class CompositionImageRenderer {
                                  edges: edges, hasAttention: measured != nil || foreground != nil)
     }
 
-    func preview(image: CIImage, corners: [CGPoint], aspect: Double) -> CGImage? {
-        guard corners.count == 4, aspect.isFinite, aspect > 0,
+    func projectedFrame(image: CIImage, corners: [CGPoint], size: CGSize) -> CGImage? {
+        guard corners.count == 4, size.width.isFinite, size.height.isFinite,
+              size.width > 0, size.height > 0, max(size.width, size.height) <= 4096,
               corners.allSatisfy({ $0.x.isFinite && $0.y.isFinite &&
                   (-0.0001...1.0001).contains($0.x) && (-0.0001...1.0001).contains($0.y) }) else { return nil }
         let extent = image.extent
@@ -112,8 +113,30 @@ final class CompositionImageRenderer {
         correction.topLeft = point(corners[0]); correction.topRight = point(corners[1])
         correction.bottomRight = point(corners[2]); correction.bottomLeft = point(corners[3])
         guard let output = correction.outputImage else { return nil }
+        return render(output, size: size)
+    }
+
+    func preview(image: CIImage, corners: [CGPoint], aspect: Double) -> CGImage? {
+        guard aspect.isFinite, aspect > 0 else { return nil }
         let height = min(288.0, 448 / max(1, aspect))
-        return render(output, size: CGSize(width: max(1, (height * aspect).rounded()), height: height))
+        return projectedFrame(image: image, corners: corners,
+            size: CGSize(width: max(1, (height * aspect).rounded()), height: height))
+    }
+
+    func referenceImage(_ image: CIImage) -> CGImage? {
+        let extent = image.extent
+        guard extent.width.isFinite, extent.height.isFinite, extent.width > 0, extent.height > 0 else { return nil }
+        guard extent.width * extent.height <= 20_000_000,
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        return context.createCGImage(image, from: extent, format: .RGBA8, colorSpace: colorSpace)
+    }
+
+    func observedPreview(image: CIImage, proposal: CompositionProposal, aspect: Double) -> CGImage? {
+        if proposal.observedFraction >= 0.9999 { return preview(image: image, corners: proposal.sourceCorners, aspect: aspect) }
+        guard let region = CompositionViewSupport.region(proposal.sourceCorners) else { return nil }
+        let corners = [CGPoint(x: region.minX, y: region.minY), CGPoint(x: region.maxX, y: region.minY),
+                       CGPoint(x: region.maxX, y: region.maxY), CGPoint(x: region.minX, y: region.maxY)]
+        return preview(image: image, corners: corners, aspect: aspect * Double(region.width / region.height))
     }
 
     private func render(_ image: CIImage, size: CGSize) -> CGImage? {

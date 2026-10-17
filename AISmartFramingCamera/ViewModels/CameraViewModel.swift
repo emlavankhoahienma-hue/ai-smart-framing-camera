@@ -170,6 +170,12 @@ public final class CameraViewModel: ObservableObject {
     private var selectedCompositionPreviewID: UUID?
     @Published private(set) var localCompositionExplanation = ""
     private var localCompositionIntent: LocalCompositionIntent?
+    private var acceptedLocalPlan: LocalFramingPlan?
+    private var localAnalysisReplans = 0
+    private var finalFramingPose: simd_quatd?
+    private var finalFramingZoom: Double = 1
+    private var finalFramingTimestamp = -Double.infinity
+    private var finalFramingCancellation: CompositionAnalysisCancellation?
     private var localCompositionAim: CompositionAimGeometry?
     @Published private(set) var localCompositionAimPoint: CGPoint?
     @Published private(set) var localAnalysisSummary = ""
@@ -200,6 +206,11 @@ public final class CameraViewModel: ObservableObject {
     private var aiSessionGeneration: Int = 0 {
         didSet {
             localAnalysisRequestID = UUID()
+            localAnalysisReplans = 0
+            acceptedLocalPlan = nil
+            finalFramingCancellation?.cancel()
+            finalFramingPose = nil
+            finalFramingTimestamp = -.infinity
             localAnalysisSummary = ""
             localAnalysisCompletedAt = nil
             localAnalysisCancellation?.cancel()
@@ -217,7 +228,13 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     private var targetPinGeneration: UInt64 = 0 {
-        didSet { postZoomRecovery.reset() }
+        didSet {
+            postZoomRecovery.reset()
+            acceptedLocalPlan = nil
+            finalFramingCancellation?.cancel()
+            finalFramingPose = nil
+            finalFramingTimestamp = -.infinity
+        }
     }
     @Published public var aiSessionState: AISessionState = .idle {
         didSet {
@@ -2019,6 +2036,29 @@ public final class CameraViewModel: ObservableObject {
     private func finishLocalAnalysis(_ analysis: LocalCompositionAnalysis, source: AITrackingSource) {
         guard let receipt = analysis.receipt,
               receipt.belongs(to: localAnalysisRequestID, timestamp: source.frame.timestamp) else { return }
+        let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1
+        let currentPose = currentFrame.flatMap { SpatialTrackingEngine.shared.pose(at: $0.timestamp) }
+        let hasFreshFrame = currentFrame.map { CaptureReadinessPolicy.isFresh($0.timestamp, now: CACurrentMediaTime()) } ?? false
+        if !hasFreshFrame || currentPose.map({ !CompositionSceneFreshness.accepts(sourcePose: source.pose, currentPose: $0,
+            sourceZoom: source.frame.displayZoom, currentZoom: Double(displayZoom)) }) ?? true {
+            if localAnalysisReplans < 2 {
+                localAnalysisReplans += 1
+                localAnalysisProgress = "Cảnh đã đổi · Đang phân tích khung mới…"
+                let generation = aiSessionGeneration
+                isOneShotCaptured = false
+                requestFreshAIFrame(generation: generation, requestedAt: CACurrentMediaTime()) { [weak self] _, buffer, frame, pose in
+                    guard let self, self.aiSessionGeneration == generation else { return }
+                    self.beginLocalCompositionAnalysis(source: AITrackingSource(buffer: buffer, frame: frame,
+                        pose: pose, subjectRect: nil, faceRects: []))
+                }
+                visionEngine.captureNextFrameForGemini = true
+            } else {
+                localAnalysisFinished = true
+                localTrackingSource = nil
+                localSelectionMessage = "Máy đang di chuyển. Giữ máy ổn định rồi bấm AI lại."
+            }
+            return
+        }
         localAnalysisSummary = receipt.usedSpecialist ?
             String(format: "%d khung · %d lượt Charm · %.1f giây", receipt.assessedFrames, receipt.modernAssessments, receipt.elapsed) :
             "Chưa hoàn tất mô hình bố cục"
@@ -2066,6 +2106,7 @@ public final class CameraViewModel: ObservableObject {
         // Automatic targets must come from a completed comparison by both models.
         // When inference fails, retain measured suggestions for explicit selection.
         if let first = localCompositionChoices.first, analysis.usedCompositionModel,
+           analysis.canAutoselectComposition,
            receipt.modernAssessments > 0, CACurrentMediaTime() - source.frame.timestamp <= 30,
            first.plan.confidence >= first.plan.minimumAutoselectConfidence {
             acceptLocalPlan(first.plan, source: source)
@@ -2194,6 +2235,7 @@ public final class CameraViewModel: ObservableObject {
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
+        acceptedLocalPlan = plan
         localCompositionAim = aim
         localCompositionAimPoint = currentTargetPoint.flatMap { compositionAlignmentPoint(fallback: $0) }
         localTrackingSource = nil
@@ -2235,7 +2277,14 @@ public final class CameraViewModel: ObservableObject {
         }
         if !zoomVerified { return "Chưa xác nhận được zoom · Có thể bấm chụp tay" }
         if !hasFreshOpticalLock { return "Đang xác nhận lại chủ thể trong ảnh…" }
-        if autoCaptureTask != nil { return "Đang kiểm tra khung trước khi chụp…" }
+        if autoCaptureTask != nil { return "Đang kiểm tra cảnh mới trước khi chụp…" }
+        if isPerfectAlignment, acceptedLocalPlan?.preservesOriginalFrame == true {
+            return "Khung hiện tại phù hợp · Giữ máy để chụp"
+        }
+        if isPerfectAlignment, isAutoZoomEnabled, !hasExecutedAutoZoomForSession,
+           abs(pendingSuggestedZoom - displayZoom) > 0.12 {
+            return String(format: "Đã khớp · Chuẩn bị zoom %.1f×", pendingSuggestedZoom)
+        }
         return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" : "Di chuyển máy để đưa chấm trắng vào vòng giữa"
     }
 
@@ -2704,7 +2753,8 @@ public final class CameraViewModel: ObservableObject {
             do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
             guard !Task.isCancelled, targetPinGeneration == pinGeneration,
                   !isPinchingZoom else { return }
-            guard abs(displayZoom - pendingTargetZoomForReveal) <= 0.08 else {
+            guard abs(Double(displayZoom - pendingTargetZoomForReveal)) <=
+                CaptureReadinessPolicy.zoomTolerance(target: Double(pendingTargetZoomForReveal)) else {
                 reachedAt = nil
                 continue
             }
@@ -2810,9 +2860,50 @@ public final class CameraViewModel: ObservableObject {
 
     private func currentCropSafeForCapture() async -> Bool {
         guard hasFreshOpticalLock, CaptureReadinessPolicy.preservesSubject(currentSubjectCropBox) else { return false }
-        if postZoomFaceMinimumTimestamp.isFinite {
-            return await verifyPostZoomFaces(after: postZoomFaceMinimumTimestamp)
+        if postZoomFaceMinimumTimestamp.isFinite,
+           !(await verifyPostZoomFaces(after: postZoomFaceMinimumTimestamp)) { return false }
+        return await verifyNewlyObservedMargins()
+    }
+
+    private func verifyNewlyObservedMargins() async -> Bool {
+        guard let plan = acceptedLocalPlan, plan.observedFraction < 0.9999 else { return true }
+        guard let snapshot = frameProcessor.latestTrackingFrameSnapshot(),
+              CaptureReadinessPolicy.isFresh(snapshot.1.timestamp, now: CACurrentMediaTime()),
+              let pose = SpatialTrackingEngine.shared.pose(at: snapshot.1.timestamp),
+              let protectedBounds = currentSubjectCropBox else { return false }
+        if let verifiedPose = finalFramingPose, snapshot.1.timestamp - finalFramingTimestamp < 0.8,
+           CompositionSceneFreshness.accepts(sourcePose: verifiedPose, currentPose: pose,
+               sourceZoom: finalFramingZoom, currentZoom: snapshot.1.displayZoom) { return true }
+        let generation = targetPinGeneration
+        let held = FaceVerificationFrame(buffer: snapshot.0)
+        let frame = snapshot.1
+        let cancellation = CompositionAnalysisCancellation()
+        finalFramingCancellation = cancellation
+        let timeout = Task {
+            do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
+            cancellation.cancel()
         }
+        defer {
+            timeout.cancel()
+            if finalFramingCancellation === cancellation { finalFramingCancellation = nil }
+        }
+        let valid = await withTaskCancellationHandler {
+            await Task.detached(priority: .userInitiated) {
+                NeuralSubjectIntelligenceEngine.shared.verifyFinalFraming(pixelBuffer: held.buffer, frame: frame,
+                    protectedBounds: protectedBounds, expectedKind: plan.subjectKind,
+                    minimumFaces: plan.expectedFaces, minimumPeople: plan.expectedPeople, cancellation: cancellation)
+            }.value
+        } onCancel: { cancellation.cancel() }
+        guard !Task.isCancelled, generation == targetPinGeneration else { return false }
+        guard valid, !cancellation.isCancelled else {
+            allowsAutoCaptureForCurrentTarget = false
+            localSelectionMessage = "Chưa xác nhận được chủ thể trong cảnh mới. Giữ máy rồi bấm AI lại hoặc chụp tay."
+            if postZoomFaceMinimumTimestamp.isFinite { restoreOriginalZoomAfterVerificationFailure() }
+            return false
+        }
+        finalFramingPose = pose
+        finalFramingTimestamp = frame.timestamp
+        finalFramingZoom = frame.displayZoom
         return true
     }
 

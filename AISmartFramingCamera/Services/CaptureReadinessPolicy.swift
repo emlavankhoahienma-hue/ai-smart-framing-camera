@@ -3,6 +3,10 @@ import CoreGraphics
 
 /// Admission uses capture timestamps, never completion time or gyro prediction.
 enum CaptureReadinessPolicy {
+    static func zoomTolerance(target: Double) -> Double {
+        max(0.01, min(0.04, abs(target) * 0.015))
+    }
+
     static func isFresh(_ timestamp: TimeInterval, now: TimeInterval) -> Bool {
         timestamp.isFinite && now.isFinite && (0...0.45).contains(now - timestamp)
     }
@@ -21,7 +25,8 @@ enum CaptureReadinessPolicy {
                                reachedAt: TimeInterval, now: TimeInterval) -> Bool {
         guard [target, hardware, frameZoom, reachedAt].allSatisfy(\.isFinite),
               target > 0, hardware > 0, frameZoom > 0,
-              abs(target - hardware) <= 0.08, abs(target - frameZoom) <= 0.08,
+              abs(target - hardware) <= zoomTolerance(target: target),
+              abs(target - frameZoom) <= zoomTolerance(target: target),
               isFresh(frameTimestamp, now: now), isFresh(opticalTimestamp, now: now) else { return false }
         return frameTimestamp > reachedAt + 0.05 && opticalTimestamp > reachedAt + 0.05 &&
             opticalTimestamp <= frameTimestamp + 0.05

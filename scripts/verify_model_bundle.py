@@ -30,6 +30,20 @@ def tree_hash(directory: Path) -> str:
 
 def main() -> None:
     bundle = Path(sys.argv[1])
+    focal_path = bundle / "FocalModelManifest.json"
+    focal = json.loads(focal_path.read_text(encoding="utf-8"))
+    if focal.get("weightsSHA256") != "82c4d695310c220e5f3bcfbf5e64d315a5e826cfd77e945e61e032460014480a":
+        raise RuntimeError("Invalid released crop checkpoint")
+    parity = focal.get("swiftParity") or {}
+    if parity.get("images", 0) < 32 or parity.get("maxPreferenceError", 1) >= 0.08 or parity.get("maxImportanceError", 1) >= 0.03:
+        raise RuntimeError("Crop model did not pass production Swift preprocessing parity")
+    human = focal.get("humanPreferences") or {}
+    if human.get("pairs", 0) != 300 or human.get("accuracy", 0) < 0.68:
+        raise RuntimeError("Crop model did not pass human preference comparison")
+    if not (bundle / "FocalNet-LICENSE.txt").is_file():
+        raise RuntimeError("Missing released crop-model license")
+    focal["compiledSHA256"] = tree_hash(bundle / "FocalCrop.mlmodelc")
+    focal_path.write_text(json.dumps(focal, indent=2), encoding="utf-8")
     charm_path = bundle / "CharmModelManifest.json"
     charm = json.loads(charm_path.read_text(encoding="utf-8"))
     if charm.get("weightsSHA256") != "d7ce85f65ed25fa8c15eeb52f63310e7207cf76fd11ca763f284576d3824a9cb":

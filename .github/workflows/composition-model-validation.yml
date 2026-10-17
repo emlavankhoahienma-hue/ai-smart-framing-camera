@@ -15,7 +15,7 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: .model-cache
-          key: composition-cadb-samp-charm-v2
+          key: composition-cadb-samp-charm-focal-v3
           restore-keys: composition-cadb-samp-v1
       - name: Install pinned conversion dependencies
         run: |
@@ -31,6 +31,10 @@ jobs:
           pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
           python scripts/export_charm_coreml.py --photos validation/photos
           xcrun coremlc compile CharmAesthetics.mlpackage .
+          pip install "timm==1.0.27"
+          python scripts/export_focal_coreml.py
+          xcrun coremlc compile FocalCrop.mlpackage .
+          python scripts/validate_focal_model.py
       - name: Validate production Swift preprocessing and photographic search
         run: |
           python scripts/validate_composition_photos.py --parity-only
@@ -42,6 +46,7 @@ jobs:
           path: |
             SAMPModelManifest.json
             CharmModelManifest.json
+            FocalModelManifest.json
             SAMPComposition.mlpackage
             CharmAesthetics.mlpackage
             CharmPositionEmbedding.bin

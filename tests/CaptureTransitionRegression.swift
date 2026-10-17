@@ -180,6 +180,12 @@ enum CaptureTransitionRegression {
             }
             try require(ready, "Verified zoom never reached capture")
         }
+        try run("a small AI zoom must actually finish before verification") {
+            try require(!CaptureReadinessPolicy.hasSettledZoom(target: 1.13, hardware: 1.06, frameZoom: 1.06,
+                frameTimestamp: 10.2, opticalTimestamp: 10.2, reachedAt: 10, now: 10.3), "Half-finished small zoom was accepted")
+            try require(CaptureReadinessPolicy.hasSettledZoom(target: 1.13, hardware: 1.13, frameZoom: 1.13,
+                frameTimestamp: 10.2, opticalTimestamp: 10.2, reachedAt: 10, now: 10.3), "Completed small zoom was blocked")
+        }
         print("Capture transition regressions: \(passed) passed")
     }
 }

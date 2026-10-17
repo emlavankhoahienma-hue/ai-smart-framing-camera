@@ -54,6 +54,7 @@ jobs:
             AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
             AISmartFramingCamera/Services/CharmPhotographicModel.swift \
             AISmartFramingCamera/Services/PortraitFramingEvidence.swift \
+            AISmartFramingCamera/Services/FocalCropModel.swift \
             AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
             tests/CompositionPlanningRegression.swift \
             -o "$RUNNER_TEMP/composition-regressions"
@@ -132,7 +133,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .model-cache
-          key: composition-cadb-samp-charm-v2
+          key: composition-cadb-samp-charm-focal-v3
           restore-keys: composition-cadb-samp-v1
 
       - name: Export and verify pretrained SAMP-Net composition specialist
@@ -146,10 +147,15 @@ jobs:
           pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
           python scripts/export_charm_coreml.py --photos validation/photos
           xcrun coremlc compile CharmAesthetics.mlpackage .
+          pip install "timm==1.0.27"
+          python scripts/export_focal_coreml.py
+          xcrun coremlc compile FocalCrop.mlpackage .
+          python scripts/validate_focal_model.py
           test -d SAMPComposition.mlmodelc
 
       - name: Validate Swift photographic model and crop safety on real images
         run: |
+          python scripts/prepare_pose_photos.py
           python scripts/validate_composition_photos.py
 
       - name: Validate preserved YOLO recognition on real photographs
@@ -157,7 +163,6 @@ jobs:
 
       - name: Validate measured portrait framing on all human test photos
         run: |
-          python scripts/prepare_pose_photos.py
           xcrun swiftc -O -warnings-as-errors \
             AISmartFramingCamera/Services/PortraitFramingEvidence.swift \
             tests/PortraitPoseDiagnostic.swift -o "$RUNNER_TEMP/portrait-pose-diagnostic"
@@ -171,7 +176,9 @@ jobs:
           path: |
             SAMPModelManifest.json
             CharmModelManifest.json
+            FocalModelManifest.json
             validation/swift/
+            validation/focal/
             validation/detection/*-real-photos.json
             validation/photos/manifest.json
             validation/pose-report.json
@@ -254,6 +261,8 @@ jobs:
           cp -r SAMPComposition.mlmodelc Payload/AISmartFramingCamera.app/
           cp SAMPModelManifest.json Payload/AISmartFramingCamera.app/
           cp models/SAMP-Net-LICENSE.txt Payload/AISmartFramingCamera.app/
+          cp -r FocalCrop.mlmodelc Payload/AISmartFramingCamera.app/
+          cp FocalModelManifest.json models/FocalNet-LICENSE.txt Payload/AISmartFramingCamera.app/
           cp -r CharmAesthetics.mlmodelc Payload/AISmartFramingCamera.app/
           cp CharmModelManifest.json CharmPositionEmbedding.bin models/Charm-LICENSE.txt Payload/AISmartFramingCamera.app/
           if [ -s AISmartFramingCamera/Resources/LocalAutoselectThresholds.json ]; then
