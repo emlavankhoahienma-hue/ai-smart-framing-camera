@@ -95,6 +95,9 @@ jobs:
             -o "$RUNNER_TEMP/capture-transition-regressions"
           "$RUNNER_TEMP/capture-transition-regressions"
 
+      - name: Compile native real-photo validation before model export
+        run: python scripts/validate_composition_photos.py --compile-only
+
       - name: Export & Compile pretrained YOLO12s and YOLO12n
         env:
           # Ultralytics/CoreMLTools currently emit upstream torch tracing and

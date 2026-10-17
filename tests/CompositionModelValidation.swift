@@ -123,7 +123,7 @@ enum CompositionModelValidation {
             guard humanFiles.count == 342 else { throw Failure(message: "Human-scene author test split is incomplete") }
             let humanDirectory = output.appendingPathComponent("human-scenes", isDirectory: true)
             try FileManager.default.createDirectory(at: humanDirectory, withIntermediateDirectories: true)
-            let alreadyTested = Set(files.map(.lastPathComponent))
+            let alreadyTested = Set(files.map { $0.lastPathComponent })
             var humanRows: [[String: Any]] = []
             for file in humanFiles where !alreadyTested.contains(file.lastPathComponent) {
                 let row: [String: Any] = try autoreleasepool {

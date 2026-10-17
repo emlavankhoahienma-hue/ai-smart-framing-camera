@@ -11,9 +11,11 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--parity-only", action="store_true")
+parser.add_argument("--compile-only", action="store_true")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 output = root / "validation/swift"
@@ -64,7 +66,7 @@ executable = bundle / "MacOS/PhotoValidation"
 executable.parent.mkdir(parents=True, exist_ok=True)
 resources = bundle / "Resources"
 resources.mkdir(exist_ok=True)
-if not args.parity_only:
+if not args.parity_only and not args.compile_only:
     for name in ("yolo12n", "yolo12s", "SigLIPBaseImage"):
         shutil.copytree(root / (name + ".mlmodelc"), resources / (name + ".mlmodelc"), dirs_exist_ok=True)
     shutil.copyfile(root / "SigLIPPrompts.json", resources / "SigLIPPrompts.json")
@@ -77,6 +79,9 @@ files = ["TrackingGeometry.swift", "CompositionPlanning.swift", "CompositionImag
 subprocess.run(["xcrun", "swiftc", "-O", "-warnings-as-errors",
                 *[str(root / "AISmartFramingCamera/Services" / name) for name in files], str(generated),
                 str(root / "tests/CompositionModelValidation.swift"), "-o", str(executable)], check=True)
+if args.compile_only:
+    print("PASS: production recognition and real-photo search harness compiled")
+    sys.exit(0)
 command = [str(executable), str(root / "validation/photos"), str(root / "SAMPComposition.mlmodelc"), str(output)]
 if args.parity_only:
     command.append("--parity-only")
