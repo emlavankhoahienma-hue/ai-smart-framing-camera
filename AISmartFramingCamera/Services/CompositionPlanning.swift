@@ -274,6 +274,21 @@ struct CompositionRaster: Sendable {
             detail: min(1, (max(0, detail / count - 0.015) + max(0, contrast - 0.01)) * 2), exposure: exposure)
     }
 
+    var visualCenterOfMass: CGPoint? {
+        guard isValid, hasAttention else { return nil }
+        var totalWeight = 0.0, sumX = 0.0, sumY = 0.0
+        for y in 0..<side {
+            for x in 0..<side {
+                let w = attention[y * side + x]
+                totalWeight += w
+                sumX += (Double(x) + 0.5) / Double(side) * w
+                sumY += (Double(y) + 0.5) / Double(side) * w
+            }
+        }
+        guard totalWeight > 0.01 else { return nil }
+        return CGPoint(x: sumX / totalWeight, y: sumY / totalWeight)
+    }
+
     /// A line needs edge support across the image, not just a local bright patch.
     var horizon: (y: CGFloat, confidence: Double)? {
         guard isValid else { return nil }
@@ -507,17 +522,9 @@ enum CompositionPlanner {
                     continue
                 }
                 var seeds: [CompositionProposal] = []
-                var placements = [
-                    subject.anchor, desired,
-                    CGPoint(x: 0.382, y: 0.382), CGPoint(x: 0.618, y: 0.382),
-                    CGPoint(x: 0.382, y: 0.618), CGPoint(x: 0.618, y: 0.618),
-                    CGPoint(x: 0.382, y: 0.50), CGPoint(x: 0.618, y: 0.50),
-                    CGPoint(x: 0.50, y: 0.382), CGPoint(x: 0.50, y: 0.50)
-                ]
-                for y in 0...4 { for x in 0...4 {
-                    placements.append(CGPoint(x: 0.22 + Double(x) * 0.14, y: 0.22 + Double(y) * 0.14))
-                } }
-                for zoom in zooms {
+                let placements = dynamicPlacements(subject: subject, intent: intent, desired: desired, raster: raster)
+                let subjectZooms = dynamicZooms(subject: subject, intent: intent, currentZoom: currentZoom, maxZoom: maxZoom, allowedZooms: allowedZooms)
+                for zoom in subjectZooms {
                     for destination in placements {
                         if isCancelled() { return [] }
                         if let plan = evaluate(destination, zoom: zoom) { seeds.append(plan) }
@@ -525,7 +532,7 @@ enum CompositionPlanner {
                 }
                 // Refine in continuous pan/tilt/log-focal-length space. Coarse
                 // grids seed the solver; they never restrict the final target.
-                for seed in diverse(seeds, limit: 3) {
+                for seed in diverse(seeds, limit: 4) {
                     var best = seed
                     for step in [0.035, 0.0175, 0.00875] {
                         let ratio = Double(best.zoom / currentZoom)
@@ -631,6 +638,95 @@ enum CompositionPlanner {
         return CGPoint(x: x, y: y)
     }
 
+    private static func dynamicPlacements(subject: CompositionSubject, intent: LocalCompositionIntent,
+                                          desired: CGPoint, raster: CompositionRaster) -> [CGPoint] {
+        var points: [CGPoint] = [desired, subject.anchor, CGPoint(x: 0.5, y: 0.5)]
+
+        // 1. Dynamic visual mass equilibrium (counterbalance environmental saliency)
+        if let com = raster.visualCenterOfMass {
+            let dx = Double(com.x - 0.5)
+            let dy = Double(com.y - 0.5)
+            let balancePoint = CGPoint(
+                x: min(0.78, max(0.22, desired.x - CGFloat(dx * 0.16))),
+                y: min(0.78, max(0.22, desired.y - CGFloat(dy * 0.14)))
+            )
+            points.append(balancePoint)
+        }
+
+        // 2. Dynamic gaze extension along line of sight
+        let lead = Double(subject.gaze)
+        if abs(lead) > 0.08 {
+            let gazeExtend = CGPoint(
+                x: min(0.78, max(0.22, desired.x - CGFloat(lead * 0.08))),
+                y: desired.y
+            )
+            points.append(gazeExtend)
+        }
+
+        // 3. Dynamic Golden Section / Rule of Thirds power intersections
+        let goldenX = [0.382, 0.618]
+        let goldenY = [0.382, 0.618]
+        for gx in goldenX {
+            for gy in goldenY {
+                points.append(CGPoint(x: gx, y: gy))
+            }
+        }
+        points.append(CGPoint(x: 0.382, y: 0.5))
+        points.append(CGPoint(x: 0.618, y: 0.5))
+        points.append(CGPoint(x: 0.5, y: 0.382))
+
+        // 4. Subtle continuous micro-variations around desired point
+        for dx in [-0.045, 0.045] {
+            for dy in [-0.04, 0.04] {
+                let p = CGPoint(x: min(0.80, max(0.20, desired.x + CGFloat(dx))),
+                                y: min(0.80, max(0.20, desired.y + CGFloat(dy))))
+                points.append(p)
+            }
+        }
+
+        return points
+    }
+
+    private static func dynamicZooms(subject: CompositionSubject, intent: LocalCompositionIntent,
+                                     currentZoom: CGFloat, maxZoom: CGFloat, allowedZooms: [CGFloat]) -> [CGFloat] {
+        let area = Double(subject.bounds.width * subject.bounds.height)
+        let desiredArea: Double
+        switch intent {
+        case .portrait: desiredArea = subject.kind == .face ? 0.16 : 0.34
+        case .environmentalPortrait, .street: desiredArea = 0.13
+        case .group: desiredArea = 0.40
+        case .landscape: desiredArea = 0.15
+        case .architecture: desiredArea = 0.48
+        case .closeUp, .food: desiredArea = 0.40
+        case .animal, .object: desiredArea = 0.32
+        }
+
+        var options: Set<CGFloat> = [currentZoom]
+
+        // Continuous optimal zoom directly regressed from subject area vs desired prominence
+        let idealRatio = sqrt(desiredArea / max(0.001, area))
+        let idealZoom = max(currentZoom, min(maxZoom, currentZoom * CGFloat(idealRatio)))
+        options.insert(idealZoom)
+
+        // Continuous variations around ideal zoom
+        if idealZoom > currentZoom {
+            options.insert(max(currentZoom, min(maxZoom, idealZoom * 0.88)))
+            options.insert(max(currentZoom, min(maxZoom, idealZoom * 1.14)))
+        }
+
+        // Hardware optical zooms within range
+        for h in allowedZooms where h.isFinite && h >= currentZoom && h <= maxZoom {
+            options.insert(h)
+        }
+
+        // Continuous intermediate logarithmic steps
+        for step in [0.25, 0.50, 0.75, 1.0] {
+            let z = currentZoom * CGFloat(exp(log(Double(maxZoom / currentZoom)) * step))
+            if z >= currentZoom && z <= maxZoom { options.insert(z) }
+        }
+
+        return Array(options).sorted()
+    }
 
     static func diverse(_ proposals: [CompositionProposal], limit: Int,
                         raySeparation: CGFloat = 0.065, zoomSeparation: Double = 0.15) -> [CompositionProposal] {
