@@ -131,12 +131,14 @@ final class CompositionImageRenderer {
         return context.createCGImage(image, from: extent, format: .RGBA8, colorSpace: colorSpace)
     }
 
-    func observedPreview(image: CIImage, proposal: CompositionProposal, aspect: Double) -> CGImage? {
-        if proposal.observedFraction >= 0.9999 { return preview(image: image, corners: proposal.sourceCorners, aspect: aspect) }
-        guard let region = CompositionViewSupport.region(proposal.sourceCorners) else { return nil }
-        let corners = [CGPoint(x: region.minX, y: region.minY), CGPoint(x: region.maxX, y: region.minY),
-                       CGPoint(x: region.maxX, y: region.maxY), CGPoint(x: region.minX, y: region.maxY)]
-        return preview(image: image, corners: corners, aspect: aspect * Double(region.width / region.height))
+    func observedPreview(image: CIImage, corners: [CGPoint], aspect: Double) -> CGImage? {
+        // A very thin outside triangle can have near-unit area support while
+        // still crossing the source boundary. Test vertices before full rendering.
+        if CompositionViewSupport.containsEntireView(corners) { return preview(image: image, corners: corners, aspect: aspect) }
+        guard let region = CompositionViewSupport.region(corners) else { return nil }
+        let observedCorners = [CGPoint(x: region.minX, y: region.minY), CGPoint(x: region.maxX, y: region.minY),
+                               CGPoint(x: region.maxX, y: region.maxY), CGPoint(x: region.minX, y: region.maxY)]
+        return preview(image: image, corners: observedCorners, aspect: aspect * Double(region.width / region.height))
     }
 
     private func render(_ image: CIImage, size: CGSize) -> CGImage? {

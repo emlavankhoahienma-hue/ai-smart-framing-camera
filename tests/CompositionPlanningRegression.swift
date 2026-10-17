@@ -90,6 +90,21 @@ enum CompositionPlanningRegression {
             try require(CompositionViewSupport.fraction(corners) > 0.999999, "a complete source frame became unobserved")
             try require(CompositionViewSupport.region(corners) == CGRect(x: 0, y: 0, width: 1, height: 1),
                 "one-ULP identity noise invalidated the original crop")
+            try require(CompositionViewSupport.containsEntireView(corners), "identity roundoff required a new scene")
+        }
+        try run("a thin revealed triangle cannot use full-source preview rendering") {
+            // Actual failing footprint from the occluded three-person photo 1565.
+            let corners = [CGPoint(x: -0.0006566634113889247, y: 0.23697605745611228),
+                CGPoint(x: 0.40799289180244735, y: 0.2605805690377059),
+                CGPoint(x: 0.4133380715944237, y: 0.6118408560032975),
+                CGPoint(x: 0.015220758988522542, y: 0.6485732638944031)]
+            try require(CompositionViewSupport.fraction(corners) > 0.9999, "fixture no longer exercises near-unit support")
+            try require(!CompositionViewSupport.containsEntireView(corners), "area support hid an unobserved corner")
+            let renderer = CompositionImageRenderer()
+            let source = CIImage(color: CIColor(red: 0.3, green: 0.6, blue: 0.2))
+                .cropped(to: CGRect(x: 0, y: 0, width: 1024, height: 768))
+            try require(renderer.observedPreview(image: source, corners: corners, aspect: 4.0 / 3) != nil,
+                "a thin outside triangle still fails the production preview")
         }
         try run("verified telephoto optics extend search while digital presets stay bounded") {
             let item = subject(rect: CGRect(x: 0.45, y: 0.4, width: 0.1, height: 0.12), kind: .object)

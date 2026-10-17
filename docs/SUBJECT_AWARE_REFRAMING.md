@@ -72,6 +72,8 @@ of the planned view supported by observed source pixels. Polygon clipping
 measures support. Previews and quality audits contain only observed pixels; no
 image generation, black-padding fiction or unseen-pixel confidence is used.
 The full protected subject and selected companions must still fit in the frame.
+Full-source rendering and final scene verification check every projected corner;
+an almost-complete area fraction cannot hide a thin newly revealed triangle.
 
 If camera pose has changed by more than two degrees or the lens changes during
 analysis, the result is discarded and a new captured frame is analyzed. This is

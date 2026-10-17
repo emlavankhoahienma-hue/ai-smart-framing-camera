@@ -315,9 +315,9 @@ enum CompositionModelValidation {
         }
         for view in result.views {
             guard view.proposal.observedFraction >= 0.78 else { throw Failure(message: "Unobserved scene exceeded the camera-pan budget") }
-            if view.proposal.observedFraction >= 0.9999,
-               view.proposal.sourceCorners.contains(where: { !(-0.00001...1.00001).contains($0.x) || !(-0.00001...1.00001).contains($0.y) }) {
-                throw Failure(message: "A crop reported invented source pixels")
+            guard let observed = CompositionViewSupport.region(view.proposal.sourceCorners),
+                  CGRect(x: 0, y: 0, width: 1, height: 1).insetBy(dx: -0.00000001, dy: -0.00000001).contains(observed) else {
+                throw Failure(message: "A quality preview included unobserved source pixels")
             }
             let future = TrackingCalibration(fx: calibration.fx * Double(view.proposal.zoom),
                 fy: calibration.fy * Double(view.proposal.zoom), cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
@@ -356,6 +356,7 @@ enum CompositionModelValidation {
             "qualityVetoedCount": result.qualityVetoedCount, "needsQualityReview": result.needsQualityReview,
             "constrainedSearchBudget": constrained,
             "observedFraction": best.proposal.observedFraction,
+            "requiresSceneVerification": !best.proposal.isEntirelyObserved,
             "aim": [Double(best.proposal.aimPoint.x), Double(best.proposal.aimPoint.y)],
             "poseSupportsTorsoPortrait": portraitBounds != nil, "selectedIntent": best.proposal.intent.rawValue,
             "compositionRating": bestAssessment.mean, "secondsMac": ProcessInfo.processInfo.systemUptime - started,

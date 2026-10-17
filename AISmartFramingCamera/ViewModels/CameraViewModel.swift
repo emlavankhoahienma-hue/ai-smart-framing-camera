@@ -2873,7 +2873,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func verifyNewlyObservedMargins() async -> Bool {
-        guard let plan = acceptedLocalPlan, plan.observedFraction < 0.9999 else { return true }
+        guard let plan = acceptedLocalPlan, plan.requiresSceneVerification else { return true }
         guard let snapshot = frameProcessor.latestTrackingFrameSnapshot(),
               CaptureReadinessPolicy.isFresh(snapshot.1.timestamp, now: CACurrentMediaTime()),
               let pose = SpatialTrackingEngine.shared.pose(at: snapshot.1.timestamp),

@@ -130,7 +130,7 @@ class LocalFramingTests(unittest.TestCase):
 
     def test_unobserved_camera_margins_are_verified_before_capture(self):
         self.assertIn("return await verifyNewlyObservedMargins()", VM)
-        self.assertIn("plan.observedFraction < 0.9999", VM)
+        self.assertIn("plan.requiresSceneVerification", VM)
         self.assertIn("verifyFinalFraming(pixelBuffer: held.buffer", VM)
         self.assertIn("minimumPeople: plan.expectedPeople", VM)
         self.assertIn("generation == targetPinGeneration", VM)

@@ -297,7 +297,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     scene: output.detectedScene, category: hero.category) ?? 1),
                 intent: proposal.intent, score: proposal.score, explanation: explanation + " Đã so sánh vùng ảnh bằng FocalNet và kiểm tra bằng SAMP-Net, Charm 2025.",
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey)
-            plan.observedFraction = proposal.observedFraction
+            plan.requiresSceneVerification = !proposal.isEntirelyObserved
             plan.preservesOriginalFrame = proposal.isUnchangedView
             plan.subjectKind = subject.kind
             plan.expectedFaces = hero.faceBounds.count

@@ -33,6 +33,14 @@ struct CompositionAimGeometry {
 /// A camera can reveal new margins after a small pan. Their pixels are unknown
 /// until alignment; crop-only scoring must not invent them or forbid all pans.
 enum CompositionViewSupport {
+    static func containsEntireView(_ corners: [CGPoint]) -> Bool {
+        corners.count == 4 && corners.allSatisfy {
+            $0.x.isFinite && $0.y.isFinite &&
+                (-0.00000001...1.00000001).contains($0.x) &&
+                (-0.00000001...1.00000001).contains($0.y)
+        }
+    }
+
     static func validRegion(_ region: CGRect) -> Bool {
         [region.minX, region.minY, region.width, region.height].allSatisfy(\.isFinite) &&
             region.width > 0.000001 && region.height > 0.000001 &&
@@ -489,6 +497,7 @@ struct CompositionProposal: Sendable {
     var retainedAttention: Double = 1
 
     var observedFraction: Double { CompositionViewSupport.fraction(sourceCorners) }
+    var isEntirelyObserved: Bool { CompositionViewSupport.containsEntireView(sourceCorners) }
 
     var isUnchangedView: Bool {
         let original = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),

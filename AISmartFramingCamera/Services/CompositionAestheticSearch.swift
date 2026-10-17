@@ -120,7 +120,7 @@ final class CompositionAestheticSearch {
         var views: [View] = []
         for value in pool {
             guard !cancellation.isCancelled else { return nil }
-            guard let preview = renderer.observedPreview(image: image, proposal: value.proposal, aspect: aspect) else {
+            guard let preview = renderer.observedPreview(image: image, corners: value.proposal.sourceCorners, aspect: aspect) else {
                 diagnostic?("observed-preview failed: \(value.proposal.sourceCorners), support=\(value.proposal.observedFraction)")
                 return nil
             }
