@@ -54,6 +54,16 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("subject-size heuristics need learned support for a deep crop") {
+            try require(!LearnedFramingPolicy.passesQualityAudit(zoomRatio: 3,
+                preference: 0, originalPreference: 0.292, composition: 3.071,
+                originalComposition: 3, aesthetics: 2.282, originalAesthetics: 3),
+                "a low-detail zoom ignored source preference and a large aesthetic loss")
+            try require(!LearnedFramingPolicy.passesQualityAudit(zoomRatio: 3,
+                preference: -2, originalPreference: 2.608, composition: 2.585,
+                originalComposition: 3, aesthetics: 2.885, originalAesthetics: 3),
+                "a larger subject was mistaken for a learned quality improvement")
+        }
         try run("real-photo quality regressions cannot force background or false-face zooms") {
             try require(!LearnedFramingPolicy.passesQualityAudit(zoomRatio: 2.145,
                 preference: -5.5958, originalPreference: 2.1433, composition: 2.3611,

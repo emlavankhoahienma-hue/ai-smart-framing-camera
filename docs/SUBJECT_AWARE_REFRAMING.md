@@ -59,6 +59,8 @@ and never displayed as recognition confidence or an absolute aesthetic rating.
 The audits can veto a substantial zoom when FocalNet and Charm jointly indicate
 lost context/quality, or both whole-image quality models indicate a material
 regression. The guard margins exceed measured numerical/preprocessing variation.
+When the relative crop ranker clearly prefers the source, making the subject
+larger also needs a measurable improvement from at least one quality model.
 This catches observed blurry-background and false-face zooms that a geometric
 subject-size objective alone encouraged. If every goal-fitting crop is vetoed,
 the actual scored original is offered for explicit review; it cannot silently

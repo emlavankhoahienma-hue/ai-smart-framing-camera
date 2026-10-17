@@ -125,10 +125,13 @@ enum LearnedFramingPolicy {
               [composition, originalComposition, aesthetics, originalAesthetics].allSatisfy({ (1...5).contains($0) }) else { return false }
         // Whole-photo quality and an incomplete same-focal pan are not comparable.
         guard zoomRatio > 1.12 else { return true }
+        let preferenceLoss = originalPreference - preference
         let aestheticLoss = originalAesthetics - aesthetics
-        let losesLearnedContext = originalPreference - preference >= 0.6 && aestheticLoss >= 0.30
+        let noLearnedImprovement = preferenceLoss >= 0.15 &&
+            composition - originalComposition < 0.10 && aesthetics - originalAesthetics < 0.10
+        let losesLearnedContext = preferenceLoss >= 0.6 && aestheticLoss >= 0.15
         let losesBothQualityRatings = originalComposition - composition >= 0.30 && aestheticLoss >= 0.20
-        return !losesLearnedContext && !losesBothQualityRatings
+        return !noLearnedImprovement && !losesLearnedContext && !losesBothQualityRatings
     }
 
     static func score(preference: Double, peers: [Double], composition: Double,
