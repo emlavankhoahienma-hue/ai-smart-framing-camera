@@ -392,11 +392,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     @Published public var isRevealingZoomTarget: Bool = false
-    @Published public var lockOnProgress: CGFloat = 0
+    @Published public var zoomRevealOpacity: CGFloat = 0
     @Published public var liveZoomFactorForReveal: CGFloat = 1.0
     private var pendingTargetZoomForReveal: CGFloat = 1.0
     private var zoomRevealStartDisplayZoom: CGFloat = 1.0
-    private var zoomRevealStartsIn = true
     private var isZoomRampPhase: Bool = false
     private var zoomAwaitingVerification = false
     private var zoomVerified = true
@@ -459,29 +458,12 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var focusPeakingCGImage: CGImage? = nil
 
-    public var zoomRevealRect: CGRect {
-        guard isRevealingZoomTarget, pendingTargetZoomForReveal > 0 else {
-            return CGRect(x: 0, y: 0, width: 1.0, height: 1.0)
-        }
-        let targetSize = min(1.0, max(0.20,
-            zoomRevealStartDisplayZoom / pendingTargetZoomForReveal))
-
-        if !isZoomRampPhase {
-            // Giai đoạn 1: khung lướt nhẹ từ toàn cảnh (1.0) về vùng crop dự kiến bao quanh chủ thể
-            let p = max(0.0, min(1.0, lockOnProgress))
-            let size = 1.0 - (1.0 - targetSize) * p
-            return CGRect(x: (1 - size) / 2, y: (1 - size) / 2,
-                          width: size, height: size)
-        } else {
-            // Giai đoạn 2: khi camera phần cứng đang ramp zoom, khung đồng bộ mở rộng ra mép màn hình
-            let ratio = min(1.0, max(0.20,
-                liveZoomFactorForReveal / pendingTargetZoomForReveal))
-            return CGRect(x: (1 - ratio) / 2, y: (1 - ratio) / 2,
-                          width: ratio, height: ratio)
-        }
+    var zoomRevealGeometry: ZoomRevealGeometry? {
+        guard isRevealingZoomTarget else { return nil }
+        return ZoomRevealGeometry(startZoom: zoomRevealStartDisplayZoom,
+                                  targetZoom: pendingTargetZoomForReveal)
     }
-
-    public var zoomRevealTargetZoom: CGFloat { pendingTargetZoomForReveal }
+    var zoomRevealIsRamping: Bool { isZoomRampPhase }
 
     @Published public var exposureBias: Float = 0.0
     @Published public var activeFlashMode: AVCaptureDevice.FlashMode = .auto {
@@ -540,16 +522,15 @@ public final class CameraViewModel: ObservableObject {
         pendingTargetZoomForReveal = cameraService.convertDeviceZoomToDisplayZoom(targetDeviceZoom)
         alignmentGate.reset()
         zoomRevealStartDisplayZoom = max(0.1, displayZoom)
-        zoomRevealStartsIn = targetZoom > displayZoom
         liveZoomFactorForReveal = displayZoom
         isZoomRampPhase = false
-        lockOnProgress = 0
+        zoomRevealOpacity = 0
         isRevealingZoomTarget = true
         let pinGeneration = targetPinGeneration
 
-        // Hiệu ứng chuyển động mượt mà điện ảnh (Cinematic Easing)
+        // Fade the frame in; its size is determined exclusively by live camera zoom.
         withAnimation(.easeOut(duration: 0.24)) {
-            lockOnProgress = 1.0
+            zoomRevealOpacity = 1.0
         }
 
         // Hold the outlined, dimmed crop before the optical ramp begins.

@@ -3,9 +3,6 @@ import SwiftUI
 public struct ARFramingOverlayView: View {
     @ObservedObject var viewModel: CameraViewModel
 
-    @State private var radarPulse: CGFloat = 1.0
-    @State private var radarOpacity: Double = 0.8
-    @State private var dashOffset: CGFloat = 0
     @State private var pinchBaseZoom: CGFloat = 1.0
     @State private var isPinching: Bool = false
 
@@ -86,9 +83,9 @@ public struct ARFramingOverlayView: View {
                     .allowsHitTesting(false)
                 }
 
-                // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
-                // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
-                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
+                // The existing tracker owns the bearing. Only the drawing changes.
+                if viewModel.showTargetCircle, !viewModel.isRevealingZoomTarget,
+                   let targetPoint = viewModel.currentTargetPoint {
                     let projectedScreen = convertBufferPointToScreen(targetPoint, in: size)
                     let targetScreen = TrackingGeometry.dock(projectedScreen, size: size)
                     let isDocked = hypot(projectedScreen.x - targetScreen.x,
@@ -99,7 +96,6 @@ public struct ARFramingOverlayView: View {
                         GuidanceRayLine(
                             from: screenCenter,
                             to: targetScreen,
-                            dashOffset: dashOffset,
                             distance: viewModel.alignmentDistance
                         )
                     }
@@ -107,8 +103,6 @@ public struct ARFramingOverlayView: View {
                     // Target Vàng
                     TargetCircleView(
                         isAligned: viewModel.isPerfectAlignment,
-                        radarPulse: radarPulse,
-                        radarOpacity: radarOpacity,
                         trackingQuality: viewModel.trackingQuality
                     )
                     .position(targetScreen)
@@ -117,7 +111,7 @@ public struct ARFramingOverlayView: View {
                     if isDocked {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(.white)
                             .rotationEffect(Angle(radians: Double(atan2(projectedScreen.y - screenCenter.y,
                                                                          projectedScreen.x - screenCenter.x)) + Double.pi / 2.0))
                             .position(targetScreen)
@@ -127,8 +121,8 @@ public struct ARFramingOverlayView: View {
                 }
 
                 // Optical centre is always fixed in the photo viewfinder.
-                if !viewModel.captureMode.isVideo {
-                    CurrentCenterCrosshair()
+                if !viewModel.captureMode.isVideo, !viewModel.isRevealingZoomTarget {
+                    CurrentCenterCrosshair(isAligned: viewModel.showTargetCircle && viewModel.isPerfectAlignment)
                     .position(screenCenter)
                     .transition(.opacity.combined(with: .scale(scale: 0.7)))
                 }
@@ -218,11 +212,13 @@ public struct ARFramingOverlayView: View {
                         .transition(.opacity)
                 }
 
-                // 11. AI Zoom Reveal Overlay (Khung bố cục điện ảnh mượt mà, không làm tối màn hình)
+                // The aperture follows actual optical zoom, without an independent scale animation.
                 ZoomRevealOverlay(
-                    rect: viewModel.zoomRevealRect,
-                    isVisible: viewModel.isRevealingZoomTarget,
-                    displayZoom: viewModel.zoomRevealTargetZoom
+                    geometry: viewModel.zoomRevealGeometry,
+                    actualZoom: viewModel.liveZoomFactorForReveal,
+                    bufferAspect: SpatialTrackingEngine.shared.currentBufferAspect,
+                    isRamping: viewModel.zoomRevealIsRamping,
+                    revealOpacity: viewModel.zoomRevealOpacity
                 )
             }
             .contentShape(Rectangle())
@@ -293,7 +289,6 @@ public struct ARFramingOverlayView: View {
             .onAppear {
                 viewModel.viewfinderSize = size
                 SpatialTrackingEngine.shared.prepare()
-                startAnimations()
             }
             // The overlay can be temporarily removed by SwiftUI or a sheet.
             // It does not own the tracking session's lifetime.
@@ -339,14 +334,6 @@ public struct ARFramingOverlayView: View {
         return CGPoint(x: max(0, min(1, p.x)), y: max(0, min(1, p.y)))
     }
 
-    private func startAnimations() {
-        withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-            radarPulse = 1.40; radarOpacity = 0.15
-        }
-        withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-            dashOffset = -20
-        }
-    }
 }
 
 // MARK: - Composition Grid
@@ -390,107 +377,53 @@ struct CompositionGridLines: View {
     }
 }
 
-// MARK: - Center Dot (Chấm Trắng Cố Định Ở Chính Giữa Màn Hình - Chuẩn Ảnh 1)
+// MARK: - Photographic alignment guide
 
-struct CurrentCenterCrosshair: View {
-    var body: some View {
-        Circle()
-            .fill(Color.white)
-            .frame(width: 9, height: 9)
-            .shadow(color: .black.opacity(0.7), radius: 1)
-            .allowsHitTesting(false)
-    }
+enum ViewfinderStyle {
+    static let aligned = Color(red: 1, green: 0.56, blue: 0.12)
 }
 
-// MARK: - Target Vòng Tròn Bé Với Tâm Dấu Cộng (+) - Chuẩn Ảnh 2
+struct CurrentCenterCrosshair: View {
+    var isAligned: Bool = false
 
-struct PlusCrosshairShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        // Thanh ngang dấu cộng
-        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-        // Thanh dọc dấu cộng
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        return path
+    var body: some View {
+        Circle()
+            .fill(isAligned ? ViewfinderStyle.aligned : .white)
+            .frame(width: 12, height: 12)
+            .shadow(color: .black.opacity(0.4), radius: 1)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 
 struct TargetCircleView: View {
     let isAligned: Bool
-    let radarPulse: CGFloat
-    let radarOpacity: Double
     let trackingQuality: TrackingQuality
 
-    private var ringGradient: LinearGradient {
-        if isAligned {
-            return LinearGradient(
-                colors: [Color(red: 0.20, green: 0.95, blue: 0.55), Color(red: 0.05, green: 0.80, blue: 0.40)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-        switch trackingQuality {
-        case .locked, .predicting, .reacquiring:
-            // Logo app gradient: Electric Cyan (#28B6F2) -> Iris Violet (#7863F2)
-            return AlignTheme.signatureGradient
-        case .lost:
-            return LinearGradient(
-                colors: [Color.red, Color.orange],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-    }
-
-    private var shadowGlowColor: Color {
-        if isAligned { return Color.green }
-        switch trackingQuality {
-        case .locked, .predicting, .reacquiring: return AlignTheme.electricCyan
-        case .lost: return Color.red
-        }
-    }
-
     var body: some View {
-        ZStack {
-            if !isAligned {
-                Circle()
-                    .stroke(ringGradient.opacity(radarOpacity * 0.6), lineWidth: 1.2)
-                    .frame(width: 28 * radarPulse, height: 28 * radarPulse)
+        Circle()
+            .strokeBorder(isAligned ? ViewfinderStyle.aligned : .white.opacity(0.9),
+                style: StrokeStyle(lineWidth: isAligned ? 2.2 : 1.7,
+                    dash: trackingQuality == .lost ? [3, 4] : []))
+            .background(Circle().fill(isAligned ? ViewfinderStyle.aligned.opacity(0.12) : .clear))
+            .frame(width: 34, height: 34)
+            .shadow(color: .black.opacity(0.35), radius: 1)
+            .opacity(trackingQuality == .lost ? 0.55 : 1)
+            .frame(width: 36, height: 36)
+            .allowsHitTesting(false)
+            .accessibilityLabel(isAligned ? "Đã căn đúng mục tiêu" : "Vòng mục tiêu")
+            // Status must not displace the centre of the projected ring.
+            .overlay(alignment: .top) {
+                if trackingQuality == .reacquiring || trackingQuality == .lost {
+                    Text("Đang xác nhận mục tiêu…")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.black.opacity(0.55), in: Capsule())
+                        .fixedSize()
+                        .offset(y: 42)
+                }
             }
-            Circle()
-                .stroke(ringGradient, lineWidth: isAligned ? 2.4 : 1.8)
-                .frame(width: 28, height: 28)
-                .shadow(color: Color.black.opacity(0.5), radius: 2)
-                .shadow(color: shadowGlowColor.opacity(isAligned ? 0.85 : 0.50), radius: isAligned ? 8 : 4)
-
-            PlusCrosshairShape()
-                .stroke(isAligned ? Color.green : Color.white, lineWidth: isAligned ? 2.0 : 1.5)
-                .frame(width: 9, height: 9)
-                .shadow(color: Color.black.opacity(0.5), radius: 1)
-
-            if isAligned {
-                Circle()
-                    .stroke(Color.green.opacity(0.4), lineWidth: 3.5)
-                    .frame(width: 36, height: 36)
-            }
-        }
-        .frame(width: 36, height: 36)
-        .allowsHitTesting(false)
-        // Status is outside layout. A label appearing must never shift the ring
-        // above its projected point by changing the centre of a VStack.
-        .overlay(alignment: .top) {
-            if trackingQuality == .reacquiring || trackingQuality == .lost {
-                Text("Đang khôi phục tín hiệu…")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.75)))
-                    .fixedSize()
-                    .offset(y: 42)
-            }
-        }
     }
 }
 
@@ -499,18 +432,18 @@ struct TargetCircleView: View {
 struct GuidanceRayLine: View {
     let from: CGPoint
     let to: CGPoint
-    let dashOffset: CGFloat
     let distance: CGFloat
 
     var body: some View {
-        Path { path in
-            path.move(to: from)
-            path.addLine(to: to)
+        if let segment = ViewfinderGuideGeometry.segment(from: from, to: to) {
+            Path { path in
+                path.move(to: segment.start)
+                path.addLine(to: segment.end)
+            }
+            .stroke(.white.opacity(0.55 * Double(min(1, max(0, distance / 0.1)))),
+                style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [3, 5]))
+            .allowsHitTesting(false)
         }
-        .stroke(
-            Color.yellow.opacity(0.65 * Double(min(1.0, distance / 0.1 + 0.4))),
-            style: StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [5, 5], dashPhase: dashOffset)
-        )
     }
 }
 
@@ -707,112 +640,84 @@ struct HorizonLevelerView: View {
 }
 
 // MARK: - AI Zoom Reveal Overlay
+
 struct ZoomRevealOverlay: View {
-    let rect: CGRect
-    let isVisible: Bool
-    let displayZoom: CGFloat
+    let geometry: ZoomRevealGeometry?
+    let actualZoom: CGFloat
+    let bufferAspect: CGFloat
+    let isRamping: Bool
+    let revealOpacity: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        GeometryReader { geo in
-            let pixelRect = CGRect(
-                x: rect.origin.x * geo.size.width,
-                y: rect.origin.y * geo.size.height,
-                width: rect.width * geo.size.width,
-                height: rect.height * geo.size.height
-            )
-
-            if isVisible {
+        GeometryReader { proxy in
+            if let geometry,
+               let normalized = geometry.normalizedRect(actualZoom: actualZoom),
+               let frame = ZoomRevealGeometry.screenRect(normalized, size: proxy.size, bufferAspect: bufferAspect) {
                 ZStack {
-                    // Show the actual centre crop the camera will zoom into.
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .overlay(Color.black.opacity(0.68))
-                        .mask(
-                            Path { path in
-                                path.addRect(CGRect(origin: .zero, size: geo.size))
-                                path.addRoundedRect(in: pixelRect, cornerSize: CGSize(width: 16, height: 16))
-                            }
-                            .fill(style: FillStyle(eoFill: true))
-                        )
-                        .ignoresSafeArea()
-
-                    // 2. Viền bóng mờ nhẹ chuyển tiếp mềm mại xung quanh viền cắt (Soft feathered edge)
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.black.opacity(0.18), lineWidth: 4)
-                        .blur(radius: 3)
-                        .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
-                        .position(x: pixelRect.midX, y: pixelRect.midY)
-
-                    // 3. Future zoom region.
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            AlignTheme.signatureGradient,
-                            lineWidth: 1.8
-                        )
-                        .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
-                        .position(x: pixelRect.midX, y: pixelRect.midY)
-                        .shadow(color: AlignTheme.electricCyan.opacity(0.35), radius: 8, x: 0, y: 0)
-
-                    // 4. Bốn góc ngắm bố cục điện ảnh (Cinematic Corner Ticks)
-                    CinematicCornerTicks(rect: pixelRect)
-
-                    // Huy hiệu AI ZOOM ở mép trên khung
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("AI ZOOM \(String(format: "%.1f", displayZoom))x")
-                            .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    // A small exposure veil keeps the live image legible. No blur of the camera feed.
+                    Path { path in
+                        path.addRect(CGRect(origin: .zero, size: proxy.size))
+                        path.addRoundedRect(in: frame, cornerSize: CGSize(width: 10, height: 10))
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3.5)
-                    .background(Capsule().fill(AlignTheme.signatureGradient))
-                    .shadow(color: Color.black.opacity(0.35), radius: 4, x: 0, y: 2)
-                    .position(x: pixelRect.midX, y: max(24, pixelRect.minY - 12))
+                    .fill(.black.opacity(0.18), style: FillStyle(eoFill: true))
+
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(LinearGradient(colors: [.cyan.opacity(0.45), .purple.opacity(0.40), .white.opacity(0.5)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 3)
+                        .blur(radius: 4)
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
+
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(.white.opacity(0.9), lineWidth: 1.2)
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
+
+                    ZoomApertureCorners()
+                        .stroke(.white, style: StrokeStyle(lineWidth: 2.3, lineCap: .round))
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .animation(.easeInOut(duration: 0.20), value: isVisible)
+                // Optical feedback already moves the live preview. A second animation would lag behind it.
+                .transaction { $0.animation = nil }
+                .overlay(alignment: .bottom) {
+                    HStack(spacing: 7) {
+                        Text(isRamping ? (geometry.isZoomingOut ? "Mở rộng góc chụp" : "AI zoom") : "Khung sẽ chụp")
+                        Text("\(actualZoom, specifier: "%.1f")× → \(geometry.targetZoom, specifier: "%.1f")×")
+                            .monospacedDigit()
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background(.black.opacity(0.55), in: Capsule())
+                    .padding(.bottom, 14)
+                }
+                .opacity(Double(min(1, max(0, revealOpacity))))
+                .transition(.opacity)
             }
         }
         .allowsHitTesting(false)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: geometry != nil)
+        .accessibilityLabel("Khung zoom của ảnh đã chọn")
     }
 }
 
-// 4 Góc ngắm bố cục điện ảnh (Corner Ticks)
-struct CinematicCornerTicks: View {
-    let rect: CGRect
-    private let tickLength: CGFloat = 16
-    private let tickWidth: CGFloat = 2.5
-
-    var body: some View {
-        Path { path in
-            let r: CGFloat = 8
-            // Góc trên trái
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY + tickLength))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
-            path.addArc(center: CGPoint(x: rect.minX + r, y: rect.minY + r), radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.minX + tickLength, y: rect.minY))
-
-            // Góc trên phải
-            path.move(to: CGPoint(x: rect.maxX - tickLength, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
-            path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.minY + r), radius: r, startAngle: .degrees(270), endAngle: .degrees(0), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + tickLength))
-
-            // Góc dưới trái
-            path.move(to: CGPoint(x: rect.minX, y: rect.maxY - tickLength))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - r))
-            path.addArc(center: CGPoint(x: rect.minX + r, y: rect.maxY - r), radius: r, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
-            path.addLine(to: CGPoint(x: rect.minX + tickLength, y: rect.maxY))
-
-            // Góc dưới phải
-            path.move(to: CGPoint(x: rect.maxX - tickLength, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.maxY))
-            path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.maxY - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - tickLength))
+struct ZoomApertureCorners: Shape {
+    func path(in rect: CGRect) -> Path {
+        let radius = min(10, min(rect.width, rect.height) * 0.16)
+        let length = min(24, min(rect.width, rect.height) * 0.32)
+        var path = Path()
+        for (x, y, sx, sy) in [(rect.minX, rect.minY, CGFloat(1), CGFloat(1)),
+                               (rect.maxX, rect.minY, CGFloat(-1), CGFloat(1)),
+                               (rect.minX, rect.maxY, CGFloat(1), CGFloat(-1)),
+                               (rect.maxX, rect.maxY, CGFloat(-1), CGFloat(-1))] {
+            path.move(to: CGPoint(x: x, y: y + sy * length))
+            path.addLine(to: CGPoint(x: x, y: y + sy * radius))
+            path.addQuadCurve(to: CGPoint(x: x + sx * radius, y: y), control: CGPoint(x: x, y: y))
+            path.addLine(to: CGPoint(x: x + sx * length, y: y))
         }
-        .stroke(Color.yellow, lineWidth: tickWidth)
-        .shadow(color: Color.yellow.opacity(0.6), radius: 4)
+        return path
     }
 }
 

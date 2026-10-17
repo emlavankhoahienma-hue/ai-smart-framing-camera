@@ -59,6 +59,15 @@ jobs:
             -o "$RUNNER_TEMP/composition-regressions"
           "$RUNNER_TEMP/composition-regressions"
 
+      - name: Run native viewfinder presentation regressions
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/TrackingGeometry.swift \
+            AISmartFramingCamera/Services/ViewfinderPresentation.swift \
+            tests/ViewfinderPresentationRegression.swift \
+            -o "$RUNNER_TEMP/viewfinder-regressions"
+          "$RUNNER_TEMP/viewfinder-regressions"
+
       - name: Verify target tracking boundary
         run: python scripts/verify_tracking_boundary.py
 

@@ -34,14 +34,14 @@ private struct ViewfinderHUDSnapshot: View {
                     LiveEntityBoxView(entity: entity,
                         layerRect: CGRect(x: width * 0.22, y: height * 0.18, width: width * 0.56, height: height * 0.64), onTap: {})
                     CurrentCenterCrosshair().position(x: width * 0.5, y: height * 0.5)
-                    TargetCircleView(isAligned: false, radarPulse: 1.1, radarOpacity: 0.3, trackingQuality: .locked)
+                    TargetCircleView(isAligned: false, trackingQuality: .locked)
                         .position(x: width * 0.67, y: height * 0.4)
                 }
                 .frame(width: width, height: height).clipShape(RoundedRectangle(cornerRadius: 12))
                 HStack(spacing: 42) {
-                    TargetCircleView(isAligned: false, radarPulse: 1, radarOpacity: 0.3, trackingQuality: .locked)
-                    TargetCircleView(isAligned: true, radarPulse: 1, radarOpacity: 0.3, trackingQuality: .locked)
-                    TargetCircleView(isAligned: false, radarPulse: 1, radarOpacity: 0.3, trackingQuality: .lost)
+                    TargetCircleView(isAligned: false, trackingQuality: .locked)
+                    TargetCircleView(isAligned: true, trackingQuality: .locked)
+                    TargetCircleView(isAligned: false, trackingQuality: .lost)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
