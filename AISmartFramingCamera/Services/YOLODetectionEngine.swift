@@ -2,386 +2,83 @@ import Foundation
 import CoreML
 import Vision
 import CoreGraphics
-import UIKit
 import CoreVideo
-import VideoToolbox
-import CoreImage
+import ImageIO
 
-/// Bộ chuẩn hóa và rescale CVPixelBuffer thời gian thực (0% CPU, dùng VideoToolbox / ANE / GPU)
-private final class PixelBufferScaler: @unchecked Sendable {
-    private var transferSession: VTPixelTransferSession?
-    private var bufferPool: CVPixelBufferPool?
-    private var poolWidth: Int = 0
-    private var poolHeight: Int = 0
-    private let lock = NSLock()
-    private lazy var ciContext = CIContext(options: [.useSoftwareRenderer: false])
-
-    init() {
-        var session: VTPixelTransferSession?
-        if VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &session) == noErr {
-            self.transferSession = session
-        }
-    }
-
-    deinit {
-        if let session = transferSession {
-            VTPixelTransferSessionInvalidate(session)
-        }
-    }
-
-    func scale(pixelBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) -> CVPixelBuffer? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard targetWidth > 0, targetHeight > 0 else { return nil }
-        let srcWidth = CVPixelBufferGetWidth(pixelBuffer)
-        let srcHeight = CVPixelBufferGetHeight(pixelBuffer)
-        if srcWidth == targetWidth && srcHeight == targetHeight {
-            return pixelBuffer
-        }
-
-        // Tái sử dụng CVPixelBufferPool để tránh cấp phát bộ nhớ liên tục trong vòng lặp 60fps
-        if bufferPool == nil || poolWidth != targetWidth || poolHeight != targetHeight {
-            poolWidth = targetWidth
-            poolHeight = targetHeight
-            bufferPool = nil
-
-            let poolAttributes: [CFString: Any] = [
-                kCVPixelBufferPoolMinimumBufferCountKey: 2
-            ]
-            let pixelBufferAttributes: [CFString: Any] = [
-                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey: targetWidth,
-                kCVPixelBufferHeightKey: targetHeight,
-                kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any]
-            ]
-            let status = CVPixelBufferPoolCreate(
-                kCFAllocatorDefault,
-                poolAttributes as CFDictionary,
-                pixelBufferAttributes as CFDictionary,
-                &bufferPool
-            )
-            guard status == kCVReturnSuccess, bufferPool != nil else { return nil }
-        }
-
-        guard let pool = bufferPool else { return nil }
-        var destBuffer: CVPixelBuffer?
-        guard CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &destBuffer) == kCVReturnSuccess,
-              let destination = destBuffer else { return nil }
-
-        // 1. Ưu tiên scaler phần cứng VideoToolbox (chuyển đổi định dạng và scale cực nhanh)
-        if let session = transferSession {
-            VTSessionSetProperty(session, key: kVTPixelTransferPropertyKey_ScalingMode, value: kVTScalingMode_Normal)
-            let transferStatus = VTPixelTransferSessionTransferImage(session, from: pixelBuffer, to: destination)
-            if transferStatus == noErr {
-                return destination
-            }
-        }
-
-        // 2. Dự phòng CoreImage GPU rendering
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let scaleX = CGFloat(targetWidth) / CGFloat(max(1, srcWidth))
-        let scaleY = CGFloat(targetHeight) / CGFloat(max(1, srcHeight))
-        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        ciContext.render(scaledImage, to: destination)
-        return destination
-    }
-}
-
-/// Nhận diện 80 lớp COCO, Khuôn mặt và Động vật/Thú cưng qua mô hình YOLOv12 Core ML.
-/// YOLO12s serves high-memory devices, YOLO12n serves older devices.
-/// Vision remains the fallback when loading or inference fails.
+/// Pretrained COCO detection. Vision remains the fallback when loading fails.
+/// The legacy detectObjects contract is retained for optical target recovery.
 public final class YOLODetectionEngine: @unchecked Sendable {
     public static let shared = YOLODetectionEngine()
-
     private let modelLock = NSLock()
     private var yoloCoreMLModel: VNCoreMLModel?
-    private var yoloNativeMLModel: MLModel?
-    private var isDedicatedYOLO26ANE: Bool = false
     private var loadedModelName: String?
-    private var inputWidth: Int = 640
-    private var inputHeight: Int = 640
-    private let pixelBufferScaler = PixelBufferScaler()
-    
-    public init() {
-        loadYOLOModel()
-    }
-    
-    /// Nạp mô hình theo thứ tự ưu tiên YOLO tối ưu, ổn định cao và chống nhận diện giả.
+
+    public init() { loadYOLOModel() }
+
     public func loadYOLOModel() {
         let highMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
-        let prioritizedNames = (highMemory
-            ? ["yolo12s", "yolo12n", "yolo11s", "yolo11n"]
-            : ["yolo12n", "yolo12s", "yolo11n", "yolo11s"])
-        
-        for name in prioritizedNames {
-            guard let modelResult = makeModel(named: name) else { continue }
-            modelLock.withLock {
-                yoloNativeMLModel = modelResult.mlModel
-                yoloCoreMLModel = modelResult.vnModel
-                isDedicatedYOLO26ANE = modelResult.isDedicatedANE
-                loadedModelName = name
-                inputWidth = modelResult.inputWidth
-                inputHeight = modelResult.inputHeight
-            }
-            let modelTypeDesc = modelResult.isDedicatedANE ? "YOLO ANE NMS-Free" : "YOLO CoreML Vision"
-            CameraLogger.success("Đã nạp thành công [\(name)] (\(modelTypeDesc)) với tối ưu ANE/GPU (\(modelResult.inputWidth)x\(modelResult.inputHeight))", category: .ai)
-            return
-        }
-        
-        // Quét tự động bundle nếu người dùng nhúng model YOLO COCO chuẩn có tên khác
-        if let bundleUrls = Bundle.main.urls(forResourcesWithExtension: "mlmodelc", subdirectory: nil) {
-            for url in bundleUrls {
-                let baseName = url.deletingPathExtension().lastPathComponent
-                let lower = baseName.lowercased()
-                if lower.contains("yolo") && !lower.contains("yolov26_") && !lower.contains("yolo26") {
-                    if let modelResult = makeModel(named: baseName) {
-                        modelLock.withLock {
-                            yoloNativeMLModel = modelResult.mlModel
-                            yoloCoreMLModel = modelResult.vnModel
-                            isDedicatedYOLO26ANE = modelResult.isDedicatedANE
-                            loadedModelName = baseName
-                            inputWidth = modelResult.inputWidth
-                            inputHeight = modelResult.inputHeight
-                        }
-                        CameraLogger.success("Đã phát hiện và nạp tự động YOLO [\(baseName)]", category: .ai)
-                        return
-                    }
-                }
+        let names = highMemory ? ["yolo12s", "yolo12n", "yolo11s", "yolo11n"] :
+                                 ["yolo12n", "yolo12s", "yolo11n", "yolo11s"]
+        for name in names {
+            if let model = makeModel(named: name, computeUnits: .all) {
+                modelLock.withLock { yoloCoreMLModel = model; loadedModelName = name }
+                return
             }
         }
-        
-        CameraLogger.info("Hệ thống sử dụng Apple Vision NPU native độc lập cho độ chính xác cao và triệt tiêu nhận diện giả", category: .ai)
+        CameraLogger.info("Không có YOLO, tiếp tục bằng Apple Vision", category: .ai)
     }
 
-    private func makeModel(named name: String) -> (mlModel: MLModel, vnModel: VNCoreMLModel?, isDedicatedANE: Bool, inputWidth: Int, inputHeight: Int)? {
-        let lower = name.lowercased()
-        // Bỏ qua các model tổng hợp chưa qua huấn luyện thực tế (synthetic toy weights)
-        if lower.contains("yolov26_ane") || lower.contains("yolov26_416") || lower.contains("yolov26_640") || lower.contains("yolo26") {
-            CameraLogger.info("Bỏ qua mô hình tổng hợp [\(name)] để ưu tiên mô hình COCO và Apple Vision chính xác cao", category: .ai)
-            return nil
-        }
-
-        let compiled = Bundle.main.url(forResource: name, withExtension: "mlmodelc")
-        let package = Bundle.main.url(forResource: name, withExtension: "mlpackage")
-        guard let url = compiled ?? package else { return nil }
+    private func makeModel(named name: String, computeUnits: MLComputeUnits) -> VNCoreMLModel? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") else { return nil }
         do {
-            let modelURL = compiled == nil ? try MLModel.compileModel(at: url) : url
             let config = MLModelConfiguration()
-            config.computeUnits = .all
+            config.computeUnits = computeUnits
             config.allowLowPrecisionAccumulationOnGPU = true
-            let mlModel = try MLModel(contentsOf: modelURL, configuration: config)
-            
-            var targetW = 640
-            var targetH = 640
-            if let imageConstraint = mlModel.modelDescription.inputDescriptionsByName["image"]?.imageConstraint {
-                targetW = imageConstraint.pixelsWide
-                targetH = imageConstraint.pixelsHigh
-            }
-            
-            // Các model chuẩn COCO (YOLO12s, YOLO12n) chạy qua Apple Vision CoreML để tận dụng NMS tích hợp
-            let vnModel = try? VNCoreMLModel(for: mlModel)
-            return (mlModel, vnModel, false, targetW, targetH)
+            return try VNCoreMLModel(for: MLModel(contentsOf: url, configuration: config))
         } catch {
-            CameraLogger.warning("Không thể nạp YOLO [\(name)]: \(error.localizedDescription)", category: .ai)
+            CameraLogger.warning("Không nạp được \(name): \(error)", category: .ai)
             return nil
         }
     }
-    
-    public var hasYOLOModel: Bool {
-        modelLock.withLock { yoloNativeMLModel != nil || yoloCoreMLModel != nil }
-    }
-    
-    public var activeModelName: String {
-        modelLock.withLock { loadedModelName ?? "YOLOv12" }
-    }
-    
-    /// Chạy nhận diện người, khuôn mặt, động vật và đồ vật trên CVPixelBuffer.
-    func detectObjects(
-        pixelBuffer: CVPixelBuffer,
-        orientation: CGImagePropertyOrientation = .up,
-        cancellation: CompositionAnalysisCancellation
-    ) -> [NeuralSubjectCandidate] {
-        guard !cancellation.isCancelled else { return [] }
-        guard CVPixelBufferGetWidth(pixelBuffer) > 32, CVPixelBufferGetHeight(pixelBuffer) > 32 else { return [] }
-        
-        let (nativeModel, vnModel, isDedicated) = modelLock.withLock {
-            (yoloNativeMLModel, yoloCoreMLModel, isDedicatedYOLO26ANE)
-        }
-        
-        if isDedicated, let nativeModel {
-            return detectWithDedicatedANE(model: nativeModel, pixelBuffer: pixelBuffer, cancellation: cancellation)
-        } else if let vnModel {
-            return detectWithVisionCoreML(vnModel: vnModel, pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
-        }
-        
-        return []
-    }
-    
-    // MARK: - Direct Apple Neural Engine Inference (NMS-Free, 0% CPU Overhead)
-    private func detectWithDedicatedANE(
-        model: MLModel,
-        pixelBuffer: CVPixelBuffer,
-        cancellation: CompositionAnalysisCancellation
-    ) -> [NeuralSubjectCandidate] {
-        guard !cancellation.isCancelled else { return [] }
 
-        let (targetW, targetH) = modelLock.withLock { (inputWidth, inputHeight) }
-        guard let scaledBuffer = pixelBufferScaler.scale(pixelBuffer: pixelBuffer, targetWidth: targetW, targetHeight: targetH) else {
-            return []
-        }
+    public var hasYOLOModel: Bool { modelLock.withLock { yoloCoreMLModel != nil } }
+    public var activeModelName: String { modelLock.withLock { loadedModelName ?? "Apple Vision" } }
+
+    func detectObjects(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation = .up,
+                       cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
+        guard !cancellation.isCancelled, CVPixelBufferGetWidth(pixelBuffer) > 32,
+              CVPixelBufferGetHeight(pixelBuffer) > 32,
+              let model = modelLock.withLock({ yoloCoreMLModel }) else { return [] }
+        return detectWithVisionCoreML(vnModel: model, pixelBuffer: pixelBuffer,
+                                     orientation: orientation, cancellation: cancellation)
+    }
+
+    /// A separate short-lived quality model cannot replace the model used by
+    /// target reacquisition. Slower still-image inference is intentional on XS.
+    func detectPhotographicObjects(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+                                   cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled else { return [] }
-        
-        do {
-            let inputProvider = try MLDictionaryFeatureProvider(dictionary: [
-                "image": MLFeatureValue(pixelBuffer: scaledBuffer)
-            ])
-            let output = try model.prediction(from: inputProvider)
+        let process = ProcessInfo.processInfo
+        if process.thermalState == .serious || process.thermalState == .critical || process.isLowPowerModeEnabled {
+            return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+        }
+        return autoreleasepool {
             guard !cancellation.isCancelled else { return [] }
-            
-            guard let coordsArray = output.featureValue(for: "coordinates")?.multiArrayValue,
-                  let confArray = output.featureValue(for: "confidence")?.multiArrayValue else {
-                return []
+            guard let model = makeModel(named: "yolo12s", computeUnits: .cpuAndNeuralEngine) ??
+                              makeModel(named: "yolo12s", computeUnits: .all) else {
+                return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
             }
-            
-            return parseDedicatedANETensors(coords: coordsArray, conf: confArray, cancellation: cancellation)
-        } catch {
-            if cancellation.isCancelled { return [] }
-            CameraLogger.error("Lỗi suy luận YOLOv26 ANE Dedicated Model", error: error, category: .ai)
-            return []
+            return detectWithVisionCoreML(vnModel: model, pixelBuffer: pixelBuffer, orientation: orientation,
+                                          cancellation: cancellation, photographic: true)
         }
     }
-    
-    private func parseDedicatedANETensors(
-        coords: MLMultiArray,
-        conf: MLMultiArray,
-        cancellation: CompositionAnalysisCancellation
-    ) -> [NeuralSubjectCandidate] {
-        guard coords.shape.count >= 3, conf.shape.count >= 3 else { return [] }
-        let numBoxes = coords.shape[1].intValue
-        let numClasses = conf.shape[2].intValue
-        guard numBoxes > 0, numClasses > 0 else { return [] }
-        
-        var candidates: [NeuralSubjectCandidate] = []
-        let threshold: Float = 0.30
-        
-        if coords.dataType == .float16 && conf.dataType == .float16 {
-            let coordsPtr = coords.dataPointer.bindMemory(to: Float16.self, capacity: numBoxes * 4)
-            let confPtr = conf.dataPointer.bindMemory(to: Float16.self, capacity: numBoxes * numClasses)
-            
-            for i in 0..<numBoxes {
-                if cancellation.isCancelled { break }
-                let confOffset = i * numClasses
-                var maxScore: Float = 0.0
-                var maxClassId: Int = 0
-                
-                for c in 0..<numClasses {
-                    let score = Float(confPtr[confOffset + c])
-                    if score > maxScore {
-                        maxScore = score
-                        maxClassId = c
-                    }
-                }
-                
-                guard maxScore >= threshold else { continue }
-                
-                let coordOffset = i * 4
-                let cx = CGFloat(Float(coordsPtr[coordOffset + 0]))
-                let cy = CGFloat(Float(coordsPtr[coordOffset + 1]))
-                let w = CGFloat(Float(coordsPtr[coordOffset + 2]))
-                let h = CGFloat(Float(coordsPtr[coordOffset + 3]))
-                
-                let x = max(0.0, cx - w / 2.0)
-                let y = max(0.0, cy - h / 2.0)
-                let rawRect = CGRect(x: x, y: y, width: w, height: h)
-                guard let uiRect = clippedValidBox(rawRect) else { continue }
-                
-                let category = mapDedicatedClassIdToCategory(maxClassId)
-                let label = localizeDedicatedClassId(maxClassId)
-                let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category)
-                
-                candidates.append(NeuralSubjectCandidate(
-                    boundingBox: uiRect,
-                    category: category,
-                    confidence: maxScore,
-                    label: label,
-                    prominenceScore: prominence
-                ))
-            }
-        } else {
-            let coordsPtr = coords.dataPointer.bindMemory(to: Float.self, capacity: numBoxes * 4)
-            let confPtr = conf.dataPointer.bindMemory(to: Float.self, capacity: numBoxes * numClasses)
-            
-            for i in 0..<numBoxes {
-                if cancellation.isCancelled { break }
-                let confOffset = i * numClasses
-                var maxScore: Float = 0.0
-                var maxClassId: Int = 0
-                
-                for c in 0..<numClasses {
-                    let score = confPtr[confOffset + c]
-                    if score > maxScore {
-                        maxScore = score
-                        maxClassId = c
-                    }
-                }
-                
-                guard maxScore >= threshold else { continue }
-                
-                let coordOffset = i * 4
-                let cx = CGFloat(coordsPtr[coordOffset + 0])
-                let cy = CGFloat(coordsPtr[coordOffset + 1])
-                let w = CGFloat(coordsPtr[coordOffset + 2])
-                let h = CGFloat(coordsPtr[coordOffset + 3])
-                
-                let x = max(0.0, cx - w / 2.0)
-                let y = max(0.0, cy - h / 2.0)
-                let rawRect = CGRect(x: x, y: y, width: w, height: h)
-                guard let uiRect = clippedValidBox(rawRect) else { continue }
-                
-                let category = mapDedicatedClassIdToCategory(maxClassId)
-                let label = localizeDedicatedClassId(maxClassId)
-                let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category)
-                
-                candidates.append(NeuralSubjectCandidate(
-                    boundingBox: uiRect,
-                    category: category,
-                    confidence: maxScore,
-                    label: label,
-                    prominenceScore: prominence
-                ))
-            }
-        }
-        
-        return candidates.sorted { $0.prominenceScore > $1.prominenceScore }
-    }
-    
-    private func mapDedicatedClassIdToCategory(_ classId: Int) -> NeuralSubjectCategory {
-        switch classId {
-        case 0: return .face
-        case 1: return .human
-        case 2: return .animal
-        case 3: return .animal
-        default: return .foregroundObject
-        }
-    }
-    
-    private func localizeDedicatedClassId(_ classId: Int) -> String {
-        switch classId {
-        case 0: return "Khuôn mặt"
-        case 1: return "Người"
-        case 2: return "Chó"
-        case 3: return "Mèo"
-        default: return "Đối tượng"
-        }
-    }
-    
-    // MARK: - Vision Framework CoreML Inference (YOLO12 / COCO Models)
+
     private func detectWithVisionCoreML(
         vnModel: VNCoreMLModel,
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation,
-        cancellation: CompositionAnalysisCancellation
+        cancellation: CompositionAnalysisCancellation,
+        photographic: Bool = false
     ) -> [NeuralSubjectCandidate] {
         var detectedCandidates: [NeuralSubjectCandidate] = []
         let request = VNCoreMLRequest(model: vnModel) { [weak self] req, error in
@@ -423,7 +120,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             }
         }
         
-        request.imageCropAndScaleOption = .scaleFill
+        request.imageCropAndScaleOption = photographic ? .scaleFit : .scaleFill
         
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
@@ -433,33 +130,28 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             CameraLogger.error("Lỗi thực thi YOLO Request", error: error, category: .ai)
             detectedCandidates.removeAll()
             
-            // Xử lý tự phục hồi khi model bị quá tải bộ nhớ
-            let current = modelLock.withLock { loadedModelName }
-            if current == "yolo12s" || current == "yolo11s" {
-                modelLock.withLock {
-                    yoloCoreMLModel = nil
-                    yoloNativeMLModel = nil
-                    loadedModelName = nil
-                }
-                DispatchQueue.global(qos: .utility).async { [weak self] in
-                    guard let self else { return }
-                    if let fallback = self.makeModel(named: "yolo12n") ?? self.makeModel(named: "yolo11n") {
-                        self.modelLock.withLock {
-                            self.yoloNativeMLModel = fallback.mlModel
-                            self.yoloCoreMLModel = fallback.vnModel
-                            self.isDedicatedYOLO26ANE = fallback.isDedicatedANE
-                            self.loadedModelName = "yolo12n"
-                        }
-                        CameraLogger.info("Đã tự động chuyển về YOLOv12 Nano để tiết kiệm tài nguyên", category: .ai)
-                    }
-                }
-            }
+            if !photographic { recoverLightweightModel() }
         }
         
         return detectedCandidates.sorted { $0.prominenceScore > $1.prominenceScore }
     }
     
-    // MARK: - Mapping YOLOv26 & COCO Classes sang NeuralSubjectCategory
+    private func recoverLightweightModel() {
+        let current = modelLock.withLock { loadedModelName }
+        guard current == "yolo12s" || current == "yolo11s" else { return }
+        modelLock.withLock { yoloCoreMLModel = nil; loadedModelName = nil }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            for name in ["yolo12n", "yolo11n"] {
+                if let model = self.makeModel(named: name, computeUnits: .all) {
+                    self.modelLock.withLock { self.yoloCoreMLModel = model; self.loadedModelName = name }
+                    return
+                }
+            }
+        }
+    }
+
+    // MARK: - COCO labels
     public func mapYOLOLabelToCategory(_ label: String) -> NeuralSubjectCategory {
         let l = label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         

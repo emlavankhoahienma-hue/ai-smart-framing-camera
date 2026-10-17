@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000063 /* PortraitFramingEvidence.swift */; };
+		C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000062 /* CharmPhotographicModel.swift */; };
 		B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* AISmartFramingCameraApp.swift */; };
 		B20000000000000000000002 /* FramingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* FramingModels.swift */; };
 		B20000000000000000000003 /* CameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* CameraService.swift */; };
@@ -72,9 +74,13 @@
 		C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005B /* AnalogDVSimulations.swift */; };
 		C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005C /* CinemaAndStudioSimulations.swift */; };
 		C2000000000000000000005D /* LiveEntityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005D /* LiveEntityTracker.swift */; };
+		C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000060 /* PhotographicCompositionModel.swift */; };
+		C20000000000000000000061 /* CompositionAestheticSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000061 /* CompositionAestheticSearch.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C10000000000000000000063 /* PortraitFramingEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortraitFramingEvidence.swift; sourceTree = "<group>"; };
+		C10000000000000000000062 /* CharmPhotographicModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharmPhotographicModel.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* AISmartFramingCameraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISmartFramingCameraApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* FramingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramingModels.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* CameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraService.swift; sourceTree = "<group>"; };
@@ -142,6 +148,8 @@
 		C1000000000000000000005B /* AnalogDVSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalogDVSimulations.swift; sourceTree = "<group>"; };
 		C1000000000000000000005C /* CinemaAndStudioSimulations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CinemaAndStudioSimulations.swift; sourceTree = "<group>"; };
 		C1000000000000000000005D /* LiveEntityTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveEntityTracker.swift; sourceTree = "<group>"; };
+		C10000000000000000000060 /* PhotographicCompositionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicCompositionModel.swift; sourceTree = "<group>"; };
+		C10000000000000000000061 /* CompositionAestheticSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionAestheticSearch.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -223,6 +231,10 @@
 				B100000000000000000000028 /* ProVideoManualControlsService.swift */,
 				B100000000000000000000031 /* RobustTargetEmbedder.bin */,
 				C1000000000000000000005D /* LiveEntityTracker.swift */,
+				C10000000000000000000061 /* CompositionAestheticSearch.swift */,
+				C10000000000000000000062 /* CharmPhotographicModel.swift */,
+				C10000000000000000000063 /* PortraitFramingEvidence.swift */,
+				C10000000000000000000060 /* PhotographicCompositionModel.swift */,
 				C30000000000000000000001 /* FilmSimulations */,
 			);
 			path = Services;
@@ -433,6 +445,10 @@
 				C2000000000000000000005B /* AnalogDVSimulations.swift in Sources */,
 				C2000000000000000000005C /* CinemaAndStudioSimulations.swift in Sources */,
 				C2000000000000000000005D /* LiveEntityTracker.swift in Sources */,
+				C20000000000000000000061 /* CompositionAestheticSearch.swift in Sources */,
+				C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */,
+				C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */,
+				C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

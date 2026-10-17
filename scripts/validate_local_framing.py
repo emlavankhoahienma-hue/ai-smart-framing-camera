@@ -41,6 +41,8 @@ class LocalFramingTests(unittest.TestCase):
         self.assertAlmostEqual(final_subject, desired, places=9)
         self.assertIn("simd_quatd(from: future.deviceRay(at: destination)", PLANNER)
         self.assertIn("trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay", VM)
+        self.assertIn("subjectPoint: hero.trackingPoint ?? proposal.subjectPoint", NEURAL)
+        self.assertIn("group.trackingPoint = hero.eyePosition ?? hero.center", NEURAL)
 
     def test_pan_right_moves_guide_left(self):
         original = aim_x(0.66, 0.38, 0.75, 1.0)
@@ -74,7 +76,9 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("guard let model, !prompts.isEmpty, !cancellation.isCancelled else { return [:] }", NEURAL)
         self.assertIn("physicalMemory >= 4_000_000_000", NEURAL)
         self.assertIn("VNGenerateAttentionBasedSaliencyImageRequest", NEURAL)
-        self.assertIn("YOLODetectionEngine.shared.detectObjects", NEURAL)
+        self.assertIn("YOLODetectionEngine.shared.detectPhotographicObjects", NEURAL)
+        quality = YOLO.split("func detectPhotographicObjects", 1)[1].split("private func detectWithVisionCoreML", 1)[0]
+        self.assertIn("return detectObjects", quality)
 
     def test_ambiguous_result_requires_selection(self):
         self.assertIn("if result.count == 12 { break }", NEURAL)
@@ -82,6 +86,7 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("localSuggestionRects = localEvidenceCandidates.map", VM)
         self.assertIn("reprojectSuggestion($0.boundingBox, from: source", VM)
         self.assertIn("allowsAutoCaptureForCurrentTarget = false", VM)
+        self.assertIn("postZoomFaceCount = output.primaryFaceCount", VM)
         self.assertNotIn("consolidateLocalAnalysisAndLockTarget", VM)
 
     def test_cancel_capture_during_zoom_ramp(self):

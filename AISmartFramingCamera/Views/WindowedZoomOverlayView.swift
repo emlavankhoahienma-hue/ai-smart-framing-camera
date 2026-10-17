@@ -80,7 +80,7 @@ public struct WindowedZoomOverlayView: View {
 
                     Text(viewModel.displayZoom >= 1.95 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE OPTICAL" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
-                        .foregroundColor(viewModel.isAIWindowedFocalRecommended || isDraggingWindow ? AlignTheme.electricCyan : .white)
+                        .foregroundColor(isDraggingWindow ? AlignTheme.electricCyan : .white)
                         .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
                         .offset(y: -22)
                 }
@@ -137,7 +137,6 @@ public struct WindowedZoomOverlayView: View {
                     let newFocal = gestureInitialFocalLength / safeScale
                     let clamped = max(24.0, min(135.0, newFocal))
                     viewModel.windowedZoomFocalLength = clamped <= 24.5 ? 24.0 : clamped
-                    viewModel.isAIWindowedFocalRecommended = false
                 }
                 .onEnded { _ in
                     isPinching = false
@@ -159,7 +158,6 @@ public struct WindowedZoomOverlayView: View {
         generator.selectionChanged()
         withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
             viewModel.windowedZoomFocalLength = preset.focalLength
-            viewModel.isAIWindowedFocalRecommended = false
         }
     }
 

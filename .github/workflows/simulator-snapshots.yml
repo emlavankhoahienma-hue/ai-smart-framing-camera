@@ -6,7 +6,7 @@ on:
       screen:
         description: 'Screen to inspect'
         type: choice
-        options: [camera, composition]
+        options: [camera, composition, viewfinder]
         default: camera
   push:
     branches: [main]
@@ -40,6 +40,10 @@ jobs:
       - name: Install composition preview snapshot host
         if: inputs.screen == 'composition'
         run: cp tests/CompositionPreviewSnapshotApp.swift AISmartFramingCamera/App/AISmartFramingCameraApp.swift
+
+      - name: Install viewfinder snapshot host
+        if: inputs.screen == 'viewfinder'
+        run: cp tests/ViewfinderHUDSnapshotApp.swift AISmartFramingCamera/App/AISmartFramingCameraApp.swift
 
       - name: Build for iOS Simulator
         run: |

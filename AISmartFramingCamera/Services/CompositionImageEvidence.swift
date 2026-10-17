@@ -38,7 +38,25 @@ final class CompositionAnalysisCancellation: @unchecked Sendable {
 final class CompositionImageRenderer {
     private let context = CIContext(options: [.cacheIntermediates: false])
 
-    func raster(image: CIImage, saliency: CVPixelBuffer?) -> CompositionRaster? {
+    /// Apple's pretrained aesthetic assessment complements geometry on iOS 18+.
+    /// A model failure or unsupported OS simply contributes no ranking evidence.
+    func aestheticScore(image: CGImage, cancellation: CompositionAnalysisCancellation) -> Double? {
+        guard !cancellation.isCancelled,
+              ProcessInfo.processInfo.thermalState != .serious,
+              ProcessInfo.processInfo.thermalState != .critical else { return nil }
+        if #available(iOS 18.0, macOS 15.0, *) {
+            let request = VNCalculateImageAestheticsScoresRequest()
+            let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
+            guard (try? cancellation.perform(request, with: handler)) != nil,
+                  let result = request.results?.first, result.overallScore.isFinite else { return nil }
+            // Utility classification is not a reason to reject a deliberate
+            // product/food photograph. Only compare actual aesthetic scores.
+            return min(1, max(-1, Double(result.overallScore)))
+        }
+        return nil
+    }
+
+    func raster(image: CIImage, saliency: CVPixelBuffer?, objectness: CVPixelBuffer? = nil) -> CompositionRaster? {
         let side = 32
         guard let small = render(image, size: CGSize(width: side, height: side)) else { return nil }
         var bytes = [UInt8](repeating: 0, count: side * side * 4)
@@ -68,12 +86,16 @@ final class CompositionImageRenderer {
             }
         }
         let measured = saliency.flatMap { attentionMap($0, side: side) }
+        let foreground = objectness.flatMap { attentionMap($0, side: side) }
         let mean = luma.reduce(0, +) / Double(luma.count)
-        let attention = measured ?? luma.enumerated().map { index, value in
-            min(1, 0.7 * edges[index] + 0.3 * abs(value - mean))
+        let attention = luma.enumerated().map { index, value in
+            if let measured, let foreground { return measured[index] * 0.7 + foreground[index] * 0.3 }
+            if let measured { return measured[index] }
+            if let foreground { return foreground[index] }
+            return min(1, 0.7 * edges[index] + 0.3 * abs(value - mean))
         }
         return CompositionRaster(side: side, luminance: luma, attention: attention,
-                                 edges: edges, hasAttention: measured != nil)
+                                 edges: edges, hasAttention: measured != nil || foreground != nil)
     }
 
     func preview(image: CIImage, corners: [CGPoint], aspect: Double) -> CGImage? {
@@ -90,7 +112,7 @@ final class CompositionImageRenderer {
         correction.topLeft = point(corners[0]); correction.topRight = point(corners[1])
         correction.bottomRight = point(corners[2]); correction.bottomLeft = point(corners[3])
         guard let output = correction.outputImage else { return nil }
-        let height = 288.0
+        let height = min(288.0, 448 / max(1, aspect))
         return render(output, size: CGSize(width: max(1, (height * aspect).rounded()), height: height))
     }
 

@@ -38,17 +38,14 @@ public struct ARFramingOverlayView: View {
                 }
 
                 // 2. Detected Faces & Multi-Object Preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm và ở chế độ Ảnh)
-                if viewModel.showDetectionBoxes && !viewModel.captureMode.isVideo {
-                    let unpinnedEntities = viewModel.liveDetectedEntities.filter { entity in
-                        guard let target = viewModel.currentTargetPoint else { return true }
-                        return !entity.rect.insetBy(dx: -0.04, dy: -0.04).contains(target)
-                    }
-                    ForEach(unpinnedEntities) { entity in
+                if viewModel.showDetectionBoxes && !viewModel.captureMode.isVideo && viewModel.currentTargetPoint == nil {
+                    ForEach(viewModel.heroDetectedEntities) { entity in
                         let layerRect = viewModel.convertMetadataRectToLayerRect(entity.rect, in: size)
                         if layerRect.width >= 12, layerRect.height >= 12 {
                             LiveEntityBoxView(entity: entity, layerRect: layerRect) {
+                                let member = viewModel.liveDetectedEntities.first { $0.id == entity.id } ?? entity
                                 viewModel.pinTargetAndStartMotion(
-                                    at: CGPoint(x: entity.rect.midX, y: entity.rect.midY),
+                                    at: CGPoint(x: member.rect.midX, y: member.rect.midY),
                                     subjectRect: entity.rect
                                 )
                             }
@@ -59,14 +56,16 @@ public struct ARFramingOverlayView: View {
                 if case .analyzing = viewModel.aiSessionState {
                     ForEach(0..<viewModel.localSuggestionRects.count, id: \.self) { index in
                         let sourceRect = viewModel.localSuggestionRects[index]
-                        if !sourceRect.isEmpty, sourceRect.maxX > 0, sourceRect.maxY > 0,
+                        if !viewModel.localSuggestionRects.prefix(index).contains(sourceRect),
+                           !sourceRect.isEmpty, sourceRect.maxX > 0, sourceRect.maxY > 0,
                            sourceRect.minX < 1, sourceRect.minY < 1 {
                             let rect = viewModel.convertMetadataRectToLayerRect(sourceRect, in: size)
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.yellow.opacity(0.78), style: StrokeStyle(lineWidth: 1.2, dash: [7, 5]))
+                            CornerBracketsShape(bracketLength: 16)
+                                .stroke(Color.white.opacity(0.85), style: StrokeStyle(lineWidth: 1, lineCap: .round))
                                 .frame(width: rect.width, height: rect.height)
                                 .position(x: rect.midX, y: rect.midY)
                                 .allowsHitTesting(false)
+                                .animation(.interpolatingSpring(stiffness: 160, damping: 27), value: rect)
                         }
                     }
                 }
@@ -582,52 +581,32 @@ struct LiveEntityBoxView: View {
     let onTap: () -> Void
 
     var body: some View {
-        let color: Color = {
-            switch entity.category {
-            case .face, .human:
-                return Color(red: 0.20, green: 0.85, blue: 1.0)
-            case .animal:
-                return Color(red: 0.25, green: 0.92, blue: 0.55)
-            case .foregroundObject, .general:
-                return Color(red: 1.0, green: 0.82, blue: 0.25)
-            }
-        }()
+        let color = Color(red: 0.94, green: 0.88, blue: 0.69)
 
         CornerBracketsShape(bracketLength: min(16, min(layerRect.width, layerRect.height) * 0.35))
-            .stroke(color, lineWidth: 1.5)
+            .stroke(color, style: StrokeStyle(lineWidth: 1.1, lineCap: .round, lineJoin: .round))
             .frame(width: max(24, layerRect.width), height: max(24, layerRect.height))
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(color.opacity(0.04))
+                    .fill(color.opacity(0.015))
             )
+            .shadow(color: .black.opacity(0.6), radius: 1, y: 1)
+            .overlay(alignment: .topLeading) {
+                Text(entity.label.uppercased())
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .tracking(1.3)
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 3))
+                    .offset(y: -22)
+            }
             .position(x: layerRect.midX, y: layerRect.midY)
             .contentShape(Rectangle())
             .onTapGesture {
                 onTap()
             }
-            .animation(.easeOut(duration: 0.08), value: layerRect)
-    }
-}
-
-// MARK: - Legacy Boxes
-
-struct FaceDetectionBox: View {
-    let rect: CGRect
-    var body: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .stroke(Color.cyan.opacity(0.7), lineWidth: 1.2)
-            .frame(width: max(20, rect.width), height: max(20, rect.height))
-            .position(x: rect.midX, y: rect.midY)
-    }
-}
-
-struct SubjectHighlightBox: View {
-    let rect: CGRect
-    var body: some View {
-        RoundedRectangle(cornerRadius: 6)
-            .stroke(Color.yellow.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-            .frame(width: max(20, rect.width), height: max(20, rect.height))
-            .position(x: rect.midX, y: rect.midY)
+            .animation(.interpolatingSpring(stiffness: 160, damping: 27), value: layerRect)
+            .accessibilityLabel("Chủ thể chính: \(entity.label)")
     }
 }
 
@@ -1026,8 +1005,6 @@ struct DirectorHUDCard: View {
             // Director Tip
             if !guidance.directorTip.isEmpty {
                 HStack(alignment: .top, spacing: 5) {
-                    Text("\u{1f4a1}")
-                        .font(.system(size: 10))
                     Text(guidance.directorTip)
                         .font(.system(size: 10.5, weight: .regular, design: .rounded))
                         .foregroundColor(.yellow.opacity(0.95))

@@ -190,8 +190,8 @@ public enum TrackingSensitivityPreset: String, CaseIterable, Identifiable {
 // MARK: - AI Framing Engine Source Indicator
 public enum AIEngineSource: Equatable {
     case geminiCloud(model: String)
-    case localTrained114MB(category: String)
     case semanticLocal(label: String)
+    case compositionLocal(label: String)
     case yoloNeural(label: String)
     case appleNeuralEngine(scene: String)
 
@@ -202,15 +202,15 @@ public enum AIEngineSource: Equatable {
                 .replacingOccurrences(of: "openai/", with: "")
                 .replacingOccurrences(of: "anthropic/", with: "")
                 .replacingOccurrences(of: "meta-llama/", with: "")
-            return "\u{2728} OpenRouter: \(clean)"
-        case .localTrained114MB(let cat):
-            return "\u{1f9e0} AI Local 114MB (\(cat))"
+            return "OpenRouter: \(clean)"
+        case .compositionLocal(let label):
+            return "Charm 2025 + SAMP-Net (\(label))"
         case .semanticLocal(let label):
-            return "\u{1f9e0} SigLIP + Vision/YOLO (\(label))"
+            return "SigLIP + Vision/YOLO (\(label))"
         case .yoloNeural(let label):
-            return "\u{26a1} YOLOv26 Neural (\(label))"
+            return "YOLO12 Neural (\(label))"
         case .appleNeuralEngine(let scene):
-            return "\u{26a1} Apple Neural Engine (\(scene))"
+            return "Apple Neural Engine (\(scene))"
         }
     }
 
@@ -223,12 +223,12 @@ public enum AIEngineSource: Equatable {
                 .replacingOccurrences(of: "meta-llama/", with: "")
                 .uppercased()
             return "OPENROUTER (\(clean))"
-        case .localTrained114MB:
-            return "AI 114MB"
+        case .compositionLocal:
+            return "Charm 2025"
         case .semanticLocal:
-            return "AI 114MB"
+            return "SigLIP + Vision"
         case .yoloNeural(let label):
-            return "YOLOv26 (\(label.uppercased()))"
+            return "YOLO12 (\(label.uppercased()))"
         case .appleNeuralEngine:
             return "NPU"
         }
@@ -237,8 +237,7 @@ public enum AIEngineSource: Equatable {
     public var iconName: String {
         switch self {
         case .geminiCloud: return "sparkles"
-        case .localTrained114MB: return "brain.head.profile"
-        case .semanticLocal: return "brain.head.profile"
+        case .compositionLocal, .semanticLocal: return "brain.head.profile"
         case .yoloNeural: return "bolt.shield.fill"
         case .appleNeuralEngine: return "cpu.fill"
         }
@@ -247,8 +246,7 @@ public enum AIEngineSource: Equatable {
     public var badgeColor: Color {
         switch self {
         case .geminiCloud: return .cyan
-        case .localTrained114MB: return .yellow
-        case .semanticLocal: return .yellow
+        case .compositionLocal, .semanticLocal: return .yellow
         case .yoloNeural: return .orange
         case .appleNeuralEngine: return .green
         }
