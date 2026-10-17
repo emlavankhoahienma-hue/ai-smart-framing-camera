@@ -56,6 +56,15 @@ views refine the leading proposals; only six or eight views run through the
 larger quality models. Preference logits are compared within one source image,
 and never displayed as recognition confidence or an absolute aesthetic rating.
 
+The audits can veto a substantial zoom when FocalNet and Charm jointly indicate
+lost context/quality, or both whole-image quality models indicate a material
+regression. The guard margins exceed measured numerical/preprocessing variation.
+This catches observed blurry-background and false-face zooms that a geometric
+subject-size objective alone encouraged. If every goal-fitting crop is vetoed,
+the actual scored original is offered for explicit review; it cannot silently
+become an automatic center target. Same-focal pans retain separate observed-pixel
+handling because their unknown new margins are not complete photo crops.
+
 Camera-pan mode permits a small newly revealed margin, with at least 78 percent
 of the planned view supported by observed source pixels. Polygon clipping
 measures support. Previews and quality audits contain only observed pixels; no
@@ -107,6 +116,8 @@ fresh tracking and capture admission still use the unchanged camera controls.
   Final replay margins come from real parent-photo pixels, and exercise the
   actual recognition and guide projection. These are planar image replays, not
   physical camera, parallax, shutter or optical-lens tests.
+  These photographs also supply application-policy regression cases; the counts
+  are functional validation, not an untouched benchmark of aesthetic quality.
 - Simulator checks render the production reticle/zoom artwork with synthetic lens
   feedback. Xcode compiles the iOS release with warnings as errors, and packaging
   verifies all six compiled models against their manifests.

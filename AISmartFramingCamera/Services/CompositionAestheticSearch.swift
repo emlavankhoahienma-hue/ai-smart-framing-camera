@@ -32,6 +32,7 @@ final class CompositionAestheticSearch {
         let geometryScore: Double
         let cropPreference: Double
         let satisfiesFramingGoal: Bool
+        var passesQualityAudit = false
     }
 
     struct Result {
@@ -41,6 +42,8 @@ final class CompositionAestheticSearch {
         let usedSpecialist: Bool
         let modernAssessmentCount: Int
         let cropAssessmentCount: Int
+        let qualityVetoedCount: Int
+        let needsQualityReview: Bool
     }
 
     private struct Ranked {
@@ -116,28 +119,44 @@ final class CompositionAestheticSearch {
         }
         specialist = nil
         guard let modern = try? CharmPhotographicModel(url: aestheticModelURL, positionURL: positionURL) else { return nil }
-        let peers = views.filter(\.satisfiesFramingGoal).map(\.cropPreference)
         for index in views.indices {
             guard !cancellation.isCancelled,
-                  let aesthetics = modern.assess(views[index].image, cancellation: cancellation),
-                  let composition = views[index].assessment,
-                  let score = LearnedFramingPolicy.score(preference: views[index].cropPreference, peers: peers,
-                    composition: composition.mean, aesthetics: aesthetics.mean, geometry: views[index].geometryScore) else { return nil }
+                  let aesthetics = modern.assess(views[index].image, cancellation: cancellation) else { return nil }
             views[index].aesthetics = aesthetics
-            views[index].proposal.score = score + min(0.003, max(-0.003, preferences[views[index].proposal.preferenceKey] ?? 0))
             progress("Đã kiểm tra thẩm mỹ \(index + 1)/\(views.count) phương án…")
         }
-        let eligible = views.filter(\.satisfiesFramingGoal)
+        guard let original = views.first(where: { $0.proposal.isUnchangedView }),
+              original.proposal.zoom.isFinite, original.proposal.zoom > 0,
+              let originalComposition = original.assessment, let originalAesthetics = original.aesthetics else { return nil }
+        for index in views.indices {
+            guard let composition = views[index].assessment, let aesthetics = views[index].aesthetics else { return nil }
+            views[index].passesQualityAudit = LearnedFramingPolicy.passesQualityAudit(
+                zoomRatio: Double(views[index].proposal.zoom / original.proposal.zoom),
+                preference: views[index].cropPreference, originalPreference: original.cropPreference,
+                composition: composition.mean, originalComposition: originalComposition.mean,
+                aesthetics: aesthetics.mean, originalAesthetics: originalAesthetics.mean)
+        }
+        let qualified = views.filter { $0.satisfiesFramingGoal && $0.passesQualityAudit }
+        let needsQualityReview = qualified.isEmpty
+        let peers = needsQualityReview ? [original.cropPreference] : qualified.map(\.cropPreference)
+        for index in views.indices {
+            guard let composition = views[index].assessment, let aesthetics = views[index].aesthetics,
+                  let score = LearnedFramingPolicy.score(preference: views[index].cropPreference, peers: peers,
+                    composition: composition.mean, aesthetics: aesthetics.mean, geometry: views[index].geometryScore) else { return nil }
+            views[index].proposal.score = score + min(0.003, max(-0.003, preferences[views[index].proposal.preferenceKey] ?? 0))
+        }
+        guard let scoredOriginal = views.first(where: { $0.proposal.isUnchangedView }) else { return nil }
+        let eligible = needsQualityReview ? [scoredOriginal] : views.filter { $0.satisfiesFramingGoal && $0.passesQualityAudit }
         var selected = CompositionPlanner.diverse(eligible.map(\.proposal), limit: 3).compactMap { plan in
-            eligible.first { $0.proposal.sourceCorners == plan.sourceCorners && $0.proposal.intent == plan.intent }
+            views.first { $0.proposal.sourceCorners == plan.sourceCorners && $0.proposal.intent == plan.intent }
         }
         if let original = views.first(where: { $0.proposal.isUnchangedView }),
            !selected.contains(where: { $0.proposal.isUnchangedView }) {
             selected = Array(selected.prefix(2)) + [original]
         }
         guard let best = selected.first else { return nil }
-        // A fallback original stays available for inspection, but cannot silently
-        // displace a layout that satisfies the selected photographic objective.
+        // An original recovered after a quality veto requires explicit selection;
+        // it must not become a fabricated automatic target for an unresolved scene.
         let range = (peers.max() ?? 0) - (peers.min() ?? 0)
         let nearby = ranked.filter {
             $0.proposal.sourceCorners != best.proposal.sourceCorners &&
@@ -145,10 +164,11 @@ final class CompositionAestheticSearch {
                 abs(log(Double($0.proposal.zoom / best.proposal.zoom))) < 0.12 &&
                 $0.preference >= best.cropPreference - max(0.01, range * 0.15)
         }
-        let stable = best.proposal.isUnchangedView ||
-            (range > 0.0001 && (!nearby.isEmpty || assessedRegions >= 12))
+        let stable = !needsQualityReview && (best.proposal.isUnchangedView ||
+            (range > 0.0001 && (!nearby.isEmpty || assessedRegions >= 12)))
         return Result(views: selected, assessedCount: views.count,
             canAutoselect: stable, usedSpecialist: true, modernAssessmentCount: views.count,
-            cropAssessmentCount: assessedRegions)
+            cropAssessmentCount: assessedRegions, qualityVetoedCount: views.filter { !$0.passesQualityAudit }.count,
+            needsQualityReview: needsQualityReview)
     }
 }

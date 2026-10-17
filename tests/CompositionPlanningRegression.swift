@@ -54,6 +54,25 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("real-photo quality regressions cannot force background or false-face zooms") {
+            try require(!LearnedFramingPolicy.passesQualityAudit(zoomRatio: 2.145,
+                preference: -5.5958, originalPreference: 2.1433, composition: 2.3611,
+                originalComposition: 1.7372, aesthetics: 1.7750, originalAesthetics: 2.1594),
+                "geometric size fit overruled the measured blurry-background crop regression")
+            try require(!LearnedFramingPolicy.passesQualityAudit(zoomRatio: 3,
+                preference: -2.3188, originalPreference: 2.4562, composition: 1.7143,
+                originalComposition: 1.6974, aesthetics: 2.1875, originalAesthetics: 2.5766),
+                "a false-face crop ignored the learned quality audit")
+        }
+        try run("quality audits retain a measured beneficial crop and reject invalid evidence") {
+            try require(LearnedFramingPolicy.passesQualityAudit(zoomRatio: 2,
+                preference: -3.0418, originalPreference: 2.2622, composition: 1.7015,
+                originalComposition: 1.9674, aesthetics: 3.0014, originalAesthetics: 2.8553),
+                "an actual aesthetic improvement was vetoed only for changing the frame")
+            try require(!LearnedFramingPolicy.passesQualityAudit(zoomRatio: .nan,
+                preference: 1, originalPreference: 0, composition: 3,
+                originalComposition: 3, aesthetics: 3, originalAesthetics: 3), "invalid quality evidence was accepted")
+        }
         try run("identity camera corners tolerate mixed boundary roundoff") {
             let noise: CGFloat = 0.0000000000000001
             let corners = [CGPoint(x: -noise, y: -noise), CGPoint(x: 1, y: -noise),

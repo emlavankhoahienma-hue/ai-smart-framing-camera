@@ -100,8 +100,8 @@ final class FocalCropModel {
 }
 
 enum LearnedFramingPolicy {
-    /// Full-image quality alone cannot veto correcting an undersized or poorly
-    /// placed subject. Neural preference selects among near-optimal safe layouts.
+    /// Intent supplies safe layout candidates. Relative neural preference orders
+    /// them, with independent quality audits for substantial crop regressions.
     static func admissible(geometry: Double, best: Double) -> Bool {
         geometry.isFinite && best.isFinite && geometry >= best - 0.018
     }
@@ -112,6 +112,23 @@ enum LearnedFramingPolicy {
         let lower = scores.filter { $0 < value - epsilon }.count
         let tied = scores.filter { abs($0 - value) <= epsilon }.count
         return (Double(lower) + 0.5 * Double(tied)) / Double(scores.count)
+    }
+
+    /// A stronger size/layout fit cannot authorize a deep crop when independent
+    /// learned assessments show substantial context or image-quality loss.
+    /// These margins exceed measured preprocessing/model numerical variation;
+    /// preference logits remain relative evidence, never calibrated confidence.
+    static func passesQualityAudit(zoomRatio: Double, preference: Double, originalPreference: Double,
+        composition: Double, originalComposition: Double, aesthetics: Double, originalAesthetics: Double) -> Bool {
+        guard [zoomRatio, preference, originalPreference, composition, originalComposition,
+               aesthetics, originalAesthetics].allSatisfy(\.isFinite), zoomRatio > 0,
+              [composition, originalComposition, aesthetics, originalAesthetics].allSatisfy({ (1...5).contains($0) }) else { return false }
+        // Whole-photo quality and an incomplete same-focal pan are not comparable.
+        guard zoomRatio > 1.12 else { return true }
+        let aestheticLoss = originalAesthetics - aesthetics
+        let losesLearnedContext = originalPreference - preference >= 0.6 && aestheticLoss >= 0.30
+        let losesBothQualityRatings = originalComposition - composition >= 0.30 && aestheticLoss >= 0.20
+        return !losesLearnedContext && !losesBothQualityRatings
     }
 
     static func score(preference: Double, peers: [Double], composition: Double,

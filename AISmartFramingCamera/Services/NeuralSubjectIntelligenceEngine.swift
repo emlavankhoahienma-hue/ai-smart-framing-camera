@@ -283,6 +283,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         let choices = result.views.map { view -> LocalCompositionChoice in
             let proposal = view.proposal
+            let explanation = result.needsQualityReview ?
+                "Các khung crop bị đánh giá kém hơn. Hãy xem khung gốc trước khi chọn chụp." : proposal.explanation
             var plan = LocalFramingPlan(subjectPoint: hero.trackingPoint ?? proposal.subjectPoint, subjectRect: hero.boundingBox,
                 cropProtectionRect: CompositionCropProtection.bounds(body: hero.boundingBox,
                     portrait: portraitBounds, intent: proposal.intent, anchor: subject.anchor,
@@ -291,7 +293,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
                     scene: output.detectedScene, category: hero.category) ?? 1),
-                intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + " Đã so sánh vùng ảnh bằng FocalNet và kiểm tra bằng SAMP-Net, Charm 2025.",
+                intent: proposal.intent, score: proposal.score, explanation: explanation + " Đã so sánh vùng ảnh bằng FocalNet và kiểm tra bằng SAMP-Net, Charm 2025.",
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey)
             plan.observedFraction = proposal.observedFraction
             plan.preservesOriginalFrame = proposal.isUnchangedView

@@ -6,8 +6,8 @@ import CoreVideo
 import Vision
 import simd
 
-/// Executes production Swift preprocessing and Core ML predictions on held-out
-/// photographs, then exercises production view search with real Vision evidence.
+/// Executes production Swift preprocessing and Core ML predictions on author-test
+/// photographs and app regression cases, with real Vision evidence.
 @main
 enum CompositionModelValidation {
     struct Reference: Decodable { let file: String; let distribution: [Double] }
@@ -113,7 +113,7 @@ enum CompositionModelValidation {
         }
         let report: [String: Any] = ["images": searches.count, "searches": searches,
             "input": "Original full-resolution source files; only candidate previews are resized",
-            "scope": "Production YOLO/Vision/SigLIP recognition, hero/group selection and composition search compiled from app source. macOS data adapters omit iOS UI/filter properties; camera/motion/capture and physical-phone performance are not exercised."]
+            "scope": "Production YOLO/Vision/SigLIP recognition and composition search on author-test photos also used as app regression cases; not an untouched aesthetic-quality benchmark. macOS adapters omit iOS UI/filter properties; camera/motion/capture and physical-phone performance are not exercised."]
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("real-photo-search.json"))
         var humanFiles: [URL] = []
@@ -331,6 +331,7 @@ enum CompositionModelValidation {
             "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
             "charmAssessedCrops": result.modernAssessmentCount, "aestheticRating": bestAesthetics.mean,
             "cropRankAssessments": result.cropAssessmentCount,
+            "qualityVetoedCount": result.qualityVetoedCount, "needsQualityReview": result.needsQualityReview,
             "constrainedSearchBudget": constrained,
             "observedFraction": best.proposal.observedFraction,
             "aim": [Double(best.proposal.aimPoint.x), Double(best.proposal.aimPoint.y)],
@@ -350,6 +351,7 @@ enum CompositionModelValidation {
              "retainedAttention": view.proposal.retainedAttention,
              "cropPreference": view.cropPreference, "geometryScore": view.geometryScore,
              "satisfiesFramingGoal": view.satisfiesFramingGoal,
+             "passesQualityAudit": view.passesQualityAudit,
              "observedFraction": view.proposal.observedFraction,
              "aim": [Double(view.proposal.aimPoint.x), Double(view.proposal.aimPoint.y)],
              "sourceCorners": view.proposal.sourceCorners.map { [Double($0.x), Double($0.y)] }]

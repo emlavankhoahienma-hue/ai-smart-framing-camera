@@ -1,7 +1,7 @@
 {
   "model": "SAMP-Net, author checkpoint",
   "weightsSHA256": "d3d02f36967734fd6f0d2770380a04b777b5cd800a9ba68d4ccc9656f6fef603",
-  "split": "CADB official test; not used to tune this app",
+  "split": "CADB official author test split; the underlying SAMP checkpoint is not fine-tuned here",
   "metrics": {
     "images": 950,
     "spearman": 0.6567309412435264,
