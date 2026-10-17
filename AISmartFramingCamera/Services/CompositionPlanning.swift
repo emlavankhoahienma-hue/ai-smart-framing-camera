@@ -2,6 +2,27 @@ import Foundation
 import CoreGraphics
 import simd
 
+/// A completed analysis belongs to one button press and one captured image.
+/// Model warm-up changes elapsed time, never the evidence required for a result.
+struct CompositionAnalysisReceipt: Sendable {
+    let requestID: UUID
+    let sourceTimestamp: TimeInterval
+    let elapsed: TimeInterval
+    let assessedFrames: Int
+    let usedSpecialist: Bool
+    var modernAssessments = 0
+
+    func belongs(to request: UUID, timestamp: TimeInterval) -> Bool {
+        requestID == request && sourceTimestamp.isFinite && timestamp.isFinite &&
+            sourceTimestamp == timestamp && elapsed.isFinite && elapsed >= 0 && assessedFrames >= 0
+    }
+
+    static func acceptsFrame(timestamp: TimeInterval, requestedAt: TimeInterval, now: TimeInterval) -> Bool {
+        timestamp.isFinite && requestedAt.isFinite && now.isFinite &&
+            timestamp >= requestedAt && timestamp <= now + 0.02 && now - timestamp <= 1
+    }
+}
+
 /// Intent describes what the frame should preserve. It is not an aesthetic verdict.
 enum LocalCompositionIntent: String, Codable, Sendable {
     case portrait, environmentalPortrait, group, landscape, architecture

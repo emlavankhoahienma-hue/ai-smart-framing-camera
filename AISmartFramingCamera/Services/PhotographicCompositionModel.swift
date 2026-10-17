@@ -71,10 +71,15 @@ enum CompositionPhotoPixels {
     }
 
     static func resizedRGB(image: CGImage, side: Int) -> [UInt8]? {
+        resizedRGB(image: image, width: side, height: side)
+    }
+
+    static func resizedRGB(image: CGImage, width: Int, height: Int) -> [UInt8]? {
+        guard width > 0, height > 0 else { return nil }
         guard let bytes = rgba(image: image) else { return nil }
-        func weights(source: Int) -> [[(Int, Int)]] {
-            let scale = Double(source) / Double(side), filter = max(1, scale)
-            return (0..<side).map { destination in
+        func weights(source: Int, target: Int) -> [[(Int, Int)]] {
+            let scale = Double(source) / Double(target), filter = max(1, scale)
+            return (0..<target).map { destination in
                 let center = (Double(destination) + 0.5) * scale
                 let start = max(0, Int(center - filter + 0.5))
                 let end = min(source, Int(center + filter + 0.5))
@@ -83,20 +88,20 @@ enum CompositionPhotoPixels {
                 return coefficients.enumerated().map { (start + $0.offset, Int(($0.element / total * 4_194_304 + 0.5).rounded(.down))) }
             }
         }
-        let horizontalWeights = weights(source: image.width), verticalWeights = weights(source: image.height)
-        var horizontal = [UInt8](repeating: 0, count: side * image.height * 3)
-        for y in 0..<image.height { for x in 0..<side { for channel in 0..<3 {
+        let horizontalWeights = weights(source: image.width, target: width), verticalWeights = weights(source: image.height, target: height)
+        var horizontal = [UInt8](repeating: 0, count: width * image.height * 3)
+        for y in 0..<image.height { for x in 0..<width { for channel in 0..<3 {
             let total = horizontalWeights[x].reduce(2_097_152) {
                 $0 + Int(bytes[(y * image.width + $1.0) * 4 + channel]) * $1.1
             }
-            horizontal[(y * side + x) * 3 + channel] = UInt8(clamping: total >> 22)
+            horizontal[(y * width + x) * 3 + channel] = UInt8(clamping: total >> 22)
         } } }
-        var output = [UInt8](repeating: 0, count: side * side * 3)
-        for y in 0..<side { for x in 0..<side { for channel in 0..<3 {
+        var output = [UInt8](repeating: 0, count: width * height * 3)
+        for y in 0..<height { for x in 0..<width { for channel in 0..<3 {
             let total = verticalWeights[y].reduce(2_097_152) {
-                $0 + Int(horizontal[($1.0 * side + x) * 3 + channel]) * $1.1
+                $0 + Int(horizontal[($1.0 * width + x) * 3 + channel]) * $1.1
             }
-            output[(y * side + x) * 3 + channel] = UInt8(clamping: total >> 22)
+            output[(y * width + x) * 3 + channel] = UInt8(clamping: total >> 22)
         } } }
         return output
     }

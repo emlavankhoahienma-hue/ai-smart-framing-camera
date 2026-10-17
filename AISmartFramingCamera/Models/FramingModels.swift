@@ -204,7 +204,7 @@ public enum AIEngineSource: Equatable {
                 .replacingOccurrences(of: "meta-llama/", with: "")
             return "OpenRouter: \(clean)"
         case .compositionLocal(let label):
-            return "SAMP-Net + YOLO12 (\(label))"
+            return "Charm 2025 + SAMP-Net (\(label))"
         case .semanticLocal(let label):
             return "SigLIP + Vision/YOLO (\(label))"
         case .yoloNeural(let label):
@@ -224,7 +224,7 @@ public enum AIEngineSource: Equatable {
                 .uppercased()
             return "OPENROUTER (\(clean))"
         case .compositionLocal:
-            return "SAMP-Net"
+            return "Charm 2025"
         case .semanticLocal:
             return "SigLIP + Vision"
         case .yoloNeural(let label):

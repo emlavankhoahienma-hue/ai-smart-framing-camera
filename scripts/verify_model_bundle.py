@@ -30,6 +30,18 @@ def tree_hash(directory: Path) -> str:
 
 def main() -> None:
     bundle = Path(sys.argv[1])
+    charm_path = bundle / "CharmModelManifest.json"
+    charm = json.loads(charm_path.read_text(encoding="utf-8"))
+    if charm.get("weightsSHA256") != "d7ce85f65ed25fa8c15eeb52f63310e7207cf76fd11ca763f284576d3824a9cb":
+        raise RuntimeError("Invalid Charm-PARA checkpoint provenance")
+    parity = charm.get("parity") or {}
+    if parity.get("images", 0) < 24 or parity.get("maxMeanScoreError", 1) > 0.04:
+        raise RuntimeError("Charm has not passed real-photo Core ML parity")
+    position = hashlib.sha256((bundle / "CharmPositionEmbedding.bin").read_bytes()).hexdigest()
+    if position != charm.get("positionBinarySHA256") or not (bundle / "Charm-LICENSE.txt").is_file():
+        raise RuntimeError("Charm position embeddings/license missing or inconsistent")
+    charm["compiledSHA256"] = tree_hash(bundle / "CharmAesthetics.mlmodelc")
+    charm_path.write_text(json.dumps(charm, indent=2), encoding="utf-8")
     composition = tree_hash(bundle / "SAMPComposition.mlmodelc")
     composition_manifest_path = bundle / "SAMPModelManifest.json"
     composition_manifest = json.loads(composition_manifest_path.read_text(encoding="utf-8"))

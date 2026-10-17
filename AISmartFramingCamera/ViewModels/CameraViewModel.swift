@@ -170,6 +170,8 @@ public final class CameraViewModel: ObservableObject {
     private var selectedCompositionPreviewID: UUID?
     @Published private(set) var localCompositionExplanation = ""
     private var localCompositionIntent: LocalCompositionIntent?
+    @Published private(set) var localAnalysisSummary = ""
+    private var localAnalysisRequestID = UUID()
     private var localAnalysisTask: Task<Void, Never>?
     private var localAnalysisCancellation: CompositionAnalysisCancellation?
     private var localEvidenceCandidates: [NeuralSubjectCandidate] = []
@@ -194,6 +196,8 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - AI Session State Machine
     private var aiSessionGeneration: Int = 0 {
         didSet {
+            localAnalysisRequestID = UUID()
+            localAnalysisSummary = ""
             localAnalysisCancellation?.cancel()
             localAnalysisCancellation = nil
             localAnalysisTask?.cancel()
@@ -943,16 +947,14 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "isLivePhotoEnabled") != nil {
             self.isLivePhotoEnabled = defaults.bool(forKey: "isLivePhotoEnabled")
         }
-        // Older builds enabled paid cloud models by default. Require an explicit opt-in once.
-        if defaults.bool(forKey: "cloudModeOptInV2"),
-           defaults.object(forKey: "useGeminiForAnalysis") != nil {
+        // Local photographic models are bundled. Migrate the earlier automatic
+        // cloud default once; cloud remains available through an explicit setting.
+        if defaults.bool(forKey: "localCompositionDefaultV3") {
             self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
         } else {
-            self.useGeminiForAnalysis = true
-            geminiService.selectedModel = .freeVision
-            geminiService.customModelName = ""
-            defaults.set(true, forKey: "cloudModeOptInV2")
-            defaults.set(true, forKey: "useGeminiForAnalysis")
+            self.useGeminiForAnalysis = false
+            defaults.set(false, forKey: "useGeminiForAnalysis")
+            defaults.set(true, forKey: "localCompositionDefaultV3")
         }
         if defaults.object(forKey: "isStreetTrackingModeEnabled") != nil {
             self.isStreetTrackingModeEnabled = defaults.bool(forKey: "isStreetTrackingModeEnabled")
@@ -1555,33 +1557,19 @@ public final class CameraViewModel: ObservableObject {
 
         let isOnline = NetworkMonitor.shared.checkConnection().isConnected
         let shouldUseCloud = useGeminiForAnalysis && geminiService.hasAPIKey && isOnline
+        let requestedAt = CACurrentMediaTime()
 
         if shouldUseCloud {
             activeModelUsedName = "Gemma 4 31B"
             // Keep the exact camera frame and CoreMotion pose used by Gemini.
-            visionEngine.onFrameCapturedForAIWithSource = { [weak self] frame, buffer, context in
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.visionEngine.capturedGeminiFrame = nil
-                    if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
-                        self.isOneShotCaptured = true
-                        guard let buffer, let context,
-                              let pose = SpatialTrackingEngine.shared.pose(at: context.timestamp) else {
-                            self.geminiError = "Khong dong bo duoc khung hinh AI voi chuyen dong camera"
-                            self.localSelectionMessage = "Khong co anh dong bo. Cham vung muon chup hoac chup tay."
-                            return
-                        }
-                        let nearbyDetection = self.latestSubjectDetectionResult
-                        self.cloudTrackingSource = AITrackingSource(
-                            buffer: buffer, frame: context, pose: pose,
-                            subjectRect: nearbyDetection?.dominantSubjectRect,
-                            faceRects: nearbyDetection?.faceRectangles ?? [])
-                        // This cloud buffer is detached from AVCapture's pool.
-                        // Drop the last local pool buffer while Gemini runs.
-                        self.localTrackingSource = nil
-                        self.callGeminiAnalysis(frame: frame)
-                    }
-                }
+            requestFreshAIFrame(generation: requestGeneration, requestedAt: requestedAt) { [weak self] frame, buffer, context, pose in
+                guard let self else { return }
+                let nearbyDetection = self.latestSubjectDetectionResult
+                self.cloudTrackingSource = AITrackingSource(buffer: buffer, frame: context, pose: pose,
+                    subjectRect: nearbyDetection?.dominantSubjectRect,
+                    faceRects: nearbyDetection?.faceRectangles ?? [])
+                self.localTrackingSource = nil
+                self.callGeminiAnalysis(frame: frame)
             }
 
             // If no camera frame arrives, use the local analysis instead of
@@ -1605,22 +1593,10 @@ public final class CameraViewModel: ObservableObject {
             if !isOnline {
                 self.localSelectionMessage = "Ngoai tuyen (khong co mang/4G) - Su dung AI tren may"
             }
-            visionEngine.onFrameCapturedForAIWithSource = { [weak self] _, buffer, context in
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.aiSessionGeneration == requestGeneration,
-                          self.aiSessionState == .analyzing, !self.isOneShotCaptured else { return }
-                    self.isOneShotCaptured = true
-                    self.visionEngine.capturedGeminiFrame = nil
-                    guard let buffer, let context,
-                          let pose = SpatialTrackingEngine.shared.pose(at: context.timestamp) else {
-                        self.localAnalysisFinished = true
-                        self.localSelectionMessage = "Không đồng bộ được ảnh và cảm biến. Chạm vùng muốn chụp."
-                        return
-                    }
-                    let source = AITrackingSource(buffer: buffer, frame: context, pose: pose,
-                                                  subjectRect: nil, faceRects: [])
-                    self.beginLocalCompositionAnalysis(source: source)
-                }
+            requestFreshAIFrame(generation: requestGeneration, requestedAt: requestedAt) { [weak self] _, buffer, context, pose in
+                let source = AITrackingSource(buffer: buffer, frame: context, pose: pose,
+                                              subjectRect: nil, faceRects: [])
+                self?.beginLocalCompositionAnalysis(source: source)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
                 guard let self, self.aiSessionGeneration == requestGeneration,
@@ -2017,6 +1993,37 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: clamped)
     }
 
+    private func requestFreshAIFrame(generation: Int, requestedAt: TimeInterval,
+        completion: @escaping (CGImage, CVPixelBuffer, TrackingFrameContext, simd_quatd) -> Void) {
+        visionEngine.onFrameCapturedForAIWithSource = { [weak self] image, buffer, frame in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.aiSessionGeneration == generation,
+                      self.aiSessionState == .analyzing, !self.isOneShotCaptured else { return }
+                self.visionEngine.capturedGeminiFrame = nil
+                let now = CACurrentMediaTime()
+                guard let frame,
+                      CompositionAnalysisReceipt.acceptsFrame(timestamp: frame.timestamp,
+                          requestedAt: requestedAt, now: now) else {
+                    if now - requestedAt < 5 {
+                        self.requestFreshAIFrame(generation: generation, requestedAt: requestedAt, completion: completion)
+                        self.visionEngine.captureNextFrameForGemini = true
+                    } else {
+                        self.localAnalysisFinished = true
+                        self.localSelectionMessage = "Chưa lấy được ảnh mới. Bấm AI để thử lại."
+                    }
+                    return
+                }
+                guard let buffer, let pose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) else {
+                    self.localAnalysisFinished = true
+                    self.localSelectionMessage = "Không đồng bộ được ảnh và cảm biến. Bấm AI để thử lại."
+                    return
+                }
+                self.isOneShotCaptured = true
+                completion(image, buffer, frame, pose)
+            }
+        }
+    }
+
     private func beginLocalCompositionAnalysis(source: AITrackingSource) {
         localAnalysisCancellation?.cancel()
         localAnalysisTask?.cancel()
@@ -2028,6 +2035,7 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisFinished = false
         localAnalysisProgress = "Đang đọc ảnh và nhận diện chủ thể…"
         let generation = aiSessionGeneration
+        let requestID = localAnalysisRequestID
         let zooms = cameraService.availableDisplayZoomOptions
         localAnalysisTask = Task { [weak self] in
             let preferences = await CompositionPreferenceStore.shared.bonuses()
@@ -2036,7 +2044,7 @@ public final class CameraViewModel: ObservableObject {
                 await Task.detached(priority: .userInitiated) {
                     NeuralSubjectIntelligenceEngine.shared.analyzeComposition(
                         pixelBuffer: source.buffer, frame: source.frame, pose: source.pose,
-                        allowedZooms: zooms, preferences: preferences, cancellation: cancellation,
+                        allowedZooms: zooms, preferences: preferences, requestID: requestID, cancellation: cancellation,
                         progress: { [weak self] message in
                             Task { @MainActor [weak self] in
                                 guard let self, self.aiSessionGeneration == generation,
@@ -2059,6 +2067,12 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func finishLocalAnalysis(_ analysis: LocalCompositionAnalysis, source: AITrackingSource) {
+        guard let receipt = analysis.receipt,
+              receipt.belongs(to: localAnalysisRequestID, timestamp: source.frame.timestamp) else { return }
+        localAnalysisSummary = receipt.usedSpecialist ?
+            String(format: "%d khung · %d lượt Charm · %.1f giây", receipt.assessedFrames, receipt.modernAssessments, receipt.elapsed) :
+            "Chưa hoàn tất mô hình bố cục"
+        CameraLogger.info("Composition request \(receipt.requestID): frame=\(receipt.sourceTimestamp), assessments=\(receipt.assessedFrames), seconds=\(receipt.elapsed)", category: .ai)
         localAnalysisFinished = true
         geminiError = nil
         guard source.frame.displayZoom.isFinite, source.frame.displayZoom > 0,
@@ -2102,9 +2116,7 @@ public final class CameraViewModel: ObservableObject {
         // require an explicit choice; a high semantic score cannot authorize a shot.
         if analysis.canAutoselectComposition, let first = localCompositionChoices.first,
            CACurrentMediaTime() - source.frame.timestamp <= 30,
-           first.plan.confidence >= first.plan.minimumAutoselectConfidence, first.plan.score >= 0.6,
-           localCompositionChoices.count == 1 ||
-                first.plan.score - localCompositionChoices[1].plan.score >= 0.06 {
+           first.plan.confidence >= first.plan.minimumAutoselectConfidence, first.plan.score >= 0.35 {
             acceptLocalPlan(first.plan, source: source)
         } else if !localCompositionChoices.isEmpty {
             allowsAutoCaptureForCurrentTarget = false

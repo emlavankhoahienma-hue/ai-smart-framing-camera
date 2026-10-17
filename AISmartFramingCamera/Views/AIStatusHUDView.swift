@@ -71,6 +71,12 @@ public struct AIStatusHUDView: View {
                     .foregroundStyle(.black)
                 }
 
+                if viewModel.activeAIIndicatorType == .local, !viewModel.localAnalysisSummary.isEmpty {
+                    Text(viewModel.localAnalysisSummary)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+
                 if showsExplanation, !explanation.isEmpty {
                     Text(explanation)
                         .font(.system(size: 11, weight: .medium))

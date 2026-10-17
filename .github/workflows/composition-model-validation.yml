@@ -27,6 +27,9 @@ jobs:
         run: |
           python scripts/export_composition_coreml.py --photos validation/photos
           xcrun coremlc compile SAMPComposition.mlpackage .
+          pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
+          python scripts/export_charm_coreml.py --photos validation/photos
+          xcrun coremlc compile CharmAesthetics.mlpackage .
       - name: Validate production Swift preprocessing and photographic search
         run: |
           xcrun swiftc -O -warnings-as-errors \
@@ -34,6 +37,7 @@ jobs:
             AISmartFramingCamera/Services/CompositionPlanning.swift \
             AISmartFramingCamera/Services/CompositionImageEvidence.swift \
             AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
+            AISmartFramingCamera/Services/CharmPhotographicModel.swift \
             AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
             tests/CompositionModelValidation.swift -o "$RUNNER_TEMP/photo-validation"
           "$RUNNER_TEMP/photo-validation" validation/photos SAMPComposition.mlmodelc validation/swift
@@ -44,5 +48,8 @@ jobs:
           name: photographic-model-validation
           path: |
             SAMPModelManifest.json
+            CharmModelManifest.json
             SAMPComposition.mlpackage
+            CharmAesthetics.mlpackage
+            CharmPositionEmbedding.bin
             validation/

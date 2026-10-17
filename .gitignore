@@ -40,6 +40,8 @@ __pycache__/
 *.mlpackage/
 *.mlmodelc/
 SAMPModelManifest.json
+CharmModelManifest.json
+CharmPositionEmbedding.bin
 SigLIPModelManifest.json
 SigLIPPrompts.json
 

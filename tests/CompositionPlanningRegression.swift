@@ -54,6 +54,29 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("two-model evidence can prefer useful zoom without a SAMP-only veto") {
+            let original = CompositionPreferencePolicy.score(composition: 3.4, aesthetics: 3.2, geometry: 0.7)!
+            let crop = CompositionPreferencePolicy.score(composition: 3.43, aesthetics: 3.5, geometry: 0.8)!
+            try require(CompositionPreferencePolicy.prefersCrop(score: crop, original: original), "useful tighter framing vetoed by old 0.10 rating threshold")
+            let worse = CompositionPreferencePolicy.score(composition: 3.1, aesthetics: 3.1, geometry: 0.8)!
+            try require(!CompositionPreferencePolicy.prefersCrop(score: worse, original: original), "zoom preferred despite both models ranking it lower")
+            try require(!CompositionPreferencePolicy.prefersCrop(score: original + 0.001, original: original), "numerical noise authorized zoom")
+            try require(CompositionPreferencePolicy.score(composition: .nan, aesthetics: 3, geometry: 0.8) == nil, "nonfinite learned rating admitted")
+        }
+        try run("each button press requires its own captured image") {
+            let request = UUID(), later = UUID()
+            let receipt = CompositionAnalysisReceipt(requestID: request, sourceTimestamp: 42,
+                elapsed: 1.2, assessedFrames: 48, usedSpecialist: true)
+            try require(receipt.belongs(to: request, timestamp: 42), "warm inference was rejected only because it is fast")
+            try require(!receipt.belongs(to: later, timestamp: 42), "a previous request authorized a new target")
+            try require(!receipt.belongs(to: request, timestamp: 43), "a previous image authorized a new target")
+        }
+        try run("capture admission rejects queued old frames and invalid clocks") {
+            try require(!CompositionAnalysisReceipt.acceptsFrame(timestamp: 9.99, requestedAt: 10, now: 10.1), "pre-press frame admitted")
+            try require(!CompositionAnalysisReceipt.acceptsFrame(timestamp: 10.1, requestedAt: 10, now: 11.2), "stalled delivery admitted")
+            try require(!CompositionAnalysisReceipt.acceptsFrame(timestamp: .nan, requestedAt: 10, now: 10.1), "nonfinite frame admitted")
+            try require(CompositionAnalysisReceipt.acceptsFrame(timestamp: 10.03, requestedAt: 10, now: 10.05), "fresh frame rejected")
+        }
         try run("restored original view participates in the automatic-selection margin") {
             let broad = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait],
                 raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], proposalLimit: 36)

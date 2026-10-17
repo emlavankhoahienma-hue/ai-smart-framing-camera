@@ -185,6 +185,7 @@ struct LocalCompositionAnalysis: Sendable {
     var assessedCompositionCount = 0
     var usedCompositionModel = false
     var canAutoselectComposition = false
+    var receipt: CompositionAnalysisReceipt? = nil
 }
 
 /// Expensive interpretation runs only on the serialized one-shot worker.
@@ -197,22 +198,28 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
 
     func analyzeComposition(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
                             pose: simd_quatd, allowedZooms: [CGFloat],
-                            preferences: [String: Double],
+                            preferences: [String: Double], requestID: UUID,
                             cancellation: CompositionAnalysisCancellation,
                             progress: @Sendable (String) -> Void = { _ in }) -> LocalCompositionAnalysis? {
         guard !cancellation.isCancelled else { return nil }
         analysisLock.lock()
         defer { SemanticCropRanker.shared.endAnalysis(); analysisLock.unlock() }
+        let started = ProcessInfo.processInfo.systemUptime
+        func receipt(count: Int = 0, specialist: Bool = false, modern: Int = 0) -> CompositionAnalysisReceipt {
+            CompositionAnalysisReceipt(requestID: requestID, sourceTimestamp: frame.timestamp,
+                elapsed: max(0, ProcessInfo.processInfo.systemUptime - started),
+                assessedFrames: count, usedSpecialist: specialist, modernAssessments: modern)
+        }
         guard !cancellation.isCancelled,
               let output = analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
                                                  cancellation: cancellation) else { return nil }
         // Choose identity before optimizing layout. Different crops must never
         // compete by silently substituting an unrelated background object.
         guard let hero = output.allCandidates.first else {
-            return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [])
+            return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [], receipt: receipt())
         }
         guard let raster = output.compositionRaster else {
-            return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero])
+            return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
         }
         let subject = CompositionSubject(index: 0, bounds: hero.boundingBox,
             anchor: hero.eyePosition ?? hero.center, kind: hero.isGroup ? .group : kind(hero.category),
@@ -238,6 +245,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             image: CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation),
             aspect: frame.calibration.aspect, preferences: preferences,
             modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
+            aestheticModelURL: Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
+            positionURL: Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
+            requiresModernModel: true,
             cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) }) else { return nil }
         let choices = result.views.map { view -> LocalCompositionChoice in
             let proposal = view.proposal
@@ -246,14 +256,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
                     scene: output.detectedScene, category: hero.category) ?? 1),
-                intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + (result.usedSpecialist ? " Đã so sánh bố cục và mức zoom bằng SAMP-Net." : " Chưa có điểm từ mô hình bố cục; hãy kiểm tra khung trước khi chọn."),
+                intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + (result.usedSpecialist ? " Đã so sánh bố cục bằng SAMP-Net và thẩm mỹ bằng Charm 2025." : " Chưa hoàn tất hai mô hình bố cục; hãy kiểm tra khung trước khi chọn."),
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey)
             return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image,
                                           preservesOriginalFrame: proposal.isUnchangedView)
         }
         return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: [hero],
             assessedCompositionCount: result.assessedCount, usedCompositionModel: result.usedSpecialist,
-            canAutoselectComposition: result.canAutoselect)
+            canAutoselectComposition: result.canAutoselect,
+            receipt: receipt(count: result.assessedCount, specialist: result.usedSpecialist, modern: result.modernAssessmentCount))
     }
 
     private func compositionIntents(_ output: NeuralAnalysisOutput, hero: NeuralSubjectCandidate) -> [LocalCompositionIntent] {

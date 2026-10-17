@@ -26,6 +26,37 @@ enum CompositionModelValidation {
         let output = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let model = try PhotographicCompositionModel(url: modelURL)
+        let modelDirectory = modelURL.deletingLastPathComponent()
+        let charm = try CharmPhotographicModel(url: modelDirectory.appendingPathComponent("CharmAesthetics.mlmodelc"),
+            positionURL: modelDirectory.appendingPathComponent("CharmPositionEmbedding.bin"))
+        let charmReferences = try JSONDecoder().decode([Reference].self,
+            from: Data(contentsOf: photos.appendingPathComponent("charm-references.json")))
+        var modernParity: [[String: Any]] = []
+        for reference in charmReferences {
+            let source = try image(photos.appendingPathComponent(reference.file))
+            guard let inputs = charm.inputs(source),
+                  let assessment = charm.assess(source, cancellation: CompositionAnalysisCancellation()) else {
+                throw Failure(message: "Charm failed to score a real photograph")
+            }
+            let expected = try Data(contentsOf: photos.appendingPathComponent(reference.file)
+                .deletingPathExtension().appendingPathExtension("charm-position.f32"))
+            guard expected.count == inputs.positions.count * MemoryLayout<Float>.size else {
+                throw Failure(message: "Charm position shape differs from author")
+            }
+            let positions = inputs.positions.dataPointer.assumingMemoryBound(to: Float.self)
+            let positionError = expected.withUnsafeBytes { data -> Double in
+                let values = data.bindMemory(to: Float.self)
+                return (0..<values.count).reduce(0.0) { max($0, abs(Double(values[$1] - positions[$1]))) }
+            }
+            let expectedMean = reference.distribution.enumerated().reduce(0.0) { $0 + $1.element * (1 + Double($1.offset) * 0.5) }
+            let error = abs(expectedMean - assessment.mean)
+            modernParity.append(["file": reference.file, "meanScoreError": error, "maxPositionError": positionError])
+            guard error < 0.06, positionError < 0.0001 else {
+                throw Failure(message: "Charm Swift preprocessing/parity failed: \(reference.file), score \(error), position \(positionError)")
+            }
+        }
+        try JSONSerialization.data(withJSONObject: modernParity, options: [.prettyPrinted, .sortedKeys])
+            .write(to: output.appendingPathComponent("swift-charm-parity.json"))
         let spectral = SpectralCompositionSaliency()
         let references = try JSONDecoder().decode([Reference].self,
             from: Data(contentsOf: photos.appendingPathComponent("parity-references.json")))
@@ -130,9 +161,12 @@ enum CompositionModelValidation {
         let broad = proposals()
         guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: broad,
             image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
+            aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
+            positionURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmPositionEmbedding.bin"),
+            requiresModernModel: true,
             cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { proposals($0) }),
             !result.views.isEmpty, result.usedSpecialist,
-            let best = result.views.first, let bestAssessment = best.assessment else {
+            let best = result.views.first, let bestAssessment = best.assessment, let bestAesthetics = best.aesthetics else {
             throw Failure(message: "Real-photo search failed: \(file.lastPathComponent), proposals \(broad.count), bounds \(bounds), people \(bodies)")
         }
         for view in result.views {
@@ -157,6 +191,8 @@ enum CompositionModelValidation {
             "detectedAnimals": pets.count,
             "sourceWidth": source.width, "sourceHeight": source.height,
             "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
+            "charmAssessedCrops": result.modernAssessmentCount,
+            "aestheticRating": bestAesthetics.mean,
             "compositionRating": bestAssessment.mean,
             "secondsMac": ProcessInfo.processInfo.systemUptime - started,
             "automaticSelectionAllowed": result.canAutoselect]

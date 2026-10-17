@@ -112,7 +112,7 @@ final class CompositionImageRenderer {
         correction.topLeft = point(corners[0]); correction.topRight = point(corners[1])
         correction.bottomRight = point(corners[2]); correction.bottomLeft = point(corners[3])
         guard let output = correction.outputImage else { return nil }
-        let height = 288.0
+        let height = min(288.0, 448 / max(1, aspect))
         return render(output, size: CGSize(width: max(1, (height * aspect).rounded()), height: height))
     }
 
