@@ -394,7 +394,7 @@ enum CompositionPlanner {
         let hardwareMax = allowedZooms.filter { $0.isFinite && $0 > 0 }.max() ?? currentZoom
         // Avoid throwing away excessive source resolution. Lens availability is
         // supplied by CameraService; existing long telephoto framing remains valid.
-        let maxZoom = max(currentZoom, min(5, hardwareMax, currentZoom * 2.4))
+        let maxZoom = max(currentZoom, min(5, hardwareMax, max(currentZoom * 2.4, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.2 }.max() ?? currentZoom)))
         let zooms = Array(Set((0...10).map {
             currentZoom * CGFloat(exp(log(Double(maxZoom / currentZoom)) * Double($0) / 10))
         } + allowedZooms.filter { $0.isFinite && $0 >= currentZoom && $0 <= maxZoom })).sorted()
@@ -469,11 +469,15 @@ enum CompositionPlanner {
                     }
                     let motion = hypot(Double(aim.point.x - 0.5), Double(aim.point.y - 0.5))
                     let intentPrior = intent == intents.first ? 0.045 : (intents.contains(intent) ? 0.02 : 0)
+                    let thirdX = min(abs(Double(destination.x) - 0.382), abs(Double(destination.x) - 0.618))
+                    let thirdY = min(abs(Double(destination.y) - 0.382), abs(Double(destination.y) - 0.618))
+                    let ruleOfThirdsBonus = 0.035 * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
+                    let ratioPenalty = area < desiredArea ? 0.005 * max(0, log(ratio)) : 0.020 * abs(log(ratio))
                     let score = 0.18 * sizeFit + 0.13 * context + 0.10 * contextFit +
                         0.11 * metrics.cleanEdges + 0.10 * space + 0.07 * symmetry +
                         0.05 * metrics.separation + 0.11 * placement + 0.05 * headroom +
-                        0.04 * edgeSafety + 0.03 * horizonFit + intentPrior -
-                        0.035 * motion - 0.035 * abs(log(ratio))
+                        0.04 * edgeSafety + 0.03 * horizonFit + intentPrior + ruleOfThirdsBonus -
+                        0.012 * motion - ratioPenalty
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: sourceCorners.map(\.point), rotation: rotation, zoom: zoom,
@@ -503,7 +507,13 @@ enum CompositionPlanner {
                     continue
                 }
                 var seeds: [CompositionProposal] = []
-                var placements = [subject.anchor, desired, CGPoint(x: 0.5, y: 0.5)]
+                var placements = [
+                    subject.anchor, desired,
+                    CGPoint(x: 0.382, y: 0.382), CGPoint(x: 0.618, y: 0.382),
+                    CGPoint(x: 0.382, y: 0.618), CGPoint(x: 0.618, y: 0.618),
+                    CGPoint(x: 0.382, y: 0.50), CGPoint(x: 0.618, y: 0.50),
+                    CGPoint(x: 0.50, y: 0.382), CGPoint(x: 0.50, y: 0.50)
+                ]
                 for y in 0...4 { for x in 0...4 {
                     placements.append(CGPoint(x: 0.22 + Double(x) * 0.14, y: 0.22 + Double(y) * 0.14))
                 } }
@@ -575,22 +585,49 @@ enum CompositionPlanner {
     private static func preferredPlacement(subject: CompositionSubject, intent: LocalCompositionIntent,
                                            raster: CompositionRaster) -> CGPoint {
         if intent == .group { return CGPoint(x: 0.5, y: 0.36) }
-        if intent == .architecture || intent == .food { return CGPoint(x: 0.5, y: 0.5) }
+        if intent == .architecture { return CGPoint(x: 0.5, y: 0.48) }
         let person = subject.kind == .person || subject.kind == .face
         let lead = min(1, max(-1, Double(subject.gaze)))
-        // Positive gaze means image-right: subject belongs left of centre.
-        var x = 0.5 - 0.145 * lead
-        if abs(lead) < 0.12 && intent != .landscape {
-            var left = 0.0, right = 0.0
-            for y in 0..<raster.side { for column in 0..<raster.side {
-                let weight = raster.attention[y * raster.side + column]
-                if column < raster.side / 2 { left += weight } else { right += weight }
-            } }
-            let imbalance = (right - left) / max(0.001, right + left)
-            x += min(0.118, max(-0.118, -imbalance * 0.18))
+        var x: Double
+        if abs(lead) >= 0.12 {
+            // Positive gaze means subject looks to image-right: place on the left third (around 0.382).
+            // Negative gaze means subject looks to image-left: place on the right third (around 0.618).
+            x = 0.5 - 0.145 * lead
+        } else {
+            // Subject looks straight ahead or is an object/animal/food:
+            // Follow Rule of Thirds & Golden Ratio based on subject's natural placement in the scene.
+            if subject.anchor.x < 0.46 {
+                x = 0.382
+            } else if subject.anchor.x > 0.54 {
+                x = 0.618
+            } else {
+                x = 0.5
+                if intent != .landscape && raster.hasAttention {
+                    var left = 0.0, right = 0.0
+                    for y in 0..<raster.side { for column in 0..<raster.side {
+                        let weight = raster.attention[y * raster.side + column]
+                        if column < raster.side / 2 { left += weight } else { right += weight }
+                    } }
+                    let imbalance = (right - left) / max(0.001, right + left)
+                    x += min(0.118, max(-0.118, -imbalance * 0.18))
+                }
+            }
         }
-        let anchorFraction = Double((subject.anchor.y - subject.bounds.minY) / subject.bounds.height)
-        let y = person ? min(0.48, max(0.30, 0.075 + anchorFraction * 0.64)) : 0.5
+        let y: Double
+        if person {
+            let anchorFraction = Double((subject.anchor.y - subject.bounds.minY) / max(0.001, subject.bounds.height))
+            y = min(0.44, max(0.30, 0.075 + anchorFraction * 0.64))
+        } else if intent == .food {
+            y = subject.anchor.y < 0.46 ? 0.382 : (subject.anchor.y > 0.54 ? 0.618 : 0.5)
+        } else {
+            if subject.anchor.y < 0.46 {
+                y = 0.382
+            } else if subject.anchor.y > 0.54 {
+                y = 0.618
+            } else {
+                y = 0.42
+            }
+        }
         return CGPoint(x: x, y: y)
     }
 

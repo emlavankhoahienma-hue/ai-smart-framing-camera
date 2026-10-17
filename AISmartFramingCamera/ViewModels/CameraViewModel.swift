@@ -2091,9 +2091,23 @@ public final class CameraViewModel: ObservableObject {
                   CACurrentMediaTime() - source.frame.timestamp <= 30 {
             acceptLocalPlan(first.plan, source: source)
         } else if let first = localEvidenceCandidates.first {
-            pendingSuggestedZoom = displayZoom
+            let area = first.boundingBox.width * first.boundingBox.height
+            if area < 0.16 {
+                let zoomOptions = cameraService.availableDisplayZoomOptions.filter { $0 > displayZoom && $0 <= displayZoom * 2.5 }
+                pendingSuggestedZoom = zoomOptions.first ?? (displayZoom * 1.5)
+            } else {
+                pendingSuggestedZoom = displayZoom
+            }
             allowsAutoCaptureForCurrentTarget = true
-            pinTargetAndStartMotion(at: first.center, subjectRect: first.boundingBox, source: source)
+            let aimPoint: CGPoint
+            if first.center.x < 0.46 {
+                aimPoint = CGPoint(x: 0.382, y: first.center.y < 0.46 ? 0.382 : 0.5)
+            } else if first.center.x > 0.54 {
+                aimPoint = CGPoint(x: 0.618, y: first.center.y < 0.46 ? 0.382 : 0.5)
+            } else {
+                aimPoint = first.center
+            }
+            pinTargetAndStartMotion(at: aimPoint, subjectRect: first.boundingBox, source: source)
             localTrackingSource = nil
             localSelectionMessage = nil
         } else {

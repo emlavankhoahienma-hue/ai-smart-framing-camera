@@ -89,7 +89,7 @@ final class CompositionAestheticSearch {
             let sourceZoom = evaluated.first(where: { $0.proposal.isUnchangedView })?.proposal.zoom ?? 1
             let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
-            for index in zoomed.prefix(2) { include(index) }
+            for index in zoomed.prefix(4) { include(index) }
             let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
                 ProcessInfo.processInfo.physicalMemory < 6_000_000_000 || ProcessInfo.processInfo.thermalState == .serious
             let budget = constrained ? 12 : 18
@@ -157,7 +157,8 @@ final class CompositionAestheticSearch {
                           $0.proposal.aimPoint.y - best.proposal.aimPoint.y) < 0.055 &&
                         abs(log(Double($0.proposal.zoom / best.proposal.zoom))) < 0.12
                 }
-                robust = nearby.filter { $0.proposal.score >= best.proposal.score - 0.025 }.count >= 2 &&
+                robust = (nearby.filter { $0.proposal.score >= best.proposal.score - 0.035 }.count >= 1 ||
+                          best.proposal.score >= (baseline?.proposal.score ?? 0) + 0.015) &&
                     baseline.map { CompositionPreferencePolicy.prefersCrop(score: best.proposal.score, original: $0.proposal.score) } == true
             }
         }
@@ -181,7 +182,7 @@ enum CompositionPreferencePolicy {
                            originalComposition: Double, originalAesthetics: Double) -> Bool {
         let ratings = [composition, aesthetics, originalComposition, originalAesthetics]
         return ratings.allSatisfy { $0.isFinite && (1...5).contains($0) } &&
-            composition >= originalComposition - 0.06 && aesthetics >= originalAesthetics - 0.06
+            composition >= originalComposition - 0.20 && aesthetics >= originalAesthetics - 0.20
     }
 
     static func score(composition: Double, aesthetics: Double, geometry: Double) -> Double? {
