@@ -101,6 +101,26 @@ enum CompositionModelValidation {
         let files = try FileManager.default.contentsOfDirectory(at: photos, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "jpg" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         let renderer = CompositionImageRenderer()
+        var regressions = ["3433.jpg", "10034.jpg", "113.jpg", "321.jpg"].map {
+            photos.appendingPathComponent("source").appendingPathComponent($0)
+        }
+        if let option = CommandLine.arguments.firstIndex(of: "--people"), option + 1 < CommandLine.arguments.count {
+            regressions.insert(URL(fileURLWithPath: CommandLine.arguments[option + 1]).appendingPathComponent("1565.jpg"), at: 0)
+        }
+        let regressionDirectory = output.appendingPathComponent("critical-regressions", isDirectory: true)
+        try FileManager.default.createDirectory(at: regressionDirectory, withIntermediateDirectories: true)
+        var regressionRows: [[String: Any]] = []
+        for file in regressions {
+            let row: [String: Any] = try autoreleasepool {
+                try searchPhoto(file: file, photos: photos, modelURL: modelURL, output: regressionDirectory,
+                                renderer: renderer, sourceOverride: image(file))
+            }
+            regressionRows.append(row)
+            print("Critical photo regression: \(file.lastPathComponent)")
+            fflush(stdout)
+        }
+        try JSONSerialization.data(withJSONObject: ["images": regressionRows.count, "searches": regressionRows], options: [.prettyPrinted, .sortedKeys])
+            .write(to: output.appendingPathComponent("critical-photo-regressions.json"))
         var searches: [[String: Any]] = []
         for file in files {
             let row: [String: Any] = try autoreleasepool {
@@ -286,7 +306,9 @@ enum CompositionModelValidation {
             aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
             positionURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmPositionEmbedding.bin"),
             aestheticLimit: budget.aesthetics, cropModel: cropModel,
-            cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { proposals($0) }),
+            cancellation: CompositionAnalysisCancellation(), progress: { _ in },
+            diagnostic: { print("Photo search diagnostic \(file.lastPathComponent): \($0)"); fflush(stdout) },
+            refine: { proposals($0) }),
             !result.views.isEmpty, result.usedSpecialist,
             let best = result.views.first, let bestAssessment = best.assessment, let bestAesthetics = best.aesthetics else {
             throw Failure(message: "Real-photo search failed: \(file.lastPathComponent), proposals \(broad.count), hero \(hero.label), bounds \(bounds)")

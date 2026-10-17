@@ -278,7 +278,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             aestheticModelURL: Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
             positionURL: Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
             aestheticLimit: budget.aesthetics, cropModel: cropModel,
-            cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) }) else {
+            cancellation: cancellation, progress: progress,
+            diagnostic: { CameraLogger.warning("Composition search: \($0)", category: .ai) },
+            refine: { proposals(refining: $0) }) else {
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
         }
         let choices = result.views.map { view -> LocalCompositionChoice in

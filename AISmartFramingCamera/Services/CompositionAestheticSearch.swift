@@ -60,6 +60,7 @@ final class CompositionAestheticSearch {
              aestheticLimit: Int = 8, cropModel: FocalCropModel? = nil,
              cancellation: CompositionAnalysisCancellation,
              progress: @Sendable (String) -> Void,
+             diagnostic: (@Sendable (String) -> Void)? = nil,
              refine: ([CompositionProposal]) -> [CompositionProposal]) -> Result? {
         guard !cancellation.isCancelled, let cropModel, let modelURL,
               let aestheticModelURL, let positionURL else { return nil }
@@ -67,8 +68,16 @@ final class CompositionAestheticSearch {
         func evaluate(_ candidates: [CompositionProposal]) -> [Ranked]? {
             guard !cancellation.isCancelled, !candidates.isEmpty, candidates.count <= 128 else { return nil }
             let regions = candidates.compactMap { CompositionViewSupport.region($0.sourceCorners) }
-            guard regions.count == candidates.count,
-                  let evidence = cropModel.assess(regions, cancellation: cancellation) else { return nil }
+            guard regions.count == candidates.count else {
+                if let invalid = candidates.first(where: { CompositionViewSupport.region($0.sourceCorners) == nil }) {
+                    diagnostic?("observed-region invalid: \(invalid.sourceCorners), support=\(invalid.observedFraction)")
+                }
+                return nil
+            }
+            guard let evidence = cropModel.assess(regions, cancellation: cancellation) else {
+                diagnostic?("crop-prediction failed: \(regions.count) regions")
+                return nil
+            }
             assessedRegions += candidates.count
             return zip(candidates, evidence.preferences).map { Ranked(proposal: $0.0, preference: $0.1) }
         }
@@ -107,27 +116,40 @@ final class CompositionAestheticSearch {
         }
         guard !pool.isEmpty else { return nil }
         var specialist = try? PhotographicCompositionModel(url: modelURL)
-        guard specialist != nil else { return nil }
+        guard specialist != nil else { diagnostic?("samp-load failed"); return nil }
         var views: [View] = []
         for value in pool {
-            guard !cancellation.isCancelled,
-                  let preview = renderer.observedPreview(image: image, proposal: value.proposal, aspect: aspect),
-                  let composition = specialist?.assess(preview, cancellation: cancellation) else { return nil }
+            guard !cancellation.isCancelled else { return nil }
+            guard let preview = renderer.observedPreview(image: image, proposal: value.proposal, aspect: aspect) else {
+                diagnostic?("observed-preview failed: \(value.proposal.sourceCorners), support=\(value.proposal.observedFraction)")
+                return nil
+            }
+            guard let composition = specialist?.assess(preview, cancellation: cancellation) else {
+                diagnostic?("samp-prediction failed: \(preview.width)x\(preview.height), thermal=\(ProcessInfo.processInfo.thermalState.rawValue)")
+                return nil
+            }
             views.append(View(proposal: value.proposal, image: preview, assessment: composition,
                 geometryScore: value.proposal.score, cropPreference: value.preference,
                 satisfiesFramingGoal: LearnedFramingPolicy.admissible(geometry: value.proposal.score, best: bestGeometry)))
         }
         specialist = nil
-        guard let modern = try? CharmPhotographicModel(url: aestheticModelURL, positionURL: positionURL) else { return nil }
+        guard let modern = try? CharmPhotographicModel(url: aestheticModelURL, positionURL: positionURL) else {
+            diagnostic?("charm-load failed"); return nil
+        }
         for index in views.indices {
             guard !cancellation.isCancelled,
-                  let aesthetics = modern.assess(views[index].image, cancellation: cancellation) else { return nil }
+                  let aesthetics = modern.assess(views[index].image, cancellation: cancellation) else {
+                diagnostic?("charm-prediction failed: \(views[index].image.width)x\(views[index].image.height)")
+                return nil
+            }
             views[index].aesthetics = aesthetics
             progress("Đã kiểm tra thẩm mỹ \(index + 1)/\(views.count) phương án…")
         }
         guard let original = views.first(where: { $0.proposal.isUnchangedView }),
               original.proposal.zoom.isFinite, original.proposal.zoom > 0,
-              let originalComposition = original.assessment, let originalAesthetics = original.aesthetics else { return nil }
+              let originalComposition = original.assessment, let originalAesthetics = original.aesthetics else {
+            diagnostic?("scored-original baseline missing"); return nil
+        }
         for index in views.indices {
             guard let composition = views[index].assessment, let aesthetics = views[index].aesthetics else { return nil }
             views[index].passesQualityAudit = LearnedFramingPolicy.passesQualityAudit(
@@ -142,7 +164,10 @@ final class CompositionAestheticSearch {
         for index in views.indices {
             guard let composition = views[index].assessment, let aesthetics = views[index].aesthetics,
                   let score = LearnedFramingPolicy.score(preference: views[index].cropPreference, peers: peers,
-                    composition: composition.mean, aesthetics: aesthetics.mean, geometry: views[index].geometryScore) else { return nil }
+                    composition: composition.mean, aesthetics: aesthetics.mean, geometry: views[index].geometryScore) else {
+                diagnostic?("learned-score failed: peers=\(peers.count), composition=\(views[index].assessment?.mean ?? .nan), aesthetics=\(views[index].aesthetics?.mean ?? .nan)")
+                return nil
+            }
             views[index].proposal.score = score + min(0.003, max(-0.003, preferences[views[index].proposal.preferenceKey] ?? 0))
         }
         guard let scoredOriginal = views.first(where: { $0.proposal.isUnchangedView }) else { return nil }
