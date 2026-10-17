@@ -35,7 +35,7 @@ flowchart LR
 
 Phân tích và render chạy trong `Task.detached`; dữ liệu sở thích nằm trong actor. `CameraViewModel` cập nhật UI trên MainActor. Cancellation token truyền đến từng VNRequest và vòng tìm kiếm. Mã thế hệ phiên cùng trạng thái hiện tại loại callback muộn. Hủy tác vụ không hứa ngắt ngay thao tác nạp model của hệ điều hành; kết quả của phiên bị hủy không được áp dụng.
 
-Chọn khung kiểm tra lại zoom và tuổi ảnh nguồn (tối đa 30 giây). Không trộn điểm bố cục với độ tin cậy detector. Ghim mục tiêu giữ nguyên quyết định chỉ chụp tay. Cảnh rộng, kiến trúc và người trong cảnh còn cần độ nghiêng máy trong 3° trước tự chụp; đây là mức cân máy từ cảm biến, không phải phép tìm đường chân trời bằng ảnh.
+Chọn khung kiểm tra lại zoom và tuổi ảnh nguồn (tối đa 15 giây sau khi phân tích xong, tối đa 90 giây từ ảnh nguồn; tự chọn vẫn giới hạn tuổi nguồn 30 giây). Không trộn điểm bố cục với độ tin cậy detector. Ghim mục tiêu giữ nguyên quyết định chỉ chụp tay. Cảnh rộng, kiến trúc và người trong cảnh còn cần độ nghiêng máy trong 3° trước tự chụp; đây là mức cân máy từ cảm biến, không phải phép tìm đường chân trời bằng ảnh.
 
 ## Kiểm thử
 

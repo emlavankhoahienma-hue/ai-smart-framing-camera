@@ -62,6 +62,13 @@ struct CompositionAnalysisReceipt: Sendable {
         timestamp.isFinite && requestedAt.isFinite && now.isFinite &&
             timestamp >= requestedAt && timestamp <= now + 0.02 && now - timestamp <= 1
     }
+
+    static func acceptsSelection(sourceTimestamp: TimeInterval, completedAt: TimeInterval,
+                                 now: TimeInterval) -> Bool {
+        [sourceTimestamp, completedAt, now].allSatisfy(\.isFinite) &&
+            sourceTimestamp <= completedAt + 0.02 && completedAt <= now + 0.02 &&
+            now - sourceTimestamp <= 90 && now - completedAt <= 15
+    }
 }
 
 /// Intent describes what the frame should preserve. It is not an aesthetic verdict.

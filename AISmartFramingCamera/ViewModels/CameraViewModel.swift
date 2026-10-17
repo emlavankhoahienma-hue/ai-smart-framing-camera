@@ -174,6 +174,7 @@ public final class CameraViewModel: ObservableObject {
     @Published private(set) var localCompositionAimPoint: CGPoint?
     @Published private(set) var localAnalysisSummary = ""
     private var localAnalysisRequestID = UUID()
+    private var localAnalysisCompletedAt: TimeInterval?
     private var localAnalysisTask: Task<Void, Never>?
     private var localAnalysisCancellation: CompositionAnalysisCancellation?
     private var localEvidenceCandidates: [NeuralSubjectCandidate] = []
@@ -200,6 +201,7 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             localAnalysisRequestID = UUID()
             localAnalysisSummary = ""
+            localAnalysisCompletedAt = nil
             localAnalysisCancellation?.cancel()
             localAnalysisCancellation = nil
             localAnalysisTask?.cancel()
@@ -1991,6 +1993,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func beginLocalCompositionAnalysis(source: AITrackingSource) {
+        localAnalysisCompletedAt = nil
         localAnalysisCancellation?.cancel()
         localAnalysisTask?.cancel()
         let cancellation = CompositionAnalysisCancellation()
@@ -2039,6 +2042,7 @@ public final class CameraViewModel: ObservableObject {
             String(format: "%d khung · %d lượt Charm · %.1f giây", receipt.assessedFrames, receipt.modernAssessments, receipt.elapsed) :
             "Chưa hoàn tất mô hình bố cục"
         CameraLogger.info("Composition request \(receipt.requestID): frame=\(receipt.sourceTimestamp), assessments=\(receipt.assessedFrames), seconds=\(receipt.elapsed)", category: .ai)
+        localAnalysisCompletedAt = CACurrentMediaTime()
         localAnalysisFinished = true
         geminiError = nil
         guard source.frame.displayZoom.isFinite, source.frame.displayZoom > 0,
@@ -2135,7 +2139,9 @@ public final class CameraViewModel: ObservableObject {
               let choice = localCompositionChoices.first(where: { $0.id == id }),
               let source = localTrackingSource else { return }
         guard abs(displayZoom - CGFloat(source.frame.displayZoom)) <= 0.08,
-              CACurrentMediaTime() - source.frame.timestamp <= 30 else {
+              let completedAt = localAnalysisCompletedAt,
+              CompositionAnalysisReceipt.acceptsSelection(sourceTimestamp: source.frame.timestamp,
+                  completedAt: completedAt, now: CACurrentMediaTime()) else {
             localCompositionChoices = []
             localEvidenceCandidates = []
             localSuggestionRects = []

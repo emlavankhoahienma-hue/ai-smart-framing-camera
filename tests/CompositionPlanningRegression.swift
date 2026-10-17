@@ -54,6 +54,16 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("manual review age starts after real cold inference without permitting stale previews") {
+            try require(CompositionAnalysisReceipt.acceptsSelection(sourceTimestamp: 10, completedAt: 65, now: 70),
+                "cold model result expired before review")
+            try require(!CompositionAnalysisReceipt.acceptsSelection(sourceTimestamp: 10, completedAt: 65, now: 81),
+                "old open preview remained actionable")
+            try require(!CompositionAnalysisReceipt.acceptsSelection(sourceTimestamp: 10, completedAt: 100, now: 101),
+                "unbounded source age accepted")
+            try require(!CompositionAnalysisReceipt.acceptsSelection(sourceTimestamp: 80, completedAt: 65, now: 70),
+                "future source image accepted")
+        }
         try run("a composition gain cannot conceal a clear aesthetic regression") {
             try require(!CompositionPreferencePolicy.consistent(composition: 4, aesthetics: 2,
                 originalComposition: 3, originalAesthetics: 3), "one model traded away photographic quality")

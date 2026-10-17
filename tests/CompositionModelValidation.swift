@@ -219,10 +219,13 @@ enum CompositionModelValidation {
             "compositionRating": bestAssessment.mean, "secondsMac": ProcessInfo.processInfo.systemUptime - started,
             "automaticSelectionAllowed": result.canAutoselect]
         var detailed = row
-        detailed["choices"] = result.views.map { view -> [String: Any] in
-            ["zoom": Double(view.proposal.zoom), "original": view.proposal.isUnchangedView,
+        detailed["choices"] = try result.views.map { view -> [String: Any] in
+            guard let composition = view.assessment, let aesthetics = view.aesthetics else {
+                throw Failure(message: "Missing completed specialist scores")
+            }
+            return ["zoom": Double(view.proposal.zoom), "original": view.proposal.isUnchangedView,
              "intent": view.proposal.intent.rawValue, "score": view.proposal.score,
-             "composition": view.assessment?.mean ?? 0, "aesthetics": view.aesthetics?.mean ?? 0,
+             "composition": composition.mean, "aesthetics": aesthetics.mean,
              "sourceCorners": view.proposal.sourceCorners.map { [Double($0.x), Double($0.y)] }]
         }
         try save(best.image, to: output.appendingPathComponent(file.lastPathComponent))

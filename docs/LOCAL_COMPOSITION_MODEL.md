@@ -8,7 +8,9 @@ runs; no fixed waiting period is used as evidence of quality. The HUD reports
 actual SAMP-Net frame counts, Charm assessments and elapsed seconds.
 Local analysis has a 75-second cancellation deadline to accommodate cold model
 loads on older devices. It returns as soon as the real comparisons finish;
-results older than 30 seconds require preview selection instead of autoselection.
+results older than 30 seconds require explicit preview selection instead of
+autoselection. Manual review expires 15 seconds after analysis completes, with
+a 90-second maximum source age; a cold model cannot consume the review window.
 
 ## Released models and provenance
 
