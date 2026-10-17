@@ -40,6 +40,7 @@ enum PortraitPoseDiagnostic {
             fflush(stdout)
         }
         let eligible = records.filter { !(($0["eligible"] as? [[Double]]) ?? []).isEmpty }.count
+        guard files.count == 342, eligible > 0 else { throw CocoaError(.coderInvalidValue) }
         let report: [String: Any] = ["images": records.count, "eligiblePhotos": eligible, "records": records,
             "scope": "Actual Vision body/face/pose observations and production torso eligibility on all CADB human test photos; diagnostic, not aesthetic or phone-performance evaluation"]
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])

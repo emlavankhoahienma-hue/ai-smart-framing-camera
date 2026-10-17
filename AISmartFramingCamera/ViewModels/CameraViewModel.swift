@@ -1604,7 +1604,7 @@ public final class CameraViewModel: ObservableObject {
                                               subjectRect: nil, faceRects: [])
                 self?.beginLocalCompositionAnalysis(source: source)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 75) { [weak self] in
                 guard let self, self.aiSessionGeneration == requestGeneration,
                       self.aiSessionState == .analyzing,
                       !self.localAnalysisFinished else { return }

@@ -6,6 +6,9 @@ successful assessment counts. An old frame or result cannot authorize a new
 button press. Model load/compilation can make the first run slower than later
 runs; no fixed waiting period is used as evidence of quality. The HUD reports
 actual SAMP-Net frame counts, Charm assessments and elapsed seconds.
+Local analysis has a 75-second cancellation deadline to accommodate cold model
+loads on older devices. It returns as soon as the real comparisons finish;
+results older than 30 seconds require preview selection instead of autoselection.
 
 ## Released models and provenance
 
