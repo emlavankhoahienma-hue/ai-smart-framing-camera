@@ -11,6 +11,7 @@ output.mkdir(parents=True, exist_ok=True)
 fixtures = json.loads((output / "pytorch-parity.json").read_text())
 for row in fixtures:
     row["file"] = str(root / "validation/photos/source" / row["file"])
+    row["inputTensor"] = str(output / row["inputTensor"])
 baseline_path = root / "docs/evaluation/fcdb-crop-preferences-300.json"
 baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 annotations = root / ".model-cache/crop-preferences/ranking_annotation.json"
@@ -73,14 +74,19 @@ report = dict(model="Released Appwrite FocalNet; production Swift/Core ML inputs
     strongPairs=strong_pairs, strongCorrect=strong, priorCombined=baseline["metrics"]["combined"],
     scope="Same published FCDB crop-pair votes; training overlap is not established; no camera or phone performance measurement",
     records=records)
-if report["accuracy"] < 0.68:
-    raise RuntimeError(f"Crop preference quality regressed: {correct}/300")
 (output / "fcdb-human-preferences.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 manifest_path = root / "FocalModelManifest.json"
 manifest = json.loads(manifest_path.read_text())
 manifest["swiftParity"] = dict(images=len(parity),
     maxPreferenceError=max(row["maxPreferenceError"] for row in parity),
-    maxImportanceError=max(row["maxImportanceError"] for row in parity))
+    maxImportanceError=max(row["maxImportanceError"] for row in parity),
+    maxImportanceMAE=max(row["importanceMAE"] for row in parity),
+    maxInputMAE=max(row["inputMAE"] for row in parity),
+    maxInputError=max(row["maxInputError"] for row in parity))
 manifest["humanPreferences"] = {key: value for key, value in report.items() if key != "records"}
 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 print(json.dumps({"parity": manifest["swiftParity"], "humanPreferenceCorrect": correct, "pairs": 300}))
+if report["accuracy"] < 0.68:
+    raise RuntimeError(f"Crop preference quality regressed: {correct}/300")
+if manifest["swiftParity"]["maxPreferenceError"] >= 0.08 or manifest["swiftParity"]["maxImportanceError"] >= 0.03:
+    raise RuntimeError(f"Swift crop preprocessing parity failed: {manifest['swiftParity']}")

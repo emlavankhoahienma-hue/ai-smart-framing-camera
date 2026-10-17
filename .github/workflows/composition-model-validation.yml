@@ -2,6 +2,12 @@ name: Photographic composition model validation
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Model preprocessing to verify
+        type: choice
+        options: [all, focal]
+        default: all
 
 jobs:
   validate:
@@ -21,21 +27,24 @@ jobs:
         run: |
           pip install torch==2.5.1 torchvision==0.20.1 numpy==1.26.4 \
             coremltools==9.0 opencv-python-headless==4.11.0.86 einops==0.8.1 \
-            scipy==1.15.3 Pillow==11.0.0
+            scipy==1.15.3 Pillow==11.0.0 timm==1.0.27
       - name: Prepare real photographs from the author test split
         run: python scripts/prepare_composition_photos.py
       - name: Convert and verify Core ML on real photographs
+        if: inputs.scope != 'focal'
         run: |
           python scripts/export_composition_coreml.py --photos validation/photos
           xcrun coremlc compile SAMPComposition.mlpackage .
           pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
           python scripts/export_charm_coreml.py --photos validation/photos
           xcrun coremlc compile CharmAesthetics.mlpackage .
-          pip install "timm==1.0.27"
+      - name: Convert and verify released crop model and production Swift inputs
+        run: |
           python scripts/export_focal_coreml.py
           xcrun coremlc compile FocalCrop.mlpackage .
           python scripts/validate_focal_model.py
       - name: Validate production Swift preprocessing and photographic search
+        if: inputs.scope != 'focal'
         run: |
           python scripts/validate_composition_photos.py --parity-only
       - name: Upload conversion evidence

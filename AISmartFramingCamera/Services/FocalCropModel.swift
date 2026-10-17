@@ -12,7 +12,7 @@ final class FocalCropModel {
     }
 
     private let model: MLModel
-    private let imageInput: MLMultiArray
+    let imageInput: MLMultiArray
     private let boxes: MLMultiArray
     private let content: MLMultiArray
     private let letterbox: CGRect

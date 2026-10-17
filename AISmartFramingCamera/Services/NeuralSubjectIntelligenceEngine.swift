@@ -276,7 +276,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
             aestheticModelURL: Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
             positionURL: Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
-            requiresModernModel: true, aestheticLimit: budget.aesthetics, cropModel: cropModel,
+            aestheticLimit: budget.aesthetics, cropModel: cropModel,
             cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) }) else {
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
         }

@@ -34,9 +34,22 @@ enum FocalModelValidation {
                 }
                 let scoreError = zip(expected, evidence.preferences).map { abs($0.0 - $0.1) }.max() ?? 0
                 let mapError = zip(map, evidence.importance).map { abs($0.0 - $0.1) }.max() ?? 0
-                guard scoreError < 0.08, mapError < 0.03 else {
-                    throw Failure(message: "Swift crop preprocessing drift: \(file), score=\(scoreError), map=\(mapError)")
+                guard let inputFile = fixture["inputTensor"] as? String else { throw Failure(message: "Missing reference tensor") }
+                let expectedInput = try Data(contentsOf: URL(fileURLWithPath: inputFile))
+                guard expectedInput.count == model.imageInput.count * 4 else { throw Failure(message: "Invalid input tensor shape") }
+                let input = model.imageInput.dataPointer.assumingMemoryBound(to: Float.self)
+                let inputErrors = expectedInput.withUnsafeBytes { data -> (Double, Double) in
+                    let values = data.bindMemory(to: Float.self)
+                    var sum = 0.0, maximum = 0.0
+                    for index in values.indices {
+                        let error = abs(Double(values[index] - input[index]))
+                        sum += error; maximum = max(maximum, error)
+                    }
+                    return (sum / Double(values.count), maximum)
                 }
+                row["inputMAE"] = inputErrors.0
+                row["maxInputError"] = inputErrors.1
+                row["importanceMAE"] = zip(map, evidence.importance).reduce(0.0) { $0 + abs($1.0 - $1.1) } / Double(map.count)
                 row["maxPreferenceError"] = scoreError
                 row["maxImportanceError"] = mapError
             }

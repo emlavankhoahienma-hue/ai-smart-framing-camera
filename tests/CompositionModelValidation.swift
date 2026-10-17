@@ -159,7 +159,7 @@ enum CompositionModelValidation {
                     try save(input, to: replayDirectory.appendingPathComponent("input_" + name))
                     let row = try searchPhoto(file: URL(fileURLWithPath: name), photos: photos, modelURL: modelURL,
                         output: replayDirectory, renderer: renderer, sourceOverride: input,
-                        replayParent: parent, replayWindow: window)
+                        replayParent: parent, replayWindow: window, constrained: true)
                     replay.append(row)
                 }
             }
@@ -201,7 +201,8 @@ enum CompositionModelValidation {
 
     static func searchPhoto(file: URL, photos: URL, modelURL: URL, output: URL,
                             renderer: CompositionImageRenderer, sourceOverride: CGImage? = nil,
-                            replayParent: CGImage? = nil, replayWindow: CGRect? = nil) throws -> [String: Any] {
+                            replayParent: CGImage? = nil, replayWindow: CGRect? = nil,
+                            constrained: Bool = false) throws -> [String: Any] {
         let source: CGImage
         if let sourceOverride { source = sourceOverride }
         else { source = try image(photos.appendingPathComponent("source").appendingPathComponent(file.lastPathComponent)) }
@@ -242,7 +243,7 @@ enum CompositionModelValidation {
         subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention && bounds.width * bounds.height > 0.45
         let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
         let budget = CompositionSearchBudget(complexScene: CompositionSearchBudget.isComplex(
-            group: hero.isGroup, intents: intents), constrained: false)
+            group: hero.isGroup, intents: intents), constrained: constrained)
         func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
             CompositionPlanner.photographicProposals(subject: subject, intents: intents, portraitBounds: portraitBounds,
                 raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
@@ -254,7 +255,7 @@ enum CompositionModelValidation {
             image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
             aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
             positionURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmPositionEmbedding.bin"),
-            requiresModernModel: true, aestheticLimit: budget.aesthetics, cropModel: cropModel,
+            aestheticLimit: budget.aesthetics, cropModel: cropModel,
             cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { proposals($0) }),
             !result.views.isEmpty, result.usedSpecialist,
             let best = result.views.first, let bestAssessment = best.assessment, let bestAesthetics = best.aesthetics else {
@@ -300,6 +301,7 @@ enum CompositionModelValidation {
             "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
             "charmAssessedCrops": result.modernAssessmentCount, "aestheticRating": bestAesthetics.mean,
             "cropRankAssessments": result.cropAssessmentCount,
+            "constrainedSearchBudget": constrained,
             "observedFraction": best.proposal.observedFraction,
             "aim": [Double(best.proposal.aimPoint.x), Double(best.proposal.aimPoint.y)],
             "poseSupportsTorsoPortrait": portraitBounds != nil, "selectedIntent": best.proposal.intent.rawValue,

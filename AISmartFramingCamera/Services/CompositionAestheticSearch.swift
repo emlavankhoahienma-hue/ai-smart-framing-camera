@@ -53,13 +53,13 @@ final class CompositionAestheticSearch {
 
     func run(proposals: [CompositionProposal], image: CIImage, aspect: Double,
              preferences: [String: Double], modelURL: URL?,
-             aestheticModelURL: URL? = nil, positionURL: URL? = nil, requiresModernModel: Bool = false,
+             aestheticModelURL: URL? = nil, positionURL: URL? = nil,
              aestheticLimit: Int = 8, cropModel: FocalCropModel? = nil,
              cancellation: CompositionAnalysisCancellation,
              progress: @Sendable (String) -> Void,
              refine: ([CompositionProposal]) -> [CompositionProposal]) -> Result? {
         guard !cancellation.isCancelled, let cropModel, let modelURL,
-              let aestheticModelURL, let positionURL, requiresModernModel else { return nil }
+              let aestheticModelURL, let positionURL else { return nil }
         var assessedRegions = 0
         func evaluate(_ candidates: [CompositionProposal]) -> [Ranked]? {
             guard !cancellation.isCancelled, !candidates.isEmpty, candidates.count <= 128 else { return nil }

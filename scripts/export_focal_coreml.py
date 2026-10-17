@@ -105,6 +105,8 @@ def main():
         boxes = np.tile(np.asarray([0, 0, 1, 1], np.float32), (1, 128, 1))
         boxes[0, :len(crops)] = crops
         inputs = {"image": tensor, "boxes": boxes, "content": letterbox_content(letterbox)[None]}
+        input_name = row["file"] + ".input.f32"
+        (fixture_dir / input_name).write_bytes(tensor.astype("<f4").tobytes())
         with torch.inference_mode():
             importance, scores = model(*(torch.from_numpy(inputs[k]) for k in ["image", "boxes", "content"]))
         actual = converted.predict(inputs)
@@ -112,7 +114,7 @@ def main():
         np.testing.assert_allclose(actual["cropScores"], scores.numpy(), atol=0.04, rtol=0.001)
         map_error = max(map_error, float(np.max(np.abs(actual["importance"] - importance.numpy()))))
         preference_error = max(preference_error, float(np.max(np.abs(actual["cropScores"] - scores.numpy()))))
-        fixtures.append({"file": row["file"], "regions": crops.tolist(),
+        fixtures.append({"file": row["file"], "inputTensor": input_name, "regions": crops.tolist(),
             "scores": scores[0, :len(crops)].tolist(), "importance": importance[0, 0].flatten().tolist()})
     (fixture_dir / "pytorch-parity.json").write_text(json.dumps(fixtures), encoding="utf-8")
     manifest = dict(model="Appwrite FocalNet human crop ranker", repository=REPOSITORY, revision=REVISION,
