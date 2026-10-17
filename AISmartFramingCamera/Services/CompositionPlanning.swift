@@ -51,7 +51,15 @@ enum CompositionViewSupport {
     static func observedPolygon(_ corners: [CGPoint]) -> [CGPoint] {
         guard corners.count == 4, corners.allSatisfy({ $0.x.isFinite && $0.y.isFinite &&
             abs($0.x) <= 8 && abs($0.y) <= 8 }) else { return [] }
-        var polygon = corners
+        // Identity projections can straddle an edge by one floating-point ULP.
+        // Snap only numerical boundary noise before intersecting almost-parallel
+        // segments; genuine newly revealed margins still remain outside.
+        func snapped(_ value: CGFloat) -> CGFloat {
+            if abs(value) <= 0.00000001 { return 0 }
+            if abs(value - 1) <= 0.00000001 { return 1 }
+            return value
+        }
+        var polygon = corners.map { CGPoint(x: snapped($0.x), y: snapped($0.y)) }
         for edge in 0..<4 {
             guard !polygon.isEmpty else { return [] }
             let horizontal = edge < 2

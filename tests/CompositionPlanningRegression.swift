@@ -54,6 +54,14 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("identity camera corners tolerate mixed boundary roundoff") {
+            let noise: CGFloat = 0.0000000000000001
+            let corners = [CGPoint(x: -noise, y: -noise), CGPoint(x: 1, y: -noise),
+                           CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
+            try require(CompositionViewSupport.fraction(corners) > 0.999999, "a complete source frame became unobserved")
+            try require(CompositionViewSupport.region(corners) == CGRect(x: 0, y: 0, width: 1, height: 1),
+                "one-ULP identity noise invalidated the original crop")
+        }
         try run("verified telephoto optics extend search while digital presets stay bounded") {
             let item = subject(rect: CGRect(x: 0.45, y: 0.4, width: 0.1, height: 0.12), kind: .object)
             func plans(_ optical: CGFloat?) -> [CompositionProposal] {
