@@ -30,6 +30,155 @@ struct CompositionAimGeometry {
     }
 }
 
+/// A camera can reveal new margins after a small pan. Their pixels are unknown
+/// until alignment; crop-only scoring must not invent them or forbid all pans.
+enum CompositionViewSupport {
+    static func validRegion(_ region: CGRect) -> Bool {
+        [region.minX, region.minY, region.width, region.height].allSatisfy(\.isFinite) &&
+            region.width > 0.000001 && region.height > 0.000001 &&
+            region.minX >= -0.00001 && region.minY >= -0.00001 &&
+            region.maxX <= 1.00001 && region.maxY <= 1.00001
+    }
+
+    private static func area(_ points: [CGPoint]) -> Double {
+        guard points.count >= 3 else { return 0 }
+        return abs(points.indices.reduce(0.0) { sum, index in
+            let next = points[(index + 1) % points.count]
+            return sum + Double(points[index].x * next.y - next.x * points[index].y)
+        }) / 2
+    }
+
+    static func observedPolygon(_ corners: [CGPoint]) -> [CGPoint] {
+        guard corners.count == 4, corners.allSatisfy({ $0.x.isFinite && $0.y.isFinite &&
+            abs($0.x) <= 8 && abs($0.y) <= 8 }) else { return [] }
+        // Identity projections can straddle an edge by one floating-point ULP.
+        // Snap only numerical boundary noise before intersecting almost-parallel
+        // segments; genuine newly revealed margins still remain outside.
+        func snapped(_ value: CGFloat) -> CGFloat {
+            if abs(value) <= 0.00000001 { return 0 }
+            if abs(value - 1) <= 0.00000001 { return 1 }
+            return value
+        }
+        var polygon = corners.map { CGPoint(x: snapped($0.x), y: snapped($0.y)) }
+        for edge in 0..<4 {
+            guard !polygon.isEmpty else { return [] }
+            let horizontal = edge < 2
+            let boundary: CGFloat = edge % 2 == 0 ? 0 : 1
+            func coordinate(_ point: CGPoint) -> CGFloat { horizontal ? point.x : point.y }
+            func inside(_ point: CGPoint) -> Bool {
+                edge % 2 == 0 ? coordinate(point) >= boundary : coordinate(point) <= boundary
+            }
+            var clipped: [CGPoint] = []
+            var previous = polygon[polygon.count - 1]
+            for point in polygon {
+                if inside(point) != inside(previous) {
+                    let denominator = coordinate(point) - coordinate(previous)
+                    guard abs(denominator) > 0.000000001 else { return [] }
+                    let t = (boundary - coordinate(previous)) / denominator
+                    clipped.append(CGPoint(x: previous.x + t * (point.x - previous.x),
+                                           y: previous.y + t * (point.y - previous.y)))
+                }
+                if inside(point) { clipped.append(point) }
+                previous = point
+            }
+            polygon = clipped
+        }
+        return polygon
+    }
+
+    static func fraction(_ corners: [CGPoint]) -> Double {
+        guard corners.count == 4, corners.allSatisfy({ $0.x.isFinite && $0.y.isFinite }),
+              area(corners) > 0.000001 else { return 0 }
+        return min(1, max(0, area(observedPolygon(corners)) / area(corners)))
+    }
+
+    static func region(_ corners: [CGPoint]) -> CGRect? {
+        let polygon = observedPolygon(corners)
+        guard let first = polygon.first else { return nil }
+        let bounds = polygon.dropFirst().reduce(CGRect(origin: first, size: .zero)) {
+            $0.union(CGRect(origin: $1, size: .zero))
+        }.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard validRegion(bounds) else { return nil }
+        func contains(_ point: CGPoint) -> Bool {
+            var sign: CGFloat = 0
+            for index in polygon.indices {
+                let a = polygon[index], b = polygon[(index + 1) % polygon.count]
+                let cross = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x)
+                if abs(cross) <= 0.000000001 { continue }
+                if sign == 0 { sign = cross }
+                else if sign * cross < 0 { return false }
+            }
+            return true
+        }
+        func rectangleVertices(_ rect: CGRect) -> [CGPoint] {
+            [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY),
+             CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)]
+        }
+        if rectangleVertices(bounds).allSatisfy(contains) { return bounds }
+        // An enclosing box can include source pixels outside the proposed view.
+        // Rank a contained observed rectangle, without extending image borders.
+        let centerX = polygon.reduce(CGFloat.zero) { $0 + $1.x } / CGFloat(polygon.count)
+        let centerY = polygon.reduce(CGFloat.zero) { $0 + $1.y } / CGFloat(polygon.count)
+        let center = CGPoint(x: centerX, y: centerY)
+        let halfWidth = min(center.x - bounds.minX, bounds.maxX - center.x)
+        let halfHeight = min(center.y - bounds.minY, bounds.maxY - center.y)
+        var low: CGFloat = 0, high: CGFloat = 1
+        func rectangle(_ scale: CGFloat) -> CGRect {
+            CGRect(x: center.x - halfWidth * scale, y: center.y - halfHeight * scale,
+                   width: 2 * halfWidth * scale, height: 2 * halfHeight * scale)
+        }
+        for _ in 0..<22 {
+            let middle = (low + high) / 2
+            if rectangleVertices(rectangle(middle)).allSatisfy(contains) { low = middle }
+            else { high = middle }
+        }
+        let observed = rectangle(low)
+        return validRegion(observed) ? observed : nil
+    }
+}
+
+enum FinalFramingEvidence {
+    static func accepts(protectedBounds: CGRect, expectedKind: CompositionSubjectKind,
+                        minimumFaces: Int, minimumPeople: Int,
+                        subjects: [CompositionSubject], faces: [CGRect]) -> Bool {
+        guard CompositionViewSupport.validRegion(protectedBounds), minimumFaces >= 0, minimumPeople >= 0 else { return false }
+        let person = expectedKind == .person || expectedKind == .face || expectedKind == .group
+        let matching = subjects.prefix(1).contains { subject in
+            let observedPerson = subject.kind == .person || subject.kind == .face || subject.kind == .group
+            guard subject.confidence.isFinite, subject.confidence >= 0.30,
+                  (person ? observedPerson : subject.kind == expectedKind),
+                  CompositionViewSupport.validRegion(subject.bounds) else { return false }
+            let overlap = subject.bounds.intersection(protectedBounds)
+            let smaller = min(subject.bounds.width * subject.bounds.height,
+                              protectedBounds.width * protectedBounds.height)
+            return !overlap.isNull && smaller > 0 && overlap.width * overlap.height / smaller >= 0.50
+        }
+        guard matching else { return false }
+        let ownFaces = faces.filter { face in
+            CompositionViewSupport.validRegion(face) &&
+                protectedBounds.insetBy(dx: -0.05, dy: -0.05).contains(CGPoint(x: face.midX, y: face.midY))
+        }
+        let people = subjects.filter { subject in
+            subject.kind == .person && subject.confidence >= 0.30 &&
+                protectedBounds.insetBy(dx: -0.05, dy: -0.05).contains(subject.anchor)
+        }
+        return ownFaces.count >= minimumFaces && people.count >= minimumPeople
+    }
+}
+
+enum CompositionSceneFreshness {
+    static func accepts(sourcePose: simd_quatd, currentPose: simd_quatd,
+                        sourceZoom: Double, currentZoom: Double) -> Bool {
+        guard sourcePose.vector.indices.allSatisfy({ sourcePose.vector[$0].isFinite && currentPose.vector[$0].isFinite }),
+              simd_length(sourcePose.vector) > 0.000001, simd_length(currentPose.vector) > 0.000001,
+              sourceZoom.isFinite, currentZoom.isFinite, sourceZoom > 0, currentZoom > 0,
+              abs(sourceZoom - currentZoom) <= 0.08 else { return false }
+        let delta = simd_normalize(sourcePose).inverse * simd_normalize(currentPose)
+        let angle = 2 * acos(min(1, abs(delta.real)))
+        return angle <= 2 * .pi / 180
+    }
+}
+
 enum CompositionCropProtection {
     /// Torso measurements protect anatomy; attention fields protect their anchor.
     /// The planner separately enforces measured attention retention. This crop
@@ -339,6 +488,8 @@ struct CompositionProposal: Sendable {
     let usesCenter: Bool
     var retainedAttention: Double = 1
 
+    var observedFraction: Double { CompositionViewSupport.fraction(sourceCorners) }
+
     var isUnchangedView: Bool {
         let original = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),
                         CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
@@ -365,6 +516,8 @@ enum CompositionPlanner {
         portraitBounds: CGRect?, raster: CompositionRaster, calibration: TrackingCalibration,
         currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
         incidentalBounds: [CGRect] = [], proposalLimit: Int = 36, refining: [CompositionProposal] = [],
+        allowsCameraPan: Bool = false,
+        maximumOpticalZoom: CGFloat? = nil,
         isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         let perIntent = max(6, proposalLimit / max(1, intents.count))
         let batches = intents.map { intent -> [CompositionProposal] in
@@ -380,7 +533,8 @@ enum CompositionPlanner {
             return proposals(subjects: [framed], intents: [intent], raster: raster, calibration: calibration,
                 currentZoom: currentZoom, allowedZooms: allowedZooms, protectedBounds: protectedBounds,
                 incidentalBounds: incidentalBounds, proposalLimit: perIntent,
-                refining: refining.filter { $0.intent == intent }, isCancelled: isCancelled)
+                refining: refining.filter { $0.intent == intent }, allowsCameraPan: allowsCameraPan,
+                maximumOpticalZoom: maximumOpticalZoom, isCancelled: isCancelled)
         }
         let candidates = batches.flatMap { $0 }
         var result = diverse(candidates, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
@@ -396,6 +550,7 @@ enum CompositionPlanner {
                           currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
                           incidentalBounds: [CGRect] = [],
                           proposalLimit: Int = 6, refining: [CompositionProposal] = [],
+                          allowsCameraPan: Bool = false, maximumOpticalZoom: CGFloat? = nil,
                           isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         guard raster.isValid, calibration.isValid, currentZoom.isFinite, currentZoom > 0 else { return [] }
         let horizonHint = raster.horizon
@@ -407,9 +562,13 @@ enum CompositionPlanner {
         let protectedRects = protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) }
         let incidentalRects = incidentalBounds.filter { valid($0) }
         let hardwareMax = allowedZooms.filter { $0.isFinite && $0 > 0 }.max() ?? currentZoom
-        // Avoid throwing away excessive source resolution. Lens availability is
-        // supplied by CameraService; existing long telephoto framing remains valid.
-        let maxZoom = max(currentZoom, min(5, hardwareMax, max(currentZoom * 2.4, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.2 }.max() ?? currentZoom)))
+        // Digital presets do not prove optical resolution. A separately measured
+        // telephoto factor can extend this budget when the hardware advertises it.
+        let optical = maximumOpticalZoom.flatMap { value -> CGFloat? in
+            value.isFinite && value > 0 && allowedZooms.contains(where: { abs($0 - value) <= 0.02 }) ? value : nil
+        } ?? currentZoom
+        let digitalLimit = max(currentZoom * 2.4, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.2 }.max() ?? currentZoom)
+        let maxZoom = max(currentZoom, min(max(5, optical), hardwareMax, max(digitalLimit, optical)))
         var result: [CompositionProposal] = []
         for subject in validSubjects.prefix(4) {
             let cropAttention = subject.allowsAttentionCrop && subject.kind == .object && raster.hasAttention
@@ -423,6 +582,9 @@ enum CompositionPlanner {
                                                                   destination.y - subject.anchor.y) < 0.000001
                     guard inside(destination, margin: unchanged ? 0 : 0.04), zoom.isFinite,
                           zoom >= currentZoom, zoom <= maxZoom else { return nil }
+                    // Match the existing actuator's zoom deadband. A tiny scored
+                    // crop must not promise a zoom that the camera will skip.
+                    if allowsCameraPan, zoom != currentZoom, abs(zoom - currentZoom) <= 0.120001 { return nil }
                     let ratio = Double(zoom / currentZoom)
                     let future = TrackingCalibration(fx: calibration.fx * ratio, fy: calibration.fy * ratio,
                         cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect, isMeasured: false)
@@ -431,7 +593,10 @@ enum CompositionPlanner {
                     let sourceCorners = corners.map {
                         calibration.project(deviceRay: rotation.act(future.deviceRay(at: $0)))
                     }
-                    guard sourceCorners.allSatisfy({ $0.isInFront && inside($0.point, margin: -0.00001) }),
+                    let support = CompositionViewSupport.fraction(sourceCorners.map(\.point))
+                    guard sourceCorners.allSatisfy(\.isInFront),
+                          sourceCorners.allSatisfy({ inside($0.point, margin: -0.00001) }) ||
+                            (allowsCameraPan && support >= 0.78),
                           let box = project(subject.bounds, from: calibration, to: future, rotation: rotation),
                           let anchorBox = project(protectedAnchor, from: calibration, to: future, rotation: rotation),
                           safe(anchorBox, original: protectedAnchor),
@@ -489,13 +654,14 @@ enum CompositionPlanner {
                         0.11 * metrics.cleanEdges + 0.10 * space + 0.07 * symmetry +
                         0.05 * metrics.separation + 0.11 * placement + 0.05 * headroom +
                         0.04 * edgeSafety + 0.03 * horizonFit + intentPrior + ruleOfThirdsBonus -
-                        0.012 * motion - ratioPenalty
+                        0.012 * motion - ratioPenalty - 0.04 * (1 - support)
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: sourceCorners.map(\.point), rotation: rotation, zoom: zoom,
                         evidenceConfidence: min(1, max(0, subject.confidence)), score: score,
                         explanation: explanation(intent: intent, gaze: subject.gaze,
-                            cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0),
+                            cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0) +
+                            (support < 0.9999 ? " Căn máy rồi kiểm tra phần cảnh mới." : ""),
                         usesCenter: abs(destination.x - 0.5) < 0.055, retainedAttention: metrics.retention)
                 }
                 if !refining.isEmpty {
@@ -815,12 +981,13 @@ enum CompositionPlanner {
         }
         var weightSum = 0.0, weightedX = 0.0, weightedY = 0.0
         var border = 0.0, borderCount = 0.0, subjectLight = 0.0, subjectCount = 0.0
-        var surroundLight = 0.0, surroundCount = 0.0, symmetryError = 0.0
+        var surroundLight = 0.0, surroundCount = 0.0, symmetryError = 0.0, symmetryCount = 0.0
         let side = 12
         for y in 0..<side {
             for x in 0..<side {
                 let p = CGPoint(x: (Double(x) + 0.5) / Double(side), y: (Double(y) + 0.5) / Double(side))
                 let original = calibration.project(deviceRay: rotation.act(future.deviceRay(at: p))).point
+                guard inside(original, margin: 0) else { continue }
                 let attention = raster.value(raster.attention, at: original)
                 let edge = raster.value(raster.edges, at: original)
                 let luma = raster.value(raster.luminance, at: original)
@@ -838,7 +1005,10 @@ enum CompositionPlanner {
                 }
                 let mirror = CGPoint(x: 1 - p.x, y: p.y)
                 let mirroredSource = calibration.project(deviceRay: rotation.act(future.deviceRay(at: mirror))).point
-                symmetryError += abs(luma - raster.value(raster.luminance, at: mirroredSource))
+                if inside(mirroredSource, margin: 0) {
+                    symmetryError += abs(luma - raster.value(raster.luminance, at: mirroredSource))
+                    symmetryCount += 1
+                }
             }
         }
         let centerDistance = hypot(weightedX / max(weightSum, 0.001) - 0.5,
@@ -852,7 +1022,7 @@ enum CompositionPlanner {
             balance: 1 - min(1, centerDistance * 2),
             lookRoom: min(1, max(0, 0.5 + (room - opposite) * 1.5)),
             separation: min(1, separation * 3),
-            symmetry: 1 - min(1, symmetryError / Double(side * side) * 3))
+            symmetry: 1 - min(1, symmetryError / max(1, symmetryCount) * 3))
     }
 
     private static func explanation(intent: LocalCompositionIntent, gaze: CGFloat,

@@ -1,5 +1,5 @@
 {
-  "base": "49f3ef3a2938bf5f36c2e8e47e9fdf5980875abf",
+  "base": "fdd01d9607f5713b6aa5a4e183454c064a3d4b33",
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
@@ -44,20 +44,14 @@
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
-      "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "d44c0be1973a181c0338df5f2b89c27a3f76da4cded65790f75b42975d17066d"
+      "end": "    private var hasFreshOpticalLock: Bool {",
+      "sha256": "506b3ccb5deb3bf0a3f27e00a8ea4dddfe8092e5102e7c3f22812af8d6713528"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
-      "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
-      "end": "    private func verifyAndCaptureWhenReady()",
-      "sha256": "83c8f28b11d8ba7ee6fb96a370270792edc9037df13fad6f3d6f14ac4b70cd20"
-    },
-    {
-      "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
-      "start": "    private func verifyAndCaptureWhenReady()",
+      "start": "    private func executeCapture()",
       "end": null,
-      "sha256": "f06b9193ce71c72ec8b9ab84f645aeab8ea47283a9221709ff7b8136c670dd08"
+      "sha256": "1cd39076ec4a84b738e61a6bfbd9ec501039bc578a4787121ee8b26c91b4a9d9"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -68,20 +62,27 @@
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    public func applyAISuggestedZoom(",
+      "end": "    public func triggerZoomRevealAnimation(",
+      "sha256": "6f2c8a8f7ddc3b4350d1cd74e3993261e8eac063df2e8b314f650928226ac4fe"
+    },
+    {
+      "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
+      "start": "    public func triggerZoomRevealAnimation(",
+      "end": "        zoomRevealStartDisplayZoom =",
+      "sha256": "f965f1b7f4cafa137bef1966d4b83703e8f58f270d794e918030c819b5c758e8"
+    },
+    {
+      "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
+      "start": "        DispatchQueue.main.asyncAfter(deadline: .now() + 0.58)",
       "end": "    // AI Framing & Composition",
-      "sha256": "71e9927f657e44b447435f651cc00388c96ad68f62d64ebeb881e97b1a640270"
+      "sha256": "9d812ceed9413ff393a5fd8d9fe9d6baaec63f9b97f6ff5c7576453e64328d21"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
-      "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
-      "end": "                // Optical centre is always fixed",
-      "sha256": "d1bc90c0ac5188a0644dc8c7b399a8f2f4f41312c3ab25cef9be235745a667a6"
-    },
-    {
-      "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
-      "start": "struct TargetCircleView: View {",
-      "end": "// MARK: - Guidance Ray",
-      "sha256": "40c9d4289d260a38ef492c6ba4d3536ef31387c22b1db3db0102b8187d118b59"
+      "start": "    public static func convertBufferPointToScreen(",
+      "end": "    private func convertScreenPointToBuffer(",
+      "sha256": "afdd75ef72e3e0f84e219331c19c7f737db1e88627e98413ecc10df47d0d50d0"
     }
-  ]
+  ],
+  "scope": "Unchanged optical/gyro tracking, pin seeding, camera hardware and photo/video capture. The requested fix changes composition-to-subject wiring and auto-shot admission/verification; native regressions exercise these separately."
 }

@@ -16,6 +16,7 @@ PLANNER = (ROOT / "Services/CompositionPlanning.swift").read_text(encoding="utf-
 SPATIAL = (ROOT / "Services/SpatialTrackingEngine.swift").read_text(encoding="utf-8")
 NEURAL = (ROOT / "Services/NeuralSubjectIntelligenceEngine.swift").read_text(encoding="utf-8")
 VM = (ROOT / "ViewModels/CameraViewModel.swift").read_text(encoding="utf-8")
+READINESS = (ROOT / "Services/CaptureReadinessPolicy.swift").read_text(encoding="utf-8")
 VISION = (ROOT / "Services/VisionFramingEngine.swift").read_text(encoding="utf-8")
 YOLO = (ROOT / "Services/YOLODetectionEngine.swift").read_text(encoding="utf-8")
 workflow_path = ROOT.parent / ".github/workflows/ios-build.yml"
@@ -67,7 +68,8 @@ class LocalFramingTests(unittest.TestCase):
 
     def test_lens_change_requires_real_frame_and_calibration(self):
         self.assertIn("latestOpticalFrameTimestamp >", VM)
-        self.assertIn("(reachedAt ?? .infinity) + 0.05", VM)
+        self.assertIn("hasSettledZoomEvidence(since: settledAt)", VM)
+        self.assertIn("opticalTimestamp > reachedAt + 0.05", READINESS)
         self.assertIn("latestOpticalCalibration?.isValid == true", VM)
         self.assertIn("latestOpticalBox", VM)
         self.assertIn("subjectBox: box", VISION)
@@ -98,8 +100,40 @@ class LocalFramingTests(unittest.TestCase):
         self.assertIn("autoCaptureTask?.cancel()", VM)
         self.assertIn("cameraService.cancelZoomRamp()", VM)
         self.assertIn("!self.zoomAwaitingVerification && self.zoomVerified", VM)
-        self.assertIn("latestOpticalFrameTimestamp > manualZoomSettledAt + 0.05", VM)
-        self.assertIn("(0...0.35).contains(age)", VM)
+        self.assertIn("settledAt: manualZoomSettledAt", VM)
+        self.assertIn("timestamp > settledAt + 0.05", READINESS)
+        self.assertIn("CaptureReadinessPolicy.hasOpticalLock", VM)
+        self.assertIn("(0...0.45).contains(now - timestamp)", READINESS)
+
+    def test_visible_aim_and_shutter_share_the_projection(self):
+        self.assertIn("trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay", VM)
+        self.assertIn("localCompositionAim = aim", VM)
+        self.assertIn("let aim = compositionAlignmentPoint(fallback: point)", VM)
+        overlay = (ROOT / "Views/ARFramingOverlayView.swift").read_text(encoding="utf-8")
+        self.assertEqual(overlay.count("let targetPoint = viewModel.viewfinderTargetPoint"), 2)
+        self.assertNotIn("localCompositionNeedsLevel", VM)
+
+    def test_zoom_cannot_fabricate_a_tracking_observation(self):
+        verification = VM.split("private func verifyZoomAfterRamp", 1)[1].split(
+            "private func restoreOriginalZoomAfterVerificationFailure", 1)[0]
+        self.assertNotIn("latestOpticalFrameTimestamp =", verification)
+        self.assertNotIn("latestOpticalBox =", verification)
+        self.assertNotIn("latestOpticalPoint =", verification)
+        self.assertIn("hasSettledZoomEvidence", verification)
+        self.assertIn("CaptureReadinessPolicy.preservesSubject", VM)
+
+    def test_moved_camera_gets_a_new_model_analysis(self):
+        self.assertIn("CompositionSceneFreshness.accepts(sourcePose: source.pose", VM)
+        self.assertIn("localAnalysisReplans < 2", VM)
+        self.assertIn("self.beginLocalCompositionAnalysis(source: AITrackingSource", VM)
+        self.assertIn("analysis.canAutoselectComposition", VM)
+
+    def test_unobserved_camera_margins_are_verified_before_capture(self):
+        self.assertIn("return await verifyNewlyObservedMargins()", VM)
+        self.assertIn("plan.observedFraction < 0.9999", VM)
+        self.assertIn("verifyFinalFraming(pixelBuffer: held.buffer", VM)
+        self.assertIn("minimumPeople: plan.expectedPeople", VM)
+        self.assertIn("generation == targetPinGeneration", VM)
 
     def test_pinning_cannot_override_manual_only_evidence(self):
         pin = VM.split("private func pinTargetAndStartMotion", 1)[1].split(

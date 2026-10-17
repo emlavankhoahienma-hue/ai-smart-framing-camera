@@ -2,6 +2,7 @@
 set -euo pipefail
 
 APP_PATH="${1:-}"
+SNAPSHOT_MODE="${2:-camera}"
 if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
   echo "Error: App path not provided or does not exist: '$APP_PATH'"
   exit 1
@@ -85,6 +86,25 @@ capture_device() {
   run_bounded 15 xcrun simctl privacy "$udid" grant camera "$BUNDLE_ID" || true
   run_bounded 15 xcrun simctl privacy "$udid" grant photos "$BUNDLE_ID" || true
   run_bounded 15 xcrun simctl privacy "$udid" grant microphone "$BUNDLE_ID" || true
+
+  if [ "$SNAPSHOT_MODE" = "zoom" ]; then
+    for stage in guide aligned preview ramp verify zoomout lost; do
+      run_bounded 15 xcrun simctl terminate "$udid" "$BUNDLE_ID" || true
+      run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID" -ZoomSnapshotStage "$stage"
+      sleep 2
+      run_bounded 30 xcrun simctl io "$udid" screenshot "${SCREENSHOT_DIR}/${filename}_${stage}.png"
+    done
+    run_bounded 15 xcrun simctl terminate "$udid" "$BUNDLE_ID"
+    run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID" -ZoomSnapshotStage motion
+    xcrun simctl io "$udid" recordVideo --codec=h264 "${SCREENSHOT_DIR}/${filename}_motion.mp4" &
+    local recorder=$!
+    sleep 12
+    kill -INT "$recorder"
+    wait "$recorder"
+    test -s "${SCREENSHOT_DIR}/${filename}_motion.mp4"
+    run_bounded 30 xcrun simctl shutdown "$udid"
+    return 0
+  fi
 
   echo "Launching application ($BUNDLE_ID)..."
   run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID"

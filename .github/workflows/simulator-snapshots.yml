@@ -6,7 +6,7 @@ on:
       screen:
         description: 'Screen to inspect'
         type: choice
-        options: [camera, composition, viewfinder]
+        options: [camera, composition, viewfinder, zoom]
         default: camera
   push:
     branches: [main]
@@ -45,6 +45,10 @@ jobs:
         if: inputs.screen == 'viewfinder'
         run: cp tests/ViewfinderHUDSnapshotApp.swift AISmartFramingCamera/App/AISmartFramingCameraApp.swift
 
+      - name: Install zoom effect snapshot host
+        if: inputs.screen == 'zoom'
+        run: cp tests/ZoomRevealSnapshotApp.swift AISmartFramingCamera/App/AISmartFramingCameraApp.swift
+
       - name: Build for iOS Simulator
         run: |
           set -o pipefail
@@ -78,14 +82,16 @@ jobs:
         timeout-minutes: 25
         run: |
           chmod +x scripts/capture_simulator_screenshots.sh
-          ./scripts/capture_simulator_screenshots.sh "${{ github.workspace }}/build-sim/Release-iphonesimulator/AISmartFramingCamera.app"
+          ./scripts/capture_simulator_screenshots.sh "${{ github.workspace }}/build-sim/Release-iphonesimulator/AISmartFramingCamera.app" "${{ inputs.screen }}"
 
       - name: Upload Screenshots Artifact
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: iPhone-Screenshots
-          path: screenshots/*.png
+          path: |
+            screenshots/*.png
+            screenshots/*.mp4
           if-no-files-found: warn
 
       - name: Publish Step Summary

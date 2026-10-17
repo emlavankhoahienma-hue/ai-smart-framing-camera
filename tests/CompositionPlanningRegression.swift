@@ -54,6 +54,25 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("identity camera corners tolerate mixed boundary roundoff") {
+            let noise: CGFloat = 0.0000000000000001
+            let corners = [CGPoint(x: -noise, y: -noise), CGPoint(x: 1, y: -noise),
+                           CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
+            try require(CompositionViewSupport.fraction(corners) > 0.999999, "a complete source frame became unobserved")
+            try require(CompositionViewSupport.region(corners) == CGRect(x: 0, y: 0, width: 1, height: 1),
+                "one-ULP identity noise invalidated the original crop")
+        }
+        try run("verified telephoto optics extend search while digital presets stay bounded") {
+            let item = subject(rect: CGRect(x: 0.45, y: 0.4, width: 0.1, height: 0.12), kind: .object)
+            func plans(_ optical: CGFloat?) -> [CompositionProposal] {
+                CompositionPlanner.photographicProposals(subject: item, intents: [.object], portraitBounds: nil,
+                    raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3, 5],
+                    proposalLimit: 72, allowsCameraPan: true, maximumOpticalZoom: optical)
+            }
+            try require(plans(nil).allSatisfy { $0.zoom <= 3.0001 }, "a digital preset was mistaken for an optical lens")
+            try require(plans(5).contains { $0.zoom >= 4.5 }, "available telephoto was excluded from safe framing")
+            try require(plans(9).allSatisfy { $0.zoom <= 3.0001 }, "an unadvertised lens exceeded hardware bounds")
+        }
         try run("large attention regions can crop background while physical object outlines stay protected") {
             var region = subject(rect: CGRect(x: 0.01, y: 0.01, width: 0.98, height: 0.98), kind: .object)
             region.allowsAttentionCrop = true
@@ -86,13 +105,12 @@ enum CompositionPlanningRegression {
             try require(!CompositionAnalysisReceipt.acceptsSelection(sourceTimestamp: 80, completedAt: 65, now: 70),
                 "future source image accepted")
         }
-        try run("a composition gain cannot conceal a clear aesthetic regression") {
-            try require(!CompositionPreferencePolicy.consistent(composition: 4, aesthetics: 2,
-                originalComposition: 3, originalAesthetics: 3), "one model traded away photographic quality")
-            try require(CompositionPreferencePolicy.consistent(composition: 3.46, aesthetics: 3.4,
-                originalComposition: 3.5, originalAesthetics: 3.1), "small numerical variation vetoed a useful crop")
-            try require(!CompositionPreferencePolicy.consistent(composition: .nan, aesthetics: 3,
-                originalComposition: 3, originalAesthetics: 3), "invalid scores passed consensus")
+        try run("crop preference is relative to one image and rejects invalid values") {
+            let scores = [-2.0, 0, 2]
+            try require(LearnedFramingPolicy.preferencePercentile(2, among: scores) ==
+                LearnedFramingPolicy.preferencePercentile(12, among: scores.map { $0 + 10 }), "logit offset changed the selected crop")
+            try require(LearnedFramingPolicy.preferencePercentile(.nan, among: scores) == nil, "invalid rank accepted")
+            try require(LearnedFramingPolicy.preferencePercentile(1, among: []) == nil, "empty ranks became evidence")
         }
         try run("composition alignment follows the chosen aim while the tracker stays on the subject") {
             let k = TrackingCalibration.fallback()
@@ -172,14 +190,14 @@ enum CompositionPlanningRegression {
             crowdedCut[.leftWrist] = CGPoint(x: 0.4, y: 0.492)
             try require(PortraitFramingEvidence.measuredBounds(body: body, face: face, joints: crowdedCut) == nil, "crop crosses a measured elbow or wrist")
         }
-        try run("two-model evidence can prefer useful zoom without a SAMP-only veto") {
-            let original = CompositionPreferencePolicy.score(composition: 3.4, aesthetics: 3.2, geometry: 0.7)!
-            let crop = CompositionPreferencePolicy.score(composition: 3.43, aesthetics: 3.5, geometry: 0.8)!
-            try require(CompositionPreferencePolicy.prefersCrop(score: crop, original: original), "useful tighter framing vetoed by old 0.10 rating threshold")
-            let worse = CompositionPreferencePolicy.score(composition: 3.1, aesthetics: 3.1, geometry: 0.8)!
-            try require(!CompositionPreferencePolicy.prefersCrop(score: worse, original: original), "zoom preferred despite both models ranking it lower")
-            try require(!CompositionPreferencePolicy.prefersCrop(score: original + 0.001, original: original), "numerical noise authorized zoom")
-            try require(CompositionPreferencePolicy.score(composition: .nan, aesthetics: 3, geometry: 0.8) == nil, "nonfinite learned rating admitted")
+        try run("photographic intent constrains whole-image conservatism without forcing every frame to change") {
+            try require(!LearnedFramingPolicy.admissible(geometry: 0.55, best: 0.72), "poor subject framing was preserved by a whole-image score")
+            try require(LearnedFramingPolicy.admissible(geometry: 0.71, best: 0.72), "already suitable original framing was forced to move")
+            let crop = LearnedFramingPolicy.score(preference: 2, peers: [-2, 0, 2], composition: 3, aesthetics: 3, geometry: 0.8)!
+            let original = LearnedFramingPolicy.score(preference: -2, peers: [-2, 0, 2], composition: 3.5, aesthetics: 3.4, geometry: 0.8)!
+            try require(crop > original, "whole-image ratings overruled strong trained crop preference")
+            try require(LearnedFramingPolicy.score(preference: 1, peers: [1], composition: .nan, aesthetics: 3, geometry: 0.8) == nil,
+                        "invalid audit ratings admitted")
         }
         try run("each button press requires its own captured image") {
             let request = UUID(), later = UUID()
@@ -195,30 +213,14 @@ enum CompositionPlanningRegression {
             try require(!CompositionAnalysisReceipt.acceptsFrame(timestamp: .nan, requestedAt: 10, now: 10.1), "nonfinite frame admitted")
             try require(CompositionAnalysisReceipt.acceptsFrame(timestamp: 10.03, requestedAt: 10, now: 10.05), "fresh frame rejected")
         }
-        try run("restored original view participates in the automatic-selection margin") {
-            let broad = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait],
-                raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], proposalLimit: 36)
-            guard let original = broad.first(where: \.isUnchangedView),
-                  let near = broad.first(where: { !$0.isUnchangedView && abs(log(Double($0.zoom))) < 0.15 &&
-                    hypot($0.aimPoint.x - 0.5, $0.aimPoint.y - 0.5) < 0.065 }) else {
-                throw Failure(description: "missing near-original photo fixture")
-            }
-            let candidates = broad.map { proposal -> CompositionProposal in
-                var copy = proposal
-                copy.score = proposal.sourceCorners == near.sourceCorners ? 0.94 :
-                    (proposal.sourceCorners == original.sourceCorners ? 0.92 : 0.5)
-                return copy
-            }
+        try run("unavailable crop weights cannot be replaced by fabricated quality evidence") {
             let ci = CIImage(color: CIColor(red: 0.4, green: 0.5, blue: 0.6))
                 .cropped(to: CGRect(x: 0, y: 0, width: 216, height: 288))
-            guard let result = CompositionAestheticSearch(renderer: CompositionImageRenderer()).run(
-                proposals: candidates, image: ci, aspect: 0.75, preferences: [:], modelURL: nil,
-                cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { _ in [] }) else {
-                throw Failure(description: "missing selection result")
-            }
-            let scores = result.views.map { $0.proposal.score }
-            try require(result.views.contains { $0.proposal.isUnchangedView }, "original option was discarded")
-            try require(scores == scores.sorted(by: >), "runner-up margin compared the wrong alternative")
+            let result = CompositionAestheticSearch(renderer: CompositionImageRenderer()).run(
+                proposals: proposals([subject()], [.portrait]), image: ci, aspect: 0.75,
+                preferences: [:], modelURL: nil, cancellation: CompositionAnalysisCancellation(),
+                progress: { _ in }, refine: { _ in [] })
+            try require(result == nil, "geometry was reported as a trained model result")
         }
         try run("learned shortlist explores zoom while retaining the unchanged view") {
             let plans = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait, .environmentalPortrait],
@@ -254,9 +256,7 @@ enum CompositionPlanningRegression {
             let result = CompositionAestheticSearch(renderer: renderer).run(proposals: proposals([subject()], [.portrait]),
                 image: ci, aspect: 0.75, preferences: [:], modelURL: nil,
                 cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { _ in [] })
-            try require(result?.canAutoselect == false && result?.usedSpecialist == false,
-                        "fallback promoted geometry to pretrained composition evidence")
-            try require(result?.assessedCount == 0, "invented model assessments")
+            try require(result == nil, "missing weights authorized an automatic target")
         }
         try run("spectral preprocessing remains finite on flat and black images") {
             let context = CIContext()
@@ -481,6 +481,88 @@ enum CompositionPlanningRegression {
                     with: VNImageRequestHandler(cgImage: cgImage, options: [:]))
                 throw Failure(description: "cancelled request executed")
             } catch is CancellationError { }
+        }
+        try run("visible composition aim unlocks alignment while physical subject remains off center") {
+            let k = TrackingCalibration.fallback()
+            let physical = CGPoint(x: 0.32, y: 0.41)
+            let requested = CGPoint(x: 0.57, y: 0.48)
+            let ray = k.deviceRay(at: requested)
+            let pose = simd_quatd(from: SIMD3(0, 0, -1), to: ray)
+            guard let geometry = CompositionAimGeometry(subject: physical, calibration: k,
+                sourcePose: simd_quatd(angle: 0, axis: SIMD3(0, 1, 0)), aimWorldRay: ray),
+                  let guide = geometry.projection(subject: k.project(deviceRay: pose.inverse.act(k.deviceRay(at: physical))).point,
+                                                  calibration: k, pose: pose) else {
+                throw Failure(description: "Missing measured subject/aim projection")
+            }
+            let subject = k.project(deviceRay: pose.inverse.act(k.deviceRay(at: physical)))
+            let distance = hypot(guide.point.x - 0.5, (guide.point.y - 0.5) / CGFloat(k.aspect))
+            try require(distance < 0.00001, "Visible aim did not reach the fixed center ring")
+            try require(hypot(subject.point.x - 0.5, subject.point.y - 0.5) > 0.1,
+                        "Fixture silently centered the subject instead of the photographic aim")
+            var gate = AlignmentCaptureGate()
+            for i in 0...30 {
+                _ = gate.update(time: Double(i) / 60, distance: Double(distance), radius: 0.038, freshEvidence: true)
+            }
+            try require(gate.isAligned, "Displayed aim and admission disagreed")
+        }
+        try run("scene budgets retain original views and bounded refinement") {
+            for complex in [false, true] {
+                for constrained in [false, true] {
+                    let budget = CompositionSearchBudget(complexScene: complex, constrained: constrained)
+                    let broad = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait],
+                        raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3],
+                        proposalLimit: budget.coarse)
+                    try require(broad.contains(where: \.isUnchangedView), "Faster search omitted original baseline")
+                    try require(broad.count >= 12 && broad.count <= budget.coarse, "Invalid coarse search coverage")
+                    let refined = CompositionPlanner.proposals(subjects: [subject()], intents: [.portrait],
+                        raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3],
+                        proposalLimit: budget.refinement, refining: Array(broad.prefix(3)))
+                    try require(refined.count <= budget.refinement, "Refinement exceeded budget")
+                    try require(budget.coarse <= 128 && budget.refinement <= 128 && budget.aesthetics <= 8,
+                                "Unbounded crop batch or quality-model work")
+                }
+            }
+            try require(CompositionSearchBudget.isComplex(group: true, intents: [.group]), "Group lost its larger search")
+            try require(CompositionSearchBudget.isComplex(group: false, intents: [.landscape]), "Landscape lost its larger search")
+        }
+        try run("same-focal-length camera guidance can pan instead of pinning the old center") {
+            let hero = subject(rect: CGRect(x: 0.12, y: 0.24, width: 0.25, height: 0.40), kind: .object)
+            let cropOnly = CompositionPlanner.proposals(subjects: [hero], intents: [.object], raster: raster(),
+                calibration: .fallback(), currentZoom: 1, allowedZooms: [1], proposalLimit: 48)
+            let guided = CompositionPlanner.proposals(subjects: [hero], intents: [.object], raster: raster(),
+                calibration: .fallback(), currentZoom: 1, allowedZooms: [1], proposalLimit: 48, allowsCameraPan: true)
+            try require(cropOnly.allSatisfy { $0.observedFraction >= 0.9999 }, "crop-only mode invented pixels")
+            try require(guided.contains { $0.observedFraction < 0.9999 && hypot($0.aimPoint.x - 0.5, $0.aimPoint.y - 0.5) > 0.025 },
+                        "camera planner still cannot leave the press-time center")
+            try require(guided.allSatisfy { $0.observedFraction >= 0.78 }, "camera guidance relies on excessive unseen scene")
+            try require(guided.allSatisfy { CompositionPlanner.visibleFraction($0.expectedSubjectRect) >= 0.98 }, "pan cut the subject")
+        }
+        try run("polygon coverage records unseen margins without synthesizing pixels") {
+            let corners = [CGPoint(x: -0.2, y: 0), CGPoint(x: 0.8, y: 0), CGPoint(x: 0.8, y: 1), CGPoint(x: -0.2, y: 1)]
+            try require(abs(CompositionViewSupport.fraction(corners) - 0.8) < 0.000001, "incorrect camera-pan coverage")
+            try require(CompositionViewSupport.region(corners) == CGRect(x: 0, y: 0, width: 0.8, height: 1), "observed preview included unseen pixels")
+            try require(CompositionViewSupport.fraction([.zero, .zero, .zero, .zero]) == 0, "degenerate frame counted as observed")
+            try require(CompositionViewSupport.region([]) == nil, "missing corners created a region")
+        }
+        try run("analysis of a prior heading cannot authorize the current scene") {
+            let identity = simd_quatd(angle: 0, axis: SIMD3(0, 1, 0))
+            try require(CompositionSceneFreshness.accepts(sourcePose: identity, currentPose: identity, sourceZoom: 1, currentZoom: 1), "stable scene expired")
+            for angle in [0.1, 0.3, 1] {
+                try require(!CompositionSceneFreshness.accepts(sourcePose: identity,
+                    currentPose: simd_quatd(angle: angle, axis: SIMD3(0, 1, 0)), sourceZoom: 1, currentZoom: 1), "old heading created a target")
+            }
+            try require(!CompositionSceneFreshness.accepts(sourcePose: identity, currentPose: identity, sourceZoom: 1, currentZoom: 2), "old lens image created a target")
+        }
+        try run("newly revealed scene must retain the same subject category") {
+            let box = CGRect(x: 0.25, y: 0.2, width: 0.45, height: 0.6)
+            let human = subject(rect: box, kind: .person)
+            let face = CGRect(x: 0.4, y: 0.22, width: 0.1, height: 0.12)
+            try require(FinalFramingEvidence.accepts(protectedBounds: box, expectedKind: .person,
+                minimumFaces: 1, minimumPeople: 1, subjects: [human], faces: [face]), "same person was rejected")
+            try require(!FinalFramingEvidence.accepts(protectedBounds: box, expectedKind: .person,
+                minimumFaces: 1, minimumPeople: 1, subjects: [subject(rect: box, kind: .object)], faces: []), "background replaced a person")
+            try require(!FinalFramingEvidence.accepts(protectedBounds: box, expectedKind: .group,
+                minimumFaces: 3, minimumPeople: 3, subjects: [human], faces: [face]), "one remaining person passed group verification")
         }
         print("Composition regressions: \(passed) passed")
     }
