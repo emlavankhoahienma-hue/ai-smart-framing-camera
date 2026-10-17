@@ -12,9 +12,10 @@ final class FocalCropModel {
     }
 
     private let model: MLModel
+    /// Reused feature buffers; validation replays these exact values in PyTorch.
     let imageInput: MLMultiArray
-    private let boxes: MLMultiArray
-    private let content: MLMultiArray
+    let boxes: MLMultiArray
+    let content: MLMultiArray
     private let letterbox: CGRect
     private var importance: [Double]?
 

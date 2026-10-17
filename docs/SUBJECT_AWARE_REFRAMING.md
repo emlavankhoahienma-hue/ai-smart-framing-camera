@@ -79,7 +79,11 @@ projected photographic aim drives both the visible dot and alignment admission.
 - Native policies cover one-focal-length pan feasibility, observed support,
   invalid/flat evidence, stale heading/lens rejection and group-member loss.
 - Conversion and the production Swift wrapper are compared with the released
-  PyTorch model on 32 real images. Black, white and low-light flat inputs must
+  PyTorch model on 32 real images. Native image/box/content tensors are replayed
+  unchanged in PyTorch to test model numerics independently of JPEG decoders.
+  Pillow versus ImageIO/Core Image input differences are bounded and reported
+  separately; those different decoded inputs must not masquerade as model error.
+  Black, white and low-light flat inputs must
   remain finite. FCDB's same 300 published human crop-pair votes are checked;
   dataset training overlap is not established, so this is not claimed as an
   untouched benchmark or overall photo-quality accuracy.
@@ -89,6 +93,8 @@ projected photographic aim drives both the visible dot and alignment admission.
 - The production detector and composition search run on the same 160 full source
   images, plus the remaining 326 human-scene test photos, covering all 342 human
   photos in the author test split. A further 36 virtual camera windows test different initial framing.
+  Those 36 searches use the constrained device budget, alongside the normal
+  budget used for the 486 source photos; neither is a device latency benchmark.
   Final replay margins come from real parent-photo pixels, and exercise the
   actual recognition and guide projection. These are planar image replays, not
   physical camera, parallax, shutter or optical-lens tests.

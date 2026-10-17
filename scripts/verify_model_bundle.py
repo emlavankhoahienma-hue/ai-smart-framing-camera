@@ -35,8 +35,11 @@ def main() -> None:
     if focal.get("weightsSHA256") != "82c4d695310c220e5f3bcfbf5e64d315a5e826cfd77e945e61e032460014480a":
         raise RuntimeError("Invalid released crop checkpoint")
     parity = focal.get("swiftParity") or {}
-    if parity.get("images", 0) < 32 or parity.get("maxPreferenceError", 1) >= 0.08 or parity.get("maxImportanceError", 1) >= 0.03:
+    if parity.get("images", 0) < 32 or parity.get("maxPreferenceError", 1) >= 0.002 or parity.get("maxImportanceError", 1) >= 0.001:
         raise RuntimeError("Crop model did not pass production Swift preprocessing parity")
+    decoded = focal.get("photoDecoderComparison") or {}
+    if decoded.get("images", 0) < 32 or decoded.get("maxInputMAE", 1) >= 0.01 or decoded.get("maxInputError", 1) >= 0.04:
+        raise RuntimeError("Native crop input differs excessively from author preprocessing")
     human = focal.get("humanPreferences") or {}
     if human.get("pairs", 0) != 300 or human.get("accuracy", 0) < 0.68:
         raise RuntimeError("Crop model did not pass human preference comparison")

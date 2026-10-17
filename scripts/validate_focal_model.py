@@ -58,6 +58,21 @@ result_path = output / "swift-predictions.json"
 subprocess.run([str(executable), str(root / "FocalCrop.mlmodelc"), str(fixture_path), str(result_path)], check=True)
 results = json.loads(result_path.read_text())
 parity = results[:32]
+import numpy as np
+import torch
+from export_focal_coreml import load_reference
+
+torch.set_num_threads(2)
+reference, _ = load_reference()
+for row in parity:
+    tensor = np.fromfile(row["nativeInputTensor"], dtype="<f4").reshape(1, 3, 256, 256)
+    boxes = np.asarray(row["nativeBoxes"], dtype=np.float32).reshape(1, 128, 4)
+    content = np.asarray(row["nativeContent"], dtype=np.float32).reshape(1, 4)
+    with torch.inference_mode():
+        importance, scores = reference(torch.from_numpy(tensor), torch.from_numpy(boxes), torch.from_numpy(content))
+    row["sameTensorPreferenceError"] = float(np.max(np.abs(scores.numpy()[0, :len(row["preferences"])] - row["preferences"])))
+    row["sameTensorImportanceError"] = float(np.max(np.abs(importance.numpy().flatten() - row["importance"])))
+result_path.write_text(json.dumps(results), encoding="utf-8")
 correct = strong = strong_pairs = 0
 records = []
 for result, (_, rows) in zip(results[32:], pairs, strict=True):
@@ -77,16 +92,23 @@ report = dict(model="Released Appwrite FocalNet; production Swift/Core ML inputs
 (output / "fcdb-human-preferences.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 manifest_path = root / "FocalModelManifest.json"
 manifest = json.loads(manifest_path.read_text())
-manifest["swiftParity"] = dict(images=len(parity),
+manifest["photoDecoderComparison"] = dict(images=len(parity),
+    scope="Same JPEG bytes decoded independently by Pillow and ImageIO/Core Image; normalized input and resulting output differences",
     maxPreferenceError=max(row["maxPreferenceError"] for row in parity),
     maxImportanceError=max(row["maxImportanceError"] for row in parity),
     maxImportanceMAE=max(row["importanceMAE"] for row in parity),
     maxInputMAE=max(row["inputMAE"] for row in parity),
     maxInputError=max(row["maxInputError"] for row in parity))
+manifest["swiftParity"] = dict(images=len(parity),
+    scope="Exact image, boxes and content tensors used by production Swift Core ML replayed in the pinned author PyTorch network",
+    maxPreferenceError=max(row["sameTensorPreferenceError"] for row in parity),
+    maxImportanceError=max(row["sameTensorImportanceError"] for row in parity))
 manifest["humanPreferences"] = {key: value for key, value in report.items() if key != "records"}
 manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-print(json.dumps({"parity": manifest["swiftParity"], "humanPreferenceCorrect": correct, "pairs": 300}))
+print(json.dumps({"parity": manifest["swiftParity"], "photoDecoding": manifest["photoDecoderComparison"], "humanPreferenceCorrect": correct, "pairs": 300}))
 if report["accuracy"] < 0.68:
     raise RuntimeError(f"Crop preference quality regressed: {correct}/300")
-if manifest["swiftParity"]["maxPreferenceError"] >= 0.08 or manifest["swiftParity"]["maxImportanceError"] >= 0.03:
+if manifest["swiftParity"]["maxPreferenceError"] >= 0.002 or manifest["swiftParity"]["maxImportanceError"] >= 0.001:
     raise RuntimeError(f"Swift crop preprocessing parity failed: {manifest['swiftParity']}")
+if manifest["photoDecoderComparison"]["maxInputMAE"] >= 0.01 or manifest["photoDecoderComparison"]["maxInputError"] >= 0.04:
+    raise RuntimeError(f"Native photo input contract failed: {manifest['photoDecoderComparison']}")

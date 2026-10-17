@@ -49,6 +49,13 @@ enum FocalModelValidation {
                 }
                 row["inputMAE"] = inputErrors.0
                 row["maxInputError"] = inputErrors.1
+                let tensorFile = URL(fileURLWithPath: args[3]).deletingLastPathComponent()
+                    .appendingPathComponent("native_" + URL(fileURLWithPath: file).lastPathComponent + ".input.f32")
+                try Data(bytes: model.imageInput.dataPointer, count: model.imageInput.count * 4).write(to: tensorFile)
+                row["nativeInputTensor"] = tensorFile.path
+                row["nativeBoxes"] = (0..<model.boxes.count).map { Double(truncating: model.boxes[$0]) }
+                row["nativeContent"] = (0..<model.content.count).map { Double(truncating: model.content[$0]) }
+                row["importance"] = evidence.importance
                 row["importanceMAE"] = zip(map, evidence.importance).reduce(0.0) { $0 + abs($1.0 - $1.1) } / Double(map.count)
                 row["maxPreferenceError"] = scoreError
                 row["maxImportanceError"] = mapError
