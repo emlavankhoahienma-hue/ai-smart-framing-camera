@@ -96,7 +96,7 @@ enum ViewfinderPresentationRegression {
             let centre = CGPoint(x: 100, y: 100)
             try require(ViewfinderGuideGeometry.segment(from: centre, to: centre) == nil, "coincident points divided by zero")
             try require(ViewfinderGuideGeometry.segment(from: centre, to: CGPoint(x: 110, y: 110)) == nil, "short line inverted")
-            try require(ViewfinderGuideGeometry.segment(from: centre, to: CGPoint(x: .nan, y: 0)) == nil, "nonfinite guide accepted")
+            try require(ViewfinderGuideGeometry.segment(from: centre, to: CGPoint(x: CGFloat.nan, y: 0)) == nil, "nonfinite guide accepted")
         }
         print("Viewfinder presentation regressions passed: \(passed)")
     }
