@@ -32,6 +32,7 @@ public struct WindowedZoomOverlayView: View {
 
     // MARK: - Window Dimensions Calculation
     private var windowRect: CGRect {
+        guard containerSize.width > 0, containerSize.height > 0 else { return .zero }
         let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength, baseOpticalZoom: viewModel.displayZoom)
         let w = containerSize.width * fractions.widthFraction
         let h = containerSize.height * fractions.heightFraction
@@ -89,6 +90,7 @@ public struct WindowedZoomOverlayView: View {
                 .gesture(
                     DragGesture(minimumDistance: 2, coordinateSpace: .named("windowed_container"))
                         .onChanged { value in
+                            guard containerSize.width > 0, containerSize.height > 0 else { return }
                             if !isDraggingWindow {
                                 isDraggingWindow = true
                                 dragStartNormalizedCenter = viewModel.windowedZoomNormalizedCenter

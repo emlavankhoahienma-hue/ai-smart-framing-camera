@@ -183,7 +183,9 @@ public struct VideoPreviewSheetView: View {
         })
 
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("cropped_\(UUID().uuidString).mov")
-        try? FileManager.default.removeItem(at: tempURL)
+        if FileManager.default.fileExists(atPath: tempURL.path) {
+            try? FileManager.default.removeItem(at: tempURL)
+        }
 
         guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
             self.isCroppingWindowedZoom = false
@@ -264,7 +266,9 @@ public struct VideoPreviewSheetView: View {
         })
 
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("graded_\(UUID().uuidString).mov")
-        try? FileManager.default.removeItem(at: tempURL)
+        if FileManager.default.fileExists(atPath: tempURL.path) {
+            try? FileManager.default.removeItem(at: tempURL)
+        }
 
         guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
             self.isGradingWithAI = false

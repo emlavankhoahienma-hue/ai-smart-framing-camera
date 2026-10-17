@@ -100,7 +100,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let ciContext: CIContext
-    private let sRGBColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    private let sRGBColorSpace = CGColorSpaceCreateDeviceRGB()
     private weak var viewModel: CameraViewModel?
     private let stateLock = NSLock()
     private var isRenderingActive: Bool = false

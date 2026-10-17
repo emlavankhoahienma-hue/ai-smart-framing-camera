@@ -5,6 +5,7 @@ import SwiftUI
 public final class RealtimeHistogramEngine: @unchecked Sendable {
     public static let shared = RealtimeHistogramEngine()
     
+    private let stateLock = NSLock()
     private var smoothedHeights: [CGFloat] = Array(repeating: 0.08, count: 32)
     
     // Palette chuẩn phổ màu như máy ảnh cao cấp (Xanh lam bóng tối -> Lục/Vàng vùng trung -> Cam/Đỏ vùng sáng gắt)
@@ -76,6 +77,7 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
         }
         
         var result: [HistogramBarData] = []
+        stateLock.lock()
         for i in 0..<32 {
             let rawNormalized = CGFloat(bins[i] / maxBin)
             let current = smoothedHeights[i]
@@ -90,12 +92,16 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
                 color: barColors[i]
             ))
         }
+        stateLock.unlock()
         return result
     }
     
     private func fallbackBars() -> [HistogramBarData] {
+        stateLock.lock()
+        let heights = smoothedHeights
+        stateLock.unlock()
         return (0..<32).map { i in
-            HistogramBarData(id: i, height: 0.08, color: barColors[i])
+            HistogramBarData(id: i, height: heights[i], color: barColors[i])
         }
     }
 }

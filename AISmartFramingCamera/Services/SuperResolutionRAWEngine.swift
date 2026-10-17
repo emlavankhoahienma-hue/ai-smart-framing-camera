@@ -35,7 +35,7 @@ public final class SuperResolutionRAWEngine {
         // ImageIO returns encoded pixel order here. Apply EXIF exactly once.
         // No 4032px thumbnail ceiling, arbitrary right rotation or vertical flip.
         let oriented = CIImage(cgImage: image).oriented(orientation)
-        let outputSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        let outputSpace = image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
         return context.createCGImage(oriented, from: oriented.extent,
                                      format: .RGBA8, colorSpace: outputSpace)
     }

@@ -1107,9 +1107,10 @@ public final class CameraService: NSObject {
             } else {
                 let targetWideCamera: AVCaptureDevice? = {
                     if self.currentCaptureMode.isVideo {
+                        let multiSupportsFormat = self.multiCameraDevice.map { !Self.findCandidateVideoFormats(for: $0, option: self.selectedVideoFormatOption).isEmpty } ?? false
                         if let wide = self.wideCameraDevice,
                            !Self.findCandidateVideoFormats(for: wide, option: self.selectedVideoFormatOption).isEmpty &&
-                           (self.multiCameraDevice == nil || Self.findCandidateVideoFormats(for: self.multiCameraDevice!, option: self.selectedVideoFormatOption).isEmpty) {
+                           !multiSupportsFormat {
                             return wide
                         }
                         return self.multiCameraDevice ?? self.wideCameraDevice
@@ -1541,13 +1542,23 @@ public final class CameraService: NSObject {
         do {
             let newInput = try AVCaptureDeviceInput(device: newCamera)
             captureSession.beginConfiguration()
-            if let oldInput = self.videoDeviceInput {
+            var configurationCommitted = false
+            defer {
+                if !configurationCommitted {
+                    captureSession.commitConfiguration()
+                }
+            }
+
+            let previousInput = self.videoDeviceInput
+            let previousCamera = self.activeCamera
+            if let oldInput = previousInput {
                 captureSession.removeInput(oldInput)
             }
             guard captureSession.canAddInput(newInput) else {
-                if let oldInput = self.videoDeviceInput {
+                if let oldInput = previousInput {
                     captureSession.addInput(oldInput)
                 }
+                configurationCommitted = true
                 captureSession.commitConfiguration()
                 return false
             }
@@ -1578,37 +1589,49 @@ public final class CameraService: NSObject {
             }
             updateMaxPhotoDimensions(for: newCamera)
 
-            try newCamera.lockForConfiguration()
-            if newCamera.isFocusModeSupported(.continuousAutoFocus) {
-                newCamera.focusMode = .continuousAutoFocus
-            }
-            if newCamera.isExposureModeSupported(.continuousAutoExposure) {
-                newCamera.exposureMode = .continuousAutoExposure
-            }
-            if newCamera.isSmoothAutoFocusSupported {
-                newCamera.isSmoothAutoFocusEnabled = true
-            }
-            if newCamera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
-                newCamera.activeColorSpace = .P3_D65
-            }
-            newCamera.isSubjectAreaChangeMonitoringEnabled = true
+            do {
+                try newCamera.lockForConfiguration()
+                defer { newCamera.unlockForConfiguration() }
 
-            // Set initial zoom factor BEFORE committing configuration so that the very first frame
-            // rendered by the new input device matches the current target field of view seamlessly!
-            if let targetDisplayZoom = initialDisplayZoom, targetDisplayZoom.isFinite {
-                let initialDeviceZoom: CGFloat
-                if newCamera.deviceType == .builtInTelephotoCamera {
-                    let teleOptical = telephotoOpticalDisplayZoom ?? 2.0
-                    initialDeviceZoom = max(1.0, min(targetDisplayZoom / teleOptical, newCamera.maxAvailableVideoZoomFactor))
-                } else {
-                    initialDeviceZoom = convertDisplayZoomToDeviceZoom(targetDisplayZoom)
+                if newCamera.isFocusModeSupported(.continuousAutoFocus) {
+                    newCamera.focusMode = .continuousAutoFocus
                 }
-                newCamera.videoZoomFactor = initialDeviceZoom
-                self.currentZoom = initialDeviceZoom
+                if newCamera.isExposureModeSupported(.continuousAutoExposure) {
+                    newCamera.exposureMode = .continuousAutoExposure
+                }
+                if newCamera.isSmoothAutoFocusSupported {
+                    newCamera.isSmoothAutoFocusEnabled = true
+                }
+                if newCamera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
+                    newCamera.activeColorSpace = .P3_D65
+                }
+                newCamera.isSubjectAreaChangeMonitoringEnabled = true
+
+                if let targetDisplayZoom = initialDisplayZoom, targetDisplayZoom.isFinite {
+                    let initialDeviceZoom: CGFloat
+                    if newCamera.deviceType == .builtInTelephotoCamera {
+                        let teleOptical = telephotoOpticalDisplayZoom ?? 2.0
+                        initialDeviceZoom = max(1.0, min(targetDisplayZoom / teleOptical, newCamera.maxAvailableVideoZoomFactor))
+                    } else {
+                        initialDeviceZoom = convertDisplayZoomToDeviceZoom(targetDisplayZoom)
+                    }
+                    newCamera.videoZoomFactor = initialDeviceZoom
+                    self.currentZoom = initialDeviceZoom
+                }
+            } catch {
+                CameraLogger.error("CameraService: Khong the lockForConfiguration cho \(newCamera.localizedName), dang rollback", error: error, category: .capture)
+                captureSession.removeInput(newInput)
+                if let oldInput = previousInput, captureSession.canAddInput(oldInput) {
+                    captureSession.addInput(oldInput)
+                    self.videoDeviceInput = oldInput
+                    self.activeCamera = previousCamera
+                }
+                configurationCommitted = true
+                captureSession.commitConfiguration()
+                return false
             }
 
-            newCamera.unlockForConfiguration()
-
+            configurationCommitted = true
             captureSession.commitConfiguration()
 
             if newCamera.deviceType == .builtInTelephotoCamera {
@@ -1703,7 +1726,16 @@ public final class CameraService: NSObject {
 
         do {
             try targetCamera.lockForConfiguration()
+            defer { targetCamera.unlockForConfiguration() }
+
             self.captureSession.beginConfiguration()
+            var sessionCommitted = false
+            defer {
+                if !sessionCommitted {
+                    self.captureSession.commitConfiguration()
+                }
+            }
+
             self.captureSession.sessionPreset = .inputPriority
             targetCamera.activeFormat = targetFormat
 
@@ -1736,8 +1768,8 @@ public final class CameraService: NSObject {
                 targetCamera.automaticallyAdjustsVideoHDREnabled = false
             }
 
+            sessionCommitted = true
             self.captureSession.commitConfiguration()
-            targetCamera.unlockForConfiguration()
 
             appliedVideoFormatOption = effectiveOption
             selectedVideoFormatOption = effectiveOption
@@ -1795,27 +1827,35 @@ public final class CameraService: NSObject {
             return
         }
 
-        captureSession.beginConfiguration()
         if mode.isVideo {
+            var canAddMovie = true
+            captureSession.beginConfiguration()
             if photoOutput.isLivePhotoCaptureEnabled { photoOutput.isLivePhotoCaptureEnabled = false }
             if !captureSession.outputs.contains(movieFileOutput) {
-                guard captureSession.canAddOutput(movieFileOutput) else {
+                if captureSession.canAddOutput(movieFileOutput) {
+                    captureSession.addOutput(movieFileOutput)
+                    if let connection = movieFileOutput.connection(with: .video) {
+                        if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+                        if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
+                    }
+                } else {
+                    canAddMovie = false
                     if photoOutput.isLivePhotoCaptureSupported {
                         photoOutput.isLivePhotoCaptureEnabled = isLivePhotoMode
                     }
-                    captureSession.commitConfiguration()
-                    desiredCaptureMode = currentCaptureMode
-                    completePendingMode(false)
-                    return
-                }
-                captureSession.addOutput(movieFileOutput)
-                if let connection = movieFileOutput.connection(with: .video) {
-                    if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
-                    if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
                 }
             }
-            captureSession.sessionPreset = .inputPriority
+            if canAddMovie {
+                captureSession.sessionPreset = .inputPriority
+            }
             captureSession.commitConfiguration()
+
+            guard canAddMovie else {
+                desiredCaptureMode = currentCaptureMode
+                completePendingMode(false)
+                return
+            }
+
             self.addAudioInputAndOutputInternal()
             self.configureAudioSessionForStereoCapture()
             configureVideoFormatInternal(option: selectedVideoFormatOption)
@@ -1832,14 +1872,19 @@ public final class CameraService: NSObject {
                     _ = switchInputDeviceInternal(to: multiCam)
                 }
             }
+
+            self.removeAudioInputAndOutputInternal()
+
+            captureSession.beginConfiguration()
             if captureSession.outputs.contains(movieFileOutput) {
                 captureSession.removeOutput(movieFileOutput)
             }
-            self.removeAudioInputAndOutputInternal()
             if photoOutput.isLivePhotoCaptureSupported {
                 photoOutput.isLivePhotoCaptureEnabled = isLivePhotoMode
             }
             captureSession.sessionPreset = .photo
+            captureSession.commitConfiguration()
+
             if let camera = activeCamera {
                 do {
                     try camera.lockForConfiguration()
@@ -1850,9 +1895,9 @@ public final class CameraService: NSObject {
                 } catch {
                     CameraLogger.error("CameraService: Khong the khoi phuc P3 color space", error: error, category: .capture)
                 }
+                updateMaxPhotoDimensions(for: camera)
             }
-            captureSession.commitConfiguration()
-            if let camera = activeCamera { updateMaxPhotoDimensions(for: camera) }
+
             if photoOutput.isAppleProRAWSupported { photoOutput.isAppleProRAWEnabled = false }
             pendingVideoFormatChange = false
             appliedVideoFormatOption = nil

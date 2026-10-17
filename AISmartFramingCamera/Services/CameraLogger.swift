@@ -25,10 +25,15 @@ public enum CameraLogger {
                 let half = String(existing.suffix(existing.count / 2))
                 try? half.data(using: .utf8)?.write(to: url)
             }
-            if let handle = try? FileHandle(forWritingTo: url) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
+            do {
+                let handle = try FileHandle(forWritingTo: url)
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+                try handle.close()
+            } catch {
+                #if DEBUG
+                print("[SYSTEM] FileHandle error: \(error.localizedDescription)")
+                #endif
             }
         } else {
             try? data.write(to: url)
@@ -77,11 +82,12 @@ public enum CameraLogger {
             try? report.data(using: .utf8)?.write(to: crashURL, options: .atomic)
             let debugURL = dir.appendingPathComponent("alignai_debug_log.txt")
             if let data = ("\n" + report + "\n").data(using: .utf8) {
-                if let handle = try? FileHandle(forWritingTo: debugURL) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                } else {
+                do {
+                    let handle = try FileHandle(forWritingTo: debugURL)
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: data)
+                    try handle.close()
+                } catch {
                     try? data.write(to: debugURL)
                 }
             }

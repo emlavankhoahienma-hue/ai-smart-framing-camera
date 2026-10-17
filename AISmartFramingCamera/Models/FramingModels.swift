@@ -1908,36 +1908,31 @@ public final class AppPhotoStorageService: @unchecked Sendable {
     }
 
     private let fileManager = FileManager.default
+    private let storageLock = NSLock()
 
-    public var capturesDirectory: URL {
-        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let dir = docs.appendingPathComponent("AlignStudioCaptures", isDirectory: true)
-        if !fileManager.fileExists(atPath: dir.path) {
-            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
-        }
-        return dir
-    }
-
-    public var thumbsDirectory: URL {
-        let dir = capturesDirectory.appendingPathComponent("Thumbnails", isDirectory: true)
-        if !fileManager.fileExists(atPath: dir.path) {
-            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
-        }
-        return dir
-    }
-
-    public var metadataDirectory: URL {
-        let dir = capturesDirectory.appendingPathComponent("Metadata", isDirectory: true)
-        if !fileManager.fileExists(atPath: dir.path) {
-            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
-        }
-        return dir
-    }
+    public let capturesDirectory: URL
+    public let thumbsDirectory: URL
+    public let metadataDirectory: URL
 
     private init() {
-        _ = capturesDirectory
-        _ = thumbsDirectory
-        _ = metadataDirectory
+        let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first ?? fileManager.temporaryDirectory
+        let captures = docs.appendingPathComponent("AlignStudioCaptures", isDirectory: true)
+        let thumbs = captures.appendingPathComponent("Thumbnails", isDirectory: true)
+        let meta = captures.appendingPathComponent("Metadata", isDirectory: true)
+
+        self.capturesDirectory = captures
+        self.thumbsDirectory = thumbs
+        self.metadataDirectory = meta
+
+        for dir in [captures, thumbs, meta] {
+            if !fileManager.fileExists(atPath: dir.path) {
+                do {
+                    try fileManager.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+                } catch {
+                    CameraLogger.error("AppPhotoStorageService: Khong the tao thu muc \(dir.lastPathComponent)", error: error, category: .photoKit)
+                }
+            }
+        }
     }
 
     /// Save full capture permanently to app sandbox
@@ -1967,14 +1962,22 @@ public final class AppPhotoStorageService: @unchecked Sendable {
         let thumbURL = thumbsDirectory.appendingPathComponent(thumbFilename)
         let metaURL = metadataDirectory.appendingPathComponent("\(id.uuidString).json")
 
+        storageLock.lock()
+        defer { storageLock.unlock() }
+
         do {
             try mainData.write(to: photoURL, options: .atomic)
         } catch {
+            CameraLogger.error("AppPhotoStorageService: Khong the ghi tep anh \(photoFilename)", error: error, category: .photoKit)
             return nil
         }
 
         if let thumbData = generateThumbnailData(from: image, maxPixelSize: 512) {
-            try? thumbData.write(to: thumbURL, options: .atomic)
+            do {
+                try thumbData.write(to: thumbURL, options: .atomic)
+            } catch {
+                CameraLogger.warning("AppPhotoStorageService: Khong the ghi thumbnail \(thumbFilename): \(error.localizedDescription)", category: .photoKit)
+            }
         }
 
         let record = StoredPhotoRecord(
@@ -1994,8 +1997,11 @@ public final class AppPhotoStorageService: @unchecked Sendable {
             isDNG: format == .dng
         )
 
-        if let metaData: Data = try? JSONEncoder().encode(record) {
-            try? metaData.write(to: metaURL, options: .atomic)
+        do {
+            let metaData = try JSONEncoder().encode(record)
+            try metaData.write(to: metaURL, options: .atomic)
+        } catch {
+            CameraLogger.warning("AppPhotoStorageService: Khong the ghi metadata: \(error.localizedDescription)", category: .photoKit)
         }
 
         return record
@@ -2094,23 +2100,51 @@ public final class AppPhotoStorageService: @unchecked Sendable {
     }
 
     public func deleteRecord(_ record: StoredPhotoRecord) {
+        storageLock.lock()
+        defer { storageLock.unlock() }
         let imgURL = photoURL(for: record)
-        try? fileManager.removeItem(at: imgURL)
-        if let thumb = thumbnailURL(for: record) {
-            try? fileManager.removeItem(at: thumb)
+        if fileManager.fileExists(atPath: imgURL.path) {
+            do {
+                try fileManager.removeItem(at: imgURL)
+            } catch {
+                CameraLogger.error("AppPhotoStorageService: Khong the xoa anh \(imgURL.lastPathComponent)", error: error, category: .photoKit)
+            }
+        }
+        if let thumb = thumbnailURL(for: record), fileManager.fileExists(atPath: thumb.path) {
+            do {
+                try fileManager.removeItem(at: thumb)
+            } catch {
+                CameraLogger.warning("AppPhotoStorageService: Khong the xoa thumbnail \(thumb.lastPathComponent): \(error.localizedDescription)", category: .photoKit)
+            }
         }
         let metaURL = metadataDirectory.appendingPathComponent("\(record.id.uuidString).json")
-        try? fileManager.removeItem(at: metaURL)
+        if fileManager.fileExists(atPath: metaURL.path) {
+            do {
+                try fileManager.removeItem(at: metaURL)
+            } catch {
+                CameraLogger.warning("AppPhotoStorageService: Khong the xoa metadata: \(error.localizedDescription)", category: .photoKit)
+            }
+        }
     }
 
     private func generateThumbnailData(from cgImage: CGImage, maxPixelSize: Int) -> Data? {
-        let uiImage = UIImage(cgImage: cgImage)
+        guard cgImage.width > 0, cgImage.height > 0 else { return nil }
         let scale = min(CGFloat(maxPixelSize) / CGFloat(cgImage.width), CGFloat(maxPixelSize) / CGFloat(cgImage.height), 1.0)
-        let targetSize = CGSize(width: max(1.0, round(CGFloat(cgImage.width) * scale)), height: max(1.0, round(CGFloat(cgImage.height) * scale)))
-        UIGraphicsBeginImageContextWithOptions(targetSize, true, 1.0)
-        uiImage.draw(in: CGRect(origin: .zero, size: targetSize))
-        let thumbImage = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        return thumbImage?.jpegData(compressionQuality: 0.80)
+        let targetWidth = max(1, Int(round(CGFloat(cgImage.width) * scale)))
+        let targetHeight = max(1, Int(round(CGFloat(cgImage.height) * scale)))
+        let colorSpace = cgImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: nil,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+        guard let scaledCG = context.makeImage() else { return nil }
+        return UIImage(cgImage: scaledCG).jpegData(compressionQuality: 0.80)
     }
 }

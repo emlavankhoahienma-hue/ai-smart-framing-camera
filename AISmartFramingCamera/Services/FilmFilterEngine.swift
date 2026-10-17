@@ -38,7 +38,7 @@ public final class FilmFilterEngine {
             filteredCI,
             from: filteredCI.extent,
             format: .RGBA8,
-            colorSpace: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+            colorSpace: image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
         )
     }
 
@@ -142,7 +142,7 @@ public final class FilmFilterEngine {
             output,
             from: output.extent,
             format: .RGBA8,
-            colorSpace: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+            colorSpace: image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
         )
     }
 
@@ -161,7 +161,7 @@ public final class FilmFilterEngine {
             output,
             from: output.extent,
             format: .RGBA8,
-            colorSpace: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+            colorSpace: image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
         )
     }
 
@@ -173,7 +173,7 @@ public final class FilmFilterEngine {
             result,
             from: result.extent,
             format: .RGBA8,
-            colorSpace: image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+            colorSpace: image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
         )
     }
 
