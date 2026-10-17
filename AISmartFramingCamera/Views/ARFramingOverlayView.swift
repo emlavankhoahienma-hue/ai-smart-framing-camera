@@ -91,7 +91,7 @@ public struct ARFramingOverlayView: View {
                     let isDocked = hypot(projectedScreen.x - targetScreen.x,
                                          projectedScreen.y - targetScreen.y) > 0.5
 
-                    // Guide from the fixed dot to the moving ring.
+                    // Guide from the fixed ring to the moving target dot.
                     if viewModel.showGuidanceRay {
                         GuidanceRayLine(
                             from: screenCenter,
@@ -122,7 +122,8 @@ public struct ARFramingOverlayView: View {
 
                 // Optical centre is always fixed in the photo viewfinder.
                 if !viewModel.captureMode.isVideo, !viewModel.isRevealingZoomTarget {
-                    CurrentCenterCrosshair(isAligned: viewModel.showTargetCircle && viewModel.isPerfectAlignment)
+                    CurrentCenterCrosshair(isAligned: viewModel.showTargetCircle && viewModel.isPerfectAlignment,
+                                           isGuiding: viewModel.showTargetCircle)
                     .position(screenCenter)
                     .transition(.opacity.combined(with: .scale(scale: 0.7)))
                 }
@@ -386,11 +387,18 @@ enum ViewfinderStyle {
 
 struct CurrentCenterCrosshair: View {
     var isAligned: Bool = false
+    var isGuiding: Bool = true
 
     var body: some View {
         Circle()
-            .fill(isAligned ? ViewfinderStyle.aligned : .white)
-            .frame(width: 12, height: 12)
+            .fill(isGuiding ? .clear : .white)
+            .overlay {
+                if isGuiding {
+                    Circle().strokeBorder(isAligned ? ViewfinderStyle.aligned : .white.opacity(0.9),
+                                          lineWidth: isAligned ? 2.2 : 1.7)
+                }
+            }
+            .frame(width: isGuiding ? 34 : 12, height: isGuiding ? 34 : 12)
             .shadow(color: .black.opacity(0.4), radius: 1)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -403,17 +411,14 @@ struct TargetCircleView: View {
 
     var body: some View {
         Circle()
-            .strokeBorder(isAligned ? ViewfinderStyle.aligned : .white.opacity(0.9),
-                style: StrokeStyle(lineWidth: isAligned ? 2.2 : 1.7,
-                    dash: trackingQuality == .lost ? [3, 4] : []))
-            .background(Circle().fill(isAligned ? ViewfinderStyle.aligned.opacity(0.12) : .clear))
-            .frame(width: 34, height: 34)
+            .fill(isAligned ? ViewfinderStyle.aligned : .white)
+            .frame(width: 12, height: 12)
             .shadow(color: .black.opacity(0.35), radius: 1)
             .opacity(trackingQuality == .lost ? 0.55 : 1)
             .frame(width: 36, height: 36)
             .allowsHitTesting(false)
-            .accessibilityLabel(isAligned ? "Đã căn đúng mục tiêu" : "Vòng mục tiêu")
-            // Status must not displace the centre of the projected ring.
+            .accessibilityLabel(isAligned ? "Đã căn đúng mục tiêu" : "Điểm mục tiêu")
+            // Status must not displace the centre of the projected target.
             .overlay(alignment: .top) {
                 if trackingQuality == .reacquiring || trackingQuality == .lost {
                     Text("Đang xác nhận mục tiêu…")

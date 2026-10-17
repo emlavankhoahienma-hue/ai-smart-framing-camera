@@ -1,16 +1,16 @@
 # Reference-inspired target and optical zoom reveal
 
-This change follows the supplied 9.33-second video: a white centre dot, a single
-white hollow target ring, orange confirmation, then a rounded white crop outline
+This change follows the supplied 9.33-second video: a fixed white hollow centre ring, a single
+moving white target dot, orange confirmation, then a rounded white crop outline
 with a restrained coloured halo. It changes presentation, not recognition models,
 subject ranking, optical tracking, target pinning or capture authorization.
 
 ## Behaviour
 
 - The existing target coordinates, aspect-fill projection and edge docking are
-  unchanged. The ring has no centre cross, pulsing radar or perpetual animation.
+  unchanged. The centre ring and moving dot have no cross, pulsing radar or perpetual animation.
   A status label is an overlay outside its fixed 36-point layout container, so
-  losing optical evidence cannot move the ring.
+  losing optical evidence cannot move the target.
 - The dot and ring turn orange on the existing alignment decision. They yield
   to the crop outline during a real AI zoom and return after verification.
 - Before zooming in, the outline shows the actual final crop. During the optical

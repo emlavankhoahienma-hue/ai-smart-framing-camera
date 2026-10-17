@@ -2239,7 +2239,7 @@ public final class CameraViewModel: ObservableObject {
         if !hasFreshOpticalLock { return "Đang xác nhận lại chủ thể trong ảnh…" }
         if localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
         if autoCaptureTask != nil { return "Đang kiểm tra khung trước khi chụp…" }
-        return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" : "Di chuyển tâm trắng vào vòng mục tiêu"
+        return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" : "Di chuyển máy để đưa chấm trắng vào vòng giữa"
     }
 
     var captureStatusText: String {

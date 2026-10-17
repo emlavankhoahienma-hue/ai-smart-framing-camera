@@ -86,11 +86,11 @@ enum ViewfinderPresentationRegression {
             try require(ZoomRevealGeometry.screenRect(rect, size: .zero, bufferAspect: 0.75) == nil, "zero viewport accepted")
             try require(ZoomRevealGeometry.screenRect(rect, size: CGSize(width: 300, height: 400), bufferAspect: .nan) == nil, "invalid aspect accepted")
         }
-        try run("guidance line leaves both the ring and fixed dot unobscured") {
+        try run("guidance line leaves both the fixed ring and moving dot unobscured") {
             let from = CGPoint(x: 100, y: 100), to = CGPoint(x: 160, y: 180)
             let segment = ViewfinderGuideGeometry.segment(from: from, to: to)!
-            try require(near(hypot(segment.start.x - from.x, segment.start.y - from.y), 10), "line overlaps centre dot")
-            try require(near(hypot(segment.end.x - to.x, segment.end.y - to.y), 21), "line enters target ring")
+            try require(near(hypot(segment.start.x - from.x, segment.start.y - from.y), 21), "line enters centre ring")
+            try require(near(hypot(segment.end.x - to.x, segment.end.y - to.y), 10), "line overlaps target dot")
         }
         try run("coincident and invalid targets never produce an inverted guide") {
             let centre = CGPoint(x: 100, y: 100)

@@ -38,13 +38,13 @@ struct ZoomRevealGeometry {
 }
 
 enum ViewfinderGuideGeometry {
-    /// Leave clear space around the fixed dot and the moving ring.
+    /// Leave clear space around the fixed ring and the moving target dot.
     static func segment(from: CGPoint, to: CGPoint) -> (start: CGPoint, end: CGPoint)? {
         guard from.x.isFinite, from.y.isFinite, to.x.isFinite, to.y.isFinite else { return nil }
         let dx = to.x - from.x, dy = to.y - from.y
         let length = hypot(dx, dy)
         guard length.isFinite, length > 32 else { return nil }
-        return (CGPoint(x: from.x + dx * 10 / length, y: from.y + dy * 10 / length),
-                CGPoint(x: to.x - dx * 21 / length, y: to.y - dy * 21 / length))
+        return (CGPoint(x: from.x + dx * 21 / length, y: from.y + dy * 21 / length),
+                CGPoint(x: to.x - dx * 10 / length, y: to.y - dy * 10 / length))
     }
 }

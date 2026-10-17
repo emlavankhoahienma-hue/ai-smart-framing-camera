@@ -65,7 +65,7 @@ private struct ZoomRevealSnapshot: View {
         var reveal = false
         var ramping = false
         var outward = false
-        var title = "Đưa chấm trắng vào vòng mục tiêu"
+        var title = "Đưa chấm trắng vào vòng giữa"
     }
 
     private func sample(at time: Double) -> Sample {
@@ -87,7 +87,7 @@ private struct ZoomRevealSnapshot: View {
             let progress = stage == "motion" ? CGFloat((time - 6.5) / 1.5) : 0.5
             return Sample(zoom: 2.4 - 1.4 * progress, reveal: true, ramping: true, outward: true,
                 title: "Zoom ra · Thấy thêm không gian xung quanh")
-        case "lost": return Sample(title: "Mất dấu · Giữ đúng vị trí vòng, báo trạng thái riêng")
+        case "lost": return Sample(title: "Mất dấu · Giữ đúng vị trí đích, báo trạng thái riêng")
         default: return Sample()
         }
     }
