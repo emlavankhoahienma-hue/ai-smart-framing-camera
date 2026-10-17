@@ -2082,21 +2082,20 @@ public final class CameraViewModel: ObservableObject {
         } else {
             activeEngineSource = .appleNeuralEngine(scene: output.detectedScene.localizedName)
         }
-        // Detector certainty and layout ranking are separate. Close alternatives
-        // require an explicit choice; a high semantic score cannot authorize a shot.
-        if analysis.canAutoselectComposition, let first = localCompositionChoices.first,
+        // AI decides the best photographic composition and zoom; accept the top plan directly
+        if let first = localCompositionChoices.first,
            CACurrentMediaTime() - source.frame.timestamp <= 30,
-           first.plan.confidence >= first.plan.minimumAutoselectConfidence, first.plan.score >= 0.35 {
+           first.plan.confidence >= first.plan.minimumAutoselectConfidence {
             acceptLocalPlan(first.plan, source: source)
-        } else if !localCompositionChoices.isEmpty {
-            allowsAutoCaptureForCurrentTarget = false
-            localSelectionMessage = analysis.usedCompositionModel ?
-                "Đã đánh giá \(analysis.assessedCompositionCount) khung và mức zoom. Chọn ảnh bạn thích." :
-                "Mô hình bố cục chưa khả dụng. Kiểm tra và chọn khung thủ công."
-            showCompositionPreviews()
-        } else if !localEvidenceCandidates.isEmpty {
-            allowsAutoCaptureForCurrentTarget = false
-            localSelectionMessage = "Chưa đủ dữ liệu để chọn khung. Chạm vùng đánh dấu để căn và chụp tay."
+        } else if let first = localCompositionChoices.first,
+                  CACurrentMediaTime() - source.frame.timestamp <= 30 {
+            acceptLocalPlan(first.plan, source: source)
+        } else if let first = localEvidenceCandidates.first {
+            pendingSuggestedZoom = displayZoom
+            allowsAutoCaptureForCurrentTarget = true
+            pinTargetAndStartMotion(at: first.center, subjectRect: first.boundingBox, source: source)
+            localTrackingSource = nil
+            localSelectionMessage = nil
         } else {
             allowsAutoCaptureForCurrentTarget = false
             localSelectionMessage = "Chưa có mốc rõ để căn máy. Thử hướng máy sang vùng có chi tiết hoặc chụp tay."
@@ -2200,40 +2199,27 @@ public final class CameraViewModel: ObservableObject {
         pendingSuggestedZoom = plan.zoom
         aiSuggestedZoom = plan.zoom
         hasExecutedAutoZoomForSession = false
-        allowsAutoCaptureForCurrentTarget = plan.confidence >= plan.minimumAutoselectConfidence || plan.score >= 0.50
+        allowsAutoCaptureForCurrentTarget = true
         localCompositionChoices = []
         localEvidenceCandidates = []
         localSuggestionRects = []
         detectedSubjectRects = []
         localSelectionMessage = nil
+        // Unified reticle tracks the photographic composition aim directly.
+        // Legacy: trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay
         pinTargetAndStartMotion(at: plan.aimPointInSource,
             subjectRect: plan.subjectRect, source: source,
-            trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay)
+            trackedPoint: nil, pinnedGuideRay: plan.aimWorldRay)
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
-        localCompositionAim = CompositionAimGeometry(subject: plan.subjectPoint,
-            calibration: source.frame.calibration, sourcePose: source.pose, aimWorldRay: plan.aimWorldRay)
-        localCompositionAimPoint = plan.aimPointInSource
-        if localCompositionAim == nil { allowsAutoCaptureForCurrentTarget = false }
+        localCompositionAim = nil
+        localCompositionAimPoint = nil
         localTrackingSource = nil
     }
 
     private func compositionAlignmentPoint(fallback: CGPoint) -> CGPoint {
-        guard let guide = localCompositionAim else { return fallback }
-        let engine = SpatialTrackingEngine.shared
-        guard let frame = frameProcessor.latestTrackingFrameSnapshot()?.1,
-              CACurrentMediaTime() - frame.timestamp >= -0.02,
-              CACurrentMediaTime() - frame.timestamp < 0.25,
-              let pose = engine.pose(at: frame.timestamp),
-              let subject = engine.projection(at: frame.timestamp, calibration: frame.calibration),
-              subject.isInFront,
-              let projected = guide.projection(subject: subject.point, calibration: frame.calibration, pose: pose) else {
-            localCompositionAimPoint = nil
-            return CGPoint(x: -10, y: -10)
-        }
-        localCompositionAimPoint = projected.point
-        return projected.point
+        return fallback
     }
 
     var localCompositionNeedsLevel: Bool {
@@ -2258,8 +2244,7 @@ public final class CameraViewModel: ObservableObject {
         if !hasFreshOpticalLock { return "Đang xác nhận lại chủ thể trong ảnh…" }
         if localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
         if autoCaptureTask != nil { return "Đang kiểm tra khung trước khi chụp…" }
-        return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" :
-            (localCompositionAim != nil ? "Đưa tâm trắng vào dấu bố cục" : "Di chuyển tâm trắng vào vòng mục tiêu")
+        return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" : "Di chuyển tâm trắng vào vòng mục tiêu"
     }
 
     var captureStatusText: String {
