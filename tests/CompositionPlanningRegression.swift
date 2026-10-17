@@ -54,6 +54,13 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("a subject anchor at the image edge still has an unchanged safe view") {
+            let hero = CompositionSubject(index: 0, bounds: CGRect(x: 0, y: 0.18, width: 0.18, height: 0.65),
+                anchor: CGPoint(x: 0.02, y: 0.25), kind: .person, confidence: 0.9, importance: 1, gaze: 0)
+            let result = CompositionPlanner.photographicProposals(subject: hero, intents: [.portrait], portraitBounds: nil,
+                raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3])
+            try require(result.contains(where: \.isUnchangedView), "edge anchor excluded the only safe original frame")
+        }
         try run("measured torso portrait enables zoom while keeping face and shoulders") {
             let body = CGRect(x: 0.35, y: 0.10, width: 0.30, height: 0.84)
             let face = CGRect(x: 0.43, y: 0.11, width: 0.14, height: 0.14)

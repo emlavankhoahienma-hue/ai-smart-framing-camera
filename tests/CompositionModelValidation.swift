@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 import ImageIO
 import CoreImage
+import CoreVideo
 import Vision
 import simd
 
@@ -93,6 +94,10 @@ enum CompositionModelValidation {
         }
         try JSONSerialization.data(withJSONObject: parity, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("swift-parity.json"))
+        if CommandLine.arguments.contains("--parity-only") {
+            print("PASS: 32 SAMP and 32 Charm production Swift parity photos")
+            return
+        }
         let files = try FileManager.default.contentsOfDirectory(at: photos, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "jpg" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         let renderer = CompositionImageRenderer()
@@ -108,62 +113,66 @@ enum CompositionModelValidation {
         }
         let report: [String: Any] = ["images": searches.count, "searches": searches,
             "input": "Original full-resolution source files; only candidate previews are resized",
-            "scope": "Production composition search and Core ML; Vision person/animal boxes provided by harness. Not a physical-iPhone FPS test or full YOLO pipeline benchmark."]
+            "scope": "Production YOLO/Vision/SigLIP recognition, hero/group selection and composition search compiled from app source. macOS data adapters omit iOS UI/filter properties; camera/motion/capture and physical-phone performance are not exercised."]
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("real-photo-search.json"))
         print("PASS: \(parity.count) author-to-Swift parity photos; \(searches.count) production composition searches")
     }
 
-    static func boundedBox(_ box: CGRect) -> CGRect? {
-        let rect = CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
-            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        return !rect.isNull && !rect.isEmpty && rect.width > 0.01 && rect.height > 0.01 ? rect : nil
+    static func pixelBuffer(_ image: CGImage) throws -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        guard CVPixelBufferCreate(kCFAllocatorDefault, image.width, image.height, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer) == kCVReturnSuccess,
+              let buffer else { throw Failure(message: "Cannot allocate photograph buffer") }
+        CIContext(options: [.cacheIntermediates: false]).render(CIImage(cgImage: image), to: buffer,
+            bounds: CGRect(x: 0, y: 0, width: image.width, height: image.height),
+            colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+        return buffer
+    }
+
+    static func save(_ image: CGImage, to output: URL) throws {
+        guard let destination = CGImageDestinationCreateWithURL(output as CFURL, "public.jpeg" as CFString, 1, nil) else {
+            throw Failure(message: "Cannot create preview destination")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw Failure(message: "Cannot save preview") }
     }
 
     static func searchPhoto(file: URL, photos: URL, modelURL: URL, output: URL,
                             renderer: CompositionImageRenderer) throws -> [String: Any] {
         let source = try image(photos.appendingPathComponent("source").appendingPathComponent(file.lastPathComponent))
-        let request = VNGenerateAttentionBasedSaliencyImageRequest()
-        let people = VNDetectHumanRectanglesRequest()
-        let animals = VNRecognizeAnimalsRequest()
-        let faces = VNDetectFaceRectanglesRequest()
-        let pose = VNDetectHumanBodyPoseRequest()
-        people.upperBodyOnly = false
-        let handler = VNImageRequestHandler(cgImage: source, orientation: .up)
-        try handler.perform([request, people, animals, faces, pose])
-        let ci = CIImage(cgImage: source)
-        guard let raster = renderer.raster(image: ci, saliency: request.results?.first?.pixelBuffer) else {
-            throw Failure(message: "Missing raster")
+        let pixels = try pixelBuffer(source)
+        let analyzer = NativeSubjectAnalysis(renderer: renderer)
+        guard let detected = analyzer.analyze(pixels) else { throw Failure(message: "Production recognition failed") }
+        guard let hero = detected.allCandidates.first, let raster = detected.compositionRaster else {
+            try save(source, to: output.appendingPathComponent(file.lastPathComponent))
+            return ["file": file.lastPathComponent, "result": "manual-no-subject",
+                    "modelAssessedCrops": 0, "charmAssessedCrops": 0, "poseSupportsTorsoPortrait": false,
+                    "selectedZoom": 1.0, "automaticSelectionAllowed": false,
+                    "detectedPeople": 0, "detectedAnimals": 0]
         }
-        let bodies: [CGRect] = (people.results ?? []).filter { $0.confidence >= 0.4 }.compactMap { boundedBox($0.boundingBox) }
-        let petBoxes: [CGRect] = (animals.results ?? []).filter { $0.confidence >= 0.4 }.compactMap { boundedBox($0.boundingBox) }
-        let pets: [CGRect] = petBoxes.sorted { lhs, rhs in lhs.width * lhs.height > rhs.width * rhs.height }
-        let isGroup = bodies.count >= 2
-        let faceBounds = (faces.results ?? []).compactMap { boundedBox($0.boundingBox) }
-        let initialBounds = bodies.first ?? pets.first ?? CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2)
-        let bounds = bodies.dropFirst().reduce(initialBounds) { $0.union($1) }
-        let kind: CompositionSubjectKind
-        let intents: [LocalCompositionIntent]
-        if isGroup { kind = .group; intents = [.group] }
-        else if !bodies.isEmpty { kind = .person; intents = [.portrait, .environmentalPortrait] }
-        else if !pets.isEmpty { kind = .animal; intents = [.animal] }
-        else { kind = .scenery; intents = [.landscape] }
-        let incidentalPets = bodies.isEmpty ? Array(pets.dropFirst()) : pets
-        let primaryBounds = bodies.isEmpty ? Array(pets.prefix(1)) : bodies
-        let ownFaces = faceBounds.filter { bounds.contains(CGPoint(x: $0.midX, y: $0.midY)) }
-        let portraitBounds = bodies.count == 1 ? PortraitFramingEvidence.bounds(body: bounds,
-            faces: ownFaces, observations: pose.results ?? []) : nil
-        let eye = bodies.count == 1 ? ownFaces.max(by: { $0.width * $0.height < $1.width * $1.height })
-            .map { CGPoint(x: $0.midX, y: $0.midY) } : nil
+        let bounds = hero.boundingBox
+        let kind = analyzer.subjectKind(hero)
+        let intents = analyzer.intents(detected, hero: hero)
+        let ownFaces = hero.faceBounds
+        let incidentalPets = detected.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox)
+        let incidentalFaces = detected.allFaceRects.filter { !ownFaces.contains($0) }
+        let primaryBounds = [bounds] + hero.companionBounds
+        var portraitBounds: CGRect?
+        if hero.category == .human, !hero.isGroup, !ownFaces.isEmpty {
+            let pose = VNDetectHumanBodyPoseRequest()
+            try VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up).perform([pose])
+            portraitBounds = PortraitFramingEvidence.bounds(body: bounds, faces: ownFaces, observations: pose.results ?? [])
+        }
         let subject = CompositionSubject(index: 0, bounds: bounds,
-            anchor: eye ?? CGPoint(x: bounds.midX, y: bounds.midY), kind: kind,
-            confidence: 0.9, importance: 1, gaze: 0)
+            anchor: hero.eyePosition ?? hero.center, kind: kind,
+            confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
+        let ci = CIImage(cvPixelBuffer: pixels)
         let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
         func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
             CompositionPlanner.photographicProposals(subject: subject, intents: intents, portraitBounds: portraitBounds,
                 raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
-                protectedBounds: isGroup ? primaryBounds : ownFaces,
-                incidentalBounds: incidentalPets + faceBounds.filter { !ownFaces.contains($0) },
+                protectedBounds: hero.companionBounds, incidentalBounds: incidentalPets + incidentalFaces,
                 proposalLimit: seeds.isEmpty ? 36 : 18, refining: seeds)
         }
         let started = ProcessInfo.processInfo.systemUptime
@@ -176,42 +185,38 @@ enum CompositionModelValidation {
             cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { proposals($0) }),
             !result.views.isEmpty, result.usedSpecialist,
             let best = result.views.first, let bestAssessment = best.assessment, let bestAesthetics = best.aesthetics else {
-            throw Failure(message: "Real-photo search failed: \(file.lastPathComponent), proposals \(broad.count), bounds \(bounds), people \(bodies)")
+            throw Failure(message: "Real-photo search failed: \(file.lastPathComponent), proposals \(broad.count), hero \(hero.label), bounds \(bounds)")
         }
         for view in result.views {
             let future = TrackingCalibration(fx: calibration.fx * Double(view.proposal.zoom),
                 fy: calibration.fy * Double(view.proposal.zoom), cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
-            let requiredBounds = view.proposal.intent == .portrait && portraitBounds != nil ? [portraitBounds!] : primaryBounds
-            for body in requiredBounds + ownFaces {
-                guard let projected = CompositionPlanner.project(body, from: calibration, to: future,
+            let required = view.proposal.intent == .portrait && portraitBounds != nil ? [portraitBounds!] + hero.companionBounds : primaryBounds
+            for bound in required {
+                guard let projected = CompositionPlanner.project(bound, from: calibration, to: future,
                     rotation: view.proposal.rotation), CompositionPlanner.visibleFraction(projected) > 0.98 else {
-                    throw Failure(message: "Search cropped a protected person: \(file.lastPathComponent)")
+                    throw Failure(message: "Search cropped a protected subject: \(file.lastPathComponent), \(hero.label)")
                 }
             }
-            for pet in incidentalPets {
-                guard let projected = CompositionPlanner.project(pet, from: calibration, to: future,
+            for bound in incidentalPets + incidentalFaces {
+                guard let projected = CompositionPlanner.project(bound, from: calibration, to: future,
                     rotation: view.proposal.rotation) else { continue }
                 let fraction = CompositionPlanner.visibleFraction(projected)
                 guard fraction <= 0.02 || fraction >= 0.98 else {
-                    throw Failure(message: "Search bisected a background animal: \(file.lastPathComponent)")
+                    throw Failure(message: "Search bisected an incidental subject: \(file.lastPathComponent)")
                 }
             }
         }
-        let row: [String: Any] = ["file": file.lastPathComponent, "detectedPeople": bodies.count,
-            "detectedAnimals": pets.count,
+        let row: [String: Any] = ["file": file.lastPathComponent, "hero": hero.label,
+            "heroConfidence": Double(hero.confidence), "group": hero.isGroup,
+            "detectedPeople": detected.allCandidates.filter { $0.category == .human && !$0.isGroup }.count,
+            "detectedAnimals": detected.allCandidates.filter { $0.category == .animal }.count,
             "sourceWidth": source.width, "sourceHeight": source.height,
             "modelAssessedCrops": result.assessedCount, "selectedZoom": Double(best.proposal.zoom),
-            "charmAssessedCrops": result.modernAssessmentCount,
-            "aestheticRating": bestAesthetics.mean,
-            "poseSupportsTorsoPortrait": portraitBounds != nil,
-            "selectedIntent": best.proposal.intent.rawValue,
-            "compositionRating": bestAssessment.mean,
-            "secondsMac": ProcessInfo.processInfo.systemUptime - started,
+            "charmAssessedCrops": result.modernAssessmentCount, "aestheticRating": bestAesthetics.mean,
+            "poseSupportsTorsoPortrait": portraitBounds != nil, "selectedIntent": best.proposal.intent.rawValue,
+            "compositionRating": bestAssessment.mean, "secondsMac": ProcessInfo.processInfo.systemUptime - started,
             "automaticSelectionAllowed": result.canAutoselect]
-        let destination = CGImageDestinationCreateWithURL(output.appendingPathComponent(file.lastPathComponent) as CFURL,
-            "public.jpeg" as CFString, 1, nil)!
-        CGImageDestinationAddImage(destination, result.views[0].image, nil)
-        guard CGImageDestinationFinalize(destination) else { throw Failure(message: "Cannot save preview") }
+        try save(best.image, to: output.appendingPathComponent(file.lastPathComponent))
         return row
     }
 }

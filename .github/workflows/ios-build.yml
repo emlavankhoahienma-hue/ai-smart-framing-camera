@@ -140,16 +140,7 @@ jobs:
 
       - name: Validate Swift photographic model and crop safety on real images
         run: |
-          xcrun swiftc -O -warnings-as-errors \
-            AISmartFramingCamera/Services/TrackingGeometry.swift \
-            AISmartFramingCamera/Services/CompositionPlanning.swift \
-            AISmartFramingCamera/Services/CompositionImageEvidence.swift \
-            AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
-            AISmartFramingCamera/Services/CharmPhotographicModel.swift \
-            AISmartFramingCamera/Services/PortraitFramingEvidence.swift \
-            AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
-            tests/CompositionModelValidation.swift -o "$RUNNER_TEMP/photo-validation"
-          "$RUNNER_TEMP/photo-validation" validation/photos SAMPComposition.mlmodelc validation/swift
+          python scripts/validate_composition_photos.py
 
       - name: Validate preserved YOLO recognition on real photographs
         run: python scripts/validate_detector_photos.py

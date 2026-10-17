@@ -346,7 +346,9 @@ enum CompositionPlanner {
                 if isCancelled() { return [] }
                 let desired = preferredPlacement(subject: subject, intent: intent, raster: raster)
                 func evaluate(_ destination: CGPoint, zoom: CGFloat) -> CompositionProposal? {
-                    guard inside(destination, margin: 0.04), zoom.isFinite,
+                    let unchanged = zoom == currentZoom && hypot(destination.x - subject.anchor.x,
+                                                                  destination.y - subject.anchor.y) < 0.000001
+                    guard inside(destination, margin: unchanged ? 0 : 0.04), zoom.isFinite,
                           zoom >= currentZoom, zoom <= maxZoom else { return nil }
                     let ratio = Double(zoom / currentZoom)
                     let future = TrackingCalibration(fx: calibration.fx * ratio, fy: calibration.fy * ratio,

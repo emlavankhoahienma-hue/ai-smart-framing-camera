@@ -111,11 +111,16 @@ geometric constraints, capture integration and tracking are not evaluated by
 these pair metrics.
 
 CI separately checks 32 real-photo author/PyTorch/Core ML/Swift inputs and scores,
-then runs production search on 160 original full-resolution CADB photos across
-10 scene categories. Crop/project the original before resizing a candidate.
-The harness uses actual Vision body/face/animal/pose observations and checks
-required body or measured torso regions, faces and incidental pets. This is not
-the entire iPhone camera pipeline. Additional native bundles execute the unchanged
+then runs recognition and search on 160 original full-resolution CADB photos
+across 10 scene categories. Crop/project the original before resizing a candidate.
+The native bundle compiles the actual protected YOLO/Vision/SigLIP recognition,
+face association, hero/group selection and intent algorithms from app source.
+Only the scene enum's iOS filter/UI computed properties are omitted by a data
+adapter; source hashes are recorded. No subject boxes or confidence scores are
+invented by the harness. It checks required body or measured torso regions,
+faces and incidental pets. No-subject frames explicitly remain manual.
+Camera/motion/capture integration and hardware intrinsics are not exercised;
+the geometry uses its declared fallback calibration. Additional native bundles execute the unchanged
 YOLO12n and YOLO12s production photographic loaders/decoders on those same 160
 photos, a blank frame and cancellation. Detection counts are observations, not
 accuracy against human object-box labels.
