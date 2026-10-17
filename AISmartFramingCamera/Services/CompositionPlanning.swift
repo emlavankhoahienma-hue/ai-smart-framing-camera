@@ -410,9 +410,6 @@ enum CompositionPlanner {
         // Avoid throwing away excessive source resolution. Lens availability is
         // supplied by CameraService; existing long telephoto framing remains valid.
         let maxZoom = max(currentZoom, min(5, hardwareMax, max(currentZoom * 2.4, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.2 }.max() ?? currentZoom)))
-        let zooms = Array(Set((0...10).map {
-            currentZoom * CGFloat(exp(log(Double(maxZoom / currentZoom)) * Double($0) / 10))
-        } + allowedZooms.filter { $0.isFinite && $0 >= currentZoom && $0 <= maxZoom })).sorted()
         var result: [CompositionProposal] = []
         for subject in validSubjects.prefix(4) {
             let cropAttention = subject.allowsAttentionCrop && subject.kind == .object && raster.hasAttention
@@ -682,6 +679,18 @@ enum CompositionPlanner {
                                 y: min(0.80, max(0.20, desired.y + CGFloat(dy))))
                 points.append(p)
             }
+        }
+
+        // 5. Intent-specific compositional framing points
+        switch intent {
+        case .landscape, .architecture:
+            if let h = raster.horizon {
+                points.append(CGPoint(x: desired.x, y: h.y))
+            }
+        case .portrait, .environmentalPortrait:
+            points.append(CGPoint(x: desired.x, y: min(0.65, max(0.28, subject.anchor.y - 0.08))))
+        default:
+            break
         }
 
         return points
