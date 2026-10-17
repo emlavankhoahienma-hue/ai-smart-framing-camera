@@ -146,7 +146,7 @@ final class CompositionAestheticSearch {
                 $0.preference >= best.cropPreference - max(0.01, range * 0.15)
         }
         let stable = best.proposal.isUnchangedView ||
-            (range > 0.0001 && (!nearby.isEmpty || eligible.count == 1 || assessedRegions >= 12))
+            (range > 0.0001 && (!nearby.isEmpty || assessedRegions >= 12))
         return Result(views: selected, assessedCount: views.count,
             canAutoselect: stable, usedSpecialist: true, modernAssessmentCount: views.count,
             cropAssessmentCount: assessedRegions)
