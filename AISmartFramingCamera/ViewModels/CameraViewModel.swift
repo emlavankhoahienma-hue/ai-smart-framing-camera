@@ -170,6 +170,8 @@ public final class CameraViewModel: ObservableObject {
     private var selectedCompositionPreviewID: UUID?
     @Published private(set) var localCompositionExplanation = ""
     private var localCompositionIntent: LocalCompositionIntent?
+    private var localCompositionAim: CompositionAimGeometry?
+    @Published private(set) var localCompositionAimPoint: CGPoint?
     @Published private(set) var localAnalysisSummary = ""
     private var localAnalysisRequestID = UUID()
     private var localAnalysisTask: Task<Void, Never>?
@@ -208,6 +210,8 @@ public final class CameraViewModel: ObservableObject {
             compositionPreviewPresentation = nil
             localCompositionExplanation = ""
             localCompositionIntent = nil
+            localCompositionAim = nil
+            localCompositionAimPoint = nil
         }
     }
     private var targetPinGeneration: UInt64 = 0 {
@@ -218,6 +222,8 @@ public final class CameraViewModel: ObservableObject {
             switch aiSessionState {
             case .idle, .done:
                 visionEngine.isIdlePreviewMode = true
+                localCompositionAim = nil
+                localCompositionAimPoint = nil
             default:
                 visionEngine.isIdlePreviewMode = false
             }
@@ -1939,6 +1945,8 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
 
     public func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect? = nil) {
+        localCompositionAim = nil
+        localCompositionAimPoint = nil
         allowsAutoCaptureForCurrentTarget = true
         pinTargetAndStartMotion(at: target, subjectRect: subjectRect, source: nil)
     }
@@ -2195,7 +2203,31 @@ public final class CameraViewModel: ObservableObject {
         pinTargetAndStartMotion(at: plan.aimPointInSource,
             subjectRect: plan.subjectRect, source: source,
             trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay)
+        if let seed = pinTrackingBox {
+            setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
+        }
+        localCompositionAim = CompositionAimGeometry(subject: plan.subjectPoint,
+            calibration: source.frame.calibration, sourcePose: source.pose, aimWorldRay: plan.aimWorldRay)
+        localCompositionAimPoint = plan.aimPointInSource
+        if localCompositionAim == nil { allowsAutoCaptureForCurrentTarget = false }
         localTrackingSource = nil
+    }
+
+    private func compositionAlignmentPoint(fallback: CGPoint) -> CGPoint {
+        guard let guide = localCompositionAim else { return fallback }
+        let engine = SpatialTrackingEngine.shared
+        guard let frame = frameProcessor.latestTrackingFrameSnapshot()?.1,
+              CACurrentMediaTime() - frame.timestamp >= -0.02,
+              CACurrentMediaTime() - frame.timestamp < 0.25,
+              let pose = engine.pose(at: frame.timestamp),
+              let subject = engine.projection(at: frame.timestamp, calibration: frame.calibration),
+              subject.isInFront,
+              let projected = guide.projection(subject: subject.point, calibration: frame.calibration, pose: pose) else {
+            localCompositionAimPoint = nil
+            return CGPoint(x: -10, y: -10)
+        }
+        localCompositionAimPoint = projected.point
+        return projected.point
     }
 
     var localCompositionNeedsLevel: Bool {
@@ -2220,7 +2252,8 @@ public final class CameraViewModel: ObservableObject {
         if !hasFreshOpticalLock { return "Đang xác nhận lại chủ thể trong ảnh…" }
         if localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
         if autoCaptureTask != nil { return "Đang kiểm tra khung trước khi chụp…" }
-        return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" : "Di chuyển tâm trắng vào vòng mục tiêu"
+        return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" :
+            (localCompositionAim != nil ? "Đưa tâm trắng vào dấu bố cục" : "Di chuyển tâm trắng vào vòng mục tiêu")
     }
 
     var captureStatusText: String {
@@ -2597,7 +2630,8 @@ public final class CameraViewModel: ObservableObject {
             allowsAutoCaptureForCurrentTarget = true
             localSelectionMessage = nil
         }
-        let dx = point.x - 0.5, dy = point.y - 0.5
+        let aim = compositionAlignmentPoint(fallback: point)
+        let dx = aim.x - 0.5, dy = aim.y - 0.5
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
         let distance = hypot(dx, dy / aspect)
         alignmentDistance = distance

@@ -54,6 +54,50 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("composition alignment follows the chosen aim while the tracker stays on the subject") {
+            let k = TrackingCalibration.fallback()
+            let identity = simd_quatd(angle: 0, axis: SIMD3(0, 1, 0))
+            let subject = CGPoint(x: 0.30, y: 0.40)
+            let bearing = k.deviceRay(at: subject)
+            let aim = k.deviceRay(at: CGPoint(x: 0.60, y: 0.55))
+            guard let guide = CompositionAimGeometry(subject: subject, calibration: k, sourcePose: identity, aimWorldRay: aim) else {
+                throw Failure(description: "valid composition guide rejected")
+            }
+            let aimPose = simd_quatd(from: SIMD3(0, 0, -1), to: aim)
+            let physical = k.project(deviceRay: aimPose.inverse.act(bearing))
+            let projected = guide.projection(subject: physical.point, calibration: k, pose: aimPose)!
+            try require(hypot(projected.point.x - 0.5, projected.point.y - 0.5) < 0.000001, "camera aim did not align")
+            try require(hypot(physical.point.x - 0.5, physical.point.y - 0.5) > 0.1, "test accidentally centered the tracked subject")
+            let subjectPose = simd_quatd(from: SIMD3(0, 0, -1), to: bearing)
+            let wrong = guide.projection(subject: CGPoint(x: 0.5, y: 0.5), calibration: k, pose: subjectPose)!
+            try require(hypot(wrong.point.x - 0.5, wrong.point.y - 0.5) > 0.1, "centering a subject falsely confirmed an off-center composition")
+            let zoomed = TrackingCalibration.fallback(zoom: 2)
+            let rolled = aimPose * simd_quatd(angle: 0.4, axis: SIMD3(0, 0, -1))
+            let tracked = zoomed.project(deviceRay: rolled.inverse.act(bearing))
+            let correct = guide.projection(subject: tracked.point, calibration: zoomed, pose: rolled)!
+            try require(hypot(correct.point.x - 0.5, correct.point.y - 0.5) < 0.000001, "roll or lens zoom changed the planned aim")
+        }
+        try run("invalid composition rays cannot authorize alignment") {
+            let k = TrackingCalibration.fallback()
+            let pose = simd_quatd(angle: 0, axis: SIMD3(0, 1, 0))
+            try require(CompositionAimGeometry(subject: CGPoint(x: .nan, y: 0.5), calibration: k,
+                sourcePose: pose, aimWorldRay: SIMD3(0, 0, -1)) == nil, "nonfinite subject accepted")
+            try require(CompositionAimGeometry(subject: CGPoint(x: 0.5, y: 0.5), calibration: k,
+                sourcePose: pose, aimWorldRay: .zero) == nil, "zero aim accepted")
+        }
+        try run("portrait crop protection is independent of full-body tracking bounds") {
+            let body = CGRect(x: 0.3, y: 0.08, width: 0.4, height: 0.86)
+            let torso = CGRect(x: 0.3, y: 0.08, width: 0.4, height: 0.45)
+            let eye = CGPoint(x: 0.5, y: 0.2)
+            try require(CompositionCropProtection.bounds(body: body, portrait: torso, intent: .portrait, anchor: eye) == torso,
+                "intentional torso crop still protects all legs")
+            for intent in [LocalCompositionIntent.group, .environmentalPortrait, .landscape] {
+                try require(CompositionCropProtection.bounds(body: body, portrait: torso, intent: intent, anchor: eye) == body,
+                    "non-portrait lost full subject protection")
+            }
+            try require(CompositionCropProtection.bounds(body: body, portrait: nil, intent: .portrait, anchor: eye) == body,
+                "missing measurements invented a crop")
+        }
         try run("a subject anchor at the image edge still has an unchanged safe view") {
             let hero = CompositionSubject(index: 0, bounds: CGRect(x: 0, y: 0.18, width: 0.18, height: 0.65),
                 anchor: CGPoint(x: 0.02, y: 0.25), kind: .person, confidence: 0.9, importance: 1, gaze: 0)

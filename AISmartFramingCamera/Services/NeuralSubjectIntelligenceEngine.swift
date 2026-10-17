@@ -262,6 +262,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let choices = result.views.map { view -> LocalCompositionChoice in
             let proposal = view.proposal
             let plan = LocalFramingPlan(subjectPoint: hero.trackingPoint ?? proposal.subjectPoint, subjectRect: hero.boundingBox,
+                cropProtectionRect: CompositionCropProtection.bounds(body: hero.boundingBox,
+                    portrait: portraitBounds, intent: proposal.intent, anchor: subject.anchor),
                 aimPointInSource: proposal.aimPoint, aimWorldRay: pose.act(proposal.rotation.act(SIMD3(0, 0, -1))),
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(

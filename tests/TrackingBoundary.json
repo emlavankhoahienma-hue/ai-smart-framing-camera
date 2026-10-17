@@ -44,8 +44,20 @@
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
+      "end": "    private func evaluateAlignment(at point: CGPoint) {",
+      "sha256": "d44c0be1973a181c0338df5f2b89c27a3f76da4cded65790f75b42975d17066d"
+    },
+    {
+      "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
+      "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
+      "end": "    private func verifyAndCaptureWhenReady()",
+      "sha256": "83c8f28b11d8ba7ee6fb96a370270792edc9037df13fad6f3d6f14ac4b70cd20"
+    },
+    {
+      "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
+      "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "447788426f85071e173a2a66769a060a2f9e3395e4db929d8896a9698b9967a3"
+      "sha256": "f06b9193ce71c72ec8b9ab84f645aeab8ea47283a9221709ff7b8136c670dd08"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",

@@ -2,9 +2,12 @@
 
 This revision changes interpretation, composition search and viewfinder styling.
 It leaves the pinned target's optical tracking, motion fusion, recovery, zoom
-verification, alignment gate and photo/video/PhotoKit pipeline intact.
+verification, alignment gate algorithm and photo/video/PhotoKit pipeline intact.
+Local AI now supplies the selected composition aim to the gate, independently of
+the unchanged subject tracker and original circle. Measured torso regions affect
+only crop protection, never tracking identity or seed size.
 `scripts/verify_tracking_boundary.py` checks normalized SHA-256 hashes of ten
-complete source files, three view-model regions, the projected target layer and the original reticle view
+complete source files, five view-model regions, the projected target layer and the original reticle view
 against commit `49f3ef3a2938bf5f36c2e8e47e9fdf5980875abf`.
 
 ## Data flow

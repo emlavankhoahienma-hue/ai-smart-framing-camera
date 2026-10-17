@@ -86,6 +86,26 @@ public struct ARFramingOverlayView: View {
                     .allowsHitTesting(false)
                 }
 
+                if viewModel.showTargetCircle, let aim = viewModel.localCompositionAimPoint {
+                    let screen = convertBufferPointToScreen(aim, in: size)
+                    let docked = TrackingGeometry.dock(screen, size: size)
+                    VStack(spacing: 4) {
+                        CornerBracketsShape(bracketLength: 6)
+                            .stroke(viewModel.isPerfectAlignment ? Color.green : Color.white,
+                                    style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                            .frame(width: 24, height: 24)
+                        Text("BỐ CỤC")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .shadow(color: .black, radius: 2)
+                    }
+                    .offset(y: 8)
+                    .position(docked)
+                    .transaction { $0.animation = nil }
+                    .allowsHitTesting(false)
+                    .accessibilityLabel("Hướng ngắm của bố cục đã chọn")
+                }
+
                 // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
                 // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
                 if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {

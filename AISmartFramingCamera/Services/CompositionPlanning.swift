@@ -2,6 +2,47 @@ import Foundation
 import CoreGraphics
 import simd
 
+/// Translates the existing subject bearing into the selected photographic aim.
+/// It reads tracking output; it never corrects or replaces the optical tracker.
+struct CompositionAimGeometry {
+    private let aimFromSubject: simd_quatd
+
+    init?(subject: CGPoint, calibration: TrackingCalibration,
+          sourcePose: simd_quatd, aimWorldRay: SIMD3<Double>) {
+        guard calibration.isValid, subject.x.isFinite, subject.y.isFinite,
+              (0...1).contains(subject.x), (0...1).contains(subject.y),
+              sourcePose.vector.indices.allSatisfy({ sourcePose.vector[$0].isFinite }),
+              simd_length(sourcePose.vector) > 0.000001,
+              aimWorldRay.indices.allSatisfy({ aimWorldRay[$0].isFinite }),
+              simd_length(aimWorldRay) > 0.000001 else { return nil }
+        let bearing = simd_normalize(sourcePose).act(calibration.deviceRay(at: subject))
+        aimFromSubject = simd_quatd(from: bearing, to: simd_normalize(aimWorldRay))
+    }
+
+    func projection(subject: CGPoint, calibration: TrackingCalibration,
+                    pose: simd_quatd) -> TrackingProjection? {
+        guard calibration.isValid, subject.x.isFinite, subject.y.isFinite,
+              pose.vector.indices.allSatisfy({ pose.vector[$0].isFinite }),
+              simd_length(pose.vector) > 0.000001 else { return nil }
+        let rotation = simd_normalize(pose)
+        let ray = rotation.act(calibration.deviceRay(at: subject))
+        return calibration.project(deviceRay: rotation.inverse.act(aimFromSubject.act(ray)))
+    }
+}
+
+enum CompositionCropProtection {
+    /// Only a measured, contained torso region may relax the full-body crop gate.
+    /// The returned rectangle is a crop constraint, never the tracking seed.
+    static func bounds(body: CGRect, portrait: CGRect?, intent: LocalCompositionIntent,
+                       anchor: CGPoint) -> CGRect {
+        guard intent == .portrait, let portrait,
+              [portrait.minX, portrait.minY, portrait.width, portrait.height].allSatisfy(\.isFinite),
+              portrait.width > 0, portrait.height > 0,
+              body.contains(portrait), portrait.contains(anchor) else { return body }
+        return portrait
+    }
+}
+
 /// A completed analysis belongs to one button press and one captured image.
 /// Model warm-up changes elapsed time, never the evidence required for a result.
 struct CompositionAnalysisReceipt: Sendable {

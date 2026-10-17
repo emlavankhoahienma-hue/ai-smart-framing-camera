@@ -127,10 +127,24 @@ accuracy against human object-box labels.
 
 ## Preserved boundaries and limits
 
-CI verifies fifteen original target/capture/reticle source boundaries against
+CI verifies seventeen original target/capture/reticle source boundaries against
 `49f3ef3`, plus the three recognition/group boundaries against `8ee6d56`.
-Tracking, recovery, target projection, reticle shape, zoom verification, photo
-capture, video and saving remain unchanged. Every build compiles iOS Release
+Tracking, recovery, subject projection, reticle shape, zoom verification, photo
+capture, video and saving remain unchanged. The original broad view-model
+boundary is split around the intentionally changed AI alignment input: all
+replacement region hashes are calculated from `49f3ef3`, never from patched code.
+The alignment gate body remains protected. A separate read-only quaternion
+maps the tracked subject bearing to the selected photographic aim. Alignment
+tests this aim, while the original yellow circle continues following the subject.
+A small labeled composition marker shows where to point the unchanged white
+optical center. Missing pose/frame evidence blocks automatic alignment.
+
+Measured torso bounds feed only crop protection after the unchanged full-body
+tracking seed is installed. This fixes full-body protection vetoing an intentional
+torso portrait at zoom execution. Group and environmental views retain complete
+subject bounds. CI also runs actual Vision body/face/pose plus production torso
+eligibility over all 342 CADB human test images; the initial diagnostic admitted
+67, without weakening joint confidence or inventing missing anatomy. Every build compiles iOS Release
 with warnings treated as errors and verifies packaged model hashes.
 
 Heavy inference remains serialized off the main thread; cancellation is checked

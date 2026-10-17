@@ -2,11 +2,12 @@ import Foundation
 import CoreGraphics
 import simd
 
-/// The optical tracker follows subjectPoint. The yellow guide follows aimWorldRay.
+/// The optical tracker follows subjectPoint. The composition guide follows aimWorldRay.
 /// These are different bearings whenever the requested composition is off centre.
 struct LocalFramingPlan: Sendable {
     let subjectPoint: CGPoint
     let subjectRect: CGRect
+    let cropProtectionRect: CGRect
     let aimPointInSource: CGPoint
     let aimWorldRay: SIMD3<Double>
     let zoom: CGFloat
