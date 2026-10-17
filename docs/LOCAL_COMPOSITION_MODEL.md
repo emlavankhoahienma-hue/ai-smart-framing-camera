@@ -66,6 +66,18 @@ original zoom ramp are retained. Recommendations cannot invent unseen pixels.
 Clutter can be excluded, while detected incidental faces/pets must stay whole
 or be omitted whole. A zoom is not forced when it worsens the measured scores.
 
+Large Vision saliency regions are attention fields, not physical object outlines.
+The preserved legacy candidate format marks these with its fixed internal
+`Vùng nổi bật` label; YOLO classes do not use that label. For regions covering
+more than 45% of the source image, measured saliency permits background cropping
+only while preserving at least 82% of attention mass, at least 40% of the region
+and the measured anchor patch. Diffuse or absent attention cannot authorize an
+aggressive crop. The full original region still seeds tracking; only crop
+protection uses the anchor patch. Physical objects, people/groups and animals
+retain their existing outline/anatomy constraints. Both learned scorers still
+decide whether a feasible crop improves the picture. This fixes searches with
+only the unchanged frame because a broad attention region filled the image.
+
 ## Deliberate portrait framing
 
 Previously every portrait crop had to keep the entire detected body, which

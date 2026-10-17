@@ -129,6 +129,11 @@ public struct NeuralSubjectCandidate: Identifiable, Sendable {
     var faceBounds: [CGRect] = []
     var trackingPoint: CGPoint? = nil
     var isGroup = false
+
+    // The preserved candidate format identifies Vision saliency regions by this
+    // fixed internal label. YOLO class labels never use it. A region is a field
+    // of attention, not a physical object whose complete outline must be kept.
+    var isAttentionRegion: Bool { category == .foregroundObject && label == "Vùng nổi bật" }
     
     public var center: CGPoint {
         CGPoint(x: boundingBox.midX, y: boundingBox.midY)
@@ -221,9 +226,11 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         guard let raster = output.compositionRaster else {
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
         }
-        let subject = CompositionSubject(index: 0, bounds: hero.boundingBox,
+        var subject = CompositionSubject(index: 0, bounds: hero.boundingBox,
             anchor: hero.eyePosition ?? hero.center, kind: hero.isGroup ? .group : kind(hero.category),
             confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
+        subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention &&
+            hero.boundingBox.width * hero.boundingBox.height > 0.45
         let intents = compositionIntents(output, hero: hero)
         var portraitBounds: CGRect?
         if hero.category == .human, !hero.isGroup, !hero.faceBounds.isEmpty {
@@ -263,7 +270,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             let proposal = view.proposal
             let plan = LocalFramingPlan(subjectPoint: hero.trackingPoint ?? proposal.subjectPoint, subjectRect: hero.boundingBox,
                 cropProtectionRect: CompositionCropProtection.bounds(body: hero.boundingBox,
-                    portrait: portraitBounds, intent: proposal.intent, anchor: subject.anchor),
+                    portrait: portraitBounds, intent: proposal.intent, anchor: subject.anchor,
+                    attentionRegion: subject.allowsAttentionCrop),
                 aimPointInSource: proposal.aimPoint, aimWorldRay: pose.act(proposal.rotation.act(SIMD3(0, 0, -1))),
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(

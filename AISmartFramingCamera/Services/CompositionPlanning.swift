@@ -31,10 +31,17 @@ struct CompositionAimGeometry {
 }
 
 enum CompositionCropProtection {
-    /// Only a measured, contained torso region may relax the full-body crop gate.
-    /// The returned rectangle is a crop constraint, never the tracking seed.
+    /// Torso measurements protect anatomy; attention fields protect their anchor.
+    /// The planner separately enforces measured attention retention. This crop
+    /// constraint never replaces a physical subject or the full tracking seed.
     static func bounds(body: CGRect, portrait: CGRect?, intent: LocalCompositionIntent,
-                       anchor: CGPoint) -> CGRect {
+                       anchor: CGPoint, attentionRegion: Bool = false) -> CGRect {
+        if attentionRegion, body.contains(anchor), body.width > 0, body.height > 0 {
+            let width = min(0.08, body.width), height = min(0.08, body.height)
+            return CGRect(x: min(body.maxX - width, max(body.minX, anchor.x - width / 2)),
+                          y: min(body.maxY - height, max(body.minY, anchor.y - height / 2)),
+                          width: width, height: height)
+        }
         guard intent == .portrait, let portrait,
               [portrait.minX, portrait.minY, portrait.width, portrait.height].allSatisfy(\.isFinite),
               portrait.width > 0, portrait.height > 0,
@@ -121,6 +128,7 @@ struct CompositionSubject: Sendable {
     let confidence: Double
     let importance: Double
     let gaze: CGFloat
+    var allowsAttentionCrop = false
 }
 
 /// Photographic importance is independent of detector certainty. In particular,
@@ -314,6 +322,7 @@ struct CompositionProposal: Sendable {
     var score: Double
     let explanation: String
     let usesCenter: Bool
+    var retainedAttention: Double = 1
 
     var isUnchangedView: Bool {
         let original = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),
@@ -351,7 +360,8 @@ enum CompositionPlanner {
                 bounds = portraitBounds
             } else { bounds = subject.bounds }
             let framed = CompositionSubject(index: subject.index, bounds: bounds, anchor: subject.anchor,
-                kind: subject.kind, confidence: subject.confidence, importance: subject.importance, gaze: subject.gaze)
+                kind: subject.kind, confidence: subject.confidence, importance: subject.importance, gaze: subject.gaze,
+                allowsAttentionCrop: subject.allowsAttentionCrop)
             return proposals(subjects: [framed], intents: [intent], raster: raster, calibration: calibration,
                 currentZoom: currentZoom, allowedZooms: allowedZooms, protectedBounds: protectedBounds,
                 incidentalBounds: incidentalBounds, proposalLimit: perIntent,
@@ -390,6 +400,9 @@ enum CompositionPlanner {
         } + allowedZooms.filter { $0.isFinite && $0 >= currentZoom && $0 <= maxZoom })).sorted()
         var result: [CompositionProposal] = []
         for subject in validSubjects.prefix(4) {
+            let cropAttention = subject.allowsAttentionCrop && subject.kind == .object && raster.hasAttention
+            let protectedAnchor = CompositionCropProtection.bounds(body: subject.bounds, portrait: nil,
+                intent: .object, anchor: subject.anchor, attentionRegion: cropAttention)
             for intent in applicableIntents(subject: subject, preferred: intents, people: protectedPeople) {
                 if isCancelled() { return [] }
                 let desired = preferredPlacement(subject: subject, intent: intent, raster: raster)
@@ -408,7 +421,9 @@ enum CompositionPlanner {
                     }
                     guard sourceCorners.allSatisfy({ $0.isInFront && inside($0.point, margin: -0.00001) }),
                           let box = project(subject.bounds, from: calibration, to: future, rotation: rotation),
-                          safe(box, original: subject.bounds),
+                          let anchorBox = project(protectedAnchor, from: calibration, to: future, rotation: rotation),
+                          safe(anchorBox, original: protectedAnchor),
+                          (!cropAttention || visibleFraction(box) >= 0.40),
                           protectedRects.allSatisfy({ original in
                               guard let rect = project(original, from: calibration, to: future, rotation: rotation) else { return false }
                               return safe(rect, original: original)
@@ -421,6 +436,7 @@ enum CompositionPlanner {
                     guard aim.isInFront, inside(aim.point, margin: 0) else { return nil }
                     let metrics = measure(raster: raster, subject: subject, box: box,
                         calibration: calibration, future: future, rotation: rotation, protectedPeople: protectedPeople)
+                    guard !cropAttention || unchanged || metrics.retention >= 0.82 else { return nil }
                     let desiredArea: Double
                     switch intent {
                     case .portrait: desiredArea = subject.kind == .face ? 0.16 : 0.34
@@ -464,7 +480,7 @@ enum CompositionPlanner {
                         evidenceConfidence: min(1, max(0, subject.confidence)), score: score,
                         explanation: explanation(intent: intent, gaze: subject.gaze,
                             cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0),
-                        usesCenter: abs(destination.x - 0.5) < 0.055)
+                        usesCenter: abs(destination.x - 0.5) < 0.055, retainedAttention: metrics.retention)
                 }
                 if !refining.isEmpty {
                     for seed in refining where seed.subjectIndex == subject.index && seed.intent == intent {

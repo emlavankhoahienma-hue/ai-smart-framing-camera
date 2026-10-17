@@ -157,16 +157,16 @@ enum CompositionModelValidation {
         let ownFaces = hero.faceBounds
         let incidentalPets = detected.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox)
         let incidentalFaces = detected.allFaceRects.filter { !ownFaces.contains($0) }
-        let primaryBounds = [bounds] + hero.companionBounds
         var portraitBounds: CGRect?
         if hero.category == .human, !hero.isGroup, !ownFaces.isEmpty {
             let pose = VNDetectHumanBodyPoseRequest()
             try VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up).perform([pose])
             portraitBounds = PortraitFramingEvidence.bounds(body: bounds, faces: ownFaces, observations: pose.results ?? [])
         }
-        let subject = CompositionSubject(index: 0, bounds: bounds,
+        var subject = CompositionSubject(index: 0, bounds: bounds,
             anchor: hero.eyePosition ?? hero.center, kind: kind,
             confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
+        subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention && bounds.width * bounds.height > 0.45
         let ci = CIImage(cvPixelBuffer: pixels)
         let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
         func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
@@ -190,7 +190,12 @@ enum CompositionModelValidation {
         for view in result.views {
             let future = TrackingCalibration(fx: calibration.fx * Double(view.proposal.zoom),
                 fy: calibration.fy * Double(view.proposal.zoom), cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
-            let required = view.proposal.intent == .portrait && portraitBounds != nil ? [portraitBounds!] + hero.companionBounds : primaryBounds
+            let protection = CompositionCropProtection.bounds(body: bounds, portrait: portraitBounds,
+                intent: view.proposal.intent, anchor: subject.anchor, attentionRegion: subject.allowsAttentionCrop)
+            let required = [protection] + hero.companionBounds
+            if subject.allowsAttentionCrop, !view.proposal.isUnchangedView, view.proposal.retainedAttention < 0.82 {
+                throw Failure(message: "Crop discarded measured attention")
+            }
             for bound in required {
                 guard let projected = CompositionPlanner.project(bound, from: calibration, to: future,
                     rotation: view.proposal.rotation), CompositionPlanner.visibleFraction(projected) > 0.98 else {
@@ -209,6 +214,7 @@ enum CompositionModelValidation {
         let row: [String: Any] = ["file": file.lastPathComponent, "hero": hero.label,
             "heroBounds": [bounds.minX, bounds.minY, bounds.width, bounds.height].map { Double($0) },
             "primaryFaces": ownFaces.count,
+            "attentionRegion": subject.allowsAttentionCrop,
             "heroConfidence": Double(hero.confidence), "group": hero.isGroup,
             "detectedPeople": detected.allCandidates.filter { $0.category == .human && !$0.isGroup }.count,
             "detectedAnimals": detected.allCandidates.filter { $0.category == .animal }.count,
@@ -226,6 +232,7 @@ enum CompositionModelValidation {
             return ["zoom": Double(view.proposal.zoom), "original": view.proposal.isUnchangedView,
              "intent": view.proposal.intent.rawValue, "score": view.proposal.score,
              "composition": composition.mean, "aesthetics": aesthetics.mean,
+             "retainedAttention": view.proposal.retainedAttention,
              "sourceCorners": view.proposal.sourceCorners.map { [Double($0.x), Double($0.y)] }]
         }
         try save(best.image, to: output.appendingPathComponent(file.lastPathComponent))

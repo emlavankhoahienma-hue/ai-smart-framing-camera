@@ -54,6 +54,28 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("large attention regions can crop background while physical object outlines stay protected") {
+            var region = subject(rect: CGRect(x: 0.01, y: 0.01, width: 0.98, height: 0.98), kind: .object)
+            region.allowsAttentionCrop = true
+            let plans = CompositionPlanner.photographicProposals(subject: region, intents: [.object], portraitBounds: nil,
+                raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3])
+            try require(plans.contains { $0.zoom > 1.2 }, "a field of saliency was treated as one uncuttable object")
+            try require(plans.allSatisfy { $0.isUnchangedView || $0.retainedAttention >= 0.82 }, "lost the measured focus of attention")
+            region.allowsAttentionCrop = false
+            let solid = CompositionPlanner.photographicProposals(subject: region, intents: [.object], portraitBounds: nil,
+                raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3])
+            try require(!solid.contains { $0.zoom > 1.1 }, "a physical object was cut as background")
+            region.allowsAttentionCrop = true
+            let pixels = raster()
+            let uniform = CompositionRaster(side: pixels.side, luminance: pixels.luminance,
+                attention: Array(repeating: 0.5, count: pixels.attention.count), edges: pixels.edges, hasAttention: true)
+            let diffuse = CompositionPlanner.photographicProposals(subject: region, intents: [.object], portraitBounds: nil,
+                raster: uniform, calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3])
+            try require(!diffuse.isEmpty && !diffuse.contains { $0.zoom > 1.15 }, "diffuse attention authorized an aggressive crop")
+            let absent = CompositionPlanner.photographicProposals(subject: region, intents: [.object], portraitBounds: nil,
+                raster: raster(measured: false), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3])
+            try require(!absent.contains { $0.zoom > 1.1 }, "missing saliency fabricated attention retention")
+        }
         try run("manual review age starts after real cold inference without permitting stale previews") {
             try require(CompositionAnalysisReceipt.acceptsSelection(sourceTimestamp: 10, completedAt: 65, now: 70),
                 "cold model result expired before review")
