@@ -51,6 +51,9 @@ No inference server or phone-side model download is required.
    with weights 0.45, 0.40 and 0.15. A crop above 1.08 times the source zoom must
    improve the combined score by at least 0.008. These are app policies, not
    calibrated probabilities of human preference.
+   Both individual ratings must also stay within 0.06/5 of their original-frame
+   values. This permits small numerical variation, while rejecting a clear
+   aesthetic regression concealed by a composition gain (or the reverse).
 5. Automatic selection requires complete evidence from both scorers, at least
    12 SAMP assessments, local support, detector certainty and a useful margin
    over distinct alternatives. Missing or partial inference uses manual previews;

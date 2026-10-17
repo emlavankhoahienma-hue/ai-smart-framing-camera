@@ -54,6 +54,14 @@ enum CompositionPlanningRegression {
     }
 
     static func main() throws {
+        try run("a composition gain cannot conceal a clear aesthetic regression") {
+            try require(!CompositionPreferencePolicy.consistent(composition: 4, aesthetics: 2,
+                originalComposition: 3, originalAesthetics: 3), "one model traded away photographic quality")
+            try require(CompositionPreferencePolicy.consistent(composition: 3.46, aesthetics: 3.4,
+                originalComposition: 3.5, originalAesthetics: 3.1), "small numerical variation vetoed a useful crop")
+            try require(!CompositionPreferencePolicy.consistent(composition: .nan, aesthetics: 3,
+                originalComposition: 3, originalAesthetics: 3), "invalid scores passed consensus")
+        }
         try run("composition alignment follows the chosen aim while the tracker stays on the subject") {
             let k = TrackingCalibration.fallback()
             let identity = simd_quatd(angle: 0, axis: SIMD3(0, 1, 0))

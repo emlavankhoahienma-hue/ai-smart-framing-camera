@@ -129,8 +129,12 @@ final class CompositionAestheticSearch {
         // veto prevented useful zoom even when the aesthetic model preferred it.
         let eligible = evaluated.filter { view in
             guard usedSpecialist, let baseline, let originalZoom else { return true }
-            return view.proposal.isUnchangedView || view.proposal.zoom <= originalZoom * 1.08 ||
-                CompositionPreferencePolicy.prefersCrop(score: view.proposal.score, original: baseline.proposal.score)
+            if view.proposal.isUnchangedView || view.proposal.zoom <= originalZoom * 1.08 { return true }
+            guard let composition = view.assessment, let aesthetics = view.aesthetics,
+                  let originalComposition = baseline.assessment, let originalAesthetics = baseline.aesthetics else { return false }
+            return CompositionPreferencePolicy.prefersCrop(score: view.proposal.score, original: baseline.proposal.score) &&
+                CompositionPreferencePolicy.consistent(composition: composition.mean, aesthetics: aesthetics.mean,
+                    originalComposition: originalComposition.mean, originalAesthetics: originalAesthetics.mean)
         }
         var selected = CompositionPlanner.diverse(eligible.map(\.proposal), limit: 3).compactMap { proposal in
             eligible.first { $0.proposal.sourceCorners == proposal.sourceCorners &&
@@ -171,6 +175,15 @@ final class CompositionAestheticSearch {
 }
 
 enum CompositionPreferencePolicy {
+    /// Numerical tolerance is small on the native 1...5 rating scales. A large
+    /// aesthetic regression cannot be traded for a composition score increase.
+    static func consistent(composition: Double, aesthetics: Double,
+                           originalComposition: Double, originalAesthetics: Double) -> Bool {
+        let ratings = [composition, aesthetics, originalComposition, originalAesthetics]
+        return ratings.allSatisfy { $0.isFinite && (1...5).contains($0) } &&
+            composition >= originalComposition - 0.06 && aesthetics >= originalAesthetics - 0.06
+    }
+
     static func score(composition: Double, aesthetics: Double, geometry: Double) -> Double? {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }

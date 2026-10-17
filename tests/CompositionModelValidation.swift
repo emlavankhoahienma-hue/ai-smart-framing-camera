@@ -207,6 +207,8 @@ enum CompositionModelValidation {
             }
         }
         let row: [String: Any] = ["file": file.lastPathComponent, "hero": hero.label,
+            "heroBounds": [bounds.minX, bounds.minY, bounds.width, bounds.height].map { Double($0) },
+            "primaryFaces": ownFaces.count,
             "heroConfidence": Double(hero.confidence), "group": hero.isGroup,
             "detectedPeople": detected.allCandidates.filter { $0.category == .human && !$0.isGroup }.count,
             "detectedAnimals": detected.allCandidates.filter { $0.category == .animal }.count,
@@ -216,7 +218,14 @@ enum CompositionModelValidation {
             "poseSupportsTorsoPortrait": portraitBounds != nil, "selectedIntent": best.proposal.intent.rawValue,
             "compositionRating": bestAssessment.mean, "secondsMac": ProcessInfo.processInfo.systemUptime - started,
             "automaticSelectionAllowed": result.canAutoselect]
+        var detailed = row
+        detailed["choices"] = result.views.map { view -> [String: Any] in
+            ["zoom": Double(view.proposal.zoom), "original": view.proposal.isUnchangedView,
+             "intent": view.proposal.intent.rawValue, "score": view.proposal.score,
+             "composition": view.assessment?.mean ?? 0, "aesthetics": view.aesthetics?.mean ?? 0,
+             "sourceCorners": view.proposal.sourceCorners.map { [Double($0.x), Double($0.y)] }]
+        }
         try save(best.image, to: output.appendingPathComponent(file.lastPathComponent))
-        return row
+        return detailed
     }
 }
