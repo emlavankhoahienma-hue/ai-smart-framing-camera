@@ -11,7 +11,7 @@ final class FocalCropModel {
         let importance: [Double]
     }
 
-    private let model: MLModel
+    private var model: MLModel?
     /// Reused feature buffers; validation replays these exact values in PyTorch.
     let imageInput: MLMultiArray
     let boxes: MLMultiArray
@@ -20,12 +20,14 @@ final class FocalCropModel {
     private var importance: [Double]?
 
     init(url: URL, image: CGImage) throws {
+        try CompositionInferenceResources.requireHeadroom()
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndNeuralEngine
-        model = try MLModel(contentsOf: url, configuration: configuration)
+        let loaded = try MLModel(contentsOf: url, configuration: configuration)
+        model = loaded
         let expected = ["image": [1, 3, 256, 256], "boxes": [1, 128, 4], "content": [1, 4]]
         for (name, shape) in expected {
-            guard model.modelDescription.inputDescriptionsByName[name]?.multiArrayConstraint?.shape.map(\.intValue) == shape else {
+            guard loaded.modelDescription.inputDescriptionsByName[name]?.multiArrayConstraint?.shape.map(\.intValue) == shape else {
                 throw CocoaError(.coderInvalidValue)
             }
         }
@@ -54,30 +56,44 @@ final class FocalCropModel {
     }
 
     func assess(_ regions: [CGRect], cancellation: CompositionAnalysisCancellation) -> Evidence? {
-        guard !cancellation.isCancelled, !regions.isEmpty, regions.count <= 128,
-              regions.allSatisfy({ CompositionViewSupport.validRegion($0) }) else { return nil }
-        let values = boxes.dataPointer.assumingMemoryBound(to: Float.self)
-        for index in 0..<128 {
-            let box = index < regions.count ? regions[index] : CGRect(x: 0, y: 0, width: 1, height: 1)
-            values[index * 4] = Float(box.minX); values[index * 4 + 1] = Float(box.minY)
-            values[index * 4 + 2] = Float(box.maxX); values[index * 4 + 3] = Float(box.maxY)
+        return autoreleasepool {
+
+            guard let model, !cancellation.isCancelled, !regions.isEmpty, regions.count <= 128,
+                  regions.allSatisfy({ CompositionViewSupport.validRegion($0) }) else { return nil }
+            let values = boxes.dataPointer.assumingMemoryBound(to: Float.self)
+            for index in 0..<128 {
+                let box = index < regions.count ? regions[index] : CGRect(x: 0, y: 0, width: 1, height: 1)
+                values[index * 4] = Float(box.minX); values[index * 4 + 1] = Float(box.minY)
+                values[index * 4 + 2] = Float(box.maxX); values[index * 4 + 3] = Float(box.maxY)
+            }
+            let result: MLFeatureProvider
+            do {
+                try CompositionInferenceResources.requireHeadroom()
+                let provider = try MLDictionaryFeatureProvider(dictionary: [
+                    "image": MLFeatureValue(multiArray: imageInput), "boxes": MLFeatureValue(multiArray: boxes),
+                    "content": MLFeatureValue(multiArray: content)])
+                guard !cancellation.isCancelled else { return nil }
+                result = try model.prediction(from: provider)
+            } catch {
+                CompositionInferenceResources.report("Focal prediction", error: error)
+                return nil
+            }
+            guard !cancellation.isCancelled,
+                  let scores = result.featureValue(for: "cropScores")?.multiArrayValue, scores.count == 128,
+                  let map = result.featureValue(for: "importance")?.multiArrayValue, map.count == 4096 else { return nil }
+            let preferences = regions.indices.map { Double(truncating: scores[$0]) }
+            let samples = (0..<4096).map { Double(truncating: map[$0]) }
+            guard preferences.allSatisfy(\.isFinite), samples.allSatisfy({ $0.isFinite && (-0.0001...1.0001).contains($0) }) else { return nil }
+            let bounded = samples.map { min(1, max(0, $0)) }
+            importance = bounded
+            return Evidence(preferences: preferences, importance: bounded)
         }
-        guard let provider = try? MLDictionaryFeatureProvider(dictionary: [
-            "image": MLFeatureValue(multiArray: imageInput), "boxes": MLFeatureValue(multiArray: boxes),
-            "content": MLFeatureValue(multiArray: content)]), !cancellation.isCancelled,
-              let result = try? model.prediction(from: provider), !cancellation.isCancelled,
-              let scores = result.featureValue(for: "cropScores")?.multiArrayValue, scores.count == 128,
-              let map = result.featureValue(for: "importance")?.multiArrayValue, map.count == 4096 else { return nil }
-        let preferences = regions.indices.map { Double(truncating: scores[$0]) }
-        let samples = (0..<4096).map { Double(truncating: map[$0]) }
-        guard preferences.allSatisfy(\.isFinite), samples.allSatisfy({ $0.isFinite && (-0.0001...1.0001).contains($0) }) else { return nil }
-        let bounded = samples.map { min(1, max(0, $0)) }
-        importance = bounded
-        return Evidence(preferences: preferences, importance: bounded)
     }
 
     /// Only composition evidence is enriched; detector identities/confidences and
     /// coherent groups remain those of the preserved recognition pipeline.
+    func releaseInferenceWeights() { model = nil }
+
     func enriching(_ raster: CompositionRaster) -> CompositionRaster {
         guard let importance, raster.isValid,
               (importance.max() ?? 0) - (importance.min() ?? 0) > 0.01 else { return raster }

@@ -50,11 +50,14 @@ private final class SemanticCropRanker: @unchecked Sendable {
               ProcessInfo.processInfo.thermalState != .critical,
               !ProcessInfo.processInfo.isLowPowerModeEnabled,
               let url = Bundle.main.url(forResource: "SigLIPBaseImage", withExtension: "mlmodelc"),
-              let promptURL = Bundle.main.url(forResource: "SigLIPPrompts", withExtension: "json"),
-              let data = try? Data(contentsOf: promptURL),
-              let vectors = try? JSONDecoder().decode([String: [Double]].self, from: data),
-              !vectors.isEmpty else { return }
+              let promptURL = Bundle.main.url(forResource: "SigLIPPrompts", withExtension: "json") else { return }
         do {
+            try CompositionInferenceResources.requireHeadroom(320 * 1024 * 1024)
+            let data = try Data(contentsOf: promptURL)
+            let vectors = try JSONDecoder().decode([String: [Double]].self, from: data)
+            guard !vectors.isEmpty, vectors.values.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isFinite) }) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
             let config = MLModelConfiguration()
             config.computeUnits = .cpuAndNeuralEngine
             model = try VNCoreMLModel(for: MLModel(contentsOf: url, configuration: config))
@@ -79,8 +82,12 @@ private final class SemanticCropRanker: @unchecked Sendable {
         let request = VNCoreMLRequest(model: model)
         // Preserve relative spacing when comparing complete portrait frames.
         request.imageCropAndScaleOption = .scaleFit
-        guard (try? cancellation.perform(request, with: handler)) != nil,
-              let observation = request.results?.first as? VNCoreMLFeatureValueObservation,
+        do { try cancellation.perform(request, with: handler) }
+        catch {
+            if !cancellation.isCancelled { CompositionInferenceResources.report("SigLIP prediction", error: error) }
+            return [:]
+        }
+        guard let observation = request.results?.first as? VNCoreMLFeatureValueObservation,
               let array = observation.featureValue.multiArrayValue else { return [:] }
         let image = (0..<array.count).map { Double(truncating: array[$0]) }
         let norm = sqrt(image.reduce(0) { $0 + $1 * $1 })
@@ -208,14 +215,19 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         analysisLock.lock()
         defer { SemanticCropRanker.shared.endAnalysis(); analysisLock.unlock() }
         let started = ProcessInfo.processInfo.systemUptime
-        func receipt(count: Int = 0, specialist: Bool = false, modern: Int = 0) -> CompositionAnalysisReceipt {
+        func receipt(count: Int = 0, specialist: Bool = false, modern: Int = 0, system: Int = 0) -> CompositionAnalysisReceipt {
             CompositionAnalysisReceipt(requestID: requestID, sourceTimestamp: frame.timestamp,
                 elapsed: max(0, ProcessInfo.processInfo.systemUptime - started),
-                assessedFrames: count, usedSpecialist: specialist, modernAssessments: modern)
+                assessedFrames: count, usedSpecialist: specialist, modernAssessments: modern, systemAssessments: system)
         }
-        guard !cancellation.isCancelled,
-              let output = analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
-                                                 cancellation: cancellation) else { return nil }
+        CompositionInferenceResources.report("Recognition begin")
+        let detected: NeuralAnalysisOutput? = autoreleasepool {
+            defer { SemanticCropRanker.shared.endAnalysis() }
+            return analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
+                                        cancellation: cancellation)
+        }
+        guard !cancellation.isCancelled, let output = detected else { return nil }
+        CompositionInferenceResources.report("Recognition complete; Focal begin")
         // Choose identity before optimizing layout. Different crops must never
         // compete by silently substituting an unrelated background object.
         guard let hero = output.allCandidates.first else {
@@ -226,9 +238,16 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         let sourceImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
         guard let reference = renderer.referenceImage(sourceImage),
-              let url = Bundle.main.url(forResource: "FocalCrop", withExtension: "mlmodelc"),
-              let cropModel = try? FocalCropModel(url: url, image: reference),
-              cropModel.assess([CGRect(x: 0, y: 0, width: 1, height: 1)], cancellation: cancellation) != nil else {
+              let url = Bundle.main.url(forResource: "FocalCrop", withExtension: "mlmodelc") else {
+            return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
+        }
+        let cropModel: FocalCropModel
+        do { cropModel = try autoreleasepool { try FocalCropModel(url: url, image: reference) } }
+        catch {
+            CompositionInferenceResources.report("Focal load failed", error: error)
+            return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
+        }
+        guard cropModel.assess([CGRect(x: 0, y: 0, width: 1, height: 1)], cancellation: cancellation) != nil else {
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
         }
         let raster = cropModel.enriching(baseRaster)
@@ -243,14 +262,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         if hero.category == .human, !hero.isGroup, !hero.faceBounds.isEmpty {
             let poseRequest = VNDetectHumanBodyPoseRequest()
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: frame.orientation, options: [:])
-            if (try? cancellation.perform(poseRequest, with: handler)) != nil {
+            do {
+                try cancellation.perform(poseRequest, with: handler)
                 portraitBounds = PortraitFramingEvidence.bounds(body: hero.boundingBox,
                     faces: hero.faceBounds, observations: poseRequest.results ?? [])
+            } catch {
+                if cancellation.isCancelled { return nil }
+                CompositionInferenceResources.report("Portrait pose unavailable", error: error)
             }
         }
-        // Release the semantic encoder before loading the composition specialist,
-        // especially on iPhone XS. Detection and group membership remain unchanged.
-        SemanticCropRanker.shared.endAnalysis()
         let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
             ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical ||
             ProcessInfo.processInfo.physicalMemory < 6_000_000_000
@@ -282,6 +302,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             refine: { proposals(refining: $0) }) else {
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
         }
+        CompositionInferenceResources.report("Analysis completed")
         let choices = result.views.map { view -> LocalCompositionChoice in
             let proposal = view.proposal
             let explanation = result.needsQualityReview ?
@@ -307,7 +328,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: [hero],
             usedCompositionModel: result.usedSpecialist,
             canAutoselectComposition: result.canAutoselect,
-            receipt: receipt(count: result.cropAssessmentCount, specialist: result.usedSpecialist, modern: result.modernAssessmentCount))
+            receipt: receipt(count: result.cropAssessmentCount, specialist: result.usedSpecialist, modern: result.modernAssessmentCount, system: result.systemAssessmentCount))
     }
 
     func verifyFinalFraming(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,

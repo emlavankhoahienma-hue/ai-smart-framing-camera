@@ -6,7 +6,7 @@ on:
       screen:
         description: 'Screen to inspect'
         type: choice
-        options: [camera, composition, viewfinder, zoom]
+        options: [camera, composition, viewfinder, zoom, window]
         default: camera
   push:
     branches: [main]
@@ -48,6 +48,10 @@ jobs:
       - name: Install zoom effect snapshot host
         if: inputs.screen == 'zoom'
         run: cp tests/ZoomRevealSnapshotApp.swift AISmartFramingCamera/App/AISmartFramingCameraApp.swift
+
+      - name: Install Windowed Zoom snapshot host
+        if: inputs.screen == 'window'
+        run: cp tests/WindowedZoomSnapshotApp.swift AISmartFramingCamera/App/AISmartFramingCameraApp.swift
 
       - name: Build for iOS Simulator
         run: |

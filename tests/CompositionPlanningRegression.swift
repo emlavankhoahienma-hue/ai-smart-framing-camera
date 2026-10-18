@@ -634,6 +634,12 @@ enum CompositionPlanningRegression {
             try require(!FinalFramingEvidence.accepts(protectedBounds: box, expectedKind: .group,
                 minimumFaces: 3, minimumPeople: 3, subjects: [human], faces: [face]), "one remaining person passed group verification")
         }
+        try run("system aesthetics compare real scores without treating utility as failure") {
+            let utility = SystemPhotographicAssessment.Score(overall: 0.6, isUtility: true)
+            try require(SystemPhotographicAssessment.preservesQuality(candidate: utility, original: utility, zoomRatio: 2), "Utility image discarded")
+            try require(!SystemPhotographicAssessment.preservesQuality(candidate: .init(overall: 0.2, isUtility: false), original: utility, zoomRatio: 2), "Large quality loss ignored")
+            try require(SystemPhotographicAssessment.preservesQuality(candidate: .init(overall: 0.2, isUtility: false), original: utility, zoomRatio: 1), "Unknown same-focal pan compared as a complete crop")
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

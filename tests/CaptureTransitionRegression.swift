@@ -186,6 +186,15 @@ enum CaptureTransitionRegression {
             try require(CaptureReadinessPolicy.hasSettledZoom(target: 1.13, hardware: 1.13, frameZoom: 1.13,
                 frameTimestamp: 10.2, opticalTimestamp: 10.2, reachedAt: 10, now: 10.3), "Completed small zoom was blocked")
         }
+        try run("brief missing camera pose pauses aligned verification and sustained loss exits") {
+            var gate = AlignmentCaptureGate()
+            for i in 0...30 { _ = gate.update(time: 10 + Double(i) / 60, distance: 0.005, radius: 0.04, freshEvidence: true) }
+            try require(gate.update(time: 10.55, distance: 0.005, radius: 0.04, freshEvidence: false) == .holding, "Brief gap discarded hold")
+            try require(gate.isAligned, "Brief gap flickered visual alignment")
+            try require(gate.update(time: 10.60, distance: 0.005, radius: 0.04, freshEvidence: true) == .ready, "Fresh evidence did not resume")
+            try require(gate.update(time: 10.82, distance: 0.005, radius: 0.04, freshEvidence: false) == .outside, "Sustained loss retained lock")
+            try require(!CaptureReadinessPolicy.isFresh(10.3, now: 10.82), "Presentation grace authorized stale shutter")
+        }
         print("Capture transition regressions: \(passed) passed")
     }
 }

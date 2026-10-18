@@ -69,6 +69,18 @@ jobs:
             -o "$RUNNER_TEMP/viewfinder-regressions"
           "$RUNNER_TEMP/viewfinder-regressions"
 
+      - name: Run viewport and real video export regressions
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/CaptureViewportGeometry.swift \
+            tests/CaptureViewportRegression.swift -o "$RUNNER_TEMP/viewport-tests"
+          "$RUNNER_TEMP/viewport-tests"
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/CaptureViewportGeometry.swift \
+            AISmartFramingCamera/Services/VideoFrameRenderer.swift \
+            tests/VideoFrameRegression.swift -o "$RUNNER_TEMP/video-tests"
+          "$RUNNER_TEMP/video-tests" validation/video-export
+
       - name: Verify target tracking boundary
         run: python scripts/verify_tracking_boundary.py
 
@@ -161,6 +173,18 @@ jobs:
           python scripts/prepare_pose_photos.py
           python scripts/validate_composition_photos.py
 
+      - name: Check repeated model lifetime with real photos
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/TrackingGeometry.swift \
+            AISmartFramingCamera/Services/CompositionPlanning.swift \
+            AISmartFramingCamera/Services/CompositionImageEvidence.swift \
+            AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
+            AISmartFramingCamera/Services/CharmPhotographicModel.swift \
+            AISmartFramingCamera/Services/FocalCropModel.swift \
+            tests/InferenceLifetimeRegression.swift -o "$RUNNER_TEMP/lifetime-tests"
+          "$RUNNER_TEMP/lifetime-tests" "$GITHUB_WORKSPACE"
+
       - name: Validate preserved YOLO recognition on real photographs
         run: python scripts/validate_detector_photos.py
 
@@ -181,6 +205,7 @@ jobs:
             CharmModelManifest.json
             FocalModelManifest.json
             validation/swift/
+            validation/video-export/
             validation/focal/
             validation/detection/*-real-photos.json
             validation/photos/manifest.json

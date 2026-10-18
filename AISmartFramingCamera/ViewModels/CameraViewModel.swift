@@ -2027,11 +2027,17 @@ public final class CameraViewModel: ObservableObject {
             } onCancel: {
                 cancellation.cancel()
             }
-            guard let self, !Task.isCancelled, !cancellation.isCancelled,
+            guard let self, !Task.isCancelled,
                   self.aiSessionGeneration == generation, self.aiSessionState == .analyzing,
-                  !self.localAnalysisExpired, let result else { return }
+                  !self.localAnalysisExpired else { return }
             self.localAnalysisTask = nil
             self.localAnalysisCancellation = nil
+            guard !cancellation.isCancelled, let result else {
+                self.localAnalysisFinished = true
+                self.localTrackingSource = nil
+                self.localSelectionMessage = cancellation.failureReason ?? "Không hoàn tất được AI. Hãy thử lại khi máy mát và đủ bộ nhớ."
+                return
+            }
             self.finishLocalAnalysis(result, source: source)
         }
     }
@@ -2065,7 +2071,7 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisSummary = receipt.usedSpecialist ?
             String(format: "%d khung · %d lượt Charm · %.1f giây", receipt.assessedFrames, receipt.modernAssessments, receipt.elapsed) :
             "Chưa hoàn tất mô hình bố cục"
-        CameraLogger.info("Composition request \(receipt.requestID): frame=\(receipt.sourceTimestamp), assessments=\(receipt.assessedFrames), seconds=\(receipt.elapsed)", category: .ai)
+        CameraLogger.info("Composition request \(receipt.requestID): frame=\(receipt.sourceTimestamp), assessments=\(receipt.assessedFrames), apple=\(receipt.systemAssessments), seconds=\(receipt.elapsed)", category: .ai)
         localAnalysisCompletedAt = CACurrentMediaTime()
         localAnalysisFinished = true
         geminiError = nil
@@ -2258,11 +2264,9 @@ public final class CameraViewModel: ObservableObject {
         guard let frame = frameProcessor.latestTrackingFrameSnapshot()?.1,
               CaptureReadinessPolicy.isFresh(frame.timestamp, now: CACurrentMediaTime()),
               let pose = spatial.pose(at: frame.timestamp),
-              let subject = spatial.projection(at: frame.timestamp, calibration: frame.calibration),
-              subject.isInFront,
-              let guide = aim.projection(subject: subject.point, calibration: frame.calibration, pose: pose),
+              let guide = aim.projection(subject: fallback, calibration: frame.calibration, pose: pose),
               guide.isInFront, guide.point.x.isFinite, guide.point.y.isFinite else {
-            localCompositionAimPoint = nil
+            // Retain the guide visually, but nil still prevents shutter admission.
             return nil
         }
         localCompositionAimPoint = guide.point
@@ -2283,8 +2287,8 @@ public final class CameraViewModel: ObservableObject {
             return localSelectionMessage ?? "Chế độ chụp tay · Bấm nút chụp khi vừa ý"
         }
         if !zoomVerified { return "Chưa xác nhận được zoom · Có thể bấm chụp tay" }
-        if !hasFreshOpticalLock { return "Đang xác nhận lại chủ thể trong ảnh…" }
-        if autoCaptureTask != nil { return "Đang kiểm tra cảnh mới trước khi chụp…" }
+        if autoCaptureTask != nil { return "Giữ máy · Đang kiểm tra khung chụp…" }
+        if !hasFreshOpticalLock && !alignmentGate.isAligned { return "Đang xác nhận lại chủ thể trong ảnh…" }
         if isPerfectAlignment, acceptedLocalPlan?.preservesOriginalFrame == true {
             return "Khung hiện tại phù hợp · Giữ máy để chụp"
         }
@@ -2651,10 +2655,13 @@ public final class CameraViewModel: ObservableObject {
     private func evaluateAlignment(at point: CGPoint) {
         guard !captureMode.isVideo, !isCameraHibernating, !isShutterPressing else { return }
         guard let aim = compositionAlignmentPoint(fallback: point) else {
-            alignmentGate.reset()
-            isPerfectAlignment = false
-            autoCaptureTask?.cancel(); autoCaptureTask = nil
-            aiSessionState = .targetPlaced(locked: false)
+            let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(alignmentDistance),
+                radius: Double(alignmentRadius), freshEvidence: false)
+            isPerfectAlignment = alignmentGate.isAligned
+            if state == .outside {
+                autoCaptureTask?.cancel(); autoCaptureTask = nil
+                aiSessionState = .targetPlaced(locked: false)
+            }
             return
         }
         let dx = aim.x - 0.5, dy = aim.y - 0.5
@@ -2965,21 +2972,10 @@ public final class CameraViewModel: ObservableObject {
 
     public func updateWindowedCameraHardwareZoom() {
         guard isWindowedZoomActive, isCameraReady, !isCameraHibernating else { return }
-        let focal = windowedZoomFocalLength
-        let requestedDisplayZoom = focal / 24.0
-        let targetDisplayZoom: CGFloat
-        let teleOpticalDisplay = cameraService.telephotoOpticalDisplayZoom ?? 2.0
-
-        if cameraService.hasPhysicalTelephotoLens && requestedDisplayZoom >= (teleOpticalDisplay - 0.1) {
-            // Tieu cu tuong duong telephoto quang hoc: kich hoat truc tiep cam Telephoto vat ly
-            targetDisplayZoom = teleOpticalDisplay
-        } else {
-            // Tieu cu goc rong: Dung cam Chinh Wide
-            targetDisplayZoom = 1.0
-        }
-
-        cameraService.applyDisplayZoomWithPhysicalLensSwitching(targetDisplayZoom, smooth: true, rate: 4.5, allowPhysicalSwitch: true)
-        presentZoomChangeHUD(displayZoom: targetDisplayZoom)
+        // Keep one optical reference while moving/resizing a window. Crop geometry
+        // uses actual zoom feedback; no lens handover can recenter an off-axis ROI.
+        guard abs(displayZoom - 1) > 0.02 else { return }
+        requestManualZoom(1, smooth: false)
     }
 
     private func requestManualZoom(_ displayZoomVal: CGFloat, smooth: Bool = false) {
@@ -3611,6 +3607,7 @@ public final class CameraViewModel: ObservableObject {
         let aspect: WindowedZoomAspectRatio
         let score: Double
         let baseOpticalZoom: CGFloat
+        let windowCenter: CGPoint
     }
     private var captureProcessingSettings: PhotoProcessingSettings?
 
@@ -3629,7 +3626,7 @@ public final class CameraViewModel: ObservableObject {
             applyFilm: apply, crop: isWindowedZoomActive && windowedZoomFocalLength > 24.5, focalLength: windowedZoomFocalLength,
             aspect: windowedZoomAspectRatio,
             score: stateBeforeCapture == .alignmentPerfect ? 1 : (framingResult?.alignmentScore ?? 0.8),
-            baseOpticalZoom: displayZoom)
+            baseOpticalZoom: displayZoom, windowCenter: windowedZoomNormalizedCenter)
     }
 
     private func captureNativePhoto(highResolution: Bool) {
@@ -3896,7 +3893,7 @@ extension CameraViewModel: CameraServiceDelegate {
         let windowFocal = settings.focalLength
         let windowAspect = settings.aspect
         let windowBaseZoom = settings.baseOpticalZoom
-        let windowCenter = self.windowedZoomNormalizedCenter
+        let windowCenter = settings.windowCenter
         let hasColorEdits = isFilmActive && (effectivePreset != .standard || finalColorParams != nil)
         let appliedIntensity = Float(self.filmSimulationIntensity)
 
@@ -3907,27 +3904,16 @@ extension CameraViewModel: CameraServiceDelegate {
             // Nếu đang bật Windowed Zoom -> Cắt ảnh gốc 48MP chính xác theo tỉ lệ và kích thước khung ngắm
             let effectiveSourcePhoto: CGImage
             if isWindowed {
-                let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: windowBaseZoom)
-                if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
-                    let normCenter = windowCenter
-                    let origW = CGFloat(photo.width)
-                    let origH = CGFloat(photo.height)
-                    let cropW = round(origW * fractions.widthFraction)
-                    let cropH = round(origH * fractions.heightFraction)
-                    let centerX = origW * normCenter.x
-                    let centerY = origH * normCenter.y
-                    let minCenterX = cropW / 2.0
-                    let maxCenterX = origW - cropW / 2.0
-                    let minCenterY = cropH / 2.0
-                    let maxCenterY = origH - cropH / 2.0
-                    let clampedCenterX = max(minCenterX, min(centerX, maxCenterX))
-                    let clampedCenterY = max(minCenterY, min(centerY, maxCenterY))
-                    let cropX = round(clampedCenterX - cropW / 2.0)
-                    let cropY = round(clampedCenterY - cropH / 2.0)
-                    let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
-                    effectiveSourcePhoto = photo.cropping(to: cropRect) ?? photo
-                    CameraLogger.info("Windowed Zoom Crop: \(photo.width)x\(photo.height) -> \(effectiveSourcePhoto.width)x\(effectiveSourcePhoto.height) (\(Int(windowFocal))mm, \(windowAspect.rawValue))", category: .capture)
+                let extent = CGRect(x: 0, y: 0, width: photo.width, height: photo.height)
+                if let normalized = CaptureViewportGeometry.crop(focalLength: windowFocal, baseZoom: windowBaseZoom,
+                    sourceAspect: CGFloat(photo.width) / CGFloat(photo.height),
+                    outputAspect: 1 / windowAspect.ratioHeightOverWidth, center: windowCenter),
+                   let pixels = CaptureViewportGeometry.pixels(normalized, extent: extent, bottomLeft: false),
+                   let cropped = photo.cropping(to: pixels.integral.intersection(extent)) {
+                    effectiveSourcePhoto = cropped
+                    CameraLogger.info("Windowed crop: \(photo.width)x\(photo.height) -> \(cropped.width)x\(cropped.height)", category: .capture)
                 } else {
+                    CameraLogger.error("Windowed crop failed; preserving original photo", category: .capture)
                     effectiveSourcePhoto = photo
                 }
             } else {

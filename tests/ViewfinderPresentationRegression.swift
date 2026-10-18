@@ -98,6 +98,15 @@ enum ViewfinderPresentationRegression {
             try require(ViewfinderGuideGeometry.segment(from: centre, to: CGPoint(x: 110, y: 110)) == nil, "short line inverted")
             try require(ViewfinderGuideGeometry.segment(from: centre, to: CGPoint(x: CGFloat.nan, y: 0)) == nil, "nonfinite guide accepted")
         }
+        try run("zoom progress comes from measured focal change in both directions") {
+            let inward = ZoomRevealGeometry(startZoom: 1, targetZoom: 4)!
+            let outward = ZoomRevealGeometry(startZoom: 4, targetZoom: 1)!
+            try require(near(inward.progress(actualZoom: 2), 0.5), "Wrong inward progress")
+            try require(near(outward.progress(actualZoom: 2), 0.5), "Wrong outward progress")
+            try require(near(inward.progress(actualZoom: 1), 0), "Command fabricated progress")
+            try require(near(inward.progress(actualZoom: 5), 1), "Overshoot escaped progress")
+            try require(near(inward.progress(actualZoom: .nan), 0), "Invalid feedback filled progress")
+        }
         print("Viewfinder presentation regressions passed: \(passed)")
     }
 }

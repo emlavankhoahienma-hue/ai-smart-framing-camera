@@ -29,6 +29,7 @@ final class CompositionAestheticSearch {
         let image: CGImage
         let assessment: PhotographicCompositionModel.Assessment?
         var aesthetics: CharmPhotographicModel.Assessment? = nil
+        var systemAesthetics: SystemPhotographicAssessment.Score? = nil
         let geometryScore: Double
         let cropPreference: Double
         let satisfiesFramingGoal: Bool
@@ -44,6 +45,7 @@ final class CompositionAestheticSearch {
         let cropAssessmentCount: Int
         let qualityVetoedCount: Int
         let needsQualityReview: Bool
+        let systemAssessmentCount: Int
     }
 
     private struct Ranked {
@@ -115,8 +117,11 @@ final class CompositionAestheticSearch {
             }
         }
         guard !pool.isEmpty else { return nil }
-        var specialist = try? PhotographicCompositionModel(url: modelURL)
-        guard specialist != nil else { diagnostic?("samp-load failed"); return nil }
+        cropModel.releaseInferenceWeights()
+        CompositionInferenceResources.report("SAMP load")
+        var specialist: PhotographicCompositionModel?
+        do { specialist = try autoreleasepool { try PhotographicCompositionModel(url: modelURL) } }
+        catch { diagnostic?("samp-load: \(error)"); CompositionInferenceResources.report("SAMP load failed", error: error); return nil }
         var views: [View] = []
         for value in pool {
             guard !cancellation.isCancelled else { return nil }
@@ -133,17 +138,34 @@ final class CompositionAestheticSearch {
                 satisfiesFramingGoal: LearnedFramingPolicy.admissible(geometry: value.proposal.score, best: bestGeometry)))
         }
         specialist = nil
-        guard let modern = try? CharmPhotographicModel(url: aestheticModelURL, positionURL: positionURL) else {
-            diagnostic?("charm-load failed"); return nil
-        }
+        CompositionInferenceResources.report("Charm load")
+        var modern: CharmPhotographicModel?
+        do { modern = try autoreleasepool { try CharmPhotographicModel(url: aestheticModelURL, positionURL: positionURL) } }
+        catch { diagnostic?("charm-load: \(error)"); CompositionInferenceResources.report("Charm load failed", error: error); return nil }
         for index in views.indices {
+            CompositionInferenceResources.report("Charm \(index + 1)/\(views.count)")
             guard !cancellation.isCancelled,
-                  let aesthetics = modern.assess(views[index].image, cancellation: cancellation) else {
+                  let aesthetics = modern?.assess(views[index].image, cancellation: cancellation) else {
                 diagnostic?("charm-prediction failed: \(views[index].image.width)x\(views[index].image.height)")
                 return nil
             }
             views[index].aesthetics = aesthetics
             progress("Đã kiểm tra thẩm mỹ \(index + 1)/\(views.count) phương án…")
+        }
+        modern = nil
+        if SystemPhotographicAssessment.isSupported {
+            CompositionInferenceResources.report("Apple aesthetics begin")
+            for index in views.indices {
+                guard !cancellation.isCancelled else { return nil }
+                do { views[index].systemAesthetics = try SystemPhotographicAssessment.assess(views[index].image, cancellation: cancellation) }
+                catch {
+                    diagnostic?("Apple aesthetics unavailable: \(error)")
+                    CompositionInferenceResources.report("Apple aesthetics failed", error: error)
+                    // Compare all candidates with the same experts on failure.
+                    for resetIndex in views.indices { views[resetIndex].systemAesthetics = nil }
+                    break
+                }
+            }
         }
         guard let original = views.first(where: { $0.proposal.isUnchangedView }),
               original.proposal.zoom.isFinite, original.proposal.zoom > 0,
@@ -157,6 +179,12 @@ final class CompositionAestheticSearch {
                 preference: views[index].cropPreference, originalPreference: original.cropPreference,
                 composition: composition.mean, originalComposition: originalComposition.mean,
                 aesthetics: aesthetics.mean, originalAesthetics: originalAesthetics.mean)
+            if views[index].proposal.isEntirelyObserved,
+               let candidate = views[index].systemAesthetics, let source = original.systemAesthetics {
+                views[index].passesQualityAudit = views[index].passesQualityAudit &&
+                    SystemPhotographicAssessment.preservesQuality(candidate: candidate, original: source,
+                        zoomRatio: Double(views[index].proposal.zoom / original.proposal.zoom))
+            }
         }
         let qualified = views.filter { $0.satisfiesFramingGoal && $0.passesQualityAudit }
         let needsQualityReview = qualified.isEmpty
@@ -168,7 +196,8 @@ final class CompositionAestheticSearch {
                 diagnostic?("learned-score failed: peers=\(peers.count), composition=\(views[index].assessment?.mean ?? .nan), aesthetics=\(views[index].aesthetics?.mean ?? .nan)")
                 return nil
             }
-            views[index].proposal.score = score + min(0.003, max(-0.003, preferences[views[index].proposal.preferenceKey] ?? 0))
+            let systemTieBreak = views[index].systemAesthetics.map { 0.01 * $0.overall } ?? 0
+            views[index].proposal.score = score + systemTieBreak + min(0.003, max(-0.003, preferences[views[index].proposal.preferenceKey] ?? 0))
         }
         guard let scoredOriginal = views.first(where: { $0.proposal.isUnchangedView }) else { return nil }
         let eligible = needsQualityReview ? [scoredOriginal] : views.filter { $0.satisfiesFramingGoal && $0.passesQualityAudit }
@@ -194,6 +223,7 @@ final class CompositionAestheticSearch {
         return Result(views: selected, assessedCount: views.count,
             canAutoselect: stable, usedSpecialist: true, modernAssessmentCount: views.count,
             cropAssessmentCount: assessedRegions, qualityVetoedCount: views.filter { !$0.passesQualityAudit }.count,
-            needsQualityReview: needsQualityReview)
+            needsQualityReview: needsQualityReview,
+            systemAssessmentCount: views.filter { $0.systemAesthetics != nil }.count)
     }
 }

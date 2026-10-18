@@ -661,13 +661,14 @@ struct ZoomRevealOverlay: View {
             if let geometry,
                let normalized = geometry.normalizedRect(actualZoom: actualZoom),
                let frame = ZoomRevealGeometry.screenRect(normalized, size: proxy.size, bufferAspect: bufferAspect) {
+                let progress = geometry.progress(actualZoom: actualZoom)
                 ZStack {
                     // A small exposure veil keeps the live image legible. No blur of the camera feed.
                     Path { path in
                         path.addRect(CGRect(origin: .zero, size: proxy.size))
                         path.addRoundedRect(in: frame, cornerSize: CGSize(width: 10, height: 10))
                     }
-                    .fill(.black.opacity(0.18), style: FillStyle(eoFill: true))
+                    .fill(.black.opacity(0.24 * (1 - Double(progress) * 0.65)), style: FillStyle(eoFill: true))
 
                     RoundedRectangle(cornerRadius: 10)
                         .stroke(LinearGradient(colors: [.cyan.opacity(0.45), .purple.opacity(0.40), .white.opacity(0.5)],
@@ -690,7 +691,15 @@ struct ZoomRevealOverlay: View {
                 .transaction { $0.animation = nil }
                 .overlay(alignment: .bottom) {
                     HStack(spacing: 7) {
-                        Text(geometry.isZoomingOut ? "Mở rộng góc chụp" : (isRamping ? "AI zoom" : "Khung sẽ chụp"))
+                        ZStack {
+                            Circle().stroke(.white.opacity(0.2), lineWidth: 2)
+                            Circle().trim(from: 0, to: progress)
+                                .stroke(.white, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                        }
+                        .frame(width: 14, height: 14)
+                        Text(progress >= 0.99 && isRamping ? "Giữ máy · Xác nhận khung" :
+                            (geometry.isZoomingOut ? "Mở rộng góc chụp" : (isRamping ? "AI đang zoom" : "Khung sẽ chụp")))
                         Text("\(actualZoom, specifier: "%.1f")× → \(geometry.targetZoom, specifier: "%.1f")×")
                             .monospacedDigit()
                     }

@@ -87,7 +87,14 @@ capture_device() {
   run_bounded 15 xcrun simctl privacy "$udid" grant photos "$BUNDLE_ID" || true
   run_bounded 15 xcrun simctl privacy "$udid" grant microphone "$BUNDLE_ID" || true
 
-  if [ "$SNAPSHOT_MODE" = "zoom" ]; then
+  if [ "$SNAPSHOT_MODE" = "window" ]; then
+    for stage in photo square video; do
+      run_bounded 15 xcrun simctl terminate "$udid" "$BUNDLE_ID" || true
+      run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID" -WindowSnapshotStage "$stage"
+      sleep 2
+      run_bounded 30 xcrun simctl io "$udid" screenshot "${SCREENSHOT_DIR}/${filename}_${stage}.png"
+    done
+  elif [ "$SNAPSHOT_MODE" = "zoom" ]; then
     for stage in guide aligned preview ramp verify zoomout lost; do
       run_bounded 15 xcrun simctl terminate "$udid" "$BUNDLE_ID" || true
       run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID" -ZoomSnapshotStage "$stage"

@@ -39,7 +39,27 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "c9929bafd21a0eafb21ff3cf890e93a623536295c83c79db604ac4a52c5e1c9d"
+      "start": "    public func isVideoFormatSupportedByHardware(",
+      "end": "    private func startRecordingInternal()",
+      "sha256": "f787e53b88c3880db95da7597ad8273ac33fae31bd34ed5eb8f61b6d814bbcf3"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/CameraService.swift",
+      "start": "    private func stopRecordingInternal(",
+      "end": "    private func configureVideoFormatInternal(",
+      "sha256": "5e2dcd00de70a4813c68cfcf93d9160581e6844a28a58455318e0cb0b495084c"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/CameraService.swift",
+      "start": "    private func updateMaxPhotoDimensions(",
+      "end": "    private func applyCaptureModeIfPossible()",
+      "sha256": "fabd6c051ded7175043e81ff1493f11d6f3e4ca350aae3e735a7cdb484fbe011"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/CameraService.swift",
+      "start": "    private func configurePhotoConnection(",
+      "end": null,
+      "sha256": "e5ec86d6ef4e078627f2a118229e89dbe3b82f6c81cfdffe65b548c4535c1131"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -50,8 +70,8 @@
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func executeCapture()",
-      "end": null,
-      "sha256": "1cd39076ec4a84b738e61a6bfbd9ec501039bc578a4787121ee8b26c91b4a9d9"
+      "end": "    // MARK: - Actions",
+      "sha256": "68e7d5cff156768a656ee18de4e45de99035cf1b4c4ca0d45abe068e294a0def"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -84,5 +104,5 @@
       "sha256": "afdd75ef72e3e0f84e219331c19c7f737db1e88627e98413ecc10df47d0d50d0"
     }
   ],
-  "scope": "Unchanged optical/gyro tracking, pin seeding, camera hardware and photo/video capture. The requested fix changes composition-to-subject wiring and auto-shot admission/verification; native regressions exercise these separately."
+  "scope": "Original optical/gyro tracking, target seeding and native capture entry remain protected. The 2026-10-18 user-requested video-format/FPS and frozen window-crop repairs are outside these boundaries; see docs/CAMERA_RELIABILITY_AUDIT.md and native tests."
 }

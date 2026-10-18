@@ -14,6 +14,9 @@ public struct VideoPreviewSheetView: View {
     @State private var gradingSuccessNote: String? = nil
     @State private var hasSavedToPhotos: Bool = false
     @State private var processedVideoURL: URL? = nil
+    @State private var hasAppliedColor = false
+    @State private var processingError: String?
+    @State private var renderTask: Task<Void, Never>?
 
     private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
     private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
@@ -111,6 +114,7 @@ public struct VideoPreviewSheetView: View {
                             .background(champagne)
                             .cornerRadius(10)
                         }
+                        .disabled(isGradingWithAI || isCroppingWindowedZoom)
 
                         ShareLink(item: processedVideoURL ?? videoURL) {
                             HStack(spacing: 6) {
@@ -146,153 +150,67 @@ public struct VideoPreviewSheetView: View {
             }
             .onDisappear {
                 player?.pause()
+                renderTask?.cancel()
             }
+            .alert("Không thể xử lý video", isPresented: Binding(
+                get: { processingError != nil }, set: { if !$0 { processingError = nil } })) {
+                Button("Đóng", role: .cancel) { processingError = nil }
+            } message: { Text(processingError ?? "") }
         }
     }
 
     private func applyWindowedZoomCrop() {
-        guard let windowFocal = viewModel.lastRecordedVideoWindowedFocal,
-              let windowAspect = viewModel.lastRecordedVideoWindowedAspect,
-              windowFocal > 24.5 else { return }
-
-        isCroppingWindowedZoom = true
-        let asset = AVAsset(url: processedVideoURL ?? videoURL)
-
-        let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom)
-        let normCenter = viewModel.lastRecordedVideoWindowedCenter
-        let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
-            let source = request.sourceImage.clampedToExtent()
-            let origExtent = request.sourceImage.extent
-            let cropW = origExtent.width * fractions.widthFraction
-            let cropH = origExtent.height * fractions.heightFraction
-            let ciCenterX = origExtent.origin.x + origExtent.width * normCenter.x
-            let ciCenterY = origExtent.origin.y + origExtent.height * (1.0 - normCenter.y)
-            let minCIX = origExtent.origin.x + cropW / 2.0
-            let maxCIX = origExtent.origin.x + origExtent.width - cropW / 2.0
-            let minCIY = origExtent.origin.y + cropH / 2.0
-            let maxCIY = origExtent.origin.y + origExtent.height - cropH / 2.0
-            let cropX = max(minCIX, min(ciCenterX, maxCIX)) - cropW / 2.0
-            let cropY = max(minCIY, min(ciCenterY, maxCIY)) - cropH / 2.0
-            let cropped = source.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
-            let translated = cropped.transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
-            let scaleX = origExtent.width / max(1.0, cropW)
-            let scaleY = origExtent.height / max(1.0, cropH)
-            let scaled = translated.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-            let finalImage = scaled.cropped(to: origExtent)
-            request.finish(with: finalImage, context: nil)
-        })
-
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("cropped_\(UUID().uuidString).mov")
-        if FileManager.default.fileExists(atPath: tempURL.path) {
-            try? FileManager.default.removeItem(at: tempURL)
-        }
-
-        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
-            self.isCroppingWindowedZoom = false
-            return
-        }
-
-        exportSession.videoComposition = composition
-        exportSession.outputURL = tempURL
-        exportSession.outputFileType = .mov
-        exportSession.shouldOptimizeForNetworkUse = true
-
-        exportSession.exportAsynchronously {
-            DispatchQueue.main.async {
-                self.isCroppingWindowedZoom = false
-                if exportSession.status == .completed {
-                    self.processedVideoURL = tempURL
-                    self.gradingSuccessNote = "Đã cắt theo khung Windowed Zoom (\(Int(windowFocal))mm)"
-                    self.player = AVPlayer(url: tempURL)
-                    self.player?.play()
-                    self.saveVideoToPhotos(url: tempURL)
-                } else {
-                    CameraLogger.error("Cắt video Windowed Zoom thất bại: \(String(describing: exportSession.error))", category: .photoKit)
-                }
-            }
-        }
+        renderOriginal(applyColor: hasAppliedColor)
     }
 
     private func applyAICinematicColor() {
-        isGradingWithAI = true
-        let asset = AVAsset(url: processedVideoURL ?? videoURL)
-        let filterPreset = viewModel.selectedFilmPreset
-        let aiColorParameters = viewModel.currentAIColorParams
-        let windowFocal = viewModel.lastRecordedVideoWindowedFocal
-        let windowAspect = viewModel.lastRecordedVideoWindowedAspect
-        let windowBaseZoom = viewModel.lastRecordedVideoWindowedBaseZoom
-        let windowCenter = viewModel.lastRecordedVideoWindowedCenter
+        renderOriginal(applyColor: true)
+    }
 
-        let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
-            let source = request.sourceImage.clampedToExtent()
-            var output = source
-
-            if let filtered = FilmFilterEngine.shared.applyPreset(to: output, preset: filterPreset) {
-                output = filtered
-            }
-
-            if let aiParams = aiColorParameters,
-               let aiFiltered = FilmFilterEngine.shared.applyAIColorParameters(to: output, params: aiParams) {
-                output = aiFiltered
-            }
-
-            if let wf = windowFocal, let wa = windowAspect, wf > 24.5 {
-                let fractions = wa.windowFractions(focalLength: wf, baseOpticalZoom: windowBaseZoom)
-                if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
-                    let normCenter = windowCenter
-                    let origExtent = request.sourceImage.extent
-                    let cropW = origExtent.width * fractions.widthFraction
-                    let cropH = origExtent.height * fractions.heightFraction
-                    let ciCenterX = origExtent.origin.x + origExtent.width * normCenter.x
-                    let ciCenterY = origExtent.origin.y + origExtent.height * (1.0 - normCenter.y)
-                    let minCIX = origExtent.origin.x + cropW / 2.0
-                    let maxCIX = origExtent.origin.x + origExtent.width - cropW / 2.0
-                    let minCIY = origExtent.origin.y + cropH / 2.0
-                    let maxCIY = origExtent.origin.y + origExtent.height - cropH / 2.0
-                    let cropX = max(minCIX, min(ciCenterX, maxCIX)) - cropW / 2.0
-                    let cropY = max(minCIY, min(ciCenterY, maxCIY)) - cropH / 2.0
-                    let cropped = output.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
-                    let translated = cropped.transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
-                    let scaleX = origExtent.width / max(1.0, cropW)
-                    let scaleY = origExtent.height / max(1.0, cropH)
-                    let scaled = translated.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-                    output = scaled.cropped(to: origExtent)
+    private func renderOriginal(applyColor: Bool) {
+        guard !isCroppingWindowedZoom, !isGradingWithAI else { return }
+        isGradingWithAI = applyColor
+        isCroppingWindowedZoom = !applyColor
+        let asset = AVURLAsset(url: videoURL)
+        let preset = viewModel.selectedFilmPreset
+        let parameters = viewModel.currentAIColorParams
+        let window: VideoFrameRenderer.Window?
+        if let focal = viewModel.lastRecordedVideoWindowedFocal,
+           let aspect = viewModel.lastRecordedVideoWindowedAspect, focal > 24.5 {
+            window = VideoFrameRenderer.Window(focalLength: focal,
+                baseZoom: viewModel.lastRecordedVideoWindowedBaseZoom,
+                outputAspect: 1 / aspect.ratioHeightOverWidth,
+                center: viewModel.lastRecordedVideoWindowedCenter)
+        } else { window = nil }
+        renderTask?.cancel()
+        renderTask = Task { @MainActor in
+            defer { isGradingWithAI = false; isCroppingWindowedZoom = false; renderTask = nil }
+            do {
+                let composition = try await VideoFrameRenderer.composition(asset: asset, window: window) { image in
+                    guard applyColor else { return image }
+                    var result = FilmFilterEngine.shared.applyPreset(to: image, preset: preset) ?? image
+                    if let parameters,
+                       let colored = FilmFilterEngine.shared.applyAIColorParameters(to: result, params: parameters) {
+                        result = colored
+                    }
+                    return result
                 }
-            } else {
-                output = output.cropped(to: request.sourceImage.extent)
-            }
-
-            request.finish(with: output, context: nil)
-        })
-
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("graded_\(UUID().uuidString).mov")
-        if FileManager.default.fileExists(atPath: tempURL.path) {
-            try? FileManager.default.removeItem(at: tempURL)
-        }
-
-        guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
-            self.isGradingWithAI = false
-            return
-        }
-
-        exportSession.videoComposition = composition
-        exportSession.outputURL = tempURL
-        exportSession.outputFileType = .mov
-        exportSession.shouldOptimizeForNetworkUse = true
-
-        exportSession.exportAsynchronously {
-            DispatchQueue.main.async {
-                self.isGradingWithAI = false
-                if exportSession.status == .completed {
-                    self.processedVideoURL = tempURL
-                    self.gradingSuccessNote = "Đã áp dụng màu film điện ảnh (\(filterPreset.displayName))"
-                    self.player = AVPlayer(url: tempURL)
-                    self.player?.play()
-                    self.saveVideoToPhotos(url: tempURL)
-                } else {
-                    CameraLogger.error("Xuất video chỉnh màu thất bại: \(String(describing: exportSession.error))", category: .photoKit)
-                    self.saveVideoToPhotos(url: self.videoURL)
-                }
+                try Task.checkCancellation()
+                let output = FileManager.default.temporaryDirectory.appendingPathComponent("rendered_\(UUID().uuidString).mov")
+                try await VideoFrameRenderer.export(asset: asset, composition: composition, to: output)
+                try Task.checkCancellation()
+                player?.pause()
+                processedVideoURL = output
+                hasAppliedColor = applyColor
+                hasSavedToPhotos = false
+                gradingSuccessNote = applyColor ? "Đã áp dụng màu và khung chụp" : "Đã cắt đúng khung Windowed Zoom"
+                player = AVPlayer(url: output)
+                player?.play()
+            } catch is CancellationError {
+                CameraLogger.info("Video processing cancelled", category: .capture)
+            } catch {
+                processingError = error.localizedDescription
+                CameraLogger.error("Video rendering failed", error: error, category: .capture)
             }
         }
     }
@@ -306,6 +224,9 @@ public struct VideoPreviewSheetView: View {
                 if success {
                     self.hasSavedToPhotos = true
                     self.viewModel.haptics.triggerSuccess()
+                } else {
+                    self.processingError = error?.localizedDescription ?? "Không lưu được video vào thư viện."
+                    CameraLogger.error("Video save failed: \(String(describing: error))", category: .photoKit)
                 }
             }
         }

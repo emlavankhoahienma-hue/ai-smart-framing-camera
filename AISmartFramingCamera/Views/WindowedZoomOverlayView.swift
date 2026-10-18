@@ -33,20 +33,12 @@ public struct WindowedZoomOverlayView: View {
     // MARK: - Window Dimensions Calculation
     private var windowRect: CGRect {
         guard containerSize.width > 0, containerSize.height > 0 else { return .zero }
-        let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength, baseOpticalZoom: viewModel.displayZoom)
-        let w = containerSize.width * fractions.widthFraction
-        let h = containerSize.height * fractions.heightFraction
-        let halfW = w / 2.0
-        let halfH = h / 2.0
-        let minCenterX = halfW
-        let maxCenterX = max(halfW, containerSize.width - halfW)
-        let minCenterY = halfH
-        let maxCenterY = max(halfH, containerSize.height - halfH)
-        let centerX = max(minCenterX, min(containerSize.width * viewModel.windowedZoomNormalizedCenter.x, maxCenterX))
-        let centerY = max(minCenterY, min(containerSize.height * viewModel.windowedZoomNormalizedCenter.y, maxCenterY))
-        let x = centerX - halfW
-        let y = centerY - halfH
-        return CGRect(x: x, y: y, width: w, height: h)
+        guard let crop = CaptureViewportGeometry.crop(focalLength: viewModel.windowedZoomFocalLength,
+            baseZoom: viewModel.displayZoom, sourceAspect: containerSize.width / containerSize.height,
+            outputAspect: 1 / viewModel.windowedZoomAspectRatio.ratioHeightOverWidth,
+            center: viewModel.windowedZoomNormalizedCenter) else { return .zero }
+        return CGRect(x: crop.minX * containerSize.width, y: crop.minY * containerSize.height,
+                      width: crop.width * containerSize.width, height: crop.height * containerSize.height)
     }
 
     public var body: some View {
@@ -55,7 +47,6 @@ public struct WindowedZoomOverlayView: View {
             if !isFull {
                 WindowedMaskCutout(windowRect: windowRect)
                     .fill(Color.black.opacity(0.38), style: FillStyle(eoFill: true))
-                    .ignoresSafeArea()
                     .allowsHitTesting(false)
                     .transition(.opacity)
             }
@@ -79,12 +70,13 @@ public struct WindowedZoomOverlayView: View {
                     }
                     .position(x: windowRect.width / 2.0, y: windowRect.height / 2.0)
 
-                    Text(viewModel.displayZoom >= 1.95 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE OPTICAL" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
+                    Text(viewModel.cameraService.hasPhysicalTelephotoLens && viewModel.displayZoom >= (viewModel.cameraService.telephotoOpticalDisplayZoom ?? .infinity) - 0.05 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE OPTICAL" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
                         .foregroundColor(isDraggingWindow ? AlignTheme.electricCyan : .white)
                         .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
                         .offset(y: -22)
                 }
+                .frame(width: windowRect.width, height: windowRect.height)
                 .position(x: windowRect.midX, y: windowRect.midY)
                 .contentShape(Rectangle())
                 .gesture(
@@ -93,16 +85,16 @@ public struct WindowedZoomOverlayView: View {
                             guard containerSize.width > 0, containerSize.height > 0 else { return }
                             if !isDraggingWindow {
                                 isDraggingWindow = true
-                                dragStartNormalizedCenter = viewModel.windowedZoomNormalizedCenter
+                                dragStartNormalizedCenter = CGPoint(x: windowRect.midX / containerSize.width,
+                                                                   y: windowRect.midY / containerSize.height)
                             }
-                            let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength, baseOpticalZoom: viewModel.displayZoom)
-                            let halfWFrac = fractions.widthFraction / 2.0
-                            let halfHFrac = fractions.heightFraction / 2.0
-                            let rawX = value.location.x / containerSize.width
-                            let rawY = value.location.y / containerSize.height
-                            let clampedX = max(halfWFrac, min(rawX, 1.0 - halfWFrac))
-                            let clampedY = max(halfHFrac, min(rawY, 1.0 - halfHFrac))
-                            viewModel.windowedZoomNormalizedCenter = CGPoint(x: clampedX, y: clampedY)
+                            if let center = CaptureViewportGeometry.draggedCenter(
+                                start: dragStartNormalizedCenter, translation: value.translation,
+                                viewport: containerSize,
+                                cropSize: CGSize(width: windowRect.width / containerSize.width,
+                                                 height: windowRect.height / containerSize.height)) {
+                                viewModel.windowedZoomNormalizedCenter = center
+                            }
                         }
                         .onEnded { _ in
                             isDraggingWindow = false

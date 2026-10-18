@@ -16,6 +16,13 @@ struct ZoomRevealGeometry {
 
     var isZoomingOut: Bool { targetZoom < startZoom }
 
+    func progress(actualZoom: CGFloat) -> CGFloat {
+        guard actualZoom.isFinite, actualZoom > 0 else { return 0 }
+        let distance = log(targetZoom / startZoom)
+        guard abs(distance) > 0.000001 else { return 0 }
+        return min(1, max(0, log(actualZoom / startZoom) / distance))
+    }
+
     func normalizedRect(actualZoom: CGFloat) -> CGRect? {
         guard actualZoom.isFinite, actualZoom > 0 else { return nil }
         // Zoom in: outline the final photograph inside the current optical view.

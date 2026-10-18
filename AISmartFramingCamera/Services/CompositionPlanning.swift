@@ -216,6 +216,7 @@ struct CompositionAnalysisReceipt: Sendable {
     let assessedFrames: Int
     let usedSpecialist: Bool
     var modernAssessments = 0
+    var systemAssessments = 0
 
     func belongs(to request: UUID, timestamp: TimeInterval) -> Bool {
         requestID == request && sourceTimestamp.isFinite && timestamp.isFinite &&

@@ -223,13 +223,11 @@ public final class CameraService: NSObject {
         let targetFPS = option.fps
         return camera.formats.filter { format in
             let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-            let maxDim = max(dims.width, dims.height)
-            let minDim = min(dims.width, dims.height)
-            let matchesRes = (minDim == targetHeight && maxDim == targetWidth) ||
-                             (minDim >= targetHeight && maxDim >= targetWidth && targetWidth >= 3840)
+            let matchesRes = VideoFormatGeometry.matches(width: dims.width, height: dims.height,
+                targetWidth: targetWidth, targetHeight: targetHeight)
             guard matchesRes else { return false }
             return format.videoSupportedFrameRateRanges.contains { range in
-                range.minFrameRate <= (targetFPS + 1.5) && range.maxFrameRate >= (targetFPS - 1.5)
+                range.minFrameRate <= targetFPS && range.maxFrameRate >= targetFPS
             }
         }
     }
@@ -1431,9 +1429,9 @@ public final class CameraService: NSObject {
         let effectiveOption = appliedVideoFormatOption ?? selectedVideoFormatOption
         let targetFPS = effectiveOption.fps
         let matchingRange = camera.activeFormat.videoSupportedFrameRateRanges.first(where: {
-            $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
+            $0.minFrameRate <= targetFPS && $0.maxFrameRate >= targetFPS
         })
-        guard let validRange = matchingRange else {
+        guard matchingRange != nil else {
             CameraLogger.error("CameraService: Active format khong ho tro target FPS \(targetFPS)", category: .capture)
             wantsRecording = false
             publishRecordingState(.idle, force: true)
@@ -1442,7 +1440,7 @@ public final class CameraService: NSObject {
         }
         do {
             try camera.lockForConfiguration()
-            let frameDuration = validRange.minFrameDuration
+            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
             camera.activeVideoMinFrameDuration = frameDuration
             camera.activeVideoMaxFrameDuration = frameDuration
             if camera.isFocusModeSupported(.continuousAutoFocus) {
@@ -1743,10 +1741,7 @@ public final class CameraService: NSObject {
                 self.photoOutput.maxPhotoDimensions = videoMaxPhotoDim
             }
 
-            let matchingRange = targetFormat.videoSupportedFrameRateRanges.first(where: {
-                $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
-            })
-            let frameDuration = matchingRange?.minFrameDuration ?? CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
+            let frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
             targetCamera.activeVideoMinFrameDuration = frameDuration
             targetCamera.activeVideoMaxFrameDuration = frameDuration
 
@@ -1860,6 +1855,19 @@ public final class CameraService: NSObject {
             self.configureAudioSessionForStereoCapture()
             configureVideoFormatInternal(option: selectedVideoFormatOption)
             pendingVideoFormatChange = false
+            guard appliedVideoFormatOption != nil else {
+                // Do not publish a 16:9 video UI while the session still has a
+                // photo format. Roll back the failed mode change on its owner queue.
+                removeAudioInputAndOutputInternal()
+                captureSession.beginConfiguration()
+                if captureSession.outputs.contains(movieFileOutput) { captureSession.removeOutput(movieFileOutput) }
+                captureSession.sessionPreset = .photo
+                if photoOutput.isLivePhotoCaptureSupported { photoOutput.isLivePhotoCaptureEnabled = isLivePhotoMode }
+                captureSession.commitConfiguration()
+                desiredCaptureMode = currentCaptureMode
+                completePendingMode(false)
+                return
+            }
         } else {
             if currentCameraPosition == .back, activeCamera?.deviceType == .builtInWideAngleCamera {
                 let dualDiscovery = AVCaptureDevice.DiscoverySession(

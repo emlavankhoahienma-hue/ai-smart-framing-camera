@@ -17,6 +17,7 @@ final class PhotographicCompositionModel {
     private let imageInput: MLMultiArray
 
     init(url: URL) throws {
+        try CompositionInferenceResources.requireHeadroom()
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndNeuralEngine
         model = try MLModel(contentsOf: url, configuration: configuration)
@@ -28,29 +29,39 @@ final class PhotographicCompositionModel {
     }
 
     func assess(_ image: CGImage, cancellation: CompositionAnalysisCancellation) -> Assessment? {
-        guard !cancellation.isCancelled, image.width >= 6, image.height >= 6,
-              max(image.width, image.height) <= 1024,
-              ProcessInfo.processInfo.thermalState != .critical,
-              let map = saliency.map(image: image),
-              let rgb = CompositionPhotoPixels.resizedRGB(image: image, side: 224) else { return nil }
-        let values = input.dataPointer.assumingMemoryBound(to: Float.self)
-        for index in map.indices { values[index] = Float(map[index]) }
-        let pixels = imageInput.dataPointer.assumingMemoryBound(to: Float.self)
-        for index in 0..<(224 * 224) { for channel in 0..<3 {
-            pixels[channel * 224 * 224 + index] = Float(rgb[index * 3 + channel]) / 255
-        } }
-        guard let provider = try? MLDictionaryFeatureProvider(dictionary: [
-                "image": MLFeatureValue(multiArray: imageInput), "saliency": MLFeatureValue(multiArray: input)]),
-              !cancellation.isCancelled,
-              let result = try? model.prediction(from: provider),
-              !cancellation.isCancelled,
-              let scores = result.featureValue(for: "compositionDistribution")?.multiArrayValue,
-              scores.count == 5 else { return nil }
-        let distribution = (0..<5).map { Double(truncating: scores[$0]) }
-        let total = distribution.reduce(0, +)
-        guard distribution.allSatisfy({ $0.isFinite && $0 >= 0 }),
-              total.isFinite, abs(total - 1) < 0.02 else { return nil }
-        return Assessment(distribution: distribution.map { $0 / total })
+        return autoreleasepool {
+
+            guard !cancellation.isCancelled, image.width >= 6, image.height >= 6,
+                  max(image.width, image.height) <= 1024,
+                  ProcessInfo.processInfo.thermalState != .critical,
+                  let map = saliency.map(image: image),
+                  let rgb = CompositionPhotoPixels.resizedRGB(image: image, side: 224) else { return nil }
+            let values = input.dataPointer.assumingMemoryBound(to: Float.self)
+            for index in map.indices { values[index] = Float(map[index]) }
+            let pixels = imageInput.dataPointer.assumingMemoryBound(to: Float.self)
+            for index in 0..<(224 * 224) { for channel in 0..<3 {
+                pixels[channel * 224 * 224 + index] = Float(rgb[index * 3 + channel]) / 255
+            } }
+            let result: MLFeatureProvider
+            do {
+                try CompositionInferenceResources.requireHeadroom()
+                let provider = try MLDictionaryFeatureProvider(dictionary: [
+                    "image": MLFeatureValue(multiArray: imageInput), "saliency": MLFeatureValue(multiArray: input)])
+                guard !cancellation.isCancelled else { return nil }
+                result = try model.prediction(from: provider)
+            } catch {
+                CompositionInferenceResources.report("SAMP prediction", error: error)
+                return nil
+            }
+            guard !cancellation.isCancelled,
+                  let scores = result.featureValue(for: "compositionDistribution")?.multiArrayValue,
+                  scores.count == 5 else { return nil }
+            let distribution = (0..<5).map { Double(truncating: scores[$0]) }
+            let total = distribution.reduce(0, +)
+            guard distribution.allSatisfy({ $0.isFinite && $0 >= 0 }),
+                  total.isFinite, abs(total - 1) < 0.02 else { return nil }
+            return Assessment(distribution: distribution.map { $0 / total })
+        }
     }
 }
 

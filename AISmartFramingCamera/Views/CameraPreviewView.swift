@@ -29,7 +29,7 @@ public struct CameraPreviewView: UIViewRepresentable {
             CATransaction.commit()
         }
         uiView.updateMetalPreviewState(
-            isActive: viewModel.isFilmSimulationActive,
+            isActive: viewModel.isFilmSimulationActive && !viewModel.isRecordingVideo,
             preset: viewModel.selectedFilmPreset,
             intensity: Float(viewModel.filmSimulationIntensity)
         )

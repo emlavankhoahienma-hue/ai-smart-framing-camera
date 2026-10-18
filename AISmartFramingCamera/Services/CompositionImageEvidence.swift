@@ -4,18 +4,82 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreVideo
 import Vision
+import Darwin
+import os
+#if canImport(UIKit)
+import UIKit
+#endif
+
+enum CompositionInferenceResources {
+    enum Failure: Error, CustomStringConvertible {
+        case memoryPressure(UInt64)
+        var description: String {
+            switch self { case .memoryPressure(let bytes): return "Insufficient inference headroom: \(bytes) bytes" }
+        }
+    }
+
+    static var footprint: UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? info.phys_footprint : 0
+    }
+
+    static func requireHeadroom(_ bytes: UInt64 = 160 * 1024 * 1024) throws {
+        #if os(iOS)
+        let available = UInt64(os_proc_available_memory())
+        guard available >= bytes else { throw Failure.memoryPressure(available) }
+        #endif
+    }
+
+    static func report(_ stage: String, error: Error? = nil) {
+        let message = "\(stage); footprint=\(footprint); error=\(error.map { String(describing: $0) } ?? "none")"
+        Logger(subsystem: "com.aismartframing.camera", category: "Inference").notice("\(message, privacy: .public)")
+        // Synchronous, small checkpoint survives a jetsam kill, which cannot be
+        // intercepted by an exception/signal handler. Never records image pixels.
+        #if os(iOS)
+        guard let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        do {
+            try Data((ISO8601DateFormatter().string(from: Date()) + " " + message).utf8)
+                .write(to: directory.appendingPathComponent("last_ai_stage.txt"), options: .atomic)
+        } catch {
+            Logger(subsystem: "com.aismartframing.camera", category: "Inference").error("Checkpoint failed: \(error.localizedDescription, privacy: .public)")
+        }
+        #endif
+    }
+}
 
 /// Cancellation reaches the active Vision request as well as the bounded search.
 final class CompositionAnalysisCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
     private var activeRequest: VNRequest?
+    private var warningObserver: NSObjectProtocol?
+    private var reason: String?
+
+    init() {
+        #if canImport(UIKit)
+        warningObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil, queue: nil) { [weak self] _ in
+                self?.cancel(reason: "Bộ nhớ đang thấp. Hãy đóng ứng dụng khác rồi bấm AI lại.")
+                CompositionInferenceResources.report("Analysis cancelled by memory warning")
+            }
+        #endif
+    }
+
+    deinit { if let warningObserver { NotificationCenter.default.removeObserver(warningObserver) } }
 
     var isCancelled: Bool { lock.withLock { cancelled } }
+    var failureReason: String? { lock.withLock { reason } }
 
-    func cancel() {
+    func cancel(reason: String? = nil) {
         let request = lock.withLock { () -> VNRequest? in
             cancelled = true
+            if let reason { self.reason = reason }
             return activeRequest
         }
         request?.cancel()
@@ -31,6 +95,43 @@ final class CompositionAnalysisCancellation: @unchecked Sendable {
         defer { lock.withLock { activeRequest = nil } }
         try handler.perform([request])
         if isCancelled { throw CancellationError() }
+    }
+}
+
+/// Apple Vision's learned image-aesthetics model introduced at WWDC 2024.
+/// It assesses observed pixels; it does not invent unseen camera margins.
+enum SystemPhotographicAssessment {
+    struct Score: Sendable {
+        let overall: Double
+        let isUtility: Bool
+    }
+
+    static var isSupported: Bool {
+        if #available(iOS 18, macOS 15, *) { return true }
+        return false
+    }
+
+    static func assess(_ image: CGImage, cancellation: CompositionAnalysisCancellation) throws -> Score? {
+        guard isSupported, !cancellation.isCancelled else { return nil }
+        if #available(iOS 18, macOS 15, *) {
+            return try autoreleasepool {
+                try CompositionInferenceResources.requireHeadroom()
+                let request = VNCalculateImageAestheticsScoresRequest()
+                try cancellation.perform(request, with: VNImageRequestHandler(cgImage: image, orientation: .up))
+                guard let observation = request.results?.first,
+                      observation.overallScore.isFinite,
+                      (-1...1).contains(observation.overallScore) else { throw CocoaError(.coderInvalidValue) }
+                return Score(overall: Double(observation.overallScore), isUtility: observation.isUtility)
+            }
+        }
+        return nil
+    }
+
+    static func preservesQuality(candidate: Score, original: Score, zoomRatio: Double) -> Bool {
+        guard [candidate.overall, original.overall, zoomRatio].allSatisfy(\.isFinite), zoomRatio > 0 else { return false }
+        // A utility label alone is not bad quality. Compare scores of the same
+        // scene and only veto a substantial, fully observed magnifying crop.
+        return zoomRatio <= 1.12 || original.overall - candidate.overall < 0.20
     }
 }
 
