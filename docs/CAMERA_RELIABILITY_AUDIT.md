@@ -71,3 +71,21 @@ a failed mode change and configures stereo after successful video-mode admission
 Export uses asynchronous composition creation, modern async export on iOS18+ and
 a serialized compatibility exporter on iOS17. Cancellation reaches AVFoundation
 and removes partial output files. This is checked using encoded video fixtures.
+
+Final scene verification no longer reloads SigLIP or the scene classifier. It
+still measures bodies, faces, animals, saliency and the photographic detector,
+then applies the same hero/group/overlap/count policy. The final-photo replay
+executes this exact reduced path and asserts that no semantic encoder was used.
+
+The new one-shot detector is pinned Ultralytics YOLO26s (2026), exported as an
+Apple NMS pipeline. The retained YOLO12 tracker uses its original scaleFill and
+recovery behavior. The old unused photographic flag was removed from that private
+decoder. A frozen 96-image author-labelled COCO val2017 subset is evaluated before
+composition conversions, so model choice can be assessed using measured results.
+This is a subset test at the app's 0.45 confidence filter, not official COCO AP.
+
+Sources: [YOLO26 paper](https://arxiv.org/abs/2606.03748),
+[author models](https://huggingface.co/Ultralytics/YOLO26),
+[Apple image aesthetics](https://developer.apple.com/documentation/vision/vncalculateimageaestheticsscoresrequest),
+[Charm paper](https://arxiv.org/abs/2504.02522),
+[FocalNet source](https://github.com/appwrite/focalnet).

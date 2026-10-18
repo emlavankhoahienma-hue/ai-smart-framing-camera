@@ -270,9 +270,13 @@ enum CompositionModelValidation {
         let pixels = try pixelBuffer(source)
         let analyzer = NativeSubjectAnalysis(renderer: renderer)
         guard let detected = analyzer.analyze(pixels) else { throw Failure(message: "Production recognition failed") }
+        guard YOLODetectionEngine.shared.activePhotographicModelName == "yolo26s" else {
+            throw Failure(message: "Real-photo composition did not execute bundled YOLO26s")
+        }
         guard let hero = detected.allCandidates.first, let baseRaster = detected.compositionRaster else {
             try save(source, to: output.appendingPathComponent(file.lastPathComponent))
             return ["file": file.lastPathComponent, "result": "manual-no-subject",
+                    "photographicDetector": "yolo26s",
                     "modelAssessedCrops": 0, "charmAssessedCrops": 0, "poseSupportsTorsoPortrait": false,
                     "selectedZoom": 1.0, "automaticSelectionAllowed": false,
                     "detectedPeople": 0, "detectedAnimals": 0]
@@ -359,6 +363,7 @@ enum CompositionModelValidation {
             }
         }
         let row: [String: Any] = ["file": file.lastPathComponent, "hero": hero.label,
+            "photographicDetector": "yolo26s",
             "heroBounds": [bounds.minX, bounds.minY, bounds.width, bounds.height].map { Double($0) },
             "primaryFaces": ownFaces.count,
             "attentionRegion": subject.allowsAttentionCrop,
@@ -412,7 +417,13 @@ enum CompositionModelValidation {
             if allObservedInParent,
                let finalImage = renderer.projectedFrame(image: CIImage(cgImage: parent), corners: corners,
                     size: CGSize(width: CGFloat(source.width), height: CGFloat(source.height))),
-               let observed = analyzer.analyze(try pixelBuffer(finalImage)) {
+               let observed = analyzer.analyze(try pixelBuffer(finalImage), includeSceneSemantics: false) {
+                guard YOLODetectionEngine.shared.activePhotographicModelName == "yolo26s" else {
+                    throw Failure(message: "Final-frame replay did not execute bundled YOLO26s")
+                }
+                detailed["replayPhotographicDetector"] = "yolo26s"
+                guard !observed.usedSemanticModel else { throw Failure(message: "Shutter verification reloaded a scene encoder") }
+                detailed["replayReloadedSceneEncoder"] = observed.usedSemanticModel
                 let future = TrackingCalibration(fx: calibration.fx * Double(best.proposal.zoom),
                     fy: calibration.fy * Double(best.proposal.zoom), cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
                 let protectedBounds = CompositionCropProtection.bounds(body: bounds, portrait: portraitBounds,

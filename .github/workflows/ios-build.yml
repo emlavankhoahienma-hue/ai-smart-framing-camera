@@ -110,7 +110,7 @@ jobs:
       - name: Compile native real-photo validation before model export
         run: python scripts/validate_composition_photos.py --compile-only
 
-      - name: Export & Compile pretrained YOLO12s and YOLO12n
+      - name: Export pinned YOLO12 tracking and YOLO26 photographic detectors
         env:
           # Ultralytics/CoreMLTools currently emit upstream torch tracing and
           # output-renaming notices that do not identify defects in this app.
@@ -125,13 +125,22 @@ jobs:
           curl --fail --location --retry 3 \
             https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12s.pt \
             --output yolo12s.pt
+          curl --fail --location --retry 3 \
+            https://huggingface.co/Ultralytics/YOLO26/resolve/45588070f19053475015dd860367c7780dd34b2a/yolo26s.pt \
+            --output yolo26s.pt
           echo "419ff3dca37d69bacc93a50fa0c186a1c6f9fe62fae0f108b0872829689e9ca6  yolo12n.pt" | shasum -a 256 --check
           echo "e915c2c4286e3f6f8610ef106fa3f94a7b8c19b30eccede5887e22c33ef75f58  yolo12s.pt" | shasum -a 256 --check
-          python -c "from ultralytics import YOLO; YOLO('yolo12n.pt').export(format='coreml', nms=True, half=True); YOLO('yolo12s.pt').export(format='coreml', nms=True, half=True)"
+          echo "646f8bc3fe0a656803d95c294f7852321748cb29d13466a1af8862e2db384a1b  yolo26s.pt" | shasum -a 256 --check
+          python -c "from ultralytics import YOLO; [YOLO(name + '.pt').export(format='coreml', imgsz=640, nms=True, quantize=16, dynamic=False, batch=1) for name in ('yolo12n', 'yolo12s', 'yolo26s')]"
           xcrun coremlc compile yolo12n.mlpackage .
           xcrun coremlc compile yolo12s.mlpackage .
+          xcrun coremlc compile yolo26s.mlpackage .
           test -d yolo12n.mlmodelc
           test -d yolo12s.mlmodelc
+          test -d yolo26s.mlmodelc
+
+      - name: Compare photographic detectors on fixed labelled COCO images
+        run: python scripts/validate_detector_photos.py --labelled-only
 
       - name: Export, verify and compile pinned SigLIP
         run: |
@@ -186,8 +195,8 @@ jobs:
             tests/InferenceLifetimeRegression.swift -o "$RUNNER_TEMP/lifetime-tests"
           "$RUNNER_TEMP/lifetime-tests" "$GITHUB_WORKSPACE"
 
-      - name: Validate preserved YOLO recognition on real photographs
-        run: python scripts/validate_detector_photos.py
+      - name: Compare real Core ML photographic detection with labelled COCO and CADB
+        run: python scripts/validate_detector_photos.py --photographs-only
 
       - name: Validate measured portrait framing on all human test photos
         run: |
@@ -209,6 +218,12 @@ jobs:
             validation/video-export/
             validation/focal/
             validation/detection/*-real-photos.json
+            validation/detection/*-coco-predictions.json
+            validation/detection/coco-comparison.json
+            validation/detection/review/
+            validation/detection/coco/ground-truth.json
+            validation/detection/coco/classes.json
+            models/YOLO26PhotographicModel.json
             validation/photos/manifest.json
             validation/pose-report.json
 
@@ -277,6 +292,9 @@ jobs:
           test -d yolo12s.mlmodelc
           cp -r yolo12n.mlmodelc Payload/AISmartFramingCamera.app/
           cp -r yolo12s.mlmodelc Payload/AISmartFramingCamera.app/
+          test -d yolo26s.mlmodelc
+          cp -r yolo26s.mlmodelc Payload/AISmartFramingCamera.app/
+          cp models/YOLO26PhotographicModel.json Payload/AISmartFramingCamera.app/
           if [ -f "AISmartFramingCamera/Services/RobustTargetEmbedder.bin" ]; then
             cp AISmartFramingCamera/Services/RobustTargetEmbedder.bin Payload/AISmartFramingCamera.app/
             echo " Đã tích hợp thành công RobustTargetEmbedder.bin vào App Bundle!"

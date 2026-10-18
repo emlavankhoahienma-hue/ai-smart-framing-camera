@@ -1,0 +1,28 @@
+{
+  "name": "Ultralytics YOLO26s",
+  "role": "One-shot photographic object detection only; YOLO12 optical target recovery is preserved",
+  "releaseYear": 2026,
+  "paper": "https://arxiv.org/abs/2606.03748",
+  "authorRepository": "https://github.com/ultralytics/ultralytics",
+  "weightsRepository": "https://huggingface.co/Ultralytics/YOLO26",
+  "weightsRevision": "45588070f19053475015dd860367c7780dd34b2a",
+  "weightsURL": "https://huggingface.co/Ultralytics/YOLO26/resolve/45588070f19053475015dd860367c7780dd34b2a/yolo26s.pt",
+  "weightsBytes": 20422725,
+  "weightsSHA256": "646f8bc3fe0a656803d95c294f7852321748cb29d13466a1af8862e2db384a1b",
+  "license": "AGPL-3.0",
+  "licenseURL": "https://github.com/ultralytics/ultralytics/blob/v8.4.178/LICENSE",
+  "ultralyticsVersion": "8.4.178",
+  "export": {
+    "format": "coreml",
+    "imgsz": 640,
+    "nms": true,
+    "quantize": 16,
+    "dynamic": false,
+    "batch": 1
+  },
+  "input": "RGB image 640x640; production VNCoreMLRequest scaleFit",
+  "output": "Apple object detector NMS pipeline: confidence and coordinates; VNRecognizedObjectObservation",
+  "classes": "80 COCO object classes, not a photographic composition model",
+  "fallback": "Logged load, prediction or output-schema failures retry with all compute units, then YOLO12s; cancellation aborts immediately. Thermal/low-power mode uses the retained optical detector.",
+  "validationScope": "Production Swift/Core ML CADB functional checks and a frozen 96-image labelled COCO val2017 subset compared with YOLO12s. Reports are generated during CI; this source manifest contains no invented evaluation results or physical iPhone performance claims."
+}

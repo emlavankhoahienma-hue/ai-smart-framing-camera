@@ -3,18 +3,49 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
-      "sha256": "b861f603e58c64f135c2afb8bb7dd7f325f7e6e3ad0d6a5594818f265d17932c"
+      "sha256": "a1ad38ca066f8793df8db891d567843e6fd1b1b1869e22fa9a5818830ab1b48f"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift",
       "start": "    private func analyzeCapturedFrame(",
-      "sha256": "02c670f8fe546b582fa2ebc9a21860d28e737a811370c92ce0ffade1d6c7f79e"
+      "sha256": "0b4886011a70761cc548a16498403d916df7693b6fb55c0e2d45ac02e2362ca2"
     },
     {
       "path": "AISmartFramingCamera/Services/CompositionPlanning.swift",
       "start": "enum HeroSubjectPolicy {",
       "end": "/// Presentation-only identity hysteresis.",
       "sha256": "42cd76af4ceccf726c1607bab3511888bc6bbcbd2738c8c013dd5b4fc5869e74"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
+      "start": "    public func loadYOLOModel()",
+      "end": "    private func makeModel(named",
+      "sha256": "42eca4633aa28a53a8a8d12043109eed4779d41c4b3da7f5f6d673c12e7a4ba1"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
+      "start": "    func detectObjects(",
+      "end": "    /// A separate short-lived",
+      "sha256": "815e6ad402a4281a9660fdcc45a2841d843fe0e9426fbc906b7edac34bc641a4"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
+      "start": "    private func detectWithVisionCoreML(",
+      "end": "    private func recoverLightweightModel()",
+      "sha256": "c00d193e788f7a7f898d455fed2a158dab158182f08f1d93e65eb378dbb412de"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
+      "start": "    private func recoverLightweightModel()",
+      "end": "    // MARK: - COCO labels",
+      "sha256": "604ab8d053a76121c0c7d787466af0ae8aebc6b0436ad20d3bb062f81e04d719"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
+      "start": "    // MARK: - COCO labels",
+      "end": null,
+      "sha256": "4cd8991fd69f06e5baa5d44fa04bc38c8e177943e5355889cd7dc05901db1c4e"
     }
-  ]
+  ],
+  "scope": "The authorized 2026-10-18 YOLO26s upgrade changes one-shot photographic recognition and model loading validation. Original YOLO12 loader, detectObjects, optical Vision decoder/recovery, label/category/scoring helpers and hero/group policy remain individually protected from the reviewed baseline. The recognition tail has its own separately reviewed boundary. Final verification may omit the scene classifier/SigLIP encoder; initial analysis uses them. Detector fusion, face association, ranking and grouping arithmetic are unchanged. The obsolete photographic flag was removed from the legacy decoder; its former default-false scaleFill and recovery behavior are unchanged."
 }

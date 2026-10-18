@@ -338,17 +338,20 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         guard !cancellation.isCancelled else { return false }
         analysisLock.lock()
         defer { SemanticCropRanker.shared.endAnalysis(); analysisLock.unlock() }
-        guard let output = analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
-                                                cancellation: cancellation), !cancellation.isCancelled else { return false }
-        let subjects = output.allCandidates.map {
-            CompositionSubject(index: 0, bounds: $0.boundingBox,
-                anchor: CompositionSubject.framingAnchor(bounds: $0.boundingBox, preferred: $0.eyePosition),
-                kind: $0.isGroup ? .group : kind($0.category), confidence: Double($0.confidence),
-                importance: $0.prominenceScore, gaze: $0.gaze)
+        return autoreleasepool {
+            guard let output = analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
+                                                    cancellation: cancellation, includeSceneSemantics: false),
+                  !cancellation.isCancelled else { return false }
+            let subjects = output.allCandidates.map {
+                CompositionSubject(index: 0, bounds: $0.boundingBox,
+                    anchor: CompositionSubject.framingAnchor(bounds: $0.boundingBox, preferred: $0.eyePosition),
+                    kind: $0.isGroup ? .group : kind($0.category), confidence: Double($0.confidence),
+                    importance: $0.prominenceScore, gaze: $0.gaze)
+            }
+            return FinalFramingEvidence.accepts(protectedBounds: protectedBounds, expectedKind: expectedKind,
+                minimumFaces: minimumFaces, minimumPeople: minimumPeople,
+                subjects: subjects, faces: output.allFaceRects)
         }
-        return FinalFramingEvidence.accepts(protectedBounds: protectedBounds, expectedKind: expectedKind,
-            minimumFaces: minimumFaces, minimumPeople: minimumPeople,
-            subjects: subjects, faces: output.allFaceRects)
     }
 
     private func compositionIntents(_ output: NeuralAnalysisOutput, hero: NeuralSubjectCandidate) -> [LocalCompositionIntent] {
@@ -375,7 +378,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     }
 
     private func analyzeCapturedFrame(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
-                                      cancellation: CompositionAnalysisCancellation) -> NeuralAnalysisOutput? {
+                                      cancellation: CompositionAnalysisCancellation,
+                                      includeSceneSemantics: Bool = true) -> NeuralAnalysisOutput? {
         SemanticCropRanker.shared.beginAnalysis()
         let bodies = VNDetectHumanRectanglesRequest()
         bodies.upperBodyOnly = false
@@ -386,7 +390,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let classification = VNClassifyImageRequest()
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         var completed = Set<ObjectIdentifier>()
-        for request in [bodies, faces, animals, objectness, attention, classification] as [VNRequest] {
+        let requests: [VNRequest] = includeSceneSemantics ?
+            [bodies, faces, animals, objectness, attention, classification] : [bodies, faces, animals, objectness, attention]
+        for request in requests {
             if cancellation.isCancelled { return nil }
             do { try cancellation.perform(request, with: handler); completed.insert(ObjectIdentifier(request)) }
             catch {
@@ -467,7 +473,10 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     bounds: bounds, kind: .scenery, confidence: 0.35, evidence: raster.evidence(in: bounds)))]
         }
         var scene = sceneType(completed.contains(ObjectIdentifier(classification)) ? classification.results ?? [] : [])
-        let semantics = SemanticCropRanker.shared.sceneEvidence(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+        // Final shutter admission needs identity, counts and overlap, not another
+        // large scene encoder. Subject ranking and group membership stay identical.
+        let semantics = includeSceneSemantics ? SemanticCropRanker.shared.sceneEvidence(
+            pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation) : [:]
         if let hint = SemanticCropRanker.shared.sceneHint(scores: semantics, candidates: candidates), scene == .general { scene = hint }
         if scene == .general, let hero = candidates.first {
             if hero.category == .human || hero.category == .face { scene = .portrait }

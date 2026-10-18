@@ -90,6 +90,8 @@ enum VideoFrameRegression {
                 try await VideoFrameRenderer.export(asset: asset, composition: composition, to: output)
                 let image = try await snapshot(output)
                 try require(abs(CGFloat(image.width) / CGFloat(image.height) - aspect) < 0.012, "Export aspect changed")
+                let expectedHeight = aspect == 1 ? 180 : (aspect == 3.0 / 4 ? 240 : 320)
+                try require(image.width == 180 && image.height == expectedHeight, "Export upscaled or used the wrong crop dimensions")
                 guard let track = try await AVURLAsset(url: output).loadTracks(withMediaType: .video).first else { throw Failure(message: "Missing export") }
                 let rate = try await track.load(.nominalFrameRate)
                 try require(abs(rate - Float(fps)) < 0.5, "Export changed frame rate")
@@ -99,8 +101,11 @@ enum VideoFrameRegression {
                 let rect = CaptureViewportGeometry.pixels(normalized, extent: ci.extent, bottomLeft: true)!
                 guard let expected = context.createCGImage(ci.cropped(to: rect), from: rect) else { throw Failure(message: "Expected crop") }
                 let left = try samples(expected), right = try samples(image)
-                let error = zip(left, right).enumerated().filter { $0.offset % 4 != 3 }
-                    .reduce(0.0) { $0 + abs(Double($1.element.0) - Double($1.element.1)) } / (32 * 32 * 3)
+                var error = 0.0
+                for index in left.indices where index % 4 != 3 {
+                    error += abs(Double(left[index]) - Double(right[index]))
+                }
+                error /= 3072.0
                 try require(error < 12, "Saved crop moved or rotated; pixel MAE \(error)")
                 // Color rerender uses the same immutable original, so geometry
                 // cannot compound even when the user repeats crop/color actions.

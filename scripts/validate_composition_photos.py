@@ -42,11 +42,11 @@ final class NativeSubjectAnalysis {
     private let renderer: CompositionImageRenderer
     private let analysisLock = NSLock()
     init(renderer: CompositionImageRenderer) { self.renderer = renderer }
-    func analyze(_ pixels: CVPixelBuffer) -> NeuralAnalysisOutput? {
+    func analyze(_ pixels: CVPixelBuffer, includeSceneSemantics: Bool = true) -> NeuralAnalysisOutput? {
         analysisLock.lock()
         defer { SemanticCropRanker.shared.endAnalysis(); analysisLock.unlock() }
         return analyzeCapturedFrame(pixelBuffer: pixels, orientation: .up,
-                                    cancellation: CompositionAnalysisCancellation())
+                                    cancellation: CompositionAnalysisCancellation(), includeSceneSemantics: includeSceneSemantics)
     }
     func intents(_ output: NeuralAnalysisOutput, hero: NeuralSubjectCandidate) -> [LocalCompositionIntent] {
         compositionIntents(output, hero: hero)
@@ -67,7 +67,7 @@ executable.parent.mkdir(parents=True, exist_ok=True)
 resources = bundle / "Resources"
 resources.mkdir(exist_ok=True)
 if not args.parity_only and not args.compile_only:
-    for name in ("yolo12n", "yolo12s", "SigLIPBaseImage"):
+    for name in ("yolo12n", "yolo12s", "yolo26s", "SigLIPBaseImage"):
         shutil.copytree(root / (name + ".mlmodelc"), resources / (name + ".mlmodelc"), dirs_exist_ok=True)
     shutil.copyfile(root / "SigLIPPrompts.json", resources / "SigLIPPrompts.json")
 with (bundle / "Info.plist").open("wb") as stream:

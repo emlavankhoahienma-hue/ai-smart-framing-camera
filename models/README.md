@@ -21,6 +21,31 @@ FP16 Core ML models with NMS, and compiles them into the IPA. Package versions
 are pinned. `scripts/verify_model_bundle.py` records the source-weight and
 compiled-tree hashes in `YOLOModelManifest.json` in the app bundle.
 
+One-shot photographic recognition additionally uses the official **Ultralytics
+YOLO26s** checkpoint, released in 2026 and described by the authors in
+[arXiv:2606.03748](https://arxiv.org/abs/2606.03748). Its source revision, SHA-256,
+license, output contract and exact export settings are pinned in
+`YOLO26PhotographicModel.json`. Ultralytics 8.4.178 uses `nms=True, quantize=16`
+to select the one-to-many head and Apple NMS pipeline compatible with Vision
+recognized-object observations. No `end2end` option is passed.
+
+YOLO26s never replaces the model slot used for optical target recovery. Its
+short-lived load/prediction attempts report actual failures, retry available
+compute units and fall back to the retained detector on failure or thermal
+pressure. COCO labels use exact object categories in the photographic path:
+computer mouse and hot dog are objects, not animals; legacy tracking mappings
+remain byte-for-byte protected.
+
+The detector validation runs native production Swift/Core ML for YOLO12n,
+YOLO12s and YOLO26s on 160 CADB sources as functional checks. A separately frozen
+96-image COCO val2017 subset uses author object boxes, official S3 image bytes
+and pinned annotation/image digests. `coco-comparison.json` reports class-aware
+IoU=0.50 precision, recall and 101-point interpolated AP for predictions retained
+at the app's confidence threshold, both for all non-crowd boxes and for boxes
+within the photographic size policy. This is not official full-COCO AP and does
+not measure composition quality or physical iPhone performance. Sixteen contact
+sheets retain all 96 source/YOLO12s/YOLO26s comparisons for visual review.
+
 `scripts/export_siglip_coreml.py` pins the Google SigLIP repository revision and
 weight digest, verifies conversion parity, and exports the image encoder and
 normalized text prompt vectors. Apple Vision saliency, face landmarks and

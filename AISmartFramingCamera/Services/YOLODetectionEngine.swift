@@ -12,6 +12,19 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     private let modelLock = NSLock()
     private var yoloCoreMLModel: VNCoreMLModel?
     private var loadedModelName: String?
+    private var completedPhotographicModelName: String?
+
+    private enum PhotographicFailure: Error, CustomStringConvertible {
+        case invalidOutputs(String)
+        case unexpectedObservations(String)
+
+        var description: String {
+            switch self {
+            case .invalidOutputs(let name): return "Detector has no Vision-compatible NMS outputs: \(name)"
+            case .unexpectedObservations(let name): return "Detector did not return recognized objects: \(name)"
+            }
+        }
+    }
 
     public init() { loadYOLOModel() }
 
@@ -31,18 +44,32 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     private func makeModel(named name: String, computeUnits: MLComputeUnits) -> VNCoreMLModel? {
         guard let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") else { return nil }
         do {
-            let config = MLModelConfiguration()
-            config.computeUnits = computeUnits
-            config.allowLowPrecisionAccumulationOnGPU = true
-            return try VNCoreMLModel(for: MLModel(contentsOf: url, configuration: config))
+            return try makeModel(at: url, name: name, computeUnits: computeUnits)
         } catch {
             CameraLogger.warning("Không nạp được \(name): \(error)", category: .ai)
             return nil
         }
     }
 
+    private func makeModel(at url: URL, name: String, computeUnits: MLComputeUnits) throws -> VNCoreMLModel {
+        let config = MLModelConfiguration()
+        config.computeUnits = computeUnits
+        config.allowLowPrecisionAccumulationOnGPU = true
+        let model = try MLModel(contentsOf: url, configuration: config)
+        if name == "yolo26s" {
+            let outputs = model.modelDescription.outputDescriptionsByName
+            guard outputs["confidence"]?.type == .multiArray,
+                  outputs["coordinates"]?.type == .multiArray,
+                  outputs["coordinates"]?.multiArrayConstraint?.shape.last?.intValue == 4 else {
+                throw PhotographicFailure.invalidOutputs(name)
+            }
+        }
+        return try VNCoreMLModel(for: model)
+    }
+
     public var hasYOLOModel: Bool { modelLock.withLock { yoloCoreMLModel != nil } }
     public var activeModelName: String { modelLock.withLock { loadedModelName ?? "Apple Vision" } }
+    var activePhotographicModelName: String? { modelLock.withLock { completedPhotographicModelName } }
 
     func detectObjects(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation = .up,
                        cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
@@ -57,19 +84,72 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     /// target reacquisition. Slower still-image inference is intentional on XS.
     func detectPhotographicObjects(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                                    cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
+        modelLock.withLock { completedPhotographicModelName = nil }
         guard !cancellation.isCancelled else { return [] }
         let process = ProcessInfo.processInfo
         if process.thermalState == .serious || process.thermalState == .critical || process.isLowPowerModeEnabled {
+            modelLock.withLock { completedPhotographicModelName = loadedModelName }
             return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         }
-        return autoreleasepool {
-            guard !cancellation.isCancelled else { return [] }
-            guard let model = makeModel(named: "yolo12s", computeUnits: .cpuAndNeuralEngine) ??
-                              makeModel(named: "yolo12s", computeUnits: .all) else {
-                return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+        // The still-image specialist is never installed into the optical recovery
+        // model slot. Each attempt releases its Core ML resources before retrying.
+        for name in ["yolo26s", "yolo12s"] {
+            guard let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") else { continue }
+            for units in [MLComputeUnits.cpuAndNeuralEngine, .all] {
+                if cancellation.isCancelled { return [] }
+                do {
+                    let candidates = try autoreleasepool {
+                        try CompositionInferenceResources.requireHeadroom()
+                        let model = try makeModel(at: url, name: name, computeUnits: units)
+                        return try photographicObservations(model: model, name: name, pixelBuffer: pixelBuffer,
+                            orientation: orientation, cancellation: cancellation)
+                    }
+                    modelLock.withLock { completedPhotographicModelName = name }
+                    CameraLogger.info("Photographic detector completed: \(name), compute \(units.rawValue), observations \(candidates.count)", category: .ai)
+                    return candidates
+                } catch {
+                    if cancellation.isCancelled { return [] }
+                    CameraLogger.warning("Photographic detector \(name), compute \(units.rawValue): \(error)", category: .ai)
+                }
             }
-            return detectWithVisionCoreML(vnModel: model, pixelBuffer: pixelBuffer, orientation: orientation,
-                                          cancellation: cancellation, photographic: true)
+        }
+        modelLock.withLock { completedPhotographicModelName = loadedModelName }
+        return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+    }
+
+    private func photographicObservations(model: VNCoreMLModel, name: String, pixelBuffer: CVPixelBuffer,
+                                         orientation: CGImagePropertyOrientation,
+                                         cancellation: CompositionAnalysisCancellation) throws -> [NeuralSubjectCandidate] {
+        let request = VNCoreMLRequest(model: model)
+        request.imageCropAndScaleOption = .scaleFit
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
+        try cancellation.perform(request, with: handler)
+        guard let observations = request.results as? [VNRecognizedObjectObservation] else {
+            throw PhotographicFailure.unexpectedObservations(name)
+        }
+        return observations.compactMap { observation -> NeuralSubjectCandidate? in
+            guard !cancellation.isCancelled, let label = observation.labels.first else { return nil }
+            let confidence = min(observation.confidence, label.confidence)
+            guard confidence.isFinite, confidence >= 0.45 else { return nil }
+            let raw = observation.boundingBox
+            guard let rect = clippedValidBox(CGRect(x: raw.minX, y: 1 - raw.maxY,
+                width: raw.width, height: raw.height)), rect.width >= 0.04, rect.height >= 0.04,
+                rect.width <= 0.95, rect.height <= 0.95,
+                rect.width / rect.height >= 0.15, rect.width / rect.height <= 6.5 else { return nil }
+            let category = photographicCategory(forCOCOLabel: label.identifier)
+            return NeuralSubjectCandidate(boundingBox: rect, category: category, confidence: confidence,
+                label: localizeYOLOLabel(label.identifier), prominenceScore:
+                    calculateYOLOProminenceScore(rect: rect, confidence: confidence, category: category))
+        }.sorted { $0.prominenceScore > $1.prominenceScore }
+    }
+
+    func photographicCategory(forCOCOLabel label: String) -> NeuralSubjectCategory {
+        // COCO's mouse is computer hardware and hot dog is food. Its object
+        // vocabulary must not use substring-based pet/animal alias matching.
+        switch label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "person": return .human
+        case "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe": return .animal
+        default: return .foregroundObject
         }
     }
 
@@ -77,8 +157,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         vnModel: VNCoreMLModel,
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation,
-        cancellation: CompositionAnalysisCancellation,
-        photographic: Bool = false
+        cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
         var detectedCandidates: [NeuralSubjectCandidate] = []
         let request = VNCoreMLRequest(model: vnModel) { [weak self] req, error in
@@ -120,7 +199,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             }
         }
         
-        request.imageCropAndScaleOption = photographic ? .scaleFit : .scaleFill
+        request.imageCropAndScaleOption = .scaleFill
         
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
@@ -130,7 +209,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             CameraLogger.error("Lỗi thực thi YOLO Request", error: error, category: .ai)
             detectedCandidates.removeAll()
             
-            if !photographic { recoverLightweightModel() }
+            recoverLightweightModel()
         }
         
         return detectedCandidates.sorted { $0.prominenceScore > $1.prominenceScore }

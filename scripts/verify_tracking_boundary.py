@@ -14,4 +14,4 @@ for name in ('TrackingBoundary.json', 'PhotographicDetectionBoundary.json'):
         actual = hashlib.sha256(text.encode('utf-8')).hexdigest()
         if actual != entry['sha256']:
             sys.exit(f"Protected code changed: {entry['path']} {entry.get('start', '')}")
-    print(f"PASS: {len(manifest['protected'])} boundaries in {name} unchanged from {manifest['base']}")
+    print(f"PASS: {len(manifest['protected'])} reviewed source guards in {name}; scope: {manifest.get('scope', 'original tracking implementation')}")

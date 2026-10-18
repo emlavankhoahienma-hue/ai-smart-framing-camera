@@ -10,6 +10,7 @@ from pathlib import Path
 YOLO_WEIGHTS_SHA256 = {
     "yolo12n": "419ff3dca37d69bacc93a50fa0c186a1c6f9fe62fae0f108b0872829689e9ca6",
     "yolo12s": "e915c2c4286e3f6f8610ef106fa3f94a7b8c19b30eccede5887e22c33ef75f58",
+    "yolo26s": "646f8bc3fe0a656803d95c294f7852321748cb29d13466a1af8862e2db384a1b",
 }
 
 
@@ -78,6 +79,12 @@ def main() -> None:
     siglip = tree_hash(bundle / "SigLIPBaseImage.mlmodelc")
     yolo = {name: tree_hash(bundle / f"{name}.mlmodelc")
             for name in YOLO_WEIGHTS_SHA256}
+    photographic_detector = json.loads((bundle / "YOLO26PhotographicModel.json").read_text(encoding="utf-8"))
+    if (photographic_detector.get("weightsSHA256") != YOLO_WEIGHTS_SHA256["yolo26s"] or
+            photographic_detector.get("weightsRevision") != "45588070f19053475015dd860367c7780dd34b2a" or
+            photographic_detector.get("export") != {"format": "coreml", "imgsz": 640, "nms": True,
+                                                     "quantize": 16, "dynamic": False, "batch": 1}):
+        raise RuntimeError("Photographic YOLO26 source/export provenance differs from the tested NMS pipeline")
     
     prompt_path = bundle / "SigLIPPrompts.json"
     source_manifest = bundle / "SigLIPModelManifest.json"
@@ -95,10 +102,14 @@ def main() -> None:
     source_manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     
     yolo_manifest_data = {
-        "repository": "ultralytics/assets",
-        "release": "v8.3.0",
         "models": {name: {"weightsSHA256": YOLO_WEIGHTS_SHA256[name],
-                           "compiledSHA256": yolo[name]} for name in yolo},
+                           "compiledSHA256": yolo[name],
+                           "role": "one-shot photographic detection" if name == "yolo26s" else "preserved optical target recovery",
+                           "weightsURL": photographic_detector["weightsURL"] if name == "yolo26s" else
+                               f"https://github.com/ultralytics/assets/releases/download/v8.3.0/{name}.pt"}
+                   for name in yolo},
+        "ultralyticsVersion": "8.4.178",
+        "export": {"nms": True, "quantize": 16, "imgsz": 640, "dynamic": False, "batch": 1},
     }
     (bundle / "YOLOModelManifest.json").write_text(json.dumps(yolo_manifest_data, indent=2), encoding="utf-8")
     print(f"SigLIP compiled SHA256: {siglip}")
