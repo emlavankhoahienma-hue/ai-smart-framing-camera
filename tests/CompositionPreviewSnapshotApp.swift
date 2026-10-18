@@ -58,10 +58,10 @@ private struct SnapshotHost: View {
             let point = CGPoint(x: 0.4, y: 0.4)
             let candidate = NeuralSubjectCandidate(boundingBox: rect, category: .human,
                 confidence: 0.9, label: intent.title, prominenceScore: 1)
-            let plan = LocalFramingPlan(subjectPoint: point, subjectRect: rect,
+            let plan = LocalFramingPlan(subjectPoint: point, subjectRect: rect, cropProtectionRect: rect,
                 aimPointInSource: point, aimWorldRay: SIMD3(0, 0, -1), zoom: zoom,
                 confidence: 0.9, minimumAutoselectConfidence: 0.72, intent: intent,
-                score: 0.8, explanation: explanation, usesCenter: x == 0.5,
+                explanation: explanation, usesCenter: x == 0.5,
                 preferenceKey: intent.rawValue)
             return LocalCompositionChoice(candidate: candidate, plan: plan, preview: preview)
         }

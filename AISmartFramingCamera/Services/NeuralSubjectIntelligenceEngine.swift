@@ -179,15 +179,13 @@ struct LocalCompositionChoice: Identifiable, @unchecked Sendable {
     let candidate: NeuralSubjectCandidate
     let plan: LocalFramingPlan
     let preview: CGImage
-    var preservesOriginalFrame = false
-    var title: String { preservesOriginalFrame ? "Giữ khung hiện tại" : plan.intent.title }
+    var title: String { plan.preservesOriginalFrame ? "Giữ khung hiện tại" : plan.intent.title }
 }
 
 struct LocalCompositionAnalysis: Sendable {
     let detection: NeuralAnalysisOutput
     let choices: [LocalCompositionChoice]
     let fallbackCandidates: [NeuralSubjectCandidate]
-    var assessedCompositionCount = 0
     var usedCompositionModel = false
     var canAutoselectComposition = false
     var receipt: CompositionAnalysisReceipt? = nil
@@ -296,7 +294,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
                     scene: output.detectedScene, category: hero.category) ?? 1),
-                intent: proposal.intent, score: proposal.score, explanation: explanation + " Đã so sánh vùng ảnh bằng FocalNet và kiểm tra bằng SAMP-Net, Charm 2025.",
+                intent: proposal.intent, explanation: explanation + " Đã so sánh vùng ảnh bằng FocalNet và kiểm tra bằng SAMP-Net, Charm 2025.",
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey)
             plan.requiresSceneVerification = !proposal.isEntirelyObserved
             plan.preservesOriginalFrame = proposal.isUnchangedView
@@ -304,11 +302,10 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             plan.expectedFaces = hero.faceBounds.count
             plan.expectedPeople = hero.isGroup ? hero.companionBounds.filter { !hero.faceBounds.contains($0) }.count :
                 (subject.kind == .person ? 1 : 0)
-            return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image,
-                                          preservesOriginalFrame: proposal.isUnchangedView)
+            return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image)
         }
         return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: [hero],
-            assessedCompositionCount: result.assessedCount, usedCompositionModel: result.usedSpecialist,
+            usedCompositionModel: result.usedSpecialist,
             canAutoselectComposition: result.canAutoselect,
             receipt: receipt(count: result.cropAssessmentCount, specialist: result.usedSpecialist, modern: result.modernAssessmentCount))
     }

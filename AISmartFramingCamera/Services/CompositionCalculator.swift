@@ -14,7 +14,6 @@ struct LocalFramingPlan: Sendable {
     let confidence: Double
     let minimumAutoselectConfidence: Double
     let intent: LocalCompositionIntent
-    let score: Double
     let explanation: String
     let usesCenter: Bool
     let preferenceKey: String

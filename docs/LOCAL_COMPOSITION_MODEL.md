@@ -2,10 +2,10 @@
 
 The local button always captures a new frame and runs real model inference.
 Each result carries a request UUID, source timestamp, measured elapsed time and
-successful assessment counts. An old frame or result cannot authorize a new
+successful crop-region and quality-assessment counts. An old frame or result cannot authorize a new
 button press. Model load/compilation can make the first run slower than later
 runs; no fixed waiting period is used as evidence of quality. The HUD reports
-actual SAMP-Net frame counts, Charm assessments and elapsed seconds.
+actual crop-region comparisons, Charm assessments and elapsed seconds.
 Local analysis has a 75-second cancellation deadline to accommodate cold model
 loads on older devices. It returns as soon as the real comparisons finish;
 results older than 30 seconds require explicit preview selection instead of
@@ -13,6 +13,10 @@ autoselection. Manual review expires 15 seconds after analysis completes, with
 a 90-second maximum source age; a cold model cannot consume the review window.
 
 ## Released models and provenance
+
+The source-relative crop ranker is now Appwrite FocalNet. Its checkpoint,
+Core ML conversion, numerical verification and relationship to the two quality
+auditors below are documented in [subject-aware reframing](SUBJECT_AWARE_REFRAMING.md).
 
 The composition scorer remains **SAMP-Net (BMVC 2021)**, using the author's
 [CADB checkpoint](https://github.com/bcmi/Image-Composition-Assessment-Dataset-CADB)
