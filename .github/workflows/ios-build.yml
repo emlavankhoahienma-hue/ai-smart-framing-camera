@@ -142,6 +142,17 @@ jobs:
       - name: Compare photographic detectors on fixed labelled COCO images
         run: python scripts/validate_detector_photos.py --labelled-only
 
+      - name: Upload labelled detector comparison for review
+        uses: actions/upload-artifact@v6
+        with:
+          name: Photographic-Detector-Comparison
+          path: |
+            validation/detection/*-coco-predictions.json
+            validation/detection/coco-comparison.json
+            validation/detection/review/
+            validation/detection/coco/ground-truth.json
+            models/YOLO26PhotographicModel.json
+
       - name: Export, verify and compile pinned SigLIP
         run: |
           pip install "torch==2.5.1" "transformers==4.46.3" \
@@ -317,6 +328,8 @@ jobs:
           fi
           test -d Payload/AISmartFramingCamera.app/SigLIPBaseImage.mlmodelc
           test -s Payload/AISmartFramingCamera.app/SigLIPPrompts.json
+          /usr/libexec/PlistBuddy -c "Add :AIFramingBuildRevision string ${{ github.event.pull_request.head.sha || github.sha }}" Payload/AISmartFramingCamera.app/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :AIFramingBuildTreeRevision string ${{ github.sha }}" Payload/AISmartFramingCamera.app/Info.plist
           python scripts/verify_model_bundle.py Payload/AISmartFramingCamera.app
 
       - name: Package IPA

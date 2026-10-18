@@ -60,6 +60,44 @@ class DetectorEvaluationTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             evaluate(self.truth(), {"records": []}, False)
 
+    def test_duplicate_source_record_is_rejected(self) -> None:
+        predictions = self.predictions((1, 0.9, [0.2, 0.2, 0.4, 0.4]))
+        predictions["records"].append(predictions["records"][0])
+        with self.assertRaisesRegex(RuntimeError, "Duplicate"):
+            evaluate(self.truth(), predictions, False)
+
+    def test_size_ignored_noncrowd_cannot_absorb_duplicate_predictions(self) -> None:
+        truth = self.truth()
+        truth["annotations"][0]["bbox"] = [2, 20, 96, 40]
+        box = [0.02, 0.2, 0.95, 0.4]
+        scores = evaluate(truth, self.predictions((1, 0.9, box), (1, 0.8, box)), True)
+        self.assertEqual(scores["ignoredPredictions"], 1)
+        self.assertEqual(scores["groups"]["people"]["groundTruth"], 0)
+        self.assertEqual(scores["groups"]["people"]["falsePositives"], 1)
+
+    def test_crowd_can_absorb_multiple_predictions(self) -> None:
+        scores = evaluate(self.truth(crowd=True), self.predictions(
+            (1, 0.9, [0.25, 0.25, 0.1, 0.1]), (1, 0.8, [0.4, 0.4, 0.1, 0.1])), False)
+        self.assertEqual(scores["ignoredPredictions"], 2)
+        self.assertEqual(scores["groups"]["people"]["falsePositives"], 0)
+
+    def test_regular_match_has_priority_over_better_overlapping_crowd(self) -> None:
+        truth = self.truth()
+        truth["annotations"].append({"id": 2, "image_id": 1, "category_id": 1,
+                                     "bbox": [10, 10, 60, 60], "iscrowd": 1})
+        box = [0.25, 0.25, 0.3, 0.3]
+        self.assertGreater(overlap(box, [0.1, 0.1, 0.6, 0.6], crowd=True),
+                           overlap(box, [0.2, 0.2, 0.4, 0.4]))
+        scores = evaluate(truth, self.predictions((1, 0.9, box)), False)
+        self.assertEqual(scores["ignoredPredictions"], 0)
+        self.assertEqual(scores["groups"]["people"]["truePositives"], 1)
+        self.assertEqual(scores["matching"][0]["matchedAnnotation"], 1)
+
+    def test_group_ap_explicitly_reports_pooled_aggregation(self) -> None:
+        scores = evaluate(self.truth(), self.predictions((1, 0.9, [0.2, 0.2, 0.4, 0.4])), False)
+        self.assertIn("Pooled/micro", scores["groupAPAggregation"])
+        self.assertIn("not the mean of per-class AP", scores["groupAPAggregation"])
+
 
 if __name__ == "__main__":
     unittest.main()

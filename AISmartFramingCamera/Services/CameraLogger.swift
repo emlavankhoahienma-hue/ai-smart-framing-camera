@@ -58,8 +58,17 @@ public enum CameraLogger {
     }
 
     public static func clearAllLogs() {
-        if let logUrl = logFileURL { try? FileManager.default.removeItem(at: logUrl) }
-        if let crashUrl = crashLogFileURL { try? FileManager.default.removeItem(at: crashUrl) }
+        for url in [logFileURL, crashLogFileURL].compactMap({ $0 }) where FileManager.default.fileExists(atPath: url.path) {
+            do { try FileManager.default.removeItem(at: url) }
+            catch { os_log("Cannot clear log: %{public}@", log: aiLog, type: .error, error.localizedDescription) }
+        }
+        if let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let checkpoint = directory.appendingPathComponent("last_ai_stage.txt")
+            if FileManager.default.fileExists(atPath: checkpoint.path) {
+                do { try FileManager.default.removeItem(at: checkpoint) }
+                catch { os_log("Cannot clear AI checkpoint: %{public}@", log: aiLog, type: .error, error.localizedDescription) }
+            }
+        }
     }
 
     public static func handleUncaughtException(_ exception: NSException) {
@@ -112,6 +121,11 @@ public enum CameraLogger {
     }
 
     public static func installCrashHandlers() {
+        let revision = Bundle.main.object(forInfoDictionaryKey: "AIFramingBuildRevision") as? String ?? "development"
+        CameraLogger.info("App build revision: \(revision)", category: .general)
+        if let stage = lastInferenceCheckpoint {
+            CameraLogger.info("Previous persisted AI checkpoint (not a crash diagnosis): \(stage)", category: .ai)
+        }
         NSSetUncaughtExceptionHandler { exception in
             CameraLogger.handleUncaughtException(exception)
         }
@@ -123,14 +137,37 @@ public enum CameraLogger {
     }
 
     public static func exportLogFileURL() -> URL? {
+        let stage = lastInferenceCheckpoint
+        // Also flush pending writes before the share sheet reads the log.
+        logQueue.sync {
+            if let stage { appendToFile("Last persisted AI checkpoint (not a crash diagnosis): " + stage) }
+        }
         return logFileURL
     }
 
+    private static var lastInferenceCheckpoint: String? {
+        guard let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let url = directory.appendingPathComponent("last_ai_stage.txt")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        do { return try String(contentsOf: url, encoding: .utf8) }
+        catch {
+            os_log("Cannot read persisted AI checkpoint: %{public}@", log: aiLog, type: .error, error.localizedDescription)
+            return nil
+        }
+    }
+
     public static func readRecentLogText(maxChars: Int = 1500) -> String {
-        guard let url = logFileURL, let content = try? String(contentsOf: url, encoding: .utf8) else {
+        guard let url = logFileURL, FileManager.default.fileExists(atPath: url.path) else {
             return "(Chua co log nao duoc ghi lai trong phien nay)"
         }
-        return content.count > maxChars ? String(content.suffix(maxChars)) : content
+        let content: String
+        do { content = try String(contentsOf: url, encoding: .utf8) }
+        catch {
+            os_log("Cannot read debug log: %{public}@", log: aiLog, type: .error, error.localizedDescription)
+            return "Không đọc được log: " + error.localizedDescription
+        }
+        let recent = content.count > maxChars ? String(content.suffix(maxChars)) : content
+        return lastInferenceCheckpoint.map { recent + "\nLast persisted AI checkpoint: " + $0 } ?? recent
     }
 
     private static let captureLog = OSLog(subsystem: subsystem, category: "Capture")

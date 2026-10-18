@@ -62,6 +62,29 @@ AlignAI already provides RAW/HEIC/JPEG capture, live histogram, focus peaking, h
 
 Zebra/false-color monitoring, waveform scopes, ProRes/Log recording, audio meters, and media/timecode management remain possible future product directions, but they should be introduced only with device-capability checks and measured frame-budget impact.
 
+## Local photographic inference
+
+One-shot analysis ranks a measured subject/group with Vision and the photographic
+YOLO26s specialist. FocalNet compares source-relative crop candidates, SAMP-Net
+and Charm audit observed image quality, and iOS18+ can add Apple's image-aesthetics
+assessment. Model lifetimes are serialized and inference buffers are drained after
+each prediction. Optical target recovery retains its separate YOLO12 models.
+
+Composition uses the exact delivered smoothed world bearing to project the guide
+into the current camera frame. Capture admission still needs fresh optical
+measurements, stable zoom, crop protection and final scene evidence. Windowed Zoom
+shares upright crop geometry between the HUD, frozen photo settings and video
+export. Each recording freezes its window; color/crop rerenders start from the
+immutable original recording.
+
 ## Build and release gate
 
-This source snapshot contains the Xcode project but no Git metadata or CI workflow. Run `xcodebuild` with Xcode on macOS, then verify camera, photo, RAW and movie transitions on an iOS 17+ device before release. The Windows development host cannot compile or link against the iOS SDK.
+The repository includes `.github/workflows/ios-build.yml`. It compiles native
+Swift regressions, exports pinned pretrained Core ML checkpoints, validates real
+photographs and encoded video fixtures, then compiles the iOS Release with warnings
+as errors and verifies model manifests before packaging an unsigned IPA.
+
+The Windows development host cannot compile Apple SDKs; the native evidence comes
+from GitHub macOS runners. Simulator layouts and image/video replays do not prove
+physical iPhone FPS, thermal behavior, lens switching or shutter/save reliability.
+See `docs/CAMERA_RELIABILITY_AUDIT.md` for the current repair scope and limits.

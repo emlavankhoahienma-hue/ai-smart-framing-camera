@@ -2,6 +2,8 @@
 
 These are fixed-subset, class-aware IoU=0.50 metrics at the app's 0.45 score
 threshold and photographic size filters. They are not official full-COCO AP.
+Regular and size-ignored non-crowd GT use IoU and match at most once; ignored
+crowd GT use intersection/prediction area and may absorb multiple predictions.
 """
 from __future__ import annotations
 
@@ -12,6 +14,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ANIMALS = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
+GROUP_AP_AGGREGATION = (
+    "Pooled/micro AP of retained predictions across classes in each group, after class-aware matching; "
+    "not the mean of per-class AP."
+)
 
 
 def group(category: int) -> str:
@@ -58,7 +64,10 @@ def metrics(decisions: list[tuple[float, bool]], count: int) -> dict:
 
 def evaluate(truth: dict, predictions: dict, restrict: bool) -> dict:
     by_name = {image["file_name"]: image for image in truth["images"]}
-    if {row["file"] for row in predictions["records"]} != set(by_name):
+    record_names = [row["file"] for row in predictions["records"]]
+    if len(record_names) != len(set(record_names)):
+        raise RuntimeError("Duplicate native prediction record for a frozen COCO image")
+    if set(record_names) != set(by_name):
         raise RuntimeError("Native predictions do not cover exactly the frozen COCO images")
     boxes = defaultdict(list)
     counts = defaultdict(int)
@@ -87,9 +96,19 @@ def evaluate(truth: dict, predictions: dict, restrict: bool) -> dict:
             matched = best is not None and overlap(box, best["box"]) >= 0.5
             if matched:
                 used.add(best["id"])
-            elif any(item["ignored"] and overlap(box, item["box"], crowd=item["crowd"]) >= 0.5 for item in targets):
-                ignored_predictions += 1
-                continue
+            else:
+                # Prefer a regular GT match, even if an ignored box overlaps
+                # more. Only crowd GT may absorb multiple predictions; a
+                # size-ineligible ordinary annotation is still one object.
+                ignored_available = [item for item in targets if item["ignored"] and
+                                     (item["crowd"] or item["id"] not in used)]
+                ignored_match = max(ignored_available,
+                                    key=lambda item: overlap(box, item["box"], crowd=item["crowd"]), default=None)
+                if ignored_match is not None and overlap(box, ignored_match["box"], crowd=ignored_match["crowd"]) >= 0.5:
+                    if not ignored_match["crowd"]:
+                        used.add(ignored_match["id"])
+                    ignored_predictions += 1
+                    continue
             decisions[category].append((score, matched))
             matched_rows.append({"file": record["file"], "classID": category, "confidence": score,
                                  "matched": matched, "box": box,
@@ -103,6 +122,7 @@ def evaluate(truth: dict, predictions: dict, restrict: bool) -> dict:
                                sum(counts[identifier] for identifier in identifiers))
     present = [item["AP50_retainedPredictions"] for item in classes.values() if item["groundTruth"]]
     return {"macroClassAP50_retainedPredictions": sum(present) / len(present) if present else None, "groups": groups,
+            "groupAPAggregation": GROUP_AP_AGGREGATION,
             "perClass": classes, "ignoredPredictions": ignored_predictions, "matching": matched_rows}
 
 
@@ -157,7 +177,8 @@ def main() -> dict:
     truth = json.loads((directory / "coco/ground-truth.json").read_text(encoding="utf-8"))
     result = {"dataset": truth["dataset"], "images": len(truth["images"]),
               "annotationSHA256": truth["annotationSHA256"],
-              "scope": "Fixed COCO val2017 subset; production Swift/Core ML predictions, confidence >=0.45, class-aware IoU >=0.50. 101-point interpolated AP of retained predictions only, not official full-COCO AP. No iPhone latency or memory claim.",
+              "scope": "Fixed COCO val2017 subset; production Swift/Core ML predictions, confidence >=0.45, class-aware regular GT IoU >=0.50. Ignored non-crowd GT use IoU >=0.50 and match once; ignored crowd GT use intersection/prediction area >=0.50 and may match multiple predictions. 101-point interpolated AP of retained predictions only, not official full-COCO AP. No iPhone latency or memory claim.",
+              "groupAPAggregation": GROUP_AP_AGGREGATION,
               "models": {}}
     native_predictions = {}
     for name in ("yolo12s", "yolo26s"):
@@ -172,6 +193,7 @@ def main() -> dict:
     for name, report in result["models"].items():
         for scope, scores in report.items():
             print(name, scope, json.dumps({"AP50_retainedPredictions": scores["macroClassAP50_retainedPredictions"],
+                                          "groupAPAggregation": scores["groupAPAggregation"],
                                           "groups": scores["groups"]}))
     return result
 
