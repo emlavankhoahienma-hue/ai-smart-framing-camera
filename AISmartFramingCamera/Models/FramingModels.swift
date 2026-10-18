@@ -1789,7 +1789,11 @@ public enum WindowedZoomAspectRatio: String, CaseIterable, Identifiable, Sendabl
     }
 
     /// Tinh toan ti le kich thuoc khung ngam (fraction tu 0.0 den 1.0 so voi toan canh)
-    public func windowFractions(focalLength: Double, baseOpticalZoom: CGFloat = 1.0) -> (widthFraction: CGFloat, heightFraction: CGFloat) {
+    public func windowFractions(
+        focalLength: Double,
+        baseOpticalZoom: CGFloat = 1.0,
+        containerAspect: CGFloat = 3.0 / 4.0
+    ) -> (widthFraction: CGFloat, heightFraction: CGFloat) {
         // Khi tieu cu <= 24.0mm (hoac Full / khong zoom), bung rong 100% toan bo viewfinder khong cat anh
         if focalLength <= 24.0 {
             return (1.0, 1.0)
@@ -1798,22 +1802,29 @@ public enum WindowedZoomAspectRatio: String, CaseIterable, Identifiable, Sendabl
         let focal = max(24.0, min(135.0, focalLength))
         // Khi zoom quang hoc cam Tele (baseOpticalZoom >= 2.0x), cam thu nhan anh o tieu cu lon hon (vd: 2x = 48mm, 3x = 72mm).
         // Khung ngam se tinh ti le cat tren nen anh Tele chat luong cao thay vi crop nat anh 1x:
-        // Tai 50mm voi cam Tele 2x: scale = (24 * 2.0) / 50 = 0.96 (khung chiem 96% cam Tele cuc net!)
-        // Tai 85mm voi cam Tele 3x: scale = (24 * 3.0) / 85 = 0.847 (khung chiem 85% cam Tele!)
         let effectiveBaseZoom = max(1.0, baseOpticalZoom)
         let rawScale = (24.0 * Double(effectiveBaseZoom)) / focal
-        let scale = max(0.10, min(1.0, rawScale))
+        let scale = CGFloat(max(0.10, min(1.0, rawScale)))
 
+        let targetAspect: CGFloat
         switch self {
         case .ratio3_4:
-            let effectiveScale = CGFloat(scale)
-            return (effectiveScale, effectiveScale)
+            targetAspect = 3.0 / 4.0
         case .ratio1_1:
-            let effectiveScale = CGFloat(scale)
-            return (effectiveScale, effectiveScale * (3.0 / 4.0))
+            targetAspect = 1.0
         case .ratio16_9:
-            let effectiveScale = CGFloat(scale)
-            return (effectiveScale, effectiveScale)
+            targetAspect = 9.0 / 16.0
+        }
+
+        let safeAspect = containerAspect > 0 ? containerAspect : (3.0 / 4.0)
+        if safeAspect >= targetAspect {
+            let widthFrac = min(1.0, scale * (targetAspect / safeAspect))
+            let heightFrac = min(1.0, scale)
+            return (widthFrac, heightFrac)
+        } else {
+            let widthFrac = min(1.0, scale)
+            let heightFrac = min(1.0, scale * (safeAspect / targetAspect))
+            return (widthFrac, heightFrac)
         }
     }
 }

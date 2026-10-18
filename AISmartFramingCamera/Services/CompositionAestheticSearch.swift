@@ -37,19 +37,23 @@ final class CompositionAestheticSearch {
             var result: [View] = []
             for (index, candidate) in candidates.enumerated() {
                 if cancellation.isCancelled { return [] }
-                guard let preview = renderer.preview(image: image, corners: candidate.sourceCorners, aspect: aspect) else { continue }
-                let assessment = specialist?.assess(preview, cancellation: cancellation)
-                var proposal = candidate
-                if let assessment {
-                    assessedCount += 1
-                    // Expected expert rating is not detector confidence.
-                    proposal.score = 0.78 * (assessment.mean - 1) / 4 + 0.22 * candidate.score
-                } else if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
-                    proposal.score += aesthetic * 0.075
+                let item: View? = autoreleasepool {
+                    guard let preview = renderer.preview(image: image, corners: candidate.sourceCorners, aspect: aspect) else { return nil }
+                    let assessment = specialist?.assess(preview, cancellation: cancellation)
+                    var proposal = candidate
+                    if let assessment {
+                        assessedCount += 1
+                        // Expected expert rating is not detector confidence.
+                        proposal.score = 0.78 * (assessment.mean - 1) / 4 + 0.22 * candidate.score
+                    } else if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
+                        proposal.score += aesthetic * 0.075
+                    }
+                    proposal.score += min(0.01, max(-0.01, preferences[proposal.preferenceKey] ?? 0))
+                    return View(proposal: proposal, image: preview, assessment: assessment,
+                                geometryScore: candidate.score)
                 }
-                proposal.score += min(0.01, max(-0.01, preferences[proposal.preferenceKey] ?? 0))
-                result.append(View(proposal: proposal, image: preview, assessment: assessment,
-                                   geometryScore: candidate.score))
+                guard let item else { continue }
+                result.append(item)
                 progress("Đang so sánh bố cục và zoom \(index + 1)/\(candidates.count)…")
             }
             return result
@@ -98,14 +102,21 @@ final class CompositionAestheticSearch {
                 include(index)
             }
             var pool = indices.prefix(budget).map { evaluated[$0] }
-            let modern: CharmPhotographicModel?
+            var modern: CharmPhotographicModel?
             if let aestheticModelURL, let positionURL {
                 modern = try? CharmPhotographicModel(url: aestheticModelURL, positionURL: positionURL)
             } else { modern = nil }
-            if let modern {
+            if let activeModern = modern {
                 for index in pool.indices {
                     guard !cancellation.isCancelled else { return nil }
-                    pool[index].aesthetics = modern.assess(pool[index].image, cancellation: cancellation)
+                    guard ProcessInfo.processInfo.thermalState != .critical else {
+                        progress("Nhiệt độ máy cao. Chuyển sang chọn bố cục thủ công…")
+                        break
+                    }
+                    let assessment = autoreleasepool {
+                        activeModern.assess(pool[index].image, cancellation: cancellation)
+                    }
+                    pool[index].aesthetics = assessment
                     if let composition = pool[index].assessment, let aesthetics = pool[index].aesthetics,
                        let score = CompositionPreferencePolicy.score(composition: composition.mean,
                            aesthetics: aesthetics.mean, geometry: pool[index].geometryScore) {
@@ -117,6 +128,7 @@ final class CompositionAestheticSearch {
             } else {
                 progress("Không nạp được Charm. Đang chuẩn bị các khung để chọn thủ công…")
             }
+            modern = nil
             usedSpecialist = usedSpecialist && !pool.isEmpty && modernCount == pool.count
             evaluated = pool
             if !usedSpecialist {

@@ -33,7 +33,11 @@ public struct WindowedZoomOverlayView: View {
     // MARK: - Window Dimensions Calculation
     private var windowRect: CGRect {
         guard containerSize.width > 0, containerSize.height > 0 else { return .zero }
-        let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength, baseOpticalZoom: viewModel.displayZoom)
+        let fractions = viewModel.windowedZoomAspectRatio.windowFractions(
+            focalLength: viewModel.windowedZoomFocalLength,
+            baseOpticalZoom: viewModel.displayZoom,
+            containerAspect: containerSize.width / containerSize.height
+        )
         let w = containerSize.width * fractions.widthFraction
         let h = containerSize.height * fractions.heightFraction
         let halfW = w / 2.0
@@ -95,11 +99,17 @@ public struct WindowedZoomOverlayView: View {
                                 isDraggingWindow = true
                                 dragStartNormalizedCenter = viewModel.windowedZoomNormalizedCenter
                             }
-                            let fractions = viewModel.windowedZoomAspectRatio.windowFractions(focalLength: viewModel.windowedZoomFocalLength, baseOpticalZoom: viewModel.displayZoom)
+                            let fractions = viewModel.windowedZoomAspectRatio.windowFractions(
+                                focalLength: viewModel.windowedZoomFocalLength,
+                                baseOpticalZoom: viewModel.displayZoom,
+                                containerAspect: containerSize.width / containerSize.height
+                            )
                             let halfWFrac = fractions.widthFraction / 2.0
                             let halfHFrac = fractions.heightFraction / 2.0
-                            let rawX = value.location.x / containerSize.width
-                            let rawY = value.location.y / containerSize.height
+                            let deltaX = value.translation.width / containerSize.width
+                            let deltaY = value.translation.height / containerSize.height
+                            let rawX = dragStartNormalizedCenter.x + deltaX
+                            let rawY = dragStartNormalizedCenter.y + deltaY
                             let clampedX = max(halfWFrac, min(rawX, 1.0 - halfWFrac))
                             let clampedY = max(halfHFrac, min(rawY, 1.0 - halfHFrac))
                             viewModel.windowedZoomNormalizedCenter = CGPoint(x: clampedX, y: clampedY)

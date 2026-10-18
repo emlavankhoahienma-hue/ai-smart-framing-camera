@@ -14,6 +14,7 @@ public struct VideoPreviewSheetView: View {
     @State private var gradingSuccessNote: String? = nil
     @State private var hasSavedToPhotos: Bool = false
     @State private var processedVideoURL: URL? = nil
+    @State private var isWindowedZoomAlreadyCropped: Bool = false
 
     private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
     private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
@@ -151,18 +152,22 @@ public struct VideoPreviewSheetView: View {
     }
 
     private func applyWindowedZoomCrop() {
-        guard let windowFocal = viewModel.lastRecordedVideoWindowedFocal,
+        guard !isWindowedZoomAlreadyCropped,
+              let windowFocal = viewModel.lastRecordedVideoWindowedFocal,
               let windowAspect = viewModel.lastRecordedVideoWindowedAspect,
               windowFocal > 24.5 else { return }
 
         isCroppingWindowedZoom = true
         let asset = AVAsset(url: processedVideoURL ?? videoURL)
-
-        let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom)
         let normCenter = viewModel.lastRecordedVideoWindowedCenter
         let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
             let source = request.sourceImage.clampedToExtent()
             let origExtent = request.sourceImage.extent
+            let fractions = windowAspect.windowFractions(
+                focalLength: windowFocal,
+                baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom,
+                containerAspect: origExtent.width / origExtent.height
+            )
             let cropW = origExtent.width * fractions.widthFraction
             let cropH = origExtent.height * fractions.heightFraction
             let ciCenterX = origExtent.origin.x + origExtent.width * normCenter.x
@@ -201,6 +206,7 @@ public struct VideoPreviewSheetView: View {
             DispatchQueue.main.async {
                 self.isCroppingWindowedZoom = false
                 if exportSession.status == .completed {
+                    self.isWindowedZoomAlreadyCropped = true
                     self.processedVideoURL = tempURL
                     self.gradingSuccessNote = "Đã cắt theo khung Windowed Zoom (\(Int(windowFocal))mm)"
                     self.player = AVPlayer(url: tempURL)
@@ -222,6 +228,7 @@ public struct VideoPreviewSheetView: View {
         let windowAspect = viewModel.lastRecordedVideoWindowedAspect
         let windowBaseZoom = viewModel.lastRecordedVideoWindowedBaseZoom
         let windowCenter = viewModel.lastRecordedVideoWindowedCenter
+        let shouldApplyWindowedCrop = !self.isWindowedZoomAlreadyCropped && (windowFocal ?? 0) > 24.5
 
         let composition = AVVideoComposition(asset: asset, applyingCIFiltersWithHandler: { request in
             let source = request.sourceImage.clampedToExtent()
@@ -236,11 +243,15 @@ public struct VideoPreviewSheetView: View {
                 output = aiFiltered
             }
 
-            if let wf = windowFocal, let wa = windowAspect, wf > 24.5 {
-                let fractions = wa.windowFractions(focalLength: wf, baseOpticalZoom: windowBaseZoom)
+            if shouldApplyWindowedCrop, let wf = windowFocal, let wa = windowAspect {
+                let origExtent = request.sourceImage.extent
+                let fractions = wa.windowFractions(
+                    focalLength: wf,
+                    baseOpticalZoom: windowBaseZoom,
+                    containerAspect: origExtent.width / origExtent.height
+                )
                 if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
                     let normCenter = windowCenter
-                    let origExtent = request.sourceImage.extent
                     let cropW = origExtent.width * fractions.widthFraction
                     let cropH = origExtent.height * fractions.heightFraction
                     let ciCenterX = origExtent.origin.x + origExtent.width * normCenter.x
@@ -284,6 +295,9 @@ public struct VideoPreviewSheetView: View {
             DispatchQueue.main.async {
                 self.isGradingWithAI = false
                 if exportSession.status == .completed {
+                    if shouldApplyWindowedCrop {
+                        self.isWindowedZoomAlreadyCropped = true
+                    }
                     self.processedVideoURL = tempURL
                     self.gradingSuccessNote = "Đã áp dụng màu film điện ảnh (\(filterPreset.displayName))"
                     self.player = AVPlayer(url: tempURL)

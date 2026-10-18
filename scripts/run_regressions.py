@@ -17,7 +17,7 @@ results = []
 with (REPORTS / 'portable-tests.log').open('w', encoding='utf-8') as log:
     for name in ['validate_tracking_geometry', 'validate_tracking_stability',
                  'validate_local_framing', 'validate_super_resolution',
-                 'validate_film_preset_contracts']:
+                 'validate_film_preset_contracts', 'validate_windowed_zoom']:
         spec = importlib.util.spec_from_file_location(name, ROOT / 'scripts' / (name + '.py'))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)

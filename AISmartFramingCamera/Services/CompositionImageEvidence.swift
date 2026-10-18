@@ -38,6 +38,10 @@ final class CompositionAnalysisCancellation: @unchecked Sendable {
 final class CompositionImageRenderer {
     private let context = CIContext(options: [.cacheIntermediates: false])
 
+    func clearCaches() {
+        context.clearCaches()
+    }
+
     /// Apple's pretrained aesthetic assessment complements geometry on iOS 18+.
     /// A model failure or unsupported OS simply contributes no ranking evidence.
     func aestheticScore(image: CGImage, cancellation: CompositionAnalysisCancellation) -> Double? {

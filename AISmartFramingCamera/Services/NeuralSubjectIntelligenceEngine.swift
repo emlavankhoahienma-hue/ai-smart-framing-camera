@@ -258,14 +258,16 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
         let search = CompositionAestheticSearch(renderer: renderer)
-        guard let result = search.run(proposals: proposals(),
+        let searchResult = search.run(proposals: proposals(),
             image: CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation),
             aspect: frame.calibration.aspect, preferences: preferences,
             modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
             aestheticModelURL: Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
             positionURL: Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
             requiresModernModel: true,
-            cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) }) else { return nil }
+            cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
+        renderer.clearCaches()
+        guard let result = searchResult else { return nil }
         let choices = result.views.map { view -> LocalCompositionChoice in
             let proposal = view.proposal
             let plan = LocalFramingPlan(subjectPoint: hero.trackingPoint ?? proposal.subjectPoint, subjectRect: hero.boundingBox,
