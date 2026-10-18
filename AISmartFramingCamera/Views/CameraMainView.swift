@@ -357,6 +357,7 @@ struct TopCameraBar: View {
 
             // 4. Windowed Zoom Mode Toggle Button
             Button(action: {
+                guard !viewModel.areWindowedZoomControlsLocked else { return }
                 let generator = UIImpactFeedbackGenerator(style: .light)
                 generator.prepare()
                 generator.impactOccurred()
@@ -371,6 +372,7 @@ struct TopCameraBar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
+            .disabled(viewModel.areWindowedZoomControlsLocked)
             .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
 
             // 5. Settings Sheet Button (Gear Icon)

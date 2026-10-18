@@ -1651,43 +1651,33 @@ public final class CameraService: NSObject {
 
         var targetCamera = currentCamera
         var effectiveOption = option
-        var candidates = Self.findCandidateVideoFormats(for: targetCamera, option: effectiveOption)
-
-        // Neu format khong ho tro tren camera hien tai (nhu 4K60 tren DualCamera cua iPhone XS),
-        // nhung camera goc rong vat ly (.builtInWideAngleCamera) co ho tro:
-        // Tu dong chuyen input sang camera goc rong vat ly de quay 4K 60FPS muot ma nhat!
-        if candidates.isEmpty && currentCameraPosition == .back {
-            if let wideCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-               wideCamera != targetCamera {
-                let wideCandidates = Self.findCandidateVideoFormats(for: wideCamera, option: effectiveOption)
-                if !wideCandidates.isEmpty {
-                    CameraLogger.info("CameraService: Chuyen sang camera goc rong vat ly (.builtInWideAngleCamera) de ho tro \(effectiveOption.rawValue) tren iPhone XS", category: .capture)
-                    if switchInputDeviceInternal(to: wideCamera) {
-                        targetCamera = wideCamera
-                        candidates = wideCandidates
-                    }
-                }
-            }
+        var candidates: [AVCaptureDevice.Format] = []
+        let fallbackOrder: [VideoFormatOption]
+        switch option {
+        case .uhd60: fallbackOrder = [.uhd30, .hd60, .hd30]
+        case .uhd30: fallbackOrder = [.hd60, .hd30]
+        case .hd60: fallbackOrder = [.hd30, .uhd30]
+        case .hd30: fallbackOrder = [.hd60, .uhd30]
         }
-
-        // Tu dong tim format tot nhat duoc phan cung thiet bi thuc te ho tro
-        if candidates.isEmpty {
-            let fallbackOrder: [VideoFormatOption]
-            switch option {
-            case .uhd60: fallbackOrder = [.uhd30, .hd60, .hd30]
-            case .uhd30: fallbackOrder = [.hd60, .hd30]
-            case .hd60:  fallbackOrder = [.hd30, .uhd30]
-            case .hd30:  fallbackOrder = [.hd60, .uhd30]
+        var devices = [currentCamera]
+        if currentCameraPosition == .back,
+           let wide = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+           wide != currentCamera { devices.append(wide) }
+        let previousDisplayZoom = convertDeviceZoomToDisplayZoom(currentCamera.videoZoomFactor)
+        // Resolve the device and format as one supported pair. A capability on
+        // the wide camera must not produce an empty format list on telephoto.
+        for candidateOption in [option] + fallbackOrder {
+            for device in devices {
+                let formats = Self.findCandidateVideoFormats(for: device, option: candidateOption)
+                guard !formats.isEmpty else { continue }
+                if device != activeCamera,
+                   !switchInputDeviceInternal(to: device, initialDisplayZoom: previousDisplayZoom) { continue }
+                targetCamera = device
+                effectiveOption = candidateOption
+                candidates = formats
+                break
             }
-            if let fallback = fallbackOrder.first(where: { isVideoFormatSupportedByHardware($0) }) {
-                CameraLogger.warning("CameraService: Phan cung khong ho tro \(option.rawValue), tu dong chuyen fallback sang \(fallback.rawValue)", category: .capture)
-                effectiveOption = fallback
-                candidates = Self.findCandidateVideoFormats(for: targetCamera, option: fallback)
-                self.selectedVideoFormatOption = fallback
-                DispatchQueue.main.async { [weak self] in
-                    self?.onSelectedVideoFormatFallback?(fallback)
-                }
-            }
+            if !candidates.isEmpty { break }
         }
 
         let targetWidth = effectiveOption.width
@@ -1768,6 +1758,11 @@ public final class CameraService: NSObject {
 
             appliedVideoFormatOption = effectiveOption
             selectedVideoFormatOption = effectiveOption
+            if effectiveOption != option {
+                let fallback = effectiveOption
+                CameraLogger.warning("CameraService: Video fallback \(option.rawValue) -> \(fallback.rawValue)", category: .capture)
+                DispatchQueue.main.async { [weak self] in self?.onSelectedVideoFormatFallback?(fallback) }
+            }
 
             let formatStr = getActiveVideoResolutionAndFPS()
             DispatchQueue.main.async { [weak self] in
@@ -1852,7 +1847,6 @@ public final class CameraService: NSObject {
             }
 
             self.addAudioInputAndOutputInternal()
-            self.configureAudioSessionForStereoCapture()
             configureVideoFormatInternal(option: selectedVideoFormatOption)
             pendingVideoFormatChange = false
             guard appliedVideoFormatOption != nil else {
@@ -1864,6 +1858,7 @@ public final class CameraService: NSObject {
                 captureSession.sessionPreset = .photo
                 if photoOutput.isLivePhotoCaptureSupported { photoOutput.isLivePhotoCaptureEnabled = isLivePhotoMode }
                 captureSession.commitConfiguration()
+                if let camera = activeCamera { updateMaxPhotoDimensions(for: camera) }
                 desiredCaptureMode = currentCaptureMode
                 completePendingMode(false)
                 return
@@ -1911,6 +1906,7 @@ public final class CameraService: NSObject {
             appliedVideoFormatOption = nil
         }
         currentCaptureMode = mode
+        if mode.isVideo { configureAudioSessionForStereoCapture() }
         let formatStr = mode.isVideo && appliedVideoFormatOption == nil
             ? "Khong ho tro \(selectedVideoFormatOption.rawValue) tren camera hien tai"
             : getActiveVideoResolutionAndFPS()

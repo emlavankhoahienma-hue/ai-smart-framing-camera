@@ -575,6 +575,34 @@ enum CompositionPlanningRegression {
             }
             try require(gate.isAligned, "Displayed aim and admission disagreed")
         }
+        try run("composition guide reprojects the delivered world bearing across delayed frames and zoom") {
+            let original = TrackingCalibration.fallback()
+            let subject = CGPoint(x: 0.31, y: 0.42)
+            let desired = CGPoint(x: 0.57, y: 0.46)
+            let identity = simd_quatd(angle: 0, axis: SIMD3(0, 1, 0))
+            let desiredWorld = original.deviceRay(at: desired)
+            guard let geometry = CompositionAimGeometry(subject: subject, calibration: original,
+                sourcePose: identity, aimWorldRay: desiredWorld) else { throw Failure(description: "Missing guide fixture") }
+            let deliveredBearing = original.deviceRay(at: subject)
+            var mixedFrameError = 0.0
+            for index in 0...240 {
+                let time = Double(index) / 120
+                let prior = simd_quatd(angle: sin(time * 2) * 0.35, axis: SIMD3(0, 1, 0))
+                let current = simd_quatd(angle: sin((time + 0.05) * 2) * 0.35, axis: SIMD3(0, 1, 0))
+                let zoom = 1 + time * 0.5
+                let calibration = TrackingCalibration.fallback(zoom: zoom)
+                let oldPoint = original.project(deviceRay: prior.inverse.act(deliveredBearing)).point
+                guard let correct = geometry.projection(subjectWorldRay: deliveredBearing, calibration: calibration, pose: current),
+                      let mixed = geometry.projection(subject: oldPoint, calibration: calibration, pose: current) else {
+                    throw Failure(description: "Delayed frame projection failed")
+                }
+                let expected = calibration.project(deviceRay: current.inverse.act(desiredWorld))
+                try require(hypot(correct.point.x - expected.point.x, correct.point.y - expected.point.y) < 1e-8,
+                            "Delivered bearing changed when preview pose/intrinsics advanced")
+                mixedFrameError = max(mixedFrameError, Double(hypot(mixed.point.x - correct.point.x, mixed.point.y - correct.point.y)))
+            }
+            try require(mixedFrameError > 0.03, "Fixture did not expose the old mixed-frame coordinate error")
+        }
         try run("scene budgets retain original views and bounded refinement") {
             for complex in [false, true] {
                 for constrained in [false, true] {

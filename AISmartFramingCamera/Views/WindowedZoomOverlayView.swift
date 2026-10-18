@@ -82,7 +82,8 @@ public struct WindowedZoomOverlayView: View {
                 .gesture(
                     DragGesture(minimumDistance: 2, coordinateSpace: .named("windowed_container"))
                         .onChanged { value in
-                            guard containerSize.width > 0, containerSize.height > 0 else { return }
+                            guard !viewModel.areWindowedZoomControlsLocked,
+                                  containerSize.width > 0, containerSize.height > 0 else { return }
                             if !isDraggingWindow {
                                 isDraggingWindow = true
                                 dragStartNormalizedCenter = CGPoint(x: windowRect.midX / containerSize.width,
@@ -102,6 +103,7 @@ public struct WindowedZoomOverlayView: View {
                         }
                 )
                 .onTapGesture(count: 2) {
+                    guard !viewModel.areWindowedZoomControlsLocked else { return }
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                         viewModel.windowedZoomNormalizedCenter = CGPoint(x: 0.5, y: 0.5)
                     }
@@ -114,6 +116,7 @@ public struct WindowedZoomOverlayView: View {
             VStack {
                 Spacer()
                 focalPresetBar
+                    .disabled(viewModel.areWindowedZoomControlsLocked)
                     .padding(.bottom, 14)
             }
         }
@@ -123,6 +126,7 @@ public struct WindowedZoomOverlayView: View {
         .gesture(
             MagnificationGesture()
                 .onChanged { value in
+                    guard !viewModel.areWindowedZoomControlsLocked else { return }
                     if !isPinching {
                         isPinching = true
                         gestureInitialFocalLength = viewModel.windowedZoomFocalLength
@@ -137,6 +141,20 @@ public struct WindowedZoomOverlayView: View {
                     viewModel.haptics.triggerSelectionChange()
                 }
         )
+        .overlay(alignment: .top) {
+            if let message = viewModel.windowedZoomStatusMessage {
+                Text(message)
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.black.opacity(0.75)))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func isPresetSelected(_ preset: WindowedFocalLengthPreset) -> Bool {
@@ -147,6 +165,7 @@ public struct WindowedZoomOverlayView: View {
     }
 
     private func selectPreset(_ preset: WindowedFocalLengthPreset) {
+        guard !viewModel.areWindowedZoomControlsLocked else { return }
         let generator = UISelectionFeedbackGenerator()
         generator.prepare()
         generator.selectionChanged()

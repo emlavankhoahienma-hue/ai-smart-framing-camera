@@ -26,7 +26,17 @@ struct CompositionAimGeometry {
               simd_length(pose.vector) > 0.000001 else { return nil }
         let rotation = simd_normalize(pose)
         let ray = rotation.act(calibration.deviceRay(at: subject))
-        return calibration.project(deviceRay: rotation.inverse.act(aimFromSubject.act(ray)))
+        return projection(subjectWorldRay: ray, calibration: calibration, pose: rotation)
+    }
+
+    func projection(subjectWorldRay: SIMD3<Double>, calibration: TrackingCalibration,
+                    pose: simd_quatd) -> TrackingProjection? {
+        guard calibration.isValid, subjectWorldRay.indices.allSatisfy({ subjectWorldRay[$0].isFinite }),
+              simd_length(subjectWorldRay) > 0.000001,
+              pose.vector.indices.allSatisfy({ pose.vector[$0].isFinite }),
+              simd_length(pose.vector) > 0.000001 else { return nil }
+        return calibration.project(deviceRay: simd_normalize(pose).inverse.act(
+            aimFromSubject.act(simd_normalize(subjectWorldRay))))
     }
 }
 

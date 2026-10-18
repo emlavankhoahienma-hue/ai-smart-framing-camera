@@ -49,3 +49,25 @@ Run native production policies, actual Core ML inference on the established real
 photo corpus, repeat-inference memory tests, simulator layout screenshots and a
 Release Xcode IPA build. Hardware shutter, thermal and jetsam conclusions require
 device evidence; a green CI job alone cannot establish them.
+
+## Further cross-review findings and repairs
+
+The displayed subject point and the latest frame can belong to different camera
+poses/intrinsics. The tracker now exposes its exact delivered smoothed world
+bearing, read-only, alongside the existing callback. Composition reprojects that
+bearing into the current image. Fusion, optical identity, Kalman corrections,
+recovery slew and their thresholds are unchanged. A delayed-frame/zoom native
+replay checks this path rather than decoding an old point with new intrinsics.
+
+Windowed capture waits for the optical 1x reset acknowledgement; crop settings
+cannot freeze the previous telephoto base while the camera queue switches inputs.
+Window controls are frozen for each recording/exposure. The chosen design keeps a
+wide optical reference while moving an off-axis crop; it does not claim native
+telephoto resolution for a digitally cropped window.
+
+Video fallback now resolves a supported device/format pair for every requested or
+fallback resolution. It commits exactly the requested frame duration, rolls back
+a failed mode change and configures stereo after successful video-mode admission.
+Export uses asynchronous composition creation, modern async export on iOS18+ and
+a serialized compatibility exporter on iOS17. Cancellation reaches AVFoundation
+and removes partial output files. This is checked using encoded video fixtures.

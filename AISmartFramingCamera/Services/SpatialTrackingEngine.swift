@@ -362,8 +362,16 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var threshold = 0.20
     private var estimated = CGPoint(x: 0.5, y: 0.5)
     private var callback: ((CGPoint, Double, TrackingQuality) -> Void)?
-    private var pendingOutput: (CGPoint, Double, TrackingQuality, UInt64)?
+    private var pendingOutput: (CGPoint, Double, TrackingQuality, UInt64, SIMD3<Double>?, TimeInterval)?
+    private var deliveredPresentationBearing: (ray: SIMD3<Double>, timestamp: TimeInterval)?
     private var deliveryScheduled = false
+
+    /// The exact smoothed world bearing delivered with the UI callback. Consumers
+    /// can project it into a newer image without decoding an older image point
+    /// with that newer image's intrinsics or pose. No tracking state is corrected.
+    var presentationBearing: (ray: SIMD3<Double>, timestamp: TimeInterval)? {
+        lock.withLock { deliveredPresentationBearing }
+    }
 
     public init() {}
     deinit {
@@ -652,6 +660,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         var quality: TrackingQuality = .reacquiring
         var outputConfidence = 0.0
+        var presentationBearing: SIMD3<Double>?
         if let reticleRay = subjectWorldRay ?? worldRay, let sample = history.last,
            (-0.05...0.45).contains(now - sample.timestamp) {
             let dt = lastDisplayTime.isFinite ? min(0.05, max(0, now - lastDisplayTime)) : 0
@@ -673,6 +682,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let projected = calibration.project(deviceRay: imagePose.inverse.act(rendered))
             if projected.point.x.isFinite, projected.point.y.isFinite {
                 estimated = projected.point
+                presentationBearing = rendered
                 let age = now - lastAccepted
                 let motionIsCurrent = now - sample.timestamp <= 0.10
                 let isVerified = now - lastVerified < 1.0 || age < 0.35
@@ -687,7 +697,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             }
         }
         // No timeout deletes worldRay or appearance. Only explicit stop/re-pin.
-        pendingOutput = (estimated, outputConfidence, quality, generation)
+        pendingOutput = (estimated, outputConfidence, quality, generation, presentationBearing, now)
         guard !deliveryScheduled else { return }
         deliveryScheduled = true
         DispatchQueue.main.async { [weak self] in
@@ -697,6 +707,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             self.pendingOutput = nil; self.deliveryScheduled = false
             let callback = self.callback
             let valid = self.active && output?.3 == self.generation
+            if valid, let output {
+                self.deliveredPresentationBearing = output.4.map { ($0, output.5) }
+            }
             self.lock.unlock()
             if valid, let output { callback?(output.0, output.1, output.2) }
         }
@@ -710,6 +723,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             presentationIsRecovering = false
             kalmanFilter = nil
             pendingPin = nil; pendingOutput = nil
+            deliveredPresentationBearing = nil
         }
         // Keep the shared pose stream warm for the next selected camera image.
         // suspend() releases it when the camera screen leaves the foreground.

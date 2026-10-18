@@ -324,7 +324,7 @@ public final class CameraViewModel: ObservableObject {
         didSet { updateFrameProcessingConfiguration() }
     }
     @Published public private(set) var recordingState: CameraRecordingState = .idle
-    private var wantsVideoRecording = false
+    @Published private var wantsVideoRecording = false
     private var pendingCaptureMode: CameraCaptureMode?
     private var modeTransitionGeneration: UInt64 = 0
     private var isModeTransitionInFlight = false
@@ -699,6 +699,9 @@ public final class CameraViewModel: ObservableObject {
                 }
                 updateWindowedCameraHardwareZoom()
             } else {
+                windowedZoomReferenceRequestID = nil
+                isPreparingWindowedZoomReference = false
+                windowedZoomStatusMessage = nil
                 requestManualZoom(selectedZoomPreset, smooth: true)
             }
         }
@@ -712,6 +715,14 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
     @Published public var windowedZoomNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    @Published public private(set) var windowedZoomStatusMessage: String?
+    private var isPreparingWindowedZoomReference = false
+    private var windowedZoomReferenceRequestID: UUID?
+    public var areWindowedZoomControlsLocked: Bool {
+        WindowedCapturePolicy.controlsLocked(recordingInFlight: recordingState != .idle,
+            wantsRecording: wantsVideoRecording,
+            photoInFlight: isShutterPressing || aiSessionState == .capturing)
+    }
     @Published public var lastRecordedVideoWindowedFocal: Double? = nil
     @Published public var lastRecordedVideoWindowedAspect: WindowedZoomAspectRatio? = nil
     @Published public var lastRecordedVideoWindowedBaseZoom: CGFloat = 1.0
@@ -2264,7 +2275,9 @@ public final class CameraViewModel: ObservableObject {
         guard let frame = frameProcessor.latestTrackingFrameSnapshot()?.1,
               CaptureReadinessPolicy.isFresh(frame.timestamp, now: CACurrentMediaTime()),
               let pose = spatial.pose(at: frame.timestamp),
-              let guide = aim.projection(subject: fallback, calibration: frame.calibration, pose: pose),
+              let presentation = spatial.presentationBearing,
+              CaptureReadinessPolicy.isFresh(presentation.timestamp, now: CACurrentMediaTime()),
+              let guide = aim.projection(subjectWorldRay: presentation.ray, calibration: frame.calibration, pose: pose),
               guide.isInFront, guide.point.x.isFinite, guide.point.y.isFinite else {
             // Retain the guide visually, but nil still prevents shutter admission.
             return nil
@@ -2971,11 +2984,53 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func updateWindowedCameraHardwareZoom() {
-        guard isWindowedZoomActive, isCameraReady, !isCameraHibernating else { return }
+        guard isWindowedZoomActive, isCameraReady, !isCameraHibernating,
+              !areWindowedZoomControlsLocked, !isPreparingWindowedZoomReference else { return }
         // Keep one optical reference while moving/resizing a window. Crop geometry
         // uses actual zoom feedback; no lens handover can recenter an off-axis ROI.
-        guard abs(displayZoom - 1) > 0.02 else { return }
-        requestManualZoom(1, smooth: false)
+        guard !isWindowedZoomReferenceReady else {
+            windowedZoomStatusMessage = nil
+            return
+        }
+        let requestID = UUID()
+        windowedZoomReferenceRequestID = requestID
+        isPreparingWindowedZoomReference = true
+        windowedZoomStatusMessage = "Đang ổn định khung 1×. Chờ trước khi chụp."
+        cameraService.applyDisplayZoomWithPhysicalLensSwitching(1, smooth: false,
+            allowPhysicalSwitch: true) { [weak self] actualDeviceZoom in
+                guard let self, self.windowedZoomReferenceRequestID == requestID else { return }
+                self.windowedZoomReferenceRequestID = nil
+                self.isPreparingWindowedZoomReference = false
+                guard self.isWindowedZoomActive else { return }
+                if let actualDeviceZoom,
+                   WindowedCapturePolicy.referenceReady(
+                    displayZoom: self.cameraService.convertDeviceZoomToDisplayZoom(actualDeviceZoom),
+                    resetPending: false, manualZoomPending: self.manualZoomRequestID != nil ||
+                        self.pendingManualZoomTarget != nil, pinching: self.isPinchingZoom),
+                   self.isWindowedZoomReferenceReady {
+                    self.windowedZoomStatusMessage = nil
+                } else {
+                    self.windowedZoomStatusMessage = "Khung 1× chưa sẵn sàng. Chờ rồi bấm chụp lại."
+                }
+            }
+    }
+
+    private var isWindowedZoomReferenceReady: Bool {
+        WindowedCapturePolicy.referenceReady(displayZoom: displayZoom,
+            resetPending: isPreparingWindowedZoomReference,
+            manualZoomPending: manualZoomRequestID != nil || pendingManualZoomTarget != nil,
+            pinching: isPinchingZoom)
+    }
+
+    private func admitWindowedZoomCapture() -> Bool {
+        guard isWindowedZoomActive else { return true }
+        guard isWindowedZoomReferenceReady else {
+            windowedZoomStatusMessage = "Đang ổn định khung 1×. Chờ rồi bấm chụp lại."
+            updateWindowedCameraHardwareZoom()
+            return false
+        }
+        windowedZoomStatusMessage = nil
+        return true
     }
 
     private func requestManualZoom(_ displayZoomVal: CGFloat, smooth: Bool = false) {
@@ -3190,7 +3245,8 @@ public final class CameraViewModel: ObservableObject {
             cameraService.stopRecordingVideo()
         } else {
             guard captureMode.isVideo, pendingCaptureMode == nil, isCameraReady,
-                  !isCameraHibernating, !isShutterPressing else { return }
+                  recordingState == .idle, !isCameraHibernating, !isShutterPressing else { return }
+            guard admitWindowedZoomCapture() else { return }
             wantsVideoRecording = true
             if isWindowedZoomActive && windowedZoomFocalLength > 24.5 {
                 lastRecordedVideoWindowedFocal = windowedZoomFocalLength
@@ -3572,6 +3628,7 @@ public final class CameraViewModel: ObservableObject {
         guard isCameraReady, !isCameraHibernating, pendingCaptureMode == nil,
               recordingState == .idle,
               !isShutterPressing, aiSessionState != .capturing else { return }
+        guard admitWindowedZoomCapture() else { return }
         if aiSessionState == .analyzing { cancelAISession() }
         pinZoomPlanTask?.cancel()
         isPreparingPinZoom = false

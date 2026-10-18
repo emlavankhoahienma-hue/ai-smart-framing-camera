@@ -42,6 +42,31 @@ enum CaptureViewportRegression {
         try check(!VideoFormatGeometry.matches(width: 4032, height: 3024, targetWidth: 3840, targetHeight: 2160), "4:3 sensor admitted as 4K video")
         try check(VideoFormatGeometry.matches(width: 1920, height: 1080, targetWidth: 1920, targetHeight: 1080), "1080p rejected")
         try check(VideoFormatGeometry.matches(width: 2160, height: 3840, targetWidth: 3840, targetHeight: 2160), "Portrait 4K rejected")
+        try check(WindowedCapturePolicy.referenceReady(displayZoom: 1, resetPending: false,
+            manualZoomPending: false, pinching: false), "Stable wide reference cannot capture")
+        try check(!WindowedCapturePolicy.referenceReady(displayZoom: 2, resetPending: false,
+            manualZoomPending: false, pinching: false), "Telephoto accepted as the wide crop reference")
+        try check(!WindowedCapturePolicy.referenceReady(displayZoom: 1, resetPending: true,
+            manualZoomPending: false, pinching: false), "Stale 1x feedback bypassed reset acknowledgement")
+        try check(!WindowedCapturePolicy.referenceReady(displayZoom: 1, resetPending: false,
+            manualZoomPending: true, pinching: false), "Queued zoom can change optics after the crop snapshot")
+        try check(!WindowedCapturePolicy.referenceReady(displayZoom: 1, resetPending: false,
+            manualZoomPending: false, pinching: true), "A moving pinch can change the captured crop reference")
+        try check(!WindowedCapturePolicy.referenceReady(displayZoom: .nan, resetPending: false,
+            manualZoomPending: false, pinching: false), "Nonfinite crop reference accepted")
+        let captureTransitions: [(String, Bool, Bool, Bool, Bool)] = [
+            ("Idle", false, false, false, false),
+            ("Record request before hardware callback", false, true, false, true),
+            ("Starting or recording", true, true, false, true),
+            ("Stop requested before file finishes", true, false, false, true),
+            ("Photo exposure and processing", false, false, true, true),
+            ("Capture completed", false, false, false, false)
+        ]
+        for (phase, recording, wantsRecording, photo, expected) in captureTransitions {
+            try check(WindowedCapturePolicy.controlsLocked(recordingInFlight: recording,
+                wantsRecording: wantsRecording, photoInFlight: photo) == expected,
+                "Window edit admission changed during \(phase)")
+        }
         print("Capture viewport regressions: \(checks) assertions passed")
     }
 }

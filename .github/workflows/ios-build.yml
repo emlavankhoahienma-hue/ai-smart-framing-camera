@@ -182,6 +182,7 @@ jobs:
             AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
             AISmartFramingCamera/Services/CharmPhotographicModel.swift \
             AISmartFramingCamera/Services/FocalCropModel.swift \
+            AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
             tests/InferenceLifetimeRegression.swift -o "$RUNNER_TEMP/lifetime-tests"
           "$RUNNER_TEMP/lifetime-tests" "$GITHUB_WORKSPACE"
 

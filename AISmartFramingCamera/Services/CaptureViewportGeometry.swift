@@ -49,3 +49,17 @@ enum VideoFormatGeometry {
             max(width, height) == max(targetWidth, targetHeight)
     }
 }
+
+/// A crop is meaningful only while its optical reference remains unchanged.
+enum WindowedCapturePolicy {
+    static func controlsLocked(recordingInFlight: Bool, wantsRecording: Bool,
+                               photoInFlight: Bool) -> Bool {
+        recordingInFlight || wantsRecording || photoInFlight
+    }
+
+    static func referenceReady(displayZoom: CGFloat, resetPending: Bool,
+                               manualZoomPending: Bool, pinching: Bool) -> Bool {
+        displayZoom.isFinite && abs(displayZoom - 1) <= 0.02 &&
+            !resetPending && !manualZoomPending && !pinching
+    }
+}

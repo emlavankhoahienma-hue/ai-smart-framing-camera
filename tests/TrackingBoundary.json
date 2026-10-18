@@ -7,7 +7,15 @@
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "006a4d899215e11a144341cca57ed8e4a656c94751c192401e714f98cdbdfba2"
+      "start": "import Foundation",
+      "end": "/// A persistent world bearing",
+      "sha256": "cd29c09b23161998ed395fd920157c86d582b52bf070481089903ee133c6e2c0"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
+      "start": "    /// Warm up before pinning",
+      "end": "    private func publish()",
+      "sha256": "53195e45d5116614a64a97c0a7453df2725f8e057c70e294f2169eb3b5b9a376"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -104,5 +112,5 @@
       "sha256": "afdd75ef72e3e0f84e219331c19c7f737db1e88627e98413ecc10df47d0d50d0"
     }
   ],
-  "scope": "Original optical/gyro tracking, target seeding and native capture entry remain protected. The 2026-10-18 user-requested video-format/FPS and frozen window-crop repairs are outside these boundaries; see docs/CAMERA_RELIABILITY_AUDIT.md and native tests."
+  "scope": "Optical tracker, identity, IMU fusion math, recovery slew and pin seeding remain protected. SpatialTrackingEngine publication exposes the exact delivered smoothed world bearing read-only, fixing mixed-frame guide projection without changing tracking corrections. Requested video-format/FPS, window admission and frozen crop repairs are outside these boundaries; see docs/CAMERA_RELIABILITY_AUDIT.md."
 }

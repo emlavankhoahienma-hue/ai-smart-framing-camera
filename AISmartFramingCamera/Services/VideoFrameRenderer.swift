@@ -6,8 +6,18 @@ import os
 /// Always render from the original recording. Crop coordinates refer to its
 /// upright image, after AVFoundation applies the track's preferred transform.
 enum VideoFrameRenderer {
+    /// AVFoundation permits cancelExport while an export is running. This owner
+    /// shares only that cancellation operation after session configuration ends.
+    private final class ExportCancellation: @unchecked Sendable {
+        let session: AVAssetExportSession
+        init(_ session: AVAssetExportSession) { self.session = session }
+        func cancel() { session.cancelExport() }
+    }
+
     /// AVAssetExportSession predates Sendable. Its setup finishes before this
     /// owner starts; every subsequent operation is serialized on this queue.
+    @available(iOS, deprecated: 18, message: "Compatibility path for iOS 17; newer systems use async export")
+    @available(macOS, deprecated: 15, message: "Newer systems use async export")
     private final class ExportOperation: @unchecked Sendable {
         private let session: AVAssetExportSession
         private let queue = DispatchQueue(label: "com.alignai.video-export")
@@ -15,7 +25,11 @@ enum VideoFrameRenderer {
         private var started = false
         private var finished = false
 
-        init(session: AVAssetExportSession) { self.session = session }
+        init(session: AVAssetExportSession, url: URL) {
+            self.session = session
+            session.outputURL = url
+            session.outputFileType = .mov
+        }
 
         func start(_ continuation: CheckedContinuation<Void, Error>) {
             queue.async {
@@ -67,7 +81,7 @@ enum VideoFrameRenderer {
         // full-resolution image. Even dimensions are required by 4:2:0 codecs.
         let size = CGSize(width: max(2, floor(oriented.width * crop.width / 2) * 2),
                           height: max(2, floor(oriented.height * crop.height / 2) * 2))
-        let composition = AVVideoComposition(asset: asset) { request in
+        let composition = try await AVVideoComposition.videoComposition(with: asset, applyingCIFiltersWithHandler: { request in
             let original = request.sourceImage
             guard let rect = CaptureViewportGeometry.pixels(crop, extent: original.extent, bottomLeft: true) else {
                 request.finish(with: CocoaError(.coderInvalidValue))
@@ -81,7 +95,7 @@ enum VideoFrameRenderer {
             let output = translated.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
                 .cropped(to: CGRect(origin: .zero, size: size))
             request.finish(with: output, context: nil)
-        }
+        })
         guard let mutable = composition.mutableCopy() as? AVMutableVideoComposition else {
             throw CocoaError(.coderInvalidValue)
         }
@@ -96,15 +110,21 @@ enum VideoFrameRenderer {
             throw CocoaError(.featureUnsupported)
         }
         session.videoComposition = composition
-        session.outputURL = url
-        session.outputFileType = .mov
         session.shouldOptimizeForNetworkUse = true
-        let operation = ExportOperation(session: session)
         do {
-            try await withTaskCancellationHandler {
-                try Task.checkCancellation()
-                try await withCheckedThrowingContinuation { operation.start($0) }
-            } onCancel: { operation.cancel() }
+            if #available(iOS 18, macOS 15, *) {
+                let cancellation = ExportCancellation(session)
+                try await withTaskCancellationHandler {
+                    try Task.checkCancellation()
+                    try await cancellation.session.export(to: url, as: .mov)
+                } onCancel: { cancellation.cancel() }
+            } else {
+                let operation = ExportOperation(session: session, url: url)
+                try await withTaskCancellationHandler {
+                    try Task.checkCancellation()
+                    try await withCheckedThrowingContinuation { operation.start($0) }
+                } onCancel: { operation.cancel() }
+            }
         } catch {
             if FileManager.default.fileExists(atPath: url.path) {
                 do { try FileManager.default.removeItem(at: url) }
