@@ -108,7 +108,9 @@ jobs:
           "$RUNNER_TEMP/capture-transition-regressions"
 
       - name: Compile native real-photo validation before model export
-        run: python scripts/validate_composition_photos.py --compile-only
+        run: |
+          python scripts/validate_composition_photos.py --compile-only
+          python scripts/validate_subject_fusion.py --compile-only
 
       - name: Export pinned YOLO12 tracking and YOLO26 photographic detectors
         env:
@@ -163,6 +165,19 @@ jobs:
           test -d SigLIPBaseImage.mlmodelc
           test -s SigLIPPrompts.json
           test -s SigLIPModelManifest.json
+
+      - name: Validate production subject fusion on every labelled source
+        run: |
+          python -m unittest discover -s tests -p 'test_subject_fusion.py'
+          python scripts/validate_subject_fusion.py --detector yolo12s
+          python scripts/validate_subject_fusion.py --detector yolo26s
+
+      - name: Upload production subject fusion for review
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Production-Subject-Fusion
+          path: validation/subject-fusion/*.json
 
       - name: Cache photographic model and evaluation data
         uses: actions/cache@v5
@@ -228,6 +243,7 @@ jobs:
             validation/swift/
             validation/video-export/
             validation/focal/
+            validation/subject-fusion/*.json
             validation/detection/*-real-photos.json
             validation/detection/*-coco-predictions.json
             validation/detection/coco-comparison.json

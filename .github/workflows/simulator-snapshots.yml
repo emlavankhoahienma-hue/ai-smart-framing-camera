@@ -98,6 +98,14 @@ jobs:
             screenshots/*.mp4
           if-no-files-found: warn
 
+      - name: Upload Simulator transport diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Simulator-Diagnostics
+          path: simulator-diagnostics/
+          if-no-files-found: ignore
+
       - name: Publish Step Summary
         if: always()
         run: |

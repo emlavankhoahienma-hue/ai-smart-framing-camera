@@ -11,6 +11,8 @@ fi
 BUNDLE_ID="com.aismartframing.camera"
 SCREENSHOT_DIR="screenshots"
 mkdir -p "$SCREENSHOT_DIR"
+DIAGNOSTIC_DIR="simulator-diagnostics"
+mkdir -p "$DIAGNOSTIC_DIR"
 
 # Preserve diagnostics and prevent an unresponsive simulator service from
 # holding the CI job indefinitely.
@@ -34,6 +36,46 @@ except subprocess.TimeoutExpired:
     status = 124
 raise SystemExit(status)
 PY
+}
+
+collect_diagnostics() {
+  local udid="$1"
+  local label="$2"
+  run_bounded 20 xcrun simctl list devices --json > "${DIAGNOSTIC_DIR}/${label}-devices.json" 2>&1 || true
+  run_bounded 20 xcrun simctl spawn "$udid" log show --style compact --last 2m \
+    --predicate 'process == "AISmartFramingCamera" OR subsystem == "com.apple.FrontBoard"' \
+    > "${DIAGNOSTIC_DIR}/${label}-launch.log" 2>&1 || true
+  local reports="${HOME}/Library/Developer/CoreSimulator/Devices/${udid}/data/Library/Logs/CrashReporter"
+  if [ -d "$reports" ]; then
+    find "$reports" -maxdepth 1 -type f -name '*AISmartFramingCamera*' \
+      -exec cp '{}' "$DIAGNOSTIC_DIR/" \;
+  fi
+}
+
+capture_stage() {
+  local udid="$1"
+  local filename="$2"
+  shift 2
+  local attempt status
+  for attempt in 1 2; do
+    status=0
+    if run_bounded 40 xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" "$@"; then
+      sleep 2
+      run_bounded 30 xcrun simctl io "$udid" screenshot "${SCREENSHOT_DIR}/${filename}.png" || status=$?
+    else
+      status=$?
+    fi
+    if [ "$status" -eq 0 ]; then return 0; fi
+    collect_diagnostics "$udid" "${filename}-attempt-${attempt}"
+    # Only a bounded transport timeout admits one cold-service recovery. An
+    # actual launch/capture error still fails; repeated timeouts also fail.
+    if [ "$status" -ne 124 ] || [ "$attempt" -eq 2 ]; then return "$status"; fi
+    echo "Recovering simulator transport once for ${filename}"
+    run_bounded 30 xcrun simctl shutdown "$udid" || return $?
+    run_bounded 45 xcrun simctl boot "$udid" || return $?
+    run_bounded 120 xcrun simctl bootstatus "$udid" -b || return $?
+    run_bounded 180 xcrun simctl install "$udid" "$APP_PATH" || return $?
+  done
 }
 
 echo "=== iOS Simulator Screenshot Tool ==="
@@ -89,20 +131,15 @@ capture_device() {
 
   if [ "$SNAPSHOT_MODE" = "window" ]; then
     for stage in photo square video; do
-      run_bounded 15 xcrun simctl terminate "$udid" "$BUNDLE_ID" || true
-      run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID" -WindowSnapshotStage "$stage"
-      sleep 2
-      run_bounded 30 xcrun simctl io "$udid" screenshot "${SCREENSHOT_DIR}/${filename}_${stage}.png"
+      capture_stage "$udid" "${filename}_${stage}" -WindowSnapshotStage "$stage"
     done
+    run_bounded 30 xcrun simctl shutdown "$udid"
+    return 0
   elif [ "$SNAPSHOT_MODE" = "zoom" ]; then
     for stage in guide aligned preview ramp verify zoomout lost; do
-      run_bounded 15 xcrun simctl terminate "$udid" "$BUNDLE_ID" || true
-      run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID" -ZoomSnapshotStage "$stage"
-      sleep 2
-      run_bounded 30 xcrun simctl io "$udid" screenshot "${SCREENSHOT_DIR}/${filename}_${stage}.png"
+      capture_stage "$udid" "${filename}_${stage}" -ZoomSnapshotStage "$stage"
     done
-    run_bounded 15 xcrun simctl terminate "$udid" "$BUNDLE_ID"
-    run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID" -ZoomSnapshotStage motion
+    run_bounded 40 xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -ZoomSnapshotStage motion
     xcrun simctl io "$udid" recordVideo --codec=h264 "${SCREENSHOT_DIR}/${filename}_motion.mp4" &
     local recorder=$!
     sleep 12

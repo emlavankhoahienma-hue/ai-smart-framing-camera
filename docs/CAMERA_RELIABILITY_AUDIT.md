@@ -84,6 +84,21 @@ decoder. A frozen 96-image author-labelled COCO val2017 subset is evaluated befo
 composition conversions, so model choice can be assessed using measured results.
 This is a subset test at the app's 0.45 confidence filter, not official COCO AP.
 
+The raw detector comparison is followed by two full production-recognition runs
+on the same 96 sources. The baseline bundle contains YOLO12s and the new bundle
+contains YOLO26s; both contain the same SigLIP prompts and Vision fusion code.
+The harness asserts the detector that actually ran on every image. It records
+all retained candidates, face associations, coherent groups and the selected
+hero, including six reviewed detector regressions. COCO has no photographic
+hero/group labels: these decisions are diagnostic observations, not invented
+ground truth. Whole-person/animal box accounting excludes face-only candidates
+and synthetic group unions; animal species are explicitly collapsed.
+
+Simulator snapshot timeouts collect app-specific launch diagnostics before one
+bounded cold-service recovery. Genuine launch errors and repeated timeouts still
+fail. Stage screenshots are reviewed independently of the native video pixel
+tests; recovering a simulator service is not evidence of a repaired app crash.
+
 Sources: [YOLO26 paper](https://arxiv.org/abs/2606.03748),
 [author models](https://huggingface.co/Ultralytics/YOLO26),
 [Apple image aesthetics](https://developer.apple.com/documentation/vision/vncalculateimageaestheticsscoresrequest),
