@@ -195,6 +195,41 @@ enum CaptureTransitionRegression {
             try require(gate.update(time: 10.82, distance: 0.005, radius: 0.04, freshEvidence: false) == .outside, "Sustained loss retained lock")
             try require(!CaptureReadinessPolicy.isFresh(10.3, now: 10.82), "Presentation grace authorized stale shutter")
         }
+        try run("one failed scene check can retry only on a newer frame") {
+            var policy = FinalFramingRetryPolicy()
+            try require(policy.canAttempt(frameTimestamp: 10), "First fresh scene check was blocked")
+            try require(policy.recordFailure(frameTimestamp: 10, retryable: true) == .retryOnNewFrame,
+                "One transient miss permanently disabled automatic capture")
+            try require(!policy.requiresManualCapture && policy.isRetryPending, "Retry did not remain pending")
+            try require(!policy.canAttempt(frameTimestamp: 10) && !policy.canAttempt(frameTimestamp: 9.9),
+                "A stale or duplicate frame started another inference")
+            try require(policy.canAttempt(frameTimestamp: 10.1), "A genuinely new frame could not retry")
+        }
+        try run("two distinct scene failures require manual capture and duplicate failures do not count") {
+            var policy = FinalFramingRetryPolicy()
+            _ = policy.recordFailure(frameTimestamp: 10, retryable: true)
+            try require(policy.recordFailure(frameTimestamp: 10, retryable: true) == .retryOnNewFrame,
+                "Duplicate frame prematurely exhausted retries")
+            try require(policy.distinctFailures == 1, "Duplicate failure counted as new evidence")
+            try require(policy.recordFailure(frameTimestamp: 10.1, retryable: true) == .manualCapture,
+                "Two distinct failures did not require a manual shutter")
+            try require(policy.requiresManualCapture && !policy.canAttempt(frameTimestamp: 10.2),
+                "A third inference was admitted after exhausting retries")
+        }
+        try run("memory cancellation never retries and a new pin or success clears retry history") {
+            var policy = FinalFramingRetryPolicy()
+            try require(policy.recordFailure(frameTimestamp: 10, retryable: false) == .manualCapture,
+                "Memory cancellation scheduled another expensive inference")
+            try require(!policy.canAttempt(frameTimestamp: 10.1), "Memory failure did not block retry")
+            policy.reset()
+            try require(policy.distinctFailures == 0 && !policy.requiresManualCapture && policy.canAttempt(frameTimestamp: 1),
+                "A new pin inherited old verification failures")
+            _ = policy.recordFailure(frameTimestamp: 11, retryable: true)
+            policy.reset()
+            try require(!policy.isRetryPending && policy.canAttempt(frameTimestamp: 11.1),
+                "Successful verification retained the failure latch")
+            try require(!policy.canAttempt(frameTimestamp: .nan), "Non-finite camera time became retry evidence")
+        }
         print("Capture transition regressions: \(passed) passed")
     }
 }

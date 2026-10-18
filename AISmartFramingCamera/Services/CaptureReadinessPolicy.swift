@@ -43,3 +43,42 @@ enum CaptureReadinessPolicy {
         return visible.width * visible.height / (bounds.width * bounds.height) >= 0.98
     }
 }
+
+/// A negative or timed-out scene check is never capture approval. One new frame
+/// may recover a transient detector miss; two distinct failures require manual
+/// capture. Memory-pressure cancellation cannot trigger another large inference.
+struct FinalFramingRetryPolicy {
+    enum FailureAction: Equatable { case retryOnNewFrame, manualCapture }
+    static let timeout: TimeInterval = 12
+    private(set) var distinctFailures = 0
+    private(set) var requiresManualCapture = false
+    private var lastFailedFrame: TimeInterval?
+
+    var isRetryPending: Bool { distinctFailures > 0 && !requiresManualCapture }
+
+    func canAttempt(frameTimestamp: TimeInterval) -> Bool {
+        guard !requiresManualCapture, frameTimestamp.isFinite else { return false }
+        return lastFailedFrame.map { frameTimestamp > $0 } ?? true
+    }
+
+    mutating func recordFailure(frameTimestamp: TimeInterval, retryable: Bool) -> FailureAction {
+        guard !requiresManualCapture, frameTimestamp.isFinite, retryable else {
+            requiresManualCapture = true
+            return .manualCapture
+        }
+        guard lastFailedFrame.map({ frameTimestamp > $0 }) ?? true else { return .retryOnNewFrame }
+        lastFailedFrame = frameTimestamp
+        distinctFailures += 1
+        if distinctFailures >= 2 {
+            requiresManualCapture = true
+            return .manualCapture
+        }
+        return .retryOnNewFrame
+    }
+
+    mutating func reset() {
+        distinctFailures = 0
+        requiresManualCapture = false
+        lastFailedFrame = nil
+    }
+}

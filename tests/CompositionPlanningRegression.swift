@@ -668,6 +668,23 @@ enum CompositionPlanningRegression {
             try require(!SystemPhotographicAssessment.preservesQuality(candidate: .init(overall: 0.2, isUtility: false), original: utility, zoomRatio: 2), "Large quality loss ignored")
             try require(SystemPhotographicAssessment.preservesQuality(candidate: .init(overall: 0.2, isUtility: false), original: utility, zoomRatio: 1), "Unknown same-focal pan compared as a complete crop")
         }
+        try run("unseen-margin pan needs support beyond geometry and conversion noise") {
+            try require(!LearnedFramingPolicy.supportsPartlyObservedReframing(
+                preference: -1, originalPreference: 1, composition: 2.9, originalComposition: 3,
+                aesthetics: 3, originalAesthetics: 3), "Geometry overruled all learned evidence")
+            try require(LearnedFramingPolicy.supportsPartlyObservedReframing(
+                preference: -1, originalPreference: 1, composition: 3, originalComposition: 3,
+                aesthetics: 3, originalAesthetics: 3), "Crop-score source bias alone vetoed a pan")
+            try require(LearnedFramingPolicy.supportsPartlyObservedReframing(
+                preference: -1, originalPreference: 1, composition: 3.2, originalComposition: 3,
+                aesthetics: 3, originalAesthetics: 3), "A composition gain was vetoed by crop-score source bias")
+            try require(LearnedFramingPolicy.supportsPartlyObservedReframing(
+                preference: 1, originalPreference: 1.001, composition: 3, originalComposition: 3.01,
+                aesthetics: 3, originalAesthetics: 3.01), "Numerical noise invented a quality regression")
+            try require(!LearnedFramingPolicy.supportsPartlyObservedReframing(
+                preference: .nan, originalPreference: 1, composition: 3, originalComposition: 3,
+                aesthetics: 3, originalAesthetics: 3), "Nonfinite evidence authorized a pan")
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

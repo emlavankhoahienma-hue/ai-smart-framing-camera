@@ -53,6 +53,29 @@ jobs:
         if: inputs.screen == 'window'
         run: cp tests/WindowedZoomSnapshotApp.swift AISmartFramingCamera/App/AISmartFramingCameraApp.swift
 
+      - name: Register URL routing for simulator snapshot hosts
+        if: inputs.screen == 'zoom' || inputs.screen == 'window'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import plistlib
+
+          path = Path("AISmartFramingCamera/Info.plist")
+          info = plistlib.loads(path.read_bytes())
+          url_types = info.setdefault("CFBundleURLTypes", [])
+          scheme = "alignai-snapshot"
+          if any(value.casefold() == scheme for entry in url_types
+                 for value in entry.get("CFBundleURLSchemes", [])):
+              raise SystemExit("Snapshot scheme conflicts with an existing URL registration")
+          url_types.append({"CFBundleURLName": "com.aismartframing.snapshot",
+                            "CFBundleTypeRole": "Editor", "CFBundleURLSchemes": [scheme]})
+          path.write_bytes(plistlib.dumps(info, sort_keys=False))
+          verified = plistlib.loads(path.read_bytes())
+          assert verified["CFBundleURLTypes"][-1]["CFBundleURLSchemes"] == [scheme]
+          print("Registered URL routing in this simulator checkout only")
+          PY
+          plutil -lint AISmartFramingCamera/Info.plist
+
       - name: Build for iOS Simulator
         run: |
           set -o pipefail

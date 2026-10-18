@@ -11,11 +11,7 @@ struct ZoomRevealSnapshotApp: App {
 
 private struct ZoomRevealSnapshot: View {
     @State private var start = Date()
-    private let stage: String = {
-        let args = ProcessInfo.processInfo.arguments
-        guard let index = args.firstIndex(of: "-ZoomSnapshotStage"), index + 1 < args.count else { return "guide" }
-        return args[index + 1]
-    }()
+    @State private var stage = "guide"
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 60, paused: stage != "motion")) { clock in
@@ -57,6 +53,19 @@ private struct ZoomRevealSnapshot: View {
         }
         .background(.black)
         .onAppear { start = Date() }
+        .onOpenURL(perform: openSnapshotStage)
+    }
+
+    private func openSnapshotStage(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme == "alignai-snapshot", components.host == "zoom",
+              components.path.isEmpty, components.fragment == nil,
+              let items = components.queryItems, items.count == 1,
+              items[0].name == "stage", let value = items[0].value,
+              ["guide", "aligned", "preview", "ramp", "verify", "zoomout", "lost", "motion"].contains(value)
+        else { return }
+        start = Date()
+        stage = value
     }
 
     private struct Sample {

@@ -7,7 +7,7 @@ struct WindowedZoomSnapshotApp: App {
 
 private struct WindowedZoomSnapshot: View {
     @StateObject private var viewModel = CameraViewModel()
-    private var stage: String { UserDefaults.standard.string(forKey: "WindowSnapshotStage") ?? "photo" }
+    @State private var stage = "photo"
 
     var body: some View {
         GeometryReader { proxy in
@@ -37,10 +37,24 @@ private struct WindowedZoomSnapshot: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(.black)
-        .onAppear {
-            viewModel.windowedZoomFocalLength = 50
-            viewModel.windowedZoomAspectRatio = stage == "video" ? .ratio16_9 : (stage == "square" ? .ratio1_1 : .ratio3_4)
-            viewModel.windowedZoomNormalizedCenter = CGPoint(x: 0.4, y: 0.65)
-        }
+        .onAppear { configureWindow(for: stage) }
+        .onOpenURL(perform: openSnapshotStage)
+    }
+
+    private func openSnapshotStage(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme == "alignai-snapshot", components.host == "window",
+              components.path.isEmpty, components.fragment == nil,
+              let items = components.queryItems, items.count == 1,
+              items[0].name == "stage", let value = items[0].value,
+              ["photo", "square", "video"].contains(value) else { return }
+        stage = value
+        configureWindow(for: value)
+    }
+
+    private func configureWindow(for stage: String) {
+        viewModel.windowedZoomFocalLength = 50
+        viewModel.windowedZoomAspectRatio = stage == "video" ? .ratio16_9 : (stage == "square" ? .ratio1_1 : .ratio3_4)
+        viewModel.windowedZoomNormalizedCenter = CGPoint(x: 0.4, y: 0.65)
     }
 }

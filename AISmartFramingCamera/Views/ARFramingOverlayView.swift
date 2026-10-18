@@ -418,18 +418,6 @@ struct TargetCircleView: View {
             .frame(width: 36, height: 36)
             .allowsHitTesting(false)
             .accessibilityLabel(isAligned ? "Đã căn đúng mục tiêu" : "Điểm mục tiêu")
-            // Status must not displace the centre of the projected target.
-            .overlay(alignment: .top) {
-                if trackingQuality == .reacquiring || trackingQuality == .lost {
-                    Text("Đang xác nhận mục tiêu…")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(.black.opacity(0.55), in: Capsule())
-                        .fixedSize()
-                        .offset(y: 42)
-                }
-            }
     }
 }
 

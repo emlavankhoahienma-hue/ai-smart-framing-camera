@@ -363,14 +363,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var estimated = CGPoint(x: 0.5, y: 0.5)
     private var callback: ((CGPoint, Double, TrackingQuality) -> Void)?
     private var pendingOutput: (CGPoint, Double, TrackingQuality, UInt64, SIMD3<Double>?, TimeInterval)?
-    private var deliveredPresentationBearing: (ray: SIMD3<Double>, timestamp: TimeInterval)?
+    private var deliveredPresentationBearing: (ray: SIMD3<Double>, timestamp: TimeInterval, generation: UInt64)?
     private var deliveryScheduled = false
 
     /// The exact smoothed world bearing delivered with the UI callback. Consumers
     /// can project it into a newer image without decoding an older image point
     /// with that newer image's intrinsics or pose. No tracking state is corrected.
     var presentationBearing: (ray: SIMD3<Double>, timestamp: TimeInterval)? {
-        lock.withLock { deliveredPresentationBearing }
+        lock.withLock {
+            guard active, let bearing = deliveredPresentationBearing,
+                  bearing.generation == generation else { return nil }
+            return (bearing.ray, bearing.timestamp)
+        }
     }
 
     public init() {}
@@ -708,7 +712,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let callback = self.callback
             let valid = self.active && output?.3 == self.generation
             if valid, let output {
-                self.deliveredPresentationBearing = output.4.map { ($0, output.5) }
+                self.deliveredPresentationBearing = output.4.map { ($0, output.5, output.3) }
             }
             self.lock.unlock()
             if valid, let output { callback?(output.0, output.1, output.2) }

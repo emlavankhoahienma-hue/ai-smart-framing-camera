@@ -133,6 +133,24 @@ enum LearnedFramingPolicy {
         return (Double(lower) + 0.5 * Double(tied)) / Double(scores.count)
     }
 
+    /// A geometric goal alone cannot justify panning into unseen margins when
+    /// none of the three learned experts supports the observed change and at
+    /// least one quality expert prefers the original beyond conversion noise. This
+    /// withholds an unsupported recommendation; it does not rate unseen pixels.
+    static func supportsPartlyObservedReframing(preference: Double, originalPreference: Double,
+        composition: Double, originalComposition: Double, aesthetics: Double, originalAesthetics: Double) -> Bool {
+        guard [preference, originalPreference, composition, originalComposition,
+               aesthetics, originalAesthetics].allSatisfy(\.isFinite),
+              [composition, originalComposition, aesthetics, originalAesthetics].allSatisfy({ (1...5).contains($0) }) else { return false }
+        // Pairwise margins exceed twice the observed 32-photo conversion errors.
+        let preferenceMargin = 0.002, ratingMargin = 0.04
+        let noLearnedGain = preference <= originalPreference + preferenceMargin &&
+            composition <= originalComposition + ratingMargin && aesthetics <= originalAesthetics + ratingMargin
+        let losesObservedEvidence = originalComposition > composition + ratingMargin ||
+            originalAesthetics > aesthetics + ratingMargin
+        return !(noLearnedGain && losesObservedEvidence)
+    }
+
     /// A stronger size/layout fit cannot authorize a deep crop when independent
     /// learned assessments show substantial context or image-quality loss.
     /// These margins exceed measured preprocessing/model numerical variation;

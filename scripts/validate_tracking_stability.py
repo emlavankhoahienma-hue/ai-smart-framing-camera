@@ -186,7 +186,10 @@ class StabilityTests(unittest.TestCase):
         ring = OVERLAY.split('struct TargetCircleView:', 1)[1].split('// MARK: - Guidance Ray', 1)[0]
         self.assertNotIn('VStack', ring.split('var body:', 1)[1].split('// Status is outside layout.', 1)[0])
         self.assertIn('.frame(width: 36, height: 36)', ring)
-        self.assertIn('.overlay(alignment: .top)', ring)
+        self.assertNotIn('Text(', ring)
+        self.assertNotIn('.overlay(', ring)
+        status_hud = (SRC / 'Views/AIStatusHUDView.swift').read_text(encoding='utf-8')
+        self.assertIn('viewModel.alignmentStatusText', status_hud)
         self.assertNotIn('Chạm để đặt lại mục tiêu', ring)
 
     def test_stream_epoch_and_appearance_ownership(self):

@@ -52,16 +52,65 @@ collect_diagnostics() {
   fi
 }
 
+record_motion() {
+  python3 - "$1" "$2" <<'PY'
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+
+udid, output = sys.argv[1:]
+command = ["xcrun", "simctl", "io", udid, "recordVideo", "--codec=h264", output]
+print("Recording:", " ".join(command), flush=True)
+process = subprocess.Popen(command, start_new_session=True)
+try:
+    process.wait(timeout=12)
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGINT)
+    try:
+        status = process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        print("Timed out while finishing simulator recording", flush=True)
+        raise SystemExit(124)
+else:
+    print("Simulator recording ended before the capture interval", flush=True)
+    raise SystemExit(process.returncode or 1)
+if status != 0:
+    raise SystemExit(status)
+if not Path(output).is_file() or Path(output).stat().st_size == 0:
+    raise SystemExit("Simulator recording did not produce a nonempty movie")
+PY
+}
+
 capture_stage() {
   local udid="$1"
   local filename="$2"
-  shift 2
+  local mode="$3"
+  local stage="$4"
+  case "${mode}:${stage}" in
+    window:photo|window:square|window:video|zoom:guide|zoom:aligned|zoom:preview|zoom:ramp|zoom:verify|zoom:zoomout|zoom:lost|zoom:motion) ;;
+    *) echo "Invalid snapshot stage: ${mode}:${stage}"; return 2 ;;
+  esac
+  local url="alignai-snapshot://${mode}?stage=${stage}"
   local attempt status
   for attempt in 1 2; do
     status=0
-    if run_bounded 40 xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" "$@"; then
-      sleep 2
-      run_bounded 30 xcrun simctl io "$udid" screenshot "${SCREENSHOT_DIR}/${filename}.png" || status=$?
+    # Opening a URL cold-starts the installed host when necessary, or updates
+    # its existing SwiftUI state. No per-stage process termination is needed.
+    if run_bounded 40 xcrun simctl openurl "$udid" "$url"; then
+      if [ "$stage" = "motion" ]; then
+        record_motion "$udid" "${SCREENSHOT_DIR}/${filename}.mp4" || status=$?
+      else
+        sleep 2
+        run_bounded 30 xcrun simctl io "$udid" screenshot "${SCREENSHOT_DIR}/${filename}.png" || status=$?
+        if [ "$status" -eq 0 ] && [ ! -s "${SCREENSHOT_DIR}/${filename}.png" ]; then
+          echo "Simulator screenshot did not produce a nonempty image"
+          status=1
+        fi
+      fi
     else
       status=$?
     fi
@@ -131,21 +180,15 @@ capture_device() {
 
   if [ "$SNAPSHOT_MODE" = "window" ]; then
     for stage in photo square video; do
-      capture_stage "$udid" "${filename}_${stage}" -WindowSnapshotStage "$stage"
+      capture_stage "$udid" "${filename}_${stage}" window "$stage"
     done
     run_bounded 30 xcrun simctl shutdown "$udid"
     return 0
   elif [ "$SNAPSHOT_MODE" = "zoom" ]; then
     for stage in guide aligned preview ramp verify zoomout lost; do
-      capture_stage "$udid" "${filename}_${stage}" -ZoomSnapshotStage "$stage"
+      capture_stage "$udid" "${filename}_${stage}" zoom "$stage"
     done
-    run_bounded 40 xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -ZoomSnapshotStage motion
-    xcrun simctl io "$udid" recordVideo --codec=h264 "${SCREENSHOT_DIR}/${filename}_motion.mp4" &
-    local recorder=$!
-    sleep 12
-    kill -INT "$recorder"
-    wait "$recorder"
-    test -s "${SCREENSHOT_DIR}/${filename}_motion.mp4"
+    capture_stage "$udid" "${filename}_motion" zoom motion
     run_bounded 30 xcrun simctl shutdown "$udid"
     return 0
   fi

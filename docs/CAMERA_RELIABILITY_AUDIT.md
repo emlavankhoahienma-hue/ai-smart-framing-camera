@@ -94,10 +94,34 @@ hero/group labels: these decisions are diagnostic observations, not invented
 ground truth. Whole-person/animal box accounting excludes face-only candidates
 and synthetic group unions; animal species are explicitly collapsed.
 
+Cross-review also found a permanent capture latch: a single negative final-scene
+check or its four-second timeout disabled automatic capture for the entire pin.
+Verification now allows two distinct fresh frames with a twelve-second bounded
+inference timeout. Duplicate frames cannot consume retries; memory-warning
+cancellation immediately requires manual capture. Success, a new session or a
+new pin clears that history. Identity, overlap, face/person counts, optical lock,
+pose, zoom and freshness requirements are unchanged. A displayed bearing also
+carries its pin generation so a new pin cannot briefly read the prior pin's ray.
+
+The observed-pixel audit now withholds a partly unseen reframe when none of Focal,
+SAMP and Charm supports its observed change beyond conversion noise, and at least
+one quality expert prefers the original. Crop-score source bias alone cannot veto
+a pan. This addresses geometry-only recommendations without re-admitting every
+original into the trained scorer or blindly removing beneficial zooms. It does
+not claim to rate unseen margins: these still require real final recognition.
+The entire photo corpus is rerun after this policy change.
+
+Reacquisition text is kept in the fixed status HUD. The badge that followed the
+target could intersect the center ring when the target was above it; removing
+that badge leaves both reticle shapes and target coordinates unchanged.
+
 Simulator snapshot timeouts collect app-specific launch diagnostics before one
 bounded cold-service recovery. Genuine launch errors and repeated timeouts still
 fail. Stage screenshots are reviewed independently of the native video pixel
 tests; recovering a simulator service is not evidence of a repaired app crash.
+The visual hosts now switch stages through a runner-only URL scheme within one
+process, avoiding a reproducible FrontBoard termination hang on cold simulators.
+The production app's URL registrations are unchanged.
 
 Sources: [YOLO26 paper](https://arxiv.org/abs/2606.03748),
 [author models](https://huggingface.co/Ultralytics/YOLO26),

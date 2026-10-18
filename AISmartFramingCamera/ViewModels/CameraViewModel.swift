@@ -176,6 +176,8 @@ public final class CameraViewModel: ObservableObject {
     private var finalFramingZoom: Double = 1
     private var finalFramingTimestamp = -Double.infinity
     private var finalFramingCancellation: CompositionAnalysisCancellation?
+    private var finalFramingRetryPolicy = FinalFramingRetryPolicy()
+    private var finalFramingFailureMessage: String?
     private var localCompositionAim: CompositionAimGeometry?
     @Published private(set) var localCompositionAimPoint: CGPoint?
     @Published private(set) var localAnalysisSummary = ""
@@ -211,6 +213,8 @@ public final class CameraViewModel: ObservableObject {
             finalFramingCancellation?.cancel()
             finalFramingPose = nil
             finalFramingTimestamp = -.infinity
+            finalFramingRetryPolicy.reset()
+            finalFramingFailureMessage = nil
             localAnalysisSummary = ""
             localAnalysisCompletedAt = nil
             localAnalysisCancellation?.cancel()
@@ -234,6 +238,8 @@ public final class CameraViewModel: ObservableObject {
             finalFramingCancellation?.cancel()
             finalFramingPose = nil
             finalFramingTimestamp = -.infinity
+            finalFramingRetryPolicy.reset()
+            finalFramingFailureMessage = nil
         }
     }
     @Published public var aiSessionState: AISessionState = .idle {
@@ -2297,10 +2303,16 @@ public final class CameraViewModel: ObservableObject {
         if zoomAwaitingVerification { return "Đang zoom và xác nhận lại chủ thể…" }
         if zoomFallbackAfter.isFinite { return "Đang khôi phục khung trước zoom…" }
         if needsManualShutter {
-            return localSelectionMessage ?? "Chế độ chụp tay · Bấm nút chụp khi vừa ý"
+            return localSelectionMessage ?? finalFramingFailureMessage ?? "Chế độ chụp tay · Bấm nút chụp khi vừa ý"
         }
         if !zoomVerified { return "Chưa xác nhận được zoom · Có thể bấm chụp tay" }
-        if autoCaptureTask != nil { return "Giữ máy · Đang kiểm tra khung chụp…" }
+        if autoCaptureTask != nil {
+            return finalFramingRetryPolicy.isRetryPending ?
+                "Giữ máy · Đang kiểm tra lại khung chụp (2/2)…" : "Giữ máy · Đang kiểm tra khung chụp…"
+        }
+        if isPerfectAlignment, finalFramingRetryPolicy.isRetryPending {
+            return "Giữ máy · Chờ ảnh mới để xác nhận lại…"
+        }
         if !hasFreshOpticalLock && !alignmentGate.isAligned { return "Đang xác nhận lại chủ thể trong ảnh…" }
         if isPerfectAlignment, acceptedLocalPlan?.preservesOriginalFrame == true {
             return "Khung hiện tại phù hợp · Giữ máy để chụp"
@@ -2901,13 +2913,14 @@ public final class CameraViewModel: ObservableObject {
         if let verifiedPose = finalFramingPose, snapshot.1.timestamp - finalFramingTimestamp < 0.8,
            CompositionSceneFreshness.accepts(sourcePose: verifiedPose, currentPose: pose,
                sourceZoom: finalFramingZoom, currentZoom: snapshot.1.displayZoom) { return true }
+        guard finalFramingRetryPolicy.canAttempt(frameTimestamp: snapshot.1.timestamp) else { return false }
         let generation = targetPinGeneration
         let held = FaceVerificationFrame(buffer: snapshot.0)
         let frame = snapshot.1
         let cancellation = CompositionAnalysisCancellation()
         finalFramingCancellation = cancellation
         let timeout = Task {
-            do { try await Task.sleep(nanoseconds: 4_000_000_000) } catch { return }
+            do { try await Task.sleep(nanoseconds: UInt64(FinalFramingRetryPolicy.timeout * 1_000_000_000)) } catch { return }
             cancellation.cancel()
         }
         defer {
@@ -2923,9 +2936,18 @@ public final class CameraViewModel: ObservableObject {
         } onCancel: { cancellation.cancel() }
         guard !Task.isCancelled, generation == targetPinGeneration else { return false }
         guard valid, !cancellation.isCancelled else {
-            allowsAutoCaptureForCurrentTarget = false
-            localSelectionMessage = "Chưa xác nhận được chủ thể trong cảnh mới. Giữ máy rồi bấm AI lại hoặc chụp tay."
-            if postZoomFaceMinimumTimestamp.isFinite { restoreOriginalZoomAfterVerificationFailure() }
+            let memoryFailure = cancellation.failureReason
+            let action = finalFramingRetryPolicy.recordFailure(frameTimestamp: frame.timestamp,
+                retryable: memoryFailure == nil)
+            CameraLogger.warning("Final framing verification failed: frame=\(frame.timestamp), distinct failures=\(finalFramingRetryPolicy.distinctFailures), cancelled=\(cancellation.isCancelled), retry=\(action == .retryOnNewFrame)", category: .ai)
+            if action == .manualCapture {
+                allowsAutoCaptureForCurrentTarget = false
+                let message = memoryFailure.map { $0 + " Có thể bấm chụp tay." } ??
+                    "Sau 2 lần vẫn chưa xác nhận được chủ thể trong cảnh mới. Bấm AI để phân tích lại hoặc chụp tay."
+                finalFramingFailureMessage = message
+                localSelectionMessage = message
+                if postZoomFaceMinimumTimestamp.isFinite { restoreOriginalZoomAfterVerificationFailure() }
+            }
             return false
         }
         guard let current = frameProcessor.latestTrackingFrameSnapshot()?.1,
@@ -2936,6 +2958,9 @@ public final class CameraViewModel: ObservableObject {
         finalFramingPose = pose
         finalFramingTimestamp = frame.timestamp
         finalFramingZoom = frame.displayZoom
+        finalFramingRetryPolicy.reset()
+        finalFramingFailureMessage = nil
+        localSelectionMessage = nil
         return true
     }
 

@@ -179,6 +179,13 @@ final class CompositionAestheticSearch {
                 preference: views[index].cropPreference, originalPreference: original.cropPreference,
                 composition: composition.mean, originalComposition: originalComposition.mean,
                 aesthetics: aesthetics.mean, originalAesthetics: originalAesthetics.mean)
+            if !views[index].proposal.isEntirelyObserved {
+                views[index].passesQualityAudit = views[index].passesQualityAudit &&
+                    LearnedFramingPolicy.supportsPartlyObservedReframing(
+                        preference: views[index].cropPreference, originalPreference: original.cropPreference,
+                        composition: composition.mean, originalComposition: originalComposition.mean,
+                        aesthetics: aesthetics.mean, originalAesthetics: originalAesthetics.mean)
+            }
             if views[index].proposal.isEntirelyObserved,
                let candidate = views[index].systemAesthetics, let source = original.systemAesthetics {
                 views[index].passesQualityAudit = views[index].passesQualityAudit &&
