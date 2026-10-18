@@ -74,6 +74,13 @@ enum CompositionPlanningRegression {
                 originalComposition: 1.6974, aesthetics: 2.1875, originalAesthetics: 2.5766),
                 "a false-face crop ignored the learned quality audit")
         }
+        try run("an optical-profile search cannot trade a large aesthetic loss for a small composition gain") {
+            try require(!LearnedFramingPolicy.passesQualityAudit(zoomRatio: 3.1380835797261506,
+                preference: -0.6821336150169373, originalPreference: -0.35570865869522095,
+                composition: 2.9018092193115654, originalComposition: 2.7617415597401704,
+                aesthetics: 1.825114111906705, originalAesthetics: 2.594860818610726),
+                "a slight composition increase hid the observed optical-profile quality regression")
+        }
         try run("quality audits retain a measured beneficial crop and reject invalid evidence") {
             try require(LearnedFramingPolicy.passesQualityAudit(zoomRatio: 2,
                 preference: -3.0418, originalPreference: 2.2622, composition: 1.7015,

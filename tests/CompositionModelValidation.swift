@@ -101,26 +101,32 @@ enum CompositionModelValidation {
         let files = try FileManager.default.contentsOfDirectory(at: photos, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "jpg" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         let renderer = CompositionImageRenderer()
-        var regressions = ["3433.jpg", "10034.jpg", "113.jpg", "321.jpg"].map {
-            photos.appendingPathComponent("source").appendingPathComponent($0)
+        var regressions: [(source: URL, optical: CGFloat?)] = ["3433.jpg", "10034.jpg", "113.jpg", "321.jpg"].map {
+            (photos.appendingPathComponent("source").appendingPathComponent($0), nil)
         }
         if let option = CommandLine.arguments.firstIndex(of: "--people"), option + 1 < CommandLine.arguments.count {
-            regressions.insert(URL(fileURLWithPath: CommandLine.arguments[option + 1]).appendingPathComponent("1565.jpg"), at: 0)
-            regressions.insert(URL(fileURLWithPath: CommandLine.arguments[option + 1]).appendingPathComponent("724.jpg"), at: 0)
+            regressions.insert((URL(fileURLWithPath: CommandLine.arguments[option + 1]).appendingPathComponent("1565.jpg"), nil), at: 0)
+            regressions.insert((URL(fileURLWithPath: CommandLine.arguments[option + 1]).appendingPathComponent("724.jpg"), nil), at: 0)
+        }
+        for optical in [CGFloat(4), CGFloat(5)] {
+            regressions.append((photos.appendingPathComponent("source/321.jpg"), optical))
         }
         let regressionDirectory = output.appendingPathComponent("critical-regressions", isDirectory: true)
         try FileManager.default.createDirectory(at: regressionDirectory, withIntermediateDirectories: true)
         var regressionRows: [[String: Any]] = []
-        for file in regressions {
+        for regression in regressions {
+            let file = regression.optical.map { URL(fileURLWithPath: "optical\(Int($0))_" + regression.source.lastPathComponent) } ?? regression.source
             let row: [String: Any] = try autoreleasepool {
                 try searchPhoto(file: file, photos: photos, modelURL: modelURL, output: regressionDirectory,
-                                renderer: renderer, sourceOverride: image(file))
+                                renderer: renderer, sourceOverride: image(regression.source), maximumOpticalZoom: regression.optical)
             }
             regressionRows.append(row)
             print("Critical photo regression: \(file.lastPathComponent), adjusted anchor: \(row["framingAnchorWasAdjusted"] as? Bool ?? false)")
             fflush(stdout)
         }
-        try JSONSerialization.data(withJSONObject: ["images": regressionRows.count, "searches": regressionRows], options: [.prettyPrinted, .sortedKeys])
+        try JSONSerialization.data(withJSONObject: ["images": regressionRows.count,
+            "uniqueSourceImages": Set(regressions.map { $0.source.lastPathComponent }).count,
+            "searches": regressionRows], options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("critical-photo-regressions.json"))
         var searches: [[String: Any]] = []
         for file in files {
@@ -192,9 +198,14 @@ enum CompositionModelValidation {
         let replayDirectory = output.appendingPathComponent("camera-replay", isDirectory: true)
         try FileManager.default.createDirectory(at: replayDirectory, withIntermediateDirectories: true)
         var replay: [[String: Any]] = []
-        let replayParents = Array(files.prefix(humanFiles.isEmpty ? 12 : 6)).map {
+        let baseParents = Array(files.prefix(humanFiles.isEmpty ? 12 : 6)).map {
             photos.appendingPathComponent("source").appendingPathComponent($0.lastPathComponent)
-        } + Array(humanFiles.prefix(6))
+        }
+        let baseNames = Set(baseParents.map { $0.lastPathComponent })
+        let replayParents = baseParents + Array(humanFiles.filter { !baseNames.contains($0.lastPathComponent) }.prefix(6))
+        guard Set(replayParents.map { $0.lastPathComponent }).count == 12 else {
+            throw Failure(message: "Camera replay must cover twelve distinct parent photographs")
+        }
         for file in replayParents {
             let parent = try image(file)
             for (index, offset) in [0.05, 0.18, 0.31].enumerated() {

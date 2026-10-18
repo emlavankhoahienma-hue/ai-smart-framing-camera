@@ -100,6 +100,9 @@ final class FocalCropModel {
 }
 
 enum LearnedFramingPolicy {
+    private static let compositionWeight = 0.10
+    private static let aestheticsWeight = 0.15
+
     /// Intent supplies safe layout candidates. Relative neural preference orders
     /// them, with independent quality audits for substantial crop regressions.
     static func admissible(geometry: Double, best: Double) -> Bool {
@@ -130,8 +133,13 @@ enum LearnedFramingPolicy {
         let noLearnedImprovement = preferenceLoss >= 0.15 &&
             composition - originalComposition < 0.10 && aesthetics - originalAesthetics < 0.10
         let losesLearnedContext = preferenceLoss >= 0.6 && aestheticLoss >= 0.15
+        // Use the same relative quality weights as final ranking. A small SAMP
+        // increase must not hide a much larger Charm decrease at another zoom.
+        let qualityLoss = (compositionWeight * (originalComposition - composition) +
+            aestheticsWeight * aestheticLoss) / (compositionWeight + aestheticsWeight)
+        let losesCombinedQuality = preferenceLoss >= 0.15 && qualityLoss >= 0.15
         let losesBothQualityRatings = originalComposition - composition >= 0.30 && aestheticLoss >= 0.20
-        return !noLearnedImprovement && !losesLearnedContext && !losesBothQualityRatings
+        return !noLearnedImprovement && !losesLearnedContext && !losesCombinedQuality && !losesBothQualityRatings
     }
 
     static func score(preference: Double, peers: [Double], composition: Double,
@@ -139,7 +147,7 @@ enum LearnedFramingPolicy {
         guard let percentile = preferencePercentile(preference, among: peers),
               [composition, aesthetics, geometry].allSatisfy(\.isFinite),
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
-        return 0.70 * percentile + 0.10 * (composition - 1) / 4 +
-            0.15 * (aesthetics - 1) / 4 + 0.05 * min(1, max(0, geometry))
+        return 0.70 * percentile + compositionWeight * (composition - 1) / 4 +
+            aestheticsWeight * (aesthetics - 1) / 4 + 0.05 * min(1, max(0, geometry))
     }
 }
