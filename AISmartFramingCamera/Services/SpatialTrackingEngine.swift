@@ -345,7 +345,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var subjectWorldRay: SIMD3<Double>?
     private var guideFromSubject: simd_quatd?
     private var pendingPin: (CGPoint, TimeInterval, TrackingCalibration)?
-    private var calibration = TrackingCalibration.fallback()
+    private var cameraFOV: Double = CompositionTuning.defaultCameraFOVWide
+    private var calibration = TrackingCalibration.fallback(fovLongDegrees: CompositionTuning.defaultCameraFOVWide)
     private var lastFrameTime = -Double.infinity
     private var zoom = 1.0
     private var active = false
@@ -398,6 +399,17 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     public var currentEstimatedScreenPoint: CGPoint { lock.withLock { estimated } }
     public var currentBufferAspect: CGFloat { lock.withLock { CGFloat(calibration.aspect) } }
     public var currentDisplayZoom: Double { lock.withLock { zoom } }
+    public var currentCameraFOV: Double { lock.withLock { cameraFOV } }
+
+    public func updateCameraFieldOfView(_ fovDegrees: Double) {
+        guard fovDegrees.isFinite, fovDegrees > 0 else { return }
+        lock.withLock {
+            cameraFOV = fovDegrees
+            if !lastFrameTime.isFinite {
+                calibration = .fallback(fovLongDegrees: cameraFOV, zoom: zoom, aspect: calibration.aspect)
+            }
+        }
+    }
 
     public func setLowTextureFlag(_ value: Bool) { lock.withLock { lowTexture = value } }
 
@@ -478,7 +490,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // KVO precedes the image exposed at that zoom. Keep the last image
             // calibration until registerFrame delivers its matching geometry.
             if !lastFrameTime.isFinite {
-                calibration = .fallback(zoom: zoom, aspect: calibration.aspect)
+                calibration = .fallback(fovLongDegrees: cameraFOV, zoom: zoom, aspect: calibration.aspect)
             }
         }
     }

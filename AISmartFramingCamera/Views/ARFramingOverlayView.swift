@@ -224,6 +224,11 @@ public struct ARFramingOverlayView: View {
                     isVisible: viewModel.isRevealingZoomTarget,
                     displayZoom: viewModel.zoomRevealTargetZoom
                 )
+
+                // 12. Realtime Diagnostic & Experiment Overlay
+                if CompositionTuning.isDebugOverlayEnabled {
+                    CompositionDebugOverlayView(viewModel: viewModel, containerSize: size)
+                }
             }
             .contentShape(Rectangle())
             .gesture(SpatialTapGesture().onEnded { event in

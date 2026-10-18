@@ -214,6 +214,32 @@ public final class CameraService: NSObject {
     public private(set) var selectedVideoCodec: VideoCodec = .hevc
     public private(set) var currentCaptureMode: CameraCaptureMode = .photo
 
+    /// Goc nhin ngang cua dinh dang camera hien tai (do)
+    public var currentVideoFieldOfView: Double? {
+        if let fov = activeCamera?.activeFormat.videoFieldOfView, fov > 0 {
+            return Double(fov)
+        }
+        return nil
+    }
+
+    /// Goc nhin hieu dung videoFieldOfView dua tren camera vat ly dang active hoac fallback theo loai ong kinh
+    public var effectiveVideoFieldOfView: Double {
+        if let fov = currentVideoFieldOfView {
+            return fov
+        }
+        if currentCameraPosition == .front {
+            return CompositionTuning.defaultCameraFOVFront
+        }
+        if let deviceType = activeCamera?.deviceType {
+            if deviceType == .builtInUltraWideCamera {
+                return CompositionTuning.defaultCameraFOVRearUltraWide
+            } else if deviceType == .builtInTelephotoCamera {
+                return CompositionTuning.defaultCameraFOVTelephoto
+            }
+        }
+        return CompositionTuning.defaultCameraFOVWide
+    }
+
     // Callback thong bao do phan giai va FPS video phan cung
     public var onActiveVideoFormatChanged: ((String) -> Void)?
 

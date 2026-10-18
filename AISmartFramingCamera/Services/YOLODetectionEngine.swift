@@ -15,6 +15,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     private var yoloNativeMLModel: MLModel?
     private var isDedicatedYOLO26ANE: Bool = false
     private var loadedModelName: String?
+    private var hasLoggedExperimentC: Bool = false
 
     public init() { loadYOLOModel() }
 
@@ -119,50 +120,70 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         conf: MLMultiArray,
         cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
+        if !hasLoggedExperimentC {
+            hasLoggedExperimentC = true
+            CompositionExperiments.logExperimentC(coords: coords, conf: conf)
+        }
+
         let numBoxes: Int
         let numClasses: Int
-        if coords.shape.count >= 3 {
+        let coordBoxStride: Int
+        let coordElemStride: Int
+        if coords.shape.count >= 3 && coords.strides.count >= 3 {
             numBoxes = coords.shape[1].intValue
-        } else if coords.shape.count == 2 {
+            coordBoxStride = coords.strides[1].intValue
+            coordElemStride = coords.strides[2].intValue
+        } else if coords.shape.count == 2 && coords.strides.count >= 2 {
             numBoxes = coords.shape[0].intValue
+            coordBoxStride = coords.strides[0].intValue
+            coordElemStride = coords.strides[1].intValue
         } else {
             return []
         }
-        if conf.shape.count >= 3 {
+
+        let confBoxStride: Int
+        let confClassStride: Int
+        if conf.shape.count >= 3 && conf.strides.count >= 3 {
             numClasses = conf.shape[2].intValue
-        } else if conf.shape.count == 2 {
+            confBoxStride = conf.strides[1].intValue
+            confClassStride = conf.strides[2].intValue
+        } else if conf.shape.count == 2 && conf.strides.count >= 2 {
             numClasses = conf.shape[1].intValue
+            confBoxStride = conf.strides[0].intValue
+            confClassStride = conf.strides[1].intValue
         } else {
             return []
         }
+
         guard numBoxes > 0, numClasses > 0 else { return [] }
         var candidates: [NeuralSubjectCandidate] = []
-        let threshold: Float = 0.45
+        let threshold: Float = CompositionTuning.yoloConfidenceThreshold
+
+        let coordsCapacity = max(coords.count, numBoxes * coordBoxStride)
+        let confCapacity = max(conf.count, numBoxes * confBoxStride)
 
         if coords.dataType == .float16 && conf.dataType == .float16 {
-            let coordsPtr = coords.dataPointer.bindMemory(to: Float16.self, capacity: numBoxes * 4)
-            let confPtr = conf.dataPointer.bindMemory(to: Float16.self, capacity: numBoxes * numClasses)
+            let coordsPtr = coords.dataPointer.bindMemory(to: Float16.self, capacity: coordsCapacity)
+            let confPtr = conf.dataPointer.bindMemory(to: Float16.self, capacity: confCapacity)
             for i in 0..<numBoxes {
                 if cancellation.isCancelled { break }
-                let confOffset = i * numClasses
+                let confBoxBase = i * confBoxStride
                 var maxScore: Float = 0.0
                 var maxClassId: Int = 0
                 for c in 0..<numClasses {
-                    let score = Float(confPtr[confOffset + c])
+                    let score = Float(confPtr[confBoxBase + c * confClassStride])
                     if score > maxScore {
                         maxScore = score
                         maxClassId = c
                     }
                 }
                 guard maxScore >= threshold else { continue }
-                let coordOffset = i * 4
-                let cx = CGFloat(Float(coordsPtr[coordOffset + 0]))
-                let cy = CGFloat(Float(coordsPtr[coordOffset + 1]))
-                let w = CGFloat(Float(coordsPtr[coordOffset + 2]))
-                let h = CGFloat(Float(coordsPtr[coordOffset + 3]))
-                let x = max(0.0, cx - w / 2.0)
-                let y = max(0.0, cy - h / 2.0)
-                let rawRect = CGRect(x: x, y: y, width: w, height: h)
+                let coordBoxBase = i * coordBoxStride
+                let cx = CGFloat(Float(coordsPtr[coordBoxBase + 0 * coordElemStride]))
+                let cy = CGFloat(Float(coordsPtr[coordBoxBase + 1 * coordElemStride]))
+                let w = CGFloat(Float(coordsPtr[coordBoxBase + 2 * coordElemStride]))
+                let h = CGFloat(Float(coordsPtr[coordBoxBase + 3 * coordElemStride]))
+                let rawRect = CompositionPureCalculations.decodeYOLORawBox(cx: cx, cy: cy, w: w, h: h)
                 guard let uiRect = clippedValidBox(rawRect) else { continue }
                 let category = mapDedicatedClassIdToCategory(maxClassId)
                 let label = localizeDedicatedClassId(maxClassId)
@@ -170,29 +191,27 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 candidates.append(NeuralSubjectCandidate(boundingBox: uiRect, category: category, confidence: maxScore, label: label, prominenceScore: prominence))
             }
         } else {
-            let coordsPtr = coords.dataPointer.bindMemory(to: Float.self, capacity: numBoxes * 4)
-            let confPtr = conf.dataPointer.bindMemory(to: Float.self, capacity: numBoxes * numClasses)
+            let coordsPtr = coords.dataPointer.bindMemory(to: Float.self, capacity: coordsCapacity)
+            let confPtr = conf.dataPointer.bindMemory(to: Float.self, capacity: confCapacity)
             for i in 0..<numBoxes {
                 if cancellation.isCancelled { break }
-                let confOffset = i * numClasses
+                let confBoxBase = i * confBoxStride
                 var maxScore: Float = 0.0
                 var maxClassId: Int = 0
                 for c in 0..<numClasses {
-                    let score = confPtr[confOffset + c]
+                    let score = confPtr[confBoxBase + c * confClassStride]
                     if score > maxScore {
                         maxScore = score
                         maxClassId = c
                     }
                 }
                 guard maxScore >= threshold else { continue }
-                let coordOffset = i * 4
-                let cx = CGFloat(coordsPtr[coordOffset + 0])
-                let cy = CGFloat(coordsPtr[coordOffset + 1])
-                let w = CGFloat(coordsPtr[coordOffset + 2])
-                let h = CGFloat(coordsPtr[coordOffset + 3])
-                let x = max(0.0, cx - w / 2.0)
-                let y = max(0.0, cy - h / 2.0)
-                let rawRect = CGRect(x: x, y: y, width: w, height: h)
+                let coordBoxBase = i * coordBoxStride
+                let cx = CGFloat(coordsPtr[coordBoxBase + 0 * coordElemStride])
+                let cy = CGFloat(coordsPtr[coordBoxBase + 1 * coordElemStride])
+                let w = CGFloat(coordsPtr[coordBoxBase + 2 * coordElemStride])
+                let h = CGFloat(coordsPtr[coordBoxBase + 3 * coordElemStride])
+                let rawRect = CompositionPureCalculations.decodeYOLORawBox(cx: cx, cy: cy, w: w, h: h)
                 guard let uiRect = clippedValidBox(rawRect) else { continue }
                 let category = mapDedicatedClassIdToCategory(maxClassId)
                 let label = localizeDedicatedClassId(maxClassId)
@@ -229,27 +248,50 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         cancellation: CompositionAnalysisCancellation,
         photographic: Bool = false
     ) -> [NeuralSubjectCandidate] {
+        let bufferW = Double(CVPixelBufferGetWidth(pixelBuffer))
+        let bufferH = Double(CVPixelBufferGetHeight(pixelBuffer))
+
+        if photographic {
+            CompositionExperiments.logExperimentD(
+                bufferWidth: Int(bufferW),
+                bufferHeight: Int(bufferH),
+                modelInputWidth: 640,
+                modelInputHeight: 640,
+                cropAndScaleOption: "scaleFit"
+            )
+        }
+
         var detectedCandidates: [NeuralSubjectCandidate] = []
+        let threshold = CompositionTuning.yoloConfidenceThreshold
+
         let request = VNCoreMLRequest(model: vnModel) { [weak self] req, error in
             guard let self = self, error == nil else { return }
             
             if let results = req.results as? [VNRecognizedObjectObservation] {
-                for obs in results where obs.confidence >= 0.45 {
+                for obs in results where obs.confidence >= threshold {
                     guard let topLabel = obs.labels.first else { continue }
                     
                     let confidence = min(obs.confidence, topLabel.confidence)
-                    guard confidence >= 0.45 else { continue }
+                    guard confidence >= threshold else { continue }
                     
                     let category = self.mapYOLOLabelToCategory(topLabel.identifier)
                     let localizedName = self.localizeYOLOLabel(topLabel.identifier)
                     
-                    // Chuyển đổi hệ tọa độ Vision (Gốc dưới-trái) sang UI Camera (Gốc trên-trái)
-                    let rawRect = CGRect(
-                        x: obs.boundingBox.origin.x,
-                        y: 1.0 - obs.boundingBox.origin.y - obs.boundingBox.height,
-                        width: obs.boundingBox.width,
-                        height: obs.boundingBox.height
-                    )
+                    // Chuyen doi he toa do Vision (Goc duoi-trai) sang UI Camera (Goc tren-trai)
+                    let visionRect = CompositionPureCalculations.visionToUprightRect(obs.boundingBox)
+                    
+                    // Hoan nguyen vien den letterbox khi dung .scaleFit
+                    let rawRect: CGRect
+                    if photographic {
+                        rawRect = CompositionPureCalculations.unpadLetterbox(
+                            normalizedRect: visionRect,
+                            sourceWidth: bufferW,
+                            sourceHeight: bufferH,
+                            modelSize: 640.0
+                        )
+                    } else {
+                        rawRect = visionRect
+                    }
                     
                     guard let uiRect = self.clippedValidBox(rawRect) else { continue }
                     guard uiRect.width >= 0.04, uiRect.height >= 0.04, uiRect.width <= 0.95, uiRect.height <= 0.95 else { continue }
@@ -448,14 +490,6 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     }
     
     private func clippedValidBox(_ rect: CGRect) -> CGRect? {
-        guard rect.minX.isFinite, rect.minY.isFinite,
-              rect.width.isFinite, rect.height.isFinite,
-              rect.width > 0, rect.height > 0 else { return nil }
-        let visible = rect.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard !visible.isNull, !visible.isEmpty,
-              visible.width >= 0.03, visible.height >= 0.03,
-              visible.width <= 0.99, visible.height <= 0.99,
-              visible.width * visible.height >= rect.width * rect.height * 0.75 else { return nil }
-        return visible
+        return CompositionPureCalculations.validateAndClipBox(rawRect: rect)
     }
 }

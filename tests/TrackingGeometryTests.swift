@@ -103,4 +103,14 @@ final class TrackingGeometryTests: XCTestCase {
         XCTAssertEqual(estimate.x, 0.5 + 16.0 / 256, accuracy: 0.015)
         XCTAssertEqual(estimate.y, 0.5 + 8.0 / 256, accuracy: 0.015)
     }
+
+    func testCameraIntrinsicsCalculation() {
+        let calib = TrackingCalibration.fallback(fovLongDegrees: 69.0, zoom: 1.0, aspect: 0.75)
+        let expectedFy = 0.5 / tan(34.5 * .pi / 180.0)
+        let expectedFx = expectedFy / 0.75
+        XCTAssertEqual(calib.fy, expectedFy, accuracy: 1e-6)
+        XCTAssertEqual(calib.fx, expectedFx, accuracy: 1e-6)
+        XCTAssertEqual(calib.fx / calib.fy, 4.0 / 3.0, accuracy: 1e-6)
+    }
 }
+

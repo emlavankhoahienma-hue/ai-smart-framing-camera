@@ -1241,6 +1241,22 @@ struct AdvancedSettingsSection: View {
                     .cornerRadius(6)
                 }
 
+                Toggle(isOn: Binding(
+                    get: { CompositionTuning.isDebugOverlayEnabled },
+                    set: { CompositionTuning.isDebugOverlayEnabled = $0 }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hiển thị Debug Overlay bố cục")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.white)
+                        Text("Hiện HUD đo zoom, target, face box và thông số AI trên kính ngắm")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                }
+                .toggleStyle(SwitchToggleStyle(tint: AlignTheme.electricCyan))
+                .padding(.vertical, 4)
+
                 HStack(spacing: 8) {
                     Button(action: {
                         var fullText = ""

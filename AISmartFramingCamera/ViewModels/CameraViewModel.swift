@@ -107,7 +107,8 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         }
 
         let frame = TrackingFrameContext.read(sampleBuffer,
-            zoom: SpatialTrackingEngine.shared.currentDisplayZoom)
+            zoom: SpatialTrackingEngine.shared.currentDisplayZoom,
+            fovLongDegrees: cameraService.effectiveVideoFieldOfView)
 
         // CameraService invokes this method on its serial videoDataQueue. Processing
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
@@ -1157,6 +1158,7 @@ public final class CameraViewModel: ObservableObject {
             self.cameraService.setLivePhotoCaptureEnabled(self.isLivePhotoEnabled)
             self.displayZoom = self.cameraService.defaultDisplayZoom
             self.currentZoom = self.cameraService.currentZoom
+            SpatialTrackingEngine.shared.updateCameraFieldOfView(self.cameraService.effectiveVideoFieldOfView)
             SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
             guard !self.isAppInBackground else { return }
             self.cameraService.start { [weak self] running in
@@ -1221,14 +1223,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // MARK: - AVCaptureVideoPreviewLayer Coordinate Mapping
-    /// Chuyen doi bounding box chuan hoa [0...1] so voi sensor bounds sang toa do hien thi tren preview layer
-    public func convertMetadataRectToLayerRect(_ normalizedSensorRect: CGRect, in screenSize: CGSize) -> CGRect {
-        guard !normalizedSensorRect.isEmpty, !normalizedSensorRect.isNull else { return .zero }
-        let metaX = max(0, min(1, normalizedSensorRect.minY))
-        let metaY = max(0, min(1, 1.0 - normalizedSensorRect.maxX))
-        let metaW = max(0, min(1 - metaX, normalizedSensorRect.height))
-        let metaH = max(0, min(1 - metaY, normalizedSensorRect.width))
-        let metadataOutputRect = CGRect(x: metaX, y: metaY, width: metaW, height: metaH)
+    /// Chuyen doi bounding box chuan hoa [0...1] upright (goc tren-trai) sang toa do hien thi tren preview layer
+    public func convertMetadataRectToLayerRect(_ uprightRect: CGRect, in screenSize: CGSize) -> CGRect {
+        guard !uprightRect.isEmpty, !uprightRect.isNull else { return .zero }
+        let metadataOutputRect = CompositionPureCalculations.uprightToMetadataOutputRect(uprightRect)
 
         if let previewLayer = self.previewLayer, previewLayer.bounds.width > 0 && previewLayer.bounds.height > 0 {
             let converted = previewLayer.layerRectConverted(fromMetadataOutputRect: metadataOutputRect)
@@ -1237,21 +1235,34 @@ public final class CameraViewModel: ObservableObject {
             }
         }
 
-        let zoom = max(1.0, displayZoom)
+        // Fallback khi chua co previewLayer: su dung ty le aspect-fill cua camera buffer
         let aspect = SpatialTrackingEngine.shared.currentBufferAspect
         let scale = max(screenSize.width / aspect, screenSize.height)
         let midX = screenSize.width / 2.0
         let midY = screenSize.height / 2.0
 
-        let zoomedX = ((normalizedSensorRect.midX - 0.5) * zoom) * scale * aspect + midX
-        let zoomedY = ((normalizedSensorRect.midY - 0.5) * zoom) * scale + midY
-        let zoomedW = normalizedSensorRect.width * zoom * scale * aspect
-        let zoomedH = normalizedSensorRect.height * zoom * scale
+        let posX = (uprightRect.midX - 0.5) * scale * aspect + midX
+        let posY = (uprightRect.midY - 0.5) * scale + midY
+        let boxW = uprightRect.width * scale * aspect
+        let boxH = uprightRect.height * scale
 
-        return CGRect(x: zoomedX - zoomedW / 2.0,
-                      y: zoomedY - zoomedH / 2.0,
-                      width: max(0, zoomedW),
-                      height: max(0, zoomedH))
+        return CGRect(x: posX - boxW / 2.0,
+                      y: posY - boxH / 2.0,
+                      width: max(0, boxW),
+                      height: max(0, boxH))
+    }
+
+    /// Chuyen doi diem Upright sang toa do man hinh Preview Layer (dung layerPointConverted hoac fallback)
+    public func convertUprightPointToLayerPoint(_ uprightPoint: CGPoint, in screenSize: CGSize) -> CGPoint {
+        if let previewLayer = self.previewLayer, previewLayer.bounds.width > 0 && previewLayer.bounds.height > 0 {
+            let devPt = CompositionPureCalculations.uprightToCaptureDevicePoint(uprightPoint)
+            let layerPt = previewLayer.layerPointConverted(fromCaptureDevicePoint: devPt)
+            if layerPt.x.isFinite && layerPt.y.isFinite {
+                return layerPt
+            }
+        }
+        let aspect = SpatialTrackingEngine.shared.currentBufferAspect
+        return TrackingGeometry.screenPoint(uprightPoint, size: screenSize, aspect: aspect)
     }
 
     public func cancelAIZoomForGesture() {
@@ -1342,6 +1353,7 @@ public final class CameraViewModel: ObservableObject {
             if self.isPinchingZoom {
                 self.selectedZoomPreset = self.resolveClosestZoomPreset(for: disp)
             }
+            SpatialTrackingEngine.shared.updateCameraFieldOfView(self.cameraService.effectiveVideoFieldOfView)
             SpatialTrackingEngine.shared.updateZoomFactor(disp)
             self.finishManualZoomIfSettled(zoom)
         }
@@ -1444,6 +1456,7 @@ public final class CameraViewModel: ObservableObject {
                 self.isSwitchingCamera = false
                 if success {
                     self.proVideoService.syncHardwareCapabilities()
+                    SpatialTrackingEngine.shared.updateCameraFieldOfView(self.cameraService.effectiveVideoFieldOfView)
                     self.haptics.triggerSelectionChange()
                 }
                 completion(success)
@@ -2633,7 +2646,7 @@ public final class CameraViewModel: ObservableObject {
     private func canZoomCurrentSubject(to target: CGFloat) -> Bool {
         guard let box = currentSubjectCropBox,
               displayZoom > 0, target > 0 else { return false }
-        let k = latestOpticalCalibration ?? TrackingCalibration.fallback(zoom: Double(displayZoom))
+        let k = latestOpticalCalibration ?? TrackingCalibration.fallback(fovLongDegrees: cameraService.effectiveVideoFieldOfView, zoom: Double(displayZoom))
         let ratio = target / displayZoom
         let cx = CGFloat(k.cx), cy = CGFloat(k.cy)
         return cx + (box.minX - cx) * ratio >= 0.015 &&
@@ -2767,7 +2780,7 @@ public final class CameraViewModel: ObservableObject {
                     latestOpticalPoint = point
                     latestOpticalFrameTimestamp = CACurrentMediaTime()
                     latestOpticalBox = CGRect(x: max(0, point.x - 0.08), y: max(0, point.y - 0.08), width: 0.16, height: 0.16)
-                    latestOpticalCalibration = latestOpticalCalibration ?? TrackingCalibration.fallback(zoom: Double(displayZoom))
+                    latestOpticalCalibration = latestOpticalCalibration ?? TrackingCalibration.fallback(fovLongDegrees: cameraService.effectiveVideoFieldOfView, zoom: Double(displayZoom))
                     alignmentGate.reset()
                     lastFailedCaptureOpticalTimestamp = -.infinity
                     lastFailedCaptureAttemptTime = -.infinity

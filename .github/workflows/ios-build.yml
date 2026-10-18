@@ -51,6 +51,8 @@ jobs:
       - name: Run native composition regressions
         run: |
           xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/CompositionTuning.swift \
+            AISmartFramingCamera/Services/CompositionPureCalculations.swift \
             AISmartFramingCamera/Services/TrackingGeometry.swift \
             AISmartFramingCamera/Services/CompositionPlanning.swift \
             AISmartFramingCamera/Services/CompositionImageEvidence.swift \
@@ -82,6 +84,8 @@ jobs:
       - name: Run native capture transition regressions
         run: |
           xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/CompositionTuning.swift \
+            AISmartFramingCamera/Services/CompositionPureCalculations.swift \
             AISmartFramingCamera/Services/TrackingGeometry.swift \
             tests/CaptureTransitionRegression.swift \
             -o "$RUNNER_TEMP/capture-transition-regressions"

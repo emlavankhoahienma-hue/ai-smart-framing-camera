@@ -21,10 +21,22 @@ public struct TrackingCalibration: Sendable {
         self.aspect = aspect; self.isMeasured = isMeasured
     }
 
-    public static func fallback(zoom: Double = 1, aspect: Double = 0.75) -> Self {
-        let fx = 0.5 / tan(65 * .pi / 360) * max(0.1, zoom)
-        return Self(fx: fx, fy: fx * aspect, cx: 0.5, cy: 0.5,
+    public static func fallback(
+        fovLongDegrees: Double = CompositionTuning.defaultCameraFOVWide,
+        zoom: Double = 1,
+        aspect: Double = CompositionTuning.fallbackBufferAspectRatio
+    ) -> Self {
+        let intrinsics = CompositionPureCalculations.calculateIntrinsics(
+            fovLongDegrees: fovLongDegrees,
+            aspect: aspect,
+            zoom: zoom
+        )
+        return Self(fx: intrinsics.fx, fy: intrinsics.fy, cx: intrinsics.cx, cy: intrinsics.cy,
                     aspect: aspect, isMeasured: false)
+    }
+
+    public static func fallback(zoom: Double, aspect: Double) -> Self {
+        return fallback(fovLongDegrees: CompositionTuning.defaultCameraFOVWide, zoom: zoom, aspect: aspect)
     }
 
     public var isValid: Bool {
@@ -80,7 +92,7 @@ public struct TrackingFrameContext: Sendable {
         self.displayZoom = displayZoom
     }
 
-    static func read(_ sample: CMSampleBuffer, zoom: Double) -> Self? {
+    static func read(_ sample: CMSampleBuffer, zoom: Double, fovLongDegrees: Double? = nil) -> Self? {
         guard let buffer = CMSampleBufferGetImageBuffer(sample) else { return nil }
         let width = Double(CVPixelBufferGetWidth(buffer))
         let height = Double(CVPixelBufferGetHeight(buffer))
@@ -90,7 +102,8 @@ public struct TrackingFrameContext: Sendable {
         // Reject another clock domain instead of silently treating arrival as PTS.
         guard width > 0, height >= width, timestamp.isFinite,
               now - timestamp >= -0.05, now - timestamp < 2 else { return nil }
-        var k = TrackingCalibration.fallback(zoom: zoom, aspect: width / height)
+        let effectiveFov = fovLongDegrees ?? CompositionTuning.defaultCameraFOVWide
+        var k = TrackingCalibration.fallback(fovLongDegrees: effectiveFov, zoom: zoom, aspect: width / height)
         if let data = CMGetAttachment(sample,
                     key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix,
                     attachmentModeOut: nil) as? Data,

@@ -335,7 +335,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
     public func processVideoSampleBuffer(_ sampleBuffer: CMSampleBuffer,
                                          orientation: CGImagePropertyOrientation = .up) {
         let frame = orientation == .up ? TrackingFrameContext.read(sampleBuffer,
-            zoom: SpatialTrackingEngine.shared.currentDisplayZoom) : nil
+            zoom: SpatialTrackingEngine.shared.currentDisplayZoom,
+            fovLongDegrees: SpatialTrackingEngine.shared.currentCameraFOV) : nil
         processVideoSampleBuffer(sampleBuffer, orientation: orientation, frameContext: frame)
     }
 
@@ -1089,12 +1090,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 cancellation: CompositionAnalysisCancellation()
             )
             for c in yoloCandidates where c.confidence >= 0.45 {
-                let vBox = CGRect(
-                    x: max(0.0, min(1.0, c.boundingBox.minX)),
-                    y: max(0.0, min(1.0, 1.0 - c.boundingBox.maxY)),
-                    width: max(0.01, min(1.0, c.boundingBox.width)),
-                    height: max(0.01, min(1.0, c.boundingBox.height))
-                )
+                let vBox = CompositionPureCalculations.uprightToVisionRect(c.boundingBox)
                 candidates.append((vBox, c.category, c.confidence))
             }
         }
@@ -1293,12 +1289,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         if (try? handler.perform(visionRequests)) != nil {
             if let faces = faceRequest.results {
                 for face in faces where face.confidence >= 0.45 {
-                    let rect = CGRect(
-                        x: face.boundingBox.minX,
-                        y: 1.0 - face.boundingBox.maxY,
-                        width: face.boundingBox.width,
-                        height: face.boundingBox.height
-                    )
+                    let rect = CompositionPureCalculations.visionToUprightRect(face.boundingBox)
                     guard rect.width >= 0.035, rect.height >= 0.035, rect.width <= 0.95, rect.height <= 0.95 else { continue }
                     candidates.append(LiveDetectedEntity(
                         rect: rect,
@@ -1312,12 +1303,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
             if let humans = humanRequest.results {
                 for obs in humans where obs.confidence >= 0.50 {
-                    let rect = CGRect(
-                        x: obs.boundingBox.minX,
-                        y: 1.0 - obs.boundingBox.maxY,
-                        width: obs.boundingBox.width,
-                        height: obs.boundingBox.height
-                    )
+                    let rect = CompositionPureCalculations.visionToUprightRect(obs.boundingBox)
                     guard rect.width >= 0.05, rect.height >= 0.05, rect.width <= 0.95, rect.height <= 0.95 else { continue }
                     candidates.append(LiveDetectedEntity(
                         rect: rect,
@@ -1332,12 +1318,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 for obs in animals where obs.confidence >= 0.50 {
                     let topLabel = obs.labels.first?.identifier.lowercased() ?? ""
                     let name = topLabel.contains("cat") ? "Mèo" : (topLabel.contains("dog") ? "Chó" : "Thú cưng")
-                    let rect = CGRect(
-                        x: obs.boundingBox.minX,
-                        y: 1.0 - obs.boundingBox.maxY,
-                        width: obs.boundingBox.width,
-                        height: obs.boundingBox.height
-                    )
+                    let rect = CompositionPureCalculations.visionToUprightRect(obs.boundingBox)
                     guard rect.width >= 0.05, rect.height >= 0.05, rect.width <= 0.95, rect.height <= 0.95 else { continue }
                     candidates.append(LiveDetectedEntity(
                         rect: rect,
