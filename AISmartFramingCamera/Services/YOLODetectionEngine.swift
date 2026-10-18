@@ -43,8 +43,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             config.computeUnits = computeUnits
             config.allowLowPrecisionAccumulationOnGPU = true
             let mlModel = try MLModel(contentsOf: url, configuration: config)
-            let outputs = mlModel.modelDescription.outputDescriptionsByName
-            let isDedicated = outputs["coordinates"] != nil && outputs["confidence"] != nil
+            let isDedicated = name.hasPrefix("yolov26") || name.hasPrefix("yolo26")
             let vnModel = isDedicated ? nil : try? VNCoreMLModel(for: mlModel)
             return (vnModel, mlModel, isDedicated)
         } catch {
@@ -78,10 +77,6 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         let process = ProcessInfo.processInfo
         if process.thermalState == .serious || process.thermalState == .critical || process.isLowPowerModeEnabled {
             return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
-        }
-        let (nativeModel, isDedicated) = modelLock.withLock { (yoloNativeMLModel, isDedicatedYOLO26ANE) }
-        if isDedicated, let nativeModel {
-            return detectWithDedicatedANE(model: nativeModel, pixelBuffer: pixelBuffer, cancellation: cancellation)
         }
         return autoreleasepool {
             guard !cancellation.isCancelled else { return [] }
@@ -124,9 +119,22 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         conf: MLMultiArray,
         cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
-        guard coords.shape.count >= 3, conf.shape.count >= 3 else { return [] }
-        let numBoxes = coords.shape[1].intValue
-        let numClasses = conf.shape[2].intValue
+        let numBoxes: Int
+        let numClasses: Int
+        if coords.shape.count >= 3 {
+            numBoxes = coords.shape[1].intValue
+        } else if coords.shape.count == 2 {
+            numBoxes = coords.shape[0].intValue
+        } else {
+            return []
+        }
+        if conf.shape.count >= 3 {
+            numClasses = conf.shape[2].intValue
+        } else if conf.shape.count == 2 {
+            numClasses = conf.shape[1].intValue
+        } else {
+            return []
+        }
         guard numBoxes > 0, numClasses > 0 else { return [] }
         var candidates: [NeuralSubjectCandidate] = []
         let threshold: Float = 0.45
