@@ -2039,7 +2039,7 @@ public final class CameraViewModel: ObservableObject {
         guard let receipt = analysis.receipt,
               receipt.belongs(to: localAnalysisRequestID, timestamp: source.frame.timestamp) else { return }
         localAnalysisSummary = receipt.usedSpecialist ?
-            String(format: "%d khung · %d lượt Charm · %.1f giây", receipt.assessedFrames, receipt.modernAssessments, receipt.elapsed) :
+            String(format: "%d khung · AI tối ưu · %.2f giây", receipt.assessedFrames, receipt.elapsed) :
             "Chưa hoàn tất mô hình bố cục"
         CameraLogger.info("Composition request \(receipt.requestID): frame=\(receipt.sourceTimestamp), assessments=\(receipt.assessedFrames), seconds=\(receipt.elapsed)", category: .ai)
         localAnalysisCompletedAt = CACurrentMediaTime()
@@ -2082,12 +2082,13 @@ public final class CameraViewModel: ObservableObject {
         } else {
             activeEngineSource = .appleNeuralEngine(scene: output.detectedScene.localizedName)
         }
-        // AI decides the best photographic composition and zoom; accept the top plan directly
-        if let first = localCompositionChoices.first,
+        // AI decides the best photographic composition and zoom; accept the active photographic plan directly
+        let activeChoice = localCompositionChoices.first(where: { !$0.preservesOriginalFrame }) ?? localCompositionChoices.first
+        if let first = activeChoice,
            CACurrentMediaTime() - source.frame.timestamp <= 30,
            first.plan.confidence >= first.plan.minimumAutoselectConfidence {
             acceptLocalPlan(first.plan, source: source)
-        } else if let first = localCompositionChoices.first,
+        } else if let first = activeChoice,
                   CACurrentMediaTime() - source.frame.timestamp <= 30 {
             acceptLocalPlan(first.plan, source: source)
         } else if let first = localEvidenceCandidates.first {

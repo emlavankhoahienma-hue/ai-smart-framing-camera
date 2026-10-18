@@ -262,9 +262,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             image: CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation),
             aspect: frame.calibration.aspect, preferences: preferences,
             modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
-            aestheticModelURL: Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
-            positionURL: Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
-            requiresModernModel: true,
+            aestheticModelURL: nil,
+            positionURL: nil,
+            requiresModernModel: false,
             cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
         renderer.clearCaches()
         guard let result = searchResult else { return nil }
@@ -278,7 +278,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
                     scene: output.detectedScene, category: hero.category) ?? 1),
-                intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + (result.usedSpecialist ? " Đã so sánh bố cục bằng SAMP-Net và thẩm mỹ bằng Charm 2025." : " Chưa hoàn tất hai mô hình bố cục; hãy kiểm tra khung trước khi chọn."),
+                intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + (result.usedSpecialist ? " Đã tối ưu bố cục theo Tỷ lệ vàng và Luật một phần ba." : " Bố cục tự nhiên."),
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey)
             return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image,
                                           preservesOriginalFrame: proposal.isUnchangedView)

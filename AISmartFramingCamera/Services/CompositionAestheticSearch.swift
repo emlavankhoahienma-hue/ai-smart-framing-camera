@@ -44,9 +44,17 @@ final class CompositionAestheticSearch {
                     if let assessment {
                         assessedCount += 1
                         // Expected expert rating is not detector confidence.
-                        proposal.score = 0.78 * (assessment.mean - 1) / 4 + 0.22 * candidate.score
+                        proposal.score = 0.50 * (assessment.mean - 1) / 4 + 0.50 * candidate.score
                     } else if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
                         proposal.score += aesthetic * 0.075
+                    }
+                    if !proposal.isUnchangedView {
+                        let thirdX = min(abs(Double(proposal.aimPoint.x) - 0.382), abs(Double(proposal.aimPoint.x) - 0.618))
+                        let thirdY = min(abs(Double(proposal.aimPoint.y) - 0.382), abs(Double(proposal.aimPoint.y) - 0.618))
+                        proposal.score += 0.055 * exp(-12 * (thirdX * thirdX + thirdY * thirdY))
+                        if proposal.zoom > 1.05 {
+                            proposal.score += 0.020
+                        }
                     }
                     proposal.score += min(0.01, max(-0.01, preferences[proposal.preferenceKey] ?? 0))
                     return View(proposal: proposal, image: preview, assessment: assessment,
@@ -140,13 +148,19 @@ final class CompositionAestheticSearch {
         // Compare the two models jointly. A fixed SAMP-only 0.10/0.12-rating
         // veto prevented useful zoom even when the aesthetic model preferred it.
         let eligible = evaluated.filter { view in
+            if view.proposal.isUnchangedView { return true }
             guard usedSpecialist, let baseline, let originalZoom else { return true }
-            if view.proposal.isUnchangedView || view.proposal.zoom <= originalZoom * 1.08 { return true }
-            guard let composition = view.assessment, let aesthetics = view.aesthetics,
-                  let originalComposition = baseline.assessment, let originalAesthetics = baseline.aesthetics else { return false }
-            return CompositionPreferencePolicy.prefersCrop(score: view.proposal.score, original: baseline.proposal.score) &&
-                CompositionPreferencePolicy.consistent(composition: composition.mean, aesthetics: aesthetics.mean,
-                    originalComposition: originalComposition.mean, originalAesthetics: originalAesthetics.mean)
+            if view.proposal.zoom <= originalZoom * 1.08 { return true }
+            guard let composition = view.assessment, let originalComposition = baseline.assessment else {
+                return view.proposal.score >= (baseline.proposal.score - 0.05)
+            }
+            if let aesthetics = view.aesthetics, let originalAesthetics = baseline.aesthetics {
+                return CompositionPreferencePolicy.prefersCrop(score: view.proposal.score, original: baseline.proposal.score) &&
+                    CompositionPreferencePolicy.consistent(composition: composition.mean, aesthetics: aesthetics.mean,
+                        originalComposition: originalComposition.mean, originalAesthetics: originalAesthetics.mean)
+            }
+            return composition.mean >= originalComposition.mean - 0.35 &&
+                   view.proposal.score >= baseline.proposal.score - 0.05
         }
         var selected = CompositionPlanner.diverse(eligible.map(\.proposal), limit: 3).compactMap { proposal in
             eligible.first { $0.proposal.sourceCorners == proposal.sourceCorners &&
@@ -170,8 +184,7 @@ final class CompositionAestheticSearch {
                         abs(log(Double($0.proposal.zoom / best.proposal.zoom))) < 0.12
                 }
                 robust = (nearby.filter { $0.proposal.score >= best.proposal.score - 0.035 }.count >= 1 ||
-                          best.proposal.score >= (baseline?.proposal.score ?? 0) + 0.015) &&
-                    baseline.map { CompositionPreferencePolicy.prefersCrop(score: best.proposal.score, original: $0.proposal.score) } == true
+                          best.proposal.score >= (baseline?.proposal.score ?? 0) - 0.02)
             }
         }
         if let best = selected.first, selected.count > 1 {
@@ -205,6 +218,6 @@ enum CompositionPreferencePolicy {
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {
-        score.isFinite && original.isFinite && score >= original + 0.008
+        score.isFinite && original.isFinite && score >= original - 0.02
     }
 }
