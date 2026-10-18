@@ -11,8 +11,9 @@ enum CaptureViewportRegression {
     }
 
     static func main() throws {
-        for source in [CGFloat(3.0 / 4), 9.0 / 16, 1] {
-            for target in [CGFloat(3.0 / 4), 9.0 / 16, 1] {
+        let aspects: [CGFloat] = [3.0 / 4, 9.0 / 16, 1]
+        for source in aspects {
+            for target in aspects {
                 for focal in [28.0, 35, 50, 85, 135] {
                     for center in [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1)] {
                         guard let crop = CaptureViewportGeometry.crop(focalLength: focal, baseZoom: 1,

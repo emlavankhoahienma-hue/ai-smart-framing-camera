@@ -1,10 +1,45 @@
 import Foundation
 import AVFoundation
 import CoreImage
+import os
 
 /// Always render from the original recording. Crop coordinates refer to its
 /// upright image, after AVFoundation applies the track's preferred transform.
 enum VideoFrameRenderer {
+    /// AVAssetExportSession predates Sendable. Its setup finishes before this
+    /// owner starts; every subsequent operation is serialized on this queue.
+    private final class ExportOperation: @unchecked Sendable {
+        private let session: AVAssetExportSession
+        private let queue = DispatchQueue(label: "com.alignai.video-export")
+        private var cancelled = false
+        private var started = false
+        private var finished = false
+
+        init(session: AVAssetExportSession) { self.session = session }
+
+        func start(_ continuation: CheckedContinuation<Void, Error>) {
+            queue.async {
+                guard !self.cancelled else { continuation.resume(throwing: CancellationError()); return }
+                self.started = true
+                self.session.exportAsynchronously {
+                    self.queue.async {
+                        self.finished = true
+                        if self.cancelled { continuation.resume(throwing: CancellationError()) }
+                        else if self.session.status == .completed { continuation.resume() }
+                        else { continuation.resume(throwing: self.session.error ?? CocoaError(.fileWriteUnknown)) }
+                    }
+                }
+            }
+        }
+
+        func cancel() {
+            queue.async {
+                self.cancelled = true
+                if self.started && !self.finished { self.session.cancelExport() }
+            }
+        }
+    }
+
     struct Window: Sendable {
         let focalLength: Double
         let baseZoom: CGFloat
@@ -64,11 +99,18 @@ enum VideoFrameRenderer {
         session.outputURL = url
         session.outputFileType = .mov
         session.shouldOptimizeForNetworkUse = true
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            session.exportAsynchronously {
-                if session.status == .completed { continuation.resume() }
-                else { continuation.resume(throwing: session.error ?? CocoaError(.fileWriteUnknown)) }
+        let operation = ExportOperation(session: session)
+        do {
+            try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                try await withCheckedThrowingContinuation { operation.start($0) }
+            } onCancel: { operation.cancel() }
+        } catch {
+            if FileManager.default.fileExists(atPath: url.path) {
+                do { try FileManager.default.removeItem(at: url) }
+                catch { Logger(subsystem: "com.aismartframing.camera", category: "Video").error("Export cleanup failed: \(error.localizedDescription, privacy: .public)") }
             }
+            throw error
         }
     }
 }

@@ -58,7 +58,7 @@ public struct CameraPreviewView: UIViewRepresentable {
             }
 
             let normalizedPoint = TrackingGeometry.bufferPoint(location, size: view.bounds.size,
-                aspect: SpatialTrackingEngine.shared.currentBufferAspect)
+                aspect: parent.viewModel.captureMode.isVideo ? 9.0 / 16.0 : SpatialTrackingEngine.shared.currentBufferAspect)
             let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location)
             parent.viewModel.userDidTapToFocus(at: normalizedPoint, devicePoint: devicePoint)
             if parent.viewModel.captureMode.isVideo { view.showFocusRing(at: location) }
@@ -83,7 +83,7 @@ public struct CameraPreviewView: UIViewRepresentable {
             guard gesture.state == .began, let view = gesture.view as? PreviewContainerView else { return }
             let location = gesture.location(in: view)
             let normalizedPoint = TrackingGeometry.bufferPoint(location, size: view.bounds.size,
-                aspect: SpatialTrackingEngine.shared.currentBufferAspect)
+                aspect: parent.viewModel.captureMode.isVideo ? 9.0 / 16.0 : SpatialTrackingEngine.shared.currentBufferAspect)
             guard let devicePoint = view.previewLayer?.captureDevicePointConverted(fromLayerPoint: location) else { return }
             parent.viewModel.lockAEAF(at: normalizedPoint, devicePoint: devicePoint)
             view.showFocusRing(at: location, persist: true)

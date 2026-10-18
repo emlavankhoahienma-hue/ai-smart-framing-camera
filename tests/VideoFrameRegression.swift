@@ -80,7 +80,8 @@ enum VideoFrameRegression {
             try await source(at: original, fps: fps)
             let sourceImage = try await snapshot(original)
             try require(sourceImage.width == 360 && sourceImage.height == 640, "Source orientation is wrong")
-            for aspect in [CGFloat(9.0 / 16), 1, 3.0 / 4] {
+            let aspects: [CGFloat] = [9.0 / 16, 1, 3.0 / 4]
+            for aspect in aspects {
                 let asset = AVURLAsset(url: original)
                 let window = VideoFrameRenderer.Window(focalLength: 48, baseZoom: 1,
                     outputAspect: aspect, center: CGPoint(x: 0.32, y: 0.68))

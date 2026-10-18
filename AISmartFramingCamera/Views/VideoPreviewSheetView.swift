@@ -198,7 +198,10 @@ public struct VideoPreviewSheetView: View {
                 try Task.checkCancellation()
                 let output = FileManager.default.temporaryDirectory.appendingPathComponent("rendered_\(UUID().uuidString).mov")
                 try await VideoFrameRenderer.export(asset: asset, composition: composition, to: output)
-                try Task.checkCancellation()
+                if Task.isCancelled {
+                    try FileManager.default.removeItem(at: output)
+                    throw CancellationError()
+                }
                 player?.pause()
                 processedVideoURL = output
                 hasAppliedColor = applyColor
