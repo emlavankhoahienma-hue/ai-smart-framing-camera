@@ -253,7 +253,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 protectedBounds: hero.companionBounds,
                 incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) } +
                     output.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox),
-                proposalLimit: seeds.isEmpty ? (constrained ? 24 : 36) : 18, refining: seeds,
+                proposalLimit: seeds.isEmpty ? (constrained ? 16 : 20) : (constrained ? 8 : 10), refining: seeds,
                 isCancelled: { cancellation.isCancelled })
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")

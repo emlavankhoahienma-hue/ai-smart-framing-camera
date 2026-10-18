@@ -96,7 +96,7 @@ final class CompositionAestheticSearch {
             for index in zoomed.prefix(4) { include(index) }
             let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
                 ProcessInfo.processInfo.physicalMemory < 6_000_000_000 || ProcessInfo.processInfo.thermalState == .serious
-            let budget = constrained ? 12 : 18
+            let budget = constrained ? 4 : 6
             for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
                 if indices.count >= budget { break }
                 include(index)
@@ -182,7 +182,7 @@ final class CompositionAestheticSearch {
             robust = robust && (nearlySame || best.proposal.score - alternative.proposal.score >= 0.015)
         }
         return Result(views: selected, assessedCount: assessedCount,
-                      canAutoselect: usedSpecialist && robust && assessedCount >= 12, usedSpecialist: usedSpecialist,
+                      canAutoselect: usedSpecialist && robust && assessedCount >= 10, usedSpecialist: usedSpecialist,
                       modernAssessmentCount: modernCount)
     }
 }

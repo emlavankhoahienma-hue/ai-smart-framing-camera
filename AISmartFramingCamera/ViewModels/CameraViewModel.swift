@@ -2107,7 +2107,17 @@ public final class CameraViewModel: ObservableObject {
             } else {
                 aimPoint = first.center
             }
-            pinTargetAndStartMotion(at: aimPoint, subjectRect: first.boundingBox, source: source)
+            var liveAim = aimPoint
+            let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: aimPoint))
+            if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
+               let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
+                    ?? SpatialTrackingEngine.shared.latestPose() {
+                let proj = currentFrame.calibration.project(deviceRay: currentPose.inverse.act(worldRay))
+                if proj.point.x.isFinite, proj.point.y.isFinite {
+                    liveAim = proj.point
+                }
+            }
+            pinTargetAndStartMotion(at: liveAim, subjectRect: first.boundingBox, source: source, pinnedGuideRay: worldRay)
             localTrackingSource = nil
             localSelectionMessage = nil
         } else {
@@ -2195,14 +2205,24 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func acceptLocalPlan(_ plan: LocalFramingPlan, source: AITrackingSource) {
-        let dx = plan.aimPointInSource.x - 0.5
-        let dy = plan.aimPointInSource.y - 0.5
+        var liveAimPoint = plan.aimPointInSource
+        if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
+           let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
+                ?? SpatialTrackingEngine.shared.latestPose() {
+            let projectedAim = currentFrame.calibration.project(
+                deviceRay: currentPose.inverse.act(plan.aimWorldRay))
+            if projectedAim.point.x.isFinite, projectedAim.point.y.isFinite {
+                liveAimPoint = projectedAim.point
+            }
+        }
+        let dx = liveAimPoint.x - 0.5
+        let dy = liveAimPoint.y - 0.5
         let distance = hypot(dx, dy)
         let angle = atan2(dy, dx) * 180 / .pi
         activeCompositionRule = plan.usesCenter ? .centerSymmetry : .ruleOfThirds
         localCompositionIntent = plan.intent
         localCompositionExplanation = plan.explanation
-        framingResult = FramingTargetResult(targetPoint: plan.aimPointInSource,
+        framingResult = FramingTargetResult(targetPoint: liveAimPoint,
             currentCenter: CGPoint(x: 0.5, y: 0.5),
             offsetVector: CGVector(dx: dx, dy: dy), distance: distance,
             angleDegrees: angle < 0 ? angle + 360 : angle,
@@ -2221,7 +2241,7 @@ public final class CameraViewModel: ObservableObject {
         localSelectionMessage = nil
         // Unified reticle tracks the photographic composition aim directly.
         // Legacy: trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay
-        pinTargetAndStartMotion(at: plan.aimPointInSource,
+        pinTargetAndStartMotion(at: liveAimPoint,
             subjectRect: plan.subjectRect, source: source,
             trackedPoint: nil, pinnedGuideRay: plan.aimWorldRay)
         if let seed = pinTrackingBox {

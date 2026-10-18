@@ -45,3 +45,6 @@ CharmPositionEmbedding.bin
 SigLIPModelManifest.json
 SigLIPPrompts.json
 
+# Build artifacts
+build_artifacts/
+
