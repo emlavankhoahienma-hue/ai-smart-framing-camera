@@ -1468,6 +1468,12 @@ public final class CameraService: NSObject {
         }
 
         if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+        if connection.isVideoMirroringSupported {
+            // Match the front preview and photo output so an off-center window
+            // selects the same side of the saved movie as the visible viewfinder.
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = currentCameraPosition == .front
+        }
         if connection.isVideoStabilizationSupported {
             if camera.activeFormat.isVideoStabilizationModeSupported(.standard) {
                 connection.preferredVideoStabilizationMode = .standard
