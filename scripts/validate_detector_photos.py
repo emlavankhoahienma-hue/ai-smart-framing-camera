@@ -22,7 +22,7 @@ for name in ("yolo12n", "yolo12s"):
     with (bundle / "Info.plist").open("wb") as stream:
         plistlib.dump({"CFBundleExecutable": executable.name, "CFBundleIdentifier": "com.alignai.validation." + name,
                        "CFBundlePackageType": "APPL"}, stream)
-    files = ["CompositionTuning.swift", "CompositionPureCalculations.swift",
+    files = ["CompositionTuning.swift", "CompositionPureCalculations.swift", "CompositionExperiments.swift",
              "TrackingGeometry.swift", "CompositionPlanning.swift", "CompositionImageEvidence.swift",
              "YOLODetectionEngine.swift", "CameraLogger.swift"]
     subprocess.run(["xcrun", "swiftc", "-O", "-warnings-as-errors",

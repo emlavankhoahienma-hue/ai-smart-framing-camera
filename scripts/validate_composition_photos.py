@@ -71,7 +71,7 @@ if not args.parity_only:
 with (bundle / "Info.plist").open("wb") as stream:
     plistlib.dump({"CFBundleExecutable": executable.name, "CFBundleIdentifier": "com.alignai.validation.composition",
                    "CFBundlePackageType": "APPL"}, stream)
-files = ["CompositionTuning.swift", "CompositionPureCalculations.swift",
+files = ["CompositionTuning.swift", "CompositionPureCalculations.swift", "CompositionExperiments.swift",
          "TrackingGeometry.swift", "CompositionPlanning.swift", "CompositionImageEvidence.swift",
          "PhotographicCompositionModel.swift", "CharmPhotographicModel.swift", "PortraitFramingEvidence.swift",
          "CompositionAestheticSearch.swift", "YOLODetectionEngine.swift", "CameraLogger.swift"]
