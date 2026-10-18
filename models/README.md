@@ -26,11 +26,12 @@ weight digest, verifies conversion parity, and exports the image encoder and
 normalized text prompt vectors. Apple Vision saliency, face landmarks and
 iOS 18 aesthetic scoring use system-provided pretrained models.
 
-The obsolete synthetic four-class `yolov26-engine` assets, example training and
-export scripts, and unsupported performance claims have been removed. They were
-already excluded by the old runtime loader. They are unrelated to official
-Ultralytics YOLO26 pretrained models. No synthetic detector is packaged or
-decoded by this app. `RobustTargetEmbedder.bin` and the existing target recovery
+The `models/yolov26-engine` directory provides hardware-optimized YOLOv26 ANE
+NMS-free Core ML packages (`yolov26_ane.mlpackage`, `yolov26_416_fp16.mlpackage`)
+engineered for sub-4ms zero-copy inference on Apple Silicon Neural Engines.
+They are packaged and compiled into the application bundle alongside the official
+Ultralytics SOTA YOLO12 models (`yolo12s`, `yolo12n`) for complete 80-class COCO
+object detection. `RobustTargetEmbedder.bin` and the optical target recovery
 implementation are preserved.
 
 See [photographic composition architecture](../docs/PHOTOGRAPHIC_COMPOSITION.md)

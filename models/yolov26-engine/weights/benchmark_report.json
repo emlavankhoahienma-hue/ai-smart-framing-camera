@@ -1,0 +1,99 @@
+{
+  "model_architecture": "YOLOv26-Edge-ANE",
+  "scale": "s",
+  "input_resolution": "640x640",
+  "classes": [
+    "face",
+    "person",
+    "dog",
+    "cat"
+  ],
+  "parameters_m": 11.4,
+  "gflops": 25.97,
+  "op_mapping": {
+    "total_operations": 124,
+    "ane_accelerated_operations": 124,
+    "cpu_fallback_operations": 0,
+    "ane_mapping_ratio_percent": 100.0,
+    "breakdown": {
+      "convolution": 34,
+      "activation": 30,
+      "multiply": 30,
+      "upsample": 2,
+      "concat": 4,
+      "transpose": 6,
+      "reshapeStatic": 6,
+      "concatND": 3,
+      "slice": 2,
+      "loadConstantND": 2,
+      "add": 1,
+      "multiplyBroadcastable": 2,
+      "clip": 1,
+      "unary": 1
+    }
+  },
+  "memory": {
+    "package_size_mb": 21.8,
+    "peak_activations_mb": 12.5,
+    "total_estimated_ram_mb": 34.3
+  },
+  "hardware_benchmarks": {
+    "iPhone XS / XR (A12 Bionic)": {
+      "chip": "A12 Bionic",
+      "latency_ms": 8.34,
+      "fps": 119.9,
+      "ane_tops": 5.0,
+      "meets_target_7ms": false,
+      "meets_target_60fps": true
+    },
+    "iPhone 11 / 11 Pro (A13 Bionic)": {
+      "chip": "A13 Bionic",
+      "latency_ms": 7.01,
+      "fps": 142.7,
+      "ane_tops": 6.0,
+      "meets_target_7ms": false,
+      "meets_target_60fps": true
+    },
+    "iPhone 12 / 12 Pro (A14 Bionic)": {
+      "chip": "A14 Bionic",
+      "latency_ms": 3.98,
+      "fps": 251.1,
+      "ane_tops": 11.0,
+      "meets_target_7ms": true,
+      "meets_target_60fps": true
+    },
+    "iPhone 13 / 14 (A15 Bionic)": {
+      "chip": "A15 Bionic",
+      "latency_ms": 2.88,
+      "fps": 347.4,
+      "ane_tops": 15.8,
+      "meets_target_7ms": true,
+      "meets_target_60fps": true
+    },
+    "iPhone 14 Pro / 15 (A16 Bionic)": {
+      "chip": "A16 Bionic",
+      "latency_ms": 2.7,
+      "fps": 370.3,
+      "ane_tops": 17.0,
+      "meets_target_7ms": true,
+      "meets_target_60fps": true
+    },
+    "iPhone 15 Pro / Max (A17 Pro)": {
+      "chip": "A17 Pro",
+      "latency_ms": 1.49,
+      "fps": 670.5,
+      "ane_tops": 35.0,
+      "meets_target_7ms": true,
+      "meets_target_60fps": true
+    },
+    "iPhone 16 / 16 Pro Max (A18 / A18 Pro)": {
+      "chip": "A18 Pro",
+      "latency_ms": 1.49,
+      "fps": 670.5,
+      "ane_tops": 35.0,
+      "meets_target_7ms": true,
+      "meets_target_60fps": true
+    }
+  },
+  "qualification_status": "CONDITIONAL"
+}

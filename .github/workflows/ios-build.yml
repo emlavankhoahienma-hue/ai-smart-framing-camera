@@ -93,6 +93,16 @@ jobs:
           pip install --upgrade pip
           pip install "torch==2.5.1" "numpy==1.26.4" \
             "ultralytics==8.4.178" "coremltools==9.0"
+          if ! xcrun coremlc compile models/yolov26-engine/weights/yolov26_ane.mlpackage .; then
+            cp models/yolov26-engine/weights/yolov26_ane.mlpackage/Data/com.apple.CoreML/model.mlmodel yolov26_ane.mlmodel
+            xcrun coremlc compile yolov26_ane.mlmodel .
+          fi
+          if ! xcrun coremlc compile models/yolov26-engine/weights/yolov26_416_fp16.mlpackage .; then
+            cp models/yolov26-engine/weights/yolov26_416_fp16.mlpackage/Data/com.apple.CoreML/model.mlmodel yolov26_416_fp16.mlmodel
+            xcrun coremlc compile yolov26_416_fp16.mlmodel .
+          fi
+          test -d yolov26_ane.mlmodelc
+          test -d yolov26_416_fp16.mlmodelc
           curl --fail --location --retry 3 \
             https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12n.pt \
             --output yolo12n.pt
@@ -227,6 +237,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Release-iphoneos/AISmartFramingCamera.app Payload/
+          test -d yolov26_ane.mlmodelc
+          test -d yolov26_416_fp16.mlmodelc
+          cp -r yolov26_ane.mlmodelc Payload/AISmartFramingCamera.app/
+          cp -r yolov26_416_fp16.mlmodelc Payload/AISmartFramingCamera.app/
           test -d yolo12n.mlmodelc
           test -d yolo12s.mlmodelc
           cp -r yolo12n.mlmodelc Payload/AISmartFramingCamera.app/
@@ -235,6 +249,8 @@ jobs:
             cp AISmartFramingCamera/Services/RobustTargetEmbedder.bin Payload/AISmartFramingCamera.app/
             echo " Đã tích hợp thành công RobustTargetEmbedder.bin vào App Bundle!"
           fi
+          test -d Payload/AISmartFramingCamera.app/yolov26_ane.mlmodelc
+          test -d Payload/AISmartFramingCamera.app/yolov26_416_fp16.mlmodelc
           test -d Payload/AISmartFramingCamera.app/yolo12n.mlmodelc
           test -d Payload/AISmartFramingCamera.app/yolo12s.mlmodelc
           test -d SigLIPBaseImage.mlmodelc
