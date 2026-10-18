@@ -111,6 +111,13 @@ original into the trained scorer or blindly removing beneficial zooms. It does
 not claim to rate unseen margins: these still require real final recognition.
 The entire photo corpus is rerun after this policy change.
 
+The real bedroom regression also exposed a large-zoom loophole: a small SAMP
+composition-score gain could override both a strong Focal context loss and a flat
+or lower Charm rating. At magnification of at least 1.5x with that crop-preference
+loss, the modern aesthetic expert must show a gain above paired conversion noise.
+Native cases retain the beneficial two-worker crop despite SAMP's lower rating.
+The bedroom source is now included among the early full-model critical regressions.
+
 Reacquisition text is kept in the fixed status HUD. The badge that followed the
 target could intersect the center ring when the target was above it; removing
 that badge leaves both reticle shapes and target coordinates unchanged.

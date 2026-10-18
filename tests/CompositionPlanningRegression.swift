@@ -90,6 +90,18 @@ enum CompositionPlanningRegression {
                 preference: 1, originalPreference: 0, composition: 3,
                 originalComposition: 3, aesthetics: 3, originalAesthetics: 3), "invalid quality evidence was accepted")
         }
+        try run("large context-losing zoom needs modern aesthetic support") {
+            try require(!LearnedFramingPolicy.passesQualityAudit(zoomRatio: 3,
+                preference: -3.3092877864837646, originalPreference: 2.1484475135803223,
+                composition: 2.806558915417685, originalComposition: 2.641033515676749,
+                aesthetics: 2.813345696819836, originalAesthetics: 2.83544228938578),
+                "A small SAMP gain authorized the observed bedroom context loss")
+            try require(LearnedFramingPolicy.passesQualityAudit(zoomRatio: 2.0006388446097896,
+                preference: -2.1245810985565186, originalPreference: 0.8615694046020508,
+                composition: 2.652257257873008, originalComposition: 2.8534961577956857,
+                aesthetics: 3.0910041043011245, originalAesthetics: 2.8559328016484775),
+                "The measured two-worker crop lost a real modern-aesthetic gain")
+        }
         try run("identity camera corners tolerate mixed boundary roundoff") {
             let noise: CGFloat = 0.0000000000000001
             let corners = [CGPoint(x: -noise, y: -noise), CGPoint(x: 1, y: -noise),

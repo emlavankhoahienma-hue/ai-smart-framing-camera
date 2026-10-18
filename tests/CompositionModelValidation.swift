@@ -101,7 +101,7 @@ enum CompositionModelValidation {
         let files = try FileManager.default.contentsOfDirectory(at: photos, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "jpg" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         let renderer = CompositionImageRenderer()
-        var regressions: [(source: URL, optical: CGFloat?)] = ["3433.jpg", "10034.jpg", "113.jpg", "321.jpg"].map {
+        var regressions: [(source: URL, optical: CGFloat?)] = ["3433.jpg", "10034.jpg", "113.jpg", "321.jpg", "3468.jpg"].map {
             (photos.appendingPathComponent("source").appendingPathComponent($0), nil)
         }
         if let option = CommandLine.arguments.firstIndex(of: "--people"), option + 1 < CommandLine.arguments.count {

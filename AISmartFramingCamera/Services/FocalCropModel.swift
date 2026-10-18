@@ -167,13 +167,21 @@ enum LearnedFramingPolicy {
         let noLearnedImprovement = preferenceLoss >= 0.15 &&
             composition - originalComposition < 0.10 && aesthetics - originalAesthetics < 0.10
         let losesLearnedContext = preferenceLoss >= 0.6 && aestheticLoss >= 0.15
+        // A large magnification discards most of the source context. When the
+        // trained crop ranker strongly objects, a small legacy composition-score
+        // increase cannot authorize it without a gain from the modern aesthetic
+        // expert. The 0.08 signal exceeds paired conversion error, not a claimed
+        // probability of a beautiful photograph.
+        let lacksModernSupport = zoomRatio >= 1.5 && preferenceLoss >= 0.6 &&
+            aesthetics - originalAesthetics < 0.08
         // Use the same relative quality weights as final ranking. A small SAMP
         // increase must not hide a much larger Charm decrease at another zoom.
         let qualityLoss = (compositionWeight * (originalComposition - composition) +
             aestheticsWeight * aestheticLoss) / (compositionWeight + aestheticsWeight)
         let losesCombinedQuality = preferenceLoss >= 0.15 && qualityLoss >= 0.15
         let losesBothQualityRatings = originalComposition - composition >= 0.30 && aestheticLoss >= 0.20
-        return !noLearnedImprovement && !losesLearnedContext && !losesCombinedQuality && !losesBothQualityRatings
+        return !noLearnedImprovement && !losesLearnedContext && !lacksModernSupport &&
+            !losesCombinedQuality && !losesBothQualityRatings
     }
 
     static func score(preference: Double, peers: [Double], composition: Double,
