@@ -6,8 +6,12 @@ import contextlib
 import copy
 import json
 import math
+import os
 import platform
 from pathlib import Path
+
+os.environ["TQDM_DISABLE"] = "1"
+os.environ["TQDM_MONITOR_INTERVAL"] = "0"
 
 import coremltools as ct
 import numpy as np

@@ -21,6 +21,9 @@ jobs:
     runs-on: macos-15
     permissions:
       contents: write
+    env:
+      TQDM_DISABLE: "1"
+      TQDM_MONITOR_INTERVAL: "0"
 
     steps:
       - name: Checkout source
