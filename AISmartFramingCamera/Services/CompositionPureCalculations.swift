@@ -223,4 +223,38 @@ public enum CompositionPureCalculations {
         let deviceRay = devicePose.inverse.act(normWorldRay)
         return deviceRayToScreenPoint(ray: deviceRay, fx: fx, fy: fy, cx: cx, cy: cy)
     }
+
+    // MARK: - 6. Quaternion Slerp & Pose Interpolation
+    /// Noi suy phep quay giua 2 pose theo thuat toan slerp voi kiem tra an toan mau so
+    public static func slerpPose(q0: simd_quatd, q1: simd_quatd, t: Double) -> simd_quatd {
+        let clampedT = max(0.0, min(1.0, t))
+        let norm0 = simd_normalize(q0)
+        let norm1 = simd_normalize(q1)
+        return simd_slerp(norm0, norm1, clampedT)
+    }
+
+    /// Noi suy pose tai thoi diem time tu lich su cac mau TrackingMotionSample
+    public static func interpolateHistoricalPose(
+        at time: TimeInterval,
+        samples: [TrackingMotionSample],
+        margin: Double = CompositionTuning.motionInterpolationMargin,
+        minDt: Double = CompositionTuning.motionInterpolationMinDt,
+        maxDt: Double = CompositionTuning.motionInterpolationMaxDt
+    ) -> simd_quatd? {
+        guard let first = samples.first, let last = samples.last,
+              time >= first.timestamp - margin, time <= last.timestamp + margin else { return nil }
+        if time <= first.timestamp { return first.deviceToWorld }
+        if time >= last.timestamp { return last.deviceToWorld }
+        for i in 1..<samples.count where samples[i].timestamp >= time {
+            let a = samples[i - 1], b = samples[i]
+            let dt = b.timestamp - a.timestamp
+            guard dt > minDt, dt < maxDt else {
+                if abs(time - a.timestamp) <= minDt { return a.deviceToWorld }
+                return nil
+            }
+            let t = (time - a.timestamp) / dt
+            return slerpPose(q0: a.deviceToWorld, q1: b.deviceToWorld, t: t)
+        }
+        return nil
+    }
 }

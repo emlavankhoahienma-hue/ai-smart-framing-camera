@@ -44,6 +44,31 @@ final class TrackingGeometryTests: XCTestCase {
         XCTAssertNil(TrackingGeometry.pose(at: 2, in: samples))
     }
 
+    func testPoseInterpolationDivisionByZeroSafety() {
+        let q0 = simd_quatd(angle: 0, axis: SIMD3(0, 1, 0))
+        let q1 = simd_quatd(angle: 0.02, axis: SIMD3(0, 1, 0))
+        // Duplicate timestamps must not crash, divide by zero, or produce NaN
+        let dupSamples = [
+            TrackingMotionSample(timestamp: 1.0, deviceToWorld: q0),
+            TrackingMotionSample(timestamp: 1.0, deviceToWorld: q1)
+        ]
+        let resDup = TrackingGeometry.pose(at: 1.0, in: dupSamples)
+        XCTAssertNotNil(resDup)
+        XCTAssertFalse(resDup!.vector.x.isNaN)
+        XCTAssertFalse(resDup!.vector.y.isNaN)
+        XCTAssertFalse(resDup!.vector.z.isNaN)
+        XCTAssertFalse(resDup!.vector.w.isNaN)
+
+        // Near-duplicate timestamps (< 1e-6)
+        let nearSamples = [
+            TrackingMotionSample(timestamp: 1.0, deviceToWorld: q0),
+            TrackingMotionSample(timestamp: 1.0 + 1e-8, deviceToWorld: q1)
+        ]
+        let resNear = TrackingGeometry.pose(at: 1.0, in: nearSamples)
+        XCTAssertNotNil(resNear)
+        XCTAssertFalse(resNear!.vector.x.isNaN)
+    }
+
     func testAspectFillAndDocking() {
         let size = CGSize(width: 390, height: 844)
         let original = CGPoint(x: -2, y: 1.5)

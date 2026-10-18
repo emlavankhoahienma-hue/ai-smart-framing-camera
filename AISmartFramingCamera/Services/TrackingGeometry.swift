@@ -131,25 +131,20 @@ public struct TrackingFrameContext: Sendable {
     }
 }
 
-struct TrackingMotionSample: Sendable {
-    let timestamp: TimeInterval
+public struct TrackingMotionSample: Sendable {
+    public let timestamp: TimeInterval
     /// Rotation from device coordinates to the CoreMotion reference frame.
-    let deviceToWorld: simd_quatd
+    public let deviceToWorld: simd_quatd
+
+    public init(timestamp: TimeInterval, deviceToWorld: simd_quatd) {
+        self.timestamp = timestamp
+        self.deviceToWorld = deviceToWorld
+    }
 }
 
 enum TrackingGeometry {
     static func pose(at time: TimeInterval, in history: [TrackingMotionSample]) -> simd_quatd? {
-        guard let first = history.first, let last = history.last,
-              time >= first.timestamp - 0.02, time <= last.timestamp + 0.02 else { return nil }
-        if time <= first.timestamp { return first.deviceToWorld }
-        if time >= last.timestamp { return last.deviceToWorld }
-        for i in 1..<history.count where history[i].timestamp >= time {
-            let a = history[i - 1], b = history[i]
-            guard b.timestamp - a.timestamp < 0.1 else { return nil }
-            let t = (time - a.timestamp) / (b.timestamp - a.timestamp)
-            return simd_slerp(a.deviceToWorld, b.deviceToWorld, t)
-        }
-        return nil
+        return CompositionPureCalculations.interpolateHistoricalPose(at: time, samples: history)
     }
 
     static func screenPoint(_ point: CGPoint, size: CGSize, aspect: CGFloat) -> CGPoint {

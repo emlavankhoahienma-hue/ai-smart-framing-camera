@@ -100,6 +100,18 @@ public enum CompositionTuning {
     /// Nguong khoang cach can le an toan khi zoom (margin tu target toi mep)
     public static let edgeSafetyMargin: Double = 0.06
 
+    /// Khoang thoi gian toi thieu giua 2 mau IMU de tinh slerp tranh chia cho 0 (1 microgiay)
+    public static let motionInterpolationMinDt: Double = 1e-6
+
+    /// Khoang thoi gian toi da giua 2 mau IMU de cho phep noi suy (100ms)
+    public static let motionInterpolationMaxDt: Double = 0.10
+
+    /// Bien ngoai suy toi da cho phep o 2 dau cua chuoi mau IMU (20ms)
+    public static let motionInterpolationMargin: Double = 0.02
+
+    /// Do tre thoi gian toi da cho phep giua frame va pose gan nhat (200ms)
+    public static let maxFrameToMotionLatency: Double = 0.20
+
     // MARK: - 5. Debug & Experiment Flags
     /// Co bat che do hien thi debug overlay tren Preview
     public static var isDebugOverlayEnabled: Bool = false

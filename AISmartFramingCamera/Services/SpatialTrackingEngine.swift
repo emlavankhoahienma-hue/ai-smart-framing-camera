@@ -355,6 +355,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     private var lastVerified = -Double.infinity
     private var lastProcessed = -Double.infinity
     private var pinTime = -Double.infinity
+    private var lastSyncWarningTime: TimeInterval = 0
     private var confidence = 0.0
     private var lowTexture = false
     private var scene: DetectedSceneType = .general
@@ -680,8 +681,15 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // Paint onto the latest camera image, using its pose and intrinsics
             // together. Projecting an older image with the newest IMU pose makes
             // the ring lead the subject and oscillate during a handheld pan.
-            let imagePose = (now - lastFrameTime <= 0.20 ?
+            let imagePose = (now - lastFrameTime <= CompositionTuning.maxFrameToMotionLatency ?
                 TrackingGeometry.pose(at: lastFrameTime, in: history) : nil) ?? sample.deviceToWorld
+            if CompositionTuning.isExperimentLoggingEnabled, lastFrameTime.isFinite {
+                let delta = sample.timestamp - lastFrameTime
+                if abs(delta) > CompositionTuning.maxFrameToMotionLatency, now - lastSyncWarningTime > 2.0 {
+                    lastSyncWarningTime = now
+                    CameraLogger.warning("[SYNC] Camera-IMU timestamp delta exceeded threshold: \(String(format: "%.1f", delta * 1000))ms", category: .tracking)
+                }
+            }
             let projected = calibration.project(deviceRay: imagePose.inverse.act(rendered))
             if projected.point.x.isFinite, projected.point.y.isFinite {
                 estimated = projected.point

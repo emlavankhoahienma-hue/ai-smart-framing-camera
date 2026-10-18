@@ -7,7 +7,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "fba0c4ac07232e8e2a3c30b0be0034e2add626ff54b4c6260cd497df448541b4"
+      "sha256": "27678bbc7085d16712d87068af7e89885b8d7ba4fafdd82df1dcc9be99b34003"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -19,7 +19,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
-      "sha256": "eeeb9c34d610d909f07833c027d4fb724ac6a2e3b2b1f5af9104fe8925356bf1"
+      "sha256": "8de12daeec3b0303f8161b2e5cca3dc21a72960399055a539e8553d61f4c5f8e"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralTargetTracker.swift",
