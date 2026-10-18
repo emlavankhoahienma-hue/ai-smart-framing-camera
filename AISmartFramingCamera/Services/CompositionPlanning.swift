@@ -484,12 +484,12 @@ enum CompositionPlanner {
                     let thirdX = min(abs(Double(destination.x) - 0.382), abs(Double(destination.x) - 0.618))
                     let thirdY = min(abs(Double(destination.y) - 0.382), abs(Double(destination.y) - 0.618))
                     let ruleOfThirdsBonus = 0.035 * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
-                    let ratioPenalty = area < desiredArea ? 0.005 * max(0, log(ratio)) : 0.020 * abs(log(ratio))
+                    let ratioAdjustment = area < desiredArea ? -0.020 * min(1.0, max(0.0, log(ratio))) : 0.020 * abs(log(ratio))
                     let score = 0.18 * sizeFit + 0.13 * context + 0.10 * contextFit +
                         0.11 * metrics.cleanEdges + 0.10 * space + 0.07 * symmetry +
                         0.05 * metrics.separation + 0.11 * placement + 0.05 * headroom +
                         0.04 * edgeSafety + 0.03 * horizonFit + intentPrior + ruleOfThirdsBonus -
-                        0.012 * motion - ratioPenalty
+                        0.012 * motion - ratioAdjustment
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: sourceCorners.map(\.point), rotation: rotation, zoom: zoom,
