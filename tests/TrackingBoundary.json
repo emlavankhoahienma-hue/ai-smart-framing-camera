@@ -3,11 +3,11 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "3f75726f4c84815723904a016e0002d3b1d19f256d42669d308bebb279533571"
+      "sha256": "90dfee5cb42b700c9bb806741a2b34487c41d538d826903f4ab158e80f1f9964"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "006a4d899215e11a144341cca57ed8e4a656c94751c192401e714f98cdbdfba2"
+      "sha256": "fba0c4ac07232e8e2a3c30b0be0034e2add626ff54b4c6260cd497df448541b4"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -19,7 +19,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
-      "sha256": "81afd16b68ce2ef67a0c92786539e4078abff1257dc1499df7643803666ef32c"
+      "sha256": "eeeb9c34d610d909f07833c027d4fb724ac6a2e3b2b1f5af9104fe8925356bf1"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralTargetTracker.swift",
@@ -39,13 +39,13 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "c9929bafd21a0eafb21ff3cf890e93a623536295c83c79db604ac4a52c5e1c9d"
+      "sha256": "b26c06c8ed1e5891999e44c860dca1c264d18b59578098c1c798801db72c310e"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "d44c0be1973a181c0338df5f2b89c27a3f76da4cded65790f75b42975d17066d"
+      "sha256": "7cc49f5e2370494f1742f685809964f57604ce4beaaf833356422bd62bb52b40"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "f06b9193ce71c72ec8b9ab84f645aeab8ea47283a9221709ff7b8136c670dd08"
+      "sha256": "09e6dc4576ca19be44b2cc17b9cbb1a93489e8ba0251d05630c89b747bde7c0e"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
