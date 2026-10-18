@@ -3,6 +3,7 @@ import CoreGraphics
 import CoreMedia
 import CoreVideo
 import CoreML
+import QuartzCore
 import simd
 
 /// Cac ham do va ghi log thuc nghiem tren may that A, B, C, D de xac thuc phan cung va he toa do.

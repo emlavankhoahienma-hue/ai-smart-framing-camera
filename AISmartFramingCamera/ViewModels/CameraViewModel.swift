@@ -108,7 +108,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
 
         let frame = TrackingFrameContext.read(sampleBuffer,
             zoom: SpatialTrackingEngine.shared.currentDisplayZoom,
-            fovLongDegrees: cameraService.effectiveVideoFieldOfView)
+            fovLongDegrees: SpatialTrackingEngine.shared.currentCameraFOV)
 
         // CameraService invokes this method on its serial videoDataQueue. Processing
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
