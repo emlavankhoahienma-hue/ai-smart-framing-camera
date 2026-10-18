@@ -25,7 +25,7 @@ import sys
 
 timeout = float(sys.argv[1])
 command = sys.argv[2:]
-print("Running:", " ".join(command), flush=True)
+print("Running:", " ".join(command), file=sys.stderr, flush=True)
 process = subprocess.Popen(command, start_new_session=True)
 try:
     status = process.wait(timeout=timeout)
@@ -85,6 +85,20 @@ if not Path(output).is_file() or Path(output).stat().st_size == 0:
 PY
 }
 
+wait_stage_acknowledgement() {
+  local acknowledgement="$1"
+  local stage="$2"
+  local index
+  for index in {1..60}; do
+    if [ -f "$acknowledgement" ] && [ "$(cat "$acknowledgement")" = "$stage" ]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "Snapshot host did not acknowledge stage: $stage" >&2
+  return 1
+}
+
 capture_stage() {
   local udid="$1"
   local filename="$2"
@@ -94,21 +108,33 @@ capture_stage() {
     window:photo|window:square|window:video|zoom:guide|zoom:aligned|zoom:preview|zoom:ramp|zoom:verify|zoom:zoomout|zoom:lost|zoom:motion) ;;
     *) echo "Invalid snapshot stage: ${mode}:${stage}"; return 2 ;;
   esac
-  local url="alignai-snapshot://${mode}?stage=${stage}"
-  local attempt status
+  local attempt status container stage_file acknowledgement
   for attempt in 1 2; do
     status=0
-    # Opening a URL cold-starts the installed host when necessary, or updates
-    # its existing SwiftUI state. No per-stage process termination is needed.
-    if run_bounded 40 xcrun simctl openurl "$udid" "$url"; then
+    container=$(run_bounded 30 xcrun simctl get_app_container "$udid" "$BUNDLE_ID" data)
+    stage_file="${container}/Documents/snapshot-stage.txt"
+    acknowledgement="${container}/Documents/snapshot-ack.txt"
+    mkdir -p "${container}/Documents"
+    rm -f "$acknowledgement"
+    printf '%s' "$stage" > "${stage_file}.new"
+    mv "${stage_file}.new" "$stage_file"
+    if wait_stage_acknowledgement "$acknowledgement" "$stage"; then
       if [ "$stage" = "motion" ]; then
         record_motion "$udid" "${SCREENSHOT_DIR}/${filename}.mp4" || status=$?
+        if [ "$status" -eq 0 ]; then
+          run_bounded 30 "${DIAGNOSTIC_DIR}/verify_snapshot_image" movie \
+            "${SCREENSHOT_DIR}/${filename}.mp4" || status=$?
+        fi
       else
         sleep 2
         run_bounded 30 xcrun simctl io "$udid" screenshot "${SCREENSHOT_DIR}/${filename}.png" || status=$?
         if [ "$status" -eq 0 ] && [ ! -s "${SCREENSHOT_DIR}/${filename}.png" ]; then
           echo "Simulator screenshot did not produce a nonempty image"
           status=1
+        fi
+        if [ "$status" -eq 0 ]; then
+          run_bounded 30 "${DIAGNOSTIC_DIR}/verify_snapshot_image" image \
+            "${SCREENSHOT_DIR}/${filename}.png" || status=$?
         fi
       fi
     else
@@ -124,6 +150,7 @@ capture_stage() {
     run_bounded 45 xcrun simctl boot "$udid" || return $?
     run_bounded 120 xcrun simctl bootstatus "$udid" -b || return $?
     run_bounded 180 xcrun simctl install "$udid" "$APP_PATH" || return $?
+    run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID" || return $?
   done
 }
 
@@ -132,6 +159,12 @@ echo "App bundle: $APP_PATH"
 echo "Bundle ID: $BUNDLE_ID"
 echo "Output directory: $SCREENSHOT_DIR"
 echo ""
+
+if [ "$SNAPSHOT_MODE" = "window" ] || [ "$SNAPSHOT_MODE" = "zoom" ]; then
+  run_bounded 90 xcrun swiftc -O scripts/verify_snapshot_image.swift \
+    -framework AppKit -framework AVFoundation \
+    -o "${DIAGNOSTIC_DIR}/verify_snapshot_image"
+fi
 
 echo "--- Available iOS Simulators ---"
 xcrun simctl list devices available || true
@@ -179,12 +212,14 @@ capture_device() {
   run_bounded 15 xcrun simctl privacy "$udid" grant microphone "$BUNDLE_ID" || true
 
   if [ "$SNAPSHOT_MODE" = "window" ]; then
+    run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID"
     for stage in photo square video; do
       capture_stage "$udid" "${filename}_${stage}" window "$stage"
     done
     run_bounded 30 xcrun simctl shutdown "$udid"
     return 0
   elif [ "$SNAPSHOT_MODE" = "zoom" ]; then
+    run_bounded 40 xcrun simctl launch "$udid" "$BUNDLE_ID"
     for stage in guide aligned preview ramp verify zoomout lost; do
       capture_stage "$udid" "${filename}_${stage}" zoom "$stage"
     done

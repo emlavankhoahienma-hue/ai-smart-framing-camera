@@ -37,19 +37,42 @@ private struct WindowedZoomSnapshot: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(.black)
-        .onAppear { configureWindow(for: stage) }
-        .onOpenURL(perform: openSnapshotStage)
+        .overlay(alignment: .topLeading) {
+            Rectangle().fill(Color(red: 1, green: 0, blue: 1))
+                .frame(width: 18, height: 18)
+        }
+        .onAppear {
+            configureWindow(for: stage)
+            refreshSnapshotStage()
+        }
+        .onReceive(Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()) { _ in
+            refreshSnapshotStage()
+        }
     }
 
-    private func openSnapshotStage(_ url: URL) {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-              components.scheme == "alignai-snapshot", components.host == "window",
-              components.path.isEmpty, components.fragment == nil,
-              let items = components.queryItems, items.count == 1,
-              items[0].name == "stage", let value = items[0].value,
-              ["photo", "square", "video"].contains(value) else { return }
-        stage = value
-        configureWindow(for: value)
+    private func refreshSnapshotStage() {
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let request = directory.appendingPathComponent("snapshot-stage.txt")
+        guard FileManager.default.fileExists(atPath: request.path) else { return }
+        do {
+            let value = try String(contentsOf: request, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard ["photo", "square", "video"].contains(value) else { return }
+            if stage != value {
+                stage = value
+                configureWindow(for: value)
+            }
+            let acknowledgement = directory.appendingPathComponent("snapshot-ack.txt")
+            var acknowledged = ""
+            if FileManager.default.fileExists(atPath: acknowledgement.path) {
+                acknowledged = try String(contentsOf: acknowledgement, encoding: .utf8)
+            }
+            if acknowledged != value {
+                try value.write(to: acknowledgement, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            NSLog("Window snapshot stage exchange failed: %@", String(describing: error))
+        }
     }
 
     private func configureWindow(for stage: String) {
