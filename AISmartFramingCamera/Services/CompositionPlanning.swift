@@ -511,9 +511,11 @@ enum CompositionPlanner {
                                      abs(Double(destination.y) - Double(CompositionTuning.goldenSectionRight)))
                     let ruleOfThirdsBonus = CompositionTuning.ruleOfThirdsBonusWeight * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
                     let ratioAdjustment = area < desiredArea ? -0.020 * min(1.0, max(0.0, log(ratio))) : 0.020 * abs(log(ratio))
+                    let contextWeight = intent.preservesContext ? 0.10 : 0.05
+                    let contextFitWeight = intent.preservesContext ? 0.08 : 0.04
                     let score = 0.26 * sizeFit + 0.34 * placement + 0.10 * headroom +
-                        0.08 * space + 0.06 * edgeSafety + 0.05 * context +
-                        0.04 * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
+                        0.08 * space + 0.06 * edgeSafety + contextWeight * context +
+                        contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
                         0.02 * horizonFit + intentPrior + ruleOfThirdsBonus -
                         0.015 * motion - ratioAdjustment
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
@@ -720,6 +722,9 @@ enum CompositionPlanner {
         case .animal, .object: desiredArea = CompositionTuning.desiredAreaAnimal
         }
 
+        if intent == .landscape || subject.kind == .scenery {
+            return [currentZoom]
+        }
         var options: Set<CGFloat> = [currentZoom]
 
         // Continuous optimal zoom directly regressed from subject area vs desired prominence with edge safety constraints
