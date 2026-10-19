@@ -451,13 +451,13 @@ enum CompositionPlanner {
                     guard !cropAttention || unchanged || metrics.retention >= 0.82 else { return nil }
                     let desiredArea: Double
                     switch intent {
-                    case .portrait: desiredArea = subject.kind == .face ? 0.16 : 0.34
-                    case .environmentalPortrait, .street: desiredArea = 0.13
-                    case .group: desiredArea = 0.40
-                    case .landscape: desiredArea = 0.15
-                    case .architecture: desiredArea = 0.48
-                    case .closeUp, .food: desiredArea = 0.40
-                    case .animal, .object: desiredArea = 0.32
+                    case .portrait: desiredArea = subject.kind == .face ? CompositionTuning.desiredAreaFace : CompositionTuning.desiredAreaPortrait
+                    case .environmentalPortrait, .street: desiredArea = CompositionTuning.desiredAreaStreet
+                    case .group: desiredArea = CompositionTuning.desiredAreaGroup
+                    case .landscape: desiredArea = CompositionTuning.desiredAreaLandscape
+                    case .architecture: desiredArea = CompositionTuning.desiredAreaArchitecture
+                    case .closeUp, .food: desiredArea = CompositionTuning.desiredAreaFood
+                    case .animal, .object: desiredArea = CompositionTuning.desiredAreaAnimal
                     }
                     let area = Double(box.width * box.height)
                     let sizeFit = subject.kind == .scenery ? 1 : exp(-pow(log(max(0.001, area) / desiredArea), 2) / 1.6)
@@ -701,20 +701,28 @@ enum CompositionPlanner {
         let area = Double(subject.bounds.width * subject.bounds.height)
         let desiredArea: Double
         switch intent {
-        case .portrait: desiredArea = subject.kind == .face ? 0.16 : 0.34
-        case .environmentalPortrait, .street: desiredArea = 0.13
-        case .group: desiredArea = 0.40
-        case .landscape: desiredArea = 0.15
-        case .architecture: desiredArea = 0.48
-        case .closeUp, .food: desiredArea = 0.40
-        case .animal, .object: desiredArea = 0.32
+        case .portrait: desiredArea = subject.kind == .face ? CompositionTuning.desiredAreaFace : CompositionTuning.desiredAreaPortrait
+        case .environmentalPortrait, .street: desiredArea = CompositionTuning.desiredAreaStreet
+        case .group: desiredArea = CompositionTuning.desiredAreaGroup
+        case .landscape: desiredArea = CompositionTuning.desiredAreaLandscape
+        case .architecture: desiredArea = CompositionTuning.desiredAreaArchitecture
+        case .closeUp, .food: desiredArea = CompositionTuning.desiredAreaFood
+        case .animal, .object: desiredArea = CompositionTuning.desiredAreaAnimal
         }
 
         var options: Set<CGFloat> = [currentZoom]
 
-        // Continuous optimal zoom directly regressed from subject area vs desired prominence
-        let idealRatio = sqrt(desiredArea / max(0.001, area))
-        let idealZoom = max(currentZoom, min(maxZoom, currentZoom * CGFloat(idealRatio)))
+        // Continuous optimal zoom directly regressed from subject area vs desired prominence with edge safety constraints
+        let idealZoom = CGFloat(CompositionPureCalculations.calculateContinuousIdealZoom(
+            currentZoom: Double(currentZoom),
+            currentArea: area,
+            desiredArea: desiredArea,
+            maxZoom: Double(maxZoom),
+            targetPoint: subject.anchor,
+            boxWidth: Double(subject.bounds.width),
+            boxHeight: Double(subject.bounds.height),
+            safetyMargin: CompositionTuning.edgeSafetyMargin
+        ))
         options.insert(idealZoom)
 
         // Continuous variations around ideal zoom
