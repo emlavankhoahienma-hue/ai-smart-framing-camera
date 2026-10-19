@@ -158,9 +158,10 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         let ciImage = orientation == .up ? CIImage(cvPixelBuffer: sourceBuffer) : CIImage(cvPixelBuffer: sourceBuffer).oriented(orientation)
         let extent = ciImage.extent
         guard extent.width > 0, extent.height > 0 else { return nil }
+        let normalizedOrigin = ciImage.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
         let scaleX = CGFloat(targetWidth) / extent.width
         let scaleY = CGFloat(targetHeight) / extent.height
-        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        let scaled = normalizedOrigin.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
         ciContext.render(scaled, to: dest)
         return dest
     }
@@ -365,11 +366,13 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                     // Hoan nguyen vien den letterbox khi dung .scaleFit
                     let rawRect: CGRect
                     if photographic {
+                        let isPortrait = (orientation == .right || orientation == .left || orientation == .rightMirrored || orientation == .leftMirrored) || (bufferH > bufferW)
                         rawRect = CompositionPureCalculations.unpadLetterbox(
                             normalizedRect: visionRect,
                             sourceWidth: bufferW,
                             sourceHeight: bufferH,
-                            modelSize: 640.0
+                            modelSize: 640.0,
+                            isPortraitOrientation: isPortrait
                         )
                     } else {
                         rawRect = visionRect

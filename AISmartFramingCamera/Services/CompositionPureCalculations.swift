@@ -110,12 +110,16 @@ public enum CompositionPureCalculations {
         normalizedRect: CGRect,
         sourceWidth: Double,
         sourceHeight: Double,
-        modelSize: Double = 640.0
+        modelSize: Double = 640.0,
+        isPortraitOrientation: Bool = true
     ) -> CGRect {
         guard sourceWidth > 0, sourceHeight > 0, modelSize > 0 else { return normalizedRect }
-        let scale = min(modelSize / sourceWidth, modelSize / sourceHeight)
-        let validW = sourceWidth * scale
-        let validH = sourceHeight * scale
+        let orientedW = isPortraitOrientation ? min(sourceWidth, sourceHeight) : sourceWidth
+        let orientedH = isPortraitOrientation ? max(sourceWidth, sourceHeight) : sourceHeight
+
+        let scale = min(modelSize / orientedW, modelSize / orientedH)
+        let validW = orientedW * scale
+        let validH = orientedH * scale
         let padX = (modelSize - validW) / 2.0
         let padY = (modelSize - validH) / 2.0
 
@@ -168,19 +172,26 @@ public enum CompositionPureCalculations {
     ) -> Double {
         guard currentArea > 0.0001, desiredArea > 0, currentZoom > 0 else { return currentZoom }
         
-        // 1. Tinh ty le zoom ly tuong tu dien tich (dien tich tang k^2 nen zoom tang k = sqrt(ratio))
         let idealRatio = sqrt(desiredArea / currentArea)
-        var zoomCandidate = currentZoom * idealRatio
+        let cappedRatio = min(2.5, max(1.0, idealRatio))
+        var zoomCandidate = currentZoom * cappedRatio
 
-        // 2. Rang buoc mep an toan: khong duoc zoom vuot qua gioi han lam box bi chém cut khoi man hinh
+        let destX = min(0.64, max(0.36, Double(targetPoint.x)))
+        let destY = min(0.62, max(0.36, Double(targetPoint.y)))
+
         if boxWidth > 0 && boxHeight > 0 {
-            let maxRatioX = (2.0 * min(Double(targetPoint.x) - safetyMargin, 1.0 - safetyMargin - Double(targetPoint.x))) / boxWidth
-            let maxRatioY = (2.0 * min(Double(targetPoint.y) - safetyMargin, 1.0 - safetyMargin - Double(targetPoint.y))) / boxHeight
+            let maxRatioX = (2.0 * min(destX - safetyMargin, 1.0 - safetyMargin - destX)) / boxWidth
+            let maxRatioY = (2.0 * min(destY - safetyMargin, 1.0 - safetyMargin - destY)) / boxHeight
             let maxAllowedRatio = max(1.0, min(maxRatioX, maxRatioY))
             zoomCandidate = min(zoomCandidate, currentZoom * maxAllowedRatio)
         }
 
-        // 3. Clamp vao khoang hop le
+        let cleanFocalSteps: [Double] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0]
+        if let nearestStep = cleanFocalSteps.min(by: { abs($0 - zoomCandidate) < abs($1 - zoomCandidate) }),
+           abs(nearestStep - zoomCandidate) <= 0.12 {
+            zoomCandidate = nearestStep
+        }
+
         return max(currentZoom, min(maxZoom, zoomCandidate))
     }
 

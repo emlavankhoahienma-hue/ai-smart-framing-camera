@@ -49,9 +49,12 @@ final class CompositionAestheticSearch {
                         proposal.score += aesthetic * 0.075
                     }
                     if !proposal.isUnchangedView {
-                        let thirdX = min(abs(Double(proposal.aimPoint.x) - 0.382), abs(Double(proposal.aimPoint.x) - 0.618))
-                        let thirdY = min(abs(Double(proposal.aimPoint.y) - 0.382), abs(Double(proposal.aimPoint.y) - 0.618))
-                        proposal.score += 0.055 * exp(-12 * (thirdX * thirdX + thirdY * thirdY))
+                        let subjCenterX = Double(proposal.expectedSubjectRect.midX)
+                        let subjTopThirdY = Double(proposal.expectedSubjectRect.minY + proposal.expectedSubjectRect.height * 0.28)
+                        let thirdX = min(abs(subjCenterX - Double(CompositionTuning.goldenSectionLeft)),
+                                         abs(subjCenterX - Double(CompositionTuning.goldenSectionRight)))
+                        let thirdY = min(abs(subjTopThirdY - 0.36), abs(Double(proposal.expectedSubjectRect.midY) - 0.382))
+                        proposal.score += 0.055 * exp(-14 * (thirdX * thirdX + thirdY * thirdY))
                         if proposal.zoom > 1.05 {
                             proposal.score += 0.020
                         }

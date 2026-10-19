@@ -7,7 +7,7 @@ public enum CompositionTuning {
 
     // MARK: - 1. YOLO Detection & Box Filtering
     /// Nguong tin cay toi thieu de chap nhan mot candidate tu YOLO model
-    public static let yoloConfidenceThreshold: Float = 0.45
+    public static let yoloConfidenceThreshold: Float = 0.48
 
     /// Kich thuoc toi thieu cua bounding box (ty le tren chieu dai/rong 0...1)
     public static let minBoxDimension: CGFloat = 0.04
@@ -32,33 +32,36 @@ public enum CompositionTuning {
 
     // MARK: - 2. Composition Rules & Anchors
     /// Truc ty le vang / Luat 1/3 ben trai tren truc ngang
-    public static let goldenSectionLeft: CGFloat = 0.382
+    public static let goldenSectionLeft: CGFloat = 0.36
 
     /// Truc ty le vang / Luat 1/3 ben phai tren truc ngang
-    public static let goldenSectionRight: CGFloat = 0.618
+    public static let goldenSectionRight: CGFloat = 0.64
+
+    /// Duong mat chan dung chuan tren truc doc
+    public static let portraitEyeLineY: Double = 0.36
 
     /// He so dich chuyen muc tieu theo huong anh mat (Gaze Lead Room)
-    public static let gazeLeadFactor: Double = 0.145
+    public static let gazeLeadFactor: Double = 0.15
 
     /// Khoang cach dinh dau ly tuong cho anh chan dung (Headroom target)
     public static let headroomTargetY: Double = 0.075
 
     /// Do rong ham Gaussian danh gia headroom
-    public static let headroomSigma: Double = 0.14
+    public static let headroomSigma: Double = 0.08
 
     /// Diem thuong toi da khi target neo gan truc 1/3
-    public static let ruleOfThirdsBonusWeight: Double = 0.035
+    public static let ruleOfThirdsBonusWeight: Double = 0.08
 
     /// He so suy hao khoang cach tam trong tinh diem noi bat
     public static let centerDistanceDecay: Double = 0.7
 
     // MARK: - 3. Target Desired Area Fraction (Dien tich mong muon theo y do)
-    public static let desiredAreaPortrait: Double = 0.34
-    public static let desiredAreaFace: Double = 0.16
-    public static let desiredAreaFood: Double = 0.40
-    public static let desiredAreaCloseUp: Double = 0.40
-    public static let desiredAreaAnimal: Double = 0.32
-    public static let desiredAreaGroup: Double = 0.40
+    public static let desiredAreaPortrait: Double = 0.28
+    public static let desiredAreaFace: Double = 0.065
+    public static let desiredAreaFood: Double = 0.30
+    public static let desiredAreaCloseUp: Double = 0.32
+    public static let desiredAreaAnimal: Double = 0.25
+    public static let desiredAreaGroup: Double = 0.36
     public static let desiredAreaEnvironment: Double = 0.13
     public static let desiredAreaStreet: Double = 0.13
     public static let desiredAreaLandscape: Double = 0.15
@@ -69,7 +72,7 @@ public enum CompositionTuning {
     public static let heroBodyAreaDivisor: Double = 0.24
 
     /// Mau so ham log-normal tinh sizeFit
-    public static let sizeFitVarianceDivisor: Double = 1.6
+    public static let sizeFitVarianceDivisor: Double = 0.85
 
     // MARK: - 4. Camera Intrinsics & 3D Spatial Tracking
     /// Goc nhin videoFieldOfView mac dinh cho camera chinh (wide 1x) tren iPhone (~69 do)
@@ -98,7 +101,7 @@ public enum CompositionTuning {
     public static let angularVelocityDampingRate: Double = 1.5
 
     /// Nguong khoang cach can le an toan khi zoom (margin tu target toi mep)
-    public static let edgeSafetyMargin: Double = 0.06
+    public static let edgeSafetyMargin: Double = 0.05
 
     /// Khoang thoi gian toi thieu giua 2 mau IMU de tinh slerp tranh chia cho 0 (1 microgiay)
     public static let motionInterpolationMinDt: Double = 1e-6

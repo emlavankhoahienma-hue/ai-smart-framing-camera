@@ -42,11 +42,19 @@ enum CompositionCropProtection {
                           y: min(body.maxY - height, max(body.minY, anchor.y - height / 2)),
                           width: width, height: height)
         }
-        guard intent == .portrait, let portrait,
-              [portrait.minX, portrait.minY, portrait.width, portrait.height].allSatisfy(\.isFinite),
-              portrait.width > 0, portrait.height > 0,
-              body.contains(portrait), portrait.contains(anchor) else { return body }
-        return portrait
+        if intent == .portrait {
+            if let portrait,
+               [portrait.minX, portrait.minY, portrait.width, portrait.height].allSatisfy(\.isFinite),
+               portrait.width > 0, portrait.height > 0,
+               body.contains(portrait), portrait.contains(anchor) {
+                return portrait
+            }
+            if body.height > 0.42 && anchor.y < body.minY + body.height * 0.45 {
+                let bustHeight = max(0.22, body.height * 0.52)
+                return CGRect(x: body.minX, y: body.minY, width: body.width, height: bustHeight)
+            }
+        }
+        return body
     }
 }
 
@@ -144,7 +152,7 @@ struct SubjectVisualEvidence: Sendable {
 enum HeroSubjectPolicy {
     static func faceAffinity(face: CGRect, body: CGRect) -> Double? {
         guard body.width > 0, body.height > 0,
-              body.insetBy(dx: -0.025, dy: -0.025).contains(CGPoint(x: face.midX, y: face.midY)) else { return nil }
+              body.insetBy(dx: -body.width * 0.15, dy: -body.height * 0.20).contains(CGPoint(x: face.midX, y: face.midY)) else { return nil }
         let x = Double((face.midX - body.midX) / body.width)
         let y = Double((face.midY - body.minY) / body.height)
         guard x.isFinite, y.isFinite, y < 0.6 else { return nil }
@@ -181,8 +189,16 @@ enum HeroSubjectPolicy {
             visual = 0.18 * e.attentionDensity + 0.15 * sqrt(max(0, e.attentionShare)) +
                 0.10 * e.separation + 0.06 * e.detail * e.exposure
         } else { visual = 0.20 * scale }
+        let tierMultiplier: Double
+        switch kind {
+        case .person, .group: tierMultiplier = hasFace ? 1.35 : 1.15
+        case .face: tierMultiplier = 1.20
+        case .animal: tierMultiplier = 1.10
+        case .object: tierMultiplier = 0.45
+        case .scenery: tierMultiplier = 0.20
+        }
         let tinyPenalty = min(1, area / (kind == .face ? 0.002 : 0.008))
-        return max(0, min(1, confidence)) * tinyPenalty *
+        return max(0, min(1, confidence)) * tinyPenalty * tierMultiplier *
             (0.25 * semantic + 0.19 * scale + 0.07 * centrality + visual)
     }
 
@@ -370,10 +386,16 @@ enum CompositionPlanner {
         let batches = intents.map { intent -> [CompositionProposal] in
             if !refining.isEmpty && !refining.contains(where: { $0.intent == intent }) { return [] }
             let bounds: CGRect
-            if intent == .portrait, subject.kind == .person, let portraitBounds,
-               subject.bounds.contains(portraitBounds), portraitBounds.contains(subject.anchor) {
-                bounds = portraitBounds
-            } else { bounds = subject.bounds }
+            if intent == .portrait, subject.kind == .person {
+                bounds = CompositionCropProtection.bounds(
+                    body: subject.bounds,
+                    portrait: portraitBounds,
+                    intent: .portrait,
+                    anchor: subject.anchor
+                )
+            } else {
+                bounds = subject.bounds
+            }
             let framed = CompositionSubject(index: subject.index, bounds: bounds, anchor: subject.anchor,
                 kind: subject.kind, confidence: subject.confidence, importance: subject.importance, gaze: subject.gaze,
                 allowsAttentionCrop: subject.allowsAttentionCrop)
@@ -468,7 +490,7 @@ enum CompositionPlanner {
                     let space = abs(subject.gaze) > 0.12 ? metrics.lookRoom : metrics.balance
                     let symmetry = intent == .architecture ? metrics.symmetry : metrics.balance
                     let person = subject.kind == .person || subject.kind == .face || subject.kind == .group
-                    let headroom = person ? exp(-pow((Double(box.minY) - 0.075) / 0.14, 2)) : 1
+                    let headroom = (person && box.height >= 0.45) ? exp(-pow((Double(box.minY) - CompositionTuning.headroomTargetY) / CompositionTuning.headroomSigma, 2)) : 1.0
                     let margin = min(box.minX, box.minY, 1 - box.maxX, 1 - box.maxY)
                     let edgeSafety = min(1, max(0, Double(margin) / 0.07))
                     var horizonFit = 1.0
@@ -481,15 +503,17 @@ enum CompositionPlanner {
                     }
                     let motion = hypot(Double(aim.point.x - 0.5), Double(aim.point.y - 0.5))
                     let intentPrior = intent == intents.first ? 0.045 : (intents.contains(intent) ? 0.02 : 0)
-                    let thirdX = min(abs(Double(destination.x) - 0.382), abs(Double(destination.x) - 0.618))
-                    let thirdY = min(abs(Double(destination.y) - 0.382), abs(Double(destination.y) - 0.618))
-                    let ruleOfThirdsBonus = 0.035 * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
+                    let thirdX = min(abs(Double(destination.x) - Double(CompositionTuning.goldenSectionLeft)),
+                                     abs(Double(destination.x) - Double(CompositionTuning.goldenSectionRight)))
+                    let thirdY = min(abs(Double(destination.y) - CompositionTuning.portraitEyeLineY),
+                                     abs(Double(destination.y) - Double(CompositionTuning.goldenSectionRight)))
+                    let ruleOfThirdsBonus = CompositionTuning.ruleOfThirdsBonusWeight * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
                     let ratioAdjustment = area < desiredArea ? -0.020 * min(1.0, max(0.0, log(ratio))) : 0.020 * abs(log(ratio))
-                    let score = 0.18 * sizeFit + 0.13 * context + 0.10 * contextFit +
-                        0.11 * metrics.cleanEdges + 0.10 * space + 0.07 * symmetry +
-                        0.05 * metrics.separation + 0.11 * placement + 0.05 * headroom +
-                        0.04 * edgeSafety + 0.03 * horizonFit + intentPrior + ruleOfThirdsBonus -
-                        0.012 * motion - ratioAdjustment
+                    let score = 0.26 * sizeFit + 0.34 * placement + 0.10 * headroom +
+                        0.08 * space + 0.06 * edgeSafety + 0.05 * context +
+                        0.04 * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
+                        0.02 * horizonFit + intentPrior + ruleOfThirdsBonus -
+                        0.015 * motion - ratioAdjustment
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: sourceCorners.map(\.point), rotation: rotation, zoom: zoom,
@@ -591,46 +615,30 @@ enum CompositionPlanner {
         if intent == .group { return CGPoint(x: 0.5, y: 0.36) }
         if intent == .architecture { return CGPoint(x: 0.5, y: 0.48) }
         let person = subject.kind == .person || subject.kind == .face
-        let lead = min(1, max(-1, Double(subject.gaze)))
+        let lead = min(1.0, max(-1.0, Double(subject.gaze)))
+        let leftAnchor = Double(CompositionTuning.goldenSectionLeft)   // 0.36
+        let rightAnchor = Double(CompositionTuning.goldenSectionRight) // 0.64
+
         var x: Double
         if abs(lead) >= 0.12 {
-            // Positive gaze means subject looks to image-right: place on the left third (around 0.382).
-            // Negative gaze means subject looks to image-left: place on the right third (around 0.618).
-            x = 0.5 - 0.145 * lead
+            x = lead > 0 ? leftAnchor : rightAnchor
         } else {
-            // Subject looks straight ahead or is an object/animal/food:
-            // Follow Rule of Thirds & Golden Ratio based on subject's natural placement in the scene.
             if subject.anchor.x < 0.46 {
-                x = 0.382
+                x = leftAnchor
             } else if subject.anchor.x > 0.54 {
-                x = 0.618
+                x = rightAnchor
             } else {
-                x = 0.5
-                if intent != .landscape && raster.hasAttention {
-                    var left = 0.0, right = 0.0
-                    for y in 0..<raster.side { for column in 0..<raster.side {
-                        let weight = raster.attention[y * raster.side + column]
-                        if column < raster.side / 2 { left += weight } else { right += weight }
-                    } }
-                    let imbalance = (right - left) / max(0.001, right + left)
-                    x += min(0.118, max(-0.118, -imbalance * 0.18))
-                }
+                x = person ? leftAnchor : 0.382
             }
         }
+
         let y: Double
         if person {
-            let anchorFraction = Double((subject.anchor.y - subject.bounds.minY) / max(0.001, subject.bounds.height))
-            y = min(0.44, max(0.30, 0.075 + anchorFraction * 0.64))
-        } else if intent == .food {
-            y = subject.anchor.y < 0.46 ? 0.382 : (subject.anchor.y > 0.54 ? 0.618 : 0.5)
+            y = CompositionTuning.portraitEyeLineY // 0.36
+        } else if intent == .food || intent == .closeUp || intent == .animal {
+            y = subject.anchor.y < 0.52 ? 0.382 : 0.618
         } else {
-            if subject.anchor.y < 0.46 {
-                y = 0.382
-            } else if subject.anchor.y > 0.54 {
-                y = 0.618
-            } else {
-                y = 0.42
-            }
+            y = subject.anchor.y < 0.48 ? 0.382 : (subject.anchor.y > 0.56 ? 0.618 : 0.42)
         }
         return CGPoint(x: x, y: y)
     }

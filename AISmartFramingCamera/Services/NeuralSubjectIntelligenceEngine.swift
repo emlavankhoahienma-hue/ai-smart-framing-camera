@@ -359,7 +359,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     c.eyePosition = CGPoint(x: face.boundingBox.minX + x * face.boundingBox.width,
                                             y: 1 - face.boundingBox.minY - y * face.boundingBox.height)
                 }
-                if let yaw = face.yaw?.doubleValue, yaw.isFinite { c.gaze = CGFloat(-sin(yaw)) }
+                if let yaw = face.yaw?.doubleValue, yaw.isFinite { c.gaze = CGFloat(sin(yaw)) }
                 faceCandidates.append(c)
             }
         }
@@ -372,10 +372,20 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 }
             }
         }
-        for observation in [objectness.results?.first, attention.results?.first].compactMap({ $0 }) {
-            for region in observation.salientObjects ?? [] where region.confidence >= 0.35 {
-                if let c = candidate(visionRect: region.boundingBox, category: .foregroundObject,
-                                     confidence: region.confidence, label: "Vùng nổi bật") { candidates.append(c) }
+        let hasPrimarySemanticSubject = candidates.contains {
+            ($0.category == .human || $0.category == .animal) && $0.confidence >= 0.45
+        } || !faceCandidates.isEmpty
+
+        if !hasPrimarySemanticSubject {
+            for observation in [attention.results?.first, objectness.results?.first].compactMap({ $0 }) {
+                for region in observation.salientObjects ?? [] where region.confidence >= 0.65 {
+                    let area = region.boundingBox.width * region.boundingBox.height
+                    guard area >= 0.025 && area <= 0.42 else { continue }
+                    if let c = candidate(visionRect: region.boundingBox, category: .foregroundObject,
+                                         confidence: region.confidence, label: "Vùng nổi bật") {
+                        candidates.append(c)
+                    }
+                }
             }
         }
         // Keep the complete body for crop safety; attach that body's own face,
@@ -386,6 +396,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 HeroSubjectPolicy.faceAffinity(face: face.boundingBox, body: box).map { (face, $0) }
             }.max { $0.1 < $1.1 }?.0
             if let face {
+                candidates[i].boundingBox = box.union(face.boundingBox)
                 candidates[i].eyePosition = face.eyePosition ?? face.center
                 candidates[i].gaze = face.gaze
                 candidates[i].companionBounds = [face.boundingBox]
@@ -397,13 +408,6 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         })
         candidates = rankedDistinct(candidates, raster: raster)
         if let group = coherentGroup(candidates, raster: raster) { candidates.insert(group, at: 0) }
-        if candidates.isEmpty, let raster, let anchor = raster.sceneryAnchor {
-            let bounds = CGRect(x: anchor.x - 0.045, y: anchor.y - 0.045, width: 0.09, height: 0.09)
-            // A texture patch is only a manual suggestion, never detector certainty.
-            candidates = [NeuralSubjectCandidate(boundingBox: bounds, category: .general,
-                confidence: 0.35, label: "Chi tiết trong cảnh", prominenceScore: HeroSubjectPolicy.score(
-                    bounds: bounds, kind: .scenery, confidence: 0.35, evidence: raster.evidence(in: bounds)))]
-        }
         var scene = sceneType(completed.contains(ObjectIdentifier(classification)) ? classification.results ?? [] : [])
         let semantics = SemanticCropRanker.shared.sceneEvidence(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         if let hint = SemanticCropRanker.shared.sceneHint(scores: semantics, candidates: candidates), scene == .general { scene = hint }
