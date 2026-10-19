@@ -14,7 +14,7 @@
       "path": "AISmartFramingCamera/Services/CompositionPlanning.swift",
       "start": "enum HeroSubjectPolicy {",
       "end": "/// Presentation-only identity hysteresis.",
-      "sha256": "f23efe0ae21291c7b7e40853953a9ea4e812547213251f5751714a56186b1d99"
+      "sha256": "48ba41fa61a73cd2aa498aebf66c18ec98eeec4c7366d02e1fc392e1f12b8c6a"
     }
   ]
 }

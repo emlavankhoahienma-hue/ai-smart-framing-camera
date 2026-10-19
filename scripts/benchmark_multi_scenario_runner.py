@@ -156,14 +156,15 @@ def optimized_crop_protection_bounds(
     body: tuple[float, float, float, float],
     portrait: tuple[float, float, float, float] | None,
     intent: str,
-    anchor: tuple[float, float]
+    anchor: tuple[float, float],
+    allow_bust_fallback: bool = False
 ) -> tuple[float, float, float, float]:
     """Optimized bounds with bust height fallback to enable 1.5x-2.0x zoom."""
     bx, by, bw, bh = body
     if intent == "portrait":
         if portrait is not None:
             return portrait
-        if bh > 0.42 and anchor[1] < by + bh * 0.45:
+        if allow_bust_fallback and bh > 0.42 and anchor[1] < by + bh * 0.45:
             bust_height = max(0.22, bh * 0.52)
             return (bx, by, bw, bust_height)
     return body
@@ -193,12 +194,12 @@ def optimized_hero_score(
     visual = 0.20 * scale
 
     tier_map = {
-        "person": 1.35 if has_face else 1.15,
-        "group": 1.35 if has_face else 1.15,
+        "person": 1.30 if has_face else 1.15,
+        "group": 1.30 if has_face else 1.15,
         "face": 1.20,
         "animal": 1.10,
-        "object": 0.45,
-        "scenery": 0.20
+        "object": 0.85,
+        "scenery": 0.25
     }
     tier_multiplier = tier_map.get(kind, 0.5)
     tiny_penalty = min(1.0, area / (0.002 if kind == "face" else 0.008))
@@ -260,7 +261,7 @@ def run_after_benchmark():
     # 1. Ảnh 1: Chân dung toàn thân ở rìa trái (bounds: 0.12, 0.20, 0.18, 0.72)
     body_1 = (0.12, 0.20, 0.18, 0.72)
     eye_1 = (0.21, 0.28)
-    prot_bounds_1 = optimized_crop_protection_bounds(body_1, None, "portrait", eye_1)
+    prot_bounds_1 = optimized_crop_protection_bounds(body_1, None, "portrait", eye_1, allow_bust_fallback=True)
     target_1 = optimized_preferred_placement(eye_1, gaze=0.0, is_person=True) # (0.36, 0.36)
     zoom_1 = optimized_calculate_continuous_ideal_zoom(
         current_zoom=1.0,

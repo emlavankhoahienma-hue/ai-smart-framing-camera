@@ -11,7 +11,7 @@ final class CompositionMultiScenarioBenchmarkTests: XCTestCase {
     func testScenario1_PortraitEdgeFullBodyAllowsBustZoom() {
         let body = CGRect(x: 0.12, y: 0.20, width: 0.18, height: 0.72)
         let eye = CGPoint(x: 0.21, y: 0.28)
-        let protected = CompositionCropProtection.bounds(body: body, portrait: nil, intent: .portrait, anchor: eye)
+        let protected = CompositionCropProtection.bounds(body: body, portrait: nil, intent: .portrait, anchor: eye, allowBustFallback: true)
         
         // Falling back to bust crop allows zoom between 1.5x and 2.0x
         XCTAssertLessThanOrEqual(protected.height, 0.52, "Crop protection must protect bust only to allow 1.5x-2.0x zoom")

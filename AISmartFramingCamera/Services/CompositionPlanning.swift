@@ -35,7 +35,8 @@ enum CompositionCropProtection {
     /// The planner separately enforces measured attention retention. This crop
     /// constraint never replaces a physical subject or the full tracking seed.
     static func bounds(body: CGRect, portrait: CGRect?, intent: LocalCompositionIntent,
-                       anchor: CGPoint, attentionRegion: Bool = false) -> CGRect {
+                       anchor: CGPoint, attentionRegion: Bool = false,
+                       allowBustFallback: Bool = false) -> CGRect {
         if attentionRegion, body.contains(anchor), body.width > 0, body.height > 0 {
             let width = min(0.08, body.width), height = min(0.08, body.height)
             return CGRect(x: min(body.maxX - width, max(body.minX, anchor.x - width / 2)),
@@ -49,7 +50,7 @@ enum CompositionCropProtection {
                body.contains(portrait), portrait.contains(anchor) {
                 return portrait
             }
-            if body.height > 0.42 && anchor.y < body.minY + body.height * 0.45 {
+            if allowBustFallback, body.height > 0.42 && anchor.y < body.minY + body.height * 0.45 {
                 let bustHeight = max(0.22, body.height * 0.52)
                 return CGRect(x: body.minX, y: body.minY, width: body.width, height: bustHeight)
             }
@@ -191,11 +192,11 @@ enum HeroSubjectPolicy {
         } else { visual = 0.20 * scale }
         let tierMultiplier: Double
         switch kind {
-        case .person, .group: tierMultiplier = hasFace ? 1.35 : 1.15
+        case .person, .group: tierMultiplier = hasFace ? 1.30 : 1.15
         case .face: tierMultiplier = 1.20
         case .animal: tierMultiplier = 1.10
-        case .object: tierMultiplier = 0.45
-        case .scenery: tierMultiplier = 0.20
+        case .object: tierMultiplier = 0.85
+        case .scenery: tierMultiplier = 0.25
         }
         let tinyPenalty = min(1, area / (kind == .face ? 0.002 : 0.008))
         return max(0, min(1, confidence)) * tinyPenalty * tierMultiplier *
@@ -391,7 +392,8 @@ enum CompositionPlanner {
                     body: subject.bounds,
                     portrait: portraitBounds,
                     intent: .portrait,
-                    anchor: subject.anchor
+                    anchor: subject.anchor,
+                    allowBustFallback: true
                 )
             } else {
                 bounds = subject.bounds
