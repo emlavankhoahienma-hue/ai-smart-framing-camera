@@ -2059,9 +2059,11 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisFinished = true
         geminiError = nil
         guard source.frame.displayZoom.isFinite, source.frame.displayZoom > 0,
-              abs(displayZoom - CGFloat(source.frame.displayZoom)) <= 0.08 else {
+              abs(displayZoom - CGFloat(source.frame.displayZoom)) <= 0.35 else {
             localTrackingSource = nil
-            localSelectionMessage = "Ống kính đã đổi trong lúc AI phân tích. Chạm vùng muốn chụp hoặc chạy AI lại."
+            localSelectionMessage = nil
+            cancelAISession()
+            startAISession()
             return
         }
         let output = analysis.detection
@@ -2074,7 +2076,8 @@ public final class CameraViewModel: ObservableObject {
         if selectedFilmPreset.isAIFullAuto { selectedFilmPreset = localPreset }
         if isAIFullColorEnabled { currentAIColorParams = output.detectedScene.aiFullColorParameters }
         localCompositionChoices = analysis.choices
-        localEvidenceCandidates = analysis.choices.isEmpty ? analysis.fallbackCandidates : analysis.choices.map(\.candidate)
+        localEvidenceCandidates = !analysis.choices.isEmpty ? analysis.choices.map(\.candidate) :
+            (!analysis.fallbackCandidates.isEmpty ? analysis.fallbackCandidates : analysis.detection.allCandidates)
         if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
            let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                 ?? SpatialTrackingEngine.shared.latestPose() {
@@ -2136,7 +2139,12 @@ public final class CameraViewModel: ObservableObject {
             localSelectionMessage = nil
         } else {
             allowsAutoCaptureForCurrentTarget = false
-            localSelectionMessage = "Chưa có mốc rõ để căn máy. Thử hướng máy sang vùng có chi tiết hoặc chụp tay."
+            let centerRect = CGRect(x: 0.25, y: 0.25, width: 0.50, height: 0.50)
+            let centerAim = CGPoint(x: 0.5, y: 0.45)
+            let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: centerAim))
+            pinTargetAndStartMotion(at: centerAim, subjectRect: centerRect, source: source, pinnedGuideRay: worldRay)
+            localTrackingSource = nil
+            localSelectionMessage = nil
         }
     }
 

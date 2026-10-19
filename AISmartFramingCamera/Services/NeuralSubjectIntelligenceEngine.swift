@@ -220,8 +220,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                                                  cancellation: cancellation) else { return nil }
         // Choose identity before optimizing layout. Different crops must never
         // compete by silently substituting an unrelated background object.
-        guard let hero = output.allCandidates.first else {
-            return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [], receipt: receipt())
+        let hero: NeuralSubjectCandidate
+        if let first = output.allCandidates.first {
+            hero = first
+        } else {
+            hero = NeuralSubjectCandidate(
+                boundingBox: CGRect(x: 0.20, y: 0.20, width: 0.60, height: 0.55),
+                category: .general,
+                confidence: 0.70,
+                label: "Khung cảnh",
+                prominenceScore: 0.20
+            )
         }
         guard let raster = output.compositionRaster else {
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
@@ -283,7 +292,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image,
                                           preservesOriginalFrame: proposal.isUnchangedView)
         }
-        return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: [hero],
+        let effectiveCandidates = output.allCandidates.isEmpty ? [hero] : output.allCandidates
+        return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: effectiveCandidates,
             assessedCompositionCount: result.assessedCount, usedCompositionModel: result.usedSpecialist,
             canAutoselectComposition: result.canAutoselect,
             receipt: receipt(count: result.assessedCount, specialist: result.usedSpecialist, modern: result.modernAssessmentCount))
@@ -378,13 +388,50 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
 
         if !hasPrimarySemanticSubject {
             for observation in [attention.results?.first, objectness.results?.first].compactMap({ $0 }) {
-                for region in observation.salientObjects ?? [] where region.confidence >= 0.65 {
+                for region in observation.salientObjects ?? [] where region.confidence >= 0.30 {
                     let area = region.boundingBox.width * region.boundingBox.height
-                    guard area >= 0.025 && area <= 0.42 else { continue }
+                    guard area >= 0.01 && area <= 0.85 else { continue }
                     if let c = candidate(visionRect: region.boundingBox, category: .foregroundObject,
                                          confidence: region.confidence, label: "Vùng nổi bật") {
                         candidates.append(c)
                     }
+                }
+            }
+        }
+        if candidates.isEmpty, let r = raster, r.hasAttention {
+            if let com = r.visualCenterOfMass {
+                let comVal = r.value(r.attention, at: com)
+                if comVal >= 0.18 {
+                    let bw: CGFloat = 0.36
+                    let bh: CGFloat = 0.36
+                    let bx = min(max(0.04, com.x - bw / 2), 1 - bw - 0.04)
+                    let by = min(max(0.04, com.y - bh / 2), 1 - bh - 0.04)
+                    let box = CGRect(x: bx, y: by, width: bw, height: bh)
+                    candidates.append(NeuralSubjectCandidate(
+                        boundingBox: box,
+                        category: .foregroundObject,
+                        confidence: Float(max(0.40, comVal)),
+                        label: "Vùng trọng tâm",
+                        prominenceScore: 0.22
+                    ))
+                }
+            }
+            if let anchor = r.sceneryAnchor {
+                let anchorVal = r.value(r.attention, at: anchor)
+                let bw: CGFloat = 0.32
+                let bh: CGFloat = 0.32
+                let bx = min(max(0.04, anchor.x - bw / 2), 1 - bw - 0.04)
+                let by = min(max(0.04, anchor.y - bh / 2), 1 - bh - 0.04)
+                let box = CGRect(x: bx, y: by, width: bw, height: bh)
+                let isFarFromFirst = candidates.first.map { hypot($0.center.x - anchor.x, $0.center.y - anchor.y) > 0.25 } ?? true
+                if isFarFromFirst {
+                    candidates.append(NeuralSubjectCandidate(
+                        boundingBox: box,
+                        category: .foregroundObject,
+                        confidence: Float(max(0.38, anchorVal)),
+                        label: "Vùng chi tiết",
+                        prominenceScore: 0.18
+                    ))
                 }
             }
         }
@@ -433,13 +480,26 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return copy
         }.sorted { $0.prominenceScore > $1.prominenceScore }
         var result: [NeuralSubjectCandidate] = []
-        for c in ranked where c.prominenceScore >= 0.12 {
+        let maxScore = ranked.first?.prominenceScore ?? 0.0
+        let threshold = maxScore >= 0.12 ? 0.10 : max(0.04, maxScore * 0.5)
+        for c in ranked where c.prominenceScore >= threshold {
             let duplicate = result.contains { other in
                 HeroSubjectPolicy.duplicate(c.boundingBox, other.boundingBox,
                     eyeA: c.eyePosition, eyeB: other.eyePosition)
             }
-            if !duplicate { result.append(c) }
+            if !duplicate {
+                var candidate = c
+                if candidate.prominenceScore < 0.12 {
+                    candidate.prominenceScore = 0.12
+                }
+                result.append(candidate)
+            }
             if result.count == 12 { break }
+        }
+        if result.isEmpty, let top = ranked.first {
+            var fallback = top
+            fallback.prominenceScore = max(0.12, fallback.prominenceScore)
+            result.append(fallback)
         }
         return result
     }
@@ -496,8 +556,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         guard [raw.minX, raw.minY, raw.width, raw.height].allSatisfy(\.isFinite),
               confidence.isFinite, raw.width > 0, raw.height > 0 else { return nil }
         let rect = raw.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard !rect.isNull, !rect.isEmpty, rect.width >= 0.025, rect.height >= 0.025,
-              rect.width * rect.height >= raw.width * raw.height * 0.8 else { return nil }
+        guard !rect.isNull, !rect.isEmpty, rect.width >= 0.015, rect.height >= 0.015,
+              rect.width * rect.height >= raw.width * raw.height * 0.65 else { return nil }
         return NeuralSubjectCandidate(boundingBox: rect, category: category, confidence: confidence, label: label,
             prominenceScore: HeroSubjectPolicy.score(bounds: rect, kind: kind(category), confidence: Double(confidence), evidence: nil))
     }

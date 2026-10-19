@@ -176,7 +176,7 @@ enum HeroSubjectPolicy {
         case .face: semantic = 0.94
         case .animal: semantic = 0.88
         case .object: semantic = 0.62
-        case .scenery: semantic = 0.40
+        case .scenery: semantic = 0.45
         }
         let visual: Double
         if let e = evidence {
@@ -189,7 +189,7 @@ enum HeroSubjectPolicy {
         case .face: tierMultiplier = 1.20
         case .animal: tierMultiplier = 1.10
         case .object: tierMultiplier = 0.85
-        case .scenery: tierMultiplier = 0.25
+        case .scenery: tierMultiplier = 0.45
         }
         let tinyPenalty = min(1, area / (kind == .face ? 0.002 : 0.008))
         return max(0, min(1, confidence)) * tinyPenalty * tierMultiplier *
@@ -899,7 +899,9 @@ enum CompositionPlanner {
 
     private static func valid(_ rect: CGRect) -> Bool {
         [rect.minX, rect.minY, rect.maxX, rect.maxY].allSatisfy(\.isFinite) &&
-        rect.width > 0.01 && rect.height > 0.01 && frame.contains(rect)
+        rect.width > 0.005 && rect.height > 0.005 &&
+        rect.minX >= -0.005 && rect.minY >= -0.005 &&
+        rect.maxX <= 1.005 && rect.maxY <= 1.005
     }
 
     private static func inside(_ point: CGPoint, margin: CGFloat) -> Bool {
