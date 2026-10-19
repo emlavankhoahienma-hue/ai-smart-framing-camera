@@ -118,7 +118,7 @@ private final class SemanticCropRanker: @unchecked Sendable {
 /// Ứng viên chủ thể được AI phát hiện và xếp hạng
 public struct NeuralSubjectCandidate: Identifiable, Sendable {
     public let id = UUID()
-    public let boundingBox: CGRect // Toạ độ chuẩn hóa UI (Top-Left 0..1)
+    public var boundingBox: CGRect // Toạ độ chuẩn hóa UI (Top-Left 0..1)
     public let category: NeuralSubjectCategory
     public let confidence: Float
     public let label: String
