@@ -35,25 +35,18 @@ enum CompositionCropProtection {
     /// The planner separately enforces measured attention retention. This crop
     /// constraint never replaces a physical subject or the full tracking seed.
     static func bounds(body: CGRect, portrait: CGRect?, intent: LocalCompositionIntent,
-                       anchor: CGPoint, attentionRegion: Bool = false,
-                       allowBustFallback: Bool = false) -> CGRect {
+                       anchor: CGPoint, attentionRegion: Bool = false) -> CGRect {
         if attentionRegion, body.contains(anchor), body.width > 0, body.height > 0 {
             let width = min(0.08, body.width), height = min(0.08, body.height)
             return CGRect(x: min(body.maxX - width, max(body.minX, anchor.x - width / 2)),
                           y: min(body.maxY - height, max(body.minY, anchor.y - height / 2)),
                           width: width, height: height)
         }
-        if intent == .portrait {
-            if let portrait,
-               [portrait.minX, portrait.minY, portrait.width, portrait.height].allSatisfy(\.isFinite),
-               portrait.width > 0, portrait.height > 0,
-               body.contains(portrait), portrait.contains(anchor) {
-                return portrait
-            }
-            if allowBustFallback, body.height > 0.42 && anchor.y < body.minY + body.height * 0.45 {
-                let bustHeight = max(0.22, body.height * 0.52)
-                return CGRect(x: body.minX, y: body.minY, width: body.width, height: bustHeight)
-            }
+        if intent == .portrait, let portrait,
+           [portrait.minX, portrait.minY, portrait.width, portrait.height].allSatisfy(\.isFinite),
+           portrait.width > 0, portrait.height > 0,
+           body.contains(portrait), portrait.contains(anchor) {
+            return portrait
         }
         return body
     }
@@ -387,17 +380,10 @@ enum CompositionPlanner {
         let batches = intents.map { intent -> [CompositionProposal] in
             if !refining.isEmpty && !refining.contains(where: { $0.intent == intent }) { return [] }
             let bounds: CGRect
-            if intent == .portrait, subject.kind == .person {
-                bounds = CompositionCropProtection.bounds(
-                    body: subject.bounds,
-                    portrait: portraitBounds,
-                    intent: .portrait,
-                    anchor: subject.anchor,
-                    allowBustFallback: true
-                )
-            } else {
-                bounds = subject.bounds
-            }
+            if intent == .portrait, subject.kind == .person, let portraitBounds,
+               subject.bounds.contains(portraitBounds), portraitBounds.contains(subject.anchor) {
+                bounds = portraitBounds
+            } else { bounds = subject.bounds }
             let framed = CompositionSubject(index: subject.index, bounds: bounds, anchor: subject.anchor,
                 kind: subject.kind, confidence: subject.confidence, importance: subject.importance, gaze: subject.gaze,
                 allowsAttentionCrop: subject.allowsAttentionCrop)

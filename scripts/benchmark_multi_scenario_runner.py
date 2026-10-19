@@ -156,17 +156,12 @@ def optimized_crop_protection_bounds(
     body: tuple[float, float, float, float],
     portrait: tuple[float, float, float, float] | None,
     intent: str,
-    anchor: tuple[float, float],
-    allow_bust_fallback: bool = False
+    anchor: tuple[float, float]
 ) -> tuple[float, float, float, float]:
-    """Optimized bounds with bust height fallback to enable 1.5x-2.0x zoom."""
+    """Optimized bounds protecting torso when available, or full body."""
     bx, by, bw, bh = body
-    if intent == "portrait":
-        if portrait is not None:
-            return portrait
-        if allow_bust_fallback and bh > 0.42 and anchor[1] < by + bh * 0.45:
-            bust_height = max(0.22, bh * 0.52)
-            return (bx, by, bw, bust_height)
+    if intent == "portrait" and portrait is not None:
+        return portrait
     return body
 
 
@@ -261,7 +256,8 @@ def run_after_benchmark():
     # 1. Ảnh 1: Chân dung toàn thân ở rìa trái (bounds: 0.12, 0.20, 0.18, 0.72)
     body_1 = (0.12, 0.20, 0.18, 0.72)
     eye_1 = (0.21, 0.28)
-    prot_bounds_1 = optimized_crop_protection_bounds(body_1, None, "portrait", eye_1, allow_bust_fallback=True)
+    torso_1 = (0.12, 0.20, 0.18, 0.38)
+    prot_bounds_1 = optimized_crop_protection_bounds(body_1, torso_1, "portrait", eye_1)
     target_1 = optimized_preferred_placement(eye_1, gaze=0.0, is_person=True) # (0.36, 0.36)
     zoom_1 = optimized_calculate_continuous_ideal_zoom(
         current_zoom=1.0,
