@@ -4,6 +4,7 @@ import Vision
 import CoreGraphics
 import CoreVideo
 import ImageIO
+import CoreImage
 
 /// Pretrained COCO and YOLOv26 ANE hardware-accelerated detection.
 /// Vision remains the fallback when loading fails.
@@ -16,6 +17,10 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     private var isDedicatedYOLO26ANE: Bool = false
     private var loadedModelName: String?
     private var hasLoggedExperimentC: Bool = false
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    private var bufferPool: CVPixelBufferPool?
+    private var bufferPoolSize: (w: Int, h: Int) = (0, 0)
+    private let poolLock = NSLock()
 
     public init() { loadYOLOModel() }
 
@@ -62,7 +67,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
               CVPixelBufferGetHeight(pixelBuffer) > 32 else { return [] }
         let (vnModel, nativeModel, isDedicated) = modelLock.withLock { (yoloCoreMLModel, yoloNativeMLModel, isDedicatedYOLO26ANE) }
         if isDedicated, let nativeModel {
-            return detectWithDedicatedANE(model: nativeModel, pixelBuffer: pixelBuffer, cancellation: cancellation)
+            return detectWithDedicatedANE(model: nativeModel, pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         } else if let vnModel {
             return detectWithVisionCoreML(vnModel: vnModel, pixelBuffer: pixelBuffer,
                                           orientation: orientation, cancellation: cancellation)
@@ -91,15 +96,92 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         }
     }
 
+    private func inputSize(for model: MLModel) -> (width: Int, height: Int) {
+        if let imageDesc = model.modelDescription.inputDescriptionsByName["image"],
+           let constraint = imageDesc.imageConstraint {
+            return (constraint.pixelsWide, constraint.pixelsHigh)
+        }
+        return (640, 640)
+    }
+
+    private func getResizedPixelBuffer(
+        from sourceBuffer: CVPixelBuffer,
+        targetWidth: Int,
+        targetHeight: Int,
+        orientation: CGImagePropertyOrientation = .up
+    ) -> CVPixelBuffer? {
+        let srcW = CVPixelBufferGetWidth(sourceBuffer)
+        let srcH = CVPixelBufferGetHeight(sourceBuffer)
+        if srcW == targetWidth && srcH == targetHeight && orientation == .up {
+            return sourceBuffer
+        }
+
+        var destinationBuffer: CVPixelBuffer?
+        poolLock.withLock {
+            if bufferPool == nil || bufferPoolSize.w != targetWidth || bufferPoolSize.h != targetHeight {
+                let poolAttributes: [CFString: Any] = [
+                    kCVPixelBufferPoolMinimumBufferCountKey: 2
+                ]
+                let pixelBufferAttributes: [CFString: Any] = [
+                    kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+                    kCVPixelBufferWidthKey: targetWidth,
+                    kCVPixelBufferHeightKey: targetHeight,
+                    kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any],
+                    kCVPixelBufferCGImageCompatibilityKey: true,
+                    kCVPixelBufferCGBitmapContextCompatibilityKey: true
+                ]
+                var pool: CVPixelBufferPool?
+                let status = CVPixelBufferPoolCreate(kCFAllocatorDefault, poolAttributes as CFDictionary, pixelBufferAttributes as CFDictionary, &pool)
+                if status == kCVReturnSuccess, let pool {
+                    bufferPool = pool
+                    bufferPoolSize = (targetWidth, targetHeight)
+                }
+            }
+            if let pool = bufferPool {
+                let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &destinationBuffer)
+                if status != kCVReturnSuccess { destinationBuffer = nil }
+            }
+        }
+
+        if destinationBuffer == nil {
+            let pixelBufferAttributes: [CFString: Any] = [
+                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey: targetWidth,
+                kCVPixelBufferHeightKey: targetHeight,
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any]
+            ]
+            CVPixelBufferCreate(kCFAllocatorDefault, targetWidth, targetHeight, kCVPixelFormatType_32BGRA, pixelBufferAttributes as CFDictionary, &destinationBuffer)
+        }
+
+        guard let dest = destinationBuffer else { return nil }
+
+        let ciImage = orientation == .up ? CIImage(cvPixelBuffer: sourceBuffer) : CIImage(cvPixelBuffer: sourceBuffer).oriented(orientation)
+        let extent = ciImage.extent
+        guard extent.width > 0, extent.height > 0 else { return nil }
+        let scaleX = CGFloat(targetWidth) / extent.width
+        let scaleY = CGFloat(targetHeight) / extent.height
+        let scaled = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        ciContext.render(scaled, to: dest)
+        return dest
+    }
+
     private func detectWithDedicatedANE(
         model: MLModel,
         pixelBuffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation = .up,
         cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled else { return [] }
+        let targetSize = inputSize(for: model)
+        guard let bufferToFeed = getResizedPixelBuffer(
+            from: pixelBuffer,
+            targetWidth: targetSize.width,
+            targetHeight: targetSize.height,
+            orientation: orientation
+        ) else { return [] }
         do {
             let inputProvider = try MLDictionaryFeatureProvider(dictionary: [
-                "image": MLFeatureValue(pixelBuffer: pixelBuffer)
+                "image": MLFeatureValue(pixelBuffer: bufferToFeed)
             ])
             let output = try model.prediction(from: inputProvider)
             guard !cancellation.isCancelled else { return [] }
