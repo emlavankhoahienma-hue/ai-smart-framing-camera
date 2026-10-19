@@ -98,8 +98,13 @@ public final class YOLODetectionEngine: @unchecked Sendable {
 
     private func inputSize(for model: MLModel) -> (width: Int, height: Int) {
         if let imageDesc = model.modelDescription.inputDescriptionsByName["image"],
-           let constraint = imageDesc.imageConstraint {
+           let constraint = imageDesc.imageConstraint,
+           constraint.pixelsWide > 0, constraint.pixelsHigh > 0 {
             return (constraint.pixelsWide, constraint.pixelsHigh)
+        }
+        let currentName = modelLock.withLock { loadedModelName } ?? ""
+        if currentName.contains("416") {
+            return (416, 416)
         }
         return (640, 640)
     }
@@ -110,6 +115,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         targetHeight: Int,
         orientation: CGImagePropertyOrientation = .up
     ) -> CVPixelBuffer? {
+        guard targetWidth > 0, targetHeight > 0 else { return nil }
         let srcW = CVPixelBufferGetWidth(sourceBuffer)
         let srcH = CVPixelBufferGetHeight(sourceBuffer)
         if srcW == targetWidth && srcH == targetHeight && orientation == .up {
@@ -148,12 +154,18 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferWidthKey: targetWidth,
                 kCVPixelBufferHeightKey: targetHeight,
-                kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any]
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any],
+                kCVPixelBufferCGImageCompatibilityKey: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey: true
             ]
             CVPixelBufferCreate(kCFAllocatorDefault, targetWidth, targetHeight, kCVPixelFormatType_32BGRA, pixelBufferAttributes as CFDictionary, &destinationBuffer)
         }
 
-        guard let dest = destinationBuffer else { return nil }
+        guard let dest = destinationBuffer,
+              CVPixelBufferGetWidth(dest) == targetWidth,
+              CVPixelBufferGetHeight(dest) == targetHeight else {
+            return nil
+        }
 
         let ciImage = orientation == .up ? CIImage(cvPixelBuffer: sourceBuffer) : CIImage(cvPixelBuffer: sourceBuffer).oriented(orientation)
         let extent = ciImage.extent
@@ -174,12 +186,18 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     ) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled else { return [] }
         let targetSize = inputSize(for: model)
+        guard targetSize.width > 0, targetSize.height > 0 else { return [] }
         guard let bufferToFeed = getResizedPixelBuffer(
             from: pixelBuffer,
             targetWidth: targetSize.width,
             targetHeight: targetSize.height,
             orientation: orientation
         ) else { return [] }
+        let feedW = CVPixelBufferGetWidth(bufferToFeed)
+        let feedH = CVPixelBufferGetHeight(bufferToFeed)
+        guard feedW == targetSize.width, feedH == targetSize.height else {
+            return []
+        }
         do {
             let inputProvider = try MLDictionaryFeatureProvider(dictionary: [
                 "image": MLFeatureValue(pixelBuffer: bufferToFeed)
@@ -239,8 +257,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         }
 
         guard numBoxes > 0, numClasses > 0 else { return [] }
-        var candidates: [NeuralSubjectCandidate] = []
-        let threshold: Float = CompositionTuning.yoloConfidenceThreshold
+        var rawCandidates: [NeuralSubjectCandidate] = []
+        let baseThreshold: Float = CompositionTuning.yoloConfidenceThreshold
 
         let coordsCapacity = max(coords.count, numBoxes * coordBoxStride)
         let confCapacity = max(conf.count, numBoxes * confBoxStride)
@@ -260,7 +278,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                         maxClassId = c
                     }
                 }
-                guard maxScore >= threshold else { continue }
+                let classThreshold: Float = (maxClassId == 0 || maxClassId == 2 || maxClassId == 3) ? max(baseThreshold, 0.52) : baseThreshold
+                guard maxScore >= classThreshold else { continue }
                 let coordBoxBase = i * coordBoxStride
                 let cx = CGFloat(Float(coordsPtr[coordBoxBase + 0 * coordElemStride]))
                 let cy = CGFloat(Float(coordsPtr[coordBoxBase + 1 * coordElemStride]))
@@ -268,10 +287,12 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 let h = CGFloat(Float(coordsPtr[coordBoxBase + 3 * coordElemStride]))
                 let rawRect = CompositionPureCalculations.decodeYOLORawBox(cx: cx, cy: cy, w: w, h: h)
                 guard let uiRect = clippedValidBox(rawRect) else { continue }
+                let area = uiRect.width * uiRect.height
+                guard area >= 0.006 && area <= 0.95 else { continue }
                 let category = mapDedicatedClassIdToCategory(maxClassId)
                 let label = localizeDedicatedClassId(maxClassId)
                 let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category)
-                candidates.append(NeuralSubjectCandidate(boundingBox: uiRect, category: category, confidence: maxScore, label: label, prominenceScore: prominence))
+                rawCandidates.append(NeuralSubjectCandidate(boundingBox: uiRect, category: category, confidence: maxScore, label: label, prominenceScore: prominence))
             }
         } else {
             let coordsPtr = coords.dataPointer.bindMemory(to: Float.self, capacity: coordsCapacity)
@@ -288,7 +309,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                         maxClassId = c
                     }
                 }
-                guard maxScore >= threshold else { continue }
+                let classThreshold: Float = (maxClassId == 0 || maxClassId == 2 || maxClassId == 3) ? max(baseThreshold, 0.52) : baseThreshold
+                guard maxScore >= classThreshold else { continue }
                 let coordBoxBase = i * coordBoxStride
                 let cx = CGFloat(coordsPtr[coordBoxBase + 0 * coordElemStride])
                 let cy = CGFloat(coordsPtr[coordBoxBase + 1 * coordElemStride])
@@ -296,13 +318,32 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 let h = CGFloat(coordsPtr[coordBoxBase + 3 * coordElemStride])
                 let rawRect = CompositionPureCalculations.decodeYOLORawBox(cx: cx, cy: cy, w: w, h: h)
                 guard let uiRect = clippedValidBox(rawRect) else { continue }
+                let area = uiRect.width * uiRect.height
+                guard area >= 0.006 && area <= 0.95 else { continue }
                 let category = mapDedicatedClassIdToCategory(maxClassId)
                 let label = localizeDedicatedClassId(maxClassId)
                 let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category)
-                candidates.append(NeuralSubjectCandidate(boundingBox: uiRect, category: category, confidence: maxScore, label: label, prominenceScore: prominence))
+                rawCandidates.append(NeuralSubjectCandidate(boundingBox: uiRect, category: category, confidence: maxScore, label: label, prominenceScore: prominence))
             }
         }
-        return candidates.sorted { $0.prominenceScore > $1.prominenceScore }
+
+        var nmsCandidates: [NeuralSubjectCandidate] = []
+        for candidate in rawCandidates.sorted(by: { $0.confidence > $1.confidence }) {
+            let isOverlapping = nmsCandidates.contains { existing in
+                if existing.category != candidate.category { return false }
+                let inter = existing.boundingBox.intersection(candidate.boundingBox)
+                guard !inter.isNull, !inter.isEmpty else { return false }
+                let interArea = inter.width * inter.height
+                let unionArea = existing.boundingBox.width * existing.boundingBox.height + candidate.boundingBox.width * candidate.boundingBox.height - interArea
+                guard unionArea > 0 else { return false }
+                return (interArea / unionArea) > 0.45
+            }
+            if !isOverlapping {
+                nmsCandidates.append(candidate)
+            }
+            if nmsCandidates.count >= 10 { break }
+        }
+        return nmsCandidates.sorted { $0.prominenceScore > $1.prominenceScore }
     }
 
     private func mapDedicatedClassIdToCategory(_ classId: Int) -> NeuralSubjectCategory {
