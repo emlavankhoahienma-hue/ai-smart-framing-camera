@@ -414,12 +414,6 @@ enum CompositionPlanner {
                 $0.confidence.isFinite && $0.importance.isFinite && $0.gaze.isFinite
         }
         let protectedPeople = validSubjects.filter { $0.kind == .person || $0.kind == .face || $0.kind == .group }
-        let protectedRects: [CGRect]
-        if intent == .group {
-            protectedRects = protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) }
-        } else {
-            protectedRects = [protectedAnchor] + protectedBounds.filter { valid($0) }
-        }
         let incidentalRects = incidentalBounds.filter { valid($0) }
         let hardwareMax = allowedZooms.filter { $0.isFinite && $0 > 0 }.max() ?? currentZoom
         // Avoid throwing away excessive source resolution. Lens availability is
@@ -432,6 +426,9 @@ enum CompositionPlanner {
                 intent: .object, anchor: subject.anchor, attentionRegion: cropAttention)
             for intent in applicableIntents(subject: subject, preferred: intents, people: protectedPeople) {
                 if isCancelled() { return [] }
+                let protectedRects: [CGRect] = intent == .group
+                    ? (protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) })
+                    : ([protectedAnchor] + protectedBounds.filter { valid($0) })
                 let desired = preferredPlacement(subject: subject, intent: intent, raster: raster)
                 func evaluate(_ destination: CGPoint, zoom: CGFloat) -> CompositionProposal? {
                     let unchanged = zoom == currentZoom && hypot(destination.x - subject.anchor.x,

@@ -223,6 +223,6 @@ enum CompositionPreferencePolicy {
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {
-        score.isFinite && original.isFinite && score >= original - 0.020
+        score.isFinite && original.isFinite && score >= original + 0.008
     }
 }
