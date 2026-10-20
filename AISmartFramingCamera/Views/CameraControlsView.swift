@@ -37,7 +37,7 @@ public struct CameraControlsView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 22)
+            .padding(.horizontal, compact ? 16 : 22)
 
             // Row 2: AI Button (Left) + Mode Switcher (Center under Shutter) + Balanced Spacer (Right)
             HStack(alignment: .center, spacing: 0) {
@@ -60,7 +60,7 @@ public struct CameraControlsView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 22)
+            .padding(.horizontal, compact ? 16 : 22)
             .padding(.bottom, 4)
         }
         .padding(.top, compact ? 2 : 4)

@@ -127,7 +127,7 @@ public struct ARFramingOverlayView: View {
                 }
 
                 // Optical centre is always fixed in the photo viewfinder.
-                if !viewModel.captureMode.isVideo {
+                if viewModel.showTargetCircle && !viewModel.captureMode.isVideo {
                     CurrentCenterCrosshair()
                     .position(screenCenter)
                     .transition(.opacity.combined(with: .scale(scale: 0.7)))

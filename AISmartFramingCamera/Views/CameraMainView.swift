@@ -9,7 +9,7 @@ struct CameraFormFactorLayout {
     var isVideo: Bool = false
 
     var isCompact: Bool { availableSize.height < 700 || availableSize.width < 375 }
-    var topHorizontalPadding: CGFloat { availableSize.width < 375 ? 8 : 14 }
+    var topHorizontalPadding: CGFloat { availableSize.width < 375 ? 8 : (availableSize.width < 390 ? 10 : 14) }
     var topVerticalPadding: CGFloat {
         isCompact ? 2 : min(18, max(4, (availableSize.height - 700) * 0.12))
     }
@@ -40,7 +40,7 @@ struct CameraFormFactorLayout {
         }
     }
     var histogramWidth: CGFloat {
-        max(54, min(75, availableSize.width * 0.17))
+        availableSize.width < 380 ? 46 : min(62, availableSize.width * 0.15)
     }
     var viewfinderTopInset: CGFloat { max(6, min(12, viewfinderSize.height * 0.02)) }
     var viewfinderBottomInset: CGFloat { max(8, min(14, viewfinderSize.height * 0.025)) }
@@ -83,6 +83,7 @@ public struct CameraMainView: View {
                         // 2. Minimalist Top Pro Toolbar
                         TopCameraBar(viewModel: viewModel, histogramWidth: layout.histogramWidth)
                             .frame(height: 44)
+                            .frame(maxWidth: .infinity)
                             .padding(.horizontal, layout.topHorizontalPadding)
                             .padding(.top, layout.topVerticalPadding)
                             .padding(.bottom, layout.topBottomPadding)
@@ -170,7 +171,7 @@ public struct CameraMainView: View {
                         .shadow(color: Color.black.opacity(0.60), radius: 12, y: 4)
                         // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
                         .overlay(alignment: .topLeading) {
-                            if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating {
+                            if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating && viewModel.captureMode.isVideo {
                                 AudioVULevelMeterView(levels: viewModel.audioLevels)
                                     .padding(.top, layout.viewfinderTopInset)
                                     .padding(.leading, 10)
@@ -203,12 +204,18 @@ public struct CameraMainView: View {
                         // 4. Bottom Control Deck (Album + Minimalist Shutter + Camera Flip + AI Button + Mode Switcher)
                         CameraControlsView(viewModel: viewModel, compact: layout.isCompact)
                             .frame(height: layout.controlDeckHeight)
+                            .frame(maxWidth: .infinity)
                             .padding(.bottom, layout.bottomComfort)
                     }
+                    .frame(width: geometry.size.width)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     CameraPermissionPlaceholderView(viewModel: viewModel)
+                        .frame(width: geometry.size.width)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .sheet(isPresented: $viewModel.isShowingSettings) {
             SettingsSheetView(viewModel: viewModel)
@@ -283,7 +290,7 @@ struct TopCameraBar: View {
     let histogramWidth: CGFloat
 
     var body: some View {
-        HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .center, spacing: 0) {
             // 1. Flash Toggle Button
             Button(action: {
                 viewModel.toggleFlash()
@@ -291,7 +298,7 @@ struct TopCameraBar: View {
                 Image(systemName: flashIconName)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.85) : AlignTheme.amberGold)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
@@ -300,13 +307,14 @@ struct TopCameraBar: View {
             // 2. Mini Live Color Histogram
             if viewModel.showHistogramInViewfinder {
                 LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
-                    .frame(height: 28)
+                    .frame(height: 26)
+                    .padding(.leading, 4)
             }
 
-            Spacer(minLength: 2)
+            Spacer(minLength: 4)
 
             // 3. Technical Specs Row: ISO, EV, Format/Codec, 4:3 (Hiển thị đầy đủ, không bị cắt chữ)
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Text(viewModel.liveISO)
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.92))
@@ -356,7 +364,7 @@ struct TopCameraBar: View {
             }
             .lineLimit(1)
 
-            Spacer(minLength: 2)
+            Spacer(minLength: 4)
 
             // 4. Windowed Zoom Mode Toggle Button
             Button(action: {
@@ -370,7 +378,7 @@ struct TopCameraBar: View {
                 Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.electricCyan : Color.white.opacity(0.85))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
@@ -383,13 +391,14 @@ struct TopCameraBar: View {
                 Image(systemName: "gearshape")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.white.opacity(0.85))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
             .accessibilityLabel("Cài đặt hệ thống")
         }
         .frame(height: 44)
+        .frame(maxWidth: .infinity)
     }
 
     private var flashIconName: String {
