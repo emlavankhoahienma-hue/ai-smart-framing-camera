@@ -2232,7 +2232,8 @@ public final class CameraViewModel: ObservableObject {
 
     private func acceptLocalPlan(_ plan: LocalFramingPlan, source: AITrackingSource) {
         var liveAimPoint = plan.aimPointInSource
-        if plan.preservesOriginalFrame, let hero = localEvidenceCandidates.first {
+        if plan.zoom <= 1.05, abs(liveAimPoint.x - 0.5) < 0.05 && abs(liveAimPoint.y - 0.5) < 0.05,
+           let hero = localEvidenceCandidates.first {
             liveAimPoint = hero.center
         }
         if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,

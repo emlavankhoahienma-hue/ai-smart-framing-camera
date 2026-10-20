@@ -352,22 +352,6 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             objectness: completed.contains(ObjectIdentifier(objectness)) ? objectness.results?.first?.pixelBuffer : nil)
         var candidates = YOLODetectionEngine.shared.detectPhotographicObjects(
             pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
-        if completed.contains(ObjectIdentifier(bodies)) {
-            for body in bodies.results ?? [] where body.confidence >= 0.40 {
-                let upright = CompositionPureCalculations.visionToUprightRect(body.boundingBox)
-                let hasMatchingFace = faceCandidates.contains { face in
-                    upright.contains(CGPoint(x: face.boundingBox.midX, y: face.boundingBox.midY)) ||
-                    (abs(face.boundingBox.midX - upright.midX) < upright.width * 0.45 && face.boundingBox.minY <= upright.minY + upright.height * 0.45)
-                }
-                let hasYoloPerson = candidates.contains {
-                    $0.category == .human && $0.boundingBox.intersects(upright)
-                }
-                guard hasMatchingFace || hasYoloPerson else { continue }
-                if let c = candidate(visionRect: body.boundingBox, category: .human, confidence: body.confidence, label: "Người") {
-                    candidates.append(c)
-                }
-            }
-        }
         var faceCandidates: [NeuralSubjectCandidate] = []
         if completed.contains(ObjectIdentifier(faces)) {
             for face in faces.results ?? [] where face.confidence >= 0.40 {
@@ -384,6 +368,22 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 }
                 if let yaw = face.yaw?.doubleValue, yaw.isFinite { c.gaze = CGFloat(sin(yaw)) }
                 faceCandidates.append(c)
+            }
+        }
+        if completed.contains(ObjectIdentifier(bodies)) {
+            for body in bodies.results ?? [] where body.confidence >= 0.40 {
+                let upright = CompositionPureCalculations.visionToUprightRect(body.boundingBox)
+                let hasMatchingFace = faceCandidates.contains { face in
+                    upright.contains(CGPoint(x: face.boundingBox.midX, y: face.boundingBox.midY)) ||
+                    (abs(face.boundingBox.midX - upright.midX) < upright.width * 0.45 && face.boundingBox.minY <= upright.minY + upright.height * 0.45)
+                }
+                let hasYoloPerson = candidates.contains {
+                    $0.category == .human && $0.boundingBox.intersects(upright)
+                }
+                guard hasMatchingFace || hasYoloPerson else { continue }
+                if let c = candidate(visionRect: body.boundingBox, category: .human, confidence: body.confidence, label: "Người") {
+                    candidates.append(c)
+                }
             }
         }
         if completed.contains(ObjectIdentifier(animals)) {
