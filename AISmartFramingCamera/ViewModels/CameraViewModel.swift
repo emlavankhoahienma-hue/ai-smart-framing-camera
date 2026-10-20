@@ -2232,6 +2232,9 @@ public final class CameraViewModel: ObservableObject {
 
     private func acceptLocalPlan(_ plan: LocalFramingPlan, source: AITrackingSource) {
         var liveAimPoint = plan.aimPointInSource
+        if plan.preservesOriginalFrame, let hero = localEvidenceCandidates.first {
+            liveAimPoint = hero.center
+        }
         if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
            let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                 ?? SpatialTrackingEngine.shared.latestPose() {

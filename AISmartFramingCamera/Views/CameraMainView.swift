@@ -40,7 +40,7 @@ struct CameraFormFactorLayout {
         }
     }
     var histogramWidth: CGFloat {
-        max(70, min(100, availableSize.width * 0.22))
+        max(54, min(75, availableSize.width * 0.17))
     }
     var viewfinderTopInset: CGFloat { max(6, min(12, viewfinderSize.height * 0.02)) }
     var viewfinderBottomInset: CGFloat { max(8, min(14, viewfinderSize.height * 0.025)) }
@@ -305,15 +305,17 @@ struct TopCameraBar: View {
 
             Spacer(minLength: 2)
 
-            // 3. Technical Specs Row: ISO, EV, Format/Codec, 4:3
-            HStack(spacing: 8) {
+            // 3. Technical Specs Row: ISO, EV, Format/Codec, 4:3 (Hiển thị đầy đủ, không bị cắt chữ)
+            HStack(spacing: 6) {
                 Text(viewModel.liveISO)
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(.white.opacity(0.92))
+                    .fixedSize()
 
                 Text(String(format: "EV %+.1f", viewModel.exposureBias))
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(.white.opacity(0.88))
+                    .fixedSize()
 
                 Button(action: {
                     let generator = UISelectionFeedbackGenerator()
@@ -335,23 +337,24 @@ struct TopCameraBar: View {
                             .font(.system(size: 11, weight: .bold, design: .monospaced))
                             .foregroundColor(.white)
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2.0)
                     .background(
                         viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo
                             ? RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.25))
-                            : RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.10))
+                            : RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.12))
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
+                .fixedSize()
                 .accessibilityLabel("Định dạng: \(currentFormatLabel). Chạm để thay đổi.")
 
                 Text(viewModel.captureMode.isVideo ? "16:9" : (viewModel.isWindowedZoomActive ? viewModel.windowedZoomAspectRatio.rawValue : "4:3"))
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(.white.opacity(0.88))
+                    .fixedSize()
             }
             .lineLimit(1)
-            .minimumScaleFactor(0.80)
 
             Spacer(minLength: 2)
 

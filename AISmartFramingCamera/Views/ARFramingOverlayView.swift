@@ -698,21 +698,20 @@ struct HorizonLevelerView: View {
     let isLevel: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             Rectangle()
-                .fill(isLevel ? Color.yellow : Color.white.opacity(0.65))
-                .frame(width: 38, height: isLevel ? 2.0 : 1.2)
+                .fill(isLevel ? Color.yellow : Color.white.opacity(0.60))
+                .frame(width: 34, height: isLevel ? 1.8 : 1.0)
 
-            Circle()
-                .stroke(isLevel ? Color.yellow : Color.white.opacity(0.65), lineWidth: isLevel ? 2.0 : 1.2)
+            Color.clear
                 .frame(width: 8, height: 8)
 
             Rectangle()
-                .fill(isLevel ? Color.yellow : Color.white.opacity(0.65))
-                .frame(width: 38, height: isLevel ? 2.0 : 1.2)
+                .fill(isLevel ? Color.yellow : Color.white.opacity(0.60))
+                .frame(width: 34, height: isLevel ? 1.8 : 1.0)
         }
         .rotationEffect(.degrees(-rollDegrees))
-        .opacity(abs(rollDegrees) > 25.0 ? 0.0 : (isLevel ? 1.0 : max(0.25, 1.0 - abs(rollDegrees) / 20.0)))
+        .opacity(abs(rollDegrees) > 15.0 ? 0.0 : (isLevel ? 1.0 : max(0.20, 1.0 - abs(rollDegrees) / 12.0)))
         .animation(.easeInOut(duration: 0.15), value: isLevel)
     }
 }

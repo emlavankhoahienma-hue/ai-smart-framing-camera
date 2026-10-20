@@ -17,16 +17,10 @@ public struct LiveColorHistogramHUDView: View {
 
     public var body: some View {
         Button(action: toggleActiveFormat) {
-            VStack(spacing: 3) {
-                rgbWaveformCanvas
-                    .frame(width: width, height: 26)
-
-                infoRow
-                    .frame(width: width, height: 14)
-            }
-            .frame(width: width, height: 44)
-            .background(Color.black.opacity(0.15))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            rgbWaveformCanvas
+                .frame(width: width, height: 26)
+                .background(Color.black.opacity(0.20))
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
         }
         .buttonStyle(.plain)
         .onAppear {

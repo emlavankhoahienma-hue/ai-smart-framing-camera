@@ -26,8 +26,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
 
     public func loadYOLOModel() {
         let highMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
-        let names = highMemory ? ["yolov26_ane", "yolo26s", "yolo12s", "yolo12n", "yolo11s", "yolo11n"] :
-                                 ["yolov26_416_fp16", "yolov26_ane", "yolo26n", "yolo12n", "yolo12s", "yolo11n", "yolo11s"]
+        let names = highMemory ? ["yolo12s", "yolo12n", "yolov26_416_fp16", "yolov26_ane"] :
+                                 ["yolo12n", "yolo12s", "yolov26_416_fp16", "yolov26_ane"]
         for name in names {
             if let modelResult = makeModel(named: name, computeUnits: .all) {
                 modelLock.withLock {

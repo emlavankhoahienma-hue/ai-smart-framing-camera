@@ -1301,10 +1301,17 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
             result.faceRectangles = candidates.filter { $0.category == .face }.map { $0.rect }
 
+            let detectedFaces = candidates.filter { $0.category == .face }
             if let humans = humanRequest.results {
                 for obs in humans where obs.confidence >= 0.50 {
                     let rect = CompositionPureCalculations.visionToUprightRect(obs.boundingBox)
                     guard rect.width >= 0.05, rect.height >= 0.05, rect.width <= 0.95, rect.height <= 0.95 else { continue }
+                    // Chỉ xác thực là "Người" khi có khuôn mặt tương ứng nằm bên trong hoặc ngay trên đỉnh hộp
+                    let hasMatchingFace = detectedFaces.contains { face in
+                        rect.contains(CGPoint(x: face.rect.midX, y: face.rect.midY)) ||
+                        (abs(face.rect.midX - rect.midX) < rect.width * 0.45 && face.rect.minY <= rect.minY + rect.height * 0.45)
+                    }
+                    guard hasMatchingFace else { continue }
                     candidates.append(LiveDetectedEntity(
                         rect: rect,
                         label: "Người",
@@ -1337,10 +1344,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 orientation: orientation,
                 cancellation: CompositionAnalysisCancellation()
             )
-            for c in yoloCandidates where c.confidence >= 0.50 {
+            for c in yoloCandidates where c.confidence >= 0.48 {
                 guard c.boundingBox.width >= 0.04, c.boundingBox.height >= 0.04,
                       c.boundingBox.width <= 0.95, c.boundingBox.height <= 0.95 else { continue }
-                guard c.category == .human || c.category == .animal || c.category == .face else { continue }
                 candidates.append(LiveDetectedEntity(
                     rect: c.boundingBox,
                     label: c.label,

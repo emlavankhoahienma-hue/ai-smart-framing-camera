@@ -3,7 +3,7 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "70e4e3661d3a2acc3008bf507f059cd0845626f13526e10b9f7b361099dd1858"
+      "sha256": "3eafbb9c21256df1cc46a6a2d057fee548ba7378c4b69a10ccd0a5397bbfa8e1"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
