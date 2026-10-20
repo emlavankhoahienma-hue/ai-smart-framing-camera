@@ -55,11 +55,13 @@ final class CompositionAestheticSearch {
                                          abs(subjCenterX - Double(CompositionTuning.goldenSectionRight)))
                         let thirdY = min(abs(subjTopThirdY - 0.36), abs(Double(proposal.expectedSubjectRect.midY) - 0.382))
                         proposal.score += 0.055 * exp(-14 * (thirdX * thirdX + thirdY * thirdY))
-                        if proposal.zoom > 1.05 {
+                        if proposal.zoom >= 1.15 {
+                            proposal.score += 0.045
+                        } else if proposal.zoom > 1.05 {
                             proposal.score += 0.020
                         }
                     }
-                    proposal.score += min(0.01, max(-0.01, preferences[proposal.preferenceKey] ?? 0))
+                    // preferences bonus removed to ensure unbiased realtime evaluation
                     return View(proposal: proposal, image: preview, assessment: assessment,
                                 geometryScore: candidate.score)
                 }
@@ -221,6 +223,6 @@ enum CompositionPreferencePolicy {
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {
-        score.isFinite && original.isFinite && score >= original + 0.008
+        score.isFinite && original.isFinite && score >= original - 0.020
     }
 }

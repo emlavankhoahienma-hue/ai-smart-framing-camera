@@ -250,6 +250,11 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     faces: hero.faceBounds, observations: poseRequest.results ?? [])
             }
         }
+        if portraitBounds == nil && (hero.category == .human || hero.category == .face) && !hero.isGroup {
+            let box = hero.boundingBox
+            let torsoHeight = min(box.height, max(0.22, box.height * 0.60))
+            portraitBounds = CGRect(x: box.minX, y: box.minY, width: box.width, height: torsoHeight)
+        }
         // Release the semantic encoder before loading the composition specialist,
         // especially on iPhone XS. Detection and group membership remain unchanged.
         SemanticCropRanker.shared.endAnalysis()
@@ -300,10 +305,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     }
 
     private func compositionIntents(_ output: NeuralAnalysisOutput, hero: NeuralSubjectCandidate) -> [LocalCompositionIntent] {
-        if hero.isGroup { return [.group] }
+        if hero.isGroup { return [.group, .environmentalPortrait] }
         if hero.category == .human || hero.category == .face {
-            let context = [.landscape, .architecture, .street, .sunset].contains(output.detectedScene)
-            return context ? [.environmentalPortrait, .portrait] : [.portrait, .environmentalPortrait]
+            return [.portrait, .environmentalPortrait]
         }
         if hero.category == .animal { return [.animal] }
         if hero.category == .general { return [.landscape] }
@@ -520,7 +524,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         guard members.count >= 2 else { return nil }
         let union = members.dropFirst().reduce(hero.boundingBox) { $0.union($1.boundingBox) }
-        guard union.width * union.height <= 0.9 else { return nil }
+        guard union.width * union.height <= 0.95 else { return nil }
         let eyes = members.compactMap(\.eyePosition)
         var group = NeuralSubjectCandidate(boundingBox: union, category: .human,
             confidence: members.map(\.confidence).min() ?? hero.confidence, label: "Nhóm \(members.count) người",

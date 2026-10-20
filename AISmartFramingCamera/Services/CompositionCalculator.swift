@@ -57,34 +57,12 @@ actor CompositionPreferenceStore {
     }
 
     func bonuses() -> [String: Double] {
-        load()
-        var wins: [String: Int] = [:], counts: [String: Int] = [:]
-        for choice in choices {
-            for opponent in Set(choice.keys) where opponent != choice.selected {
-                wins[choice.selected, default: 0] += 1
-                counts[choice.selected, default: 0] += 1
-                counts[opponent, default: 0] += 1
-            }
-        }
-        return counts.reduce(into: [:]) { result, item in
-            guard item.value >= 3 else { return }
-            let preference = Double(wins[item.key, default: 0] + 1) / Double(item.value + 2)
-            result[item.key] = (preference - 0.5) * 0.05
-        }
+        // Da vo hieu hoa: Khong tich luy thien vi lam triet tieu kha nang zoom va bo cuc dong
+        return [:]
     }
 
     func record(keys: [String], selected: String) {
-        load()
-        let distinct = Array(Set(keys)).sorted()
-        guard distinct.count > 1, distinct.contains(selected) else { return }
-        choices.append(Choice(keys: distinct, selected: selected))
-        choices = Array(choices.suffix(500))
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(choices).write(to: url, options: .atomic)
-        } catch {
-            CameraLogger.error("Không lưu được lựa chọn bố cục", error: error, category: .ai)
-        }
+        // Da vo hieu hoa: Khong ghi de thien vi vao cac lan phan tich sau
     }
 
     func exportURL() -> URL? {

@@ -62,8 +62,8 @@ public enum CompositionTuning {
     public static let desiredAreaCloseUp: Double = 0.32
     public static let desiredAreaAnimal: Double = 0.25
     public static let desiredAreaGroup: Double = 0.36
-    public static let desiredAreaEnvironment: Double = 0.13
-    public static let desiredAreaStreet: Double = 0.13
+    public static let desiredAreaEnvironment: Double = 0.22
+    public static let desiredAreaStreet: Double = 0.22
     public static let desiredAreaLandscape: Double = 0.15
     public static let desiredAreaArchitecture: Double = 0.48
 

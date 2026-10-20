@@ -202,7 +202,7 @@ enum HeroSubjectPolicy {
         let scaleRatio = min(a.height, b.height) / max(a.height, b.height)
         let horizontalGap = max(0, max(a.minX, b.minX) - min(a.maxX, b.maxX))
         let verticalGap = abs(a.midY - b.midY)
-        return scaleRatio >= 0.48 && horizontalGap <= max(a.width, b.width) * 1.2 &&
+        return scaleRatio >= 0.48 && horizontalGap <= max(max(a.width, b.width) * 2.5, 0.42) &&
             verticalGap <= max(a.height, b.height) * 0.50
     }
 }
@@ -414,7 +414,12 @@ enum CompositionPlanner {
                 $0.confidence.isFinite && $0.importance.isFinite && $0.gaze.isFinite
         }
         let protectedPeople = validSubjects.filter { $0.kind == .person || $0.kind == .face || $0.kind == .group }
-        let protectedRects = protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) }
+        let protectedRects: [CGRect]
+        if intent == .group {
+            protectedRects = protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) }
+        } else {
+            protectedRects = [protectedAnchor] + protectedBounds.filter { valid($0) }
+        }
         let incidentalRects = incidentalBounds.filter { valid($0) }
         let hardwareMax = allowedZooms.filter { $0.isFinite && $0 > 0 }.max() ?? currentZoom
         // Avoid throwing away excessive source resolution. Lens availability is
@@ -785,7 +790,9 @@ enum CompositionPlanner {
             let others = people.filter { $0.index != subject.index &&
                 !subject.bounds.insetBy(dx: -0.02, dy: -0.02).contains($0.bounds) &&
                 !$0.bounds.insetBy(dx: -0.02, dy: -0.02).contains(subject.bounds) }
-            if !others.isEmpty { return [.group] }
+            if !others.isEmpty {
+                return preferred.contains(.group) ? [.group, .portrait] : [.portrait, .environmentalPortrait, .group]
+            }
             if preferred.contains(.environmentalPortrait) || preferred.contains(.landscape) ||
                 preferred.contains(.architecture) || preferred.contains(.street) {
                 let explicit = preferred.filter { $0 == .environmentalPortrait || $0 == .portrait }

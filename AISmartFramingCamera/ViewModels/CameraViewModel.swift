@@ -2144,7 +2144,7 @@ public final class CameraViewModel: ObservableObject {
         } else {
             allowsAutoCaptureForCurrentTarget = false
             let centerRect = CGRect(x: 0.25, y: 0.25, width: 0.50, height: 0.50)
-            let centerAim = CGPoint(x: 0.5, y: 0.45)
+            let centerAim = localEvidenceCandidates.first?.center ?? CGPoint(x: 0.5, y: 0.45)
             let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: centerAim))
             pinTargetAndStartMotion(at: centerAim, subjectRect: centerRect, source: source, pinnedGuideRay: worldRay)
             localTrackingSource = nil
