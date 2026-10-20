@@ -1231,6 +1231,7 @@ public final class CameraService: NSObject {
             do {
                 try camera.lockForConfiguration()
                 defer { camera.unlockForConfiguration() }
+                camera.isSubjectAreaChangeMonitoringEnabled = false
                 camera.setFocusModeLocked(lensPosition: max(0, min(1, lensPosition)), completionHandler: nil)
             } catch {
                 CameraLogger.error("CameraService: Lỗi khóa vị trí lens", error: error, category: .capture)
@@ -1244,11 +1245,25 @@ public final class CameraService: NSObject {
             do {
                 try camera.lockForConfiguration()
                 defer { camera.unlockForConfiguration() }
+                let center = CGPoint(x: 0.5, y: 0.5)
+                if camera.isFocusPointOfInterestSupported {
+                    camera.focusPointOfInterest = center
+                }
+                if camera.isExposurePointOfInterestSupported {
+                    camera.exposurePointOfInterest = center
+                }
                 if camera.isFocusModeSupported(.continuousAutoFocus) {
                     camera.focusMode = .continuousAutoFocus
                 } else if camera.isFocusModeSupported(.autoFocus) {
                     camera.focusMode = .autoFocus
                 }
+                if camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposureMode = .continuousAutoExposure
+                }
+                if camera.isSmoothAutoFocusSupported {
+                    camera.isSmoothAutoFocusEnabled = true
+                }
+                camera.isSubjectAreaChangeMonitoringEnabled = true
             } catch {
                 CameraLogger.error("CameraService: Lỗi khôi phục continuous autofocus", error: error, category: .capture)
             }
@@ -1256,15 +1271,20 @@ public final class CameraService: NSObject {
     }
 
     /// Thiết lập lấy nét & đo sáng thông minh tự động (Smart Continuous AF/AE)
-    public func setSmartFocusAndExposure(at devicePoint: CGPoint) {
+    public func setSmartFocusAndExposure(at devicePoint: CGPoint, focusType: SmartFocusType = .salientObject) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
+            guard camera.focusMode != .locked else { return }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 let clampedPoint = CGPoint(
                     x: max(0.01, min(0.99, devicePoint.x)),
                     y: max(0.01, min(0.99, devicePoint.y))
                 )
+                if camera.isSmoothAutoFocusSupported {
+                    camera.isSmoothAutoFocusEnabled = true
+                }
                 if camera.isFocusPointOfInterestSupported {
                     camera.focusPointOfInterest = clampedPoint
                     if camera.isFocusModeSupported(.continuousAutoFocus) {
@@ -1273,15 +1293,27 @@ public final class CameraService: NSObject {
                         camera.focusMode = .autoFocus
                     }
                 }
+                let exposurePoint: CGPoint
+                switch focusType {
+                case .face:
+                    exposurePoint = CGPoint(x: clampedPoint.x * 0.8 + 0.5 * 0.2, y: clampedPoint.y * 0.8 + 0.5 * 0.2)
+                case .salientObject, .aiTarget:
+                    exposurePoint = CGPoint(x: clampedPoint.x * 0.3 + 0.5 * 0.7, y: clampedPoint.y * 0.3 + 0.5 * 0.7)
+                case .center:
+                    exposurePoint = CGPoint(x: 0.5, y: 0.5)
+                }
+                let clampedExposurePoint = CGPoint(
+                    x: max(0.01, min(0.99, exposurePoint.x)),
+                    y: max(0.01, min(0.99, exposurePoint.y))
+                )
                 if camera.isExposurePointOfInterestSupported {
-                    camera.exposurePointOfInterest = clampedPoint
+                    camera.exposurePointOfInterest = clampedExposurePoint
                     if camera.isExposureModeSupported(.continuousAutoExposure) {
                         camera.exposureMode = .continuousAutoExposure
                     } else if camera.isExposureModeSupported(.autoExpose) {
                         camera.exposureMode = .autoExpose
                     }
                 }
-                camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error configuring smart focus & exposure", error: error, category: .capture)
             }
@@ -1289,11 +1321,12 @@ public final class CameraService: NSObject {
     }
 
     // MARK: - Focus & Exposure Tap (Người dùng chạm màn hình lấy nét thủ công)
-    public func focusAndExpose(at devicePoint: CGPoint) {
+    public func focusAndExpose(at devicePoint: CGPoint, resetExposureBias: Bool = true) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 let clampedPoint = CGPoint(
                     x: max(0.01, min(0.99, devicePoint.x)),
                     y: max(0.01, min(0.99, devicePoint.y))
@@ -1314,22 +1347,25 @@ public final class CameraService: NSObject {
                 } else if camera.isExposureModeSupported(.autoExpose) {
                     camera.exposureMode = .autoExpose
                 }
+                if resetExposureBias {
+                    camera.setExposureTargetBias(0.0, completionHandler: nil)
+                }
                 if camera.isSmoothAutoFocusSupported {
                     camera.isSmoothAutoFocusEnabled = true
                 }
                 camera.isSubjectAreaChangeMonitoringEnabled = true
-                camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error setting focus and exposure", error: error, category: .capture)
             }
         }
     }
 
-    public func resetFocusAndExposureToCenter() {
+    public func resetFocusAndExposureToCenter(resetExposureBias: Bool = true) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
                 let center = CGPoint(x: 0.5, y: 0.5)
                 if camera.isFocusPointOfInterestSupported {
                     camera.focusPointOfInterest = center
@@ -1343,11 +1379,13 @@ public final class CameraService: NSObject {
                 if camera.isExposureModeSupported(.continuousAutoExposure) {
                     camera.exposureMode = .continuousAutoExposure
                 }
+                if resetExposureBias {
+                    camera.setExposureTargetBias(0.0, completionHandler: nil)
+                }
                 if camera.isSmoothAutoFocusSupported {
                     camera.isSmoothAutoFocusEnabled = true
                 }
                 camera.isSubjectAreaChangeMonitoringEnabled = true
-                camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error resetting focus/exposure to center", error: error, category: .capture)
             }
@@ -1359,6 +1397,8 @@ public final class CameraService: NSObject {
             guard let self = self, let camera = self.activeCamera else { return }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                camera.isSubjectAreaChangeMonitoringEnabled = false
                 let clampedPoint = CGPoint(
                     x: max(0.01, min(0.99, devicePoint.x)),
                     y: max(0.01, min(0.99, devicePoint.y))
@@ -1375,7 +1415,6 @@ public final class CameraService: NSObject {
                 if camera.isExposureModeSupported(.locked) {
                     camera.exposureMode = .locked
                 }
-                camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("CameraService: Error locking AE/AF", error: error, category: .capture)
             }
@@ -1387,13 +1426,25 @@ public final class CameraService: NSObject {
             guard let self = self, let camera = self.activeCamera else { return }
             do {
                 try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                let center = CGPoint(x: 0.5, y: 0.5)
+                if camera.isFocusPointOfInterestSupported {
+                    camera.focusPointOfInterest = center
+                }
+                if camera.isExposurePointOfInterestSupported {
+                    camera.exposurePointOfInterest = center
+                }
                 if camera.isFocusModeSupported(.continuousAutoFocus) {
                     camera.focusMode = .continuousAutoFocus
                 }
                 if camera.isExposureModeSupported(.continuousAutoExposure) {
                     camera.exposureMode = .continuousAutoExposure
                 }
-                camera.unlockForConfiguration()
+                camera.setExposureTargetBias(0.0, completionHandler: nil)
+                if camera.isSmoothAutoFocusSupported {
+                    camera.isSmoothAutoFocusEnabled = true
+                }
+                camera.isSubjectAreaChangeMonitoringEnabled = true
             } catch {
                 CameraLogger.error("CameraService: Error unlocking AE/AF", error: error, category: .capture)
             }

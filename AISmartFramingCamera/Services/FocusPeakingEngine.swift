@@ -100,7 +100,7 @@ public final class FocusPeakingEngine: @unchecked Sendable {
             let targetWidth: CGFloat = 720.0
             let scale = width > targetWidth ? targetWidth / width : 1.0
             let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            let renderRect = CGRect(origin: .zero, size: CGSize(width: scaledImage.extent.width, height: scaledImage.extent.height))
+            let renderRect = scaledImage.extent.integral
             
             // 2. Chuyển đổi đơn sắc và tăng tương phản tần số cao
             guard let colorControls = CIFilter(name: "CIColorControls") else { return }

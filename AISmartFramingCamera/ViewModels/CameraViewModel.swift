@@ -910,6 +910,10 @@ public final class CameraViewModel: ObservableObject {
     private var focusSquareHideTask: Task<Void, Never>? = nil
     private var manualFocusLockUntil: CFTimeInterval = 0
     private let manualFocusCooldown: CFTimeInterval = 4.0
+    private var smoothedSmartFocusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    private let focusEMAAlpha: CGFloat = 0.28
+    private var ignoreSubjectAreaChangeUntil: CFTimeInterval = 0
+    private var lastUserSunAdjustTime: CFTimeInterval = 0
 
     public init() {
         // Load saved settings
@@ -3354,19 +3358,22 @@ public final class CameraViewModel: ObservableObject {
 
     private func handleSubjectAreaChanged() {
         let now = CACurrentMediaTime()
+        guard now >= ignoreSubjectAreaChangeUntil else { return }
         guard captureMode != .proVideo || proVideoService.isAutoFocus else { return }
         guard now >= manualFocusLockUntil, !isAEAFLocked else { return }
-        guard now - lastForcedResetTime >= 1.2 else {
+        guard now - lastForcedResetTime >= 1.5 else {
             return
         }
         lastForcedResetTime = now
 
         // Cảnh vật hoặc chủ thể di chuyển -> Tự động trả về tâm và lấy nét liên tục chuẩn Apple Camera
         if showTargetCircle, let target = currentTargetPoint {
-            applyFocusAndExposure(to: target, source: .aiTarget, force: true)
+            applyFocusAndExposure(to: target, source: .aiTarget, force: false, showUI: false)
         } else {
+            smoothedSmartFocusPoint = CGPoint(x: 0.5, y: 0.5)
             lastFocusPoint = CGPoint(x: 0.5, y: 0.5)
-            cameraService.resetFocusAndExposureToCenter()
+            activeSunExposureBias = 0.0
+            cameraService.resetFocusAndExposureToCenter(resetExposureBias: true)
             activeFocusSquarePoint = nil
             isShowingSunSlider = false
         }
@@ -3379,14 +3386,25 @@ public final class CameraViewModel: ObservableObject {
 
         // 1. Ưu tiên số 1: Nếu AI đã khóa mục tiêu target (vòng tròn vàng), luôn lấy nét vào target
         if showTargetCircle, let target = currentTargetPoint {
-            applyFocusAndExposure(to: target, source: .aiTarget)
+            smoothedSmartFocusPoint = CGPoint(
+                x: focusEMAAlpha * target.x + (1.0 - focusEMAAlpha) * smoothedSmartFocusPoint.x,
+                y: focusEMAAlpha * target.y + (1.0 - focusEMAAlpha) * smoothedSmartFocusPoint.y
+            )
+            guard now - lastSmartFocusExposureTime >= 0.45 else { return }
+            applyFocusAndExposure(to: smoothedSmartFocusPoint, source: .aiTarget, force: false, showUI: false)
             return
         }
 
-        // 2. Chế độ rảnh (chưa khóa target, kể cả chưa bấm AI lần nào): lọc
-        // nhiễu — chỉ đổi điểm đo sáng khi vật được phát hiện ổn định qua
-        // nhiều lần liên tiếp, tránh nhảy loạn ISO do thuật toán saliency
-        // chọn nhầm qua lại giữa 2 vật có điểm số gần bằng nhau.
+        // 2. Chế độ rảnh (chưa khóa target):
+        if type == .center {
+            if hypot(lastFocusPoint.x - 0.5, lastFocusPoint.y - 0.5) > 0.12 && now - lastSmartFocusExposureTime >= 2.0 {
+                smoothedSmartFocusPoint = CGPoint(x: 0.5, y: 0.5)
+                applyFocusAndExposure(to: smoothedSmartFocusPoint, source: .center, force: false, showUI: false)
+            }
+            return
+        }
+
+        // Lọc nhiễu cho .face và .salientObject: chỉ đổi điểm khi vật được phát hiện ổn định
         if let pending = pendingSmartFocusPoint {
             let dist = hypot(point.x - pending.x, point.y - pending.y)
             if dist < 0.06 {
@@ -3402,10 +3420,14 @@ public final class CameraViewModel: ObservableObject {
             return
         }
 
-        guard pendingSmartFocusStableCount >= 2, now - lastSmartFocusExposureTime >= 1.0 else { return }
+        let requiredCooldown: TimeInterval = (type == .face) ? 0.65 : 1.1
+        guard pendingSmartFocusStableCount >= 2, now - lastSmartFocusExposureTime >= requiredCooldown else { return }
 
-        lastSmartFocusExposureTime = now
-        applyFocusAndExposure(to: point, source: type)
+        smoothedSmartFocusPoint = CGPoint(
+            x: focusEMAAlpha * point.x + (1.0 - focusEMAAlpha) * smoothedSmartFocusPoint.x,
+            y: focusEMAAlpha * point.y + (1.0 - focusEMAAlpha) * smoothedSmartFocusPoint.y
+        )
+        applyFocusAndExposure(to: smoothedSmartFocusPoint, source: type, force: false, showUI: false)
     }
 
     public func triggerFocusSquareAnimation(at point: CGPoint) {
@@ -3414,7 +3436,14 @@ public final class CameraViewModel: ObservableObject {
         }
         focusSquareHideTask?.cancel()
         focusSquareHideTask = Task {
-            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            while true {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                if Task.isCancelled { return }
+                let timeSinceLastAdjust = CACurrentMediaTime() - self.lastUserSunAdjustTime
+                if timeSinceLastAdjust >= 1.5 {
+                    break
+                }
+            }
             await MainActor.run {
                 if !self.isAEAFLocked && self.activeFocusSquarePoint == point {
                     withAnimation(.easeIn(duration: 0.3)) {
@@ -3440,13 +3469,17 @@ public final class CameraViewModel: ObservableObject {
         if captureMode == .proVideo && !proVideoService.isAutoFocus {
             proVideoService.setAutoFocus(true)
         }
-        manualFocusLockUntil = CACurrentMediaTime() + manualFocusCooldown
+        activeSunExposureBias = 0.0
+        smoothedSmartFocusPoint = normalizedPoint
+        let now = CACurrentMediaTime()
+        manualFocusLockUntil = now + manualFocusCooldown
+        ignoreSubjectAreaChangeUntil = now + manualFocusCooldown
         lastFocusPoint = normalizedPoint
         activeFocusSquarePoint = normalizedPoint
         isShowingSunSlider = true
 
         let devPoint = devicePoint ?? CameraService.convertUIPointToDevicePoint(normalizedPoint)
-        cameraService.focusAndExpose(at: devPoint)
+        cameraService.focusAndExpose(at: devPoint, resetExposureBias: true)
         triggerFocusSquareAnimation(at: normalizedPoint)
     }
 
@@ -3456,6 +3489,8 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func adjustSunExposureBias(delta: Float) {
+        lastUserSunAdjustTime = CACurrentMediaTime()
+        manualFocusLockUntil = max(manualFocusLockUntil, lastUserSunAdjustTime + manualFocusCooldown)
         let newBias = max(-2.0, min(2.0, activeSunExposureBias + delta))
         activeSunExposureBias = newBias
         setExposure(newBias)
@@ -3523,19 +3558,22 @@ public final class CameraViewModel: ObservableObject {
         CameraLogger.info("Đã đặt lại thông số Gyro calibration về mặc định 0.0°", category: .motion)
     }
 
-    public func applyFocusAndExposure(to point: CGPoint, source: SmartFocusType, force: Bool = false) {
+    public func applyFocusAndExposure(to point: CGPoint, source: SmartFocusType, force: Bool = false, showUI: Bool = false) {
         guard captureMode != .proVideo || proVideoService.isAutoFocus else { return }
         guard point.x.isFinite, point.y.isFinite else { return }
         let dx = point.x - lastFocusPoint.x
         let dy = point.y - lastFocusPoint.y
         let dist = sqrt(dx * dx + dy * dy)
 
-        // Chỉ trigger refocus & animation khi điểm focus thay đổi đáng kể (> 0.08) hoặc khi cảnh thay đổi (force)
-        if dist > 0.08 || force {
+        let threshold: CGFloat = (source == .face || source == .aiTarget) ? 0.065 : 0.09
+        if dist > threshold || force {
+            let now = CACurrentMediaTime()
             lastFocusPoint = point
+            lastSmartFocusExposureTime = now
+            ignoreSubjectAreaChangeUntil = now + 1.8
             let devicePoint = CameraService.convertUIPointToDevicePoint(point)
-            cameraService.setSmartFocusAndExposure(at: devicePoint)
-            if !captureMode.isVideo && !isRecordingVideo {
+            cameraService.setSmartFocusAndExposure(at: devicePoint, focusType: source)
+            if showUI && !captureMode.isVideo && !isRecordingVideo {
                 triggerFocusSquareAnimation(at: point)
             }
         }

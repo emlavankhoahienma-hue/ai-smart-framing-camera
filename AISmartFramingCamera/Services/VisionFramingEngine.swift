@@ -1358,8 +1358,18 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let focus: CGPoint
         let type: SmartFocusType
         if let first = candidates.first {
-            focus = CGPoint(x: first.rect.midX, y: first.rect.midY)
-            type = first.category == .face ? .face : .salientObject
+            if first.category == .face {
+                focus = CGPoint(x: first.rect.midX, y: first.rect.midY)
+                type = .face
+            } else if first.category == .human {
+                // Khuon mat thuong nam o 1/3 phia tren cua khung nguoi (body box)
+                let upperFocusY = first.rect.minY + first.rect.height * 0.30
+                focus = CGPoint(x: first.rect.midX, y: upperFocusY)
+                type = .salientObject
+            } else {
+                focus = CGPoint(x: first.rect.midX, y: first.rect.midY)
+                type = .salientObject
+            }
         } else {
             focus = CGPoint(x: 0.5, y: 0.5)
             type = .center

@@ -3,7 +3,7 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "90dfee5cb42b700c9bb806741a2b34487c41d538d826903f4ab158e80f1f9964"
+      "sha256": "70e4e3661d3a2acc3008bf507f059cd0845626f13526e10b9f7b361099dd1858"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
@@ -39,7 +39,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "b26c06c8ed1e5891999e44c860dca1c264d18b59578098c1c798801db72c310e"
+      "sha256": "043a21ea2c9855bc4598a11dfae25ca8eb60853565a6863d5b183c235c80e49a"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "09e6dc4576ca19be44b2cc17b9cbb1a93489e8ba0251d05630c89b747bde7c0e"
+      "sha256": "3d87ef7959cafaf8a41c7e6b726a5ea9a2cd8aa77ea23796c1dafe582313ecd9"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",

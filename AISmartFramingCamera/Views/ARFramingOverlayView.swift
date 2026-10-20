@@ -624,6 +624,7 @@ struct FocusSquareWithSunSlider: View {
     let onAdjustBias: (Float) -> Void
 
     @State private var scale: CGFloat = 1.3
+    @State private var lastDragTranslationY: CGFloat = 0.0
 
     var body: some View {
         HStack(spacing: 8) {
@@ -670,8 +671,13 @@ struct FocusSquareWithSunSlider: View {
                     .gesture(
                         DragGesture(minimumDistance: 1)
                             .onChanged { val in
-                                let delta = Float(-val.translation.height / 75.0) * 0.25
-                                onAdjustBias(delta)
+                                let incrementalY = val.translation.height - lastDragTranslationY
+                                lastDragTranslationY = val.translation.height
+                                let stepDelta = Float(-incrementalY / 65.0) * 2.5
+                                onAdjustBias(stepDelta)
+                            }
+                            .onEnded { _ in
+                                lastDragTranslationY = 0.0
                             }
                     )
                 }
