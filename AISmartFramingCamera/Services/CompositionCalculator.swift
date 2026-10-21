@@ -1,3 +1,4 @@
+import QuartzCore
 import Foundation
 import CoreGraphics
 import simd
@@ -490,7 +491,6 @@ public final class CompositionCalculator: @unchecked Sendable {
         // (d) Đường chân trời (Horizon / Landscape) - Lỗ hổng 4: Horizon X/Y Decoupling
         var horizonPoints: [(CGPoint, String)] = []
         if sceneType == .landscape || sceneType == .sky || sceneType == .water || horizonY != nil {
-            let hY = horizonY ?? 0.382
             let yTargets: [CGFloat] = [0.382, 0.618]
 
             // Kiểm tra nếu cảnh có điểm tụ ngang rõ rệt (mặt trời, cây đơn độc lệch bên, con thuyền)

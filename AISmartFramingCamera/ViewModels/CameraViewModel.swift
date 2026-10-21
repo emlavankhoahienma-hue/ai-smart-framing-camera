@@ -669,7 +669,8 @@ public final class CameraViewModel: ObservableObject {
         HapticFeedbackService.shared.triggerMagneticSnap()
 
         // Phase 4: Đồng bộ chu trình Khóa tâm Hard Lock với chuyển Zoom quang học Z* mượt mà
-        if let targetZoom = pendingSuggestedZoom, abs(displayZoom - targetZoom) > 0.15, !hasExecutedAutoZoomForSession {
+        let targetZoom = pendingSuggestedZoom
+        if abs(displayZoom - targetZoom) > 0.15, !hasExecutedAutoZoomForSession {
             hasExecutedAutoZoomForSession = true
             triggerZoomRevealAnimation(targetZoom: targetZoom)
         }
