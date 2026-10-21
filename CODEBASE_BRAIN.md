@@ -333,3 +333,20 @@ python scripts/check_responsive_layout.py
 # 4. Chạy toàn bộ 68 ca test hồi quy tính toán thuần túy
 python scripts/run_regressions.py
 ```
+---
+
+## 5. LỊCH SỬ PHÁT HÀNH & KẾT QUẢ CI/CD BUILD RELEASE
+
+### Bản phát hành gần nhất: `v1.0.0-build.494`
+- **Thời gian hoàn tất**: Tháng 10/2026 (CI Run ID: `39568246961`, Commit: `6b31eed`).
+- **Nền tảng build**: macOS-15 runner, Xcode 16.0, Swift 6 compatible.
+- **Trạng thái**: **100% PASS (Exit Code 0, 0 Errors, 0 Warnings)**.
+- **Tập tin phát hành**:
+  - `AISmartFramingCamera.ipa` (Đã tích hợp đầy đủ 5 mô hình CoreML: YOLO12s, YOLO12n, SigLIP, SAMP-Net, Charm).
+  - `AISmartFramingCamera-SourceCode.zip`.
+  - Link tải tốc độ cao: `https://gh-proxy.com/https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/download/v1.0.0-build.494/AISmartFramingCamera.ipa`.
+- **Tóm tắt tính năng được xác thực**:
+  1. *Phase 1*: Hard Lock chốt tâm $(0.5, 0.5)$ khi căn khớp, chống trôi mục tiêu, góc quay Gyro dynamic thoát khóa theo Zoom/FOV.
+  2. *Phase 2*: Bộ lọc làm mượt Dynamic EMA + Deadband vi mô $< 0.004$ + Slew-rate limiter theo vận tốc Gyro.
+  3. *Phase 3*: Đa giả thuyết bố cục cạnh tranh động (`evaluateHypotheses`), ANE Cadence Throttling (Fast 60fps vs Slow 4-5Hz), Upright coordinate, Quán tính chủ thể +0.25 IoU, Horizon Decoupling $\Delta X = 0$.
+  4. *Phase 4*: Đấu loại khung cắt ảo đa tỷ lệ (`evaluateVirtualCropZooms`), kích thước tuyến tính chuẩn hóa 1D `linearOccupancy`, chuẩn hóa 1x, mô phỏng toàn vẹn sau căn khớp kèm **quy tắc chân dung bán thân Medium Shot**, Pre-Zoom Target Projection theo quang học.
