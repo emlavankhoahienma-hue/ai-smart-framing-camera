@@ -1737,6 +1737,12 @@ public struct SubjectDetectionResult {
     /// Estimated color temperature (K): 2700 warm ~ 8000 cool
     public var estimatedColorTemp: Float = 5500
     public var detectedEntities: [LiveDetectedEntity] = []
+    public var detectedHorizonAngle: Double?
+    public var detectedHorizonY: CGFloat?
+    public var foregroundMaskRects: [CGRect] = []
+    public var focalAnchorPoint: CGPoint?
+    public var focalSaliencyRatio: Double = 0.5
+    public var edgeClutterScore: Double = 0.0
 
     public init() {}
 }

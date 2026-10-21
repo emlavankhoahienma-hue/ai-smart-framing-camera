@@ -105,6 +105,16 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var detectionDeliveryScheduled = false
     private var pendingDetectionDelivery: (SubjectDetectionResult, CVPixelBuffer, TrackingFrameContext?, CGPoint, SmartFocusType, UInt64)?
 
+    // MARK: - Phase 3 & 4: Cadence Throttling & Scene Evidence Cache
+    private var detectionFrameCount: UInt64 = 0
+    private var cachedDetectedHorizonAngle: Double? = nil
+    private var cachedDetectedHorizonY: CGFloat? = nil
+    private var cachedDetectedScene: DetectedSceneType = .general
+    private var cachedSaliencyPoints: [CGPoint] = []
+    private var previousHeroRect: CGRect? = nil
+    private var previousHeroAnchor: CGPoint? = nil
+    public private(set) var latestSceneEvidence: SceneCompositionEvidence? = nil
+
     public var isTrackingTarget: Bool { ingressLock.withLock { active } }
     public var isIdlePreviewMode: Bool {
         get { ingressLock.withLock { idle } }
@@ -1275,18 +1285,50 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     private func detect(_ buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                         frame: TrackingFrameContext?, epoch: UInt64) {
+        detectionFrameCount += 1
         var result = SubjectDetectionResult()
         var candidates: [LiveDetectedEntity] = []
 
-        // 1. Apple Vision Native Precision Detection (Luôn luôn chạy trên Apple Neural Engine - cực kỳ chính xác)
+        // Lỗ hổng 1: Phân tầng nhịp chạy (Cadence Throttling) để chống nghẽn ANE & quá nhiệt
+        // Nhịp nhanh (mỗi frame): Face, Human, Animal, YOLO
+        // Nhịp chậm (mỗi 5 frame ~ 4-5 Hz): Horizon, Classify, Saliency, ForegroundMask
+        let runSlowRequests = (detectionFrameCount % 5 == 1)
+
         let faceRequest = VNDetectFaceRectanglesRequest()
         let humanRequest = VNDetectHumanRectanglesRequest()
         humanRequest.upperBodyOnly = false
         let animalRequest = VNRecognizeAnimalsRequest()
 
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
-        let visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest]
+        var visionRequests: [VNRequest] = [faceRequest, humanRequest, animalRequest]
+
+        var horizonRequest: VNDetectHorizonRequest? = nil
+        var classifyRequest: VNClassifyImageRequest? = nil
+        var saliencyRequest: VNGenerateAttentionBasedSaliencyImageRequest? = nil
+        var maskRequestObj: Any? = nil
+
+        if runSlowRequests {
+            let hReq = VNDetectHorizonRequest()
+            horizonRequest = hReq
+            visionRequests.append(hReq)
+
+            let cReq = VNClassifyImageRequest()
+            classifyRequest = cReq
+            visionRequests.append(cReq)
+
+            let sReq = VNGenerateAttentionBasedSaliencyImageRequest()
+            saliencyRequest = sReq
+            visionRequests.append(sReq)
+
+            if #available(iOS 17.0, *) {
+                let maskReq = VNGenerateForegroundInstanceMaskRequest()
+                maskRequestObj = maskReq
+                visionRequests.append(maskReq)
+            }
+        }
+
         if (try? handler.perform(visionRequests)) != nil {
+            // (a) Khuôn mặt
             if let faces = faceRequest.results {
                 for face in faces where face.confidence >= 0.45 {
                     let rect = CompositionPureCalculations.visionToUprightRect(face.boundingBox)
@@ -1301,12 +1343,12 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
             result.faceRectangles = candidates.filter { $0.category == .face }.map { $0.rect }
 
+            // (b) Thân người
             let detectedFaces = candidates.filter { $0.category == .face }
             if let humans = humanRequest.results {
                 for obs in humans where obs.confidence >= 0.50 {
                     let rect = CompositionPureCalculations.visionToUprightRect(obs.boundingBox)
                     guard rect.width >= 0.05, rect.height >= 0.05, rect.width <= 0.95, rect.height <= 0.95 else { continue }
-                    // Chỉ xác thực là "Người" khi có khuôn mặt tương ứng nằm bên trong hoặc ngay trên đỉnh hộp
                     let hasMatchingFace = detectedFaces.contains { face in
                         rect.contains(CGPoint(x: face.rect.midX, y: face.rect.midY)) ||
                         (abs(face.rect.midX - rect.midX) < rect.width * 0.45 && face.rect.minY <= rect.minY + rect.height * 0.45)
@@ -1321,6 +1363,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 }
             }
 
+            // (c) Động vật / Thú cưng
             if let animals = animalRequest.results {
                 for obs in animals where obs.confidence >= 0.50 {
                     let topLabel = obs.labels.first?.identifier.lowercased() ?? ""
@@ -1335,9 +1378,74 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     ))
                 }
             }
+
+            // Xử lý các request nhịp chậm hoặc tái sử dụng cache
+            if runSlowRequests {
+                if let horizon = horizonRequest?.results?.first {
+                    cachedDetectedHorizonAngle = horizon.angle
+                    let normY = 0.5 - CGFloat(horizon.transform.ty)
+                    cachedDetectedHorizonY = max(0.08, min(0.92, normY))
+                }
+                if let classifications = classifyRequest?.results {
+                    for c in classifications.prefix(5) where c.confidence >= 0.25 {
+                        let id = c.identifier.lowercased()
+                        if id.contains("landscape") || id.contains("mountain") || id.contains("nature") || id.contains("sky") || id.contains("water") || id.contains("sea") || id.contains("forest") {
+                            cachedDetectedScene = .landscape
+                            break
+                        } else if id.contains("building") || id.contains("architecture") || id.contains("interior") || id.contains("room") {
+                            cachedDetectedScene = .architecture
+                            break
+                        } else if id.contains("food") || id.contains("dish") || id.contains("meal") {
+                            cachedDetectedScene = .food
+                            break
+                        } else if id.contains("plant") || id.contains("flower") {
+                            cachedDetectedScene = .foliage
+                            break
+                        }
+                    }
+                }
+                if let salientObjects = saliencyRequest?.results?.first?.salientObjects {
+                    var newSaliencyPoints: [CGPoint] = []
+                    for obj in salientObjects where obj.confidence >= 0.35 {
+                        let rect = CompositionPureCalculations.visionToUprightRect(obj.boundingBox)
+                        if rect.width >= 0.04, rect.height >= 0.04, rect.width <= 0.88, rect.height <= 0.88 {
+                            newSaliencyPoints.append(CGPoint(x: rect.midX, y: rect.midY))
+                        }
+                    }
+                    cachedSaliencyPoints = newSaliencyPoints
+                }
+                if #available(iOS 17.0, *), let req = maskRequestObj as? VNGenerateForegroundInstanceMaskRequest,
+                   let observation = req.results?.first {
+                    for instance in observation.allInstances {
+                        if let masked = try? observation.generateMaskedImage(ofInstances: [instance], from: handler, croppedToInstancesExtent: false) {
+                            _ = masked
+                        }
+                    }
+                }
+            }
         }
 
-        // 2. Real YOLO CoreML (Tích hợp song song khi có mô hình COCO chuẩn đã nạp)
+        // Tái sử dụng kết quả bối cảnh / đường chân trời / Saliency từ cache
+        result.detectedHorizonAngle = cachedDetectedHorizonAngle
+        result.detectedHorizonY = cachedDetectedHorizonY
+        result.detectedScene = cachedDetectedScene
+        result.saliencyPoints = cachedSaliencyPoints
+
+        // Bổ sung các vùng nổi bật Saliency vào ứng viên nếu chưa bị trùng lặp
+        for pt in cachedSaliencyPoints {
+            let overlapsExisting = candidates.contains { $0.rect.contains(pt) }
+            if !overlapsExisting {
+                let rect = CGRect(x: max(0.04, pt.x - 0.12), y: max(0.04, pt.y - 0.12), width: 0.24, height: 0.24)
+                candidates.append(LiveDetectedEntity(
+                    rect: rect,
+                    label: "Vùng nổi bật",
+                    confidence: 0.60,
+                    category: .foregroundObject
+                ))
+            }
+        }
+
+        // 2. Real YOLO CoreML
         if YOLODetectionEngine.shared.hasYOLOModel {
             let yoloCandidates = YOLODetectionEngine.shared.detectObjects(
                 pixelBuffer: buffer,
@@ -1357,29 +1465,93 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
 
         candidates = deduplicateCandidates(candidates)
-        result.detectedEntities = candidates
-        result.dominantSubjectRect = candidates.first?.rect ?? result.faceRectangles.first
-        result.confidence = candidates.first?.confidence ?? 0
 
+        // Lỗ hổng 3: Kiểm tra sự tồn tại của đối tượng lớn ở tiền/trung cảnh
+        let hasLargeForeground = candidates.contains { ($0.category == .human || $0.category == .animal || $0.category == .foregroundObject) && ($0.rect.width * $0.rect.height >= 0.07) }
+
+        // 3. Chấm điểm Trọng số Nhiếp ảnh Động (SubjectRelevanceScore) kèm Quán tính Chủ thể (Subject Persistence)
+        let scoredCandidates: [(LiveDetectedEntity, Double)] = candidates.map { c in
+            let hasMatchingFace = c.category == .face || (c.category == .human && result.faceRectangles.contains(where: { c.rect.contains($0) }))
+            let hasSaliency = result.saliencyPoints.contains { c.rect.contains($0) }
+            let score = CompositionCalculator.calculateSubjectRelevance(
+                rect: c.rect,
+                category: c.category,
+                confidence: Double(c.confidence),
+                gaze: 0.0,
+                hasFace: hasMatchingFace,
+                saliencyDensity: hasSaliency ? 0.85 : 0.45,
+                previousWinningRect: previousHeroRect,
+                previousWinningAnchor: previousHeroAnchor,
+                hasLargeForegroundSubject: hasLargeForeground
+            )
+            return (c, score)
+        }.sorted { $0.1 > $1.1 }
+
+        let rankedCandidates = scoredCandidates.map { $0.0 }
+        result.detectedEntities = rankedCandidates
+        result.dominantSubjectRect = rankedCandidates.first?.rect ?? result.faceRectangles.first
+        result.confidence = rankedCandidates.first?.confidence ?? 0
+
+        // 4. Xác định Điểm neo Chủ thể Thực sự (S_anchor) & Điểm lấy nét thông minh (Hệ tọa độ Upright y=0 ở đỉnh trên)
         let focus: CGPoint
         let type: SmartFocusType
-        if let first = candidates.first {
-            if first.category == .face {
-                focus = CGPoint(x: first.rect.midX, y: first.rect.midY)
+        if let hero = rankedCandidates.first {
+            if hero.category == .face {
+                focus = CGPoint(x: hero.rect.midX, y: hero.rect.midY)
                 type = .face
-            } else if first.category == .human {
-                // Khuon mat thuong nam o 1/3 phia tren cua khung nguoi (body box)
-                let upperFocusY = first.rect.minY + first.rect.height * 0.30
-                focus = CGPoint(x: first.rect.midX, y: upperFocusY)
+            } else if hero.category == .human {
+                // Điểm neo đặt tại 1/3 trên của cơ thể (khuôn mặt / mắt) thay vì giữa bụng
+                let upperFocusY = hero.rect.minY + hero.rect.height * 0.28
+                focus = CGPoint(x: hero.rect.midX, y: upperFocusY)
+                type = .face
+            } else if hero.category == .animal {
+                let upperFocusY = hero.rect.minY + hero.rect.height * 0.35
+                focus = CGPoint(x: hero.rect.midX, y: upperFocusY)
                 type = .salientObject
             } else {
-                focus = CGPoint(x: first.rect.midX, y: first.rect.midY)
+                focus = CGPoint(x: hero.rect.midX, y: hero.rect.midY)
                 type = .salientObject
             }
+            result.focalAnchorPoint = focus
+            previousHeroRect = hero.rect
+            previousHeroAnchor = focus
         } else {
-            focus = CGPoint(x: 0.5, y: 0.5)
+            // Không có chủ thể rời rạc (Thiên nhiên / Kiến trúc): Neo vào chân trời hoặc trọng tâm thị giác
+            if let horizonY = result.detectedHorizonY {
+                focus = CGPoint(x: 0.5, y: horizonY)
+            } else if let firstSaliency = result.saliencyPoints.first {
+                focus = firstSaliency
+            } else {
+                focus = CGPoint(x: 0.5, y: 0.5)
+            }
             type = .center
+            result.focalAnchorPoint = focus
+            previousHeroRect = nil
+            previousHeroAnchor = focus
         }
+
+        // Lỗ hổng 5: Đóng gói SceneCompositionEvidence cho Phase 4
+        let totalSaliencyCount = max(1, result.saliencyPoints.count)
+        let heroBox = rankedCandidates.first?.rect ?? CGRect(x: 0.25, y: 0.25, width: 0.50, height: 0.50)
+        let insideSaliencyCount = result.saliencyPoints.filter { heroBox.contains($0) }.count
+        let focalSaliencyRatio = Double(insideSaliencyCount) / Double(totalSaliencyCount)
+
+        let edgeClutterCount = candidates.filter { min($0.rect.minX, min($0.rect.minY, min(1.0 - $0.rect.maxX, 1.0 - $0.rect.maxY))) < 0.05 }.count
+        let edgeClutterScore = min(1.0, Double(edgeClutterCount) * 0.35)
+
+        result.focalSaliencyRatio = focalSaliencyRatio
+        result.edgeClutterScore = edgeClutterScore
+
+        self.latestSceneEvidence = SceneCompositionEvidence(
+            primarySubjectRect: heroBox,
+            focalAnchorPoint: focus,
+            focalCategory: rankedCandidates.first?.category ?? .general,
+            focalSaliencyRatio: focalSaliencyRatio,
+            edgeClutterScore: edgeClutterScore,
+            detectedScene: result.detectedScene,
+            detectedHorizonY: result.detectedHorizonY,
+            timestamp: CACurrentMediaTime()
+        )
 
         result.averageLuminance = 0.5
         result.estimatedColorTemp = 5500

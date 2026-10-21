@@ -102,6 +102,7 @@ public struct ARFramingOverlayView: View {
                             dashOffset: dashOffset,
                             distance: viewModel.alignmentDistance
                         )
+                        .transaction { $0.animation = nil }
                     }
 
                     // Target Vàng

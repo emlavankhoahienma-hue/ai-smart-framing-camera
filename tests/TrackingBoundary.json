@@ -3,11 +3,11 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "3eafbb9c21256df1cc46a6a2d057fee548ba7378c4b69a10ccd0a5397bbfa8e1"
+      "sha256": "9df90485ea0314a1e802e51f4ede7f80ca12333ecc11a7c213b5e98d3cd6460f"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "27678bbc7085d16712d87068af7e89885b8d7ba4fafdd82df1dcc9be99b34003"
+      "sha256": "93b29641db436c967b1f8245d935273de30a51620e0b2f1026ace1473d9924f6"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -19,7 +19,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
-      "sha256": "8de12daeec3b0303f8161b2e5cca3dc21a72960399055a539e8553d61f4c5f8e"
+      "sha256": "6582272aa458f72adf103fc6be5b4ca283160febc0192c33b1d0980f232b484e"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralTargetTracker.swift",
@@ -45,25 +45,25 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "7cc49f5e2370494f1742f685809964f57604ce4beaaf833356422bd62bb52b40"
+      "sha256": "ece9fd06f52750efdd16c880389b03a350830d3550f68c695961ecaee983dfc4"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
       "end": "    private func verifyAndCaptureWhenReady()",
-      "sha256": "83c8f28b11d8ba7ee6fb96a370270792edc9037df13fad6f3d6f14ac4b70cd20"
+      "sha256": "a707e8fd7b60bfbccf1feec83feed71813ec293db287a6981d38f4d25533274d"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "3d87ef7959cafaf8a41c7e6b726a5ea9a2cd8aa77ea23796c1dafe582313ecd9"
+      "sha256": "82a57adeb87d28bac95d042ad2a8148b29b10a718d43cc114a68170045e0a050"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func setupMotionCallbacks()",
       "end": "    public func startAISession()",
-      "sha256": "22881ac7778f95510c7c76284c0eb9ed09b56f648b42ff64f3dca1de97d59634"
+      "sha256": "a493e4075821587dc02d4244c0491be5181f560569e5af58060c3b6211a12226"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -75,7 +75,7 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
       "end": "                // Optical centre is always fixed",
-      "sha256": "d1bc90c0ac5188a0644dc8c7b399a8f2f4f41312c3ab25cef9be235745a667a6"
+      "sha256": "756dccf2c112317bef0b900cbc91956584a89c1a193de5b14e066e95a0752a3f"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",

@@ -225,7 +225,10 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
 
         let safeConf = min(1.0, max(0.20, confidence))
         let baseSigma = 0.008 / max(0.5, focalScale)
-        let nsaSigma = baseSigma * (1.0 + 1.5 * (1.0 - safeConf))
+        // Trọng số làm mượt động theo Độ tin cậy AI & Bước nhảy góc: Khi độ tin cậy thấp hoặc có bước nhảy góc lớn,
+        // tự động tăng phương sai nhiễu đo lường R để bộ lọc EKF hấp thụ chuyển động êm ái qua nhiều frame
+        let jumpFactor = min(3.0, max(1.0, angle / 0.035))
+        let nsaSigma = baseSigma * (1.0 + 1.5 * (1.0 - safeConf)) * jumpFactor
         let rMat = Mat2.diagonal(nsaSigma * nsaSigma)
 
         let sMat = (pThetaTheta + rMat).symmetrized
@@ -246,8 +249,14 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
 
         let corrAngle = hypot(deltaThetaCorr.x, deltaThetaCorr.y)
         if corrAngle > 1e-12 {
-            let uCorr = (tangentE1 * deltaThetaCorr.x + tangentE2 * deltaThetaCorr.y) / corrAngle
-            let newBearing = simd_normalize(bearing * cos(corrAngle) + uCorr * sin(corrAngle))
+            // Slew-Rate Limiter trên sai số cập nhật Vision: Giới hạn bước hiệu chỉnh tối đa mỗi frame AI
+            // để triệt tiêu hiện tượng giật cục / nhảy cóc khi AI đổi anchor hoặc box, tuyệt đối không kẹp Gyro 100Hz
+            let maxCorrAngle = 0.040
+            let effectiveCorr = min(corrAngle, maxCorrAngle)
+            let ratio = effectiveCorr / corrAngle
+            let effectiveDelta = deltaThetaCorr * ratio
+            let uCorr = (tangentE1 * effectiveDelta.x + tangentE2 * effectiveDelta.y) / effectiveCorr
+            let newBearing = simd_normalize(bearing * cos(effectiveCorr) + uCorr * sin(effectiveCorr))
             updateTangentFrame(newBearing: newBearing)
         }
 
@@ -529,6 +538,30 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         }
     }
 
+    /// Vận tốc góc tức thời của thiết bị từ cảm biến Gyroscope (rad/s)
+    public func currentDeviceAngularSpeed() -> Double {
+        lock.withLock {
+            guard history.count >= 2 else { return 0 }
+            let s1 = history[history.count - 1]
+            let s2 = history[history.count - 2]
+            let dt = s1.timestamp - s2.timestamp
+            guard dt > 1e-4, dt < 0.15 else { return 0 }
+            let dot = max(-1.0, min(1.0, abs(simd_dot(s2.deviceToWorld.vector, s1.deviceToWorld.vector))))
+            let angle = 2.0 * acos(dot)
+            return angle / dt
+        }
+    }
+
+    /// Tính lượng dịch chuyển góc (radians) của Gyro giữa timestamp quá khứ và hiện tại (Bù trễ Vision)
+    public func angularDisplacementSince(timestamp: TimeInterval) -> Double {
+        lock.withLock {
+            guard let pastPose = TrackingGeometry.pose(at: timestamp, in: history),
+                  let currentPose = latestPose() ?? history.last?.deviceToWorld else { return 0 }
+            let dot = max(-1.0, min(1.0, abs(simd_dot(pastPose.vector, currentPose.vector))))
+            return 2.0 * acos(dot)
+        }
+    }
+
     private func resolvePin() {
         guard let (point, time, k) = pendingPin else { return }
         // A tap can precede the first CoreMotion callback. Once that callback
@@ -626,6 +659,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                     filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
                 } else {
                     filter.update(innovation: innovation, sInv: sInv)
+                    // Bù độ trễ Vision: Dự báo trạng thái bộ lọc EKF từ thời điểm frame tới hiện tại
+                    let now = CACurrentMediaTime()
+                    if now > frame.timestamp, now - frame.timestamp <= 0.25 {
+                        filter.predict(to: now, isDynamicScene: street || scene.isDeformableNature)
+                    }
                     let blended = filter.bearing
                     let length = simd_length(blended)
                     guard length.isFinite, length > 1e-9 else { publish(); return }

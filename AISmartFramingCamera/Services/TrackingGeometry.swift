@@ -175,12 +175,22 @@ enum TrackingGeometry {
 struct AlignmentCaptureGate {
     enum State: Equatable { case outside, holding, ready }
     private(set) var isAligned = false
+    private(set) var isTargetLocked = false
     private var lastTime: TimeInterval?
     private var lastGoodTime: TimeInterval?
     private var dwell: TimeInterval = 0
 
     mutating func reset() {
-        isAligned = false; lastTime = nil; lastGoodTime = nil; dwell = 0
+        isAligned = false; isTargetLocked = false; lastTime = nil; lastGoodTime = nil; dwell = 0
+    }
+
+    mutating func lockTarget() {
+        isTargetLocked = true
+        isAligned = true
+    }
+
+    mutating func unlockTarget() {
+        isTargetLocked = false
     }
 
     mutating func update(time: TimeInterval, distance: Double, radius: Double,
@@ -191,8 +201,9 @@ struct AlignmentCaptureGate {
         if let lastTime, time < lastTime || time - lastTime > 0.35 { reset() }
         let dt = lastTime.map { max(0, min(0.05, time - $0)) } ?? 0
         lastTime = time
-        let inside = distance <= radius * (isAligned ? 1.45 : 1)
-        if freshEvidence && inside {
+        let inside = isTargetLocked || (distance <= radius * (isAligned ? 1.45 : 1))
+        let effectiveEvidence = isTargetLocked || freshEvidence
+        if effectiveEvidence && inside {
             isAligned = true
             lastGoodTime = time
             dwell += dt

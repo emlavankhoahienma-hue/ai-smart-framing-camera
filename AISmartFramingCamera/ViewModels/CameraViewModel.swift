@@ -634,6 +634,122 @@ public final class CameraViewModel: ObservableObject {
     @Published public var alignmentDistance: CGFloat = 1.0
     @Published public var isPerfectAlignment: Bool = false
 
+    /// Trạng thái khóa cứng mục tiêu khi tâm trắng khớp với tâm Target (0.5, 0.5)
+    @Published public private(set) var isTargetLocked: Bool = false
+    @Published public private(set) var lockedTargetPosition: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    private var lockedDevicePose: simd_quatd? = nil
+    private var lockedAtTime: CFTimeInterval = 0
+    private var lastSubjectInLockTime: CFTimeInterval = 0
+
+    /// Ngưỡng thoát khóa cơ sở (ở 1.0x: ~5.73° = 0.10 rad). Tự động co giãn theo mức Zoom thực tế (FOV).
+    private let baseUnlockAngleThreshold: Double = 0.10
+
+    /// Ngưỡng thoát khóa góc quay tích lũy Gyro co giãn động theo FOV/Zoom hiện tại
+    private var dynamicUnlockAngleThreshold: Double {
+        let zoom = max(1.0, Double(displayZoom))
+        return baseUnlockAngleThreshold / zoom
+    }
+
+    // Smooth Unlock Handoff: Chuyển tiếp mượt từ (0.5, 0.5) sang vị trí mục tiêu mới khi mở khóa
+    private var unlockHandoffStartTime: CFTimeInterval = 0
+    private var unlockHandoffStartPoint: CGPoint? = nil
+    private let unlockHandoffDuration: CFTimeInterval = 0.20
+
+    private func lockHardTarget() {
+        guard !isTargetLocked else { return }
+        isTargetLocked = true
+        lockedTargetPosition = CGPoint(x: 0.5, y: 0.5)
+        currentTargetPoint = lockedTargetPosition
+        lockedDevicePose = SpatialTrackingEngine.shared.latestPose()
+        lockedAtTime = CACurrentMediaTime()
+        lastSubjectInLockTime = lockedAtTime
+        unlockHandoffStartPoint = nil
+        unlockHandoffStartTime = 0
+        alignmentGate.lockTarget()
+        HapticFeedbackService.shared.triggerMagneticSnap()
+
+        // Phase 4: Đồng bộ chu trình Khóa tâm Hard Lock với chuyển Zoom quang học Z* mượt mà
+        if let targetZoom = pendingSuggestedZoom, abs(displayZoom - targetZoom) > 0.15, !hasExecutedAutoZoomForSession {
+            hasExecutedAutoZoomForSession = true
+            triggerZoomRevealAnimation(targetZoom: targetZoom)
+        }
+    }
+
+    private func unlockHardTargetLock() {
+        guard isTargetLocked else { return }
+        isTargetLocked = false
+        lockedDevicePose = nil
+        alignmentGate.unlockTarget()
+        // Kích hoạt chuyển tiếp mượt (Smooth Unlock Handoff) từ (0.5, 0.5) sang vị trí mới
+        unlockHandoffStartPoint = CGPoint(x: 0.5, y: 0.5)
+        unlockHandoffStartTime = CACurrentMediaTime()
+    }
+
+    /// Quyết định Giữ khóa / Mở khóa bằng "Độ đồng thuận Không gian - Thị giác" (Spatial-Visual Coherence)
+    private func shouldUnlockHardTarget() -> Bool {
+        guard isTargetLocked else { return false }
+
+        // 1. Nếu đang trong tiến trình chụp ảnh (Capture Sequence Active): Tuyệt đối giữ khóa 100%
+        if aiSessionState == .capturing || isShutterPressing {
+            return false
+        }
+
+        // 2. Điều kiện (a): Người dùng chủ động lia máy đi chỗ khác (Góc quay Gyro tích lũy vượt ngưỡng theo Zoom/FOV)
+        if let lockedPose = lockedDevicePose,
+           let currentPose = SpatialTrackingEngine.shared.latestPose() {
+            let normLocked = simd_normalize(lockedPose)
+            let normCurrent = simd_normalize(currentPose)
+            let dot = max(-1.0, min(1.0, abs(simd_dot(normLocked.vector, normCurrent.vector))))
+            let gyroAngle = 2.0 * acos(dot)
+            if gyroAngle >= dynamicUnlockAngleThreshold {
+                return true
+            }
+        }
+
+        // 3. Điều kiện (b): Chống lỗi "Khóa vào không khí" (Subject moved away while phone is stationary)
+        // Nếu máy tương đối tĩnh nhưng chủ thể AI/tâm điểm thực tế đã di chuyển ra xa hoặc mất dấu liên tục > 400ms:
+        let now = CACurrentMediaTime()
+        if now - lockedAtTime > 0.25 {
+            let currentEstimated = SpatialTrackingEngine.shared.currentEstimatedScreenPoint
+            let distanceToCenter = hypot(currentEstimated.x - 0.5, currentEstimated.y - 0.5)
+            let exitRadius = max(0.06, Double(alignmentRadius) * 2.2)
+
+            let subjectStillNear = distanceToCenter <= exitRadius && hasFreshOpticalLock
+            if subjectStillNear {
+                lastSubjectInLockTime = now
+            } else if now - lastSubjectInLockTime > 0.40 {
+                // Chủ thể đã thực sự rời xa tâm khóa > 400ms trong khi máy đứng yên
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private func hasUserPannedAwayFromLock() -> Bool {
+        shouldUnlockHardTarget()
+    }
+
+    /// Tính tọa độ chuyển tiếp mượt (Smooth Unlock Handoff) nếu vừa mở khóa
+    private func resolveUnlockHandoffPoint(target: CGPoint) -> CGPoint {
+        guard let handoffStart = unlockHandoffStartPoint, unlockHandoffStartTime > 0 else {
+            return target
+        }
+        let elapsed = CACurrentMediaTime() - unlockHandoffStartTime
+        if elapsed < unlockHandoffDuration {
+            let t = elapsed / unlockHandoffDuration
+            let smoothT = t * t * (3.0 - 2.0 * t) // Hermite smoothstep
+            return CGPoint(
+                x: handoffStart.x + (target.x - handoffStart.x) * smoothT,
+                y: handoffStart.y + (target.y - handoffStart.y) * smoothT
+            )
+        } else {
+            unlockHandoffStartPoint = nil
+            unlockHandoffStartTime = 0
+            return target
+        }
+    }
+
     // Gemini State
     @Published public var isGeminiAnalyzing: Bool = false
     @Published public var geminiError: String? = nil
@@ -1494,8 +1610,22 @@ public final class CameraViewModel: ObservableObject {
         // Động cơ Tracking Không Gian Chuẩn Xác: Thống nhất một callback duy nhất
         SpatialTrackingEngine.shared.onSpatialTargetUpdated = { [weak self] point, _, quality in
             guard let self = self, !self.isShowingSettings else { return }
-            // Vòng vàng luôn bám vật thể (kể cả trong lúc zoom reveal) để không nhảy sau khi zoom
-            self.currentTargetPoint = point
+
+            if self.isTargetLocked {
+                if self.lockedDevicePose == nil {
+                    self.lockedDevicePose = SpatialTrackingEngine.shared.latestPose()
+                }
+                if self.shouldUnlockHardTarget() {
+                    self.unlockHardTargetLock()
+                    self.currentTargetPoint = self.resolveUnlockHandoffPoint(target: point)
+                } else {
+                    self.currentTargetPoint = self.lockedTargetPosition
+                }
+            } else {
+                // Luồng Gyro 100Hz đi thẳng 100% không bị kẹp bước nhảy để tâm dính chặt không gian thực.
+                // Nếu vừa mở khóa, áp dụng Smooth Unlock Handoff để chuyển tiếp êm ái từ tâm (0.5, 0.5).
+                self.currentTargetPoint = self.resolveUnlockHandoffPoint(target: point)
+            }
             // Quality describes evidence, not the colour/lifetime of the guide.
             // A predicted bearing remains visible without pretending it is optical.
             let seeding = quality == .reacquiring && self.latestOpticalPoint == nil &&
@@ -1504,7 +1634,7 @@ public final class CameraViewModel: ObservableObject {
             // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
             switch self.aiSessionState {
             case .targetPlaced, .alignmentPerfect:
-                self.evaluateAlignment(at: point)
+                self.evaluateAlignment(at: self.currentTargetPoint ?? point)
             default: break
             }
         }
@@ -1525,6 +1655,7 @@ public final class CameraViewModel: ObservableObject {
               isCameraReady, !isCameraHibernating,
               !isShutterPressing, recordingState == .idle,
               (aiSessionState == .idle || aiSessionState == .done) else { return }
+        unlockHardTargetLock()
         if isWindowedZoomActive { isWindowedZoomActive = false }
         targetPinGeneration &+= 1
         alignmentGate.reset()
@@ -1641,6 +1772,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func cancelAISession() {
+        unlockHardTargetLock()
         targetPinGeneration &+= 1
         alignmentGate.reset()
         pinZoomPlanTask?.cancel()
@@ -1690,6 +1822,7 @@ public final class CameraViewModel: ObservableObject {
     /// Called when the camera overlay disappears or the app resigns active.
     /// A resumed CoreMotion reference frame must not inherit the old world ray.
     public func suspendSpatialTracking() {
+        unlockHardTargetLock()
         isPinchingZoom = false
         pendingManualZoomTarget = nil
         manualZoomRequestID = nil
@@ -2112,22 +2245,35 @@ public final class CameraViewModel: ObservableObject {
                   CACurrentMediaTime() - source.frame.timestamp <= 30 {
             acceptLocalPlan(first.plan, source: source)
         } else if let first = localEvidenceCandidates.first {
-            let area = first.boundingBox.width * first.boundingBox.height
-            if area < 0.16 {
-                let zoomOptions = cameraService.availableDisplayZoomOptions.filter { $0 > displayZoom && $0 <= displayZoom * 2.5 }
-                pendingSuggestedZoom = zoomOptions.first ?? (displayZoom * 1.5)
-            } else {
-                pendingSuggestedZoom = displayZoom
-            }
             allowsAutoCaptureForCurrentTarget = true
-            let aimPoint: CGPoint
-            if first.center.x < 0.46 {
-                aimPoint = CGPoint(x: 0.382, y: first.center.y < 0.46 ? 0.382 : 0.5)
-            } else if first.center.x > 0.54 {
-                aimPoint = CGPoint(x: 0.618, y: first.center.y < 0.46 ? 0.382 : 0.5)
-            } else {
-                aimPoint = first.center
-            }
+            let anchor = first.eyePosition ?? (first.category == .human ? CGPoint(x: first.center.x, y: first.boundingBox.minY + first.boundingBox.height * 0.28) : first.center)
+
+            // Phase 4: AI Tự Quyết định Mức Zoom bằng Đấu loại Khung cắt Ảo & Pre-Zoom Target Projection
+            let sceneEvidence = VisionFramingEngine.shared.latestSceneEvidence ?? SceneCompositionEvidence(
+                primarySubjectRect: first.boundingBox,
+                focalAnchorPoint: anchor,
+                focalCategory: first.category,
+                focalSaliencyRatio: 0.50,
+                edgeClutterScore: 0.0,
+                detectedScene: self.detectedScene,
+                detectedHorizonY: nil,
+                timestamp: CACurrentMediaTime()
+            )
+            let evaluatedFraming = self.calculator.evaluateFramingResult(
+                anchor: anchor,
+                subjectRect: first.boundingBox,
+                category: first.category,
+                gaze: first.gaze,
+                sceneType: self.detectedScene,
+                currentZoom: self.displayZoom,
+                availableZooms: self.cameraService.availableDisplayZoomOptions,
+                sceneEvidence: sceneEvidence
+            )
+            let aimPoint = evaluatedFraming.targetPoint
+            self.activeCompositionRule = evaluatedFraming.optimalRule
+            self.framingResult = evaluatedFraming
+            self.pendingSuggestedZoom = evaluatedFraming.recommendedZoomFactor
+            self.aiSuggestedZoom = evaluatedFraming.recommendedZoomFactor
             var liveAim = aimPoint
             let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: aimPoint))
             if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
@@ -2249,7 +2395,13 @@ public final class CameraViewModel: ObservableObject {
         let dy = liveAimPoint.y - 0.5
         let distance = hypot(dx, dy)
         let angle = atan2(dy, dx) * 180 / .pi
-        activeCompositionRule = plan.usesCenter ? .centerSymmetry : .ruleOfThirds
+        if plan.explanation.contains("Tỷ lệ vàng") || plan.explanation.contains("Golden") {
+            activeCompositionRule = .goldenRatio
+        } else if plan.usesCenter {
+            activeCompositionRule = .centerSymmetry
+        } else {
+            activeCompositionRule = .ruleOfThirds
+        }
         localCompositionIntent = plan.intent
         localCompositionExplanation = plan.explanation
         framingResult = FramingTargetResult(targetPoint: liveAimPoint,
@@ -2323,6 +2475,9 @@ public final class CameraViewModel: ObservableObject {
                                           source: AITrackingSource?,
                                           trackedPoint: CGPoint? = nil,
                                           pinnedGuideRay: SIMD3<Double>? = nil) {
+        unlockHardTargetLock()
+        unlockHandoffStartPoint = nil
+        unlockHandoffStartTime = 0
         guard target.x.isFinite, target.y.isFinite,
               (0...1).contains(target.x), (0...1).contains(target.y) else { return }
         guard !captureMode.isVideo, aiSessionState != .capturing, !isCameraHibernating else { return }
@@ -2685,14 +2840,17 @@ public final class CameraViewModel: ObservableObject {
             allowsAutoCaptureForCurrentTarget = true
             localSelectionMessage = nil
         }
-        let aim = compositionAlignmentPoint(fallback: point)
+        let aim = isTargetLocked ? lockedTargetPosition : compositionAlignmentPoint(fallback: point)
         let dx = aim.x - 0.5, dy = aim.y - 0.5
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
         let distance = hypot(dx, dy / aspect)
         alignmentDistance = distance
         let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),
-            radius: Double(alignmentRadius), freshEvidence: hasFreshOpticalLock && !isPinchingZoom)
+            radius: Double(alignmentRadius), freshEvidence: (hasFreshOpticalLock || isTargetLocked) && !isPinchingZoom)
         isPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
+        if !isTargetLocked && isPerfectAlignment {
+            lockHardTarget()
+        }
         guard state != .outside else {
             autoCaptureTask?.cancel(); autoCaptureTask = nil
             lastFailedCaptureOpticalTimestamp = -.infinity
@@ -2712,7 +2870,7 @@ public final class CameraViewModel: ObservableObject {
         }
         aiSessionState = .alignmentPerfect
         alignmentState = .aligned(score: 1)
-        guard state == .ready, hasFreshOpticalLock, !isPreparingPinZoom,
+        guard state == .ready, (hasFreshOpticalLock || isTargetLocked), !isPreparingPinZoom,
               !zoomAwaitingVerification else { return }
         if isAutoZoomEnabled && !hasExecutedAutoZoomForSession {
             let desired = cameraService.convertDeviceZoomToDisplayZoom(
@@ -2757,7 +2915,7 @@ public final class CameraViewModel: ObservableObject {
             }
             if cropSafe { self.postZoomRecovery.reset() }
             if self.aiSessionState == .alignmentPerfect && !self.isShutterPressing &&
-                self.hasFreshOpticalLock && self.alignmentGate.isAligned &&
+                (self.hasFreshOpticalLock || self.isTargetLocked) && self.alignmentGate.isAligned &&
                 self.alignmentDistance <= self.alignmentRadius * 1.6 &&
                 !self.zoomAwaitingVerification && self.zoomVerified &&
                 !self.isPinchingZoom && !self.isPreparingPinZoom &&
@@ -2898,7 +3056,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func currentCropSafeForCapture() async -> Bool {
-        guard hasFreshOpticalLock else { return false }
+        guard hasFreshOpticalLock || isTargetLocked else { return false }
         return true
     }
 
@@ -3053,6 +3211,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func unlockAEAF() {
+        unlockHardTargetLock()
         guard isAEAFLocked else { return }
         haptics.triggerSelectionChange()
         isAEAFLocked = false
@@ -3461,6 +3620,7 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - Chạm Lấy Nét & Khóa AE/AF (iPhone Camera Standard)
     public func userDidTapToFocus(at normalizedPoint: CGPoint, devicePoint: CGPoint? = nil) {
+        unlockHardTargetLock()
         guard aiSessionState != .capturing, !isCameraHibernating else { return }
         if isAEAFLocked {
             unlockAEAF()
@@ -4016,6 +4176,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 CameraLogger.success("Render bộ lọc hoàn tất, hiển thị xem trước & lưu ảnh (LivePhoto: \(item.isLivePhoto))", category: .capture)
                 self.isShutterPressing = false
                 self.haptics.triggerShutterClick()
+                self.unlockHardTargetLock()
                 withAnimation {
                     self.latestCapturedPhoto = item
                     self.aiSessionState = .done
@@ -4029,6 +4190,7 @@ extension CameraViewModel: CameraServiceDelegate {
     }
 
     public func cameraService(_ service: CameraService, didFailCaptureWithError error: Error) {
+        self.unlockHardTargetLock()
         // AVCapture can reject a new request while an earlier capture is
         // finishing. Restore this request's UI state instead of stranding it
         // in .capturing; repeated failure callbacks are ignored below.
