@@ -7,6 +7,14 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
     
     private let stateLock = NSLock()
     private var smoothedHeights: [CGFloat] = Array(repeating: 0.08, count: 32)
+    private var _averageLuminance: Float = 0.5
+    
+    /// Do sang trung binh chuan hoa (0.0 = toi hoan toan, 1.0 = sang trang hoan toan)
+    public var averageLuminance: Float {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _averageLuminance
+    }
     
     // Palette chuẩn phổ màu như máy ảnh cao cấp (Xanh lam bóng tối -> Lục/Vàng vùng trung -> Cam/Đỏ vùng sáng gắt)
     private let barColors: [Color] = {
@@ -52,6 +60,8 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
         let data = baseAddress.assumingMemoryBound(to: UInt8.self)
         var bins = Array(repeating: Float(0), count: 32)
         var maxBin: Float = 1.0
+        var totalLum: Float = 0.0
+        var sampleCount: Int = 0
         
         // Lấy mẫu nhanh 120x90 điểm ảnh (Subsampling) -> CPU < 0.3%
         let stepX = max(2, width / 96)
@@ -67,6 +77,8 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
                 
                 // Độ sáng theo chuẩn Rec.709
                 let lum = r * 0.2126 + g * 0.7152 + b * 0.0722
+                totalLum += lum
+                sampleCount += 1
                 let binIndex = min(31, max(0, Int(lum / 8.0)))
                 bins[binIndex] += 1
             }
@@ -76,8 +88,10 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
             if count > maxBin { maxBin = count }
         }
         
+        let rawAvg = sampleCount > 0 ? (totalLum / Float(sampleCount)) / 255.0 : 0.5
         var result: [HistogramBarData] = []
         stateLock.lock()
+        _averageLuminance = _averageLuminance * 0.8 + rawAvg * 0.2
         for i in 0..<32 {
             let rawNormalized = CGFloat(bins[i] / maxBin)
             let current = smoothedHeights[i]

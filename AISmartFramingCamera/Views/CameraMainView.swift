@@ -111,6 +111,12 @@ public struct CameraMainView: View {
                                 .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                             }
 
+                            // Dual Concurrent Camera PIP Overlay
+                            if viewModel.isDualCameraActive {
+                                DualCameraPIPOverlayView(viewModel: viewModel, containerSize: layout.viewfinderSize)
+                                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+                            }
+
                             // Optical Zoom HUD Feedback Badge
                             if viewModel.isZoomHUDVisible, let hudText = viewModel.activeZoomHUDText {
                                 VStack {
@@ -213,6 +219,14 @@ public struct CameraMainView: View {
                     CameraPermissionPlaceholderView(viewModel: viewModel)
                         .frame(width: geometry.size.width)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+
+                // Low-Light Selfie Screen Flash Overlay (Warm 3000K soft flattering light)
+                if viewModel.isScreenFlashOverlayVisible {
+                    Color(red: 1.0, green: 0.96, blue: 0.90)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                        .zIndex(999)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
@@ -384,7 +398,20 @@ struct TopCameraBar: View {
             .buttonStyle(PlainButtonStyle())
             .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
 
-            // 5. Settings Sheet Button (Gear Icon)
+            // 5. Dual Concurrent Camera (PIP) Toggle Button
+            Button(action: {
+                viewModel.toggleDualCamera()
+            }) {
+                Image(systemName: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(viewModel.isDualCameraActive ? AlignTheme.electricCyan : Color.white.opacity(0.85))
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel("Chế độ Dual Camera Picture-in-Picture")
+
+            // 6. Settings Sheet Button (Gear Icon)
             Button(action: {
                 viewModel.isShowingSettings = true
             }) {

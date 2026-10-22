@@ -491,6 +491,98 @@ public final class CameraViewModel: ObservableObject {
             cameraService.setFlashMode(activeFlashMode)
         }
     }
+
+    // MARK: - Dual Concurrent Camera (PIP)
+    @Published public var isDualCameraActive: Bool = false
+    @Published public var isDualCameraSupported: Bool = CameraService.isDualCameraSupported
+
+    public func toggleDualCamera() {
+        guard isDualCameraSupported else {
+            haptics.triggerError()
+            showHUDNotice("Không hỗ trợ MultiCam")
+            return
+        }
+
+        haptics.triggerSelectionChange()
+        if isDualCameraActive {
+            cameraService.stopDualCamera(primaryPreviewLayer: self.previewLayer) { [weak self] success in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.isDualCameraActive = false
+                    self.showHUDNotice("Dual Cam: Tắt")
+                }
+            }
+        } else {
+            cameraService.startDualCamera(primaryPreviewLayer: self.previewLayer) { [weak self] success in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if success {
+                        self.isDualCameraActive = true
+                        self.showHUDNotice("Dual Cam PIP: Bật")
+                    } else {
+                        self.isDualCameraActive = false
+                        self.showHUDNotice("Không thể mở Dual Cam")
+                    }
+                }
+            }
+        }
+    }
+
+    public func showHUDNotice(_ text: String) {
+        zoomHUDDismissWorkItem?.cancel()
+        activeZoomHUDText = text
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
+            self.isZoomHUDVisible = true
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            withAnimation(.easeOut(duration: 0.35)) {
+                self?.isZoomHUDVisible = false
+            }
+        }
+        zoomHUDDismissWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
+    }
+
+    // MARK: - Screen Flash (Low-Light Selfie)
+    @Published public var isScreenFlashOverlayVisible: Bool = false
+    @Published public private(set) var currentCameraPosition: AVCaptureDevice.Position = .back
+    @Published public private(set) var currentLiveISO: Float = 100
+    @Published public private(set) var currentLiveExposureDuration: Double = 0.0
+    private var previousScreenBrightness: CGFloat? = nil
+    private var screenFlashWatchdogTask: Task<Void, Never>? = nil
+
+    public var isFrontCamera: Bool {
+        currentCameraPosition == .front
+    }
+
+    /// Phat hien dieu kien thieu sang cho camera truoc qua do choi Histogram hoac thong so ISO/man trap
+    public var isLowLightCondition: Bool {
+        let avgLum = RealtimeHistogramEngine.shared.averageLuminance
+        if avgLum < 0.28 {
+            return true
+        }
+        if currentLiveISO >= 450 || currentLiveExposureDuration >= 0.033 {
+            return true
+        }
+        return false
+    }
+
+    /// Xac dinh xem co nen kich hoat Screen Flash khi chup anh khong
+    public var shouldActivateScreenFlash: Bool {
+        guard !captureMode.isVideo else { return false }
+        guard isFrontCamera else { return false }
+        switch activeFlashMode {
+        case .on:
+            return true
+        case .auto:
+            return isLowLightCondition
+        case .off:
+            return false
+        @unknown default:
+            return false
+        }
+    }
     @Published public var isPinchingZoom: Bool = false
 
     private var pendingSuggestedZoom: CGFloat = 1.0
@@ -902,6 +994,10 @@ public final class CameraViewModel: ObservableObject {
         isAppInBackground = isBackground
         updateCameraHibernationState()
         if isBackground {
+            if isDualCameraActive {
+                toggleDualCamera()
+            }
+            deactivateScreenFlash()
             isCameraReady = false
             if wantsVideoRecording || recordingState != .idle {
                 wantsVideoRecording = false
@@ -1164,6 +1260,7 @@ public final class CameraViewModel: ObservableObject {
         self.cameraService.setVideoCodec(self.selectedVideoCodec)
         self.cameraService.setVideoFormatOption(self.selectedVideoFormatOption)
         self.cameraService.setFlashMode(self.activeFlashMode)
+        self.currentCameraPosition = self.cameraService.currentCameraPosition
 
         // didSet không fire khi gán trong init -> gọi trực tiếp để engine nhận đúng ngưỡng
         applyTrackingSensitivityToEngines()
@@ -1484,6 +1581,8 @@ public final class CameraViewModel: ObservableObject {
         // Form cài đặt mỗi frame (gây lag khi lướt). Đóng cài đặt là tự cập nhật lại.
         cameraService.onLiveCameraStatsUpdated = { [weak self] stats in
             guard let self = self, !self.isShowingSettings else { return }
+            self.currentLiveISO = stats.iso
+            self.currentLiveExposureDuration = stats.exposureDurationSeconds
             let isoInt = Int(round(stats.iso))
             let newISO = "ISO \(isoInt)"
             if self.liveISO != newISO {
@@ -1567,6 +1666,12 @@ public final class CameraViewModel: ObservableObject {
 
     public func switchCamera(completion: @escaping (Bool) -> Void = { _ in }) {
         guard canSwitchCamera else { completion(false); return }
+        if isDualCameraActive {
+            toggleDualCamera()
+            showHUDNotice("Đã tắt Dual Cam để đổi camera")
+            completion(true)
+            return
+        }
         isSwitchingCamera = true
         if aiSessionState != .idle {
             cancelAISession()
@@ -1576,6 +1681,7 @@ public final class CameraViewModel: ObservableObject {
                 guard let self else { completion(false); return }
                 self.isSwitchingCamera = false
                 if success {
+                    self.currentCameraPosition = self.cameraService.currentCameraPosition
                     self.proVideoService.syncHardwareCapabilities()
                     SpatialTrackingEngine.shared.updateCameraFieldOfView(self.cameraService.effectiveVideoFieldOfView)
                     self.haptics.triggerSelectionChange()
@@ -3811,11 +3917,60 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func captureNativePhoto(highResolution: Bool) {
+        if shouldActivateScreenFlash {
+            activateScreenFlash { [weak self] in
+                guard let self else { return }
+                self.executeNativePhotoCapture(highResolution: highResolution)
+            }
+        } else {
+            executeNativePhotoCapture(highResolution: highResolution)
+        }
+    }
+
+    private func executeNativePhotoCapture(highResolution: Bool) {
         photoCapturePhase = .preparing
         captureProcessingSettings = currentPhotoProcessingSettings()
         cameraService.capturePhoto(isDNG: selectedPhotoFormat == .dng,
             isHEIF: selectedPhotoFormat == .heif || selectedPhotoFormat == .heic,
             highResolution: highResolution)
+    }
+
+    private func activateScreenFlash(completion: @escaping @MainActor () -> Void) {
+        if previousScreenBrightness == nil {
+            previousScreenBrightness = UIScreen.main.brightness
+        }
+        withAnimation(.easeIn(duration: 0.10)) {
+            isScreenFlashOverlayVisible = true
+        }
+        UIScreen.main.brightness = 1.0
+
+        // Arm safety watchdog to prevent stuck brightness in any unexpected scenario
+        screenFlashWatchdogTask?.cancel()
+        screenFlashWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 giay timeout du phong
+            self?.deactivateScreenFlash()
+        }
+
+        // Thoi gian on dinh phoi sang (AE settle) cho cam truoc duoi nguon sang man hinh (~200ms)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard let self else { return }
+            completion()
+        }
+    }
+
+    public func deactivateScreenFlash() {
+        screenFlashWatchdogTask?.cancel()
+        screenFlashWatchdogTask = nil
+        guard isScreenFlashOverlayVisible || previousScreenBrightness != nil else { return }
+
+        withAnimation(.easeOut(duration: 0.18)) {
+            isScreenFlashOverlayVisible = false
+        }
+        if let previous = previousScreenBrightness {
+            UIScreen.main.brightness = previous
+            previousScreenBrightness = nil
+        }
     }
 
     /// Encodes only edited, already-upright pixels. Unedited captures and DNG
@@ -4056,9 +4211,13 @@ extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didChangePhotoPhase phase: PhotoCapturePhase) {
         guard aiSessionState == .capturing, isShutterPressing else { return }
         photoCapturePhase = phase
+        if phase == .processing {
+            deactivateScreenFlash()
+        }
     }
 
     public func cameraService(_ service: CameraService, didCapturePhoto photo: CGImage, rawData: Data?, processedCompanionData: Data?, livePhotoMovieURL: URL?, iso: Float, shutterSpeed: Double, format: PhotoSaveFormat, requestedHighResolution: Bool) {
+        deactivateScreenFlash()
         photoCapturePhase = .processing
         CameraLogger.info("Bắt đầu xử lý bộ lọc ảnh màu AI (Kích thước: \(photo.width)x\(photo.height), LivePhoto: \(livePhotoMovieURL != nil ? "CÓ" : "KHÔNG"))", category: .capture)
 
@@ -4191,6 +4350,7 @@ extension CameraViewModel: CameraServiceDelegate {
     }
 
     public func cameraService(_ service: CameraService, didFailCaptureWithError error: Error) {
+        deactivateScreenFlash()
         self.unlockHardTargetLock()
         // AVCapture can reject a new request while an earlier capture is
         // finishing. Restore this request's UI state instead of stranding it

@@ -39,7 +39,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "043a21ea2c9855bc4598a11dfae25ca8eb60853565a6863d5b183c235c80e49a"
+      "sha256": "9213aa80a20bcadbdacebb898153b21fcf8b8ad93998331454e12923f0646f54"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "82a57adeb87d28bac95d042ad2a8148b29b10a718d43cc114a68170045e0a050"
+      "sha256": "831c8b01f7a9cdf76b42e84dd79b211b7fa2a8d55afd3d045f68d569728302b7"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
