@@ -63,4 +63,9 @@ public final class HapticFeedbackService {
     public func triggerTrackingLostWarning() {
         notificationFeedback.notificationOccurred(.warning)
     }
+
+    // MARK: - Error Notification
+    public func triggerError() {
+        notificationFeedback.notificationOccurred(.error)
+    }
 }

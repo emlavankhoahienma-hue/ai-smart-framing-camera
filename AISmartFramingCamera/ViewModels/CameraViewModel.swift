@@ -3954,7 +3954,7 @@ public final class CameraViewModel: ObservableObject {
         // Thoi gian on dinh phoi sang (AE settle) cho cam truoc duoi nguon sang man hinh (~200ms)
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 200_000_000)
-            guard let self else { return }
+            guard let self, self.isScreenFlashOverlayVisible else { return }
             completion()
         }
     }
