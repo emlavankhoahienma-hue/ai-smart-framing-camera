@@ -66,7 +66,7 @@ public struct WindowedZoomOverlayView: View {
 
             // 2. Khung ngam chinh voi vien bo tron nhe 14pt, tam keo va so mm tren dinh
             if !isFull {
-                ZStack(alignment: .top) {
+                ZStack(alignment: .center) {
                     RoundedRectangle(cornerRadius: 14)
                         .stroke(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.85), lineWidth: isDraggingWindow ? 2.0 : 1.5)
                         .background(Color.white.opacity(0.001))
@@ -81,8 +81,9 @@ public struct WindowedZoomOverlayView: View {
                             .fill(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.65))
                             .frame(width: 4, height: 4)
                     }
-                    .position(x: windowRect.width / 2.0, y: windowRect.height / 2.0)
-
+                }
+                .frame(width: windowRect.width, height: windowRect.height)
+                .overlay(alignment: .top) {
                     Text(viewModel.displayZoom >= 1.95 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE OPTICAL" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
                         .foregroundColor(isDraggingWindow ? AlignTheme.electricCyan : .white)

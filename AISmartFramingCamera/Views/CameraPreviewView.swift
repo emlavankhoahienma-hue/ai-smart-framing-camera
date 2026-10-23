@@ -18,8 +18,10 @@ public struct CameraPreviewView: UIViewRepresentable {
 
     public func updateUIView(_ uiView: PreviewContainerView, context: Context) {
         uiView.updateOrientation()
-        if viewModel.previewLayer !== uiView.previewLayer {
-            viewModel.previewLayer = uiView.previewLayer
+        uiView.syncDualCameraPrimaryLayer(viewModel.cameraService.multiCamPrimaryPreviewLayer)
+        let activeLayer = viewModel.cameraService.multiCamPrimaryPreviewLayer ?? uiView.previewLayer
+        if viewModel.previewLayer !== activeLayer {
+            viewModel.previewLayer = activeLayer
         }
         let targetGravity: AVLayerVideoGravity = .resizeAspectFill
         if uiView.previewLayer?.videoGravity != targetGravity {
@@ -220,6 +222,7 @@ public class PreviewContainerView: UIView {
     private let focusRingView = UIView(frame: CGRect(x: 0, y: 0, width: 70, height: 70))
     private var metalView: MTKView?
     private var metalRenderer: MetalFilmSimulationRenderer?
+    private weak var multiCamOverlayLayer: AVCaptureVideoPreviewLayer?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -250,6 +253,22 @@ public class PreviewContainerView: UIView {
         previewLayer?.session = session
         previewLayer?.contentsScale = currentDisplayScale
         previewLayer?.rasterizationScale = currentDisplayScale
+    }
+
+    public func syncDualCameraPrimaryLayer(_ dualLayer: AVCaptureVideoPreviewLayer?) {
+        if multiCamOverlayLayer === dualLayer {
+            dualLayer?.frame = bounds
+            return
+        }
+        multiCamOverlayLayer?.removeFromSuperlayer()
+        multiCamOverlayLayer = dualLayer
+        if let dualLayer {
+            dualLayer.videoGravity = .resizeAspectFill
+            dualLayer.frame = bounds
+            dualLayer.contentsScale = currentDisplayScale
+            dualLayer.rasterizationScale = currentDisplayScale
+            layer.insertSublayer(dualLayer, at: 0)
+        }
     }
 
     public func setupMetalPreview(viewModel: CameraViewModel) {
@@ -294,6 +313,9 @@ public class PreviewContainerView: UIView {
         super.layoutSubviews()
         previewLayer?.contentsScale = currentDisplayScale
         previewLayer?.rasterizationScale = currentDisplayScale
+        multiCamOverlayLayer?.frame = bounds
+        multiCamOverlayLayer?.contentsScale = currentDisplayScale
+        multiCamOverlayLayer?.rasterizationScale = currentDisplayScale
         metalView?.frame = bounds
         updateOrientation()
     }

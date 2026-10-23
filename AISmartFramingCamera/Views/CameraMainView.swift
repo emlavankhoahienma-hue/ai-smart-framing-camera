@@ -23,21 +23,11 @@ struct CameraFormFactorLayout {
         let widthLimit = max(1, availableSize.width - 12)
         let heightLimit = max(1, availableSize.height - 44 - topVerticalPadding -
                               topBottomPadding - controlDeckHeight - bottomComfort - minimumGap)
-        if isVideo {
-            // Chuẩn khung hình điện ảnh 16:9 chiều dọc (9:16 = 0.5625)
-            // Khớp 100% tỷ lệ cảm biến 4K/1080P, tuyệt đối không bị vuông, không bị crop méo
-            let targetAspect: CGFloat = 9.0 / 16.0
-            var height = min(widthLimit / targetAspect, heightLimit)
-            var width = height * targetAspect
-            if width > widthLimit {
-                width = widthLimit
-                height = width / targetAspect
-            }
-            return CGSize(width: width, height: height)
-        } else {
-            let height = min(widthLimit * 4.0 / 3.0, heightLimit)
-            return CGSize(width: height * 3.0 / 4.0, height: height)
-        }
+        // Giữ cố định khung viewfinder 4:3 chuẩn trong cả chế độ Chụp ảnh và Quay video
+        // để thanh công cụ phía trên (TopCameraBar) và cụm điều khiển dưới đứng yên tuyệt đối,
+        // không bị nhảy vị trí hoặc tràn màn hình khi chuyển sang Quay video.
+        let height = min(widthLimit * 4.0 / 3.0, heightLimit)
+        return CGSize(width: height * 3.0 / 4.0, height: height)
     }
     var histogramWidth: CGFloat {
         availableSize.width < 380 ? 46 : min(62, availableSize.width * 0.15)
@@ -327,17 +317,19 @@ struct TopCameraBar: View {
 
             Spacer(minLength: 4)
 
-            // 3. Technical Specs Row: ISO, EV, Format/Codec, 4:3 (Hiển thị đầy đủ, không bị cắt chữ)
-            HStack(spacing: 5) {
+            // 3. Technical Specs Row: ISO, EV, Format/Codec, 4:3 (Gọn gàng, ổn định, không tràn màn hình khi sang Video)
+            HStack(spacing: 4) {
                 Text(viewModel.liveISO)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.92))
-                    .fixedSize()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
 
-                Text(String(format: "EV %+.1f", viewModel.exposureBias))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                Text(String(format: "EV%+0.1f", viewModel.exposureBias))
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundColor(.white.opacity(0.88))
-                    .fixedSize()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
 
                 Button(action: {
                     let generator = UISelectionFeedbackGenerator()
@@ -356,8 +348,10 @@ struct TopCameraBar: View {
                                 .frame(width: 4, height: 4)
                         }
                         Text(currentFormatLabel)
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                             .foregroundColor(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                     }
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2.0)
@@ -368,15 +362,16 @@ struct TopCameraBar: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .fixedSize()
                 .accessibilityLabel("Định dạng: \(currentFormatLabel). Chạm để thay đổi.")
 
                 Text(viewModel.captureMode.isVideo ? "16:9" : (viewModel.isWindowedZoomActive ? viewModel.windowedZoomAspectRatio.rawValue : "4:3"))
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.88))
-                    .fixedSize()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .lineLimit(1)
+            .layoutPriority(1)
 
             Spacer(minLength: 4)
 
@@ -392,7 +387,7 @@ struct TopCameraBar: View {
                 Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.electricCyan : Color.white.opacity(0.85))
-                    .frame(width: 36, height: 36)
+                    .frame(width: 34, height: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
@@ -405,7 +400,7 @@ struct TopCameraBar: View {
                 Image(systemName: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(viewModel.isDualCameraActive ? AlignTheme.electricCyan : Color.white.opacity(0.85))
-                    .frame(width: 36, height: 36)
+                    .frame(width: 34, height: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
@@ -418,7 +413,7 @@ struct TopCameraBar: View {
                 Image(systemName: "gearshape")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.white.opacity(0.85))
-                    .frame(width: 36, height: 36)
+                    .frame(width: 34, height: 36)
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
@@ -439,7 +434,13 @@ struct TopCameraBar: View {
 
     private var currentFormatLabel: String {
         if viewModel.captureMode.isVideo {
-            return viewModel.activeVideoResolutionString
+            switch viewModel.selectedVideoFormatOption {
+            case .uhd60: return "4K·60"
+            case .uhd30: return "4K·30"
+            case .uhd24: return "4K·24"
+            case .hd60:  return "1080P·60"
+            case .hd30:  return "1080P·30"
+            }
         }
         switch viewModel.selectedPhotoFormat {
         case .dng: return "RAW"

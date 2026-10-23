@@ -35,11 +35,14 @@ public struct SettingsSheetView: View {
     @Namespace private var tabNamespace
     @State private var searchText: String = ""
 
-    // OpenRouter API Key State
+    // Multi-Provider 2026 API & Model State
     @State private var geminiKeyInput: String = ""
     @State private var isKeyVisible: Bool = false
     @State private var selectedModel: AIVisionModel = .freeVision
     @State private var customModelInput: String = ""
+    @State private var customEndpointInput: String = ""
+    @State private var profileLabelInput: String = ""
+    @State private var modelSearchFilter: String = ""
     @State private var isTestingKey: Bool = false
     @State private var testResult: String? = nil
     @State private var showDeleteKeyConfirmation: Bool = false
@@ -98,6 +101,9 @@ public struct SettingsSheetView: View {
                                         isKeyVisible: $isKeyVisible,
                                         selectedModel: $selectedModel,
                                         customModelInput: $customModelInput,
+                                        customEndpointInput: $customEndpointInput,
+                                        profileLabelInput: $profileLabelInput,
+                                        modelSearchFilter: $modelSearchFilter,
                                         isTestingKey: $isTestingKey,
                                         testResult: $testResult,
                                         showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
@@ -161,6 +167,7 @@ public struct SettingsSheetView: View {
             .onAppear {
                 selectedModel = viewModel.geminiService.selectedModel
                 customModelInput = viewModel.geminiService.customModelName
+                customEndpointInput = viewModel.geminiService.customEndpointURL
             }
             .sheet(isPresented: $viewModel.isShowingGyroCalibration) {
                 GyroCalibrationSheetView(viewModel: viewModel)
@@ -237,13 +244,16 @@ public struct SettingsSheetView: View {
             if "định dạng ảnh raw jpeg heic dng siêu nét đa khung drizzle super-res live photo lưu ảnh gốc video codec 4k 1080p fps film màu fuji kodak leica horizon focus peaking histogram hiệu chuẩn con quay gyro cân đối xứng âm thanh audio vu meter micro".contains(q) {
                 PhotoCaptureSettingsSection(viewModel: viewModel)
             }
-            if "bố cục tỷ lệ vàng 1/3 tam giác xoắn ốc ai zoom bám chủ thể tự chụp tia hướng dẫn openrouter api key gemini model ping latency".contains(q) {
+            if "bố cục tỷ lệ vàng 1/3 tam giác xoắn ốc ai zoom bám chủ thể tự chụp tia hướng dẫn openrouter openai anthropic claude gpt-5 gemini groq deepseek api key model ping latency".contains(q) {
                 AIFramingSettingsSection(
                     viewModel: viewModel,
                     geminiKeyInput: $geminiKeyInput,
                     isKeyVisible: $isKeyVisible,
                     selectedModel: $selectedModel,
                     customModelInput: $customModelInput,
+                    customEndpointInput: $customEndpointInput,
+                    profileLabelInput: $profileLabelInput,
+                    modelSearchFilter: $modelSearchFilter,
                     isTestingKey: $isTestingKey,
                     testResult: $testResult,
                     showDeleteKeyConfirmation: $showDeleteKeyConfirmation,
@@ -771,6 +781,9 @@ struct AIFramingSettingsSection: View {
     @Binding var isKeyVisible: Bool
     @Binding var selectedModel: AIVisionModel
     @Binding var customModelInput: String
+    @Binding var customEndpointInput: String
+    @Binding var profileLabelInput: String
+    @Binding var modelSearchFilter: String
     @Binding var isTestingKey: Bool
     @Binding var testResult: String?
     @Binding var showDeleteKeyConfirmation: Bool
@@ -918,23 +931,24 @@ struct AIFramingSettingsSection: View {
 
     @ViewBuilder
     private var aiCloudCard: some View {
-        SettingsSectionCard(title: "OpenRouter API Key", icon: "key.fill") {
+        SettingsSectionCard(title: "Kết nối Đa API & Model AI (2026)", icon: "network.badge.shield.half.filled") {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggleRow(
-                    title: "Dùng OpenRouter Cloud",
-                    subtitle: "Tắt để dùng AI cục bộ trên máy, hoàn toàn offline",
-                    icon: "network",
+                    title: "Ưu tiên Cloud AI (Tự động Fallback)",
+                    subtitle: "Tự động dùng Cloud AI khi có API Key & mạng; tự chuyển về Local AI trên máy nếu mất mạng hoặc lỗi API",
+                    icon: "sparkles.tv.fill",
                     isOn: $viewModel.useGeminiForAnalysis
                 )
 
-                Text("Chế độ miễn phí chỉ áp dụng model :free. Gemini 3.7 Flash và 3.1 Pro cần credits OpenRouter.")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.62))
-
-                if !viewModel.useGeminiForAnalysis {
-                    Label("AI trên máy đang hoạt động, không cần cloud", systemImage: "iphone")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.85))
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(viewModel.useGeminiForAnalysis && viewModel.geminiService.hasAPIKey ? Color.green : AlignTheme.electricCyan)
+                        .frame(width: 7, height: 7)
+                    Text(viewModel.useGeminiForAnalysis && viewModel.geminiService.hasAPIKey
+                         ? "Đang hoạt động: \(viewModel.geminiService.selectedProvider.shortBadge) • \(viewModel.geminiService.activeModelID) (Tự dự phòng Local AI)"
+                         : "Đang chạy AI Cục bộ trên máy (Neural Engine Offline 100%)")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.88))
                 }
 
                 if let cloudError = viewModel.geminiError {
@@ -946,7 +960,62 @@ struct AIFramingSettingsSection: View {
 
                 Divider().background(Color.white.opacity(0.06))
 
-                // Masked API Key Display with Eye Toggle (Matching Mockup)
+                // 1. Chọn Nhà cung cấp API (Multi-Provider 2026)
+                SettingsPickerRow(
+                    title: "Nhà cung cấp API",
+                    subtitle: "OpenRouter, Google Gemini, OpenAI, Claude, Groq, xAI, DeepSeek, Custom",
+                    icon: "server.rack",
+                    selectedValueString: viewModel.geminiService.selectedProvider.shortBadge
+                ) {
+                    Picker("", selection: Binding(
+                        get: { viewModel.geminiService.selectedProvider },
+                        set: { newProvider in
+                            viewModel.geminiService.selectedProvider = newProvider
+                        }
+                    )) {
+                        ForEach(AICloudProvider.allCases) { provider in
+                            Text(provider.displayName).tag(provider)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.white)
+                }
+
+                // Custom Endpoint URL (Hiển thị khi chọn Custom hoặc khi người dùng muốn ghi đè Base URL)
+                if viewModel.geminiService.selectedProvider == .custom || !customEndpointInput.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("BASE URL / ENDPOINT TÙY CHỈNH (OPENAI-COMPATIBLE):")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.50))
+                        HStack(spacing: 8) {
+                            TextField("https://api.example.com/v1/chat/completions", text: $customEndpointInput)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundColor(.white)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled(true)
+                                .padding(8)
+                                .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                                )
+
+                            Button("Lưu URL") {
+                                viewModel.geminiService.customEndpointURL = customEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                toastMessage = "Đã cập nhật Endpoint URL"
+                            }
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(Color.white.opacity(0.16))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
+                }
+
+                // 2. Hiển thị & Nhập API Key
                 HStack(spacing: 10) {
                     Image(systemName: "key.fill")
                         .font(.system(size: 14))
@@ -955,7 +1024,7 @@ struct AIFramingSettingsSection: View {
                     if viewModel.geminiService.hasAPIKey {
                         if isKeyVisible {
                             Text(viewModel.geminiService.apiKey)
-                                .font(.system(size: 13, design: .monospaced))
+                                .font(.system(size: 12.5, design: .monospaced))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -965,31 +1034,27 @@ struct AIFramingSettingsSection: View {
                                 .foregroundColor(.white.opacity(0.85))
                         }
                     } else {
-                        Text("Chưa nhập API Key")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color.white.opacity(0.40))
+                        Text("Chưa có API Key cho \(viewModel.geminiService.selectedProvider.shortBadge)")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(Color.white.opacity(0.45))
                     }
 
                     Spacer()
 
                     if viewModel.geminiService.hasAPIKey {
-                        Button(action: {
-                            isKeyVisible.toggle()
-                        }) {
+                        Button(action: { isKeyVisible.toggle() }) {
                             Image(systemName: isKeyVisible ? "eye.slash.fill" : "eye.fill")
                                 .font(.system(size: 14))
                                 .foregroundColor(Color.white.opacity(0.65))
-                                .frame(width: 36, height: 36)
+                                .frame(width: 34, height: 34)
                         }
                         .buttonStyle(.plain)
 
-                        Button(role: .destructive, action: {
-                            showDeleteKeyConfirmation = true
-                        }) {
+                        Button(role: .destructive, action: { showDeleteKeyConfirmation = true }) {
                             Image(systemName: "trash.fill")
                                 .font(.system(size: 13))
                                 .foregroundColor(.red.opacity(0.85))
-                                .frame(width: 36, height: 36)
+                                .frame(width: 34, height: 34)
                         }
                         .buttonStyle(.plain)
                     }
@@ -1004,15 +1069,17 @@ struct AIFramingSettingsSection: View {
                         )
                 )
 
-                // API Key Input Field (Hidden by default if key already present)
-                if !viewModel.geminiService.hasAPIKey {
+                // Ô nhập nhanh hoặc cập nhật API Key mới + Lưu thành Profile Đa kết nối
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        SecureField("Dán OpenRouter sk-or-v1-...", text: $geminiKeyInput)
-                            .font(.system(size: 12.5, design: .monospaced))
+                        SecureField(viewModel.geminiService.selectedProvider.keyPlaceholder, text: $geminiKeyInput)
+                            .font(.system(size: 12, design: .monospaced))
                             .foregroundColor(.white)
                             .tint(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 9)
                             .background(Color(red: 0.05, green: 0.05, blue: 0.07))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .overlay(
@@ -1024,25 +1091,91 @@ struct AIFramingSettingsSection: View {
                             let trimmed = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !trimmed.isEmpty else { return }
                             viewModel.geminiService.apiKey = trimmed
+                            viewModel.geminiService.addOrUpdateProfile(
+                                label: profileLabelInput,
+                                provider: viewModel.geminiService.selectedProvider,
+                                apiKey: trimmed,
+                                customEndpoint: customEndpointInput,
+                                modelID: customModelInput.isEmpty ? selectedModel.rawValue : customModelInput
+                            )
+                            viewModel.useGeminiForAnalysis = true
                             geminiKeyInput = ""
-                            toastMessage = "Đã lưu an toàn API Key vào Keychain!"
+                            profileLabelInput = ""
+                            toastMessage = "Đã lưu API Key & tự động kích hoạt Cloud AI!"
                         }) {
-                            Text("Lưu")
-                                .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            Text("Lưu Key")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .background(Color.white.opacity(0.20))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 9)
+                                .background(AlignTheme.signatureGradient)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
-                    .padding(.vertical, 2)
+
+                    // Danh sách cấu hình kết nối đã lưu (Multi-API Profiles)
+                    if !viewModel.geminiService.savedProfiles.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("CÁC KẾT NỐI ĐÃ LƯU (CHẠM ĐỂ CHUYỂN NHANH):")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundColor(.white.opacity(0.48))
+                                .padding(.top, 4)
+
+                            ForEach(viewModel.geminiService.savedProfiles) { prof in
+                                let isCurrent = viewModel.geminiService.activeProfileID == prof.id
+                                HStack(spacing: 8) {
+                                    Button(action: {
+                                        viewModel.geminiService.activateProfile(prof)
+                                        selectedModel = viewModel.geminiService.selectedModel
+                                        customModelInput = viewModel.geminiService.customModelName
+                                        customEndpointInput = viewModel.geminiService.customEndpointURL
+                                        viewModel.useGeminiForAnalysis = true
+                                        toastMessage = "Đã chuyển sang \(prof.label)"
+                                    }) {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: isCurrent ? "checkmark.circle.fill" : "circle")
+                                                .foregroundColor(isCurrent ? AlignTheme.electricCyan : .white.opacity(0.4))
+                                                .font(.system(size: 13))
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text("\(prof.provider.shortBadge) • \(prof.modelID)")
+                                                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                                    .foregroundColor(.white)
+                                                    .lineLimit(1)
+                                                Text("Key: \(prof.apiKeyPreview)")
+                                                    .font(.system(size: 10, design: .monospaced))
+                                                    .foregroundColor(.white.opacity(0.55))
+                                            }
+                                            Spacer()
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    Button(role: .destructive, action: {
+                                        viewModel.geminiService.deleteProfile(prof)
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.white.opacity(0.35))
+                                            .font(.system(size: 14))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(isCurrent ? AlignTheme.electricCyan.opacity(0.12) : Color.white.opacity(0.04))
+                                )
+                            }
+                        }
+                    }
                 }
 
-                // Model Selection Row
+                Divider().background(Color.white.opacity(0.06))
+
+                // 3. Chọn Model 2026 có sẵn hoặc Tải trực tiếp danh sách Model từ Server
                 SettingsPickerRow(
-                    title: "Mô hình thị giác",
-                    subtitle: "Chọn model AI phân tích bố cục",
+                    title: "Model 2026 chuẩn",
+                    subtitle: selectedModel.subtitle,
                     icon: "cpu",
                     selectedValueString: selectedModel.displayName
                 ) {
@@ -1055,15 +1188,19 @@ struct AIFramingSettingsSection: View {
                     .tint(.white)
                     .onChangeCompatible(of: selectedModel) { newModel in
                         viewModel.geminiService.selectedModel = newModel
+                        viewModel.geminiService.customModelName = ""
+                        customModelInput = ""
                     }
                 }
 
-                // Optional Custom OpenRouter Model ID Input
+                // Nhập mã Model bất kỳ (hoặc chọn từ danh sách Model tải trực tiếp từ API)
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        TextField("Model OpenRouter tùy chỉnh (tùy chọn)", text: $customModelInput)
-                            .font(.system(size: 12, design: .monospaced))
+                        TextField("Nhập ID Model bất kỳ (VD: openai/gpt-5-chat, gemini-2.5-pro...)", text: $customModelInput)
+                            .font(.system(size: 11.5, design: .monospaced))
                             .foregroundColor(.white)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
                             .padding(8)
                             .background(Color(red: 0.05, green: 0.05, blue: 0.07))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1072,22 +1209,94 @@ struct AIFramingSettingsSection: View {
                                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
                             )
 
-                        Button("Lưu") {
+                        Button("Áp dụng") {
                             viewModel.geminiService.customModelName = customModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                            toastMessage = "Đã lưu model tùy chỉnh"
+                            toastMessage = customModelInput.isEmpty ? "Đã dùng model danh sách chuẩn" : "Đã áp dụng model: \(viewModel.geminiService.customModelName)"
                         }
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 11.5, weight: .bold))
                         .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(Color.white.opacity(0.16))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
 
-                    if !viewModel.geminiService.customModelName.isEmpty {
-                        Text("Đang ưu tiên model tùy chỉnh: \(viewModel.geminiService.customModelName)")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.70))
+                    // Nút Tải danh sách 200+ Model trực tiếp từ API Provider
+                    HStack(spacing: 10) {
+                        Button(action: {
+                            Task {
+                                let (_, msg) = await viewModel.geminiService.fetchAvailableModels()
+                                await MainActor.run {
+                                    toastMessage = msg
+                                }
+                            }
+                        }) {
+                            HStack(spacing: 5) {
+                                if viewModel.geminiService.isFetchingModels {
+                                    ProgressView().scaleEffect(0.75).tint(.white)
+                                } else {
+                                    Image(systemName: "arrow.down.doc.fill")
+                                }
+                                Text(viewModel.geminiService.isFetchingModels ? "Đang tải danh sách model..." : "Tải danh sách Model mới nhất từ API")
+                                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundColor(AlignTheme.electricCyan)
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+
+                        if !viewModel.geminiService.customModelName.isEmpty {
+                            Button("Xóa tùy chỉnh") {
+                                customModelInput = ""
+                                viewModel.geminiService.customModelName = ""
+                            }
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(.orange)
+                        }
+                    }
+
+                    if !viewModel.geminiService.discoveredModels.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            TextField("Lọc nhanh trong \(viewModel.geminiService.discoveredModels.count) model...", text: $modelSearchFilter)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.white)
+                                .textInputAutocapitalization(.never)
+                                .padding(6)
+                                .background(Color.black.opacity(0.35))
+                                .cornerRadius(6)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    let filtered = viewModel.geminiService.discoveredModels.filter {
+                                        modelSearchFilter.isEmpty || $0.localizedCaseInsensitiveContains(modelSearchFilter)
+                                    }.prefix(40)
+                                    ForEach(Array(filtered), id: \.self) { modelID in
+                                        let isPicked = viewModel.geminiService.activeModelID == modelID
+                                        Button(action: {
+                                            customModelInput = modelID
+                                            viewModel.geminiService.customModelName = modelID
+                                            toastMessage = "Đã chọn model: \(modelID)"
+                                        }) {
+                                            Text(modelID)
+                                                .font(.system(size: 10.5, weight: isPicked ? .bold : .medium, design: .monospaced))
+                                                .foregroundColor(isPicked ? .black : .white)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 5)
+                                                .background(
+                                                    Capsule().fill(isPicked ? AlignTheme.electricCyan : Color.white.opacity(0.10))
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.top, 2)
                     }
                 }
 
-                // Test Connection Button (Async Ping)
+                // 4. Kiểm tra kết nối (Async Ping)
                 Button(action: {
                     isTestingKey = true
                     testResult = nil
@@ -1105,7 +1314,7 @@ struct AIFramingSettingsSection: View {
                         } else {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                         }
-                        Text(isTestingKey ? "Đang gửi yêu cầu kiểm tra..." : "Kiểm tra kết nối (tính 1 lượt API)")
+                        Text(isTestingKey ? "Đang kiểm tra kết nối..." : "Kiểm tra kết nối & độ trễ API")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
                     .foregroundColor(.white)
@@ -1349,9 +1558,9 @@ struct AdvancedSettingsSection: View {
                 Divider().background(Color.white.opacity(0.06))
 
                 VStack(spacing: 8) {
-                    infoRow(label: "Tác giả", value: "SmartVN (Trần Văn Trình)")
+                    infoRow(label: "Tác giả", value: "ace4youblade ( VanKhoa )")
                     infoRow(label: "Liên hệ", value: "tranvantrinhhd@gmail.com")
-                    infoRow(label: "Phiên bản", value: "AI Smart Framing Camera v1.0.0 (Build 300)")
+                    infoRow(label: "Phiên bản", value: "Free")
                 }
                 .padding(.vertical, 8)
             }

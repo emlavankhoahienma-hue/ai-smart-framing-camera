@@ -1172,14 +1172,24 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "isLivePhotoEnabled") != nil {
             self.isLivePhotoEnabled = defaults.bool(forKey: "isLivePhotoEnabled")
         }
-        // Local photographic models are bundled. Migrate the earlier automatic
-        // cloud default once; cloud remains available through an explicit setting.
-        if defaults.bool(forKey: "localCompositionDefaultV3") {
-            self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
+        // Mặc định ưu tiên Cloud AI khi người dùng đã cấu hình API Key;
+        // nếu chưa có API Key hoặc mất mạng thì tự động dùng Local AI trên máy.
+        if self.geminiService.hasAPIKey {
+            if defaults.object(forKey: "useGeminiForAnalysis") != nil {
+                self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
+            } else {
+                self.useGeminiForAnalysis = true
+            }
         } else {
-            self.useGeminiForAnalysis = false
-            defaults.set(false, forKey: "useGeminiForAnalysis")
-            defaults.set(true, forKey: "localCompositionDefaultV3")
+            self.useGeminiForAnalysis = defaults.bool(forKey: "useGeminiForAnalysis")
+        }
+        self.geminiService.onActiveKeyConfigured = { [weak self] hasKey in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if hasKey {
+                    self.useGeminiForAnalysis = true
+                }
+            }
         }
         if defaults.object(forKey: "isStreetTrackingModeEnabled") != nil {
             self.isStreetTrackingModeEnabled = defaults.bool(forKey: "isStreetTrackingModeEnabled")
@@ -1823,7 +1833,7 @@ public final class CameraViewModel: ObservableObject {
         let requestedAt = CACurrentMediaTime()
 
         if shouldUseCloud {
-            activeModelUsedName = "Gemma 4 31B"
+            activeModelUsedName = geminiService.activeModelID
             // Keep the exact camera frame and CoreMotion pose used by Gemini.
             requestFreshAIFrame(generation: requestGeneration, requestedAt: requestedAt) { [weak self] frame, buffer, context, pose in
                 guard let self else { return }
@@ -2095,21 +2105,74 @@ public final class CameraViewModel: ObservableObject {
             selectedFilmPreset = response.recommendedPreset
         }
 
-        var targetPoint = CGPoint(x: response.targetX, y: response.targetY)
+        var subjectAnchor = CGPoint(x: response.targetX, y: response.targetY)
         let subjectRect = normalizedSubjectRect(cloudTrackingSource?.subjectRect)
 
-        // Nếu Gemini trả về tọa độ trung tâm (0.5, 0.5) nhưng ta có chủ thể thực tế rõ ràng phát hiện lệch tâm,
-        // ưu tiên gắn target vào chủ thể để người dùng căn trúng chủ thể & zoom đẹp mắt!
-        if let sRect = subjectRect, abs(targetPoint.x - 0.5) < 0.05 && abs(targetPoint.y - 0.5) < 0.05 {
+        // Nếu Cloud AI trả về tọa độ trung tâm (0.5, 0.5) nhưng cảm biến phát hiện chủ thể lệch tâm,
+        // ưu tiên lấy mỏ neo thực tế của chủ thể.
+        if let sRect = subjectRect, abs(subjectAnchor.x - 0.5) < 0.05 && abs(subjectAnchor.y - 0.5) < 0.05 {
             let sCenter = CGPoint(x: sRect.midX, y: sRect.midY)
-            if abs(sCenter.x - 0.5) > 0.08 || abs(sCenter.y - 0.5) > 0.08 {
-                targetPoint = sCenter
+            if abs(sCenter.x - 0.5) > 0.06 || abs(sCenter.y - 0.5) > 0.06 {
+                subjectAnchor = sCenter
             }
         }
 
-        pinTargetAndStartMotion(at: targetPoint, subjectRect: subjectRect,
-                                source: cloudTrackingSource,
-                                trackedPoint: subjectRect.map { CGPoint(x: $0.midX, y: $0.midY) })
+        let effectiveRect = subjectRect ?? CGRect(
+            x: max(0.02, subjectAnchor.x - 0.12),
+            y: max(0.02, subjectAnchor.y - 0.16),
+            width: 0.24,
+            height: 0.32
+        )
+
+        // Tính toán điểm ngắm bố cục (Composition Aim Projection) để đưa chủ thể về đúng điểm mạnh Tỷ lệ vàng / 1/3
+        let sceneEvidence = VisionFramingEngine.shared.latestSceneEvidence ?? SceneCompositionEvidence(
+            primarySubjectRect: effectiveRect,
+            focalAnchorPoint: subjectAnchor,
+            focalCategory: response.sceneType == .portrait || response.sceneType == .groupPortrait ? .human : .genericObject,
+            focalSaliencyRatio: 0.65,
+            edgeClutterScore: 0.0,
+            detectedScene: response.sceneType,
+            detectedHorizonY: nil,
+            timestamp: CACurrentMediaTime()
+        )
+        let evaluated = calculator.evaluateFramingResult(
+            anchor: subjectAnchor,
+            subjectRect: effectiveRect,
+            category: response.sceneType == .portrait || response.sceneType == .groupPortrait ? .human : .genericObject,
+            gaze: .none,
+            sceneType: response.sceneType,
+            currentZoom: displayZoom,
+            availableZooms: cameraService.availableDisplayZoomOptions,
+            sceneEvidence: sceneEvidence
+        )
+        self.framingResult = evaluated
+
+        let chosenZoom = response.suggestedZoom > 1.05 ? response.suggestedZoom : evaluated.recommendedZoomFactor
+        self.aiSuggestedZoom = chosenZoom
+        self.pendingSuggestedZoom = chosenZoom
+
+        var liveAim = evaluated.targetPoint
+        var guideWorldRay: simd_double3? = nil
+        if let source = cloudTrackingSource {
+            let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: evaluated.targetPoint))
+            guideWorldRay = worldRay
+            if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
+               let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
+                    ?? SpatialTrackingEngine.shared.latestPose() {
+                let proj = currentFrame.calibration.project(deviceRay: currentPose.inverse.act(worldRay))
+                if proj.point.x.isFinite, proj.point.y.isFinite {
+                    liveAim = proj.point
+                }
+            }
+        }
+
+        pinTargetAndStartMotion(
+            at: liveAim,
+            subjectRect: effectiveRect,
+            source: cloudTrackingSource,
+            pinnedGuideRay: guideWorldRay,
+            trackedPoint: subjectAnchor
+        )
         cloudTrackingSource = nil
         localTrackingSource = nil
     }
