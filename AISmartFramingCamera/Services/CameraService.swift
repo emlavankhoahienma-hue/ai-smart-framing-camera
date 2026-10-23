@@ -843,6 +843,79 @@ public final class CameraService: NSObject {
         }
     }
 
+    /// Chọn định dạng MultiCam ổn định nhất (ưu tiên 420v/420f 1080p/720p chuẩn 30fps) để tránh lỗi FigCaptureSession abort.
+    private static func selectStableMultiCamFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {
+        let multiFormats = device.formats.filter { $0.isMultiCamSupported }
+        let yuvFormats = multiFormats.filter {
+            let sub = CMFormatDescriptionGetMediaSubType($0.formatDescription)
+            return sub == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
+                   sub == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        }
+        let pool = yuvFormats.isEmpty ? multiFormats : yuvFormats
+        return pool.first(where: {
+            let dims = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+            let supports30 = $0.videoSupportedFrameRateRanges.contains { $0.minFrameRate <= 30 && $0.maxFrameRate >= 30 }
+            return dims.width == 1920 && dims.height == 1080 && supports30
+        }) ?? pool.first(where: {
+            let dims = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+            return dims.width == 1920 && dims.height == 1080
+        }) ?? pool.first
+    }
+
+    /// Gắn lại input của session đơn sau khi rời MultiCam (một AVCaptureDevice không được thuộc 2 session cùng lúc).
+    private func reattachSingleSessionInput() {
+        guard let input = videoDeviceInput, !captureSession.inputs.contains(input) else { return }
+        captureSession.beginConfiguration()
+        if captureSession.canAddInput(input) { captureSession.addInput(input) }
+        if let connection = videoDataOutput.connection(with: .video) {
+            configureTrackingConnection(connection)
+            if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = currentCameraPosition == .front
+            }
+        }
+        if let connection = movieFileOutput.connection(with: .video),
+           connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
+        if let connection = photoOutput.connection(with: .video) { configurePhotoConnection(connection) }
+        captureSession.commitConfiguration()
+    }
+
+    /// Hủy cấu hình MultiCam dở dang và khôi phục an toàn session đơn.
+    private func abortDualSetup(_ session: AVCaptureMultiCamSession, primaryPreviewLayer: AVCaptureVideoPreviewLayer?) {
+        if session.isRunning { session.stopRunning() }
+        session.beginConfiguration()
+        session.connections.forEach { session.removeConnection($0) }
+        session.outputs.forEach { session.removeOutput($0) }
+        session.inputs.forEach { session.removeInput($0) }
+        session.commitConfiguration()
+        if let primaryCam = wideCameraDevice ?? activeCamera, let savedFormat = savedPrimaryActiveFormat {
+            do {
+                try primaryCam.lockForConfiguration()
+                primaryCam.activeFormat = savedFormat
+                primaryCam.unlockForConfiguration()
+            } catch {
+                CameraLogger.error("Lỗi khôi phục activeFormat khi hủy MultiCam", error: error, category: .capture)
+            }
+        }
+        if let savedCam = savedSingleSessionCamera { activeCamera = savedCam }
+        savedPrimaryActiveFormat = nil
+        savedSingleSessionCamera = nil
+        reattachSingleSessionInput()
+        if let primaryLayer = primaryPreviewLayer {
+            DispatchQueue.main.sync {
+                primaryLayer.session = self.captureSession
+                if let conn = primaryLayer.connection, conn.isVideoRotationAngleSupported(90) {
+                    conn.videoRotationAngle = 90
+                }
+            }
+        }
+        if wantsSessionRunning && !captureSession.isRunning { captureSession.startRunning() }
+        publishSessionRunning(captureSession.isRunning && !captureSession.isInterrupted)
+    }
+
     // MARK: - Dual Concurrent Camera Session Management
     public func startDualCamera(primaryPreviewLayer: AVCaptureVideoPreviewLayer? = nil, completion: @escaping (Bool) -> Void) {
         sessionQueue.async { [weak self] in
@@ -860,19 +933,30 @@ public final class CameraService: NSObject {
                 return
             }
 
-            // 1. Tạm dừng session đơn hiện tại
+            // 1. Tạm dừng session đơn và tách hẳn input + preview layer khỏi captureSession
+            // để giải phóng hoàn toàn cảm biến phần cứng trước khi MultiCamSession khởi chạy.
             if self.captureSession.isRunning {
                 self.captureSession.stopRunning()
+            }
+            if let primaryLayer = primaryPreviewLayer {
+                DispatchQueue.main.sync {
+                    primaryLayer.session = nil
+                }
+            }
+            if let singleInput = self.videoDeviceInput, self.captureSession.inputs.contains(singleInput) {
+                self.captureSession.beginConfiguration()
+                self.captureSession.removeInput(singleInput)
+                self.captureSession.commitConfiguration()
             }
 
             // 2. Khởi tạo AVCaptureMultiCamSession
             let multiSession = AVCaptureMultiCamSession()
             multiSession.beginConfiguration()
 
-            // 3. Cấu hình Camera Chính (Primary Back Camera)
-            guard let primaryCamera = self.wideCameraDevice ?? self.activeCamera else {
+            // 3. Cấu hình Camera Chính (Primary Back Wide Camera)
+            guard let primaryCamera = self.wideCameraDevice ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
                 multiSession.commitConfiguration()
-                self.captureSession.startRunning()
+                self.abortDualSetup(multiSession, primaryPreviewLayer: primaryPreviewLayer)
                 DispatchQueue.main.async { completion(false) }
                 return
             }
@@ -880,14 +964,15 @@ public final class CameraService: NSObject {
             self.savedSingleSessionCamera = self.activeCamera
             self.savedPrimaryActiveFormat = primaryCamera.activeFormat
 
-            let primaryMultiFormats = primaryCamera.formats.filter { $0.isMultiCamSupported }
-            if let bestPrimaryFormat = primaryMultiFormats.first(where: {
-                let dims = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
-                return dims.width == 1920 && dims.height == 1080
-            }) ?? primaryMultiFormats.first {
+            if let bestPrimaryFormat = Self.selectStableMultiCamFormat(for: primaryCamera) {
                 do {
                     try primaryCamera.lockForConfiguration()
                     primaryCamera.activeFormat = bestPrimaryFormat
+                    let fps30 = CMTime(value: 1, timescale: 30)
+                    if bestPrimaryFormat.videoSupportedFrameRateRanges.contains(where: { $0.minFrameRate <= 30 && $0.maxFrameRate >= 30 }) {
+                        primaryCamera.activeVideoMinFrameDuration = fps30
+                        primaryCamera.activeVideoMaxFrameDuration = fps30
+                    }
                     if primaryCamera.isFocusModeSupported(.continuousAutoFocus) {
                         primaryCamera.focusMode = .continuousAutoFocus
                     }
@@ -903,21 +988,14 @@ public final class CameraService: NSObject {
             guard let primaryInput = try? AVCaptureDeviceInput(device: primaryCamera),
                   multiSession.canAddInput(primaryInput) else {
                 multiSession.commitConfiguration()
-                if let savedFormat = self.savedPrimaryActiveFormat {
-                    try? primaryCamera.lockForConfiguration()
-                    primaryCamera.activeFormat = savedFormat
-                    primaryCamera.unlockForConfiguration()
-                }
-                self.savedPrimaryActiveFormat = nil
-                self.savedSingleSessionCamera = nil
-                self.captureSession.startRunning()
+                self.abortDualSetup(multiSession, primaryPreviewLayer: primaryPreviewLayer)
                 DispatchQueue.main.async { completion(false) }
                 return
             }
             multiSession.addInputWithNoConnections(primaryInput)
             self.activeCamera = primaryCamera
 
-            // Kết nối luồng chính tới multiCamVideoDataOutput riêng biệt (vì self.videoDataOutput đang gắn vào captureSession)
+            // Kết nối luồng chính tới multiCamVideoDataOutput riêng biệt
             self.multiCamVideoDataOutput.alwaysDiscardsLateVideoFrames = true
             self.multiCamVideoDataOutput.automaticallyConfiguresOutputBufferDimensions = false
             self.multiCamVideoDataOutput.deliversPreviewSizedOutputBuffers = true
@@ -927,7 +1005,7 @@ public final class CameraService: NSObject {
             self.multiCamVideoDataOutput.setSampleBufferDelegate(self, queue: self.videoDataQueue)
             if multiSession.canAddOutput(self.multiCamVideoDataOutput) {
                 multiSession.addOutputWithNoConnections(self.multiCamVideoDataOutput)
-                if let primaryVideoPort = primaryInput.ports.first(where: { $0.mediaType == .video }) {
+                if let primaryVideoPort = primaryInput.ports(for: .video, sourceDeviceType: primaryCamera.deviceType, sourceDevicePosition: primaryCamera.position).first ?? primaryInput.ports.first(where: { $0.mediaType == .video }) {
                     let primaryConnection = AVCaptureConnection(inputPorts: [primaryVideoPort], output: self.multiCamVideoDataOutput)
                     if multiSession.canAddConnection(primaryConnection) {
                         multiSession.addConnection(primaryConnection)
@@ -938,31 +1016,28 @@ public final class CameraService: NSObject {
                 }
             }
 
-            // 4. Kết nối Primary Preview Layer (Khung ngắm chính) với MultiCam session
+            // 4. Kết nối Primary Preview Layer trên Main Thread (CALayer chuẩn)
             if let primaryLayer = primaryPreviewLayer,
-               let primaryVideoPort = primaryInput.ports.first(where: { $0.mediaType == .video }) {
-                primaryLayer.setSessionWithNoConnection(multiSession)
+               let primaryVideoPort = primaryInput.ports(for: .video, sourceDeviceType: primaryCamera.deviceType, sourceDevicePosition: primaryCamera.position).first ?? primaryInput.ports.first(where: { $0.mediaType == .video }) {
+                DispatchQueue.main.sync {
+                    primaryLayer.setSessionWithNoConnection(multiSession)
+                }
                 let primaryLayerConn = AVCaptureConnection(inputPort: primaryVideoPort, videoPreviewLayer: primaryLayer)
                 if multiSession.canAddConnection(primaryLayerConn) {
                     multiSession.addConnection(primaryLayerConn)
                     if primaryLayerConn.isVideoRotationAngleSupported(90) {
                         primaryLayerConn.videoRotationAngle = 90
                     }
-                    if primaryLayerConn.isVideoMirroringSupported {
-                        primaryLayerConn.automaticallyAdjustsVideoMirroring = false
-                        primaryLayerConn.isVideoMirrored = false
-                    }
                 }
             }
 
-            // 5. Kết nối Photo Output cho MultiCam để chụp ảnh trong Dual Cam an toàn
+            // 5. Kết nối Photo Output cho MultiCam
             if multiSession.canAddOutput(self.multiCamPhotoOutput) {
                 multiSession.addOutputWithNoConnections(self.multiCamPhotoOutput)
-                if let primaryVideoPort = primaryInput.ports.first(where: { $0.mediaType == .video }) {
+                if let primaryVideoPort = primaryInput.ports(for: .video, sourceDeviceType: primaryCamera.deviceType, sourceDevicePosition: primaryCamera.position).first ?? primaryInput.ports.first(where: { $0.mediaType == .video }) {
                     let photoConn = AVCaptureConnection(inputPorts: [primaryVideoPort], output: self.multiCamPhotoOutput)
                     if multiSession.canAddConnection(photoConn) {
                         multiSession.addConnection(photoConn)
-                        // maxPhotoDimensions chỉ được gán SAU KHI output đã nối với nguồn video có activeFormat
                         if let maxDim = primaryCamera.activeFormat.supportedMaxPhotoDimensions.max(by: {
                             Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
                         }) {
@@ -980,28 +1055,23 @@ public final class CameraService: NSObject {
             }
 
             // 6. Cấu hình Camera Phụ (Secondary Front Camera) cho PIP
-            let frontDiscovery = AVCaptureDevice.DiscoverySession(
-                deviceTypes: [.builtInTrueDepthCamera, .builtInWideAngleCamera],
-                mediaType: .video,
-                position: .front
-            )
-            guard let frontCamera = frontDiscovery.devices.first else {
+            guard let frontCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) ??
+                                    AVCaptureDevice.default(.builtInTrueDepthCamera, for: .video, position: .front) else {
                 multiSession.commitConfiguration()
-                if let savedCam = self.savedSingleSessionCamera { self.activeCamera = savedCam }
-                if let primaryLayer = primaryPreviewLayer { primaryLayer.session = self.captureSession }
-                self.captureSession.startRunning()
+                self.abortDualSetup(multiSession, primaryPreviewLayer: primaryPreviewLayer)
                 DispatchQueue.main.async { completion(false) }
                 return
             }
 
-            let secondaryMultiFormats = frontCamera.formats.filter { $0.isMultiCamSupported }
-            if let bestSecondaryFormat = secondaryMultiFormats.first(where: {
-                let dims = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
-                return dims.width == 1920 && dims.height == 1080
-            }) ?? secondaryMultiFormats.first {
+            if let bestSecondaryFormat = Self.selectStableMultiCamFormat(for: frontCamera) {
                 do {
                     try frontCamera.lockForConfiguration()
                     frontCamera.activeFormat = bestSecondaryFormat
+                    let fps30 = CMTime(value: 1, timescale: 30)
+                    if bestSecondaryFormat.videoSupportedFrameRateRanges.contains(where: { $0.minFrameRate <= 30 && $0.maxFrameRate >= 30 }) {
+                        frontCamera.activeVideoMinFrameDuration = fps30
+                        frontCamera.activeVideoMaxFrameDuration = fps30
+                    }
                     if frontCamera.isExposureModeSupported(.continuousAutoExposure) {
                         frontCamera.exposureMode = .continuousAutoExposure
                     }
@@ -1014,20 +1084,19 @@ public final class CameraService: NSObject {
             guard let secondaryInput = try? AVCaptureDeviceInput(device: frontCamera),
                   multiSession.canAddInput(secondaryInput) else {
                 multiSession.commitConfiguration()
-                if let savedCam = self.savedSingleSessionCamera { self.activeCamera = savedCam }
-                if let primaryLayer = primaryPreviewLayer { primaryLayer.session = self.captureSession }
-                self.captureSession.startRunning()
+                self.abortDualSetup(multiSession, primaryPreviewLayer: primaryPreviewLayer)
                 DispatchQueue.main.async { completion(false) }
                 return
             }
             multiSession.addInputWithNoConnections(secondaryInput)
 
-            // Tạo secondaryPreviewLayer cho cửa sổ PIP
-            // BẮT BUỘC tắt automaticallyAdjustsVideoMirroring trước khi gán isVideoMirrored = true
-            // để tránh NSInvalidArgumentException trên AVCaptureVideoPreviewLayer connection!
-            let pipLayer = AVCaptureVideoPreviewLayer(sessionWithNoConnection: multiSession)
-            pipLayer.videoGravity = .resizeAspectFill
-            if let frontVideoPort = secondaryInput.ports.first(where: { $0.mediaType == .video }) {
+            // Tạo secondaryPreviewLayer trên Main Thread
+            let pipLayer: AVCaptureVideoPreviewLayer = DispatchQueue.main.sync {
+                let layer = AVCaptureVideoPreviewLayer(sessionWithNoConnection: multiSession)
+                layer.videoGravity = .resizeAspectFill
+                return layer
+            }
+            if let frontVideoPort = secondaryInput.ports(for: .video, sourceDeviceType: frontCamera.deviceType, sourceDevicePosition: .front).first ?? secondaryInput.ports.first(where: { $0.mediaType == .video }) {
                 let pipConnection = AVCaptureConnection(inputPort: frontVideoPort, videoPreviewLayer: pipLayer)
                 if multiSession.canAddConnection(pipConnection) {
                     multiSession.addConnection(pipConnection)
@@ -1042,7 +1111,21 @@ public final class CameraService: NSObject {
             }
 
             multiSession.commitConfiguration()
+
+            guard multiSession.hardwareCost <= 1.0, multiSession.systemPressureCost <= 1.0 else {
+                CameraLogger.warning("MultiCam vượt ngân sách phần cứng (hw: \(multiSession.hardwareCost), pressure: \(multiSession.systemPressureCost))", category: .capture)
+                self.abortDualSetup(multiSession, primaryPreviewLayer: primaryPreviewLayer)
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+
             multiSession.startRunning()
+            guard multiSession.isRunning else {
+                CameraLogger.warning("MultiCamSession không khởi chạy được, khôi phục session đơn", category: .capture)
+                self.abortDualSetup(multiSession, primaryPreviewLayer: primaryPreviewLayer)
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
 
             self.multiCamSession = multiSession
             self.secondaryCameraDevice = frontCamera
@@ -1106,11 +1189,15 @@ public final class CameraService: NSObject {
             self.secondaryCameraDevice = nil
             self.isDualCameraActive = false
 
-            // Phục hồi primary preview layer về captureSession đơn
+            self.reattachSingleSessionInput()
+
+            // Phục hồi primary preview layer về captureSession đơn trên Main Thread
             if let primaryLayer = primaryPreviewLayer {
-                primaryLayer.session = self.captureSession
-                if let conn = primaryLayer.connection, conn.isVideoRotationAngleSupported(90) {
-                    conn.videoRotationAngle = 90
+                DispatchQueue.main.sync {
+                    primaryLayer.session = self.captureSession
+                    if let conn = primaryLayer.connection, conn.isVideoRotationAngleSupported(90) {
+                        conn.videoRotationAngle = 90
+                    }
                 }
             }
 

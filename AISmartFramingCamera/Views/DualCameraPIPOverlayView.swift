@@ -19,13 +19,17 @@ public class PIPContainerView: UIView {
 
     public func setPreviewLayer(_ layer: AVCaptureVideoPreviewLayer?) {
         guard hostedLayer !== layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         hostedLayer?.removeFromSuperlayer()
         hostedLayer = layer
         if let layer {
+            layer.removeFromSuperlayer()
             layer.frame = bounds
             layer.videoGravity = .resizeAspectFill
             self.layer.addSublayer(layer)
         }
+        CATransaction.commit()
     }
 
     override public func layoutSubviews() {
@@ -49,7 +53,12 @@ public struct DualCameraPIPPreviewView: UIViewRepresentable {
     }
 
     public func updateUIView(_ uiView: PIPContainerView, context: Context) {
-        uiView.setPreviewLayer(viewModel.cameraService.secondaryPreviewLayer)
+        let service = viewModel.cameraService
+        uiView.setPreviewLayer(service.isDualCameraActive ? service.secondaryPreviewLayer : nil)
+    }
+
+    public static func dismantleUIView(_ uiView: PIPContainerView, coordinator: ()) {
+        uiView.setPreviewLayer(nil)
     }
 }
 
