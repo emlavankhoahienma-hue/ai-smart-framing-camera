@@ -958,15 +958,16 @@ public final class CameraService: NSObject {
             // 5. Kết nối Photo Output cho MultiCam để chụp ảnh trong Dual Cam an toàn
             if multiSession.canAddOutput(self.multiCamPhotoOutput) {
                 multiSession.addOutputWithNoConnections(self.multiCamPhotoOutput)
-                if let maxDim = primaryCamera.activeFormat.supportedMaxPhotoDimensions.max(by: {
-                    Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
-                }) {
-                    self.multiCamPhotoOutput.maxPhotoDimensions = maxDim
-                }
                 if let primaryVideoPort = primaryInput.ports.first(where: { $0.mediaType == .video }) {
                     let photoConn = AVCaptureConnection(inputPorts: [primaryVideoPort], output: self.multiCamPhotoOutput)
                     if multiSession.canAddConnection(photoConn) {
                         multiSession.addConnection(photoConn)
+                        // maxPhotoDimensions chỉ được gán SAU KHI output đã nối với nguồn video có activeFormat
+                        if let maxDim = primaryCamera.activeFormat.supportedMaxPhotoDimensions.max(by: {
+                            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+                        }) {
+                            self.multiCamPhotoOutput.maxPhotoDimensions = maxDim
+                        }
                         if photoConn.isVideoRotationAngleSupported(90) {
                             photoConn.videoRotationAngle = 90
                         }
