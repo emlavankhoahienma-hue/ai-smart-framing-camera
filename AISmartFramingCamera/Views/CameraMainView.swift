@@ -434,13 +434,9 @@ struct TopCameraBar: View {
 
     private var currentFormatLabel: String {
         if viewModel.captureMode.isVideo {
-            switch viewModel.selectedVideoFormatOption {
-            case .uhd60: return "4K·60"
-            case .uhd30: return "4K·30"
-            case .uhd24: return "4K·24"
-            case .hd60:  return "1080P·60"
-            case .hd30:  return "1080P·30"
-            }
+            let w = viewModel.selectedVideoFormatOption.width
+            let fps = Int(round(viewModel.selectedVideoFormatOption.fps))
+            return w >= 3840 ? "4K·\(fps)" : "1080P·\(fps)"
         }
         switch viewModel.selectedPhotoFormat {
         case .dng: return "RAW"

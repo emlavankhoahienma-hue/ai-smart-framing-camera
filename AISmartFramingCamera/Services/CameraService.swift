@@ -913,7 +913,21 @@ public final class CameraService: NSObject {
         captureSession.commitConfiguration()
 
         activeCamera = camera
-        observeCameraZoom(camera)
+        zoomObservation?.invalidate()
+        zoomObservation = camera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
+            guard let newValue = change.newValue else { return }
+            DispatchQueue.main.async {
+                self?.onLiveZoomFactorChanged?(newValue)
+            }
+        }
+        if #available(iOS 15.0, *) {
+            constituentObservation?.invalidate()
+            constituentObservation = camera.observe(\.activePrimaryConstituent, options: [.initial, .new]) { _, change in
+                if let device = change.newValue as? AVCaptureDevice {
+                    CameraLogger.info("CameraService: Cam vat ly hoat dong: \(device.localizedName)", category: .capture)
+                }
+            }
+        }
     }
 
     /// Hủy cấu hình MultiCam dở dang và khôi phục an toàn session đơn.
@@ -1019,7 +1033,7 @@ public final class CameraService: NSObject {
                         primaryCamera.activeVideoMinFrameDuration = fps30
                         primaryCamera.activeVideoMaxFrameDuration = fps30
                     }
-                    let maxAllowedZoom = min(primaryCamera.activeFormat.videoMaxZoomFactorForMultiCamSession, 3.0)
+                    let maxAllowedZoom = min(primaryCamera.activeFormat.videoMaxZoomFactor, 3.0)
                     primaryCamera.videoZoomFactor = max(1.0, min(primaryCamera.videoZoomFactor, maxAllowedZoom))
                     if primaryCamera.isFocusModeSupported(.continuousAutoFocus) {
                         primaryCamera.focusMode = .continuousAutoFocus
@@ -1091,7 +1105,7 @@ public final class CameraService: NSObject {
                         frontCamera.activeVideoMinFrameDuration = fps30
                         frontCamera.activeVideoMaxFrameDuration = fps30
                     }
-                    let maxFrontZoom = min(frontCamera.activeFormat.videoMaxZoomFactorForMultiCamSession, 2.0)
+                    let maxFrontZoom = min(frontCamera.activeFormat.videoMaxZoomFactor, 2.0)
                     frontCamera.videoZoomFactor = max(1.0, min(frontCamera.videoZoomFactor, maxFrontZoom))
                     if frontCamera.isExposureModeSupported(.continuousAutoExposure) {
                         frontCamera.exposureMode = .continuousAutoExposure
@@ -2545,7 +2559,7 @@ public final class CameraService: NSObject {
                 actualFormat = .dng
             } else {
                 settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
-                settings.photoQualityPrioritization = isDual ? .speed : activeOutput.maxPhotoQualityPrioritization
+                settings.photoQualityPrioritization = activeOutput.maxPhotoQualityPrioritization
                 actualFormat = codec == .hevc ? .heif : .jpeg
             }
 

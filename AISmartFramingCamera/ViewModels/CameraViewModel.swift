@@ -2125,10 +2125,11 @@ public final class CameraViewModel: ObservableObject {
         )
 
         // Tính toán điểm ngắm bố cục (Composition Aim Projection) để đưa chủ thể về đúng điểm mạnh Tỷ lệ vàng / 1/3
+        let cat: NeuralSubjectCategory = response.sceneType == .portrait ? .human : (response.sceneType == .pet ? .animal : .foregroundObject)
         let sceneEvidence = VisionFramingEngine.shared.latestSceneEvidence ?? SceneCompositionEvidence(
             primarySubjectRect: effectiveRect,
             focalAnchorPoint: subjectAnchor,
-            focalCategory: response.sceneType == .portrait || response.sceneType == .groupPortrait ? .human : .genericObject,
+            focalCategory: cat,
             focalSaliencyRatio: 0.65,
             edgeClutterScore: 0.0,
             detectedScene: response.sceneType,
@@ -2138,8 +2139,8 @@ public final class CameraViewModel: ObservableObject {
         let evaluated = calculator.evaluateFramingResult(
             anchor: subjectAnchor,
             subjectRect: effectiveRect,
-            category: response.sceneType == .portrait || response.sceneType == .groupPortrait ? .human : .genericObject,
-            gaze: .none,
+            category: cat,
+            gaze: 0.0,
             sceneType: response.sceneType,
             currentZoom: displayZoom,
             availableZooms: cameraService.availableDisplayZoomOptions,
@@ -2170,8 +2171,8 @@ public final class CameraViewModel: ObservableObject {
             at: liveAim,
             subjectRect: effectiveRect,
             source: cloudTrackingSource,
-            pinnedGuideRay: guideWorldRay,
-            trackedPoint: subjectAnchor
+            trackedPoint: subjectAnchor,
+            pinnedGuideRay: guideWorldRay
         )
         cloudTrackingSource = nil
         localTrackingSource = nil
