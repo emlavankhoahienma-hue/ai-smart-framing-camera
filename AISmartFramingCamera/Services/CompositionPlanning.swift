@@ -185,10 +185,15 @@ enum HeroSubjectPolicy {
         } else { visual = 0.20 * scale }
         let tierMultiplier: Double
         switch kind {
-        case .person, .group: tierMultiplier = hasFace ? 1.30 : 1.15
+        case .person, .group:
+            let distantBystander = !hasFace && area < 0.045 && bounds.maxY < 0.60
+            tierMultiplier = hasFace ? 1.30 : (distantBystander ? 0.58 : 1.12)
         case .face: tierMultiplier = 1.20
         case .animal: tierMultiplier = 1.10
-        case .object: tierMultiplier = 0.85
+        case .object:
+            let bloatedRegion = area > 0.46
+            let crispForegroundObject = (0.02...0.38).contains(area) && hypot(Double(bounds.midX - 0.5), Double(bounds.midY - 0.52)) < 0.34
+            tierMultiplier = bloatedRegion ? 0.52 : (crispForegroundObject ? 1.04 : 0.88)
         case .scenery: tierMultiplier = 0.45
         }
         let tinyPenalty = min(1, area / (kind == .face ? 0.002 : 0.008))
@@ -604,7 +609,11 @@ enum CompositionPlanner {
 
     private static func preferredPlacement(subject: CompositionSubject, intent: LocalCompositionIntent,
                                            raster: CompositionRaster) -> CGPoint {
-        if intent == .group { return CGPoint(x: 0.5, y: 0.36) }
+        if intent == .group {
+            let groupX: Double = subject.anchor.x < 0.47 ? Double(CompositionTuning.goldenSectionLeft) :
+                (subject.anchor.x > 0.53 ? Double(CompositionTuning.goldenSectionRight) : 0.382)
+            return CGPoint(x: groupX, y: 0.382)
+        }
         if intent == .architecture { return CGPoint(x: 0.5, y: 0.48) }
         let person = subject.kind == .person || subject.kind == .face
         let lead = min(1.0, max(-1.0, Double(subject.gaze)))

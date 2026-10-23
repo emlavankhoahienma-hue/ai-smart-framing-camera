@@ -3,18 +3,18 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
-      "sha256": "1cb61db11ec48bc2679baad72198d4daee68d4b27cc1adb9f89846a1a91c7fb1"
+      "sha256": "7f6ea44f2a3c864eece023c84ca68e9ddb4f1311dfed3d83858137db1f0bd562"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift",
       "start": "    private func analyzeCapturedFrame(",
-      "sha256": "233e73f54655bcdf03bddb554f24123ce802f3e4184dab1152db73e57d421f60"
+      "sha256": "6dfa8f839aa3d2649ac9bad4da0fee01bf59f7b0e095d0dcfe69318c9dc1d1cc"
     },
     {
       "path": "AISmartFramingCamera/Services/CompositionPlanning.swift",
       "start": "enum HeroSubjectPolicy {",
       "end": "/// Presentation-only identity hysteresis.",
-      "sha256": "c6cbae9cb56a79e07500216936fdecc8e5b9ac2182831ccdd8ed9d3986896242"
+      "sha256": "e152e25728e8354d79fd09f36710efd9b9541911fd8e52bef04232a06ee6145c"
     }
   ]
 }

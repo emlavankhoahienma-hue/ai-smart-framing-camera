@@ -133,7 +133,7 @@ public struct NeuralSubjectCandidate: Identifiable, Sendable {
     // The preserved candidate format identifies Vision saliency regions by this
     // fixed internal label. YOLO class labels never use it. A region is a field
     // of attention, not a physical object whose complete outline must be kept.
-    var isAttentionRegion: Bool { category == .foregroundObject && label == "Vùng nổi bật" }
+    var isAttentionRegion: Bool { category == .foregroundObject && (label == "Vùng nổi bật" || label == "Chủ thể tiền cảnh") }
     
     public var center: CGPoint {
         CGPoint(x: boundingBox.midX, y: boundingBox.midY)
@@ -276,8 +276,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             image: CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation),
             aspect: frame.calibration.aspect, preferences: preferences,
             modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
-            aestheticModelURL: nil,
-            positionURL: nil,
+            aestheticModelURL: constrained ? nil : Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
+            positionURL: constrained ? nil : Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
             requiresModernModel: false,
             cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
         renderer.clearCaches()
@@ -395,20 +395,37 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 }
             }
         }
-        let hasPrimarySemanticSubject = candidates.contains {
-            ($0.category == .human || $0.category == .animal) && $0.confidence >= 0.45
-        } || !faceCandidates.isEmpty
+        let hasProminentSemanticSubject = candidates.contains {
+            ($0.category == .human || $0.category == .animal) &&
+            $0.confidence >= 0.52 &&
+            $0.areaRatio >= 0.075 &&
+            $0.boundingBox.maxY >= 0.56
+        } || faceCandidates.contains { $0.areaRatio >= 0.015 }
 
-        if !hasPrimarySemanticSubject {
-            for observation in [attention.results?.first, objectness.results?.first].compactMap({ $0 }) {
+        if !hasProminentSemanticSubject {
+            var tightSaliencyCandidates: [NeuralSubjectCandidate] = []
+            var broadSaliencyCandidates: [NeuralSubjectCandidate] = []
+            for (index, observation) in [objectness.results?.first, attention.results?.first].compactMap({ $0 }).enumerated() {
                 for region in observation.salientObjects ?? [] where region.confidence >= 0.30 {
                     let area = region.boundingBox.width * region.boundingBox.height
-                    guard area >= 0.01 && area <= 0.85 else { continue }
+                    guard area >= 0.012 && area <= 0.78 else { continue }
+                    let isObjectness = (index == 0)
+                    let label = (isObjectness && area <= 0.42) ? "Chủ thể tiền cảnh" : "Vùng nổi bật"
+                    let adjustedConfidence = (isObjectness && area <= 0.42) ? min(0.98, region.confidence * 1.15) : region.confidence * 0.88
                     if let c = candidate(visionRect: region.boundingBox, category: .foregroundObject,
-                                         confidence: region.confidence, label: "Vùng nổi bật") {
-                        candidates.append(c)
+                                         confidence: adjustedConfidence, label: label) {
+                        if area <= 0.42 {
+                            tightSaliencyCandidates.append(c)
+                        } else {
+                            broadSaliencyCandidates.append(c)
+                        }
                     }
                 }
+            }
+            if !tightSaliencyCandidates.isEmpty {
+                candidates.append(contentsOf: tightSaliencyCandidates)
+            } else {
+                candidates.append(contentsOf: broadSaliencyCandidates)
             }
         }
         if candidates.isEmpty, let r = raster, r.hasAttention {
@@ -518,9 +535,12 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     }
 
     private func coherentGroup(_ candidates: [NeuralSubjectCandidate], raster: CompositionRaster?) -> NeuralSubjectCandidate? {
-        guard let hero = candidates.first, hero.category == .human || hero.category == .face else { return nil }
+        guard let hero = candidates.first,
+              hero.category == .human || hero.category == .face,
+              (hero.areaRatio >= 0.045 || !hero.faceBounds.isEmpty) else { return nil }
         let people = candidates.filter { ($0.category == .human || $0.category == .face) &&
-            $0.prominenceScore >= hero.prominenceScore * 0.48 }
+            ($0.areaRatio >= 0.032 || !$0.faceBounds.isEmpty) &&
+            $0.prominenceScore >= hero.prominenceScore * 0.52 }
         var members = [hero]
         var added = true
         while added {

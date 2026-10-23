@@ -291,7 +291,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 guard area >= 0.006 && area <= 0.95 else { continue }
                 let category = mapDedicatedClassIdToCategory(maxClassId)
                 let label = localizeDedicatedClassId(maxClassId)
-                let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category)
+                let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category, rawLabel: label)
                 rawCandidates.append(NeuralSubjectCandidate(boundingBox: uiRect, category: category, confidence: maxScore, label: label, prominenceScore: prominence))
             }
         } else {
@@ -322,7 +322,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 guard area >= 0.006 && area <= 0.95 else { continue }
                 let category = mapDedicatedClassIdToCategory(maxClassId)
                 let label = localizeDedicatedClassId(maxClassId)
-                let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category)
+                let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category, rawLabel: label)
                 rawCandidates.append(NeuralSubjectCandidate(boundingBox: uiRect, category: category, confidence: maxScore, label: label, prominenceScore: prominence))
             }
         }
@@ -424,7 +424,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                     let aspectRatio = uiRect.width / max(0.001, uiRect.height)
                     guard aspectRatio >= 0.15 && aspectRatio <= 6.5 else { continue }
                     
-                    let score = self.calculateYOLOProminenceScore(rect: uiRect, confidence: confidence, category: category)
+                    let score = self.calculateYOLOProminenceScore(rect: uiRect, confidence: confidence, category: category, rawLabel: topLabel.identifier)
                     
                     detectedCandidates.append(NeuralSubjectCandidate(
                         boundingBox: uiRect,
@@ -586,30 +586,54 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         return dict[key] ?? label.capitalized
     }
     
-    private func calculateYOLOProminenceScore(rect: CGRect, confidence: Float, category: NeuralSubjectCategory) -> Double {
+    private func calculateYOLOProminenceScore(rect: CGRect, confidence: Float, category: NeuralSubjectCategory, rawLabel: String = "") -> Double {
         let area = Double(rect.width * rect.height)
         
         let areaScore: Double
         if area < 0.02 {
-            areaScore = area / 0.02 * 0.5
-        } else if area > 0.60 {
-            areaScore = max(0.40, 1.0 - (area - 0.60) * 1.1)
+            areaScore = area / 0.02 * 0.45
+        } else if area > 0.55 {
+            areaScore = max(0.30, 1.0 - (area - 0.55) * 1.35)
         } else {
-            areaScore = 1.0 - abs(area - 0.25) * 1.1
+            areaScore = 1.0 - abs(area - 0.22) * 1.05
         }
         
         let dx = Double(rect.midX - 0.5)
         let dy = Double(rect.midY - 0.5)
         let distToCenter = sqrt(dx * dx + dy * dy)
-        let centerScore = max(0.2, 1.0 - distToCenter * 0.7)
+        let centerScore = max(0.25, 1.0 - distToCenter * 0.72)
         
-        // Ưu tiên cao nhất cho Face và Animal, sau đó tới Human
+        let lowerLabel = rawLabel.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let backgroundFurnitureLabels: Set<String> = [
+            "chair", "dining table", "couch", "bed", "tv", "bench", "toilet",
+            "sink", "refrigerator", "oven", "microwave", "ghế", "bàn ăn", "sofa", "giường", "tivi"
+        ]
+        let heroTabletopLabels: Set<String> = [
+            "cup", "wine glass", "bottle", "bowl", "cake", "donut", "pizza", "sandwich",
+            "banana", "apple", "orange", "potted plant", "vase", "book", "cell phone",
+            "laptop", "clock", "teddy bear", "backpack", "handbag",
+            "cốc nước", "ly rượu", "chai nước", "bát đĩa", "bánh ngọt", "chậu cây",
+            "bình hoa", "cuốn sách", "điện thoại", "gấu bông"
+        ]
+        
+        // Ưu tiên cao nhất cho Face và Animal, sau đó tới Human và Vật thể tiền cảnh; phạt nặng bàn ghế hậu cảnh
         let categoryBonus: Double
         switch category {
-        case .face: categoryBonus = 2.4
-        case .animal: categoryBonus = 2.0
-        case .human: categoryBonus = 1.8
-        default: categoryBonus = 0.8
+        case .face:
+            categoryBonus = 2.4
+        case .animal:
+            categoryBonus = 2.0
+        case .human:
+            let distantBackgroundHuman = (area < 0.045 && rect.maxY < 0.62)
+            categoryBonus = distantBackgroundHuman ? 0.65 : 1.8
+        default:
+            if backgroundFurnitureLabels.contains(lowerLabel) {
+                categoryBonus = 0.26
+            } else if heroTabletopLabels.contains(lowerLabel) {
+                categoryBonus = 1.55
+            } else {
+                categoryBonus = 1.05
+            }
         }
         
         return Double(confidence) * 1.5 * areaScore * centerScore * category.priorityWeight * categoryBonus

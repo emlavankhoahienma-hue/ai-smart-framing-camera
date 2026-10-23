@@ -111,6 +111,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var cachedDetectedHorizonY: CGFloat? = nil
     private var cachedDetectedScene: DetectedSceneType = .general
     private var cachedSaliencyPoints: [CGPoint] = []
+    private var cachedSaliencyRects: [(rect: CGRect, confidence: Float, isObjectness: Bool)] = []
     private var previousHeroRect: CGRect? = nil
     private var previousHeroAnchor: CGPoint? = nil
     public private(set) var latestSceneEvidence: SceneCompositionEvidence? = nil
@@ -1305,6 +1306,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         var horizonRequest: VNDetectHorizonRequest? = nil
         var classifyRequest: VNClassifyImageRequest? = nil
         var saliencyRequest: VNGenerateAttentionBasedSaliencyImageRequest? = nil
+        var objectnessRequest: VNGenerateObjectnessBasedSaliencyImageRequest? = nil
         var maskRequestObj: Any? = nil
 
         if runSlowRequests {
@@ -1319,6 +1321,10 @@ public final class VisionFramingEngine: @unchecked Sendable {
             let sReq = VNGenerateAttentionBasedSaliencyImageRequest()
             saliencyRequest = sReq
             visionRequests.append(sReq)
+
+            let oReq = VNGenerateObjectnessBasedSaliencyImageRequest()
+            objectnessRequest = oReq
+            visionRequests.append(oReq)
 
             if #available(iOS 17.0, *) {
                 let maskReq = VNGenerateForegroundInstanceMaskRequest()
@@ -1404,16 +1410,30 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         }
                     }
                 }
-                if let salientObjects = saliencyRequest?.results?.first?.salientObjects {
-                    var newSaliencyPoints: [CGPoint] = []
-                    for obj in salientObjects where obj.confidence >= 0.35 {
+                var newSaliencyPoints: [CGPoint] = []
+                var newSaliencyRects: [(rect: CGRect, confidence: Float, isObjectness: Bool)] = []
+                if let objectnessObjects = objectnessRequest?.results?.first?.salientObjects {
+                    for obj in objectnessObjects where obj.confidence >= 0.32 {
                         let rect = CompositionPureCalculations.visionToUprightRect(obj.boundingBox)
-                        if rect.width >= 0.04, rect.height >= 0.04, rect.width <= 0.88, rect.height <= 0.88 {
+                        let area = rect.width * rect.height
+                        if rect.width >= 0.04, rect.height >= 0.04, area >= 0.008, area <= 0.45 {
                             newSaliencyPoints.append(CGPoint(x: rect.midX, y: rect.midY))
+                            newSaliencyRects.append((rect: rect, confidence: obj.confidence, isObjectness: true))
                         }
                     }
-                    cachedSaliencyPoints = newSaliencyPoints
                 }
+                if let salientObjects = saliencyRequest?.results?.first?.salientObjects {
+                    for obj in salientObjects where obj.confidence >= 0.35 {
+                        let rect = CompositionPureCalculations.visionToUprightRect(obj.boundingBox)
+                        let area = rect.width * rect.height
+                        if rect.width >= 0.04, rect.height >= 0.04, area >= 0.008, area <= 0.52 {
+                            newSaliencyPoints.append(CGPoint(x: rect.midX, y: rect.midY))
+                            newSaliencyRects.append((rect: rect, confidence: obj.confidence, isObjectness: false))
+                        }
+                    }
+                }
+                cachedSaliencyPoints = newSaliencyPoints
+                cachedSaliencyRects = newSaliencyRects
                 if #available(iOS 17.0, *), let req = maskRequestObj as? VNGenerateForegroundInstanceMaskRequest,
                    let observation = req.results?.first {
                     for instance in observation.allInstances {
@@ -1431,15 +1451,25 @@ public final class VisionFramingEngine: @unchecked Sendable {
         result.detectedScene = cachedDetectedScene
         result.saliencyPoints = cachedSaliencyPoints
 
-        // Bổ sung các vùng nổi bật Saliency vào ứng viên nếu chưa bị trùng lặp
-        for pt in cachedSaliencyPoints {
-            let overlapsExisting = candidates.contains { $0.rect.contains(pt) }
+        // Bổ sung các chủ thể tiền cảnh Objectness / Saliency với đúng bounding box thực tế
+        let saliencyLabel: String = {
+            switch cachedDetectedScene {
+            case .food: return "Món ăn / Đồ uống"
+            case .foliage, .macro: return "Hoa lá / Chi tiết"
+            case .architecture: return "Chi tiết kiến trúc"
+            default: return "Chủ thể tiền cảnh"
+            }
+        }()
+        for item in cachedSaliencyRects {
+            let pt = CGPoint(x: item.rect.midX, y: item.rect.midY)
+            let overlapsExisting = candidates.contains {
+                $0.rect.contains(pt) || CompositionPureCalculations.calculateIoU(rectA: $0.rect, rectB: item.rect) > 0.35
+            }
             if !overlapsExisting {
-                let rect = CGRect(x: max(0.04, pt.x - 0.12), y: max(0.04, pt.y - 0.12), width: 0.24, height: 0.24)
                 candidates.append(LiveDetectedEntity(
-                    rect: rect,
-                    label: "Vùng nổi bật",
-                    confidence: 0.60,
+                    rect: item.rect,
+                    label: item.isObjectness ? saliencyLabel : "Vùng nổi bật",
+                    confidence: item.isObjectness ? min(0.92, item.confidence * 1.15) : max(0.55, item.confidence),
                     category: .foregroundObject
                 ))
             }

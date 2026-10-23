@@ -482,6 +482,17 @@ enum CompositionPlanningRegression {
                 throw Failure(description: "cancelled request executed")
             } catch is CancellationError { }
         }
+        try run("hero ranking prioritizes foreground tabletop objects over tiny distant background people") {
+            let tabletop = CGRect(x: 0.36, y: 0.38, width: 0.24, height: 0.32)
+            let distantPerson = CGRect(x: 0.48, y: 0.22, width: 0.09, height: 0.26)
+            let fgEvidence = SubjectVisualEvidence(attentionDensity: 0.72, attentionShare: 0.45,
+                separation: 0.65, detail: 0.60, exposure: 0.85)
+            let bgEvidence = SubjectVisualEvidence(attentionDensity: 0.18, attentionShare: 0.06,
+                separation: 0.20, detail: 0.25, exposure: 0.80)
+            let fgScore = HeroSubjectPolicy.score(bounds: tabletop, kind: .object, confidence: 0.82, evidence: fgEvidence)
+            let bgScore = HeroSubjectPolicy.score(bounds: distantPerson, kind: .person, confidence: 0.82, evidence: bgEvidence, hasFace: false)
+            try require(fgScore > bgScore, "distant faceless background person outranked foreground tabletop object")
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

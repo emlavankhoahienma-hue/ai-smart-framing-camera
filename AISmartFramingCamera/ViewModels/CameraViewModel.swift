@@ -2484,16 +2484,48 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func acceptLocalPlan(_ plan: LocalFramingPlan, source: AITrackingSource) {
-        var liveAimPoint = plan.aimPointInSource
-        if plan.zoom <= 1.05, abs(liveAimPoint.x - 0.5) < 0.05 && abs(liveAimPoint.y - 0.5) < 0.05,
-           let hero = localEvidenceCandidates.first {
-            liveAimPoint = hero.center
+        let hero = localEvidenceCandidates.first
+        let anchor = hero?.eyePosition ?? plan.subjectPoint
+        let category = hero?.category ?? .foregroundObject
+        let gaze = hero?.gaze ?? 0
+        let availableZooms = cameraService.availableDisplayZoomOptions
+        let evaluatedFraming = calculator.evaluateFramingResult(
+            anchor: anchor,
+            subjectRect: plan.subjectRect,
+            category: category,
+            gaze: gaze,
+            sceneType: detectedScene,
+            currentZoom: displayZoom,
+            availableZooms: availableZooms,
+            horizonY: visionEngine.latestSceneEvidence?.detectedHorizonY,
+            activeRule: nil,
+            sceneEvidence: visionEngine.latestSceneEvidence
+        )
+
+        var sourceAimPoint = plan.aimPointInSource
+        var effectiveGuideRay = plan.aimWorldRay
+        let planDistFromCenter = hypot(sourceAimPoint.x - 0.5, sourceAimPoint.y - 0.5)
+        // Khắc phục triệt để lỗi Target nằm lì ở tâm (0.5, 0.5):
+        // Khi static crop ở 1x không dịch được góc ảnh ra ngoài [0, 1], dùng phép chiếu hướng xoay máy 3D
+        // từ CompositionCalculator để dẫn đường đưa chủ thể vào điểm mạnh Tỷ lệ vàng / 1/3.
+        if planDistFromCenter < 0.09 && detectedScene != .architecture {
+            sourceAimPoint = evaluatedFraming.targetPoint
+            effectiveGuideRay = source.pose.act(source.frame.calibration.deviceRay(at: sourceAimPoint))
         }
+
+        var effectiveZoom = plan.zoom
+        if effectiveZoom <= displayZoom * 1.12 && evaluatedFraming.recommendedZoomFactor > effectiveZoom * 1.12 {
+            effectiveZoom = evaluatedFraming.recommendedZoomFactor
+        }
+        effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(
+            cameraService.convertDisplayZoomToDeviceZoom(effectiveZoom))
+
+        var liveAimPoint = sourceAimPoint
         if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
            let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                 ?? SpatialTrackingEngine.shared.latestPose() {
             let projectedAim = currentFrame.calibration.project(
-                deviceRay: currentPose.inverse.act(plan.aimWorldRay))
+                deviceRay: currentPose.inverse.act(effectiveGuideRay))
             if projectedAim.point.x.isFinite, projectedAim.point.y.isFinite {
                 liveAimPoint = projectedAim.point
             }
@@ -2502,25 +2534,28 @@ public final class CameraViewModel: ObservableObject {
         let dy = liveAimPoint.y - 0.5
         let distance = hypot(dx, dy)
         let angle = atan2(dy, dx) * 180 / .pi
-        if plan.explanation.contains("Tỷ lệ vàng") || plan.explanation.contains("Golden") {
+        if planDistFromCenter < 0.09 && detectedScene != .architecture {
+            activeCompositionRule = evaluatedFraming.optimalRule
+        } else if plan.explanation.contains("Tỷ lệ vàng") || plan.explanation.contains("Golden") {
             activeCompositionRule = .goldenRatio
-        } else if plan.usesCenter {
+        } else if plan.usesCenter && detectedScene == .architecture {
             activeCompositionRule = .centerSymmetry
         } else {
             activeCompositionRule = .ruleOfThirds
         }
         localCompositionIntent = plan.intent
-        localCompositionExplanation = plan.explanation
+        let zoomText = abs(effectiveZoom - displayZoom) > 0.12 ? String(format: " · Smart Zoom %.1fx", effectiveZoom) : ""
+        localCompositionExplanation = plan.explanation + zoomText
         framingResult = FramingTargetResult(targetPoint: liveAimPoint,
             currentCenter: CGPoint(x: 0.5, y: 0.5),
             offsetVector: CGVector(dx: dx, dy: dy), distance: distance,
             angleDegrees: angle < 0 ? angle + 360 : angle,
             alignmentScore: max(0, min(1, 1 - Double(distance / 0.40))),
             isAligned: distance <= calculator.alignmentTolerance,
-            recommendedZoomFactor: plan.zoom, optimalRule: activeCompositionRule,
-            guideDescription: plan.explanation)
-        pendingSuggestedZoom = plan.zoom
-        aiSuggestedZoom = plan.zoom
+            recommendedZoomFactor: effectiveZoom, optimalRule: activeCompositionRule,
+            guideDescription: localCompositionExplanation)
+        pendingSuggestedZoom = effectiveZoom
+        aiSuggestedZoom = effectiveZoom
         hasExecutedAutoZoomForSession = false
         allowsAutoCaptureForCurrentTarget = true
         localCompositionChoices = []
@@ -2528,11 +2563,11 @@ public final class CameraViewModel: ObservableObject {
         localSuggestionRects = []
         detectedSubjectRects = []
         localSelectionMessage = nil
-        // Unified reticle tracks the photographic composition aim directly.
-        // Legacy: trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay
+        // Track the physical subject with Vision/EKF while guiding the reticle along effectiveGuideRay.
+        let trackedSubjectPoint = hero?.trackingPoint ?? anchor
         pinTargetAndStartMotion(at: liveAimPoint,
             subjectRect: plan.subjectRect, source: source,
-            trackedPoint: nil, pinnedGuideRay: plan.aimWorldRay)
+            trackedPoint: trackedSubjectPoint, pinnedGuideRay: effectiveGuideRay)
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
@@ -2656,8 +2691,8 @@ public final class CameraViewModel: ObservableObject {
             if let currentFrame = selectedFrame?.1,
                let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                     ?? SpatialTrackingEngine.shared.latestPose() {
-                // Show the physical subject, not the offset composition aim.
-                let reticleRay = trackedSubjectRay ?? ray
+                // Show the composition guide bearing so the user pans the subject into the power point.
+                let reticleRay = ray
                 let projected = currentFrame.calibration.project(
                     deviceRay: currentPose.inverse.act(reticleRay)).point
                 if projected.x.isFinite, projected.y.isFinite {
@@ -2922,15 +2957,20 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func canZoomCurrentSubject(to target: CGFloat) -> Bool {
-        guard let box = currentSubjectCropBox,
-              displayZoom > 0, target > 0 else { return false }
+        guard displayZoom > 0, target > 0 else { return false }
+        guard let box = currentSubjectCropBox else { return true }
         let k = latestOpticalCalibration ?? TrackingCalibration.fallback(fovLongDegrees: cameraService.effectiveVideoFieldOfView, zoom: Double(displayZoom))
         let ratio = target / displayZoom
         let cx = CGFloat(k.cx), cy = CGFloat(k.cy)
-        return cx + (box.minX - cx) * ratio >= 0.015 &&
-            cy + (box.minY - cy) * ratio >= 0.015 &&
-            cx + (box.maxX - cx) * ratio <= 0.985 &&
-            cy + (box.maxY - cy) * ratio <= 0.985
+        let projectedMinX = cx + (box.minX - cx) * ratio
+        let projectedMaxX = cx + (box.maxX - cx) * ratio
+        let projectedMinY = cy + (box.minY - cy) * ratio
+        let projectedMaxY = cy + (box.maxY - cy) * ratio
+        let centerInside = (0.04...0.96).contains((projectedMinX + projectedMaxX) * 0.5) &&
+            (0.04...0.96).contains((projectedMinY + projectedMaxY) * 0.5)
+        let boundsReasonable = projectedMinX >= -0.12 && projectedMaxX <= 1.12 &&
+            projectedMinY >= -0.06 && projectedMaxY <= 1.18
+        return centerInside && boundsReasonable
     }
 
     private var alignmentRadius: CGFloat {
@@ -2955,7 +2995,7 @@ public final class CameraViewModel: ObservableObject {
         let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),
             radius: Double(alignmentRadius), freshEvidence: (hasFreshOpticalLock || isTargetLocked) && !isPinchingZoom)
         isPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
-        if !isTargetLocked && isPerfectAlignment {
+        if !isTargetLocked && state == .ready && !localCompositionNeedsLevel {
             lockHardTarget()
         }
         guard state != .outside else {

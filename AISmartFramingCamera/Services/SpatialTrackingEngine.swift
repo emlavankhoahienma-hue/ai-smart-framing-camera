@@ -480,9 +480,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 kalmanFilter = nil
                 pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
             }
-            // The yellow reticle represents the physical subject. The
-            // composition guide may have a different bearing.
-            displayWorldRay = subjectWorldRay ?? worldRay
+            // The yellow reticle represents the composition guide bearing (worldRay)
+            // while EKF/optical tracking tracks the physical subject (subjectWorldRay).
+            displayWorldRay = worldRay ?? subjectWorldRay
             lastDisplayTime = -.infinity
             presentationIsRecovering = false
             lastAccepted = -Double.infinity; lastVerified = -.infinity
@@ -683,7 +683,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                     // Accepted live optical motion is already rate limited.
                     // Do not filter it a second time or the reticle trails a
                     // moving subject while the image continues to move.
-                    displayWorldRay = subjectWorldRay ?? worldRay
+                    displayWorldRay = worldRay ?? subjectWorldRay
                 }
             } else {
                 // The first timestamped visual fix can initialize if pinning
@@ -703,7 +703,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         var quality: TrackingQuality = .reacquiring
         var outputConfidence = 0.0
-        if let reticleRay = subjectWorldRay ?? worldRay, let sample = history.last,
+        if let reticleRay = worldRay ?? subjectWorldRay, let sample = history.last,
            (-0.05...0.45).contains(now - sample.timestamp) {
             let dt = lastDisplayTime.isFinite ? min(0.05, max(0, now - lastDisplayTime)) : 0
             let rendered = presentationIsRecovering ? (displayWorldRay.map {

@@ -540,16 +540,36 @@ public final class CompositionCalculator: @unchecked Sendable {
                 }
             }
 
-            // Yếu tố 3: Cân bằng trọng lượng thị giác (Visual Balance)
+            // Yếu tố 3: Cân bằng trọng lượng thị giác & Chống bẫy tâm (Off-Center Guidance Fitness)
+            // Tránh lỗi cũ: exp(-4 * d^2) đạt đỉnh ở d=0 khiến Target luôn bị hút về (0.5, 0.5).
+            // Nay: ưu tiên khoảng dẫn hướng bố cục rõ ràng (d ~ 0.10 - 0.24) trừ khi chụp kiến trúc đối xứng.
             let targetDistFromCenter = hypot(Double(target.x - 0.5), Double(target.y - 0.5))
-            let balanceScore = exp(-4.0 * pow(targetDistFromCenter, 2))
+            let balanceScore: Double
+            if sceneType == .architecture && item.rule == .centerSymmetry {
+                balanceScore = exp(-4.0 * pow(targetDistFromCenter, 2))
+            } else {
+                balanceScore = exp(-9.5 * pow(targetDistFromCenter - 0.145, 2))
+            }
 
-            // Yếu tố 4: Ưu tiên thể loại cảnh (Scene Aesthetic Resonance)
+            // Phạt mạnh giả thuyết đặt Target nằm lì ở chính giữa màn hình (0.5, 0.5)
+            var centerTrapPenalty = 0.0
+            if sceneType != .architecture {
+                if item.rule == .centerSymmetry {
+                    centerTrapPenalty += 0.38
+                }
+                if targetDistFromCenter < 0.085 {
+                    centerTrapPenalty += (0.085 - targetDistFromCenter) * 3.8
+                }
+            }
+
+            // Yếu tố 4: Ưu tiên thể loại cảnh & Quy tắc Tỷ lệ vàng / 1/3 (Scene Aesthetic Resonance)
             var sceneAestheticBonus = 0.0
             if sceneType == .architecture && item.rule == .centerSymmetry {
                 sceneAestheticBonus += 0.22
-            } else if (sceneType == .landscape || sceneType == .sky || sceneType == .water) && item.rule != .centerSymmetry {
-                sceneAestheticBonus += 0.15
+            } else if item.rule == .goldenRatio {
+                sceneAestheticBonus += 0.16
+            } else if item.rule == .ruleOfThirds {
+                sceneAestheticBonus += 0.14
             }
 
             // Yếu tố 5: Phạt Target tràn biên (Edge Clutter & Clipping Penalty)
@@ -561,12 +581,12 @@ public final class CompositionCalculator: @unchecked Sendable {
             // Yếu tố 6: Quán tính thời gian (Temporal Hysteresis / Stability Bonus)
             var temporalBonus = 0.0
             let activeRuleToMatch = activeRule ?? activeWinningRule
-            if item.rule == activeRuleToMatch {
+            if item.rule == activeRuleToMatch && item.rule != .centerSymmetry {
                 temporalBonus += 0.08
             }
             let distToActiveGrid = hypot(Double(pGrid.x - activeWinningGridPoint.x), Double(pGrid.y - activeWinningGridPoint.y))
-            if distToActiveGrid < 0.08 {
-                temporalBonus += 0.12
+            if distToActiveGrid < 0.08 && targetDistFromCenter >= 0.075 {
+                temporalBonus += 0.10
             }
 
             let totalScore = max(0.01,
@@ -575,7 +595,8 @@ public final class CompositionCalculator: @unchecked Sendable {
                 0.22 * balanceScore +
                 sceneAestheticBonus +
                 temporalBonus -
-                edgePenalty
+                edgePenalty -
+                centerTrapPenalty
             )
 
             let hypothesis = CompositionHypothesis(
@@ -636,7 +657,8 @@ public final class CompositionCalculator: @unchecked Sendable {
         defer { stateLock.unlock() }
 
         let currentZoom = max(0.5, currentDisplayZoom)
-        let testZooms = Array(Set(availableZooms + [currentDisplayZoom, 1.0, 2.0, 3.0])).filter { $0.isFinite && $0 >= 0.5 && $0 <= 10.0 }.sorted()
+        let intermediateZooms: [CGFloat] = [1.0, 1.25, 1.5, 1.8, 2.0, 2.5, 3.0]
+        let testZooms = Array(Set(availableZooms + [currentDisplayZoom] + intermediateZooms)).filter { $0.isFinite && $0 >= 0.5 && $0 <= 10.0 }.sorted()
         var scoredList: [VirtualCropZoomScore] = []
 
         // Sửa Lỗi 2: Chuẩn hóa kích thước đo được về hệ quy chiếu gốc 1x
@@ -739,10 +761,18 @@ public final class CompositionCalculator: @unchecked Sendable {
                 }
             }
 
-            // Yếu tố 4: Quán tính chống nhảy Zoom (Zoom Momentum / Hysteresis)
-            let momentumBonus = (abs(z - currentDisplayZoom) < 0.15) ? 0.22 : 0.0
+            // Phạt nếu chủ thể quá nhỏ tại mức zoom đang xét (khuyến khích Smart Zoom 1.5x / 2x / 3x khi chủ thể nhỏ/vừa)
+            var underfillPenalty = 0.0
+            if baseLinearSize1x >= 0.07 && evidence.detectedScene != .landscape && evidence.detectedScene != .architecture {
+                if projectedLinearSize < 0.36 {
+                    underfillPenalty = -0.34 * (0.36 - projectedLinearSize) / 0.36
+                }
+            }
 
-            let totalScore = max(-10.0, focalDensityScore + clutterRemovalGain + integrityPenalty + momentumBonus)
+            // Yếu tố 4: Quán tính nhẹ (tránh lỗi cũ 0.22 làm kẹt cứng ở 1x không bao giờ dám zoom)
+            let momentumBonus = (abs(z - currentDisplayZoom) < 0.12) ? 0.025 : 0.0
+
+            let totalScore = max(-10.0, focalDensityScore + clutterRemovalGain + integrityPenalty + underfillPenalty + momentumBonus)
             let rationale = String(format: "Zoom %.1fx · Mật độ: %.2f · Khử rác: %.2f · Phạt cắt: %.2f", z, focalDensityScore, clutterRemovalGain, integrityPenalty)
 
             let cropW = 1.0 / z
