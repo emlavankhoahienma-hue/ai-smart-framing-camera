@@ -1463,7 +1463,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         for item in cachedSaliencyRects {
             let pt = CGPoint(x: item.rect.midX, y: item.rect.midY)
             let overlapsExisting = candidates.contains {
-                $0.rect.contains(pt) || CompositionPureCalculations.computeIoU($0.rect, item.rect) > 0.35
+                $0.rect.contains(pt)
             }
             if !overlapsExisting {
                 candidates.append(LiveDetectedEntity(
