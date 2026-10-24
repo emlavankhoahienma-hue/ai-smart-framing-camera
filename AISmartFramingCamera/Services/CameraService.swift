@@ -2081,7 +2081,8 @@ public final class CameraService: NSObject {
             publishRecordingState(.starting)
 
             let corner = currentDualCameraPIPCorner
-            DualCameraAssetRecorder.shared.startRecording(outputURL: outputURL, codec: selectedVideoCodec, corner: corner) { [weak self] (success: Bool) in
+            let pipScale = currentDualCameraPIPScale
+            DualCameraAssetRecorder.shared.startRecording(outputURL: outputURL, codec: selectedVideoCodec, corner: corner, scale: pipScale) { [weak self] (success: Bool) in
                 guard let self else { return }
                 self.sessionQueue.async {
                     if success {

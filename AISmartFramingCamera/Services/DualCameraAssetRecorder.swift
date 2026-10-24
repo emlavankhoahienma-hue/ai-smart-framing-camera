@@ -36,6 +36,7 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
 
     private let stateLock = NSLock()
     public var pipCorner: DualCameraPIPCorner = .topTrailing
+    public var pipScale: CGFloat = 1.0
 
     public var isRecording: Bool {
         stateLock.lock()
@@ -51,6 +52,7 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
         dimensions: CMVideoDimensions = CMVideoDimensions(width: 1080, height: 1920),
         codec: VideoCodec = .hevc,
         corner: DualCameraPIPCorner = .topTrailing,
+        scale: CGFloat = 1.0,
         completion: @escaping (Bool) -> Void
     ) {
         recordQueue.async { [weak self] in
@@ -66,6 +68,7 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
                 return
             }
             self.pipCorner = corner
+            self.pipScale = scale
             self.sessionStartTime = nil
             self.lastVideoPTS = nil
             self.currentOutputURL = outputURL

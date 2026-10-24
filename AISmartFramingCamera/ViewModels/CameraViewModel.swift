@@ -131,7 +131,6 @@ private final class CameraFrameProcessor: @unchecked Sendable {
 
         guard !snapshot.isSettingsVisible else { return }
 
-        let now = CACurrentMediaTime()
         if snapshot.tracksSuggestions, let frame,
            now - lastSuggestionUpdateTime >= 1.0 / 30.0 {
             lastSuggestionUpdateTime = now
