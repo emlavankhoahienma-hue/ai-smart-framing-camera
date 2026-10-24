@@ -167,6 +167,7 @@ public final class CameraService: NSObject {
     private var latestMultiCamPixelBuffer: CVPixelBuffer?
     private var latestFrontMultiCamPixelBuffer: CVPixelBuffer?
     public var currentDualCameraPIPCorner: DualCameraPIPCorner = .topTrailing
+    public var currentDualCameraPIPScale: CGFloat = 1.0
     private var secondaryDeviceInput: AVCaptureDeviceInput?
     private var secondaryCameraDevice: AVCaptureDevice?
     private var savedSingleSessionCamera: AVCaptureDevice?
@@ -1240,6 +1241,9 @@ public final class CameraService: NSObject {
                 multiSession.stopRunning()
             }
 
+            self.frontMultiCamVideoDataOutput.setSampleBufferDelegate(nil, queue: nil)
+            self.multiCamVideoDataOutput.setSampleBufferDelegate(nil, queue: nil)
+
             multiSession.beginConfiguration()
             for connection in multiSession.connections {
                 multiSession.removeConnection(connection)
@@ -1333,6 +1337,7 @@ public final class CameraService: NSObject {
         let shutterVal = (expDuration.isFinite && expDuration > 0) ? expDuration : (1.0 / 60.0)
         let format: PhotoSaveFormat = isHEIF ? .heif : .jpeg
         let corner = currentDualCameraPIPCorner
+        let pipScale = currentDualCameraPIPScale
 
         DispatchQueue.main.async {
             AudioServicesPlaySystemSound(1108) // Shutter click
@@ -1362,7 +1367,8 @@ public final class CameraService: NSObject {
                     over: backCI,
                     canvasWidth: rect.width,
                     canvasHeight: rect.height,
-                    corner: corner
+                    corner: corner,
+                    scaleMultiplier: pipScale
                 )
             } else {
                 finalCI = backCI

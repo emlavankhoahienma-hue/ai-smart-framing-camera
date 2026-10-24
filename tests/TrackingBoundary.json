@@ -39,7 +39,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "394655b985550956f8d156a4012672dddacd9066b7bec834ec66ae11981eb9cc"
+      "sha256": "eb6bc3199810b5f75f66e61e529206dd55a107405476aa400138d15c243a48ce"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",

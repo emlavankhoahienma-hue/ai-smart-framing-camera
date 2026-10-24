@@ -20,6 +20,7 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var showHistogramInViewfinder = true
     var isVideo = false
     var isAIVideoDirectorActive = false
+    var isDualCameraActive = false
 }
 
 /// Owns frame-rate work on AVFoundation's serial sample-buffer queue. UI state is
@@ -34,6 +35,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     private var lastHistogramComputeTime: CFTimeInterval = 0
     private var lastFocusPeakingComputeTime: CFTimeInterval = 0
     private var lastSuggestionUpdateTime: CFTimeInterval = 0
+    private var lastVisionProcessTime: CFTimeInterval = 0
 
     @MainActor
     func attach(to owner: CameraViewModel) {
@@ -113,7 +115,12 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         // CameraService invokes this method on its serial videoDataQueue. Processing
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
         // another concurrency boundary.
-        VisionFramingEngine.shared.processVideoSampleBuffer(sampleBuffer, orientation: .up, frameContext: frame)
+        let now = CACurrentMediaTime()
+        let visionInterval: CFTimeInterval = snapshot.isDualCameraActive ? (1.0 / 5.0) : 0
+        if visionInterval == 0 || (now - lastVisionProcessTime >= visionInterval) {
+            lastVisionProcessTime = now
+            VisionFramingEngine.shared.processVideoSampleBuffer(sampleBuffer, orientation: .up, frameContext: frame)
+        }
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
@@ -511,6 +518,7 @@ public final class CameraViewModel: ObservableObject {
                     guard let self else { return }
                     self.isDualCameraActive = false
                     self.isCameraReady = true
+                    self.updateFrameProcessingConfiguration()
                     self.previewContainerView?.syncDualCameraPrimaryLayer(
                         nil,
                         isDualActive: false,
@@ -532,6 +540,7 @@ public final class CameraViewModel: ObservableObject {
                     if success {
                         self.isDualCameraActive = true
                         self.isCameraReady = true
+                        self.updateFrameProcessingConfiguration()
                         self.previewContainerView?.syncDualCameraPrimaryLayer(
                             self.cameraService.multiCamPrimaryPreviewLayer,
                             isDualActive: true,
@@ -568,6 +577,11 @@ public final class CameraViewModel: ObservableObject {
     public func setDualCameraPIPCorner(_ corner: DualCameraPIPCorner) {
         cameraService.currentDualCameraPIPCorner = corner
         DualCameraAssetRecorder.shared.pipCorner = corner
+    }
+
+    public func setDualCameraPIPScale(_ scale: CGFloat) {
+        cameraService.currentDualCameraPIPScale = scale
+        DualCameraAssetRecorder.shared.pipScale = scale
     }
 
     public func showHUDNotice(_ text: String) {
@@ -1335,7 +1349,8 @@ public final class CameraViewModel: ObservableObject {
                 isRecordingVideo: isRecordingVideo,
                 showHistogramInViewfinder: showHistogramInViewfinder,
                 isVideo: captureMode.isVideo,
-                isAIVideoDirectorActive: isAIVideoDirectorActive
+                isAIVideoDirectorActive: isAIVideoDirectorActive,
+                isDualCameraActive: isDualCameraActive
             )
         )
     }
@@ -1659,6 +1674,7 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self else { return }
             self.isDualCameraActive = isActive
             self.isCameraReady = true
+            self.updateFrameProcessingConfiguration()
             let dualLayer = isActive ? self.cameraService.multiCamPrimaryPreviewLayer : nil
             self.previewContainerView?.syncDualCameraPrimaryLayer(
                 dualLayer,

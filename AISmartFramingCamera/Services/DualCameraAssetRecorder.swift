@@ -175,6 +175,7 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
             }
             self.lastVideoPTS = pts
             let corner = self.pipCorner
+            let scaleMultiplier = self.pipScale
             self.stateLock.unlock()
 
             let width = CVPixelBufferGetWidth(backBuffer)
@@ -186,7 +187,14 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
 
             if let frontBuffer {
                 let frontCI = CIImage(cvPixelBuffer: frontBuffer)
-                finalCI = Self.compositePIP(frontCI: frontCI, over: backCI, canvasWidth: CGFloat(width), canvasHeight: CGFloat(height), corner: corner)
+                finalCI = Self.compositePIP(
+                    frontCI: frontCI,
+                    over: backCI,
+                    canvasWidth: CGFloat(width),
+                    canvasHeight: CGFloat(height),
+                    corner: corner,
+                    scaleMultiplier: scaleMultiplier
+                )
             } else {
                 finalCI = backCI
             }
@@ -294,13 +302,16 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
         over backCI: CIImage,
         canvasWidth: CGFloat,
         canvasHeight: CGFloat,
-        corner: DualCameraPIPCorner
+        corner: DualCameraPIPCorner,
+        scaleMultiplier: CGFloat = 1.0
     ) -> CIImage {
         let fExtent = frontCI.extent
         guard fExtent.width > 0, fExtent.height > 0 else { return backCI }
 
-        // Kích thước PIP: Chiếm 28% chiều rộng khung hình chính, tỉ lệ 3:4 chuẩn chân dung
-        let pipWidth = round(canvasWidth * 0.28)
+        // Kích thước PIP: Chiếm 28% chiều rộng khung hình chính (nhân tỉ lệ scaleMultiplier), tỉ lệ 3:4 chuẩn chân dung
+        let basePipWidth = round(canvasWidth * 0.28)
+        let clampedScale = max(0.75, min(1.8, scaleMultiplier))
+        let pipWidth = round(basePipWidth * clampedScale)
         let pipHeight = round(pipWidth * (4.0 / 3.0))
         let margin: CGFloat = round(canvasWidth * 0.035)
 

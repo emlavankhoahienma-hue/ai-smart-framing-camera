@@ -62,7 +62,7 @@ public struct DualCameraPIPPreviewView: UIViewRepresentable {
     }
 }
 
-// MARK: - Dual Camera PIP Draggable Overlay View
+// MARK: - Dual Camera PIP Draggable & Scalable Overlay View
 public struct DualCameraPIPOverlayView: View {
     @ObservedObject var viewModel: CameraViewModel
     let containerSize: CGSize
@@ -73,8 +73,12 @@ public struct DualCameraPIPOverlayView: View {
     @State private var dragOffset: CGSize = .zero
     @State private var isDragging: Bool = false
 
-    private let pipWidth: CGFloat = 96
-    private let pipHeight: CGFloat = 128
+    // Tỉ lệ kích thước khung camera trước (0.75x đến 1.8x)
+    @State private var pipScale: CGFloat = 1.0
+    @State private var lastPipScale: CGFloat = 1.0
+
+    private let basePipWidth: CGFloat = 96
+    private let basePipHeight: CGFloat = 128
     private let margin: CGFloat = 10
 
     public init(viewModel: CameraViewModel, containerSize: CGSize) {
@@ -82,11 +86,21 @@ public struct DualCameraPIPOverlayView: View {
         self.containerSize = containerSize
     }
 
+    private var currentPipWidth: CGFloat {
+        basePipWidth * pipScale
+    }
+
+    private var currentPipHeight: CGFloat {
+        basePipHeight * pipScale
+    }
+
     private var basePosition: CGPoint {
-        let minX = margin + pipWidth / 2
-        let maxX = max(minX, containerSize.width - margin - pipWidth / 2)
-        let minY = margin + 34 + pipHeight / 2 // Bên dưới audio VU meter
-        let maxY = max(minY, containerSize.height - margin - 46 - pipHeight / 2) // Bên trên thanh zoom pill
+        let halfW = currentPipWidth / 2
+        let halfH = currentPipHeight / 2
+        let minX = margin + halfW
+        let maxX = max(minX, containerSize.width - margin - halfW)
+        let minY = margin + 34 + halfH // Bên dưới audio VU meter
+        let maxY = max(minY, containerSize.height - margin - 46 - halfH) // Bên trên thanh zoom pill
 
         switch currentCorner {
         case .topLeading:
@@ -100,58 +114,83 @@ public struct DualCameraPIPOverlayView: View {
         }
     }
 
+    private var clampedPosition: CGPoint {
+        let rawX = basePosition.x + dragOffset.width
+        let rawY = basePosition.y + dragOffset.height
+        let halfW = currentPipWidth / 2
+        let halfH = currentPipHeight / 2
+        let minX = margin + halfW
+        let maxX = max(minX, containerSize.width - margin - halfW)
+        let minY = margin + 34 + halfH
+        let maxY = max(minY, containerSize.height - margin - 46 - halfH)
+        return CGPoint(
+            x: max(minX, min(maxX, rawX)),
+            y: max(minY, min(maxY, rawY))
+        )
+    }
+
     public var body: some View {
-        let currentPos = basePosition
+        let currentW = currentPipWidth
+        let currentH = currentPipHeight
+
         ZStack {
             DualCameraPIPPreviewView(viewModel: viewModel)
-                .frame(width: pipWidth, height: pipHeight)
+                .frame(width: currentW, height: currentH)
                 .background(Color.black)
 
-            // Header Badge (Live Indicator + Close)
+            // Header: Nút đóng góc phải trên gọn gàng (đã bỏ chữ PIP và chấm tròn)
             VStack {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(AlignTheme.electricCyan)
-                        .frame(width: 5, height: 5)
-                        .shadow(color: AlignTheme.electricCyan, radius: 3)
-                    Text("PIP")
-                        .font(.system(size: 8, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white.opacity(0.92))
+                HStack {
                     Spacer()
                     Button(action: {
                         viewModel.toggleDualCamera()
                     }) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 7, weight: .black))
-                            .foregroundColor(.white.opacity(0.85))
-                            .frame(width: 14, height: 14)
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white.opacity(0.92))
+                            .frame(width: 18, height: 18)
                             .background(Circle().fill(Color.black.opacity(0.55)))
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
-                .padding(.horizontal, 6)
-                .padding(.top, 6)
+                .padding(6)
                 Spacer()
             }
         }
-        .frame(width: pipWidth, height: pipHeight)
+        .frame(width: currentW, height: currentH)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
+            // Viền màu trắng đơn giản, tinh tế
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(AlignTheme.rimGradient, lineWidth: 1.5)
+                .stroke(Color.white.opacity(0.92), lineWidth: 1.5)
         )
         .shadow(color: Color.black.opacity(0.65), radius: 8, y: 3)
         .scaleEffect(isDragging ? 1.04 : 1.0)
-        .position(x: currentPos.x + dragOffset.width, y: currentPos.y + dragOffset.height)
+        .position(clampedPosition)
+        // Chạm đúp 2 lần để đổi nhanh kích thước: Nhỏ -> Vừa -> Lớn -> Nhỏ
+        .onTapGesture(count: 2) {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                if pipScale < 1.15 {
+                    pipScale = 1.35
+                } else if pipScale < 1.55 {
+                    pipScale = 1.70
+                } else {
+                    pipScale = 1.0
+                }
+                lastPipScale = pipScale
+            }
+            viewModel.setDualCameraPIPScale(pipScale)
+        }
+        // Kéo di chuyển vị trí khung camera
         .gesture(
-            DragGesture()
+            DragGesture(minimumDistance: 4)
                 .onChanged { value in
                     isDragging = true
                     dragOffset = value.translation
                 }
                 .onEnded { value in
-                    let finalX = currentPos.x + value.translation.width
-                    let finalY = currentPos.y + value.translation.height
+                    let finalX = basePosition.x + value.translation.width
+                    let finalY = basePosition.y + value.translation.height
 
                     let isLeft = finalX < (containerSize.width / 2)
                     let isTop = finalY < (containerSize.height / 2)
@@ -169,6 +208,18 @@ public struct DualCameraPIPOverlayView: View {
                         self.isDragging = false
                     }
                     viewModel.setDualCameraPIPCorner(newCorner)
+                }
+        )
+        // Chụm 2 ngón tay để phóng to/thu nhỏ khung hình mượt mà
+        .simultaneousGesture(
+            MagnificationGesture()
+                .onChanged { value in
+                    let targetScale = min(max(lastPipScale * value, 0.75), 1.8)
+                    pipScale = targetScale
+                }
+                .onEnded { _ in
+                    lastPipScale = pipScale
+                    viewModel.setDualCameraPIPScale(pipScale)
                 }
         )
     }
