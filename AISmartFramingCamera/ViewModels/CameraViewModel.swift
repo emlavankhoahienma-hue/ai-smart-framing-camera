@@ -510,6 +510,7 @@ public final class CameraViewModel: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.isDualCameraActive = false
+                    self.isCameraReady = true
                     self.previewContainerView?.syncDualCameraPrimaryLayer(
                         nil,
                         isDualActive: false,
@@ -530,6 +531,7 @@ public final class CameraViewModel: ObservableObject {
                     guard let self else { return }
                     if success {
                         self.isDualCameraActive = true
+                        self.isCameraReady = true
                         self.previewContainerView?.syncDualCameraPrimaryLayer(
                             self.cameraService.multiCamPrimaryPreviewLayer,
                             isDualActive: true,
@@ -544,6 +546,7 @@ public final class CameraViewModel: ObservableObject {
                         self.showHUDNotice("Dual Cam PIP: Bật")
                     } else {
                         self.isDualCameraActive = false
+                        self.isCameraReady = true
                         self.previewContainerView?.syncDualCameraPrimaryLayer(
                             nil,
                             isDualActive: false,
@@ -1650,6 +1653,7 @@ public final class CameraViewModel: ObservableObject {
         cameraService.onDualCameraStateChanged = { [weak self] isActive in
             guard let self = self else { return }
             self.isDualCameraActive = isActive
+            self.isCameraReady = true
             let dualLayer = isActive ? self.cameraService.multiCamPrimaryPreviewLayer : nil
             self.previewContainerView?.syncDualCameraPrimaryLayer(
                 dualLayer,
@@ -1678,6 +1682,10 @@ public final class CameraViewModel: ObservableObject {
 
     public func selectCaptureMode(_ mode: CameraCaptureMode) {
         guard mode != captureMode || pendingCaptureMode != nil else { return }
+        if isDualCameraActive && mode.isVideo {
+            toggleDualCamera()
+            showHUDNotice("Đã tắt Dual Cam để sang video")
+        }
         modeTransitionGeneration &+= 1
         let generation = modeTransitionGeneration
         pendingCaptureMode = mode
@@ -1688,7 +1696,8 @@ public final class CameraViewModel: ObservableObject {
             }
             return
         }
-        if !isCameraReady {
+        let operational = isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning
+        if !operational {
             return
         }
         if aiSessionState != .idle {
@@ -1819,10 +1828,13 @@ public final class CameraViewModel: ObservableObject {
 
     /// Bắt đầu phiên AI khi người dùng bấm nút AI — chỉ phân tích ĐÚNG 1 LẦN duy nhất
     public func startAISession() {
-        guard captureMode == .photo, pendingCaptureMode == nil,
-              isCameraReady, !isCameraHibernating,
-              !isShutterPressing, recordingState == .idle,
-              (aiSessionState == .idle || aiSessionState == .done) else { return }
+        if isCameraHibernating { return }
+        if captureMode != .photo { selectCaptureMode(.photo) }
+        if isShutterPressing { isShutterPressing = false }
+        if aiSessionState != .idle && aiSessionState != .done { cancelAISession() }
+
+        let isOperational = isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning
+        guard isOperational, recordingState == .idle else { return }
         unlockHardTargetLock()
         if isWindowedZoomActive { isWindowedZoomActive = false }
         targetPinGeneration &+= 1
@@ -2353,13 +2365,17 @@ public final class CameraViewModel: ObservableObject {
                     }
                     return
                 }
-                guard let buffer, let pose = SpatialTrackingEngine.shared.pose(at: frame.timestamp) else {
+                let effectiveBuffer = buffer ?? self.cameraService.currentMultiCamPixelBuffer() ?? self.latestCameraPixelBuffer()
+                let effectivePose = SpatialTrackingEngine.shared.pose(at: frame.timestamp)
+                    ?? SpatialTrackingEngine.shared.latestPose()
+                    ?? simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+                guard let finalBuffer = effectiveBuffer else {
                     self.localAnalysisFinished = true
-                    self.localSelectionMessage = "Không đồng bộ được ảnh và cảm biến. Bấm AI để thử lại."
+                    self.localSelectionMessage = "Không lấy được khung hình camera. Bấm AI để thử lại."
                     return
                 }
                 self.isOneShotCaptured = true
-                completion(image, buffer, frame, pose)
+                completion(image, finalBuffer, frame, effectivePose)
             }
         }
     }
@@ -3597,23 +3613,40 @@ public final class CameraViewModel: ObservableObject {
             haptics.triggerShutterClick()
             cameraService.stopRecordingVideo()
         } else {
-            guard captureMode.isVideo, pendingCaptureMode == nil, isCameraReady,
-                  !isCameraHibernating, !isShutterPressing else { return }
-            wantsVideoRecording = true
-            if isWindowedZoomActive && windowedZoomFocalLength > 24.5 {
-                lastRecordedVideoWindowedFocal = windowedZoomFocalLength
-                lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
-                lastRecordedVideoWindowedBaseZoom = displayZoom
-                lastRecordedVideoWindowedCenter = windowedZoomNormalizedCenter
-            } else {
-                lastRecordedVideoWindowedFocal = nil
-                lastRecordedVideoWindowedAspect = nil
-                lastRecordedVideoWindowedBaseZoom = 1.0
-                lastRecordedVideoWindowedCenter = CGPoint(x: 0.5, y: 0.5)
+            if isDualCameraActive {
+                cameraService.stopDualCamera(primaryPreviewLayer: self.previewLayer) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.isDualCameraActive = false
+                        self.isCameraReady = true
+                        self.showHUDNotice("Đã tắt Dual Cam để quay video")
+                        self.startVideoRecordingInternal()
+                    }
+                }
+                return
             }
-            haptics.triggerShutterClick()
-            cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
+            startVideoRecordingInternal()
         }
+    }
+
+    private func startVideoRecordingInternal() {
+        guard captureMode.isVideo, pendingCaptureMode == nil,
+              (isCameraReady || cameraService.isAnySessionRunning),
+              !isCameraHibernating, !isShutterPressing else { return }
+        wantsVideoRecording = true
+        if isWindowedZoomActive && windowedZoomFocalLength > 24.5 {
+            lastRecordedVideoWindowedFocal = windowedZoomFocalLength
+            lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
+            lastRecordedVideoWindowedBaseZoom = displayZoom
+            lastRecordedVideoWindowedCenter = windowedZoomNormalizedCenter
+        } else {
+            lastRecordedVideoWindowedFocal = nil
+            lastRecordedVideoWindowedAspect = nil
+            lastRecordedVideoWindowedBaseZoom = 1.0
+            lastRecordedVideoWindowedCenter = CGPoint(x: 0.5, y: 0.5)
+        }
+        haptics.triggerShutterClick()
+        cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
     }
 
     private func updateVideoRecordingClock() {
@@ -4012,7 +4045,8 @@ public final class CameraViewModel: ObservableObject {
             toggleVideoRecording()
             return
         }
-        guard isCameraReady, !isCameraHibernating, pendingCaptureMode == nil,
+        guard (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
+              !isCameraHibernating, pendingCaptureMode == nil,
               recordingState == .idle,
               !isShutterPressing, aiSessionState != .capturing else { return }
         if aiSessionState == .analyzing { cancelAISession() }
@@ -4196,7 +4230,9 @@ public final class CameraViewModel: ObservableObject {
                         }
                         return (data, nil)
                     }
-                    let mainData = item.preservesOriginalFile ? item.rawPhotoData :
+                    let mainData = (item.preservesOriginalFile ? item.rawPhotoData : nil) ??
+                        item.processedCompanionData ??
+                        item.rawPhotoData ??
                         Self.encodeRenderedPhoto(item.processedImage, sourceData: item.rawPhotoData,
                                                  format: item.saveFormat)
                     guard let mainData else { return nil }
@@ -4451,7 +4487,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 rawPhotoData: rawData,
                 processedCompanionData: processedCompanionData,
                 saveFormat: format,
-                preservesOriginalFile: format == .dng || (!isWindowed && !hasColorEdits),
+                preservesOriginalFile: (format == .dng || (!isWindowed && !hasColorEdits)) && rawData != nil,
                 rawLocalFileURL: localRawURL,
                 livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
@@ -4470,7 +4506,7 @@ extension CameraViewModel: CameraServiceDelegate {
             } else if item.preservesOriginalFile, let raw = rawData {
                 persistedData = raw
             } else {
-                persistedData = Self.encodeRenderedPhoto(processedImageResult, sourceData: rawData, format: format)
+                persistedData = processedCompanionData ?? Self.encodeRenderedPhoto(processedImageResult, sourceData: rawData, format: format)
             }
             if let dataToSave = persistedData {
                 AppPhotoStorageService.shared.persistCapture(

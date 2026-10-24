@@ -128,6 +128,13 @@ public final class CameraService: NSObject {
 
     // State
     public private(set) var isSessionRunning = false
+    public var isAnySessionRunning: Bool {
+        if isDualCameraActive {
+            return multiCamSession?.isRunning == true
+        } else {
+            return captureSession.isRunning && !captureSession.isInterrupted
+        }
+    }
     public private(set) var currentZoom: CGFloat = 1.0
     public private(set) var minZoom: CGFloat = 1.0
     public private(set) var maxZoom: CGFloat = 10.0
@@ -342,8 +349,10 @@ public final class CameraService: NSObject {
         }
     }
 
-    private func publishSessionRunning(_ running: Bool) {
-        guard isSessionRunning != running else { return }
+    private func publishSessionRunning(_ running: Bool, force: Bool = false) {
+        if !force {
+            guard isSessionRunning != running else { return }
+        }
         isSessionRunning = running
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -1158,7 +1167,7 @@ public final class CameraService: NSObject {
             self.secondaryDeviceInput = secondaryInput
             self.secondaryPreviewLayer = pipLayer
             self.isDualCameraActive = true
-            self.publishSessionRunning(multiSession.isRunning && !multiSession.isInterrupted)
+            self.publishSessionRunning(multiSession.isRunning && !multiSession.isInterrupted, force: true)
 
             DispatchQueue.main.async {
                 self.onDualCameraStateChanged?(true)
@@ -1231,7 +1240,8 @@ public final class CameraService: NSObject {
             if !self.captureSession.isRunning && self.wantsSessionRunning {
                 self.captureSession.startRunning()
             }
-            self.publishSessionRunning(self.captureSession.isRunning && !self.captureSession.isInterrupted)
+            self.publishSessionRunning(self.captureSession.isRunning && !self.captureSession.isInterrupted, force: true)
+            self.applyCaptureModeIfPossible()
 
             DispatchQueue.main.async {
                 self.onDualCameraStateChanged?(false)
@@ -1243,10 +1253,21 @@ public final class CameraService: NSObject {
     /// Chụp ảnh tức thì từ luồng video MultiCam khi đang bật Dual Camera (không cần gắn AVCapturePhotoOutput vào MultiCamSession).
     private func captureDualCameraStill(isHEIF: Bool) {
         multiCamFrameLock.lock()
-        let pixelBuffer = latestMultiCamPixelBuffer
+        var pixelBuffer = latestMultiCamPixelBuffer
         multiCamFrameLock.unlock()
 
+        if pixelBuffer == nil {
+            for _ in 0..<6 {
+                usleep(20_000)
+                multiCamFrameLock.lock()
+                pixelBuffer = latestMultiCamPixelBuffer
+                multiCamFrameLock.unlock()
+                if pixelBuffer != nil { break }
+            }
+        }
+
         guard let buffer = pixelBuffer else {
+            sessionQueue.async { self.isPhotoCaptureInFlight = false }
             DispatchQueue.main.async {
                 self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.cameraNotReady)
             }
@@ -1260,13 +1281,21 @@ public final class CameraService: NSObject {
         let shutterVal = (expDuration.isFinite && expDuration > 0) ? expDuration : (1.0 / 60.0)
         let format: PhotoSaveFormat = isHEIF ? .heif : .jpeg
 
+        DispatchQueue.main.async {
+            AudioServicesPlaySystemSound(1108) // Shutter click
+            HapticFeedbackService.shared.triggerShutterClick()
+        }
+
         photoProcessingQueue.async { [weak self] in
             guard let self else { return }
             let ciImage = CIImage(cvPixelBuffer: buffer)
             let rect = ciImage.extent
             guard rect.width > 0, rect.height > 0,
                   let cgImage = self.sharedPhotoContext.createCGImage(ciImage, from: rect) else {
-                self.sessionQueue.async { self.isPhotoCaptureInFlight = false }
+                self.sessionQueue.async {
+                    self.isPhotoCaptureInFlight = false
+                    self.applyCaptureModeIfPossible()
+                }
                 DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.photoProcessingFailed)
                 }
@@ -1274,14 +1303,17 @@ public final class CameraService: NSObject {
             }
 
             let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-            let jpegData = self.sharedPhotoContext.jpegRepresentation(of: ciImage, colorSpace: colorSpace, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.92])
+            let jpegData = self.sharedPhotoContext.jpegRepresentation(of: ciImage, colorSpace: colorSpace, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.94])
 
-            self.sessionQueue.async { self.isPhotoCaptureInFlight = false }
+            self.sessionQueue.async {
+                self.isPhotoCaptureInFlight = false
+                self.applyCaptureModeIfPossible()
+            }
             DispatchQueue.main.async {
                 self.delegate?.cameraService(
                     self,
                     didCapturePhoto: cgImage,
-                    rawData: nil,
+                    rawData: jpegData,
                     processedCompanionData: jpegData,
                     livePhotoMovieURL: nil,
                     iso: isoVal,
