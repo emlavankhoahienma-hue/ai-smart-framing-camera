@@ -310,14 +310,10 @@ AISmartFramingCamera/
 
 ---
 
-## Thông Tin Tác Giả & Giấy Phép
+## License
+Dự án được phân phối dưới giấy phép mã nguồn mở **MIT License**. Mọi cá nhân và tổ chức đều có quyền tự do sử dụng, chỉnh sửa và đóng góp theo các điều khoản của giấy phép.
 
-* **Kỹ sư phát triển**: **VanKhoa**
-* **Kho lưu trữ chính thức**: [GitHub Repository](https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera)
-* **Giấy phép phát hành**: Dự án được phân phối dưới giấy phép mã nguồn mở **MIT License**. Mọi cá nhân và tổ chức đều có quyền tự do sử dụng, chỉnh sửa và đóng góp theo các điều khoản của giấy phép.
-
-<div align="center">
-
-*Phát hành chính thức năm 2026. Thiết kế vì tình yêu nghệ thuật nhiếp ảnh điện ảnh.*
-
-</div>
+## Author
+**Ace4youblade (VanKhoa)**  
+Open-source software developer (born 2012) from Hai Phong, Vietnam.  
+GitHub: [@emlavankhoahienma-hue](https://github.com/emlavankhoahienma-hue)
