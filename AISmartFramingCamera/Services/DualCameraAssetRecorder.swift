@@ -5,6 +5,14 @@ import CoreGraphics
 import QuartzCore
 import UIKit
 
+// MARK: - Dual Camera PIP Corner
+public enum DualCameraPIPCorner: String, CaseIterable, Sendable {
+    case topLeading
+    case topTrailing
+    case bottomLeading
+    case bottomTrailing
+}
+
 // MARK: - Dual Camera PIP Video & Photo Compositor / Asset Recorder
 public final class DualCameraAssetRecorder: @unchecked Sendable {
     public static let shared = DualCameraAssetRecorder()
