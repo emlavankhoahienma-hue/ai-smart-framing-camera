@@ -67,9 +67,7 @@ public struct DualCameraPIPOverlayView: View {
     @ObservedObject var viewModel: CameraViewModel
     let containerSize: CGSize
 
-    public enum PIPCorner {
-        case topLeading, topTrailing, bottomLeading, bottomTrailing
-    }
+    public typealias PIPCorner = DualCameraPIPCorner
 
     @State private var currentCorner: PIPCorner = .topTrailing
     @State private var dragOffset: CGSize = .zero
@@ -170,6 +168,7 @@ public struct DualCameraPIPOverlayView: View {
                         self.dragOffset = .zero
                         self.isDragging = false
                     }
+                    viewModel.setDualCameraPIPCorner(newCorner)
                 }
         )
     }

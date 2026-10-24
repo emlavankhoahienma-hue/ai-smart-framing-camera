@@ -161,8 +161,12 @@ public final class CameraService: NSObject {
     public private(set) var secondaryPreviewLayer: AVCaptureVideoPreviewLayer?
     private let multiCamPhotoOutput = AVCapturePhotoOutput()
     private let multiCamVideoDataOutput = AVCaptureVideoDataOutput()
+    private let frontMultiCamVideoDataOutput = AVCaptureVideoDataOutput()
+    private let frontVideoDataQueue = DispatchQueue(label: "com.alignai.camera.frontVideoDataQueue", qos: .userInteractive)
     private let multiCamFrameLock = NSLock()
     private var latestMultiCamPixelBuffer: CVPixelBuffer?
+    private var latestFrontMultiCamPixelBuffer: CVPixelBuffer?
+    public var currentDualCameraPIPCorner: DualCameraPIPCorner = .topTrailing
     private var secondaryDeviceInput: AVCaptureDeviceInput?
     private var secondaryCameraDevice: AVCaptureDevice?
     private var savedSingleSessionCamera: AVCaptureDevice?
@@ -1142,6 +1146,43 @@ public final class CameraService: NSObject {
                         pipConnection.isVideoMirrored = true
                     }
                 }
+
+                self.frontMultiCamVideoDataOutput.alwaysDiscardsLateVideoFrames = true
+                self.frontMultiCamVideoDataOutput.videoSettings = [
+                    kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
+                ]
+                self.frontMultiCamVideoDataOutput.setSampleBufferDelegate(self, queue: self.frontVideoDataQueue)
+
+                if multiSession.canAddOutput(self.frontMultiCamVideoDataOutput) {
+                    multiSession.addOutputWithNoConnections(self.frontMultiCamVideoDataOutput)
+                    let frontDataConn = AVCaptureConnection(inputPorts: [frontVideoPort], output: self.frontMultiCamVideoDataOutput)
+                    if multiSession.canAddConnection(frontDataConn) {
+                        multiSession.addConnection(frontDataConn)
+                        if frontDataConn.isVideoRotationAngleSupported(90) {
+                            frontDataConn.videoRotationAngle = 90
+                        }
+                        if frontDataConn.isVideoMirroringSupported {
+                            frontDataConn.automaticallyAdjustsVideoMirroring = false
+                            frontDataConn.isVideoMirrored = true
+                        }
+                    }
+                }
+            }
+
+            // 8. Kết nối Audio Input và Audio Output vào MultiCamSession để quay video có âm thanh
+            if let audioDev = AVCaptureDevice.default(for: .audio),
+               let aInput = try? AVCaptureDeviceInput(device: audioDev),
+               multiSession.canAddInput(aInput) {
+                multiSession.addInputWithNoConnections(aInput)
+                if multiSession.canAddOutput(self.audioDataOutput) {
+                    multiSession.addOutputWithNoConnections(self.audioDataOutput)
+                    if let aPort = aInput.ports.first(where: { $0.mediaType == .audio }) {
+                        let aConn = AVCaptureConnection(inputPorts: [aPort], output: self.audioDataOutput)
+                        if multiSession.canAddConnection(aConn) {
+                            multiSession.addConnection(aConn)
+                        }
+                    }
+                }
             }
 
             multiSession.commitConfiguration()
@@ -1224,6 +1265,7 @@ public final class CameraService: NSObject {
 
             self.multiCamFrameLock.lock()
             self.latestMultiCamPixelBuffer = nil
+            self.latestFrontMultiCamPixelBuffer = nil
             self.multiCamFrameLock.unlock()
 
             self.multiCamSession = nil
@@ -1250,10 +1292,17 @@ public final class CameraService: NSObject {
         }
     }
 
-    /// Chụp ảnh tức thì từ luồng video MultiCam khi đang bật Dual Camera (không cần gắn AVCapturePhotoOutput vào MultiCamSession).
+    public func currentFrontMultiCamPixelBuffer() -> CVPixelBuffer? {
+        multiCamFrameLock.lock()
+        defer { multiCamFrameLock.unlock() }
+        return latestFrontMultiCamPixelBuffer
+    }
+
+    /// Chụp ảnh tức thì từ luồng video MultiCam khi đang bật Dual Camera (lồng ghép PIP cam trước lên cam sau theo góc người dùng đã chọn).
     private func captureDualCameraStill(isHEIF: Bool) {
         multiCamFrameLock.lock()
         var pixelBuffer = latestMultiCamPixelBuffer
+        var frontBuffer = latestFrontMultiCamPixelBuffer
         multiCamFrameLock.unlock()
 
         if pixelBuffer == nil {
@@ -1261,6 +1310,9 @@ public final class CameraService: NSObject {
                 usleep(20_000)
                 multiCamFrameLock.lock()
                 pixelBuffer = latestMultiCamPixelBuffer
+                if frontBuffer == nil {
+                    frontBuffer = latestFrontMultiCamPixelBuffer
+                }
                 multiCamFrameLock.unlock()
                 if pixelBuffer != nil { break }
             }
@@ -1280,6 +1332,7 @@ public final class CameraService: NSObject {
         let expDuration = camera.map { CMTimeGetSeconds($0.exposureDuration) } ?? (1.0 / 60.0)
         let shutterVal = (expDuration.isFinite && expDuration > 0) ? expDuration : (1.0 / 60.0)
         let format: PhotoSaveFormat = isHEIF ? .heif : .jpeg
+        let corner = currentDualCameraPIPCorner
 
         DispatchQueue.main.async {
             AudioServicesPlaySystemSound(1108) // Shutter click
@@ -1288,10 +1341,34 @@ public final class CameraService: NSObject {
 
         photoProcessingQueue.async { [weak self] in
             guard let self else { return }
-            let ciImage = CIImage(cvPixelBuffer: buffer)
-            let rect = ciImage.extent
-            guard rect.width > 0, rect.height > 0,
-                  let cgImage = self.sharedPhotoContext.createCGImage(ciImage, from: rect) else {
+            let backCI = CIImage(cvPixelBuffer: buffer)
+            let rect = backCI.extent
+            guard rect.width > 0, rect.height > 0 else {
+                self.sessionQueue.async {
+                    self.isPhotoCaptureInFlight = false
+                    self.applyCaptureModeIfPossible()
+                }
+                DispatchQueue.main.async {
+                    self.delegate?.cameraService(self, didFailCaptureWithError: CameraServiceError.photoProcessingFailed)
+                }
+                return
+            }
+
+            let finalCI: CIImage
+            if let fBuf = frontBuffer {
+                let frontCI = CIImage(cvPixelBuffer: fBuf)
+                finalCI = DualCameraAssetRecorder.compositePIP(
+                    frontCI: frontCI,
+                    over: backCI,
+                    canvasWidth: rect.width,
+                    canvasHeight: rect.height,
+                    corner: corner
+                )
+            } else {
+                finalCI = backCI
+            }
+
+            guard let cgImage = self.sharedPhotoContext.createCGImage(finalCI, from: rect) else {
                 self.sessionQueue.async {
                     self.isPhotoCaptureInFlight = false
                     self.applyCaptureModeIfPossible()
@@ -1303,7 +1380,7 @@ public final class CameraService: NSObject {
             }
 
             let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-            let jpegData = self.sharedPhotoContext.jpegRepresentation(of: ciImage, colorSpace: colorSpace, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.94])
+            let jpegData = self.sharedPhotoContext.jpegRepresentation(of: finalCI, colorSpace: colorSpace, options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 0.94])
 
             self.sessionQueue.async {
                 self.isPhotoCaptureInFlight = false
@@ -1989,6 +2066,30 @@ public final class CameraService: NSObject {
     private func startRecordingInternal() {
         guard wantsRecording, recordingState == .idle else { return }
 
+        if isDualCameraActive {
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("AlignAI_DualVideo_\(UUID().uuidString).mp4")
+            recordingURL = outputURL
+            recordingInterruptionError = nil
+            recordingStopCommandIssued = false
+            publishRecordingState(.starting)
+
+            let corner = currentDualCameraPIPCorner
+            DualCameraAssetRecorder.shared.startRecording(outputURL: outputURL, codec: selectedVideoCodec, corner: corner) { [weak self] success in
+                guard let self else { return }
+                self.sessionQueue.async {
+                    if success {
+                        self.publishRecordingState(.recording)
+                    } else {
+                        self.wantsRecording = false
+                        self.publishRecordingState(.idle, force: true)
+                        self.reportRecordingFailure(CameraServiceError.recordingUnavailable)
+                    }
+                }
+            }
+            return
+        }
+
         // Tu dong cau hinh / khoi phuc format neu chua ap dung
         if appliedVideoFormatOption == nil || appliedVideoFormatOption != selectedVideoFormatOption {
             configureVideoFormatInternal(option: selectedVideoFormatOption)
@@ -2075,6 +2176,26 @@ public final class CameraService: NSObject {
 
     private func stopRecordingInternal() {
         wantsRecording = false
+        if isDualCameraActive {
+            publishRecordingState(.stopping)
+            DualCameraAssetRecorder.shared.stopRecording { [weak self] outputURL, error in
+                guard let self else { return }
+                self.sessionQueue.async {
+                    self.publishRecordingState(.idle, force: true)
+                    let finishedURL = outputURL ?? self.recordingURL
+                    self.recordingURL = nil
+                    if let url = finishedURL {
+                        DispatchQueue.main.async {
+                            self.delegate?.cameraService(self, didFinishRecordingVideoAt: url)
+                        }
+                    } else if let error = error {
+                        self.reportRecordingFailure(error)
+                    }
+                }
+            }
+            return
+        }
+
         switch recordingState {
         case .idle:
             break
@@ -2390,6 +2511,12 @@ public final class CameraService: NSObject {
     }
 
     private func applyCaptureModeIfPossible() {
+        if isDualCameraActive {
+            currentCaptureMode = desiredCaptureMode
+            completePendingMode(true)
+            return
+        }
+
         guard !isPhotoCaptureInFlight, recordingState == .idle,
               !movieFileOutput.isRecording, videoDeviceInput != nil else { return }
         let mode = desiredCaptureMode
@@ -2751,14 +2878,30 @@ public final class CameraService: NSObject {
 extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         if output == self.audioDataOutput {
+            if isDualCameraActive && DualCameraAssetRecorder.shared.isRecording {
+                DualCameraAssetRecorder.shared.appendAudioSampleBuffer(sampleBuffer)
+            }
             handleAudioSampleBuffer(sampleBuffer, from: connection)
+            return
+        }
+
+        if output === self.frontMultiCamVideoDataOutput, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            multiCamFrameLock.lock()
+            latestFrontMultiCamPixelBuffer = pb
+            multiCamFrameLock.unlock()
             return
         }
 
         if output === self.multiCamVideoDataOutput, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
             multiCamFrameLock.lock()
             latestMultiCamPixelBuffer = pb
+            let frontPB = latestFrontMultiCamPixelBuffer
             multiCamFrameLock.unlock()
+
+            if isDualCameraActive && DualCameraAssetRecorder.shared.isRecording {
+                let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                DualCameraAssetRecorder.shared.appendBackPixelBuffer(pb, frontBuffer: frontPB, pts: pts)
+            }
         }
 
         // Giới hạn tần số dispatch stats lên UI tối đa 5Hz (0.2s) để tránh lag main thread

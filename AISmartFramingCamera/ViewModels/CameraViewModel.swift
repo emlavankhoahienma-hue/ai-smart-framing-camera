@@ -565,6 +565,11 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    public func setDualCameraPIPCorner(_ corner: DualCameraPIPCorner) {
+        cameraService.currentDualCameraPIPCorner = corner
+        DualCameraAssetRecorder.shared.pipCorner = corner
+    }
+
     public func showHUDNotice(_ text: String) {
         zoomHUDDismissWorkItem?.cancel()
         activeZoomHUDText = text
@@ -1682,10 +1687,6 @@ public final class CameraViewModel: ObservableObject {
 
     public func selectCaptureMode(_ mode: CameraCaptureMode) {
         guard mode != captureMode || pendingCaptureMode != nil else { return }
-        if isDualCameraActive && mode.isVideo {
-            toggleDualCamera()
-            showHUDNotice("Đã tắt Dual Cam để sang video")
-        }
         modeTransitionGeneration &+= 1
         let generation = modeTransitionGeneration
         pendingCaptureMode = mode
@@ -2347,15 +2348,24 @@ public final class CameraViewModel: ObservableObject {
 
     private func requestFreshAIFrame(generation: Int, requestedAt: TimeInterval,
         completion: @escaping (CGImage, CVPixelBuffer, TrackingFrameContext, simd_quatd) -> Void) {
+        visionEngine.captureNextFrameForGemini = true
         visionEngine.onFrameCapturedForAIWithSource = { [weak self] image, buffer, frame in
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.aiSessionGeneration == generation,
                       self.aiSessionState == .analyzing, !self.isOneShotCaptured else { return }
                 self.visionEngine.capturedGeminiFrame = nil
                 let now = CACurrentMediaTime()
-                guard self.manualZoomRequestID == nil, !self.isPinchingZoom, let frame,
-                      CompositionAnalysisReceipt.acceptsFrame(timestamp: frame.timestamp,
-                          requestedAt: max(requestedAt, self.manualZoomSettledAt), now: now) else {
+                let effectiveBuffer = buffer ?? self.cameraService.currentMultiCamPixelBuffer() ?? self.latestCameraPixelBuffer()
+                let effectiveFrame = frame ?? TrackingFrameContext(
+                    timestamp: now,
+                    calibration: TrackingCalibration.fallback(fovLongDegrees: CompositionTuning.defaultCameraFOVWide, zoom: Double(self.displayZoom), aspect: 9.0/16.0),
+                    imageSize: CGSize(width: effectiveBuffer.map { CGFloat(CVPixelBufferGetWidth($0)) } ?? 1080,
+                                      height: effectiveBuffer.map { CGFloat(CVPixelBufferGetHeight($0)) } ?? 1920),
+                    displayZoom: Double(self.displayZoom)
+                )
+                let frameTimestamp = effectiveFrame.timestamp
+                let isFresh = frameTimestamp >= (requestedAt - 0.25) || (now - requestedAt >= 0.8)
+                guard self.manualZoomRequestID == nil, !self.isPinchingZoom, isFresh else {
                     if now - requestedAt < 5 {
                         self.requestFreshAIFrame(generation: generation, requestedAt: requestedAt, completion: completion)
                         self.visionEngine.captureNextFrameForGemini = true
@@ -2365,8 +2375,7 @@ public final class CameraViewModel: ObservableObject {
                     }
                     return
                 }
-                let effectiveBuffer = buffer ?? self.cameraService.currentMultiCamPixelBuffer() ?? self.latestCameraPixelBuffer()
-                let effectivePose = SpatialTrackingEngine.shared.pose(at: frame.timestamp)
+                let effectivePose = SpatialTrackingEngine.shared.pose(at: frameTimestamp)
                     ?? SpatialTrackingEngine.shared.latestPose()
                     ?? simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
                 guard let finalBuffer = effectiveBuffer else {
@@ -2375,7 +2384,7 @@ public final class CameraViewModel: ObservableObject {
                     return
                 }
                 self.isOneShotCaptured = true
-                completion(image, finalBuffer, frame, effectivePose)
+                completion(image, finalBuffer, effectiveFrame, effectivePose)
             }
         }
     }
@@ -3613,25 +3622,13 @@ public final class CameraViewModel: ObservableObject {
             haptics.triggerShutterClick()
             cameraService.stopRecordingVideo()
         } else {
-            if isDualCameraActive {
-                cameraService.stopDualCamera(primaryPreviewLayer: self.previewLayer) { [weak self] _ in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.isDualCameraActive = false
-                        self.isCameraReady = true
-                        self.showHUDNotice("Đã tắt Dual Cam để quay video")
-                        self.startVideoRecordingInternal()
-                    }
-                }
-                return
-            }
             startVideoRecordingInternal()
         }
     }
 
     private func startVideoRecordingInternal() {
         guard captureMode.isVideo, pendingCaptureMode == nil,
-              (isCameraReady || cameraService.isAnySessionRunning),
+              (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
               !isCameraHibernating, !isShutterPressing else { return }
         wantsVideoRecording = true
         if isWindowedZoomActive && windowedZoomFocalLength > 24.5 {
