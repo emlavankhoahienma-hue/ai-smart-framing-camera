@@ -13,13 +13,21 @@ public struct CameraPreviewView: UIViewRepresentable {
         view.setupLayer(session: viewModel.cameraService.captureSession)
         view.setupMetalPreview(viewModel: viewModel)
         viewModel.previewLayer = view.previewLayer
+        viewModel.previewContainerView = view
         return view
     }
 
     public func updateUIView(_ uiView: PreviewContainerView, context: Context) {
+        viewModel.previewContainerView = uiView
+        let isDual = viewModel.isDualCameraActive || viewModel.cameraService.isDualCameraActive
+        let dualLayer = isDual ? viewModel.cameraService.multiCamPrimaryPreviewLayer : nil
+        uiView.syncDualCameraPrimaryLayer(
+            dualLayer,
+            isDualActive: isDual,
+            singleSession: viewModel.cameraService.captureSession
+        )
         uiView.updateOrientation()
-        uiView.syncDualCameraPrimaryLayer(viewModel.cameraService.multiCamPrimaryPreviewLayer)
-        let activeLayer = viewModel.cameraService.multiCamPrimaryPreviewLayer ?? uiView.previewLayer
+        let activeLayer = dualLayer ?? uiView.previewLayer
         if viewModel.previewLayer !== activeLayer {
             viewModel.previewLayer = activeLayer
         }
@@ -32,6 +40,7 @@ public struct CameraPreviewView: UIViewRepresentable {
         }
         uiView.updateMetalPreviewState(
             isActive: viewModel.isFilmSimulationActive,
+            isDualCamera: isDual,
             preset: viewModel.selectedFilmPreset,
             intensity: Float(viewModel.filmSimulationIntensity)
         )
@@ -106,6 +115,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private weak var viewModel: CameraViewModel?
     private let stateLock = NSLock()
     private var isRenderingActive: Bool = false
+    private var isDualCameraMode: Bool = false
     private var currentPreset: FilmPreset = .standard
     private var currentIntensity: Float = 1.0
 
@@ -114,6 +124,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var lastFilteredCI: CIImage? = nil
     private var lastPreset: FilmPreset = .standard
     private var lastIntensity: Float = 1.0
+    private var lastFilterActive: Bool = false
     private var lastDrawableSize: CGSize = .zero
 
     init?(device: MTLDevice, viewModel: CameraViewModel) {
@@ -128,9 +139,10 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         super.init()
     }
 
-    func updateState(isActive: Bool, preset: FilmPreset, intensity: Float) {
+    func updateState(isActive: Bool, isDualCamera: Bool, preset: FilmPreset, intensity: Float) {
         stateLock.lock()
         self.isRenderingActive = isActive && preset != .standard
+        self.isDualCameraMode = isDualCamera
         self.currentPreset = preset
         self.currentIntensity = intensity
         stateLock.unlock()
@@ -140,13 +152,15 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
     func draw(in view: MTKView) {
         stateLock.lock()
-        let active = isRenderingActive
+        let filterActive = isRenderingActive
+        let dualActive = isDualCameraMode
         let preset = currentPreset
         let intensity = currentIntensity
         stateLock.unlock()
 
-        guard active, preset != .standard else { return }
-        guard let vm = self.viewModel, let pixelBuffer = vm.latestCameraPixelBuffer() else { return }
+        guard filterActive || dualActive else { return }
+        guard let vm = self.viewModel,
+              let pixelBuffer = vm.cameraService.currentMultiCamPixelBuffer() ?? vm.latestCameraPixelBuffer() else { return }
 
         guard let currentDrawable = view.currentDrawable,
               let commandBuffer = commandQueue.makeCommandBuffer() else { return }
@@ -158,6 +172,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
         // Optimization: reuse last filtered image if buffer, preset, intensity and size haven't changed
         if pixelBuffer === lastProcessedBuffer,
+           filterActive == lastFilterActive,
            preset == lastPreset,
            abs(intensity - lastIntensity) < 0.005,
            drawableSize == lastDrawableSize,
@@ -184,11 +199,17 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
                     .concatenating(CGAffineTransform(translationX: ox, y: oy)))
                 .cropped(to: CGRect(origin: .zero, size: drawableSize))
 
-            let filteredCI = FilmFilterEngine.shared.applyPreset(to: viewportCI, preset: preset, intensity: intensity) ?? viewportCI
+            let filteredCI: CIImage
+            if filterActive && preset != .standard {
+                filteredCI = FilmFilterEngine.shared.applyPreset(to: viewportCI, preset: preset, intensity: intensity) ?? viewportCI
+            } else {
+                filteredCI = viewportCI
+            }
             finalImageToRender = filteredCI
 
             lastProcessedBuffer = pixelBuffer
             lastFilteredCI = filteredCI
+            lastFilterActive = filterActive
             lastPreset = preset
             lastIntensity = intensity
             lastDrawableSize = drawableSize
@@ -219,6 +240,7 @@ public class PreviewContainerView: UIView {
         return layer as? AVCaptureVideoPreviewLayer
     }
 
+    private let dualPrimaryContainerView = PIPContainerView()
     private let focusRingView = UIView(frame: CGRect(x: 0, y: 0, width: 70, height: 70))
     private var metalView: MTKView?
     private var metalRenderer: MetalFilmSimulationRenderer?
@@ -242,6 +264,12 @@ public class PreviewContainerView: UIView {
         previewLayer?.rasterizationScale = currentDisplayScale
         previewLayer?.videoGravity = .resizeAspectFill
 
+        dualPrimaryContainerView.frame = bounds
+        dualPrimaryContainerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        dualPrimaryContainerView.isUserInteractionEnabled = false
+        dualPrimaryContainerView.isHidden = true
+        addSubview(dualPrimaryContainerView)
+
         focusRingView.layer.borderColor = UIColor.systemYellow.cgColor
         focusRingView.layer.borderWidth = 1.5
         focusRingView.layer.cornerRadius = 35
@@ -255,19 +283,27 @@ public class PreviewContainerView: UIView {
         previewLayer?.rasterizationScale = currentDisplayScale
     }
 
-    public func syncDualCameraPrimaryLayer(_ dualLayer: AVCaptureVideoPreviewLayer?) {
-        if multiCamOverlayLayer === dualLayer {
-            dualLayer?.frame = bounds
-            return
-        }
-        multiCamOverlayLayer?.removeFromSuperlayer()
-        multiCamOverlayLayer = dualLayer
-        if let dualLayer {
-            dualLayer.videoGravity = .resizeAspectFill
-            dualLayer.frame = bounds
-            dualLayer.contentsScale = currentDisplayScale
-            dualLayer.rasterizationScale = currentDisplayScale
-            layer.insertSublayer(dualLayer, at: 0)
+    public func syncDualCameraPrimaryLayer(
+        _ dualLayer: AVCaptureVideoPreviewLayer?,
+        isDualActive: Bool,
+        singleSession: AVCaptureSession
+    ) {
+        if isDualActive {
+            if previewLayer?.session != nil {
+                previewLayer?.session = nil
+            }
+            dualPrimaryContainerView.frame = bounds
+            dualPrimaryContainerView.isHidden = (dualLayer == nil)
+            dualPrimaryContainerView.setPreviewLayer(dualLayer)
+            multiCamOverlayLayer = dualLayer
+        } else {
+            multiCamOverlayLayer = nil
+            dualPrimaryContainerView.setPreviewLayer(nil)
+            dualPrimaryContainerView.isHidden = true
+            if previewLayer?.session !== singleSession {
+                previewLayer?.session = singleSession
+            }
+            updateOrientation()
         }
     }
 
@@ -292,9 +328,9 @@ public class PreviewContainerView: UIView {
         insertSubview(mtk, belowSubview: focusRingView)
     }
 
-    public func updateMetalPreviewState(isActive: Bool, preset: FilmPreset, intensity: Float) {
-        let shouldRender = isActive && preset != .standard
-        metalRenderer?.updateState(isActive: shouldRender, preset: preset, intensity: intensity)
+    public func updateMetalPreviewState(isActive: Bool, isDualCamera: Bool, preset: FilmPreset, intensity: Float) {
+        let shouldRender = (isActive && preset != .standard) || isDualCamera
+        metalRenderer?.updateState(isActive: isActive, isDualCamera: isDualCamera, preset: preset, intensity: intensity)
 
         if metalView?.isHidden != !shouldRender {
             metalView?.isHidden = !shouldRender
@@ -313,6 +349,7 @@ public class PreviewContainerView: UIView {
         super.layoutSubviews()
         previewLayer?.contentsScale = currentDisplayScale
         previewLayer?.rasterizationScale = currentDisplayScale
+        dualPrimaryContainerView.frame = bounds
         multiCamOverlayLayer?.frame = bounds
         multiCamOverlayLayer?.contentsScale = currentDisplayScale
         multiCamOverlayLayer?.rasterizationScale = currentDisplayScale

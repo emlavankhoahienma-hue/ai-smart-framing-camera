@@ -189,6 +189,7 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Services
     public let cameraService = CameraService.shared
     public weak var previewLayer: AVCaptureVideoPreviewLayer?
+    public weak var previewContainerView: PreviewContainerView?
     public let visionEngine = VisionFramingEngine.shared
     public let calculator = CompositionCalculator.shared
     public let filterEngine = FilmFilterEngine.shared
@@ -509,6 +510,17 @@ public final class CameraViewModel: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.isDualCameraActive = false
+                    self.previewContainerView?.syncDualCameraPrimaryLayer(
+                        nil,
+                        isDualActive: false,
+                        singleSession: self.cameraService.captureSession
+                    )
+                    self.previewContainerView?.updateMetalPreviewState(
+                        isActive: self.isFilmSimulationActive,
+                        isDualCamera: false,
+                        preset: self.selectedFilmPreset,
+                        intensity: Float(self.filmSimulationIntensity)
+                    )
                     self.showHUDNotice("Dual Cam: Tắt")
                 }
             }
@@ -518,9 +530,31 @@ public final class CameraViewModel: ObservableObject {
                     guard let self else { return }
                     if success {
                         self.isDualCameraActive = true
+                        self.previewContainerView?.syncDualCameraPrimaryLayer(
+                            self.cameraService.multiCamPrimaryPreviewLayer,
+                            isDualActive: true,
+                            singleSession: self.cameraService.captureSession
+                        )
+                        self.previewContainerView?.updateMetalPreviewState(
+                            isActive: self.isFilmSimulationActive,
+                            isDualCamera: true,
+                            preset: self.selectedFilmPreset,
+                            intensity: Float(self.filmSimulationIntensity)
+                        )
                         self.showHUDNotice("Dual Cam PIP: Bật")
                     } else {
                         self.isDualCameraActive = false
+                        self.previewContainerView?.syncDualCameraPrimaryLayer(
+                            nil,
+                            isDualActive: false,
+                            singleSession: self.cameraService.captureSession
+                        )
+                        self.previewContainerView?.updateMetalPreviewState(
+                            isActive: self.isFilmSimulationActive,
+                            isDualCamera: false,
+                            preset: self.selectedFilmPreset,
+                            intensity: Float(self.filmSimulationIntensity)
+                        )
                         self.showHUDNotice("Không thể mở Dual Cam")
                     }
                 }
@@ -1611,6 +1645,23 @@ public final class CameraViewModel: ObservableObject {
         cameraService.onAudioLevelsUpdated = { [weak self] left, right in
             guard let self = self, self.showAudioLevelMeter, !self.isCameraHibernating else { return }
             self.audioLevels = (left, right)
+        }
+
+        cameraService.onDualCameraStateChanged = { [weak self] isActive in
+            guard let self = self else { return }
+            self.isDualCameraActive = isActive
+            let dualLayer = isActive ? self.cameraService.multiCamPrimaryPreviewLayer : nil
+            self.previewContainerView?.syncDualCameraPrimaryLayer(
+                dualLayer,
+                isDualActive: isActive,
+                singleSession: self.cameraService.captureSession
+            )
+            self.previewContainerView?.updateMetalPreviewState(
+                isActive: self.isFilmSimulationActive,
+                isDualCamera: isActive,
+                preset: self.selectedFilmPreset,
+                intensity: Float(self.filmSimulationIntensity)
+            )
         }
     }
 

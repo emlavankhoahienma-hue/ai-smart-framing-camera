@@ -1076,6 +1076,10 @@ public final class CameraService: NSObject {
                     if primaryLayerConn.isVideoRotationAngleSupported(90) {
                         primaryLayerConn.videoRotationAngle = 90
                     }
+                    if primaryLayerConn.isVideoMirroringSupported {
+                        primaryLayerConn.automaticallyAdjustsVideoMirroring = false
+                        primaryLayerConn.isVideoMirrored = false
+                    }
                 }
             }
 
@@ -1154,12 +1158,21 @@ public final class CameraService: NSObject {
             self.secondaryDeviceInput = secondaryInput
             self.secondaryPreviewLayer = pipLayer
             self.isDualCameraActive = true
+            self.publishSessionRunning(multiSession.isRunning && !multiSession.isInterrupted)
 
             DispatchQueue.main.async {
                 self.onDualCameraStateChanged?(true)
                 completion(true)
             }
         }
+    }
+
+    public func currentMultiCamPixelBuffer() -> CVPixelBuffer? {
+        guard isDualCameraActive else { return nil }
+        multiCamFrameLock.lock()
+        let pb = latestMultiCamPixelBuffer
+        multiCamFrameLock.unlock()
+        return pb
     }
 
     public func stopDualCamera(primaryPreviewLayer: AVCaptureVideoPreviewLayer? = nil, completion: (((Bool) -> Void))? = nil) {
