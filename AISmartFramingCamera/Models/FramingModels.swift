@@ -160,6 +160,15 @@ public enum AISessionState: Equatable {
         default: return true
         }
     }
+
+    public var isTargetPlacedOrAligned: Bool {
+        switch self {
+        case .targetPlaced, .alignmentPerfect:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 // MARK: - Tracking Quality State Machine (Hybrid Optical + Gyro State)

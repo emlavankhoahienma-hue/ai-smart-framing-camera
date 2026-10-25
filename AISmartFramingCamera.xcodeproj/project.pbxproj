@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		C20000000000000000000069 /* DualCameraAssetRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000069 /* DualCameraAssetRecorder.swift */; };
+		C20000000000000000000070 /* SmartSceneExposureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000070 /* SmartSceneExposureEngine.swift */; };
 		C20000000000000000000068 /* DualCameraPIPOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000068 /* DualCameraPIPOverlayView.swift */; };
 		C20000000000000000000064 /* CompositionTuning.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000064 /* CompositionTuning.swift */; };
 		C20000000000000000000065 /* CompositionPureCalculations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000065 /* CompositionPureCalculations.swift */; };
@@ -86,6 +87,7 @@
 
 /* Begin PBXFileReference section */
 		C10000000000000000000069 /* DualCameraAssetRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraAssetRecorder.swift; sourceTree = "<group>"; };
+		C10000000000000000000070 /* SmartSceneExposureEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartSceneExposureEngine.swift; sourceTree = "<group>"; };
 		C10000000000000000000068 /* DualCameraPIPOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraPIPOverlayView.swift; sourceTree = "<group>"; };
 		C10000000000000000000064 /* CompositionTuning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionTuning.swift; sourceTree = "<group>"; };
 		C10000000000000000000065 /* CompositionPureCalculations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionPureCalculations.swift; sourceTree = "<group>"; };
@@ -250,6 +252,7 @@
 				C10000000000000000000065 /* CompositionPureCalculations.swift */,
 				C10000000000000000000066 /* CompositionExperiments.swift */,
 				C10000000000000000000069 /* DualCameraAssetRecorder.swift */,
+				C10000000000000000000070 /* SmartSceneExposureEngine.swift */,
 				C10000000000000000000060 /* PhotographicCompositionModel.swift */,
 				C30000000000000000000001 /* FilmSimulations */,
 			);
@@ -472,6 +475,7 @@
 				C20000000000000000000067 /* CompositionDebugOverlayView.swift in Sources */,
 				C20000000000000000000068 /* DualCameraPIPOverlayView.swift in Sources */,
 				C20000000000000000000069 /* DualCameraAssetRecorder.swift in Sources */,
+				C20000000000000000000070 /* SmartSceneExposureEngine.swift in Sources */,
 				C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -48,7 +48,7 @@ public struct AIStatusHUDView: View {
                 )
 
                 // Chỉ báo kế hoạch 3 bước đồng bộ: Target -> Zoom -> Chỉnh sáng EV
-                if viewModel.aiSessionState == .targetPlaced || viewModel.aiSessionState == .alignmentPerfect {
+                if viewModel.aiSessionState.isTargetPlacedOrAligned {
                     HStack(spacing: 6) {
                         Label("Target", systemImage: "scope")
                             .font(.system(size: 9.5, weight: .semibold))
