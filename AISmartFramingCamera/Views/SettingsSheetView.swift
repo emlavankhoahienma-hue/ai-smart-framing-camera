@@ -165,6 +165,7 @@ public struct SettingsSheetView: View {
                 Text("Thao tác này sẽ hủy khóa chủ thể hiện tại, dừng theo dõi con quay và đưa camera về trạng thái ngắm tự do.")
             }
             .onAppear {
+                geminiKeyInput = viewModel.geminiService.apiKey
                 selectedModel = viewModel.geminiService.selectedModel
                 customModelInput = viewModel.geminiService.customModelName
                 customEndpointInput = viewModel.geminiService.customEndpointURL
@@ -960,28 +961,61 @@ struct AIFramingSettingsSection: View {
 
                 Divider().background(Color.white.opacity(0.06))
 
-                // 1. Chọn Nhà cung cấp API (Multi-Provider 2026)
-                SettingsPickerRow(
-                    title: "Nhà cung cấp API",
-                    subtitle: "OpenRouter, Google Gemini, OpenAI, Claude, Groq, xAI, DeepSeek, Custom",
-                    icon: "server.rack",
-                    selectedValueString: viewModel.geminiService.selectedProvider.shortBadge
-                ) {
-                    Picker("", selection: Binding(
-                        get: { viewModel.geminiService.selectedProvider },
-                        set: { newProvider in
-                            viewModel.geminiService.selectedProvider = newProvider
-                        }
-                    )) {
-                        ForEach(AICloudProvider.allCases) { provider in
-                            Text(provider.displayName).tag(provider)
+                // 1. Thanh chọn Nhà cung cấp API (Provider Selector)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("Nhà cung cấp API", systemImage: "server.rack")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                        Spacer()
+                        Text(viewModel.geminiService.selectedProvider.displayName)
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundColor(AlignTheme.electricCyan)
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(AICloudProvider.allCases) { provider in
+                                let isSelected = viewModel.geminiService.selectedProvider == provider
+                                Button(action: {
+                                    UISelectionFeedbackGenerator().selectionChanged()
+                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                        viewModel.geminiService.selectedProvider = provider
+                                        geminiKeyInput = viewModel.geminiService.apiKey
+                                        let available = AIVisionModel.models(for: provider)
+                                        if !available.contains(selectedModel) {
+                                            let def = AIVisionModel.defaultModel(for: provider)
+                                            selectedModel = def
+                                            viewModel.geminiService.selectedModel = def
+                                        }
+                                    }
+                                }) {
+                                    HStack(spacing: 5) {
+                                        if isSelected {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 11, weight: .bold))
+                                        }
+                                        Text(provider.shortBadge)
+                                            .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                                    }
+                                    .foregroundColor(isSelected ? .black : .white.opacity(0.85))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(
+                                        isSelected ? AnyView(AlignTheme.signatureGradient) : AnyView(Color(red: 0.08, green: 0.09, blue: 0.12))
+                                    )
+                                    .clipShape(Capsule())
+                                    .overlay(
+                                        Capsule().stroke(isSelected ? Color.clear : Color.white.opacity(0.12), lineWidth: 1)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
-                    .pickerStyle(.menu)
-                    .tint(.white)
                 }
 
-                // Custom Endpoint URL (Hiển thị khi chọn Custom hoặc khi người dùng muốn ghi đè Base URL)
+                // Custom Endpoint URL (Hiển thị khi chọn Custom hoặc khi người dùng có Custom Endpoint)
                 if viewModel.geminiService.selectedProvider == .custom || !customEndpointInput.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("BASE URL / ENDPOINT TÙY CHỈNH (OPENAI-COMPATIBLE):")
@@ -1015,93 +1049,89 @@ struct AIFramingSettingsSection: View {
                     }
                 }
 
-                // 2. Hiển thị & Nhập API Key
-                HStack(spacing: 10) {
-                    Image(systemName: "key.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white)
-
-                    if viewModel.geminiService.hasAPIKey {
-                        if isKeyVisible {
-                            Text(viewModel.geminiService.apiKey)
-                                .font(.system(size: 12.5, design: .monospaced))
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                // 2. DUY NHẤT 1 Ô NHẬP KHÓA API THÔNG MINH
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("Khóa API \(viewModel.geminiService.selectedProvider.shortBadge)", systemImage: "key.fill")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundColor(.white)
+                        Spacer()
+                        if viewModel.geminiService.hasAPIKey {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.shield.fill")
+                                    .font(.system(size: 10))
+                                Text("Đã lưu Keychain")
+                                    .font(.system(size: 10.5, weight: .bold))
+                            }
+                            .foregroundColor(.green)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.green.opacity(0.15))
+                            .clipShape(Capsule())
                         } else {
-                            Text("••••••••••••••••••••••••")
-                                .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.85))
+                            Text("Chưa có Key")
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundColor(.white.opacity(0.40))
                         }
-                    } else {
-                        Text("Chưa có API Key cho \(viewModel.geminiService.selectedProvider.shortBadge)")
-                            .font(.system(size: 12.5))
-                            .foregroundColor(Color.white.opacity(0.45))
                     }
 
-                    Spacer()
+                    HStack(spacing: 8) {
+                        Group {
+                            if isKeyVisible {
+                                TextField(viewModel.geminiService.selectedProvider.keyPlaceholder, text: $geminiKeyInput)
+                            } else {
+                                SecureField(viewModel.geminiService.selectedProvider.keyPlaceholder, text: $geminiKeyInput)
+                            }
+                        }
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.white)
+                        .tint(.white)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
 
-                    if viewModel.geminiService.hasAPIKey {
+                        // Nút Hiện/Ẩn
                         Button(action: { isKeyVisible.toggle() }) {
                             Image(systemName: isKeyVisible ? "eye.slash.fill" : "eye.fill")
-                                .font(.system(size: 14))
+                                .font(.system(size: 13))
                                 .foregroundColor(Color.white.opacity(0.65))
                                 .frame(width: 34, height: 34)
+                                .background(Color(red: 0.08, green: 0.09, blue: 0.12))
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .buttonStyle(.plain)
 
-                        Button(role: .destructive, action: { showDeleteKeyConfirmation = true }) {
-                            Image(systemName: "trash.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(.red.opacity(0.85))
-                                .frame(width: 34, height: 34)
+                        // Nút Xóa Key (chỉ hiển thị khi có key hoặc đang gõ)
+                        if viewModel.geminiService.hasAPIKey || !geminiKeyInput.isEmpty {
+                            Button(role: .destructive, action: {
+                                geminiKeyInput = ""
+                                viewModel.geminiService.apiKey = ""
+                                toastMessage = "Đã xóa API Key của \(viewModel.geminiService.selectedProvider.shortBadge)"
+                            }) {
+                                Image(systemName: "trash.fill")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.red.opacity(0.85))
+                                    .frame(width: 34, height: 34)
+                                    .background(Color(red: 0.08, green: 0.09, blue: 0.12))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(red: 0.05, green: 0.05, blue: 0.07))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
 
-                // Ô nhập nhanh hoặc cập nhật API Key mới + Lưu thành Profile Đa kết nối
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        SecureField(viewModel.geminiService.selectedProvider.keyPlaceholder, text: $geminiKeyInput)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(.white)
-                            .tint(.white)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 9)
-                            .background(Color(red: 0.05, green: 0.05, blue: 0.07))
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                            )
-
+                        // Nút Lưu Key
                         Button(action: {
                             let trimmed = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !trimmed.isEmpty else { return }
                             viewModel.geminiService.apiKey = trimmed
-                            viewModel.geminiService.addOrUpdateProfile(
-                                label: profileLabelInput,
-                                provider: viewModel.geminiService.selectedProvider,
-                                apiKey: trimmed,
-                                customEndpoint: customEndpointInput,
-                                modelID: customModelInput.isEmpty ? selectedModel.rawValue : customModelInput
-                            )
                             viewModel.useGeminiForAnalysis = true
-                            geminiKeyInput = ""
-                            profileLabelInput = ""
-                            toastMessage = "Đã lưu API Key & tự động kích hoạt Cloud AI!"
+                            toastMessage = "Đã lưu API Key cho \(viewModel.geminiService.selectedProvider.shortBadge)!"
                         }) {
                             Text("Lưu Key")
                                 .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -1111,76 +1141,21 @@ struct AIFramingSettingsSection: View {
                                 .background(AlignTheme.signatureGradient)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
-                    }
-
-                    // Danh sách cấu hình kết nối đã lưu (Multi-API Profiles)
-                    if !viewModel.geminiService.savedProfiles.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("CÁC KẾT NỐI ĐÃ LƯU (CHẠM ĐỂ CHUYỂN NHANH):")
-                                .font(.system(size: 10, weight: .bold, design: .rounded))
-                                .foregroundColor(.white.opacity(0.48))
-                                .padding(.top, 4)
-
-                            ForEach(viewModel.geminiService.savedProfiles) { prof in
-                                let isCurrent = viewModel.geminiService.activeProfileID == prof.id
-                                HStack(spacing: 8) {
-                                    Button(action: {
-                                        viewModel.geminiService.activateProfile(prof)
-                                        selectedModel = viewModel.geminiService.selectedModel
-                                        customModelInput = viewModel.geminiService.customModelName
-                                        customEndpointInput = viewModel.geminiService.customEndpointURL
-                                        viewModel.useGeminiForAnalysis = true
-                                        toastMessage = "Đã chuyển sang \(prof.label)"
-                                    }) {
-                                        HStack(spacing: 8) {
-                                            Image(systemName: isCurrent ? "checkmark.circle.fill" : "circle")
-                                                .foregroundColor(isCurrent ? AlignTheme.electricCyan : .white.opacity(0.4))
-                                                .font(.system(size: 13))
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text("\(prof.provider.shortBadge) • \(prof.modelID)")
-                                                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                                                    .foregroundColor(.white)
-                                                    .lineLimit(1)
-                                                Text("Key: \(prof.apiKeyPreview)")
-                                                    .font(.system(size: 10, design: .monospaced))
-                                                    .foregroundColor(.white.opacity(0.55))
-                                            }
-                                            Spacer()
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    Button(role: .destructive, action: {
-                                        viewModel.geminiService.deleteProfile(prof)
-                                    }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.white.opacity(0.35))
-                                            .font(.system(size: 14))
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(isCurrent ? AlignTheme.electricCyan.opacity(0.12) : Color.white.opacity(0.04))
-                                )
-                            }
-                        }
+                        .buttonStyle(.plain)
                     }
                 }
 
                 Divider().background(Color.white.opacity(0.06))
 
-                // 3. Chọn Model 2026 có sẵn hoặc Tải trực tiếp danh sách Model từ Server
+                // 3. Chọn Model theo đúng Hãng được chọn
                 SettingsPickerRow(
-                    title: "Model 2026 chuẩn",
+                    title: "Model thẩm mỹ (\(viewModel.geminiService.selectedProvider.shortBadge))",
                     subtitle: selectedModel.subtitle,
                     icon: "cpu",
                     selectedValueString: selectedModel.displayName
                 ) {
                     Picker("", selection: $selectedModel) {
-                        ForEach(AIVisionModel.allCases) { model in
+                        ForEach(AIVisionModel.models(for: viewModel.geminiService.selectedProvider)) { model in
                             Text(model.displayName).tag(model)
                         }
                     }

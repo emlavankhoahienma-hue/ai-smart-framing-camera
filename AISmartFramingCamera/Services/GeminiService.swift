@@ -225,6 +225,20 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     case grok4Vision = "x-ai/grok-4"
     case qwen25VL72B = "qwen/qwen2.5-vl-72b-instruct"
     case llamaVision = "meta-llama/llama-3.2-11b-vision-instruct"
+    // Bổ sung Model mới nhất 2026 (Giữ nguyên 100% model cũ)
+    case gemini20ProExp = "google/gemini-2.0-pro-exp-02-05"
+    case gemini15Flash8B = "google/gemini-1.5-flash-8b"
+    case gpt45 = "openai/gpt-4.5-preview"
+    case gpt4o = "openai/gpt-4o"
+    case o1 = "openai/o1"
+    case o3Mini = "openai/o3-mini"
+    case claude35Sonnet = "anthropic/claude-3.5-sonnet"
+    case groqLlama33 = "groq/llama-3.3-70b-versatile"
+    case groqLlama32_90B = "groq/llama-3.2-90b-vision-preview"
+    case deepseekChat = "deepseek/deepseek-chat"
+    case deepseekReasoner = "deepseek/deepseek-reasoner"
+    case deepseekVL2 = "deepseek/deepseek-vl2"
+    case grok2Vision = "x-ai/grok-2-vision-1212"
 
     public var id: String { rawValue }
 
@@ -243,18 +257,31 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .gemini25Flash:      return "Gemini 2.5 Flash Vision"
         case .gemini25Pro:        return "Gemini 2.5 Pro Vision"
         case .gemini20Flash:      return "Gemini 2.0 Flash"
+        case .gemini20ProExp:     return "Gemini 2.0 Pro Exp (Google)"
         case .geminiFlash15:      return "Gemini 1.5 Flash"
         case .geminiPro15:        return "Gemini 1.5 Pro"
+        case .gemini15Flash8B:    return "Gemini 1.5 Flash 8B (Google)"
         case .gpt5:               return "OpenAI GPT-5 Vision (2026 Flagship)"
         case .gpt5Mini:           return "OpenAI GPT-5 Mini Vision (Nhanh)"
+        case .gpt45:              return "OpenAI GPT-4.5 Preview (2026)"
+        case .gpt4o:              return "OpenAI GPT-4o Omni Vision"
         case .gpt41:              return "OpenAI GPT-4.1 Vision"
         case .gpt41Mini:          return "OpenAI GPT-4.1 Mini (Tiết kiệm)"
+        case .o1:                 return "OpenAI o1 Reasoning Vision"
+        case .o3Mini:             return "OpenAI o3-mini Vision (2026)"
         case .o4MiniHigh:         return "OpenAI o4-mini High (Suy luận ảnh)"
         case .gpt4oMini:          return "OpenAI GPT-4o Mini"
         case .claude45Sonnet:     return "Claude 4.5 Sonnet Vision (2026)"
         case .claude4Sonnet:      return "Claude 4 Sonnet Vision"
         case .claude37Sonnet:     return "Claude 3.7 Sonnet Vision"
+        case .claude35Sonnet:     return "Claude 3.5 Sonnet Vision"
         case .claude35Haiku:      return "Claude 3.5 Haiku"
+        case .groqLlama33:        return "Groq Llama 3.3 70B Versatile"
+        case .groqLlama32_90B:    return "Groq Llama 3.2 90B Vision"
+        case .deepseekChat:       return "DeepSeek V3 Chat (DeepSeek)"
+        case .deepseekReasoner:   return "DeepSeek R1 Reasoner (DeepSeek)"
+        case .deepseekVL2:        return "DeepSeek VL2 Vision (DeepSeek)"
+        case .grok2Vision:        return "xAI Grok 2 Vision"
         case .grok4Vision:        return "xAI Grok 4 Vision (2026)"
         case .qwen25VL72B:        return "Qwen 2.5 VL 72B Instruct"
         case .llamaVision:        return "Llama 3.2 11B Vision"
@@ -265,9 +292,9 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         switch self {
         case .freeVision, .gemini25FlashFree, .qwen3VLFree, .llama4MaverickFree:
             return "Miễn phí qua OpenRouter — tự động xoay vòng dự phòng khi quá tải"
-        case .gemini31FlashLite, .gemini25Flash, .gpt5Mini, .gpt41Mini, .gpt4oMini:
+        case .gemini31FlashLite, .gemini25Flash, .gemini20Flash, .gemini15Flash8B, .gpt5Mini, .gpt41Mini, .gpt4oMini, .o3Mini:
             return "Tốc độ phản hồi cực nhanh (<1.2s), tối ưu tiết kiệm token"
-        case .gemini31Pro, .gemini25Pro, .gpt5, .claude45Sonnet, .claude4Sonnet, .o4MiniHigh:
+        case .gemini31Pro, .gemini25Pro, .gemini20ProExp, .gpt5, .gpt45, .gpt4o, .claude45Sonnet, .claude4Sonnet, .claude37Sonnet, .o1, .o4MiniHigh:
             return "Độ chính xác bố cục & thẩm mỹ nhiếp ảnh đỉnh cao 2026"
         default:
             return "Mô hình thị giác đa phương thức thế hệ mới 2026"
@@ -280,6 +307,89 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             return "google/gemini-2.5-flash"
         default:
             return rawValue
+        }
+    }
+
+    /// Lọc danh sách Model phù hợp theo đúng Hãng API được chọn
+    public static func models(for provider: AICloudProvider) -> [AIVisionModel] {
+        switch provider {
+        case .googleGemini:
+            return [
+                .autoStrongest,
+                .gemini25Flash,
+                .gemini25Pro,
+                .gemini20Flash,
+                .gemini20ProExp,
+                .geminiFlash15,
+                .geminiPro15,
+                .gemini15Flash8B,
+                .gemini31FlashLite,
+                .gemini31Pro,
+                .gemini37Flash,
+                .gemini36Flash,
+                .gemini35Flash,
+                .gemini25FlashFree
+            ]
+        case .openAI:
+            return [
+                .autoStrongest,
+                .gpt4oMini,
+                .gpt4o,
+                .gpt45,
+                .gpt5,
+                .gpt5Mini,
+                .gpt41,
+                .gpt41Mini,
+                .o1,
+                .o3Mini,
+                .o4MiniHigh
+            ]
+        case .anthropic:
+            return [
+                .autoStrongest,
+                .claude37Sonnet,
+                .claude35Sonnet,
+                .claude35Haiku,
+                .claude4Sonnet,
+                .claude45Sonnet
+            ]
+        case .groq:
+            return [
+                .autoStrongest,
+                .llamaVision,
+                .groqLlama33,
+                .groqLlama32_90B,
+                .llama4MaverickFree
+            ]
+        case .deepSeek:
+            return [
+                .autoStrongest,
+                .deepseekChat,
+                .deepseekReasoner,
+                .deepseekVL2
+            ]
+        case .xAI:
+            return [
+                .autoStrongest,
+                .grok2Vision,
+                .grok4Vision
+            ]
+        case .openRouter, .custom:
+            return allCases
+        }
+    }
+
+    /// Model mặc định tối ưu theo từng Hãng
+    public static func defaultModel(for provider: AICloudProvider) -> AIVisionModel {
+        switch provider {
+        case .googleGemini: return .gemini25Flash
+        case .openAI: return .gpt4oMini
+        case .anthropic: return .claude37Sonnet
+        case .groq: return .llamaVision
+        case .deepSeek: return .deepseekChat
+        case .xAI: return .grok2Vision
+        case .openRouter: return .freeVision
+        case .custom: return .autoStrongest
         }
     }
 
@@ -305,8 +415,63 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public static func fallbackChain(selected: AIVisionModel, customModelName: String, provider: AICloudProvider = .openRouter) -> [String] {
         let custom = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
         var preferred = custom.isEmpty ? selected.technicalModelID : custom
-        if provider == .googleGemini && preferred.hasPrefix("google/") {
-            preferred = String(preferred.dropFirst("google/".count)).replacingOccurrences(of: ":free", with: "")
+
+        if provider == .googleGemini {
+            var cleanModel = preferred
+            if cleanModel.hasPrefix("google/") {
+                cleanModel = String(cleanModel.dropFirst("google/".count))
+            }
+            cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
+            if cleanModel == "gemini-flash-1.5" { cleanModel = "gemini-1.5-flash" }
+            if cleanModel == "gemini-pro-1.5" { cleanModel = "gemini-1.5-pro" }
+            if cleanModel == "gemini-2.0-flash-001" { cleanModel = "gemini-2.0-flash" }
+            if cleanModel == "auto" { cleanModel = "gemini-2.5-flash" }
+            let candidates = [cleanModel, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+            var unique: [String] = []
+            for c in candidates {
+                if !unique.contains(c) { unique.append(c) }
+            }
+            return unique
+        } else if provider == .openAI {
+            var cleanModel = preferred
+            if cleanModel.hasPrefix("openai/") {
+                cleanModel = String(cleanModel.dropFirst("openai/".count))
+            }
+            cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
+            if cleanModel == "auto" { cleanModel = "gpt-4o-mini" }
+            let candidates = [cleanModel, "gpt-4o-mini", "gpt-4o", "gpt-4.5-preview"]
+            var unique: [String] = []
+            for c in candidates {
+                if !unique.contains(c) { unique.append(c) }
+            }
+            return unique
+        } else if provider == .anthropic {
+            var cleanModel = preferred
+            if cleanModel.hasPrefix("anthropic/") {
+                cleanModel = String(cleanModel.dropFirst("anthropic/".count))
+            }
+            cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
+            if cleanModel == "auto" { cleanModel = "claude-3-7-sonnet-20250219" }
+            let candidates = [cleanModel, "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"]
+            var unique: [String] = []
+            for c in candidates {
+                if !unique.contains(c) { unique.append(c) }
+            }
+            return unique
+        } else if provider == .groq {
+            var cleanModel = preferred
+            if cleanModel.hasPrefix("groq/") || cleanModel.hasPrefix("meta-llama/") {
+                let parts = cleanModel.split(separator: "/")
+                if parts.count == 2 { cleanModel = String(parts[1]) }
+            }
+            cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
+            if cleanModel == "auto" { cleanModel = "llama-3.2-11b-vision-preview" }
+            let candidates = [cleanModel, "llama-3.2-11b-vision-preview", "llama-3.2-90b-vision-preview"]
+            var unique: [String] = []
+            for c in candidates {
+                if !unique.contains(c) { unique.append(c) }
+            }
+            return unique
         } else if provider != .openRouter && preferred.contains("/") {
             let parts = preferred.split(separator: "/")
             if parts.count == 2 {
@@ -442,17 +607,18 @@ public enum GeminiError: LocalizedError {
     case allModelsFailed(String)
 
     public var errorDescription: String? {
+        let providerName = GeminiService.shared.selectedProvider.displayName
         switch self {
         case .noAPIKey:
-            return "Chưa cài OpenRouter API Key. Mở Cài đặt để dán key (sk-or-...)."
+            return "Chưa cài đặt API Key. Mở Cài đặt để nhập key cho \(providerName)."
         case .invalidAPIKey(let msg):
-            return "OpenRouter API Key không hợp lệ: \(msg)."
+            return "API Key không hợp lệ (\(providerName)): \(msg)."
         case .insufficientCredits:
-            return "Model đã chọn cần credits OpenRouter. Đã tắt cloud và chuyển sang AI cục bộ; chọn model :free nếu muốn dùng lượt miễn phí."
+            return "Tài khoản \(providerName) không đủ số dư/credits. Đã chuyển sang AI Neural Engine cục bộ."
         case .freeQuotaReached:
-            return "OpenRouter đang giới hạn lượt miễn phí. AI cục bộ vẫn dùng được, không cần chờ cloud."
+            return "\(providerName) đang giới hạn lượt yêu cầu. Đang dùng AI Neural Engine cục bộ."
         case .rateLimited(let msg):
-            return "Model OpenRouter tạm thời bận hoặc hết hạn mức/credits: \(msg)."
+            return "Model \(providerName) tạm thời bận hoặc hết hạn mức/quota: \(msg)."
         case .imageConversionFailed:
             return "Không thể chuyển đổi ảnh gửi AI."
         case .invalidURL:
@@ -460,14 +626,14 @@ public enum GeminiError: LocalizedError {
         case .networkError(let e):
             return "Lỗi mạng: \(e.localizedDescription)"
         case .invalidResponse:
-            return "Dữ liệu OpenRouter trả về không đúng định dạng."
+            return "Dữ liệu \(providerName) trả về không đúng định dạng."
         case .parseError(let msg):
             return "Lỗi AI (\(msg))"
         case .allModelsFailed(let msg):
-            if msg.isEmpty || msg == "Tất cả model OpenRouter đều bận." {
-                return "Tất cả model OpenRouter đều bận hoặc hết hạn mức/credits. Đang dùng AI Neural Engine cục bộ."
+            if msg.isEmpty || msg.contains("đều bận") {
+                return "Tất cả model của \(providerName) đều bận hoặc hết hạn mức. Đang dùng AI Neural Engine cục bộ."
             }
-            return "Tất cả model OpenRouter đều bận: \(msg)"
+            return "Các model \(providerName) đều bận: \(msg)"
         }
     }
 }
@@ -574,21 +740,24 @@ public final class GeminiService: ObservableObject {
                !provVal.isEmpty {
                 return provVal
             }
-            if let keychainVal = KeychainHelper.standard.read(forKey: "openrouter_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !keychainVal.isEmpty {
-                return keychainVal
-            }
-            if let keychainVal = KeychainHelper.standard.read(forKey: "gemini_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !keychainVal.isEmpty {
-                return keychainVal
-            }
-            if let legacyKey = UserDefaults.standard.string(forKey: "openrouter_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !legacyKey.isEmpty {
-                KeychainHelper.standard.save(legacyKey, forKey: "openrouter_api_key")
-                UserDefaults.standard.removeObject(forKey: "openrouter_api_key")
-                return legacyKey
-            }
-            if let legacyKey = UserDefaults.standard.string(forKey: "gemini_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !legacyKey.isEmpty {
-                KeychainHelper.standard.save(legacyKey, forKey: "openrouter_api_key")
-                UserDefaults.standard.removeObject(forKey: "gemini_api_key")
-                return legacyKey
+            if selectedProvider == .openRouter {
+                if let keychainVal = KeychainHelper.standard.read(forKey: "openrouter_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !keychainVal.isEmpty {
+                    return keychainVal
+                }
+                if let legacyKey = UserDefaults.standard.string(forKey: "openrouter_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !legacyKey.isEmpty {
+                    KeychainHelper.standard.save(legacyKey, forKey: "openrouter_api_key")
+                    UserDefaults.standard.removeObject(forKey: "openrouter_api_key")
+                    return legacyKey
+                }
+            } else if selectedProvider == .googleGemini {
+                if let keychainVal = KeychainHelper.standard.read(forKey: "gemini_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !keychainVal.isEmpty {
+                    return keychainVal
+                }
+                if let legacyKey = UserDefaults.standard.string(forKey: "gemini_api_key")?.trimmingCharacters(in: .whitespacesAndNewlines), !legacyKey.isEmpty {
+                    KeychainHelper.standard.save(legacyKey, forKey: "ai_provider_key_google_gemini")
+                    UserDefaults.standard.removeObject(forKey: "gemini_api_key")
+                    return legacyKey
+                }
             }
             return ""
         }
@@ -599,6 +768,7 @@ public final class GeminiService: ObservableObject {
                 KeychainHelper.standard.delete(forKey: keychainKeyForProvider(selectedProvider))
                 if selectedProvider == .openRouter {
                     KeychainHelper.standard.delete(forKey: "openrouter_api_key")
+                } else if selectedProvider == .googleGemini {
                     KeychainHelper.standard.delete(forKey: "gemini_api_key")
                 }
                 onActiveKeyConfigured?(hasAPIKey)
@@ -618,6 +788,8 @@ public final class GeminiService: ObservableObject {
                 KeychainHelper.standard.save(clean, forKey: keychainKeyForProvider(selectedProvider))
                 if selectedProvider == .openRouter {
                     KeychainHelper.standard.save(clean, forKey: "openrouter_api_key")
+                } else if selectedProvider == .googleGemini {
+                    KeychainHelper.standard.save(clean, forKey: "gemini_api_key")
                 }
                 onActiveKeyConfigured?(true)
             }
@@ -855,7 +1027,7 @@ public final class GeminiService: ObservableObject {
     public func testAPIKey(completion: @escaping (Bool, String) -> Void) {
         let key = apiKey
         guard !key.isEmpty else {
-            completion(false, "API Key đang trống. Hãy dán OpenRouter API Key (sk-or-...).")
+            completion(false, "API Key cho \(selectedProvider.displayName) đang trống. Hãy nhập API Key trong Cài đặt.")
             return
         }
 
@@ -871,7 +1043,7 @@ public final class GeminiService: ObservableObject {
         completion: @escaping (Bool, String) -> Void
     ) {
         guard index < candidates.count else {
-            completion(false, "Da thu tat ca model OpenRouter nhung key bi gioi han quota hoac het credits. Hay kiem tra so du tren openrouter.ai.")
+            completion(false, "Đã thử các model của \(selectedProvider.displayName) nhưng kết nối không thành công. Hãy kiểm tra API key hoặc hạn mức của tài khoản.")
             return
         }
 
@@ -888,8 +1060,16 @@ public final class GeminiService: ObservableObject {
         }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
-        request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
+        if selectedProvider == .googleGemini {
+            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        } else if selectedProvider == .anthropic {
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        }
+        if selectedProvider == .openRouter {
+            request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
+        }
 
         let body: [String: Any] = [
             "model": testModel,
@@ -911,7 +1091,7 @@ public final class GeminiService: ObservableObject {
             }
 
             guard let data = data, let http = response as? HTTPURLResponse else {
-                DispatchQueue.main.async { completion(false, "Không nhận được phản hồi từ OpenRouter.") }
+                DispatchQueue.main.async { completion(false, "Không nhận được phản hồi từ \(self.selectedProvider.displayName).") }
                 return
             }
 
@@ -919,18 +1099,18 @@ public final class GeminiService: ObservableObject {
                 DispatchQueue.main.async {
                     self.lastModelUsed = testModel
                     self.lastLatencyMs = latency
-                    completion(true, "\u{2705} Kết nối thành công! [OpenRouter] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
+                    completion(true, "✅ Kết nối thành công! [\(self.selectedProvider.displayName)] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
                 }
             } else if http.statusCode == 429,
                       testModel.hasSuffix(":free") || testModel == "openrouter/free" {
                 DispatchQueue.main.async {
-                    completion(false, "\u{274c} OpenRouter đang giới hạn lượt miễn phí. Kiểm tra này cũng tính là một yêu cầu API.")
+                    completion(false, "❌ \(self.selectedProvider.displayName) đang giới hạn lượt miễn phí. Kiểm tra này cũng tính là một yêu cầu API.")
                 }
             } else if http.statusCode == 404 || http.statusCode == 429 || http.statusCode == 503 || http.statusCode == 502 {
                 self.testModelCandidate(candidates: candidates, index: index + 1, key: key, completion: completion)
             } else {
                 let msg = Self.extractErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
-                DispatchQueue.main.async { completion(false, "\u{274c} Lỗi OpenRouter (\(http.statusCode)): \(msg)") }
+                DispatchQueue.main.async { completion(false, "❌ Lỗi \(self.selectedProvider.displayName) (\(http.statusCode)): \(msg)") }
             }
         }.resume()
     }
@@ -1328,13 +1508,21 @@ public final class GeminiService: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
-        request.setValue("AlignAI Video Director", forHTTPHeaderField: "X-Title")
+        if selectedProvider == .googleGemini {
+            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        } else if selectedProvider == .anthropic {
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        }
+        if selectedProvider == .openRouter {
+            request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("AlignAI Video Director", forHTTPHeaderField: "X-Title")
+        }
         if currentModelID.hasSuffix(":free") || currentModelID == "openrouter/free" {
             request.timeoutInterval = 45
         }
 
-        let requestBody: [String: Any] = [
+        var requestBody: [String: Any] = [
             "model": currentModelID,
             "messages": [
                 [
@@ -1354,11 +1542,13 @@ public final class GeminiService: ObservableObject {
                 ]
             ],
             "response_format": ["type": "json_object"],
-            "reasoning": ["exclude": true],
             "temperature": 0.40,
             "top_p": 0.90,
             "max_tokens": 1024
         ]
+        if selectedProvider == .openRouter {
+            requestBody["reasoning"] = ["exclude": true]
+        }
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
             let fallback = Self.generateLocalVideoGuidance(
@@ -1490,7 +1680,7 @@ public final class GeminiService: ObservableObject {
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
         guard index < chain.count else {
-            let finalMsg = lastErrorMsg.isEmpty ? "Tất cả model Gemini đều bận." : lastErrorMsg
+            let finalMsg = lastErrorMsg.isEmpty ? "Tất cả model của \(selectedProvider.displayName) đều bận." : lastErrorMsg
             completion(.failure(.allModelsFailed(finalMsg)))
             return
         }
@@ -1559,10 +1749,18 @@ public final class GeminiService: ObservableObject {
         }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
-        request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
+        if selectedProvider == .googleGemini {
+            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        } else if selectedProvider == .anthropic {
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        }
+        if selectedProvider == .openRouter {
+            request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
+        }
 
-        let requestBody: [String: Any] = [
+        var requestBody: [String: Any] = [
             "model": modelID,
             "messages": [
                 [
@@ -1582,11 +1780,13 @@ public final class GeminiService: ObservableObject {
                 ]
             ],
             "response_format": ["type": "json_object"],
-            "reasoning": ["exclude": true],
             "temperature": 0.20,
             "top_p": 0.90,
             "max_tokens": 420
         ]
+        if selectedProvider == .openRouter {
+            requestBody["reasoning"] = ["exclude": true]
+        }
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
             completion(.failure(.parseError("Không thể tạo JSON")))
@@ -1612,7 +1812,7 @@ public final class GeminiService: ObservableObject {
                 let errorDetails = Self.extractErrorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)"
 
                 if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-                    DispatchQueue.main.async { completion(.failure(.invalidAPIKey("OpenRouter: \(errorDetails)"))) }
+                    DispatchQueue.main.async { completion(.failure(.invalidAPIKey("\(self.selectedProvider.displayName): \(errorDetails)"))) }
                     return
                 }
                 if httpResponse.statusCode == 402 {
