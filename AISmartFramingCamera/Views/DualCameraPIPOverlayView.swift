@@ -72,6 +72,7 @@ public struct DualCameraPIPOverlayView: View {
     @State private var currentCorner: PIPCorner = .topTrailing
     @State private var dragOffset: CGSize = .zero
     @State private var isDragging: Bool = false
+    @State private var isPinching: Bool = false
 
     // Tỉ lệ kích thước khung camera trước (0.75x đến 1.8x)
     @State private var pipScale: CGFloat = 1.0
@@ -94,48 +95,50 @@ public struct DualCameraPIPOverlayView: View {
         basePipHeight * pipScale
     }
 
-    private var basePosition: CGPoint {
-        let halfW = currentPipWidth / 2
-        let halfH = currentPipHeight / 2
-        let minX = margin + halfW
-        let maxX = max(minX, containerSize.width - margin - halfW)
-        let minY = margin + 34 + halfH // Bên dưới audio VU meter
-        let maxY = max(minY, containerSize.height - margin - 46 - halfH) // Bên trên thanh zoom pill
+    private var minOriginX: CGFloat { margin }
+    private var maxOriginX: CGFloat { max(margin, containerSize.width - margin - currentPipWidth) }
+    private var minOriginY: CGFloat { margin + 34 } // Bên dưới audio VU meter
+    private var maxOriginY: CGFloat { max(minOriginY, containerSize.height - margin - 46 - currentPipHeight) } // Bên trên thanh zoom pill
 
+    private var baseOrigin: CGPoint {
         switch currentCorner {
         case .topLeading:
-            return CGPoint(x: minX, y: minY)
+            return CGPoint(x: minOriginX, y: minOriginY)
         case .topTrailing:
-            return CGPoint(x: maxX, y: minY)
+            return CGPoint(x: maxOriginX, y: minOriginY)
         case .bottomLeading:
-            return CGPoint(x: minX, y: maxY)
+            return CGPoint(x: minOriginX, y: maxOriginY)
         case .bottomTrailing:
-            return CGPoint(x: maxX, y: maxY)
+            return CGPoint(x: maxOriginX, y: maxOriginY)
         }
     }
 
-    private var clampedPosition: CGPoint {
-        let rawX = basePosition.x + dragOffset.width
-        let rawY = basePosition.y + dragOffset.height
-        let halfW = currentPipWidth / 2
-        let halfH = currentPipHeight / 2
-        let minX = margin + halfW
-        let maxX = max(minX, containerSize.width - margin - halfW)
-        let minY = margin + 34 + halfH
-        let maxY = max(minY, containerSize.height - margin - 46 - halfH)
+    private var clampedOrigin: CGPoint {
+        let rawX = baseOrigin.x + dragOffset.width
+        let rawY = baseOrigin.y + dragOffset.height
         return CGPoint(
-            x: max(minX, min(maxX, rawX)),
-            y: max(minY, min(maxY, rawY))
+            x: max(minOriginX, min(maxOriginX, rawX)),
+            y: max(minOriginY, min(maxOriginY, rawY))
         )
     }
 
     public var body: some View {
         let currentW = currentPipWidth
         let currentH = currentPipHeight
+        let origin = clampedOrigin
 
+        ZStack(alignment: .topLeading) {
+            pipCardView(width: currentW, height: currentH)
+                .offset(x: origin.x, y: origin.y)
+        }
+        .frame(width: containerSize.width, height: containerSize.height, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private func pipCardView(width: CGFloat, height: CGFloat) -> some View {
         ZStack {
             DualCameraPIPPreviewView(viewModel: viewModel)
-                .frame(width: currentW, height: currentH)
+                .frame(width: width, height: height)
                 .background(Color.black)
 
             // Header: Nút đóng góc phải trên gọn gàng (đã bỏ chữ PIP và chấm tròn)
@@ -148,8 +151,8 @@ public struct DualCameraPIPOverlayView: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundColor(.white.opacity(0.92))
-                            .frame(width: 18, height: 18)
-                            .background(Circle().fill(Color.black.opacity(0.55)))
+                            .frame(width: 20, height: 20)
+                            .background(Circle().fill(Color.black.opacity(0.60)))
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
@@ -157,7 +160,7 @@ public struct DualCameraPIPOverlayView: View {
                 Spacer()
             }
         }
-        .frame(width: currentW, height: currentH)
+        .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             // Viền màu trắng đơn giản, tinh tế
@@ -165,11 +168,11 @@ public struct DualCameraPIPOverlayView: View {
                 .stroke(Color.white.opacity(0.92), lineWidth: 1.5)
         )
         .shadow(color: Color.black.opacity(0.65), radius: 8, y: 3)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .scaleEffect(isDragging ? 1.04 : 1.0)
-        .position(clampedPosition)
         // Chạm đúp 2 lần để đổi nhanh kích thước: Nhỏ -> Vừa -> Lớn -> Nhỏ
         .onTapGesture(count: 2) {
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
                 if pipScale < 1.15 {
                     pipScale = 1.35
                 } else if pipScale < 1.55 {
@@ -183,17 +186,23 @@ public struct DualCameraPIPOverlayView: View {
         }
         // Kéo di chuyển vị trí khung camera
         .gesture(
-            DragGesture(minimumDistance: 4)
+            DragGesture(minimumDistance: 8)
                 .onChanged { value in
+                    guard !isPinching else { return }
                     isDragging = true
                     dragOffset = value.translation
                 }
                 .onEnded { value in
-                    let finalX = basePosition.x + value.translation.width
-                    let finalY = basePosition.y + value.translation.height
+                    guard !isPinching else {
+                        isDragging = false
+                        dragOffset = .zero
+                        return
+                    }
+                    let finalX = baseOrigin.x + value.translation.width
+                    let finalY = baseOrigin.y + value.translation.height
 
-                    let isLeft = finalX < (containerSize.width / 2)
-                    let isTop = finalY < (containerSize.height / 2)
+                    let isLeft = (finalX + currentPipWidth / 2) < (containerSize.width / 2)
+                    let isTop = (finalY + currentPipHeight / 2) < (containerSize.height / 2)
 
                     let newCorner: PIPCorner
                     if isTop {
@@ -202,7 +211,7 @@ public struct DualCameraPIPOverlayView: View {
                         newCorner = isLeft ? .bottomLeading : .bottomTrailing
                     }
 
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.80)) {
                         self.currentCorner = newCorner
                         self.dragOffset = .zero
                         self.isDragging = false
@@ -214,12 +223,16 @@ public struct DualCameraPIPOverlayView: View {
         .simultaneousGesture(
             MagnificationGesture()
                 .onChanged { value in
+                    isPinching = true
                     let targetScale = min(max(lastPipScale * value, 0.75), 1.8)
                     pipScale = targetScale
                 }
                 .onEnded { _ in
                     lastPipScale = pipScale
                     viewModel.setDualCameraPIPScale(pipScale)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        isPinching = false
+                    }
                 }
         )
     }
