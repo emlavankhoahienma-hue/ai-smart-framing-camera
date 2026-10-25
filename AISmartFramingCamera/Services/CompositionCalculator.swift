@@ -145,6 +145,39 @@ public struct FramingTargetResult {
     public let recommendedZoomFactor: CGFloat// Recommended zoom (1.0x, 2.0x, 3.0x...)
     public let optimalRule: CompositionRule  // Active or auto-selected rule
     public let guideDescription: String      // Actionable advice for the photographer
+    public let recommendedEVBias: Float      // Smart Scene-Aware EV Bias (-2.0...2.0)
+    public let lightingScene: String         // "backlit", "night", "sunset", "harsh_sun", "normal"
+    public let lightingRationale: String     // Detailed lighting rationale
+
+    public init(
+        targetPoint: CGPoint,
+        currentCenter: CGPoint,
+        offsetVector: CGVector,
+        distance: CGFloat,
+        angleDegrees: CGFloat,
+        alignmentScore: Double,
+        isAligned: Bool,
+        recommendedZoomFactor: CGFloat,
+        optimalRule: CompositionRule,
+        guideDescription: String,
+        recommendedEVBias: Float = 0.0,
+        lightingScene: String = "normal",
+        lightingRationale: String = ""
+    ) {
+        self.targetPoint = targetPoint
+        self.currentCenter = currentCenter
+        self.offsetVector = offsetVector
+        self.distance = distance
+        self.angleDegrees = angleDegrees
+        self.alignmentScore = alignmentScore
+        self.isAligned = isAligned
+        self.recommendedZoomFactor = recommendedZoomFactor
+        self.optimalRule = optimalRule
+        self.guideDescription = guideDescription
+        self.recommendedEVBias = recommendedEVBias
+        self.lightingScene = lightingScene
+        self.lightingRationale = lightingRationale
+    }
 }
 
 // MARK: - Phase 3 & 4: AI Multi-Hypothesis Photographic Composition & Virtual Crop Zoom Scoring
@@ -817,7 +850,11 @@ public final class CompositionCalculator: @unchecked Sendable {
         availableZooms: [CGFloat] = [1.0, 2.0, 3.0],
         horizonY: CGFloat? = nil,
         activeRule: CompositionRule? = nil,
-        sceneEvidence: SceneCompositionEvidence? = nil
+        sceneEvidence: SceneCompositionEvidence? = nil,
+        pixelBuffer: CVPixelBuffer? = nil,
+        iso: Float? = nil,
+        exposureDuration: Double? = nil,
+        aperture: Float? = nil
     ) -> FramingTargetResult {
         // Bước 1: Đánh giá giả thuyết bố cục tìm điểm mạnh P_grid*
         let (winningHypothesis, _) = evaluateHypotheses(
@@ -864,7 +901,23 @@ public final class CompositionCalculator: @unchecked Sendable {
         let isAligned = distance <= alignmentTolerance
         let score = max(0, min(1, 1 - Double(distance / 0.40)))
 
-        let combinedGuide = winningHypothesis.rationale + " · " + zoomDecision.rationale
+        // Bước 4: Trích xuất khung cắt ảo tương lai W(Z*) và tính toán Smart Scene Exposure EV*
+        let futureCrop = SmartSceneExposureEngine.shared.calculateVirtualCropWindow(
+            anchor: anchor,
+            gridPoint: winningHypothesis.gridPoint,
+            targetZoom: optimalZoom
+        )
+        let exposureDecision = SmartSceneExposureEngine.shared.evaluateExposure(
+            pixelBuffer: pixelBuffer,
+            virtualCrop: futureCrop,
+            subjectRect: subjectRect,
+            sceneContext: sceneType,
+            iso: iso,
+            exposureDuration: exposureDuration,
+            aperture: aperture
+        )
+
+        let combinedGuide = winningHypothesis.rationale + " · " + zoomDecision.rationale + " · " + exposureDecision.rationale
 
         return FramingTargetResult(
             targetPoint: finalTarget,
@@ -876,7 +929,10 @@ public final class CompositionCalculator: @unchecked Sendable {
             isAligned: isAligned,
             recommendedZoomFactor: optimalZoom,
             optimalRule: winningHypothesis.rule,
-            guideDescription: combinedGuide
+            guideDescription: combinedGuide,
+            recommendedEVBias: exposureDecision.recommendedEVBias,
+            lightingScene: exposureDecision.sceneType.rawValue,
+            lightingRationale: exposureDecision.rationale
         )
     }
 

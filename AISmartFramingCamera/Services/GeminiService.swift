@@ -392,6 +392,38 @@ public struct GeminiFramingResponse {
     public let latencyMs: Int
     public let recommendedPreset: FilmPreset
     public let presetExplanation: String
+    public let recommendedEVBias: Float?
+    public let lightingScene: String?
+
+    public init(
+        targetX: CGFloat,
+        targetY: CGFloat,
+        suggestedZoom: CGFloat,
+        sceneType: DetectedSceneType,
+        colorRecipe: GeminiColorRecipe,
+        compositionRule: CompositionRule,
+        explanation: String,
+        modelUsed: String,
+        latencyMs: Int,
+        recommendedPreset: FilmPreset,
+        presetExplanation: String,
+        recommendedEVBias: Float? = nil,
+        lightingScene: String? = nil
+    ) {
+        self.targetX = targetX
+        self.targetY = targetY
+        self.suggestedZoom = suggestedZoom
+        self.sceneType = sceneType
+        self.colorRecipe = colorRecipe
+        self.compositionRule = compositionRule
+        self.explanation = explanation
+        self.modelUsed = modelUsed
+        self.latencyMs = latencyMs
+        self.recommendedPreset = recommendedPreset
+        self.presetExplanation = presetExplanation
+        self.recommendedEVBias = recommendedEVBias
+        self.lightingScene = lightingScene
+    }
 }
 
 // MARK: - Errors
@@ -1810,9 +1842,9 @@ public final class GeminiService: ObservableObject {
         }
         return """
         Nhiếp ảnh gia AI. Gợi ý cảm biến: \(hints)
-        Tìm tọa độ thực tế của chủ thể chính TRONG ẢNH HIỆN TẠI (target_x, target_y trong [0.05..0.95], góc trên-trái=(0,0); ưu tiên mắt/mặt nếu có người; KHÔNG trả về 0.5,0.5 nếu chủ thể lệch tâm) và mức zoom quang học tối ưu [1.0, 1.5, 2.0, 3.0].
+        Tìm tọa độ thực tế của chủ thể chính TRONG ẢNH HIỆN TẠI (target_x, target_y trong [0.05..0.95], góc trên-trái=(0,0); ưu tiên mắt/mặt nếu có người; KHÔNG trả về 0.5,0.5 nếu chủ thể lệch tâm), mức zoom quang học tối ưu [1.0, 1.5, 2.0, 3.0], mức bù sáng ev_bias [-2.0..+2.0] và lighting_scene ("backlit", "night", "sunset", "harsh_sun", "normal").
         Chỉ trả về 1 JSON object hợp lệ:
-        {"target_x":0.42,"target_y":0.36,"suggested_zoom":1.5,"scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Fuji Pro 400H","preset_explanation":"Tôn da sáng tự nhiên","explanation":"Căn mắt chủ thể vào điểm mạnh tỷ lệ vàng","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.05,"saturation":1.04,"contrast":1.03,"shadow_lift":0.03,"highlight_roll":0.95,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng sáng tự nhiên"}}
+        {"target_x":0.42,"target_y":0.36,"suggested_zoom":1.5,"ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Fuji Pro 400H","preset_explanation":"Tôn da sáng tự nhiên","explanation":"Căn mắt chủ thể vào điểm mạnh tỷ lệ vàng","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.05,"saturation":1.04,"contrast":1.03,"shadow_lift":0.03,"highlight_roll":0.95,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng sáng tự nhiên"}}
         """
     }
     // MARK: - Response Parsing
@@ -1850,6 +1882,9 @@ public final class GeminiService: ObservableObject {
         let recPreset = FilmPreset.match(from: presetRaw) ?? sceneType.recommendedFilter
         let presetExpl = (json["preset_explanation"] as? String) ?? "\(recPreset.displayName) — Tối ưu cho bối cảnh \(sceneType.localizedName)"
 
+        let evRaw = (json["ev_bias"] as? NSNumber)?.floatValue ?? (json["exposure_bias"] as? NSNumber)?.floatValue
+        let lightingScene = (json["lighting_scene"] as? String) ?? (json["lighting"] as? String)
+
         return GeminiFramingResponse(
             targetX: max(0.05, min(0.95, targetX)),
             targetY: max(0.05, min(0.95, targetY)),
@@ -1861,7 +1896,9 @@ public final class GeminiService: ObservableObject {
             modelUsed: modelUsed,
             latencyMs: latencyMs,
             recommendedPreset: recPreset,
-            presetExplanation: presetExpl
+            presetExplanation: presetExpl,
+            recommendedEVBias: evRaw ?? colorRecipe.exposureBias,
+            lightingScene: lightingScene
         )
     }
 

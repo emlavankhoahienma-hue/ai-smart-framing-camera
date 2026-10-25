@@ -720,6 +720,10 @@ public final class CameraViewModel: ObservableObject {
     // AI Framing & Composition
     @Published public var framingResult: FramingTargetResult?
     @Published public var alignmentState: FramingAlignmentState = .analyzing
+    @Published public var isSmartExposureEnabled: Bool = true
+    @Published public private(set) var plannedEVBias: Float = 0.0
+    @Published public private(set) var plannedLightingScene: String = "normal"
+    @Published public private(set) var plannedLightingDescription: String = ""
     @Published public var detectedScene: DetectedSceneType = .general
     @Published public var detectedSubjectRects: [CGRect] = []
     @Published public var detectedFaceRects: [CGRect] = []
@@ -820,6 +824,9 @@ public final class CameraViewModel: ObservableObject {
         if abs(displayZoom - targetZoom) > 0.15, !hasExecutedAutoZoomForSession {
             hasExecutedAutoZoomForSession = true
             triggerZoomRevealAnimation(targetZoom: targetZoom)
+        } else {
+            // Pha 3: Nếu không cần zoom ống kính, thực thi ngay bước chỉnh sáng thông minh
+            applyPlannedEVBiasIfNeeded()
         }
     }
 
@@ -1968,6 +1975,12 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func cancelAISession() {
+        if plannedEVBias != 0.0 {
+            setExposure(0.0)
+            plannedEVBias = 0.0
+            plannedLightingScene = "normal"
+            plannedLightingDescription = ""
+        }
         unlockHardTargetLock()
         targetPinGeneration &+= 1
         alignmentGate.reset()
@@ -2223,9 +2236,31 @@ public final class CameraViewModel: ObservableObject {
             sceneType: response.sceneType,
             currentZoom: displayZoom,
             availableZooms: cameraService.availableDisplayZoomOptions,
-            sceneEvidence: sceneEvidence
+            sceneEvidence: sceneEvidence,
+            pixelBuffer: frameProcessor.latestPixelBufferSnapshot(),
+            iso: cameraService.currentISO,
+            exposureDuration: cameraService.currentExposureDuration,
+            aperture: cameraService.currentAperture
         )
         self.framingResult = evaluated
+
+        // Kế hoạch 3 pha đồng bộ: Trích xuất EV thông minh từ Cloud hoặc Fallback về Local
+        let cloudEV = response.recommendedEVBias ?? response.colorRecipe.exposureBias
+        let finalEV: Float
+        let lScene: String
+        let lRationale: String
+        if abs(cloudEV) > 0.05 {
+            finalEV = cloudEV
+            lScene = response.lightingScene ?? (cloudEV > 0.3 ? "backlit" : (cloudEV < -0.3 ? "night" : "normal"))
+            lRationale = "Cloud AI chẩn đoán ánh sáng (\(lScene)): EV \(String(format: "%+.1f", finalEV))"
+        } else {
+            finalEV = evaluated.recommendedEVBias
+            lScene = evaluated.lightingScene
+            lRationale = evaluated.lightingRationale
+        }
+        self.plannedEVBias = finalEV
+        self.plannedLightingScene = lScene
+        self.plannedLightingDescription = lRationale
 
         let chosenZoom = response.suggestedZoom > 1.05 ? response.suggestedZoom : evaluated.recommendedZoomFactor
         self.aiSuggestedZoom = chosenZoom
@@ -2529,13 +2564,20 @@ public final class CameraViewModel: ObservableObject {
                 sceneType: self.detectedScene,
                 currentZoom: self.displayZoom,
                 availableZooms: self.cameraService.availableDisplayZoomOptions,
-                sceneEvidence: sceneEvidence
+                sceneEvidence: sceneEvidence,
+                pixelBuffer: self.frameProcessor.latestPixelBufferSnapshot(),
+                iso: self.cameraService.currentISO,
+                exposureDuration: self.cameraService.currentExposureDuration,
+                aperture: self.cameraService.currentAperture
             )
             let aimPoint = evaluatedFraming.targetPoint
             self.activeCompositionRule = evaluatedFraming.optimalRule
             self.framingResult = evaluatedFraming
             self.pendingSuggestedZoom = evaluatedFraming.recommendedZoomFactor
             self.aiSuggestedZoom = evaluatedFraming.recommendedZoomFactor
+            self.plannedEVBias = evaluatedFraming.recommendedEVBias
+            self.plannedLightingScene = evaluatedFraming.lightingScene
+            self.plannedLightingDescription = evaluatedFraming.lightingRationale
             var liveAim = aimPoint
             let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: aimPoint))
             if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
@@ -2654,8 +2696,15 @@ public final class CameraViewModel: ObservableObject {
             availableZooms: availableZooms,
             horizonY: visionEngine.latestSceneEvidence?.detectedHorizonY,
             activeRule: nil,
-            sceneEvidence: visionEngine.latestSceneEvidence
+            sceneEvidence: visionEngine.latestSceneEvidence,
+            pixelBuffer: frameProcessor.latestPixelBufferSnapshot(),
+            iso: cameraService.currentISO,
+            exposureDuration: cameraService.currentExposureDuration,
+            aperture: cameraService.currentAperture
         )
+        self.plannedEVBias = evaluatedFraming.recommendedEVBias
+        self.plannedLightingScene = evaluatedFraming.lightingScene
+        self.plannedLightingDescription = evaluatedFraming.lightingRationale
 
         var sourceAimPoint = plan.aimPointInSource
         var effectiveGuideRay = plan.aimWorldRay
@@ -3266,6 +3315,7 @@ public final class CameraViewModel: ObservableObject {
                         self.isZoomRampPhase = false
                     }
                     selectedZoomPreset = resolveClosestZoomPreset(for: displayZoom)
+                    self.applyPlannedEVBiasIfNeeded()
                     return
                 }
             } else {
@@ -3500,6 +3550,22 @@ public final class CameraViewModel: ObservableObject {
         let clamped = max(-2, min(2, bias))
         exposureBias = clamped
         cameraService.setExposureBias(clamped)
+    }
+
+    /// Pha 3: Thực thi áp dụng mức bù sáng thông minh đã tính sẵn (Smart Scene-Aware Exposure)
+    public func applyPlannedEVBiasIfNeeded() {
+        guard isSmartExposureEnabled else { return }
+        let bias = plannedEVBias
+        guard bias.isFinite, abs(bias) > 0.05 else { return }
+
+        // Kiểm tra an toàn quang phổ với RealtimeHistogramEngine: đảm bảo clip ratio < 1%
+        let currentLuma = RealtimeHistogramEngine.shared.averageLuminance
+        var safeEV = bias
+        if bias > 0 && currentLuma > 0.78 {
+            safeEV = min(bias, 0.3)
+        }
+        setExposure(safeEV)
+        showHUDNotice(String(format: "Đã tinh chỉnh ánh sáng %+.1f EV (%@)", safeEV, plannedLightingScene))
     }
 
     public func lockAEAF(at normalizedPoint: CGPoint, devicePoint: CGPoint) {

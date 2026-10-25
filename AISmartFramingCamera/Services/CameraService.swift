@@ -1789,6 +1789,24 @@ public final class CameraService: NSObject {
         }
     }
 
+    public var currentISO: Float {
+        guard let camera = activeCamera else { return 100.0 }
+        let isoVal = camera.iso
+        return (isoVal.isFinite && isoVal > 0) ? isoVal : 100.0
+    }
+
+    public var currentExposureDuration: Double {
+        guard let camera = activeCamera else { return 0.016 }
+        let dur = CMTimeGetSeconds(camera.exposureDuration)
+        return (dur.isFinite && dur > 0) ? dur : 0.016
+    }
+
+    public var currentAperture: Float {
+        guard let camera = activeCamera else { return 1.8 }
+        let ap = camera.lensAperture
+        return (ap.isFinite && ap > 0) ? ap : 1.8
+    }
+
     public var onSubjectAreaDidChange: (() -> Void)?
 
     // MARK: - Smart Focus & Exposure (Apple Camera App Style)

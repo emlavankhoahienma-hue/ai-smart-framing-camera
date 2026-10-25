@@ -47,6 +47,34 @@ public struct AIStatusHUDView: View {
                         )
                 )
 
+                // Chỉ báo kế hoạch 3 bước đồng bộ: Target -> Zoom -> Chỉnh sáng EV
+                if viewModel.aiSessionState == .targetPlaced || viewModel.aiSessionState == .alignmentPerfect {
+                    HStack(spacing: 6) {
+                        Label("Target", systemImage: "scope")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundColor(.yellow)
+                        Text("➔")
+                            .font(.system(size: 8))
+                            .foregroundColor(.white.opacity(0.45))
+                        Label(String(format: "%.1fx", viewModel.pendingSuggestedZoom), systemImage: "plus.magnifyingglass")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundColor(.cyan)
+                        Text("➔")
+                            .font(.system(size: 8))
+                            .foregroundColor(.white.opacity(0.45))
+                        Label(String(format: "%+.1f EV", viewModel.plannedEVBias), systemImage: "sun.max.fill")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundColor(viewModel.plannedEVBias > 0 ? .orange : (viewModel.plannedEVBias < 0 ? .blue : .white.opacity(0.85)))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3.5)
+                    .background(
+                        Capsule()
+                            .fill(Color.black.opacity(0.55))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+                    )
+                }
+
                 if case .analyzing = viewModel.aiSessionState,
                    !viewModel.localCompositionChoices.isEmpty {
                     Button(action: viewModel.showCompositionPreviews) {
