@@ -2550,7 +2550,7 @@ public final class CameraService: NSObject {
             // Cập nhật maxPhotoDimensions sau khi captureSession đã commit format mới an toàn
             if let videoMaxPhotoDim = targetFormat.supportedMaxPhotoDimensions.first,
                self.captureSession.outputs.contains(self.photoOutput),
-               targetCamera.activeFormat.supportedMaxPhotoDimensions.contains(videoMaxPhotoDim) {
+               targetCamera.activeFormat.supportedMaxPhotoDimensions.contains(where: { $0.width == videoMaxPhotoDim.width && $0.height == videoMaxPhotoDim.height }) {
                 self.photoOutput.maxPhotoDimensions = videoMaxPhotoDim
             }
 

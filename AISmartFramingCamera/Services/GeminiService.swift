@@ -204,7 +204,7 @@ public struct AIConnectionProfile: Identifiable, Codable, Equatable {
 
 // MARK: - Supported AI Vision Models (2026 Full Catalog)
 public enum AIVisionModel: String, CaseIterable, Identifiable {
-    case pollinationsOpenAI = "openai/gpt-4o-mini"
+    case pollinationsOpenAI = "pollinations/gpt-4o-mini"
     case gemini20FlashDirect = "gemini-2.0-flash"
     case gemini20FlashLiteDirect = "gemini-2.0-flash-lite-preview-02-05"
     case gemini15FlashDirect = "gemini-1.5-flash"
@@ -385,6 +385,8 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         switch self {
         case .autoStrongest:
             return "google/gemini-2.5-flash"
+        case .pollinationsOpenAI:
+            return "openai/gpt-4o-mini"
         default:
             return rawValue
         }
@@ -508,7 +510,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
         if provider == .pollinations {
             var cleanModel = preferred
-            if cleanModel == "auto" || cleanModel.isEmpty || cleanModel == "openai" {
+            if cleanModel == "auto" || cleanModel.isEmpty || cleanModel == "openai" || cleanModel.hasPrefix("pollinations/") {
                 cleanModel = "openai/gpt-4o-mini"
             }
             if selected != .autoStrongest && !custom.isEmpty {
@@ -920,6 +922,9 @@ public final class GeminiService: ObservableObject {
     public var activeModelID: String {
         let custom = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !custom.isEmpty { return custom }
+        if selectedProvider == .pollinations {
+            return selectedModel.technicalModelID
+        }
         let raw = selectedModel.technicalModelID
         if selectedProvider == .googleGemini && raw.hasPrefix("google/") {
             return String(raw.dropFirst("google/".count)).replacingOccurrences(of: ":free", with: "")
