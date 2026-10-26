@@ -214,6 +214,9 @@ public final class CameraService: NSObject {
 
     public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
         guard displayZoom.isFinite else { return 1.0 }
+        if isDualCameraActive {
+            return max(1.0, min(displayZoom, maxZoom))
+        }
         if activeCamera?.deviceType == .builtInTelephotoCamera {
             let optical = telephotoOpticalDisplayZoom ?? 2.0
             return max(1.0, min(displayZoom / optical, maxZoom))
@@ -228,6 +231,9 @@ public final class CameraService: NSObject {
 
     public func convertDeviceZoomToDisplayZoom(_ deviceZoom: CGFloat) -> CGFloat {
         guard deviceZoom.isFinite else { return defaultDisplayZoom }
+        if isDualCameraActive {
+            return max(1.0, min(deviceZoom, maxZoom))
+        }
         if activeCamera?.deviceType == .builtInTelephotoCamera {
             let optical = telephotoOpticalDisplayZoom ?? 2.0
             return deviceZoom * optical
@@ -1047,8 +1053,11 @@ public final class CameraService: NSObject {
                         primaryCamera.activeVideoMinFrameDuration = fps30
                         primaryCamera.activeVideoMaxFrameDuration = fps30
                     }
-                    let maxAllowedZoom = min(primaryCamera.activeFormat.videoMaxZoomFactor, 3.0)
-                    primaryCamera.videoZoomFactor = max(1.0, min(primaryCamera.videoZoomFactor, maxAllowedZoom))
+                    let maxAllowedZoom = min(primaryCamera.activeFormat.videoMaxZoomFactor, primaryCamera.maxAvailableVideoZoomFactor)
+                    primaryCamera.videoZoomFactor = 1.0
+                    self.minZoom = 1.0
+                    self.maxZoom = min(10.0, maxAllowedZoom)
+                    self.currentZoom = 1.0
                     if primaryCamera.isFocusModeSupported(.continuousAutoFocus) {
                         primaryCamera.focusMode = .continuousAutoFocus
                     }
@@ -1285,6 +1294,11 @@ public final class CameraService: NSObject {
 
             if !self.captureSession.isRunning && self.wantsSessionRunning {
                 self.captureSession.startRunning()
+            }
+            if let cam = self.activeCamera {
+                self.minZoom = cam.minAvailableVideoZoomFactor
+                self.maxZoom = cam.maxAvailableVideoZoomFactor
+                self.currentZoom = cam.videoZoomFactor
             }
             self.publishSessionRunning(self.captureSession.isRunning && !self.captureSession.isInterrupted, force: true)
             self.applyCaptureModeIfPossible()
@@ -1660,6 +1674,32 @@ public final class CameraService: NSObject {
             guard displayZoom.isFinite, displayZoom > 0 else {
                 CameraLogger.warning("CameraService: Bo qua zoom khong hop le", category: .capture)
                 rejected()
+                return
+            }
+
+            if self.isDualCameraActive {
+                guard let primaryCam = self.activeCamera else { rejected(); return }
+                let maxLimit = min(primaryCam.maxAvailableVideoZoomFactor, primaryCam.activeFormat.videoMaxZoomFactor)
+                let targetZoom = max(1.0, min(displayZoom, maxLimit))
+                do {
+                    try primaryCam.lockForConfiguration()
+                    defer { primaryCam.unlockForConfiguration() }
+                    if smooth {
+                        let adaptiveRate = max(3.5, min(9.0, rate))
+                        primaryCam.ramp(toVideoZoomFactor: targetZoom, withRate: adaptiveRate)
+                    } else {
+                        primaryCam.videoZoomFactor = targetZoom
+                    }
+                    let actualZoom = primaryCam.videoZoomFactor
+                    self.currentZoom = actualZoom
+                    DispatchQueue.main.async {
+                        self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
+                        completion?(actualZoom)
+                    }
+                } catch {
+                    CameraLogger.error("CameraService: Loi zoom trong Dual Camera", error: error, category: .capture)
+                    rejected()
+                }
                 return
             }
 

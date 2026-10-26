@@ -87,92 +87,100 @@ public struct KeychainHelper {
 
 // MARK: - 2026 Multi-Provider AI Gateway Architecture
 public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
-    case openRouter   = "openrouter"
+    case pollinations = "pollinations"
     case googleGemini = "google_gemini"
+    case groq         = "groq"
+    case openRouter   = "openrouter"
     case openAI       = "openai"
     case anthropic    = "anthropic"
-    case groq         = "groq"
-    case xAI          = "xai"
     case deepSeek     = "deepseek"
+    case xAI          = "xai"
     case custom       = "custom_openai"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
+        case .pollinations: return "Pollinations AI (Miễn phí 100% • Không cần Key)"
+        case .googleGemini: return "Google AI Studio (Gemini 2.0 / 1.5 • Miễn phí cao)"
+        case .groq:         return "Groq Cloud (LPU Siêu tốc • Miễn phí)"
         case .openRouter:   return "OpenRouter (Đa Model 2026)"
-        case .googleGemini: return "Google Gemini API (Trực tiếp)"
-        case .openAI:       return "OpenAI API (GPT-5 / GPT-4.1)"
-        case .anthropic:    return "Anthropic API (Claude 4.5 / 4)"
+        case .openAI:       return "OpenAI API (GPT-4o / GPT-4.1)"
+        case .anthropic:    return "Anthropic API (Claude 3.7 / 3.5)"
         case .groq:         return "Groq Cloud (LPU Siêu tốc)"
-        case .xAI:          return "xAI API (Grok 4 Vision)"
-        case .deepSeek:     return "DeepSeek API (VL2 / R2)"
+        case .xAI:          return "xAI API (Grok 2 Vision)"
+        case .deepSeek:     return "DeepSeek API (VL2 / V3)"
         case .custom:       return "Tùy chỉnh (OpenAI-Compatible)"
         }
     }
 
     public var shortBadge: String {
         switch self {
+        case .pollinations: return "Pollinations (Free)"
+        case .googleGemini: return "Google Gemini"
+        case .groq:         return "Groq LPU"
         case .openRouter:   return "OpenRouter"
-        case .googleGemini: return "Google AI"
         case .openAI:       return "OpenAI"
         case .anthropic:    return "Anthropic"
-        case .groq:         return "Groq LPU"
-        case .xAI:          return "xAI Grok"
         case .deepSeek:     return "DeepSeek"
+        case .xAI:          return "xAI Grok"
         case .custom:       return "Custom API"
         }
     }
 
     public var defaultChatCompletionsURL: String {
         switch self {
-        case .openRouter:   return "https://openrouter.ai/api/v1/chat/completions"
+        case .pollinations: return "https://text.pollinations.ai/openai/chat/completions"
         case .googleGemini: return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        case .groq:         return "https://api.groq.com/openai/v1/chat/completions"
+        case .openRouter:   return "https://openrouter.ai/api/v1/chat/completions"
         case .openAI:       return "https://api.openai.com/v1/chat/completions"
         case .anthropic:    return "https://api.anthropic.com/v1/messages"
-        case .groq:         return "https://api.groq.com/openai/v1/chat/completions"
-        case .xAI:          return "https://api.x.ai/v1/chat/completions"
         case .deepSeek:     return "https://api.deepseek.com/v1/chat/completions"
+        case .xAI:          return "https://api.x.ai/v1/chat/completions"
         case .custom:       return "https://api.openai.com/v1/chat/completions"
         }
     }
 
     public var defaultModelsURL: String {
         switch self {
-        case .openRouter:   return "https://openrouter.ai/api/v1/models"
+        case .pollinations: return "https://text.pollinations.ai/models"
         case .googleGemini: return "https://generativelanguage.googleapis.com/v1beta/openai/models"
+        case .groq:         return "https://api.groq.com/openai/v1/models"
+        case .openRouter:   return "https://openrouter.ai/api/v1/models"
         case .openAI:       return "https://api.openai.com/v1/models"
         case .anthropic:    return "https://api.anthropic.com/v1/models"
-        case .groq:         return "https://api.groq.com/openai/v1/models"
-        case .xAI:          return "https://api.x.ai/v1/models"
         case .deepSeek:     return "https://api.deepseek.com/v1/models"
+        case .xAI:          return "https://api.x.ai/v1/models"
         case .custom:       return ""
         }
     }
 
     public var keyPlaceholder: String {
         switch self {
-        case .openRouter:   return "Dán OpenRouter Key (sk-or-v1-...)"
+        case .pollinations: return "Hoàn toàn miễn phí — không cần dán API Key"
         case .googleGemini: return "Dán Google AI Studio Key (AIzaSy...)"
+        case .groq:         return "Dán Groq API Key (gsk_...)"
+        case .openRouter:   return "Dán OpenRouter Key (sk-or-v1-...)"
         case .openAI:       return "Dán OpenAI API Key (sk-proj-...)"
         case .anthropic:    return "Dán Anthropic Key (sk-ant-...)"
-        case .groq:         return "Dán Groq API Key (gsk_...)"
-        case .xAI:          return "Dán xAI API Key (xai-...)"
         case .deepSeek:     return "Dán DeepSeek API Key (sk-...)"
+        case .xAI:          return "Dán xAI API Key (xai-...)"
         case .custom:       return "Dán Bearer API Key..."
         }
     }
 
     public var defaultModelID: String {
         switch self {
-        case .openRouter:   return "google/gemma-4-31b-it:free"
-        case .googleGemini: return "gemini-2.5-flash"
-        case .openAI:       return "gpt-4.1-mini"
-        case .anthropic:    return "claude-sonnet-4-20250514"
-        case .groq:         return "meta-llama/llama-4-scout-17b-16e-instruct"
-        case .xAI:          return "grok-2-vision-1212"
+        case .pollinations: return "openai"
+        case .googleGemini: return "gemini-2.0-flash"
+        case .groq:         return "llama-3.2-11b-vision-preview"
+        case .openRouter:   return "google/gemini-2.0-flash-exp:free"
+        case .openAI:       return "gpt-4o-mini"
+        case .anthropic:    return "claude-3-5-sonnet-20241022"
         case .deepSeek:     return "deepseek-chat"
-        case .custom:       return "gpt-4.1-mini"
+        case .xAI:          return "grok-2-vision-1212"
+        case .custom:       return "gpt-4o-mini"
         }
     }
 }
@@ -197,6 +205,13 @@ public struct AIConnectionProfile: Identifiable, Codable, Equatable {
 
 // MARK: - Supported AI Vision Models (2026 Full Catalog)
 public enum AIVisionModel: String, CaseIterable, Identifiable {
+    case pollinationsOpenAI = "pollinations/openai"
+    case gemini20FlashDirect = "gemini-2.0-flash"
+    case gemini20FlashLiteDirect = "gemini-2.0-flash-lite-preview-02-05"
+    case gemini15FlashDirect = "gemini-1.5-flash"
+    case gemini20FlashFree = "google/gemini-2.0-flash-exp:free"
+    case groqLlama32_11BDirect = "llama-3.2-11b-vision-preview"
+    case groqLlama32_90BDirect = "llama-3.2-90b-vision-preview"
     case freeVision = "google/gemma-4-31b-it:free"
     case gemini25FlashFree = "google/gemini-2.5-flash-preview:free"
     case qwen3VLFree = "qwen/qwen3-vl-32b-instruct:free"
@@ -244,6 +259,13 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
+        case .pollinationsOpenAI:     return "Pollinations OpenAI Vision (Miễn phí 100% không cần Key)"
+        case .gemini20FlashDirect:    return "Gemini 2.0 Flash (Trực tiếp Google AI • Miễn phí cao)"
+        case .gemini20FlashLiteDirect:return "Gemini 2.0 Flash Lite (Google AI • Siêu tốc)"
+        case .gemini15FlashDirect:    return "Gemini 1.5 Flash (Google AI • 1500 lượt/ngày free)"
+        case .gemini20FlashFree:      return "Gemini 2.0 Flash (OpenRouter • Miễn phí)"
+        case .groqLlama32_11BDirect:  return "Llama 3.2 11B Vision (Groq LPU Siêu tốc • Free)"
+        case .groqLlama32_90BDirect:  return "Llama 3.2 90B Vision (Groq LPU Chất lượng cao • Free)"
         case .freeVision:         return "Gemma 4 31B Vision (Miễn phí)"
         case .gemini25FlashFree:  return "Gemini 2.5 Flash (Miễn phí)"
         case .qwen3VLFree:        return "Qwen 3 VL 32B (Miễn phí)"
@@ -290,7 +312,13 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public var subtitle: String {
         switch self {
-        case .freeVision, .gemini25FlashFree, .qwen3VLFree, .llama4MaverickFree:
+        case .pollinationsOpenAI:
+            return "Miễn phí 100%, không yêu cầu API Key — bấm là chạy ngay"
+        case .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
+            return "Trực tiếp Google AI Studio — Hạn mức miễn phí 1.500 lượt/ngày cực lớn"
+        case .groqLlama32_11BDirect, .groqLlama32_90BDirect:
+            return "Groq LPU chip chuyên dụng — Tốc độ xử lý siêu tốc < 0.8 giây hoàn toàn miễn phí"
+        case .gemini20FlashFree, .freeVision, .gemini25FlashFree, .qwen3VLFree, .llama4MaverickFree:
             return "Miễn phí qua OpenRouter — tự động xoay vòng dự phòng khi quá tải"
         case .gemini31FlashLite, .gemini25Flash, .gemini20Flash, .gemini15Flash8B, .gpt5Mini, .gpt41Mini, .gpt4oMini, .o3Mini:
             return "Tốc độ phản hồi cực nhanh (<1.2s), tối ưu tiết kiệm token"
@@ -313,22 +341,37 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Lọc danh sách Model phù hợp theo đúng Hãng API được chọn
     public static func models(for provider: AICloudProvider) -> [AIVisionModel] {
         switch provider {
+        case .pollinations:
+            return [.pollinationsOpenAI]
         case .googleGemini:
             return [
                 .autoStrongest,
+                .gemini20FlashDirect,
+                .gemini15FlashDirect,
+                .gemini20FlashLiteDirect,
+                .gemini20ProExp,
+                .gemini15Flash8B,
                 .gemini25Flash,
                 .gemini25Pro,
                 .gemini20Flash,
-                .gemini20ProExp,
                 .geminiFlash15,
                 .geminiPro15,
-                .gemini15Flash8B,
                 .gemini31FlashLite,
                 .gemini31Pro,
                 .gemini37Flash,
                 .gemini36Flash,
                 .gemini35Flash,
                 .gemini25FlashFree
+            ]
+        case .groq:
+            return [
+                .autoStrongest,
+                .groqLlama32_11BDirect,
+                .groqLlama32_90BDirect,
+                .llamaVision,
+                .groqLlama33,
+                .groqLlama32_90B,
+                .llama4MaverickFree
             ]
         case .openAI:
             return [
@@ -353,14 +396,6 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
                 .claude4Sonnet,
                 .claude45Sonnet
             ]
-        case .groq:
-            return [
-                .autoStrongest,
-                .llamaVision,
-                .groqLlama33,
-                .groqLlama32_90B,
-                .llama4MaverickFree
-            ]
         case .deepSeek:
             return [
                 .autoStrongest,
@@ -382,39 +417,43 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Model mặc định tối ưu theo từng Hãng
     public static func defaultModel(for provider: AICloudProvider) -> AIVisionModel {
         switch provider {
-        case .googleGemini: return .gemini25Flash
+        case .pollinations: return .pollinationsOpenAI
+        case .googleGemini: return .gemini20FlashDirect
+        case .groq: return .groqLlama32_11BDirect
         case .openAI: return .gpt4oMini
         case .anthropic: return .claude37Sonnet
-        case .groq: return .llamaVision
         case .deepSeek: return .deepseekChat
         case .xAI: return .grok2Vision
-        case .openRouter: return .freeVision
+        case .openRouter: return .gemini20FlashFree
         case .custom: return .autoStrongest
         }
     }
 
     public static var autoFallbackChain: [String] {
         [
-            "google/gemini-2.5-flash",
-            "openai/gpt-4.1-mini",
-            "google/gemma-4-31b-it:free"
+            "google/gemini-2.0-flash-exp:free",
+            "google/gemma-4-31b-it:free",
+            "openai/gpt-4.1-mini"
         ]
     }
 
     public static var freeFallbackChain: [String] {
         [
+            "google/gemini-2.0-flash-exp:free",
             "google/gemma-4-31b-it:free",
             "google/gemini-2.5-flash-preview:free",
             "qwen/qwen3-vl-32b-instruct:free",
-            "meta-llama/llama-4-maverick:free",
-            "google/gemma-4-26b-a4b-it:free",
-            "openrouter/free"
+            "meta-llama/llama-4-maverick:free"
         ]
     }
 
     public static func fallbackChain(selected: AIVisionModel, customModelName: String, provider: AICloudProvider = .openRouter) -> [String] {
         let custom = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
         var preferred = custom.isEmpty ? selected.technicalModelID : custom
+
+        if provider == .pollinations {
+            return ["openai"]
+        }
 
         if provider == .googleGemini {
             var cleanModel = preferred
@@ -425,39 +464,17 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             if cleanModel == "gemini-flash-1.5" { cleanModel = "gemini-1.5-flash" }
             if cleanModel == "gemini-pro-1.5" { cleanModel = "gemini-1.5-pro" }
             if cleanModel == "gemini-2.0-flash-001" { cleanModel = "gemini-2.0-flash" }
-            if cleanModel == "auto" { cleanModel = "gemini-2.5-flash" }
-            let candidates = [cleanModel, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
-            var unique: [String] = []
-            for c in candidates {
-                if !unique.contains(c) { unique.append(c) }
+            if cleanModel == "auto" { cleanModel = "gemini-2.0-flash" }
+
+            // Người dùng chọn model nào -> chạy trực tiếp model đó, chỉ fallback 1 lần nếu không trả về gì
+            if selected != .autoStrongest && !custom.isEmpty {
+                return [cleanModel]
             }
-            return unique
-        } else if provider == .openAI {
-            var cleanModel = preferred
-            if cleanModel.hasPrefix("openai/") {
-                cleanModel = String(cleanModel.dropFirst("openai/".count))
+            if cleanModel == "gemini-1.5-flash" {
+                return ["gemini-1.5-flash", "gemini-2.0-flash"]
+            } else {
+                return [cleanModel, "gemini-1.5-flash"]
             }
-            cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
-            if cleanModel == "auto" { cleanModel = "gpt-4o-mini" }
-            let candidates = [cleanModel, "gpt-4o-mini", "gpt-4o", "gpt-4.5-preview"]
-            var unique: [String] = []
-            for c in candidates {
-                if !unique.contains(c) { unique.append(c) }
-            }
-            return unique
-        } else if provider == .anthropic {
-            var cleanModel = preferred
-            if cleanModel.hasPrefix("anthropic/") {
-                cleanModel = String(cleanModel.dropFirst("anthropic/".count))
-            }
-            cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
-            if cleanModel == "auto" { cleanModel = "claude-3-7-sonnet-20250219" }
-            let candidates = [cleanModel, "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"]
-            var unique: [String] = []
-            for c in candidates {
-                if !unique.contains(c) { unique.append(c) }
-            }
-            return unique
         } else if provider == .groq {
             var cleanModel = preferred
             if cleanModel.hasPrefix("groq/") || cleanModel.hasPrefix("meta-llama/") {
@@ -466,23 +483,47 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             }
             cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
             if cleanModel == "auto" { cleanModel = "llama-3.2-11b-vision-preview" }
-            let candidates = [cleanModel, "llama-3.2-11b-vision-preview", "llama-3.2-90b-vision-preview"]
-            var unique: [String] = []
-            for c in candidates {
-                if !unique.contains(c) { unique.append(c) }
+            if selected != .autoStrongest {
+                return [cleanModel]
             }
-            return unique
+            return [cleanModel, "llama-3.2-11b-vision-preview"]
+        } else if provider == .openAI {
+            var cleanModel = preferred
+            if cleanModel.hasPrefix("openai/") {
+                cleanModel = String(cleanModel.dropFirst("openai/".count))
+            }
+            cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
+            if cleanModel == "auto" { cleanModel = "gpt-4o-mini" }
+            if selected != .autoStrongest {
+                return [cleanModel]
+            }
+            return [cleanModel, "gpt-4o-mini"]
+        } else if provider == .anthropic {
+            var cleanModel = preferred
+            if cleanModel.hasPrefix("anthropic/") {
+                cleanModel = String(cleanModel.dropFirst("anthropic/".count))
+            }
+            cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
+            if cleanModel == "auto" { cleanModel = "claude-3-7-sonnet-20250219" }
+            if selected != .autoStrongest {
+                return [cleanModel]
+            }
+            return [cleanModel, "claude-3-5-haiku-20241022"]
         } else if provider != .openRouter && preferred.contains("/") {
             let parts = preferred.split(separator: "/")
             if parts.count == 2 {
                 preferred = String(parts[1]).replacingOccurrences(of: ":free", with: "")
             }
+            return [preferred]
         }
         guard provider == .openRouter else {
             return [preferred]
         }
+        if selected != .autoStrongest && !custom.isEmpty {
+            return [preferred]
+        }
         let freeOnly = preferred.hasSuffix(":free") || preferred == "openrouter/free"
-        let fallback = freeOnly ? freeFallbackChain : autoFallbackChain
+        let fallback = freeOnly ? ["google/gemini-2.0-flash-exp:free", "google/gemma-4-31b-it:free"] : ["google/gemini-2.0-flash-exp:free", "openai/gpt-4o-mini"]
         return [preferred] + fallback.filter { $0 != preferred }
     }
 }
@@ -799,7 +840,10 @@ public final class GeminiService: ObservableObject {
         }
     }
 
-    public var hasAPIKey: Bool { !apiKey.isEmpty }
+    public var hasAPIKey: Bool {
+        if selectedProvider == .pollinations { return true }
+        return !apiKey.isEmpty
+    }
 
     public var activeEndpointURLString: String {
         let custom = customEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1025,6 +1069,11 @@ public final class GeminiService: ObservableObject {
     }
 
     public func testAPIKey(completion: @escaping (Bool, String) -> Void) {
+        if selectedProvider == .pollinations {
+            completion(true, "✅ Pollinations AI sẵn sàng! Miễn phí 100%, không cần API Key.")
+            return
+        }
+
         let key = apiKey
         guard !key.isEmpty else {
             completion(false, "API Key cho \(selectedProvider.displayName) đang trống. Hãy nhập API Key trong Cài đặt.")
@@ -1032,8 +1081,13 @@ public final class GeminiService: ObservableObject {
         }
 
         let testCandidates = AIVisionModel.fallbackChain(selected: selectedModel, customModelName: customModelName, provider: selectedProvider)
+        guard let testModel = testCandidates.first else {
+            completion(false, "Không tìm thấy model phù hợp.")
+            return
+        }
 
-        testModelCandidate(candidates: testCandidates, index: 0, key: key, completion: completion)
+        // Test đúng 1 model chính do người dùng chọn để phản hồi siêu tốc, không test chuỗi gây hao tốn quota và lag
+        testModelCandidate(candidates: [testModel], index: 0, key: key, completion: completion)
     }
 
     private func testModelCandidate(
@@ -1059,10 +1113,12 @@ public final class GeminiService: ObservableObject {
             request.timeoutInterval = 45
         }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        if selectedProvider == .googleGemini {
+        if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        if selectedProvider == .googleGemini && !key.isEmpty {
             request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-        } else if selectedProvider == .anthropic {
+        } else if selectedProvider == .anthropic && !key.isEmpty {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         }
@@ -1308,7 +1364,7 @@ public final class GeminiService: ObservableObject {
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
         let key = apiKey
-        guard !key.isEmpty else {
+        guard hasAPIKey else {
             completion(.failure(.noAPIKey))
             return
         }
@@ -1414,7 +1470,7 @@ public final class GeminiService: ObservableObject {
             }
         }
 
-        guard !key.isEmpty else {
+        guard hasAPIKey else {
             let fallback = Self.generateLocalVideoGuidance(
                 sceneContext: sceneContext,
                 subjectRect: subjectRect,
@@ -1748,10 +1804,12 @@ public final class GeminiService: ObservableObject {
             request.timeoutInterval = 45
         }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        if selectedProvider == .googleGemini {
+        if !key.isEmpty {
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        if selectedProvider == .googleGemini && !key.isEmpty {
             request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-        } else if selectedProvider == .anthropic {
+        } else if selectedProvider == .anthropic && !key.isEmpty {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         }
@@ -2032,19 +2090,27 @@ public final class GeminiService: ObservableObject {
         faceRects: [CGRect] = []
     ) -> String {
         var hints = ""
-        if let scene = sceneContext { hints += "scene=\(scene.rawValue) " }
+        if let scene = sceneContext { hints += "scene_type=\(scene.rawValue); " }
         if let r = subjectRect {
-            hints += String(format: "subj=[%.2f,%.2f,%.2f,%.2f] ", r.midX, r.midY, r.width, r.height)
+            hints += String(format: "subject_box=[x:%.2f,y:%.2f,w:%.2f,h:%.2f]; ", r.midX, r.midY, r.width, r.height)
         }
-        if !faceRects.isEmpty { hints += "faces=\(faceRects.count) " }
+        if !faceRects.isEmpty { hints += "detected_faces=\(faceRects.count); " }
         if let m = colorMetrics {
-            hints += String(format: "luma=%.2f warm=%.2f ", m.averageLuma, m.warmthCast)
+            hints += String(format: "luma=%.2f,warmth=%.2f,contrast=%.2f; ", m.averageLuma, m.warmthCast, m.contrastScore)
         }
         return """
-        Nhiếp ảnh gia AI. Gợi ý cảm biến: \(hints)
-        Tìm tọa độ thực tế của chủ thể chính TRONG ẢNH HIỆN TẠI (target_x, target_y trong [0.05..0.95], góc trên-trái=(0,0); ưu tiên mắt/mặt nếu có người; KHÔNG trả về 0.5,0.5 nếu chủ thể lệch tâm), mức zoom quang học tối ưu [1.0, 1.5, 2.0, 3.0], mức bù sáng ev_bias [-2.0..+2.0] và lighting_scene ("backlit", "night", "sunset", "harsh_sun", "normal").
-        Chỉ trả về 1 JSON object hợp lệ:
-        {"target_x":0.42,"target_y":0.36,"suggested_zoom":1.5,"ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Fuji Pro 400H","preset_explanation":"Tôn da sáng tự nhiên","explanation":"Căn mắt chủ thể vào điểm mạnh tỷ lệ vàng","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.05,"saturation":1.04,"contrast":1.03,"shadow_lift":0.03,"highlight_roll":0.95,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng sáng tự nhiên"}}
+        You are an elite Director of Photography (DoP) and Master Cinematographer.
+        Analyze this camera viewfinder image with professional artistic precision.
+        Sensor cues: \(hints)
+        MANDATORY INSTRUCTIONS:
+        1. Pinpoint the exact optical focal center of the primary visual subject (target_x, target_y in [0.05..0.95], where top-left is 0.0,0.0 and bottom-right is 1.0,1.0). If a person or face exists, lock onto the dominant eye or face center. Never return center 0.5,0.5 if subject is off-center.
+        2. Determine optimal framing optical zoom: choose from [1.0, 1.5, 2.0, 2.5, 3.0] to remove clutter and flatter subject proportions.
+        3. Determine smart scene exposure bias: ev_bias from -2.0 to +2.0 (e.g. -0.7 for backlit silhouette, +0.5 for underexposed face/night, 0.0 for balanced).
+        4. Classify lighting_scene: "backlit", "night", "sunset", "harsh_sun", "indoor_warm", or "normal".
+        5. Recommend the ideal film look preset and color recipe.
+
+        Respond with ONLY ONE valid, raw JSON object (no markdown, no quotes, no extra text):
+        {"target_x":0.42,"target_y":0.36,"suggested_zoom":1.5,"ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Classic Chrome","preset_explanation":"Tôn da sáng tự nhiên và giữ tương phản trung tính","explanation":"Khóa nét vào mắt chủ thể và căn chỉnh điểm mạnh 1/3 điện ảnh","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.0,"saturation":1.04,"contrast":1.03,"shadow_lift":0.02,"highlight_roll":0.95,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng ánh sáng tự nhiên"}}
         """
     }
     // MARK: - Response Parsing

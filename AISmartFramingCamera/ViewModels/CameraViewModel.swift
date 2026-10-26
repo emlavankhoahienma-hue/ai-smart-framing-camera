@@ -2216,60 +2216,45 @@ public final class CameraViewModel: ObservableObject {
             height: 0.32
         )
 
-        // Tính toán điểm ngắm bố cục (Composition Aim Projection) để đưa chủ thể về đúng điểm mạnh Tỷ lệ vàng / 1/3
-        let cat: NeuralSubjectCategory = response.sceneType == .portrait ? .human : (response.sceneType == .pet ? .animal : .foregroundObject)
-        let sceneEvidence = VisionFramingEngine.shared.latestSceneEvidence ?? SceneCompositionEvidence(
-            primarySubjectRect: effectiveRect,
-            focalAnchorPoint: subjectAnchor,
-            focalCategory: cat,
-            focalSaliencyRatio: 0.65,
-            edgeClutterScore: 0.0,
-            detectedScene: response.sceneType,
-            detectedHorizonY: nil,
-            timestamp: CACurrentMediaTime()
-        )
-        let evaluated = calculator.evaluateFramingResult(
-            anchor: subjectAnchor,
-            subjectRect: effectiveRect,
-            category: cat,
-            gaze: 0.0,
-            sceneType: response.sceneType,
-            currentZoom: displayZoom,
-            availableZooms: cameraService.availableDisplayZoomOptions,
-            sceneEvidence: sceneEvidence,
-            pixelBuffer: frameProcessor.latestPixelBufferSnapshot(),
-            iso: cameraService.currentISO,
-            exposureDuration: cameraService.currentExposureDuration,
-            aperture: cameraService.currentAperture
-        )
-        self.framingResult = evaluated
-
-        // Kế hoạch 3 pha đồng bộ: Trích xuất EV thông minh từ Cloud hoặc Fallback về Local
+        // Áp dụng trực tiếp Target, Zoom và EV từ Chuyên gia Cloud AI mà không qua bước chấm điểm cục bộ
+        let aimPoint = CGPoint(x: response.targetX, y: response.targetY)
+        let center = CGPoint(x: 0.5, y: 0.5)
+        let dx = aimPoint.x - center.x
+        let dy = aimPoint.y - center.y
+        let dist = hypot(dx, dy)
+        let angle = atan2(dy, dx) * 180.0 / .pi
+        let isAligned = dist <= 0.045
+        let alignmentScore = max(0.0, min(1.0, 1.0 - Double(dist / 0.5)))
         let cloudEV = response.recommendedEVBias ?? response.colorRecipe.exposureBias
-        let finalEV: Float
-        let lScene: String
-        let lRationale: String
-        if abs(cloudEV) > 0.05 {
-            finalEV = cloudEV
-            lScene = response.lightingScene ?? (cloudEV > 0.3 ? "backlit" : (cloudEV < -0.3 ? "night" : "normal"))
-            lRationale = "Cloud AI chẩn đoán ánh sáng (\(lScene)): EV \(String(format: "%+.1f", finalEV))"
-        } else {
-            finalEV = evaluated.recommendedEVBias
-            lScene = evaluated.lightingScene
-            lRationale = evaluated.lightingRationale
-        }
-        self.plannedEVBias = finalEV
+        let lScene = response.lightingScene ?? (cloudEV > 0.3 ? "backlit" : (cloudEV < -0.3 ? "night" : "normal"))
+        let lRationale = "Cloud AI (\(response.modelUsed)): \(response.explanation)"
+
+        let directFraming = FramingTargetResult(
+            targetPoint: aimPoint,
+            currentCenter: center,
+            offsetVector: CGVector(dx: dx, dy: dy),
+            distance: dist,
+            angleDegrees: angle,
+            alignmentScore: alignmentScore,
+            isAligned: isAligned,
+            recommendedZoomFactor: response.suggestedZoom,
+            optimalRule: response.compositionRule,
+            guideDescription: response.explanation,
+            recommendedEVBias: cloudEV,
+            lightingScene: lScene,
+            lightingRationale: lRationale
+        )
+        self.framingResult = directFraming
+        self.plannedEVBias = cloudEV
         self.plannedLightingScene = lScene
         self.plannedLightingDescription = lRationale
+        self.aiSuggestedZoom = response.suggestedZoom
+        self.pendingSuggestedZoom = response.suggestedZoom
 
-        let chosenZoom = response.suggestedZoom > 1.05 ? response.suggestedZoom : evaluated.recommendedZoomFactor
-        self.aiSuggestedZoom = chosenZoom
-        self.pendingSuggestedZoom = chosenZoom
-
-        var liveAim = evaluated.targetPoint
+        var liveAim = aimPoint
         var guideWorldRay: simd_double3? = nil
         if let source = cloudTrackingSource {
-            let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: evaluated.targetPoint))
+            let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: aimPoint))
             guideWorldRay = worldRay
             if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
                let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
@@ -3491,7 +3476,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func setZoom(_ displayZoomVal: CGFloat) {
-        guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
+        guard displayZoomVal.isFinite, (isCameraReady || isDualCameraActive), !isShutterPressing, !isCameraHibernating else { return }
         cancelAIZoomForGesture()
         requestManualZoom(displayZoomVal, smooth: true)
     }
@@ -3501,7 +3486,7 @@ public final class CameraViewModel: ObservableObject {
     /// - Khi hai ngon tay dang di chuyen: KHONG reconfigure captureSession de giu pipeline 60 FPS cuc ky muot ma (allowPhysicalSwitch = false).
     /// - Khi dung tay 160ms (debounced settle) hoac nhac tay (finishZoomGesture): Kich hoat switch sang camera Telephoto vat ly voi allowPhysicalSwitch = true.
     public func setZoomContinuous(_ displayZoomVal: CGFloat) {
-        guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
+        guard displayZoomVal.isFinite, (isCameraReady || isDualCameraActive), !isShutterPressing, !isCameraHibernating else { return }
         if !isPinchingZoom { beginManualZoomGesture() }
         selectedZoomPreset = resolveClosestZoomPreset(for: displayZoomVal)
         let now = CACurrentMediaTime()
@@ -3524,7 +3509,7 @@ public final class CameraViewModel: ObservableObject {
     public func finishZoomGesture(_ finalDisplayZoom: CGFloat) {
         pinchSettleWorkItem?.cancel()
         pinchSettleWorkItem = nil
-        guard isCameraReady, !isShutterPressing, !isCameraHibernating else {
+        guard (isCameraReady || isDualCameraActive), !isShutterPressing, !isCameraHibernating else {
             isPinchingZoom = false
             return
         }
@@ -3538,7 +3523,7 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func setZoomFromButton(_ displayZoomVal: CGFloat) {
-        guard displayZoomVal.isFinite, isCameraReady, !isShutterPressing, !isCameraHibernating else { return }
+        guard displayZoomVal.isFinite, (isCameraReady || isDualCameraActive), !isShutterPressing, !isCameraHibernating else { return }
         cancelAIZoomForGesture()
         haptics.triggerSelectionChange()
         selectedZoomPreset = displayZoomVal
