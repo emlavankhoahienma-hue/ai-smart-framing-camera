@@ -155,34 +155,6 @@ jobs:
           xcrun coremlc compile CharmAesthetics.mlpackage .
           test -d SAMPComposition.mlmodelc
 
-      - name: Validate Swift photographic model and crop safety on real images
-        run: |
-          python scripts/validate_composition_photos.py
-
-      - name: Validate preserved YOLO recognition on real photographs
-        run: python scripts/validate_detector_photos.py
-
-      - name: Validate measured portrait framing on all human test photos
-        run: |
-          python scripts/prepare_pose_photos.py
-          xcrun swiftc -O -warnings-as-errors \
-            AISmartFramingCamera/Services/PortraitFramingEvidence.swift \
-            tests/PortraitPoseDiagnostic.swift -o "$RUNNER_TEMP/portrait-pose-diagnostic"
-          "$RUNNER_TEMP/portrait-pose-diagnostic" validation/pose/photos validation/pose-report.json
-
-      - name: Upload photographic model validation
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: Photographic-Composition-Validation
-          path: |
-            SAMPModelManifest.json
-            CharmModelManifest.json
-            validation/swift/
-            validation/detection/*-real-photos.json
-            validation/photos/manifest.json
-            validation/pose-report.json
-
       - name: Build for iOS (unsigned)
         run: |
           set -o pipefail

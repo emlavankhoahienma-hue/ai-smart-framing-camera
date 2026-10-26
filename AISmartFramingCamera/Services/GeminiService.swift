@@ -107,7 +107,6 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
         case .openRouter:   return "OpenRouter (Đa Model 2026)"
         case .openAI:       return "OpenAI API (GPT-4o / GPT-4.1)"
         case .anthropic:    return "Anthropic API (Claude 3.7 / 3.5)"
-        case .groq:         return "Groq Cloud (LPU Siêu tốc)"
         case .xAI:          return "xAI API (Grok 2 Vision)"
         case .deepSeek:     return "DeepSeek API (VL2 / V3)"
         case .custom:       return "Tùy chỉnh (OpenAI-Compatible)"
