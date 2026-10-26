@@ -639,7 +639,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isPinchingZoom: Bool = false
 
     @Published public private(set) var pendingSuggestedZoom: CGFloat = 1.0
-    private var hasExecutedAutoZoomForSession: Bool = false
+    public private(set) var hasExecutedAutoZoomForSession: Bool = false
     private var lastAutoZoomExecutionTime: Date = .distantPast
 
     // MARK: - Auto-Zoom Execution (1x, 2x, 3x Zoom-In & Zoom-Out with Cooldown & Hysteresis)

@@ -752,7 +752,7 @@ public struct ZoomRevealCutoutShape: Shape {
 }
 
 // MARK: - 4 Ngoặc Vuông Góc Khung (Corner Brackets)
-public struct CornerBracketsShape: Shape {
+public struct ZoomCornerBracketsShape: Shape {
     public var cornerLength: CGFloat = 18.0
     public var cornerRadius: CGFloat = 16.0
 
@@ -806,11 +806,16 @@ public struct ZoomRevealOverlay: View {
 
     // Giai đoạn 1: Khung ngắm mục tiêu nhỏ (Pre-Zoom Crop Box) khi AI đề xuất mức zoom mà chưa khóa
     private var isPreZoomSuggested: Bool {
-        !viewModel.hasExecutedAutoZoomForSession &&
-        viewModel.isAutoZoomEnabled &&
-        (viewModel.pendingSuggestedZoom - viewModel.displayZoom) > 0.15 &&
-        viewModel.currentTargetPoint != nil &&
-        (viewModel.aiSessionState == .analyzing || viewModel.aiSessionState == .standby)
+        guard !viewModel.hasExecutedAutoZoomForSession,
+              viewModel.isAutoZoomEnabled,
+              (viewModel.pendingSuggestedZoom - viewModel.displayZoom) > 0.15,
+              viewModel.currentTargetPoint != nil else { return false }
+        switch viewModel.aiSessionState {
+        case .analyzing, .targetPlaced:
+            return true
+        default:
+            return false
+        }
     }
 
     private var isEffectActive: Bool {
@@ -905,13 +910,13 @@ public struct ZoomRevealOverlay: View {
 
                 // 4. 4 Ngoặc Vuông Góc Khung (Corner Brackets)
                 if isRevealing {
-                    CornerBracketsShape(cornerLength: 18.0, cornerRadius: 16.0)
+                    ZoomCornerBracketsShape(cornerLength: 18.0, cornerRadius: 16.0)
                         .stroke(AlignTheme.iridescentRainbow, lineWidth: 2.8)
                         .frame(width: max(20, rect.width), height: max(20, rect.height))
                         .position(x: rect.midX, y: rect.midY)
                         .opacity(strokeOpacity)
                 } else {
-                    CornerBracketsShape(cornerLength: 18.0, cornerRadius: 16.0)
+                    ZoomCornerBracketsShape(cornerLength: 18.0, cornerRadius: 16.0)
                         .stroke(Color.white.opacity(0.85), lineWidth: 2.0)
                         .frame(width: max(20, rect.width), height: max(20, rect.height))
                         .position(x: rect.midX, y: rect.midY)
