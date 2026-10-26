@@ -171,7 +171,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
 
     public var defaultModelID: String {
         switch self {
-        case .pollinations: return "openai/gpt-4o-mini"
+        case .pollinations: return "openai/gpt-5.4-nano"
         case .googleGemini: return "gemini-2.0-flash"
         case .groq:         return "llama-3.2-11b-vision-preview"
         case .openRouter:   return "google/gemini-2.0-flash-exp:free"
@@ -204,6 +204,8 @@ public struct AIConnectionProfile: Identifiable, Codable, Equatable {
 
 // MARK: - Supported AI Vision Models (2026 Full Catalog)
 public enum AIVisionModel: String, CaseIterable, Identifiable {
+    case pollinationsGPT54Nano = "pollinations/gpt-5.4-nano"
+    case pollinationsGPT54Mini = "pollinations/gpt-5.4-mini"
     case pollinationsOpenAI = "pollinations/gpt-4o-mini"
     case gemini20FlashDirect = "gemini-2.0-flash"
     case gemini20FlashLiteDirect = "gemini-2.0-flash-lite-preview-02-05"
@@ -258,7 +260,9 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations AI)"
+        case .pollinationsGPT54Nano:  return "GPT-5.4 Nano (Pollinations • Miễn phí 100%)"
+        case .pollinationsGPT54Mini:  return "GPT-5.4 Mini (Pollinations • Miễn phí 100%)"
+        case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations AI • Cần Pollen)"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash (Trực tiếp Google AI • Miễn phí cao)"
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Flash Lite (Google AI • Siêu tốc)"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash (Google AI • 1500 lượt/ngày free)"
@@ -311,7 +315,9 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public var shortName: String {
         switch self {
-        case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations)"
+        case .pollinationsGPT54Nano:  return "GPT-5.4 Nano"
+        case .pollinationsGPT54Mini:  return "GPT-5.4 Mini"
+        case .pollinationsOpenAI:     return "GPT-4o Mini"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash"
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Lite"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash"
@@ -364,8 +370,10 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public var subtitle: String {
         switch self {
+        case .pollinationsGPT54Nano, .pollinationsGPT54Mini:
+            return "Phân tích ảnh trực tiếp từ Pollinations AI — Miễn phí 100%, không tốn Pollen"
         case .pollinationsOpenAI:
-            return "Hỗ trợ phân tích ảnh qua endpoint chính thức gen.pollinations.ai"
+            return "Phân tích ảnh qua GPT-4o Mini trên Pollinations AI (yêu cầu tài khoản có Pollen)"
         case .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
             return "Trực tiếp Google AI Studio — Hạn mức miễn phí 1.500 lượt/ngày cực lớn"
         case .groqLlama32_11BDirect, .groqLlama32_90BDirect:
@@ -384,7 +392,11 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "google/gemini-2.5-flash"
+            return "openai/gpt-5.4-nano"
+        case .pollinationsGPT54Nano:
+            return "openai/gpt-5.4-nano"
+        case .pollinationsGPT54Mini:
+            return "openai/gpt-5.4-mini"
         case .pollinationsOpenAI:
             return "openai/gpt-4o-mini"
         default:
@@ -398,6 +410,8 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinations:
             return [
                 .autoStrongest,
+                .pollinationsGPT54Nano,
+                .pollinationsGPT54Mini,
                 .pollinationsOpenAI
             ]
         case .googleGemini:
@@ -474,7 +488,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     /// Model mặc định tối ưu theo từng Hãng
     public static func defaultModel(for provider: AICloudProvider) -> AIVisionModel {
         switch provider {
-        case .pollinations: return .pollinationsOpenAI
+        case .pollinations: return .pollinationsGPT54Nano
         case .googleGemini: return .gemini20FlashDirect
         case .groq: return .groqLlama32_11BDirect
         case .openAI: return .gpt4oMini
@@ -510,13 +524,24 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
         if provider == .pollinations {
             var cleanModel = preferred
-            if cleanModel == "auto" || cleanModel.isEmpty || cleanModel == "openai" || cleanModel.hasPrefix("pollinations/") {
+            if cleanModel == "auto" || cleanModel.isEmpty || cleanModel == "openai" {
+                cleanModel = "openai/gpt-5.4-nano"
+            } else if cleanModel == "pollinations/gpt-4o-mini" {
                 cleanModel = "openai/gpt-4o-mini"
+            } else if cleanModel == "pollinations/gpt-5.4-nano" {
+                cleanModel = "openai/gpt-5.4-nano"
+            } else if cleanModel == "pollinations/gpt-5.4-mini" {
+                cleanModel = "openai/gpt-5.4-mini"
             }
-            if selected != .autoStrongest && !custom.isEmpty {
-                return [cleanModel]
+
+            var chain = [cleanModel]
+            let candidates = ["openai/gpt-5.4-nano", "openai/gpt-5.4-mini", "openai/gpt-4o-mini"]
+            for cand in candidates {
+                if !chain.contains(cand) {
+                    chain.append(cand)
+                }
             }
-            return [cleanModel, "openai/gpt-4o-mini"]
+            return chain
         }
 
         if provider == .googleGemini {
@@ -1815,20 +1840,19 @@ public final class GeminiService: ObservableObject {
             case .success(let response):
                 completion(.success(response))
             case .failure(let error):
-                // Stop immediately if invalid key
-                if case .invalidAPIKey = error {
-                    completion(.failure(error))
-                    return
-                }
-                if case .insufficientCredits = error {
+                CameraLogger.warning("GeminiService: Model \(currentModelID) thất bại: \(error.localizedDescription)", category: .ai)
+
+                // Nếu là lỗi sai API Key hoàn toàn (401/403) và không còn model dự phòng khác
+                if case .invalidAPIKey = error, index >= chain.count - 1 {
+                    CameraLogger.error("GeminiService: Sai API Key cho \(self.selectedProvider.displayName)", category: .ai)
                     completion(.failure(error))
                     return
                 }
 
-                // ONLY rotate to the next model on genuine quota exhaustion (429) or transient network errors
-                // DO NOT rotate on parse errors or completed requests (prevents costly cascading requests!)
-                switch error {
-                case .rateLimited, .networkError:
+                // Tự động chuyển sang model dự phòng tiếp theo trong chuỗi nếu còn model (hết quota 429, hết credit 402, lỗi model...)
+                if index + 1 < chain.count {
+                    let nextModel = chain[index + 1]
+                    CameraLogger.info("GeminiService: Tự động chuyển fallback sang model: \(nextModel)", category: .ai)
                     self.tryModelChain(
                         chain: chain,
                         index: index + 1,
@@ -1839,7 +1863,8 @@ public final class GeminiService: ObservableObject {
                         startTime: startTime,
                         completion: completion
                     )
-                default:
+                } else {
+                    CameraLogger.error("GeminiService: Toàn bộ model trong chuỗi đều không khả dụng", category: .ai)
                     completion(.failure(error))
                 }
             }
@@ -1886,14 +1911,14 @@ public final class GeminiService: ObservableObject {
                     "role": "user",
                     "content": [
                         [
+                            "type": "text",
+                            "text": prompt
+                        ],
+                        [
                             "type": "image_url",
                             "image_url": [
                                 "url": "data:image/jpeg;base64,\(base64Image)"
                             ]
-                        ],
-                        [
-                            "type": "text",
-                            "text": prompt
                         ]
                     ]
                 ]
@@ -1901,7 +1926,7 @@ public final class GeminiService: ObservableObject {
             "response_format": ["type": "json_object"],
             "temperature": 0.20,
             "top_p": 0.90,
-            "max_tokens": 420
+            "max_tokens": 1000
         ]
         if selectedProvider == .openRouter {
             requestBody["reasoning"] = ["exclude": true]
@@ -1957,15 +1982,23 @@ public final class GeminiService: ObservableObject {
 
             var responseText: String?
 
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let firstChoice = choices.first,
-               let message = firstChoice["message"] as? [String: Any],
-               let text = message["content"] as? String {
-                responseText = text
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let choices = json["choices"] as? [[String: Any]],
+                   let firstChoice = choices.first,
+                   let message = firstChoice["message"] as? [String: Any],
+                   let text = message["content"] as? String {
+                    responseText = text
+                } else if let content = json["content"] as? String {
+                    responseText = content
+                } else if let text = json["text"] as? String {
+                    responseText = text
+                }
+            } else if let rawString = String(data: data, encoding: .utf8), !rawString.isEmpty {
+                responseText = rawString
             }
 
             guard let text = responseText, !text.isEmpty else {
+                CameraLogger.error("GeminiService: Không thể đọc content từ phản hồi của model \(modelID)", category: .ai)
                 DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
                 return
             }

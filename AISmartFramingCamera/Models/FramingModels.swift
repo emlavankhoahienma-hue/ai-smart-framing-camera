@@ -211,7 +211,7 @@ public enum AIEngineSource: Equatable {
                 .replacingOccurrences(of: "openai/", with: "")
                 .replacingOccurrences(of: "anthropic/", with: "")
                 .replacingOccurrences(of: "meta-llama/", with: "")
-            return "OpenRouter: \(clean)"
+            return "Cloud AI: \(clean)"
         case .compositionLocal(let label):
             return "Charm 2025 + SAMP-Net (\(label))"
         case .semanticLocal(let label):
@@ -231,7 +231,7 @@ public enum AIEngineSource: Equatable {
                 .replacingOccurrences(of: "anthropic/", with: "")
                 .replacingOccurrences(of: "meta-llama/", with: "")
                 .uppercased()
-            return "OPENROUTER (\(clean))"
+            return "CLOUD (\(clean))"
         case .compositionLocal:
             return "Charm 2025"
         case .semanticLocal:

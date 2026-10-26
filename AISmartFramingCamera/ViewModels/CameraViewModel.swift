@@ -2159,6 +2159,7 @@ public final class CameraViewModel: ObservableObject {
                 case .success(let response):
                     self.handleGeminiResponse(response)
                 case .failure(let error):
+                    CameraLogger.warning("CameraViewModel: Phân tích Cloud AI thất bại (\(error.localizedDescription)), tự động chuyển sang AI trên máy", category: .ai)
                     self.geminiError = error.localizedDescription
                     self.analyzeCloudCaptureLocally()
                 }
