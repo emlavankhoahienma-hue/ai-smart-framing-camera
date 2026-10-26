@@ -2413,6 +2413,10 @@ public final class CameraService: NSObject {
     }
 
     private func configureVideoFormatInternal(option: VideoFormatOption) {
+        guard !self.isDualCameraActive else {
+            CameraLogger.info("CameraService: Bỏ qua configureVideoFormatInternal khi Dual Camera đang kích hoạt", category: .capture)
+            return
+        }
         appliedVideoFormatOption = nil
         guard let currentCamera = self.activeCamera else { return }
 
@@ -2501,19 +2505,26 @@ public final class CameraService: NSObject {
                 }
             }
 
-            self.captureSession.sessionPreset = .inputPriority
-            targetCamera.activeFormat = targetFormat
-
-            if let videoMaxPhotoDim = targetFormat.supportedMaxPhotoDimensions.first {
-                self.photoOutput.maxPhotoDimensions = videoMaxPhotoDim
+            if self.captureSession.canSetSessionPreset(.inputPriority) {
+                self.captureSession.sessionPreset = .inputPriority
             }
+            targetCamera.activeFormat = targetFormat
 
             let matchingRange = targetFormat.videoSupportedFrameRateRanges.first(where: {
                 $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
             })
             let frameDuration = matchingRange?.minFrameDuration ?? CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
-            targetCamera.activeVideoMinFrameDuration = frameDuration
-            targetCamera.activeVideoMaxFrameDuration = frameDuration
+
+            // Đảm bảo không vi phạm bất biến: activeVideoMinFrameDuration <= activeVideoMaxFrameDuration
+            // Tránh văng NSInvalidArgumentException gây Crash Signal 6 trong AVFCapture
+            let currentMax = targetCamera.activeVideoMaxFrameDuration
+            if CMTimeCompare(frameDuration, currentMax) > 0 {
+                targetCamera.activeVideoMaxFrameDuration = frameDuration
+                targetCamera.activeVideoMinFrameDuration = frameDuration
+            } else {
+                targetCamera.activeVideoMinFrameDuration = frameDuration
+                targetCamera.activeVideoMaxFrameDuration = frameDuration
+            }
 
             if targetCamera.isFocusModeSupported(.continuousAutoFocus) {
                 targetCamera.focusMode = .continuousAutoFocus
@@ -2535,6 +2546,13 @@ public final class CameraService: NSObject {
 
             sessionCommitted = true
             self.captureSession.commitConfiguration()
+
+            // Cập nhật maxPhotoDimensions sau khi captureSession đã commit format mới an toàn
+            if let videoMaxPhotoDim = targetFormat.supportedMaxPhotoDimensions.first,
+               self.captureSession.outputs.contains(self.photoOutput),
+               targetCamera.activeFormat.supportedMaxPhotoDimensions.contains(videoMaxPhotoDim) {
+                self.photoOutput.maxPhotoDimensions = videoMaxPhotoDim
+            }
 
             appliedVideoFormatOption = effectiveOption
             selectedVideoFormatOption = effectiveOption

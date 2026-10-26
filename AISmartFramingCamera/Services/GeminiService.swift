@@ -101,7 +101,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
 
     public var displayName: String {
         switch self {
-        case .pollinations: return "Pollinations AI (Miễn phí 100% • Không cần Key)"
+        case .pollinations: return "Pollinations AI (enter.pollinations.ai)"
         case .googleGemini: return "Google AI Studio (Gemini 2.0 / 1.5 • Miễn phí cao)"
         case .groq:         return "Groq Cloud (LPU Siêu tốc • Miễn phí)"
         case .openRouter:   return "OpenRouter (Đa Model 2026)"
@@ -115,7 +115,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
 
     public var shortBadge: String {
         switch self {
-        case .pollinations: return "Pollinations (Free)"
+        case .pollinations: return "Pollinations"
         case .googleGemini: return "Google Gemini"
         case .groq:         return "Groq LPU"
         case .openRouter:   return "OpenRouter"
@@ -129,7 +129,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
 
     public var defaultChatCompletionsURL: String {
         switch self {
-        case .pollinations: return "https://text.pollinations.ai/openai/chat/completions"
+        case .pollinations: return "https://gen.pollinations.ai/v1/chat/completions"
         case .googleGemini: return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         case .groq:         return "https://api.groq.com/openai/v1/chat/completions"
         case .openRouter:   return "https://openrouter.ai/api/v1/chat/completions"
@@ -143,7 +143,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
 
     public var defaultModelsURL: String {
         switch self {
-        case .pollinations: return "https://text.pollinations.ai/models"
+        case .pollinations: return "https://gen.pollinations.ai/v1/models"
         case .googleGemini: return "https://generativelanguage.googleapis.com/v1beta/openai/models"
         case .groq:         return "https://api.groq.com/openai/v1/models"
         case .openRouter:   return "https://openrouter.ai/api/v1/models"
@@ -157,7 +157,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
 
     public var keyPlaceholder: String {
         switch self {
-        case .pollinations: return "Hoàn toàn miễn phí — không cần dán API Key"
+        case .pollinations: return "Dán Pollinations Key (từ enter.pollinations.ai)..."
         case .googleGemini: return "Dán Google AI Studio Key (AIzaSy...)"
         case .groq:         return "Dán Groq API Key (gsk_...)"
         case .openRouter:   return "Dán OpenRouter Key (sk-or-v1-...)"
@@ -171,7 +171,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
 
     public var defaultModelID: String {
         switch self {
-        case .pollinations: return "openai"
+        case .pollinations: return "openai/gpt-4o-mini"
         case .googleGemini: return "gemini-2.0-flash"
         case .groq:         return "llama-3.2-11b-vision-preview"
         case .openRouter:   return "google/gemini-2.0-flash-exp:free"
@@ -204,7 +204,7 @@ public struct AIConnectionProfile: Identifiable, Codable, Equatable {
 
 // MARK: - Supported AI Vision Models (2026 Full Catalog)
 public enum AIVisionModel: String, CaseIterable, Identifiable {
-    case pollinationsOpenAI = "pollinations/openai"
+    case pollinationsOpenAI = "openai/gpt-4o-mini"
     case gemini20FlashDirect = "gemini-2.0-flash"
     case gemini20FlashLiteDirect = "gemini-2.0-flash-lite-preview-02-05"
     case gemini15FlashDirect = "gemini-1.5-flash"
@@ -258,7 +258,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .pollinationsOpenAI:     return "Pollinations OpenAI Vision (Miễn phí 100% không cần Key)"
+        case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations AI)"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash (Trực tiếp Google AI • Miễn phí cao)"
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Flash Lite (Google AI • Siêu tốc)"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash (Google AI • 1500 lượt/ngày free)"
@@ -309,10 +309,63 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         }
     }
 
+    public var shortName: String {
+        switch self {
+        case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations)"
+        case .gemini20FlashDirect:    return "Gemini 2.0 Flash"
+        case .gemini20FlashLiteDirect:return "Gemini 2.0 Lite"
+        case .gemini15FlashDirect:    return "Gemini 1.5 Flash"
+        case .gemini20FlashFree:      return "Gemini 2.0 Free"
+        case .groqLlama32_11BDirect:  return "Llama 3.2 11B (Groq)"
+        case .groqLlama32_90BDirect:  return "Llama 3.2 90B (Groq)"
+        case .freeVision:             return "Gemma 4 31B"
+        case .gemini25FlashFree:      return "Gemini 2.5 Free"
+        case .qwen3VLFree:            return "Qwen 3 VL"
+        case .llama4MaverickFree:     return "Llama 4 Maverick"
+        case .autoStrongest:          return "Auto Mạnh Nhất"
+        case .gemini31FlashLite:      return "Gemini 3.1 Lite"
+        case .gemini31Pro:            return "Gemini 3.1 Pro"
+        case .gemini37Flash:          return "Gemini 3.7 Flash"
+        case .gemini36Flash:          return "Gemini 3.6 Flash"
+        case .gemini35Flash:          return "Gemini 3.5 Flash"
+        case .gemini25Flash:          return "Gemini 2.5 Flash"
+        case .gemini25Pro:            return "Gemini 2.5 Pro"
+        case .gemini20Flash:          return "Gemini 2.0 Flash"
+        case .gemini20ProExp:         return "Gemini 2.0 Pro"
+        case .geminiFlash15:          return "Gemini 1.5 Flash"
+        case .geminiPro15:            return "Gemini 1.5 Pro"
+        case .gemini15Flash8B:        return "Gemini 1.5 8B"
+        case .gpt5:                   return "GPT-5 Vision"
+        case .gpt5Mini:               return "GPT-5 Mini"
+        case .gpt45:                  return "GPT-4.5 Preview"
+        case .gpt4o:                  return "GPT-4o"
+        case .gpt41:                  return "GPT-4.1"
+        case .gpt41Mini:              return "GPT-4.1 Mini"
+        case .o1:                     return "o1 Vision"
+        case .o3Mini:                 return "o3-mini"
+        case .o4MiniHigh:             return "o4-mini High"
+        case .gpt4oMini:              return "GPT-4o Mini"
+        case .claude45Sonnet:         return "Claude 4.5 Sonnet"
+        case .claude4Sonnet:          return "Claude 4 Sonnet"
+        case .claude37Sonnet:         return "Claude 3.7 Sonnet"
+        case .claude35Sonnet:         return "Claude 3.5 Sonnet"
+        case .claude35Haiku:          return "Claude 3.5 Haiku"
+        case .groqLlama33:            return "Llama 3.3 70B"
+        case .groqLlama32_90B:        return "Llama 3.2 90B"
+        case .deepseekChat:           return "DeepSeek V3"
+        case .deepseekReasoner:       return "DeepSeek R1"
+        case .deepseekVL2:            return "DeepSeek VL2"
+        case .grok2Vision:            return "Grok 2 Vision"
+        case .grok4Vision:            return "Grok 4 Vision"
+        case .qwen25VL72B:            return "Qwen 2.5 VL"
+        case .llamaVision:            return "Llama 3.2 11B"
+        }
+    }
+
     public var subtitle: String {
         switch self {
         case .pollinationsOpenAI:
-            return "Miễn phí 100%, không yêu cầu API Key — bấm là chạy ngay"
+            return "Hỗ trợ phân tích ảnh qua endpoint chính thức gen.pollinations.ai"
         case .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
             return "Trực tiếp Google AI Studio — Hạn mức miễn phí 1.500 lượt/ngày cực lớn"
         case .groqLlama32_11BDirect, .groqLlama32_90BDirect:
@@ -341,7 +394,10 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public static func models(for provider: AICloudProvider) -> [AIVisionModel] {
         switch provider {
         case .pollinations:
-            return [.pollinationsOpenAI]
+            return [
+                .autoStrongest,
+                .pollinationsOpenAI
+            ]
         case .googleGemini:
             return [
                 .autoStrongest,
@@ -451,7 +507,14 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         var preferred = custom.isEmpty ? selected.technicalModelID : custom
 
         if provider == .pollinations {
-            return ["openai"]
+            var cleanModel = preferred
+            if cleanModel == "auto" || cleanModel.isEmpty || cleanModel == "openai" {
+                cleanModel = "openai/gpt-4o-mini"
+            }
+            if selected != .autoStrongest && !custom.isEmpty {
+                return [cleanModel]
+            }
+            return [cleanModel, "openai/gpt-4o-mini"]
         }
 
         if provider == .googleGemini {
@@ -840,7 +903,6 @@ public final class GeminiService: ObservableObject {
     }
 
     public var hasAPIKey: Bool {
-        if selectedProvider == .pollinations { return true }
         return !apiKey.isEmpty
     }
 
@@ -1068,11 +1130,6 @@ public final class GeminiService: ObservableObject {
     }
 
     public func testAPIKey(completion: @escaping (Bool, String) -> Void) {
-        if selectedProvider == .pollinations {
-            completion(true, "✅ Pollinations AI sẵn sàng! Miễn phí 100%, không cần API Key.")
-            return
-        }
-
         let key = apiKey
         guard !key.isEmpty else {
             completion(false, "API Key cho \(selectedProvider.displayName) đang trống. Hãy nhập API Key trong Cài đặt.")

@@ -973,44 +973,46 @@ struct AIFramingSettingsSection: View {
                             .foregroundColor(AlignTheme.electricCyan)
                     }
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(AICloudProvider.allCases) { provider in
-                                let isSelected = viewModel.geminiService.selectedProvider == provider
-                                Button(action: {
-                                    UISelectionFeedbackGenerator().selectionChanged()
-                                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                        viewModel.geminiService.selectedProvider = provider
-                                        geminiKeyInput = viewModel.geminiService.apiKey
-                                        let available = AIVisionModel.models(for: provider)
-                                        if !available.contains(selectedModel) {
-                                            let def = AIVisionModel.defaultModel(for: provider)
-                                            selectedModel = def
-                                            viewModel.geminiService.selectedModel = def
-                                        }
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                        ForEach(AICloudProvider.allCases) { provider in
+                            let isSelected = viewModel.geminiService.selectedProvider == provider
+                            Button(action: {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                    viewModel.geminiService.selectedProvider = provider
+                                    geminiKeyInput = viewModel.geminiService.apiKey
+                                    let available = AIVisionModel.models(for: provider)
+                                    if !available.contains(selectedModel) {
+                                        let def = AIVisionModel.defaultModel(for: provider)
+                                        selectedModel = def
+                                        viewModel.geminiService.selectedModel = def
                                     }
-                                }) {
-                                    HStack(spacing: 5) {
-                                        if isSelected {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .font(.system(size: 11, weight: .bold))
-                                        }
-                                        Text(provider.shortBadge)
-                                            .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
-                                    }
-                                    .foregroundColor(isSelected ? .black : .white.opacity(0.85))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(
-                                        isSelected ? AnyView(AlignTheme.signatureGradient) : AnyView(Color(red: 0.08, green: 0.09, blue: 0.12))
-                                    )
-                                    .clipShape(Capsule())
-                                    .overlay(
-                                        Capsule().stroke(isSelected ? Color.clear : Color.white.opacity(0.12), lineWidth: 1)
-                                    )
                                 }
-                                .buttonStyle(.plain)
+                            }) {
+                                HStack(spacing: 4) {
+                                    if isSelected {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 10, weight: .bold))
+                                    }
+                                    Text(provider.shortBadge)
+                                        .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.85)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .foregroundColor(isSelected ? .black : .white.opacity(0.85))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 8)
+                                .background(
+                                    isSelected ? AnyView(AlignTheme.signatureGradient) : AnyView(Color(red: 0.08, green: 0.09, blue: 0.12))
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(isSelected ? Color.clear : Color.white.opacity(0.12), lineWidth: 1)
+                                )
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -1056,19 +1058,7 @@ struct AIFramingSettingsSection: View {
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundColor(.white)
                         Spacer()
-                        if viewModel.geminiService.selectedProvider == .pollinations {
-                            HStack(spacing: 4) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 10))
-                                Text("Miễn phí 100%")
-                                    .font(.system(size: 10.5, weight: .bold))
-                            }
-                            .foregroundColor(AlignTheme.electricCyan)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(AlignTheme.electricCyan.opacity(0.15))
-                            .clipShape(Capsule())
-                        } else if viewModel.geminiService.hasAPIKey {
+                        if viewModel.geminiService.hasAPIKey {
                             HStack(spacing: 4) {
                                 Image(systemName: "checkmark.shield.fill")
                                     .font(.system(size: 10))
@@ -1087,87 +1077,79 @@ struct AIFramingSettingsSection: View {
                         }
                     }
 
-                    if viewModel.geminiService.selectedProvider == .pollinations {
-                        HStack(spacing: 8) {
-                            Image(systemName: "checkmark.seal.fill")
-                                .foregroundColor(AlignTheme.electricCyan)
-                            Text("Pollinations AI miễn phí 100% không giới hạn. Sẵn sàng phân tích mà không cần API Key.")
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundColor(.white.opacity(0.90))
-                        }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AlignTheme.electricCyan.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    } else {
-                        HStack(spacing: 8) {
-                            Group {
-                                if isKeyVisible {
-                                    TextField(viewModel.geminiService.selectedProvider.keyPlaceholder, text: $geminiKeyInput)
-                                } else {
-                                    SecureField(viewModel.geminiService.selectedProvider.keyPlaceholder, text: $geminiKeyInput)
-                                }
+                    HStack(spacing: 8) {
+                        Group {
+                            if isKeyVisible {
+                                TextField(viewModel.geminiService.selectedProvider.keyPlaceholder, text: $geminiKeyInput)
+                            } else {
+                                SecureField(viewModel.geminiService.selectedProvider.keyPlaceholder, text: $geminiKeyInput)
                             }
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(.white)
-                            .tint(.white)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 9)
-                            .background(Color(red: 0.05, green: 0.05, blue: 0.07))
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                            )
+                        }
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.white)
+                        .tint(.white)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
 
-                            // Nút Hiện/Ẩn
-                            Button(action: { isKeyVisible.toggle() }) {
-                                Image(systemName: isKeyVisible ? "eye.slash.fill" : "eye.fill")
+                        // Nút Hiện/Ẩn
+                        Button(action: { isKeyVisible.toggle() }) {
+                            Image(systemName: isKeyVisible ? "eye.slash.fill" : "eye.fill")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color.white.opacity(0.65))
+                                .frame(width: 34, height: 34)
+                                .background(Color(red: 0.08, green: 0.09, blue: 0.12))
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
+                        // Nút Xóa Key (chỉ hiển thị khi có key hoặc đang gõ)
+                        if viewModel.geminiService.hasAPIKey || !geminiKeyInput.isEmpty {
+                            Button(role: .destructive, action: {
+                                geminiKeyInput = ""
+                                viewModel.geminiService.apiKey = ""
+                                toastMessage = "Đã xóa API Key của \(viewModel.geminiService.selectedProvider.shortBadge)"
+                            }) {
+                                Image(systemName: "trash.fill")
                                     .font(.system(size: 13))
-                                    .foregroundColor(Color.white.opacity(0.65))
+                                    .foregroundColor(.red.opacity(0.85))
                                     .frame(width: 34, height: 34)
                                     .background(Color(red: 0.08, green: 0.09, blue: 0.12))
                                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
                             .buttonStyle(.plain)
-
-                            // Nút Xóa Key (chỉ hiển thị khi có key hoặc đang gõ)
-                            if viewModel.geminiService.hasAPIKey || !geminiKeyInput.isEmpty {
-                                Button(role: .destructive, action: {
-                                    geminiKeyInput = ""
-                                    viewModel.geminiService.apiKey = ""
-                                    toastMessage = "Đã xóa API Key của \(viewModel.geminiService.selectedProvider.shortBadge)"
-                                }) {
-                                    Image(systemName: "trash.fill")
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.red.opacity(0.85))
-                                        .frame(width: 34, height: 34)
-                                        .background(Color(red: 0.08, green: 0.09, blue: 0.12))
-                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                }
-                                .buttonStyle(.plain)
-                            }
-
-                            // Nút Lưu Key
-                            Button(action: {
-                                let trimmed = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !trimmed.isEmpty else { return }
-                                viewModel.geminiService.apiKey = trimmed
-                                viewModel.useGeminiForAnalysis = true
-                                toastMessage = "Đã lưu API Key cho \(viewModel.geminiService.selectedProvider.shortBadge)!"
-                            }) {
-                                Text("Lưu Key")
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 9)
-                                    .background(AlignTheme.signatureGradient)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
                         }
+
+                        // Nút Lưu Key
+                        Button(action: {
+                            let trimmed = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return }
+                            viewModel.geminiService.apiKey = trimmed
+                            viewModel.useGeminiForAnalysis = true
+                            toastMessage = "Đã lưu API Key cho \(viewModel.geminiService.selectedProvider.shortBadge)!"
+                        }) {
+                            Text("Lưu Key")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 9)
+                                .background(AlignTheme.signatureGradient)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if viewModel.geminiService.selectedProvider == .pollinations {
+                        Text("Lấy key miễn phí không giới hạn tại enter.pollinations.ai/keys")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundColor(AlignTheme.electricCyan.opacity(0.85))
                     }
                 }
 
@@ -1178,15 +1160,16 @@ struct AIFramingSettingsSection: View {
                     title: "Model thẩm mỹ (\(viewModel.geminiService.selectedProvider.shortBadge))",
                     subtitle: selectedModel.subtitle,
                     icon: "cpu",
-                    selectedValueString: selectedModel.displayName
+                    selectedValueString: selectedModel.shortName
                 ) {
                     Picker("", selection: $selectedModel) {
                         ForEach(AIVisionModel.models(for: viewModel.geminiService.selectedProvider)) { model in
-                            Text(model.displayName).tag(model)
+                            Text(model.shortName).tag(model)
                         }
                     }
                     .pickerStyle(.menu)
                     .tint(.white)
+                    .frame(maxWidth: 160, alignment: .trailing)
                     .onChangeCompatible(of: selectedModel) { newModel in
                         viewModel.geminiService.selectedModel = newModel
                         viewModel.geminiService.customModelName = ""
@@ -1902,6 +1885,7 @@ public struct SettingsPickerRow<Content: View>: View {
                 picker
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(maxWidth: 160, alignment: .trailing)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
