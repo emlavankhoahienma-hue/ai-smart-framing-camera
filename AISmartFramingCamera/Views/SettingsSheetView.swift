@@ -979,6 +979,7 @@ struct AIFramingSettingsSection: View {
                             Button(action: {
                                 UISelectionFeedbackGenerator().selectionChanged()
                                 withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                    viewModel.geminiService.activeProfileID = nil
                                     viewModel.geminiService.selectedProvider = provider
                                     geminiKeyInput = viewModel.geminiService.apiKey
                                     let available = AIVisionModel.models(for: provider)
@@ -1007,6 +1008,7 @@ struct AIFramingSettingsSection: View {
                                     isSelected ? AnyView(AlignTheme.signatureGradient) : AnyView(Color(red: 0.08, green: 0.09, blue: 0.12))
                                 )
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                                         .stroke(isSelected ? Color.clear : Color.white.opacity(0.12), lineWidth: 1)

@@ -177,6 +177,10 @@ public struct AIStatusHUDView: View {
             if viewModel.localCompositionChoices.isEmpty, viewModel.localSelectionMessage != nil {
                 return "Chưa có khung để chọn"
             }
+            if viewModel.activeAIIndicatorType == .cloud {
+                let model = viewModel.activeModelUsedName.isEmpty ? "Cloud" : viewModel.activeModelUsedName
+                return "Đang gửi Cloud AI (\(model))..."
+            }
             return viewModel.localCompositionChoices.isEmpty ? viewModel.localAnalysisProgress : "Chọn phương án bố cục"
         case .targetPlaced, .alignmentPerfect:
             return viewModel.alignmentStatusText

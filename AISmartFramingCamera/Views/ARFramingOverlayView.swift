@@ -818,8 +818,9 @@ public struct ZoomRevealOverlay: View {
         }
     }
 
+    // Hiệu ứng đưa khung và zoom mượt chỉ kích hoạt khi tâm target đã đạt và khóa cứng (Hard Lock)
     private var isEffectActive: Bool {
-        viewModel.isRevealingZoomTarget || isPreZoomSuggested
+        viewModel.isRevealingZoomTarget
     }
 
     private var startDisplayZoom: CGFloat {

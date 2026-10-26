@@ -412,7 +412,8 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
                 .autoStrongest,
                 .pollinationsGPT54Nano,
                 .pollinationsGPT54Mini,
-                .pollinationsOpenAI
+                .pollinationsOpenAI,
+                .freeVision
             ]
         case .googleGemini:
             return [
@@ -523,7 +524,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         var preferred = custom.isEmpty ? selected.technicalModelID : custom
 
         if provider == .pollinations {
-            var cleanModel = preferred
+            var cleanModel = preferred.replacingOccurrences(of: ":free", with: "")
             if cleanModel == "auto" || cleanModel.isEmpty || cleanModel == "openai" {
                 cleanModel = "openai/gpt-5.4-nano"
             } else if cleanModel == "pollinations/gpt-4o-mini" {
@@ -532,10 +533,12 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
                 cleanModel = "openai/gpt-5.4-nano"
             } else if cleanModel == "pollinations/gpt-5.4-mini" {
                 cleanModel = "openai/gpt-5.4-mini"
+            } else if cleanModel.contains("gemma-4") {
+                cleanModel = "google/gemma-4-31b-it"
             }
 
             var chain = [cleanModel]
-            let candidates = ["openai/gpt-5.4-nano", "openai/gpt-5.4-mini", "openai/gpt-4o-mini"]
+            let candidates = ["openai/gpt-5.4-nano", "openai/gpt-5.4-mini", "openai/gpt-4o-mini", "google/gemma-4-31b-it"]
             for cand in candidates {
                 if !chain.contains(cand) {
                     chain.append(cand)
@@ -903,16 +906,18 @@ public final class GeminiService: ObservableObject {
                 }
                 onActiveKeyConfigured?(hasAPIKey)
             } else {
-                if clean.hasPrefix("sk-or-v1-") && selectedProvider != .openRouter && selectedProvider != .custom {
-                    selectedProvider = .openRouter
-                } else if clean.hasPrefix("AIzaSy") && selectedProvider != .googleGemini && selectedProvider != .custom {
-                    selectedProvider = .googleGemini
-                } else if clean.hasPrefix("sk-ant-") && selectedProvider != .anthropic && selectedProvider != .custom {
-                    selectedProvider = .anthropic
-                } else if clean.hasPrefix("gsk_") && selectedProvider != .groq && selectedProvider != .custom {
-                    selectedProvider = .groq
-                } else if clean.hasPrefix("xai-") && selectedProvider != .xAI && selectedProvider != .custom {
-                    selectedProvider = .xAI
+                if selectedProvider != .pollinations {
+                    if clean.hasPrefix("sk-or-v1-") && selectedProvider != .openRouter && selectedProvider != .custom {
+                        selectedProvider = .openRouter
+                    } else if clean.hasPrefix("AIzaSy") && selectedProvider != .googleGemini && selectedProvider != .custom {
+                        selectedProvider = .googleGemini
+                    } else if clean.hasPrefix("sk-ant-") && selectedProvider != .anthropic && selectedProvider != .custom {
+                        selectedProvider = .anthropic
+                    } else if clean.hasPrefix("gsk_") && selectedProvider != .groq && selectedProvider != .custom {
+                        selectedProvider = .groq
+                    } else if clean.hasPrefix("xai-") && selectedProvider != .xAI && selectedProvider != .custom {
+                        selectedProvider = .xAI
+                    }
                 }
                 KeychainHelper.standard.save(clean, forKey: keychainKeyForProvider(selectedProvider, profileID: activeProfileID))
                 KeychainHelper.standard.save(clean, forKey: keychainKeyForProvider(selectedProvider))
@@ -1086,13 +1091,14 @@ public final class GeminiService: ObservableObject {
     }
 
     public var cloudAnalysisDeadline: TimeInterval {
+        if selectedProvider == .pollinations { return 22.0 }
         let custom = customModelName
-        if custom.hasSuffix(":free") || custom == "openrouter/free" { return 15 }
+        if custom.hasSuffix(":free") || custom == "openrouter/free" { return 20.0 }
         switch selectedModel {
         case .freeVision, .gemini25FlashFree, .qwen3VLFree, .llama4MaverickFree:
-            return 15
+            return 20.0
         default:
-            return 10
+            return 16.0
         }
     }
 
@@ -1886,8 +1892,9 @@ public final class GeminiService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 25.0
         if modelID.hasSuffix(":free") || modelID == "openrouter/free" {
-            request.timeoutInterval = 45
+            request.timeoutInterval = 45.0
         }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if !key.isEmpty {
@@ -1923,11 +1930,14 @@ public final class GeminiService: ObservableObject {
                     ]
                 ]
             ],
-            "response_format": ["type": "json_object"],
             "temperature": 0.20,
             "top_p": 0.90,
             "max_tokens": 1000
         ]
+        let lowerModel = modelID.lowercased()
+        if lowerModel.contains("gpt-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4") {
+            requestBody["response_format"] = ["type": "json_object"]
+        }
         if selectedProvider == .openRouter {
             requestBody["reasoning"] = ["exclude": true]
         }
@@ -1985,12 +1995,19 @@ public final class GeminiService: ObservableObject {
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 if let choices = json["choices"] as? [[String: Any]],
                    let firstChoice = choices.first,
-                   let message = firstChoice["message"] as? [String: Any],
-                   let text = message["content"] as? String {
-                    responseText = text
-                } else if let content = json["content"] as? String {
+                   let message = firstChoice["message"] as? [String: Any] {
+                    if let text = message["content"] as? String, !text.isEmpty {
+                        responseText = text
+                    } else if let contentArr = message["content"] as? [[String: Any]] {
+                        responseText = contentArr.compactMap { $0["text"] as? String }.joined()
+                    } else if let reasoning = message["reasoning_content"] as? String, !reasoning.isEmpty {
+                        responseText = reasoning
+                    }
+                } else if let content = json["content"] as? String, !content.isEmpty {
                     responseText = content
-                } else if let text = json["text"] as? String {
+                } else if let contentArr = json["content"] as? [[String: Any]] {
+                    responseText = contentArr.compactMap { $0["text"] as? String }.joined()
+                } else if let text = json["text"] as? String, !text.isEmpty {
                     responseText = text
                 }
             } else if let rawString = String(data: data, encoding: .utf8), !rawString.isEmpty {

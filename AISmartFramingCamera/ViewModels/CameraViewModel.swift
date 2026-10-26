@@ -821,9 +821,9 @@ public final class CameraViewModel: ObservableObject {
         alignmentGate.lockTarget()
         HapticFeedbackService.shared.triggerMagneticSnap()
 
-        // Phase 4: Đồng bộ chu trình Khóa tâm Hard Lock với chuyển Zoom quang học Z* mượt mà
+        // Phase 4: Đồng bộ chu trình Khóa tâm Hard Lock với chuyển Zoom quang học Z* mượt mà 60fps
         let targetZoom = pendingSuggestedZoom
-        if abs(displayZoom - targetZoom) > 0.15, !hasExecutedAutoZoomForSession {
+        if isAutoZoomEnabled, abs(displayZoom - targetZoom) > 0.12, !hasExecutedAutoZoomForSession, !zoomAwaitingVerification, canZoomCurrentSubject(to: targetZoom) {
             hasExecutedAutoZoomForSession = true
             triggerZoomRevealAnimation(targetZoom: targetZoom)
         } else {
@@ -1935,19 +1935,20 @@ public final class CameraViewModel: ObservableObject {
 
             // If no camera frame arrives, use the local analysis instead of
             // leaving the session in .analyzing indefinitely.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
                 guard let self = self else { return }
                 if self.aiSessionGeneration == requestGeneration && self.aiSessionState == .analyzing && !self.isOneShotCaptured {
                     self.isOneShotCaptured = true
-                    self.localSelectionMessage = "Camera chua gui anh AI. Cham vung muon chup hoac chup tay."
+                    self.localSelectionMessage = "Camera chưa gửi ảnh AI. Chạm vùng muốn chụp hoặc chụp tay."
                 }
             }
             // A captured frame can still be followed by a stalled cloud call.
-            DispatchQueue.main.asyncAfter(deadline: .now() + geminiService.cloudAnalysisDeadline) { [weak self] in
+            let cloudDeadline = geminiService.cloudAnalysisDeadline
+            DispatchQueue.main.asyncAfter(deadline: .now() + cloudDeadline) { [weak self] in
                 guard let self, self.aiSessionGeneration == requestGeneration,
                       self.aiSessionState == .analyzing, self.isGeminiAnalyzing else { return }
                 self.isGeminiAnalyzing = false
-                self.geminiError = "Cloud AI phan hoi cham, da tu dong chuyen sang AI tren may"
+                self.geminiError = "Cloud AI phản hồi chậm (quá \(Int(cloudDeadline))s), đã tự động chuyển sang AI trên máy"
                 self.analyzeCloudCaptureLocally()
             }
         } else {
