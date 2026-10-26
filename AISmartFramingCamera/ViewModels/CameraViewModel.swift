@@ -694,22 +694,22 @@ public final class CameraViewModel: ObservableObject {
         isRevealingZoomTarget = true
         let pinGeneration = targetPinGeneration
 
-        // Giai đoạn 2: Khóa mục tiêu & Phát sáng viền Cầu Vồng (Hard Lock & Iridescent Glow: 0.25s)
-        withAnimation(.easeOut(duration: 0.25)) {
+        // Giai đoạn 2: Khóa mục tiêu & Phát sáng viền Cầu Vồng (Hard Lock & Iridescent Glow: 0.28s)
+        withAnimation(.easeOut(duration: 0.28)) {
             lockOnProgress = 1.0
         }
 
-        // Giai đoạn 3: Bung khung cửa sổ đồng bộ với Zoom (Synchronized Window Expansion: ~0.45s)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak self] in
+        // Giai đoạn 3: Giữ vùng zoom để người xem quan sát rõ (~0.62s) rồi mới Bung khung & Zoom mượt 60fps
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.62) { [weak self] in
             guard let self = self, self.targetPinGeneration == pinGeneration,
                   self.zoomAwaitingVerification, !self.isPinchingZoom else { return }
             self.isZoomRampPhase = true
             let delta = Double(abs(targetDeviceZoom - self.currentZoom))
-            let rampDuration: Double = 0.45
+            let rampDuration: Double = 0.48
             let smoothRate = Float(max(1.2, min(16.0, delta / rampDuration)))
             self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: smoothRate)
 
-            withAnimation(.timingCurve(0.2, 0.8, 0.2, 1.0, duration: 0.45)) {
+            withAnimation(.timingCurve(0.2, 0.8, 0.2, 1.0, duration: 0.48)) {
                 self.zoomExpansionProgress = 1.0
             }
         }

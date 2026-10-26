@@ -69,7 +69,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    public func applyAISuggestedZoom(",
       "end": "    // AI Framing & Composition",
-      "sha256": "a82bfb20b06e3cfe0c7b096130a5399c5e9fd53bbfa9de344a2cf1ea010bbdd6"
+      "sha256": "112368526962f91f6f723066d50428a454b117ed30bd1e400794316d92d47c41"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
