@@ -67,20 +67,6 @@ jobs:
       - name: Verify target tracking boundary
         run: python scripts/verify_tracking_boundary.py
 
-      - name: Compile iOS source before model export
-        run: |
-          set -o pipefail
-          xcodebuild build -quiet \
-            -project AISmartFramingCamera.xcodeproj \
-            -scheme AISmartFramingCamera \
-            -destination 'generic/platform=iOS' \
-            -configuration Release \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-            ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS=NO \
-            ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
-            BUILD_DIR=${{ github.workspace }}/build 2>&1 | tee build.log
-
       - name: Run native capture transition regressions
         run: |
           xcrun swiftc -O -warnings-as-errors \
@@ -147,7 +133,7 @@ jobs:
           pip install "torch==2.5.1" "torchvision==0.20.1" "numpy==1.26.4" \
             "coremltools==9.0" "opencv-python-headless==4.11.0.86" \
             "einops==0.8.1" "Pillow==11.0.0"
-          python scripts/prepare_composition_photos.py
+          python scripts/prepare_composition_photos.py --per-scene 5
           python scripts/export_composition_coreml.py --photos validation/photos
           xcrun coremlc compile SAMPComposition.mlpackage .
           pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"

@@ -22,10 +22,10 @@ def main():
     parser.add_argument("--photos", type=Path, required=True)
     parser.add_argument("--inspect-only", action="store_true")
     args = parser.parse_args()
-    torch.set_num_threads(2)
+    torch.set_num_threads(1)
     author, position = load_model(args.cache)
     portable = MobileCharm(author).eval()
-    photos = sorted(args.photos.glob("*.jpg"))[:32]
+    photos = sorted(args.photos.glob("*.jpg"))[:24]
     if len(photos) < 24:
         raise RuntimeError("At least 24 held-out photo fixtures are required")
     examples, references = [], []

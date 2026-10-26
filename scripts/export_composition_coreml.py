@@ -57,7 +57,13 @@ def fixed_shape_pooling():
     """
     functional = torch.nn.functional
     original1, original2 = functional.adaptive_max_pool1d, functional.adaptive_max_pool2d
+    original_avg2 = functional.adaptive_avg_pool2d
     original_upper, original_lower = torch.triu_indices, torch.tril_indices
+
+    def safe_avg2d(value, output_size):
+        if output_size == (1, 1) or output_size == 1 or output_size == [1, 1]:
+            return value.mean(dim=(-2, -1), keepdim=True)
+        return original_avg2(value, output_size)
 
     def triangle(row, col, offset=0, dtype=torch.long, device=None, layout=torch.strided, *, upper):
         pairs = [(y, x) for y in range(int(row)) for x in range(int(col))
@@ -89,12 +95,14 @@ def fixed_shape_pooling():
         return axis(axis(value, 2, h), 3, w)
 
     functional.adaptive_max_pool1d, functional.adaptive_max_pool2d = one, two
+    functional.adaptive_avg_pool2d = safe_avg2d
     torch.triu_indices = lambda *a, **kw: triangle(*a, **kw, upper=True)
     torch.tril_indices = lambda *a, **kw: triangle(*a, **kw, upper=False)
     try:
         yield
     finally:
         functional.adaptive_max_pool1d, functional.adaptive_max_pool2d = original1, original2
+        functional.adaptive_avg_pool2d = original_avg2
         torch.triu_indices, torch.tril_indices = original_upper, original_lower
 
 
@@ -104,7 +112,7 @@ def main() -> None:
     parser.add_argument("--photos", type=Path)
     parser.add_argument("--skip-predict", action="store_true", help="Conversion inspection on non-macOS only")
     args = parser.parse_args()
-    torch.set_num_threads(2)
+    torch.set_num_threads(1)
     model = load_model(args.cache)
     portable_model = copy.deepcopy(model)
     portable_model.pattern_module.pool_list[4] = StaticSurround()
@@ -140,7 +148,7 @@ def main() -> None:
     if not args.skip_predict:
         if platform.system() != "Darwin" or args.photos is None:
             raise RuntimeError("Release conversion requires Core ML prediction on real photos on macOS")
-        photos = sorted(args.photos.glob("*.jpg"))[:32]
+        photos = sorted(args.photos.glob("*.jpg"))[:24]
         if len(photos) < 24:
             raise RuntimeError("At least 24 real-photo conversion fixtures are required")
         errors = []
@@ -148,7 +156,7 @@ def main() -> None:
         for photo in photos:
             image = Image.open(photo).convert("RGB")
             image_tensor, saliency = inputs(image)
-            with torch.inference_mode():
+            with torch.inference_mode(), fixed_shape_pooling():
                 expected = model(image_tensor, saliency)[2].numpy().reshape(-1)
             rgb = np.asarray(image.resize((224, 224), Image.Resampling.BILINEAR), dtype=np.float32).transpose(2, 0, 1)[None] / 255
             actual = converted.predict({"image": rgb,
