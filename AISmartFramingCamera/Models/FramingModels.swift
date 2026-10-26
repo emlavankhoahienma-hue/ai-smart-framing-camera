@@ -1902,6 +1902,19 @@ public struct AlignTheme {
         endPoint: .trailing
     )
 
+    // Iridescent Rainbow Gradient (Optical Window Pull-In AI Effect: Hồng Neon, Tím Cyberpunk, Xanh Cyan, Xanh Mint, Cam Hổ Phách)
+    public static let iridescentRainbow = LinearGradient(
+        colors: [
+            Color(red: 1.00, green: 0.35, blue: 0.65), // Hồng Neon (Neon Pink)
+            Color(red: 0.70, green: 0.35, blue: 0.95), // Tím Cyberpunk (Purple)
+            Color(red: 0.15, green: 0.85, blue: 0.95), // Xanh Cyan Tươi (Electric Cyan)
+            Color(red: 0.20, green: 0.95, blue: 0.65), // Xanh Mint / Ngọc
+            Color(red: 1.00, green: 0.60, blue: 0.20)  // Cam Hổ Phách (Amber Orange)
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
     // Optical Reticle Color: Strictly reserved for target tracking & optical framing
     public static let opticalTargetColor = amberGold
     public static let opticalAlignedColor = Color(red: 0.19, green: 0.82, blue: 0.35) // #30D158 (ISO Green)

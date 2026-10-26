@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "71cd3230d860be56585c874964b380252f62259db4d2f832e8d8e1b181417c3a"
+      "sha256": "e6b2b1e2252b2a65e3afd8f28c3a2163bcfcb692014753b6f44cf1fa34daa4b3"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -69,7 +69,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    public func applyAISuggestedZoom(",
       "end": "    // AI Framing & Composition",
-      "sha256": "71e9927f657e44b447435f651cc00388c96ad68f62d64ebeb881e97b1a640270"
+      "sha256": "a82bfb20b06e3cfe0c7b096130a5399c5e9fd53bbfa9de344a2cf1ea010bbdd6"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",

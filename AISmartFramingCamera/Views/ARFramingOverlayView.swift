@@ -219,11 +219,10 @@ public struct ARFramingOverlayView: View {
                         .transition(.opacity)
                 }
 
-                // 11. AI Zoom Reveal Overlay (Khung bố cục điện ảnh mượt mà, không làm tối màn hình)
+                // 11. AI Zoom Reveal Overlay (Optical Window Pull-In Effect: 4 Giai đoạn Chuẩn TikTok/Douyin)
                 ZoomRevealOverlay(
-                    rect: viewModel.zoomRevealRect,
-                    isVisible: viewModel.isRevealingZoomTarget,
-                    displayZoom: viewModel.zoomRevealTargetZoom
+                    viewModel: viewModel,
+                    containerSize: size
                 )
 
                 // 12. Realtime Diagnostic & Experiment Overlay
@@ -717,113 +716,228 @@ struct HorizonLevelerView: View {
     }
 }
 
-// MARK: - AI Zoom Reveal Overlay
-struct ZoomRevealOverlay: View {
-    let rect: CGRect
-    let isVisible: Bool
-    let displayZoom: CGFloat
+// MARK: - AI Zoom Reveal Cutout Mask Shape (Even-Odd Fill: Tối bên ngoài, trong suốt hoàn toàn bên trong)
+public struct ZoomRevealCutoutShape: Shape {
+    public var windowRect: CGRect
 
-    var body: some View {
-        GeometryReader { geo in
-            let pixelRect = CGRect(
-                x: rect.origin.x * geo.size.width,
-                y: rect.origin.y * geo.size.height,
-                width: rect.width * geo.size.width,
-                height: rect.height * geo.size.height
+    public var animatableData: AnimatablePair<
+        AnimatablePair<CGFloat, CGFloat>,
+        AnimatablePair<CGFloat, CGFloat>
+    > {
+        get {
+            AnimatablePair(
+                AnimatablePair(windowRect.origin.x, windowRect.origin.y),
+                AnimatablePair(windowRect.size.width, windowRect.size.height)
             )
-
-            if isVisible {
-                ZStack {
-                    // Show the actual centre crop the camera will zoom into.
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .overlay(Color.black.opacity(0.68))
-                        .mask(
-                            Path { path in
-                                path.addRect(CGRect(origin: .zero, size: geo.size))
-                                path.addRoundedRect(in: pixelRect, cornerSize: CGSize(width: 16, height: 16))
-                            }
-                            .fill(style: FillStyle(eoFill: true))
-                        )
-                        .ignoresSafeArea()
-
-                    // 2. Viền bóng mờ nhẹ chuyển tiếp mềm mại xung quanh viền cắt (Soft feathered edge)
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.black.opacity(0.18), lineWidth: 4)
-                        .blur(radius: 3)
-                        .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
-                        .position(x: pixelRect.midX, y: pixelRect.midY)
-
-                    // 3. Future zoom region.
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            AlignTheme.signatureGradient,
-                            lineWidth: 1.8
-                        )
-                        .frame(width: max(20, pixelRect.width), height: max(20, pixelRect.height))
-                        .position(x: pixelRect.midX, y: pixelRect.midY)
-                        .shadow(color: AlignTheme.electricCyan.opacity(0.35), radius: 8, x: 0, y: 0)
-
-                    // 4. Bốn góc ngắm bố cục điện ảnh (Cinematic Corner Ticks)
-                    CinematicCornerTicks(rect: pixelRect)
-
-                    // Huy hiệu AI ZOOM ở mép trên khung
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("AI ZOOM \(String(format: "%.1f", displayZoom))x")
-                            .font(.system(size: 9, weight: .heavy, design: .rounded))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3.5)
-                    .background(Capsule().fill(AlignTheme.signatureGradient))
-                    .shadow(color: Color.black.opacity(0.35), radius: 4, x: 0, y: 2)
-                    .position(x: pixelRect.midX, y: max(24, pixelRect.minY - 12))
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .animation(.easeInOut(duration: 0.20), value: isVisible)
-            }
         }
-        .allowsHitTesting(false)
+        set {
+            windowRect = CGRect(
+                x: newValue.first.first,
+                y: newValue.first.second,
+                width: newValue.second.first,
+                height: newValue.second.second
+            )
+        }
+    }
+
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        // Toàn bộ màn hình preview
+        path.addRect(rect)
+        // Khoét rỗng khung chữ nhật ở giữa với bo góc 16pt (Even-Odd Fill sẽ bỏ qua vùng này)
+        let r = max(0.0, min(16.0, min(windowRect.width, windowRect.height) / 2.0))
+        path.addRoundedRect(in: windowRect, cornerSize: CGSize(width: r, height: r))
+        return path
     }
 }
 
-// 4 Góc ngắm bố cục điện ảnh (Corner Ticks)
-struct CinematicCornerTicks: View {
-    let rect: CGRect
-    private let tickLength: CGFloat = 16
-    private let tickWidth: CGFloat = 2.5
+// MARK: - 4 Ngoặc Vuông Góc Khung (Corner Brackets)
+public struct CornerBracketsShape: Shape {
+    public var cornerLength: CGFloat = 18.0
+    public var cornerRadius: CGFloat = 16.0
 
-    var body: some View {
-        Path { path in
-            let r: CGFloat = 8
-            // Góc trên trái
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY + tickLength))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
-            path.addArc(center: CGPoint(x: rect.minX + r, y: rect.minY + r), radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.minX + tickLength, y: rect.minY))
+    public init(cornerLength: CGFloat = 18.0, cornerRadius: CGFloat = 16.0) {
+        self.cornerLength = cornerLength
+        self.cornerRadius = cornerRadius
+    }
 
-            // Góc trên phải
-            path.move(to: CGPoint(x: rect.maxX - tickLength, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
-            path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.minY + r), radius: r, startAngle: .degrees(270), endAngle: .degrees(0), clockwise: false)
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + tickLength))
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let r = max(0.0, min(cornerRadius, min(rect.width, rect.height) / 2.0))
+        let l = max(r, min(cornerLength, min(rect.width, rect.height) / 2.0))
 
-            // Góc dưới trái
-            path.move(to: CGPoint(x: rect.minX, y: rect.maxY - tickLength))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - r))
-            path.addArc(center: CGPoint(x: rect.minX + r, y: rect.maxY - r), radius: r, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
-            path.addLine(to: CGPoint(x: rect.minX + tickLength, y: rect.maxY))
+        // Top-Left
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY + l))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        path.addArc(center: CGPoint(x: rect.minX + r, y: rect.minY + r), radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        path.addLine(to: CGPoint(x: rect.minX + l, y: rect.minY))
 
-            // Góc dưới phải
-            path.move(to: CGPoint(x: rect.maxX - tickLength, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.maxY))
-            path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.maxY - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - tickLength))
+        // Top-Right
+        path.move(to: CGPoint(x: rect.maxX - l, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.minY + r), radius: r, startAngle: .degrees(270), endAngle: .degrees(0), clockwise: false)
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + l))
+
+        // Bottom-Right
+        path.move(to: CGPoint(x: rect.maxX - l, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.maxY))
+        path.addArc(center: CGPoint(x: rect.maxX - r, y: rect.maxY - r), radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false)
+        path.addLine(to: CGPoint(x: rect.maxX - l, y: rect.maxY))
+
+        // Bottom-Left
+        path.move(to: CGPoint(x: rect.minX + l, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        path.addArc(center: CGPoint(x: rect.minX + r, y: rect.maxY - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - l))
+
+        return path
+    }
+}
+
+// MARK: - AI Zoom Reveal Overlay (Optical Window Pull-In Effect: 4 Giai đoạn Chuẩn TikTok/Douyin)
+public struct ZoomRevealOverlay: View {
+    @ObservedObject var viewModel: CameraViewModel
+    let containerSize: CGSize
+
+    public init(viewModel: CameraViewModel, containerSize: CGSize) {
+        self.viewModel = viewModel
+        self.containerSize = containerSize
+    }
+
+    // Giai đoạn 1: Khung ngắm mục tiêu nhỏ (Pre-Zoom Crop Box) khi AI đề xuất mức zoom mà chưa khóa
+    private var isPreZoomSuggested: Bool {
+        !viewModel.hasExecutedAutoZoomForSession &&
+        viewModel.isAutoZoomEnabled &&
+        (viewModel.pendingSuggestedZoom - viewModel.displayZoom) > 0.15 &&
+        viewModel.currentTargetPoint != nil &&
+        (viewModel.aiSessionState == .analyzing || viewModel.aiSessionState == .standby)
+    }
+
+    private var isEffectActive: Bool {
+        viewModel.isRevealingZoomTarget || isPreZoomSuggested
+    }
+
+    private var startDisplayZoom: CGFloat {
+        max(0.5, viewModel.isRevealingZoomTarget ? viewModel.zoomRevealStartDisplayZoom : viewModel.displayZoom)
+    }
+
+    private var targetDisplayZoom: CGFloat {
+        max(startDisplayZoom, viewModel.isRevealingZoomTarget ? viewModel.pendingTargetZoomForReveal : viewModel.pendingSuggestedZoom)
+    }
+
+    private var windowRect: CGRect {
+        guard containerSize.width > 0, containerSize.height > 0 else { return .zero }
+
+        let s = min(1.0, max(0.18, startDisplayZoom / targetDisplayZoom))
+        let cropW = containerSize.width * s
+        let cropH = containerSize.height * s
+
+        let centerNorm = viewModel.currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
+        let centerX = centerNorm.x * containerSize.width
+        let centerY = centerNorm.y * containerSize.height
+
+        let minX = max(0.0, min(containerSize.width - cropW, centerX - cropW / 2.0))
+        let minY = max(0.0, min(containerSize.height - cropH, centerY - cropH / 2.0))
+        let initialRect = CGRect(x: minX, y: minY, width: cropW, height: cropH)
+
+        let fullRect = CGRect(origin: .zero, size: containerSize)
+
+        let t = viewModel.isRevealingZoomTarget ? viewModel.zoomExpansionProgress : 0.0
+        return interpolateRect(from: initialRect, to: fullRect, progress: t)
+    }
+
+    private func interpolateRect(from startRect: CGRect, to endRect: CGRect, progress t: CGFloat) -> CGRect {
+        let clampedT = max(0.0, min(1.0, t))
+        return CGRect(
+            x: startRect.origin.x + (endRect.origin.x - startRect.origin.x) * clampedT,
+            y: startRect.origin.y + (endRect.origin.y - startRect.origin.y) * clampedT,
+            width: startRect.width + (endRect.width - startRect.width) * clampedT,
+            height: startRect.height + (endRect.height - startRect.height) * clampedT
+        )
+    }
+
+    public var body: some View {
+        if isEffectActive {
+            let rect = windowRect
+            let isRevealing = viewModel.isRevealingZoomTarget
+            let lockProgress = isRevealing ? viewModel.lockOnProgress : 0.0
+            let expansionProgress = isRevealing ? viewModel.zoomExpansionProgress : 0.0
+
+            // Giai đoạn 4: Settle & Fade Out (Khi expansionProgress từ 0.82 -> 1.0, tan biến mượt mà)
+            let fadeMultiplier: CGFloat = expansionProgress >= 0.82 ? max(0.0, (1.0 - expansionProgress) / 0.18) : 1.0
+            let strokeOpacity = (isRevealing ? lockProgress : 0.75) * fadeMultiplier
+            let dimmingOpacity = (isRevealing ? 0.32 * lockProgress : 0.0) * fadeMultiplier
+
+            ZStack {
+                // 1. Giai đoạn 2: Mặt nạ khoét lỗ Even-Odd Cutout Mask (Tối nhẹ 32% bên ngoài, trong suốt hoàn toàn bên trong khung)
+                if dimmingOpacity > 0.01 {
+                    ZoomRevealCutoutShape(windowRect: rect)
+                        .fill(Color.black.opacity(dimmingOpacity), style: FillStyle(eoFill: true))
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+
+                // 2. Viền bóng mờ nhẹ chuyển tiếp (Soft feathered shadow)
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.black.opacity(0.18 * strokeOpacity), lineWidth: 3)
+                    .blur(radius: 2)
+                    .frame(width: max(20, rect.width), height: max(20, rect.height))
+                    .position(x: rect.midX, y: rect.midY)
+
+                // 3. Khung viền chính:
+                // - Giai đoạn 1: Viền mảnh trắng mờ
+                // - Giai đoạn 2 -> 4: Viền Cầu Vồng Iridescent Rainbow phát sáng neon
+                if isRevealing {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(AlignTheme.iridescentRainbow, lineWidth: 2.0)
+                        .frame(width: max(20, rect.width), height: max(20, rect.height))
+                        .position(x: rect.midX, y: rect.midY)
+                        .shadow(color: Color(red: 0.70, green: 0.35, blue: 0.95).opacity(0.65 * strokeOpacity), radius: 8, x: 0, y: 0)
+                        .shadow(color: Color(red: 0.15, green: 0.85, blue: 0.95).opacity(0.45 * strokeOpacity), radius: 14, x: 0, y: 0)
+                        .opacity(strokeOpacity)
+                } else {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.white.opacity(0.65), lineWidth: 1.5)
+                        .frame(width: max(20, rect.width), height: max(20, rect.height))
+                        .position(x: rect.midX, y: rect.midY)
+                        .opacity(strokeOpacity)
+                }
+
+                // 4. 4 Ngoặc Vuông Góc Khung (Corner Brackets)
+                if isRevealing {
+                    CornerBracketsShape(cornerLength: 18.0, cornerRadius: 16.0)
+                        .stroke(AlignTheme.iridescentRainbow, lineWidth: 2.8)
+                        .frame(width: max(20, rect.width), height: max(20, rect.height))
+                        .position(x: rect.midX, y: rect.midY)
+                        .opacity(strokeOpacity)
+                } else {
+                    CornerBracketsShape(cornerLength: 18.0, cornerRadius: 16.0)
+                        .stroke(Color.white.opacity(0.85), lineWidth: 2.0)
+                        .frame(width: max(20, rect.width), height: max(20, rect.height))
+                        .position(x: rect.midX, y: rect.midY)
+                        .opacity(strokeOpacity)
+                }
+
+                // 5. Huy hiệu AI ZOOM ở mép trên khung
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("AI ZOOM \(String(format: "%.1f", targetDisplayZoom))x")
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3.5)
+                .background(
+                    Capsule().fill(isRevealing ? AlignTheme.iridescentRainbow : AlignTheme.signatureGradient)
+                )
+                .shadow(color: Color.black.opacity(0.4), radius: 4, x: 0, y: 2)
+                .position(x: rect.midX, y: max(28, rect.minY - 14))
+                .opacity(strokeOpacity)
+            }
+            .allowsHitTesting(false)
+            .animation(.easeInOut(duration: 0.20), value: isEffectActive)
         }
-        .stroke(Color.yellow, lineWidth: tickWidth)
-        .shadow(color: Color.yellow.opacity(0.6), radius: 4)
     }
 }
 

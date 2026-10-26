@@ -402,10 +402,11 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isRevealingZoomTarget: Bool = false
     @Published public var lockOnProgress: CGFloat = 0
     @Published public var liveZoomFactorForReveal: CGFloat = 1.0
-    private var pendingTargetZoomForReveal: CGFloat = 1.0
-    private var zoomRevealStartDisplayZoom: CGFloat = 1.0
+    public private(set) var pendingTargetZoomForReveal: CGFloat = 1.0
+    public private(set) var zoomRevealStartDisplayZoom: CGFloat = 1.0
     private var zoomRevealStartsIn = true
     private var isZoomRampPhase: Bool = false
+    @Published public var zoomExpansionProgress: CGFloat = 0.0
     private var zoomAwaitingVerification = false
     private var zoomVerified = true
     private var pendingManualZoomTarget: CGFloat?
@@ -471,19 +472,16 @@ public final class CameraViewModel: ObservableObject {
         guard isRevealingZoomTarget, pendingTargetZoomForReveal > 0 else {
             return CGRect(x: 0, y: 0, width: 1.0, height: 1.0)
         }
-        let targetSize = min(1.0, max(0.20,
+        let targetSize = min(1.0, max(0.18,
             zoomRevealStartDisplayZoom / pendingTargetZoomForReveal))
 
         if !isZoomRampPhase {
-            // Giai đoạn 1: khung lướt nhẹ từ toàn cảnh (1.0) về vùng crop dự kiến bao quanh chủ thể
             let p = max(0.0, min(1.0, lockOnProgress))
             let size = 1.0 - (1.0 - targetSize) * p
             return CGRect(x: (1 - size) / 2, y: (1 - size) / 2,
                           width: size, height: size)
         } else {
-            // Giai đoạn 2: khi camera phần cứng đang ramp zoom, khung đồng bộ mở rộng ra mép màn hình
-            let ratio = min(1.0, max(0.20,
-                liveZoomFactorForReveal / pendingTargetZoomForReveal))
+            let ratio = targetSize + (1.0 - targetSize) * zoomExpansionProgress
             return CGRect(x: (1 - ratio) / 2, y: (1 - ratio) / 2,
                           width: ratio, height: ratio)
         }
@@ -691,25 +689,29 @@ public final class CameraViewModel: ObservableObject {
         zoomRevealStartsIn = targetZoom > displayZoom
         liveZoomFactorForReveal = displayZoom
         isZoomRampPhase = false
-        lockOnProgress = 0
+        lockOnProgress = 0.0
+        zoomExpansionProgress = 0.0
         isRevealingZoomTarget = true
         let pinGeneration = targetPinGeneration
 
-        // Hiệu ứng chuyển động mượt mà điện ảnh (Cinematic Easing)
-        withAnimation(.easeOut(duration: 0.24)) {
+        // Giai đoạn 2: Khóa mục tiêu & Phát sáng viền Cầu Vồng (Hard Lock & Iridescent Glow: 0.25s)
+        withAnimation(.easeOut(duration: 0.25)) {
             lockOnProgress = 1.0
         }
 
-        // Hold the outlined, dimmed crop before the optical ramp begins.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.58) { [weak self] in
+        // Giai đoạn 3: Bung khung cửa sổ đồng bộ với Zoom (Synchronized Window Expansion: ~0.45s)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak self] in
             guard let self = self, self.targetPinGeneration == pinGeneration,
                   self.zoomAwaitingVerification, !self.isPinchingZoom else { return }
             self.isZoomRampPhase = true
-            let octaveDistance = abs(log2(Double(targetDeviceZoom / max(0.5, self.currentZoom))))
-            let targetDuration = min(1.8, max(1.2, octaveDistance * 1.3))
-            let smoothRate = Float(max(0.5, min(8.0,
-                Double(abs(targetDeviceZoom - self.currentZoom)) / targetDuration)))
+            let delta = Double(abs(targetDeviceZoom - self.currentZoom))
+            let rampDuration: Double = 0.45
+            let smoothRate = Float(max(1.2, min(16.0, delta / rampDuration)))
             self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: smoothRate)
+
+            withAnimation(.timingCurve(0.2, 0.8, 0.2, 1.0, duration: 0.45)) {
+                self.zoomExpansionProgress = 1.0
+            }
         }
         zoomVerificationTask?.cancel()
         zoomVerificationTask = Task { [weak self] in
@@ -3299,6 +3301,8 @@ public final class CameraViewModel: ObservableObject {
                     withAnimation(.easeOut(duration: 0.35)) {
                         self.isRevealingZoomTarget = false
                         self.isZoomRampPhase = false
+                        self.zoomExpansionProgress = 0.0
+                        self.lockOnProgress = 0.0
                     }
                     selectedZoomPreset = resolveClosestZoomPreset(for: displayZoom)
                     self.applyPlannedEVBiasIfNeeded()
@@ -3329,6 +3333,8 @@ public final class CameraViewModel: ObservableObject {
         withAnimation(.easeOut(duration: 0.30)) {
             self.isRevealingZoomTarget = false
             self.isZoomRampPhase = false
+            self.zoomExpansionProgress = 0.0
+            self.lockOnProgress = 0.0
         }
     }
 
