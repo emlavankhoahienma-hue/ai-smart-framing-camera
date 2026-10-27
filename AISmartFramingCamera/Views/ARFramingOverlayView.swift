@@ -54,6 +54,9 @@ public struct ARFramingOverlayView: View {
                 }
 
                 if case .analyzing = viewModel.aiSessionState {
+                    ScanRadarWaveSweepView(size: size, topInset: topChromeInset, bottomInset: 120)
+                        .allowsHitTesting(false)
+
                     ForEach(0..<viewModel.localSuggestionRects.count, id: \.self) { index in
                         let sourceRect = viewModel.localSuggestionRects[index]
                         if !viewModel.localSuggestionRects.prefix(index).contains(sourceRect),
@@ -1398,5 +1401,82 @@ struct CinematicWaypointMarker: View {
         .buttonStyle(PlainButtonStyle())
         .scaleEffect(isCurrent ? 1.08 : 0.95)
         .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isCurrent)
+    }
+}
+
+
+// MARK: - AI Radar Scan Wave Sweep View (Hieu ung quet laser radar bo cuc AI - Phong cach SenseTime & Doka)
+struct ScanRadarWaveSweepView: View {
+    let size: CGSize
+    let topInset: CGFloat
+    let bottomInset: CGFloat
+
+    @State private var sweepProgress: CGFloat = 0.0
+
+    private var scanHeight: CGFloat {
+        max(100, size.height - topInset - bottomInset)
+    }
+
+    var body: some View {
+        let currentY = topInset + scanHeight * sweepProgress
+
+        ZStack(alignment: .top) {
+            // Luong sang toa mem gradient theo duong quet (Doka & Kapi radar tail)
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(red: 0.91, green: 0.82, blue: 0.96).opacity(0.0),
+                    Color(red: 0.50, green: 0.93, blue: 1.00).opacity(0.04),
+                    Color(red: 0.06, green: 0.91, blue: 1.00).opacity(0.12),
+                    Color(red: 1.00, green: 0.85, blue: 0.40).opacity(0.22)
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(width: size.width, height: 64)
+            .offset(y: currentY - 64)
+            .mask(
+                LinearGradient(
+                    gradient: Gradient(stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .white, location: 0.15),
+                        .init(color: .white, location: 0.85),
+                        .init(color: .clear, location: 1.0)
+                    ]),
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+
+            // Tia laser sang ruc tam quet
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: Color(red: 0.06, green: 0.91, blue: 1.0).opacity(0.5), location: 0.12),
+                            .init(color: Color(red: 1.0, green: 0.92, blue: 0.75), location: 0.5),
+                            .init(color: Color(red: 0.06, green: 0.91, blue: 1.0).opacity(0.5), location: 0.88),
+                            .init(color: .clear, location: 1.0)
+                        ]),
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(width: size.width, height: 1.6)
+                .shadow(color: Color(red: 0.06, green: 0.91, blue: 1.0).opacity(0.8), radius: 5, x: 0, y: 0)
+                .shadow(color: Color.white.opacity(0.9), radius: 1.5, x: 0, y: 0)
+                .offset(y: currentY)
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .clipped()
+        .allowsHitTesting(false)
+        .onAppear {
+            withAnimation(
+                .easeInOut(duration: 1.9)
+                .repeatForever(autoreverses: false)
+            ) {
+                sweepProgress = 1.0
+            }
+        }
     }
 }

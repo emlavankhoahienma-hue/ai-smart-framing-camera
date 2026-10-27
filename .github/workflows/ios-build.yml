@@ -230,6 +230,12 @@ jobs:
           if [ -s AISmartFramingCamera/Resources/LocalAutoselectThresholds.json ]; then
             cp AISmartFramingCamera/Resources/LocalAutoselectThresholds.json Payload/AISmartFramingCamera.app/
           fi
+          if [ -d "AISmartFramingCamera/Resources/LUTs" ]; then
+            mkdir -p Payload/AISmartFramingCamera.app/LUTs
+            cp -r AISmartFramingCamera/Resources/LUTs/* Payload/AISmartFramingCamera.app/
+            cp -r AISmartFramingCamera/Resources/LUTs/* Payload/AISmartFramingCamera.app/LUTs/
+            echo " Đã tích hợp thành công 3D Fuji LUTs vào App Bundle!"
+          fi
           test -d Payload/AISmartFramingCamera.app/SigLIPBaseImage.mlmodelc
           test -s Payload/AISmartFramingCamera.app/SigLIPPrompts.json
           python scripts/verify_model_bundle.py Payload/AISmartFramingCamera.app

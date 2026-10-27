@@ -31,6 +31,12 @@ public enum FujiFilmSimulations {
 
     // MARK: - 1. Classic Chrome (Tuong phan bong toi cung, mau sac tram am, bau troi ngoc lam)
     private static func applyClassicChrome(_ input: CIImage) -> CIImage {
+        // Tich hop 3D LUT goc Doka Beetle.92-FujiClassicChrome qua CIColorCube neu co
+        if let lutData = FilmSimulationCore.load3DLUT(named: "Beetle.92-FujiClassicChrome") {
+            var out = FilmSimulationCore.applyColorCube(input, cubeData: lutData, dimension: 32)
+            out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.18, grainSize: 1.4)
+            return FilmSimulationCore.applyVignette(out, intensity: 0.20, radius: 2.2)
+        }
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 0.92, y: 0.05, z: 0.03, w: 0),
@@ -54,6 +60,13 @@ public enum FujiFilmSimulations {
 
     // MARK: - 2. Fuji Pro 400H (Da sang min, mau pastel, vung sang nguyen am pastel)
     private static func applyFujiPro400H(_ input: CIImage) -> CIImage {
+        // Tich hop 3D LUT goc Doka Beetle.92-Fuji160C qua CIColorCube neu co
+        if let lutData = FilmSimulationCore.load3DLUT(named: "Beetle.92-Fuji160C") {
+            var out = FilmSimulationCore.applyColorCube(input, cubeData: lutData, dimension: 32)
+            out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.12, radius: 6.0)
+            out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.14, grainSize: 1.2)
+            return out
+        }
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 0.96, y: 0.02, z: 0.02, w: 0),
@@ -101,6 +114,12 @@ public enum FujiFilmSimulations {
 
     // MARK: - 4. Classic Neg (Tuong phan cao, vung toi am reu, phong cach duong pho hoai co)
     private static func applyClassicNeg(_ input: CIImage) -> CIImage {
+        // Tich hop 3D LUT goc Doka Beetle.92-FujiNostalgicNeg qua CIColorCube neu co
+        if let lutData = FilmSimulationCore.load3DLUT(named: "Beetle.92-FujiNostalgicNeg") {
+            var out = FilmSimulationCore.applyColorCube(input, cubeData: lutData, dimension: 32)
+            out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.22, grainSize: 1.6)
+            return FilmSimulationCore.applyVignette(out, intensity: 0.24, radius: 2.0)
+        }
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 1.04, y: -0.02, z: -0.02, w: 0),

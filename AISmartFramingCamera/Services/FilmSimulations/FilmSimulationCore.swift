@@ -378,4 +378,100 @@ public enum FilmSimulationCore {
         blend.setValue(mask, forKey: kCIInputMaskImageKey)
         return blend.outputImage?.cropped(to: original.extent) ?? filtered
     }
+
+    // MARK: - 10. Hardware-Accelerated 3D Color Cube (CIColorCube 3D LUT)
+    public static func applyColorCube(
+        _ input: CIImage,
+        cubeData: Data,
+        dimension: Int = 32
+    ) -> CIImage {
+        guard let filter = CIFilter(name: "CIColorCube") else { return input }
+        filter.setValue(input, forKey: kCIInputImageKey)
+        filter.setValue(dimension, forKey: "inputCubeDimension")
+        filter.setValue(cubeData, forKey: "inputCubeData")
+        return filter.outputImage ?? input
+    }
+
+    /// Trinh quan ly va nap 3D LUT dang binary (.bin) va van ban (.cube) voi bo nho dem RAM
+    public final class CubeLUTLoader: @unchecked Sendable {
+        public static let shared = CubeLUTLoader()
+        private var cache: [String: Data] = [:]
+        private let lock = NSLock()
+
+        private init() {}
+
+        public func loadLUT(named name: String, dimension: Int = 32) -> Data? {
+            lock.lock()
+            if let cached = cache[name] {
+                lock.unlock()
+                return cached
+            }
+            lock.unlock()
+
+            // 1. Uu tien doc tep binary pre-baked (.bin) trong App Bundle de dat toc do 0.1ms
+            if let binURL = Bundle.main.url(forResource: name, withExtension: "bin") ??
+                            Bundle.main.url(forResource: name, withExtension: "bin", subdirectory: "LUTs") {
+                if let data = try? Data(contentsOf: binURL) {
+                    lock.lock()
+                    cache[name] = data
+                    lock.unlock()
+                    return data
+                }
+            }
+
+            // 2. Thu nap tep tin nguon chuan .cube (Adobe 3D LUT format)
+            if let cubeURL = Bundle.main.url(forResource: name, withExtension: "cube") ??
+                             Bundle.main.url(forResource: name, withExtension: "cube", subdirectory: "LUTs") {
+                if let content = try? String(contentsOf: cubeURL, encoding: .utf8),
+                   let data = parseCube(content: content, dimension: dimension) {
+                    lock.lock()
+                    cache[name] = data
+                    lock.unlock()
+                    return data
+                }
+            }
+
+            return nil
+        }
+
+        public func parseCube(content: String, dimension: Int = 32) -> Data? {
+            let totalExpectedFloats = dimension * dimension * dimension * 4
+            var floats = [Float32]()
+            floats.reserveCapacity(totalExpectedFloats)
+
+            var parsedDim = dimension
+            content.enumerateLines { line, _ in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty || trimmed.hasPrefix("#") { return }
+                if trimmed.hasPrefix("LUT_3D_SIZE") {
+                    let parts = trimmed.split(separator: " ")
+                    if parts.count >= 2, let d = Int(parts[1]) {
+                        parsedDim = d
+                    }
+                    return
+                }
+                if trimmed.hasPrefix("TITLE") || trimmed.hasPrefix("DOMAIN_") { return }
+
+                let tokens = trimmed.split(separator: " ")
+                if tokens.count >= 3,
+                   let r = Float32(tokens[0]),
+                   let g = Float32(tokens[1]),
+                   let b = Float32(tokens[2]) {
+                    floats.append(r)
+                    floats.append(g)
+                    floats.append(b)
+                    floats.append(1.0)
+                }
+            }
+
+            let expectedCount = parsedDim * parsedDim * parsedDim * 4
+            guard floats.count == expectedCount else { return nil }
+
+            return Data(bytes: floats, count: floats.count * MemoryLayout<Float32>.size)
+        }
+    }
+
+    public static func load3DLUT(named name: String, dimension: Int = 32) -> Data? {
+        return CubeLUTLoader.shared.loadLUT(named: name, dimension: dimension)
+    }
 }
