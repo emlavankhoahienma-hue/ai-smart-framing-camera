@@ -2201,17 +2201,20 @@ public final class CameraViewModel: ObservableObject {
             selectedFilmPreset = response.recommendedPreset
         }
 
-        var subjectAnchor = CGPoint(x: response.targetX, y: response.targetY)
+        let subjectAnchor = CGPoint(x: response.subjectX, y: response.subjectY)
+        let compositionAnchor = CGPoint(x: response.compositionAnchorX, y: response.compositionAnchorY)
         let subjectRect = normalizedSubjectRect(cloudTrackingSource?.subjectRect)
+        let baseSubjectSize = response.estimatedSubjectSize ?? subjectRect?.size ?? CGSize(width: 0.25, height: 0.35)
 
-        // Nếu Cloud AI trả về tọa độ trung tâm (0.5, 0.5) nhưng cảm biến phát hiện chủ thể lệch tâm,
-        // ưu tiên lấy mỏ neo thực tế của chủ thể.
-        if let sRect = subjectRect, abs(subjectAnchor.x - 0.5) < 0.05 && abs(subjectAnchor.y - 0.5) < 0.05 {
-            let sCenter = CGPoint(x: sRect.midX, y: sRect.midY)
-            if abs(sCenter.x - 0.5) > 0.06 || abs(sCenter.y - 0.5) > 0.06 {
-                subjectAnchor = sCenter
-            }
-        }
+        // Tính toán hình học bố cục tối ưu:
+        let (cameraAimPoint, optimalZoom) = GeminiService.computeOptimalFramingGeometry(
+            subjectPoint: subjectAnchor,
+            compositionAnchor: compositionAnchor,
+            currentZoom: self.zoomFactor,
+            suggestedZoom: response.suggestedZoom,
+            shotScale: response.shotScale,
+            subjectSize: baseSubjectSize
+        )
 
         let effectiveRect = subjectRect ?? CGRect(
             x: max(0.02, subjectAnchor.x - 0.12),
@@ -2220,8 +2223,8 @@ public final class CameraViewModel: ObservableObject {
             height: 0.32
         )
 
-        // Áp dụng trực tiếp Target, Zoom và EV từ Chuyên gia Cloud AI mà không qua bước chấm điểm cục bộ
-        let aimPoint = CGPoint(x: response.targetX, y: response.targetY)
+        // Áp dụng trực tiếp Target, Zoom và EV từ Chuyên gia Cloud AI
+        let aimPoint = cameraAimPoint
         let center = CGPoint(x: 0.5, y: 0.5)
         let dx = aimPoint.x - center.x
         let dy = aimPoint.y - center.y
@@ -2241,7 +2244,7 @@ public final class CameraViewModel: ObservableObject {
             angleDegrees: angle,
             alignmentScore: alignmentScore,
             isAligned: isAligned,
-            recommendedZoomFactor: response.suggestedZoom,
+            recommendedZoomFactor: optimalZoom,
             optimalRule: response.compositionRule,
             guideDescription: response.explanation,
             recommendedEVBias: cloudEV,
@@ -2252,8 +2255,8 @@ public final class CameraViewModel: ObservableObject {
         self.plannedEVBias = cloudEV
         self.plannedLightingScene = lScene
         self.plannedLightingDescription = lRationale
-        self.aiSuggestedZoom = response.suggestedZoom
-        self.pendingSuggestedZoom = response.suggestedZoom
+        self.aiSuggestedZoom = optimalZoom
+        self.pendingSuggestedZoom = optimalZoom
 
         var liveAim = aimPoint
         var guideWorldRay: simd_double3? = nil
@@ -3554,9 +3557,16 @@ public final class CameraViewModel: ObservableObject {
         // Kiểm tra an toàn quang phổ với RealtimeHistogramEngine: đảm bảo clip ratio < 1%
         let currentLuma = RealtimeHistogramEngine.shared.averageLuminance
         var safeEV = bias
-        if bias > 0 && currentLuma > 0.78 {
-            safeEV = min(bias, 0.3)
+        // Highlight Roll-off Damper: Bảo vệ vùng sáng không bị cháy highlight khi độ chói tổng thể đã cao
+        if bias > 0 && currentLuma > 0.72 {
+            let excess = Float(currentLuma - 0.72) / 0.28
+            safeEV = max(0.0, min(bias, 0.35 * (1.0 - excess)))
+        } else if bias < -0.8 && currentLuma < 0.18 {
+            // Shadow Protection: Không dìm tối quá mức khi khung hình đã quá thiếu sáng
+            safeEV = max(bias, -0.7)
         }
+        safeEV = (safeEV * 10.0).rounded() / 10.0
+        guard abs(safeEV) > 0.04 else { return }
         setExposure(safeEV)
         showHUDNotice(String(format: "Đã tinh chỉnh ánh sáng %+.1f EV (%@)", safeEV, plannedLightingScene))
     }

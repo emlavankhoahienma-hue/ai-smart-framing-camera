@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import UIKit
 import CoreGraphics
 import QuartzCore
@@ -694,6 +695,12 @@ public struct GeminiFramingResponse {
     public let presetExplanation: String
     public let recommendedEVBias: Float?
     public let lightingScene: String?
+    public let subjectX: CGFloat
+    public let subjectY: CGFloat
+    public let compositionAnchorX: CGFloat
+    public let compositionAnchorY: CGFloat
+    public let estimatedSubjectSize: CGSize?
+    public let shotScale: String
 
     public init(
         targetX: CGFloat,
@@ -708,7 +715,13 @@ public struct GeminiFramingResponse {
         recommendedPreset: FilmPreset,
         presetExplanation: String,
         recommendedEVBias: Float? = nil,
-        lightingScene: String? = nil
+        lightingScene: String? = nil,
+        subjectX: CGFloat? = nil,
+        subjectY: CGFloat? = nil,
+        compositionAnchorX: CGFloat = 0.5,
+        compositionAnchorY: CGFloat = 0.5,
+        estimatedSubjectSize: CGSize? = nil,
+        shotScale: String = "medium_portrait"
     ) {
         self.targetX = targetX
         self.targetY = targetY
@@ -723,6 +736,12 @@ public struct GeminiFramingResponse {
         self.presetExplanation = presetExplanation
         self.recommendedEVBias = recommendedEVBias
         self.lightingScene = lightingScene
+        self.subjectX = subjectX ?? targetX
+        self.subjectY = subjectY ?? targetY
+        self.compositionAnchorX = compositionAnchorX
+        self.compositionAnchorY = compositionAnchorY
+        self.estimatedSubjectSize = estimatedSubjectSize
+        self.shotScale = shotScale
     }
 }
 
@@ -1341,11 +1360,12 @@ public final class GeminiService: ObservableObject {
         )
     }
 
-    // MARK: - Image Downscaling & Optimization for AI Vision Analysis
+    // MARK: - Image Downscaling & Optimization for AI Vision Analysis with ImageIO & Visual Grid (Set-of-Mark)
     public static func prepareImageForAnalysis(
         _ image: CGImage,
         maxDimension: CGFloat = 1280,
-        compressionQuality: CGFloat = 0.60
+        compressionQuality: CGFloat = 0.60,
+        overlayVisualGrid: Bool = true
     ) -> Data? {
         let originalWidth = CGFloat(image.width)
         let originalHeight = CGFloat(image.height)
@@ -1373,9 +1393,24 @@ public final class GeminiService: ObservableObject {
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
         ) {
-            context.interpolationQuality = .medium
+            context.interpolationQuality = .high
             context.draw(image, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+
+            if overlayVisualGrid {
+                drawVisualGridOverlay(in: context, width: targetWidth, height: targetHeight)
+            }
+
             if let scaledCG = context.makeImage() {
+                let data = NSMutableData()
+                if let destination = CGImageDestinationCreateWithData(data as CFMutableData, "public.jpeg" as CFString, 1, nil) {
+                    let options: [CFString: Any] = [
+                        kCGImageDestinationLossyCompressionQuality: compressionQuality
+                    ]
+                    CGImageDestinationAddImage(destination, scaledCG, options as CFDictionary)
+                    if CGImageDestinationFinalize(destination) {
+                        return data as Data
+                    }
+                }
                 let uiImage = UIImage(cgImage: scaledCG)
                 return uiImage.jpegData(compressionQuality: compressionQuality)
             }
@@ -1383,6 +1418,86 @@ public final class GeminiService: ObservableObject {
 
         let uiImage = UIImage(cgImage: image)
         return uiImage.jpegData(compressionQuality: compressionQuality)
+    }
+
+    /// Vẽ lưới ô thị giác Set-of-Mark (Visual Grid Prompting) siêu mảnh, tinh tế, không làm mờ chi tiết chủ thể
+    private static func drawVisualGridOverlay(in context: CGContext, width: Int, height: Int) {
+        context.saveGState()
+        let w = CGFloat(width)
+        let h = CGFloat(height)
+
+        // 1. Lưới 10x10 ô chuẩn (10% increments) với đường nét hairline siêu mảnh (alpha 0.18)
+        context.setLineWidth(1.0)
+        context.setStrokeColor(UIColor.white.withAlphaComponent(0.18).cgColor)
+
+        for i in 1...9 {
+            let fraction = CGFloat(i) * 0.10
+            context.move(to: CGPoint(x: w * fraction, y: 0))
+            context.addLine(to: CGPoint(x: w * fraction, y: h))
+
+            context.move(to: CGPoint(x: 0, y: h * fraction))
+            context.addLine(to: CGPoint(x: w, y: h * fraction))
+        }
+        context.strokePath()
+
+        // 2. Vạch chia phụ 20x20 (5% increments) ở viền biên để AI định vị cận cảnh
+        context.setStrokeColor(UIColor.white.withAlphaComponent(0.10).cgColor)
+        for i in 1...19 where i % 2 != 0 {
+            let fraction = CGFloat(i) * 0.05
+            context.move(to: CGPoint(x: w * fraction, y: 0))
+            context.addLine(to: CGPoint(x: w * fraction, y: 5))
+            context.move(to: CGPoint(x: w * fraction, y: h - 5))
+            context.addLine(to: CGPoint(x: w * fraction, y: h))
+
+            context.move(to: CGPoint(x: 0, y: h * fraction))
+            context.addLine(to: CGPoint(x: 5, y: h * fraction))
+            context.move(to: CGPoint(x: w - 5, y: h * fraction))
+            context.addLine(to: CGPoint(x: w, y: h * fraction))
+        }
+        context.strokePath()
+
+        // 3. Đánh dấu chữ thập (+) tại các điểm mạnh bố cục Tỷ lệ vàng, 1/3 và Tâm khung hình
+        let powerPoints: [CGPoint] = [
+            CGPoint(x: 0.333, y: 0.333), CGPoint(x: 0.667, y: 0.333),
+            CGPoint(x: 0.333, y: 0.667), CGPoint(x: 0.667, y: 0.667),
+            CGPoint(x: 0.382, y: 0.382), CGPoint(x: 0.618, y: 0.382),
+            CGPoint(x: 0.382, y: 0.618), CGPoint(x: 0.618, y: 0.618),
+            CGPoint(x: 0.500, y: 0.500)
+        ]
+        context.setStrokeColor(UIColor.cyan.withAlphaComponent(0.35).cgColor)
+        context.setLineWidth(1.2)
+        let crossSize: CGFloat = 6.0
+        for p in powerPoints {
+            let cx = w * p.x
+            let cy = h * p.y
+            context.move(to: CGPoint(x: cx - crossSize, y: cy))
+            context.addLine(to: CGPoint(x: cx + crossSize, y: cy))
+            context.move(to: CGPoint(x: cx, y: cy - crossSize))
+            context.addLine(to: CGPoint(x: cx, y: cy + crossSize))
+        }
+        context.strokePath()
+
+        // 4. Ký hiệu chữ - số (A..J ở mép trên, 1..10 ở mép trái) định danh 100 ô thị giác SoM
+        let fontSize = max(8.0, min(11.0, w * 0.015))
+        let font = UIFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .semibold)
+        let textAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.white.withAlphaComponent(0.50)
+        ]
+        let colLetters = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+        UIGraphicsPushContext(context)
+        for i in 0..<10 {
+            let colText = colLetters[i] as NSString
+            let colX = w * (CGFloat(i) * 0.10 + 0.05) - (fontSize * 0.3)
+            colText.draw(at: CGPoint(x: colX, y: 2), withAttributes: textAttributes)
+
+            let rowText = "\(i + 1)" as NSString
+            let rowY = h * (CGFloat(i) * 0.10 + 0.05) - (fontSize * 0.5)
+            rowText.draw(at: CGPoint(x: 2, y: rowY), withAttributes: textAttributes)
+        }
+        UIGraphicsPopContext()
+
+        context.restoreGState()
     }
 
     // MARK: - Local Neural/Hardware Color Recipe Fallback (Offline & Zero-Quota Safety)
@@ -1937,7 +2052,8 @@ public final class GeminiService: ObservableObject {
             "max_tokens": 1000
         ]
         let lowerModel = modelID.lowercased()
-        if selectedProvider == .openAI && (lowerModel.contains("gpt-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4")) {
+        if (selectedProvider == .openAI || selectedProvider == .googleGemini) &&
+           (lowerModel.contains("gpt-") || lowerModel.contains("gemini-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4")) {
             requestBody["response_format"] = ["type": "json_object"]
         }
         if selectedProvider == .openRouter {
@@ -2071,8 +2187,8 @@ public final class GeminiService: ObservableObject {
     }
 
     public static func hasUsableFraming(_ json: [String: Any]) -> Bool {
-        let x = parseCGFloat(json["target_x"], defaultVal: .nan)
-        let y = parseCGFloat(json["target_y"], defaultVal: .nan)
+        let x = parseCGFloat(json["subject_x"], defaultVal: parseCGFloat(json["target_x"], defaultVal: .nan))
+        let y = parseCGFloat(json["subject_y"], defaultVal: parseCGFloat(json["target_y"], defaultVal: .nan))
         let zoom = parseCGFloat(json["suggested_zoom"], defaultVal: .nan)
         return x.isFinite && y.isFinite && zoom.isFinite &&
             (0...1).contains(x) && (0...1).contains(y) && (1...5).contains(zoom)
@@ -2179,6 +2295,18 @@ public final class GeminiService: ObservableObject {
         let recPreset = FilmPreset.match(from: presetRaw) ?? sceneType.recommendedFilter
         let presetExpl = extractString(forKey: "preset_explanation") ?? "\(recPreset.displayName) — Tối ưu cho bối cảnh \(sceneType.localizedName)"
 
+        let rawSubjX = extractNumber(forKey: "subject_x")
+        let rawSubjY = extractNumber(forKey: "subject_y")
+        let subjX = CGFloat(rawSubjX ?? Double(targetX))
+        let subjY = CGFloat(rawSubjY ?? Double(targetY))
+        let compX = CGFloat(extractNumber(forKey: "composition_x") ?? 0.5)
+        let compY = CGFloat(extractNumber(forKey: "composition_y") ?? 0.5)
+        let shotScale = extractString(forKey: "shot_scale") ?? "medium_portrait"
+        var estSize: CGSize? = nil
+        if let sw = extractNumber(forKey: "subject_w"), let sh = extractNumber(forKey: "subject_h"), sw > 0, sh > 0 {
+            estSize = CGSize(width: CGFloat(sw), height: CGFloat(sh))
+        }
+
         return GeminiFramingResponse(
             targetX: max(0.05, min(0.95, targetX)),
             targetY: max(0.05, min(0.95, targetY)),
@@ -2190,11 +2318,19 @@ public final class GeminiService: ObservableObject {
             modelUsed: modelUsed,
             latencyMs: latencyMs,
             recommendedPreset: recPreset,
-            presetExplanation: presetExpl
+            presetExplanation: presetExpl,
+            recommendedEVBias: Float(exp),
+            lightingScene: nil,
+            subjectX: subjX,
+            subjectY: subjY,
+            compositionAnchorX: compX,
+            compositionAnchorY: compY,
+            estimatedSubjectSize: estSize,
+            shotScale: shotScale
         )
     }
 
-    // MARK: - Prompt
+    // MARK: - Prompt with Visual Grid (Set-of-Mark Grounding) & Dual-Anchor Directives
 
     private func buildPrompt(
         sceneContext: DetectedSceneType? = nil,
@@ -2204,33 +2340,206 @@ public final class GeminiService: ObservableObject {
     ) -> String {
         var hints = ""
         if let scene = sceneContext { hints += "scene_type=\(scene.rawValue); " }
-        if let r = subjectRect {
-            hints += String(format: "subject_box=[x:%.2f,y:%.2f,w:%.2f,h:%.2f]; ", r.midX, r.midY, r.width, r.height)
+        var safeMaxZoomHint: CGFloat = 3.0
+        if let r = subjectRect, r.width > 0.02, r.height > 0.02 {
+            let maxZByW = min(3.0, max(1.0, 0.72 / r.width))
+            let maxZByH = min(3.0, max(1.0, 0.76 / r.height))
+            safeMaxZoomHint = min(maxZByW, maxZByH)
+            hints += String(format: "subject_box=[cx:%.3f,cy:%.3f,w:%.3f,h:%.3f,safe_max_zoom:%.2f]; ", r.midX, r.midY, r.width, r.height, safeMaxZoomHint)
         }
-        if !faceRects.isEmpty { hints += "detected_faces=\(faceRects.count); " }
+        if let firstFace = faceRects.first {
+            hints += String(format: "primary_face=[cx:%.3f,cy:%.3f,w:%.3f,h:%.3f,count:%d]; ", firstFace.midX, firstFace.midY, firstFace.width, firstFace.height, faceRects.count)
+        }
         if let m = colorMetrics {
             hints += String(format: "luma=%.2f,warmth=%.2f,contrast=%.2f; ", m.averageLuma, m.warmthCast, m.contrastScore)
         }
-        return """
-        You are an elite Director of Photography (DoP) and Master Cinematographer.
-        Analyze this camera viewfinder image with professional artistic precision.
-        Sensor cues: \(hints)
-        MANDATORY INSTRUCTIONS:
-        1. Pinpoint the exact optical focal center of the primary visual subject (target_x, target_y in [0.05..0.95], where top-left is 0.0,0.0 and bottom-right is 1.0,1.0). If a person or face exists, lock onto the dominant eye or face center. Never return center 0.5,0.5 if subject is off-center.
-        2. Determine optimal framing optical zoom: choose from [1.0, 1.5, 2.0, 2.5, 3.0] to remove clutter and flatter subject proportions.
-        3. Determine smart scene exposure bias: ev_bias from -2.0 to +2.0 (e.g. -0.7 for backlit silhouette, +0.5 for underexposed face/night, 0.0 for balanced).
-        4. Classify lighting_scene: "backlit", "night", "sunset", "harsh_sun", "indoor_warm", or "normal".
-        5. Recommend the ideal film look preset and color recipe.
 
-        Respond with ONLY ONE valid, raw JSON object (no markdown, no quotes, no extra text):
-        {"target_x":0.42,"target_y":0.36,"suggested_zoom":1.5,"ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Classic Chrome","preset_explanation":"Tôn da sáng tự nhiên và giữ tương phản trung tính","explanation":"Khóa nét vào mắt chủ thể và căn chỉnh điểm mạnh 1/3 điện ảnh","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.0,"saturation":1.04,"contrast":1.03,"shadow_lift":0.02,"highlight_roll":0.95,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng ánh sáng tự nhiên"}}
+        return """
+        You are a World-Class Director of Photography (DoP). Analyze this viewfinder frame with professional artistic precision.
+        Sensor cues: \(hints)
+        COORDINATE SYSTEM & VISUAL GRID (Set-of-Mark Grounding):
+        - The image is overlaid with a calibrated 10x10 coordinate grid (Columns A to J from x=0.0 to 1.0; Rows 1 to 10 from y=0.0 to 1.0, fine ticks every 0.05).
+        - Use these grid intersections and cell references (e.g. D4, F3) to pinpoint coordinates with sub-pixel accuracy!
+        - Top-left is (0.0, 0.0), bottom-right is (1.0, 1.0).
+
+        MANDATORY CINEMATOGRAPHY RULES:
+        1. SUBJECT ANCHOR (subject_x, subject_y, subject_w, subject_h): Locate the exact optical focal point of the primary subject in the CURRENT frame (lock onto dominant eye/face center for people/pets, or primary focal center for objects/landscapes). NEVER output (0.5, 0.5) if the subject is off-center.
+        2. COMPOSITION POWER POINT (composition_x, composition_y): Choose the ideal aesthetic screen position where the subject anchor SHOULD sit after framing:
+           - Rule of Thirds / Golden Ratio: e.g. (0.38, 0.38), (0.62, 0.38), (0.33, 0.33), (0.67, 0.33) with generous lead room in the gaze direction.
+           - Center Symmetry: (0.50, 0.44) ONLY if architectural/strict bilateral symmetry.
+        3. OPTIMAL ZOOM (shot_scale & suggested_zoom):
+           - Choose shot_scale from ["close_up", "medium_portrait", "full_body", "environmental", "wide"].
+           - Compute suggested_zoom in [1.0..3.0] (prefer prime lens steps: 1.0, 1.2, 1.5, 2.0, 2.5, 3.0) so the subject fills the ideal proportion for shot_scale WITHOUT clipping head/limbs (must not exceed safe_max_zoom=\(String(format: "%.2f", safeMaxZoomHint))).
+        4. SMART EXPOSURE (ev_bias in [-1.5..+1.5], lighting_scene in ["backlit","night","sunset","harsh_sun","indoor_warm","normal"]).
+
+        Return ONLY ONE raw valid JSON object (no markdown fences, no extra text):
+        {"subject_x":0.44,"subject_y":0.36,"subject_w":0.28,"subject_h":0.42,"composition_x":0.38,"composition_y":0.38,"target_x":0.44,"target_y":0.36,"shot_scale":"medium_portrait","suggested_zoom":1.5,"ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Classic Chrome","preset_explanation":"Tôn da tự nhiên và chiều sâu điện ảnh","explanation":"Khóa nét mắt chủ thể và đặt vào điểm mạnh Tỷ lệ vàng 1/3 kèm zoom 1.5x (35mm)","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.0,"saturation":1.04,"contrast":1.03,"shadow_lift":0.02,"highlight_roll":0.95,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng ánh sáng tự nhiên"}}
         """
     }
+    // MARK: - Mathematical Constraint Solver for Dual-Anchor Framing & Optimal Zoom
+    public static func computeOptimalFramingGeometry(
+        rawSubjectPoint: CGPoint,
+        rawCompositionPoint: CGPoint?,
+        rawTargetPoint: CGPoint,
+        rawZoom: CGFloat,
+        shotScale: String,
+        compositionRule: CompositionRule,
+        sensorSubjectRect: CGRect?,
+        sensorFaceRects: [CGRect],
+        aiEstimatedSize: CGSize?
+    ) -> (subjectAnchor: CGPoint, compositionAnchor: CGPoint, cameraAimPoint: CGPoint, optimalZoom: CGFloat) {
+        // 1. Xác định Subject Anchor chính xác (ưu tiên mắt/khuôn mặt cảm biến nếu AI trả về gần tâm (0.5, 0.5) vô lý)
+        var sPoint = rawSubjectPoint
+        let isNearCenter = abs(sPoint.x - 0.5) < 0.04 && abs(sPoint.y - 0.5) < 0.04
+        if let primaryFace = sensorFaceRects.first {
+            let eyeAnchor = CGPoint(x: primaryFace.midX, y: primaryFace.minY + primaryFace.height * 0.38)
+            if isNearCenter {
+                sPoint = eyeAnchor
+            } else if hypot(sPoint.x - eyeAnchor.x, sPoint.y - eyeAnchor.y) <= max(primaryFace.width, primaryFace.height) * 1.1 {
+                // Nội suy làm mượt giữa tọa độ AI Cloud và landmark khuôn mặt phần cứng
+                sPoint = CGPoint(x: sPoint.x * 0.65 + eyeAnchor.x * 0.35,
+                                 y: sPoint.y * 0.65 + eyeAnchor.y * 0.35)
+            }
+        } else if let sRect = sensorSubjectRect, isNearCenter {
+            let upperCenter = CGPoint(x: sRect.midX, y: sRect.minY + sRect.height * 0.38)
+            if abs(upperCenter.x - 0.5) > 0.05 || abs(upperCenter.y - 0.5) > 0.05 {
+                sPoint = upperCenter
+            }
+        }
+        sPoint.x = max(0.05, min(0.95, sPoint.x))
+        sPoint.y = max(0.05, min(0.95, sPoint.y))
+
+        // 2. Xác định Điểm Mạnh Bố Cục Đích G = (g_x, g_y)
+        var gPoint: CGPoint
+        if let comp = rawCompositionPoint,
+           comp.x.isFinite, comp.y.isFinite,
+           (0.15...0.85).contains(comp.x), (0.15...0.85).contains(comp.y) {
+            gPoint = comp
+        } else {
+            switch compositionRule {
+            case .centerSymmetry:
+                gPoint = CGPoint(x: 0.50, y: 0.44)
+            case .ruleOfThirds:
+                let gx: CGFloat = sPoint.x <= 0.5 ? 0.333 : 0.667
+                let gy: CGFloat = sPoint.y <= 0.55 ? 0.36 : 0.60
+                gPoint = CGPoint(x: gx, y: gy)
+            default: // .goldenRatio, .goldenSpiral
+                let gx: CGFloat = sPoint.x <= 0.5 ? 0.382 : 0.618
+                let gy: CGFloat = sPoint.y <= 0.55 ? 0.382 : 0.58
+                gPoint = CGPoint(x: gx, y: gy)
+            }
+        }
+
+        // 3. Giải bài toán Tối Ưu Mức Zoom Z* không cắt chủ thể (Constrained Optimal Zoom Solver)
+        let effWidth = sensorSubjectRect?.width ?? aiEstimatedSize?.width ?? 0.24
+        let effHeight = sensorSubjectRect?.height ?? aiEstimatedSize?.height ?? 0.34
+        let clampedW = max(0.05, min(0.92, effWidth))
+        let clampedH = max(0.05, min(0.92, effHeight))
+
+        let targetHeightOccupancy: CGFloat
+        switch shotScale.lowercased() {
+        case "close_up": targetHeightOccupancy = 0.56
+        case "medium_portrait": targetHeightOccupancy = 0.44
+        case "full_body": targetHeightOccupancy = 0.64
+        case "environmental": targetHeightOccupancy = 0.30
+        case "wide", "wide_landscape": targetHeightOccupancy = 0.22
+        default: targetHeightOccupancy = 0.42
+        }
+
+        let occupancyZoom: CGFloat = (shotScale.lowercased() == "wide" || shotScale.lowercased() == "wide_landscape")
+            ? 1.0
+            : max(1.0, min(3.0, targetHeightOccupancy / clampedH))
+
+        // Giới hạn chống cắt mép ảnh khi đặt chủ thể ở điểm mạnh gPoint với lề an toàn 0.055
+        let pad: CGFloat = 0.055
+        let availHalfW = max(0.12, min(gPoint.x, 1.0 - gPoint.x) - pad)
+        let availHalfH = max(0.14, min(gPoint.y, 1.0 - gPoint.y) - pad)
+        let maxSafeZoomW = (2.0 * availHalfW) / clampedW
+        let maxSafeZoomH = (2.0 * availHalfH) / clampedH
+        let maxSafeZoom = max(1.0, min(3.2, min(maxSafeZoomW, maxSafeZoomH)))
+
+        // Hợp nhất Zoom từ AI Cloud (70%) và Zoom Hình học Cỡ cảnh (30%), kẹp trong ngưỡng an toàn
+        let blendedZoom: CGFloat
+        if sensorSubjectRect != nil || aiEstimatedSize != nil {
+            blendedZoom = rawZoom * 0.70 + occupancyZoom * 0.30
+        } else {
+            blendedZoom = rawZoom
+        }
+        var finalZoom = max(1.0, min(maxSafeZoom, min(3.0, blendedZoom)))
+
+        // Lực hút về tiêu cự quang học chuẩn (1.0x=24mm, 1.2x=28mm, 1.5x=35mm, 2.0x=48mm, 2.5x=60mm, 3.0x=77mm)
+        let opticalSteps: [CGFloat] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0]
+        if let nearestStep = opticalSteps.min(by: { abs($0 - finalZoom) < abs($1 - finalZoom) }),
+           abs(nearestStep - finalZoom) <= 0.14,
+           nearestStep <= maxSafeZoom + 0.05 {
+            finalZoom = nearestStep
+        } else {
+            finalZoom = (finalZoom * 10.0).rounded() / 10.0
+        }
+
+        // 4. Tính Đích Ngắm Quang Học C_aim để khi tâm camera (0.5, 0.5) trùng vào C_aim ở mức zoom finalZoom,
+        // chủ thể tại sPoint sẽ rơi chính xác vào điểm mạnh bố cục gPoint!
+        // Công thức: C_aim = S - (G - 0.5) / Z*
+        let rawAimX = sPoint.x - (gPoint.x - 0.5) / finalZoom
+        let rawAimY = sPoint.y - (gPoint.y - 0.5) / finalZoom
+        let aimPoint = CGPoint(
+            x: max(0.06, min(0.94, rawAimX)),
+            y: max(0.06, min(0.94, rawAimY))
+        )
+
+        return (
+            subjectAnchor: sPoint,
+            compositionAnchor: gPoint,
+            cameraAimPoint: aimPoint,
+            optimalZoom: finalZoom
+        )
+    }
+
+    public static func computeOptimalFramingGeometry(
+        subjectPoint: CGPoint,
+        compositionAnchor: CGPoint,
+        currentZoom: CGFloat,
+        suggestedZoom: CGFloat,
+        shotScale: String,
+        subjectSize: CGSize
+    ) -> (cameraAimPoint: CGPoint, optimalZoom: CGFloat) {
+        let res = computeOptimalFramingGeometry(
+            rawSubjectPoint: subjectPoint,
+            rawCompositionPoint: compositionAnchor,
+            rawTargetPoint: subjectPoint,
+            rawZoom: suggestedZoom,
+            shotScale: shotScale,
+            compositionRule: .ruleOfThirds,
+            sensorSubjectRect: CGRect(
+                x: max(0.0, subjectPoint.x - subjectSize.width / 2.0),
+                y: max(0.0, subjectPoint.y - subjectSize.height / 2.0),
+                width: min(1.0, subjectSize.width),
+                height: min(1.0, subjectSize.height)
+            ),
+            sensorFaceRects: [],
+            aiEstimatedSize: subjectSize
+        )
+        return (cameraAimPoint: res.cameraAimPoint, optimalZoom: res.optimalZoom)
+    }
+
     // MARK: - Response Parsing
 
     private static func parseGeminiResponse(_ json: [String: Any], modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
-        let targetX = parseCGFloat(json["target_x"], defaultVal: 0.5)
-        let targetY = parseCGFloat(json["target_y"], defaultVal: 0.5)
+        let rawTargetX = parseCGFloat(json["target_x"], defaultVal: 0.5)
+        let rawTargetY = parseCGFloat(json["target_y"], defaultVal: 0.5)
+        let subjectX = parseCGFloat(json["subject_x"], defaultVal: rawTargetX)
+        let subjectY = parseCGFloat(json["subject_y"], defaultVal: rawTargetY)
+        let compX = parseCGFloat(json["composition_x"], defaultVal: 0.5)
+        let compY = parseCGFloat(json["composition_y"], defaultVal: 0.5)
+        let shotScale = (json["shot_scale"] as? String) ?? "medium_portrait"
+
+        var estSize: CGSize? = nil
+        let sw = parseCGFloat(json["subject_w"], defaultVal: .nan)
+        let sh = parseCGFloat(json["subject_h"], defaultVal: .nan)
+        if sw.isFinite, sh.isFinite, sw > 0, sh > 0 {
+            estSize = CGSize(width: sw, height: sh)
+        }
+
         let suggestedZoom = parseCGFloat(json["suggested_zoom"], defaultVal: 1.0)
         let explanation = (json["explanation"] as? String) ?? "AI phân tích bố cục hoàn tất"
 
@@ -2265,8 +2574,8 @@ public final class GeminiService: ObservableObject {
         let lightingScene = (json["lighting_scene"] as? String) ?? (json["lighting"] as? String)
 
         return GeminiFramingResponse(
-            targetX: max(0.05, min(0.95, targetX)),
-            targetY: max(0.05, min(0.95, targetY)),
+            targetX: max(0.05, min(0.95, rawTargetX)),
+            targetY: max(0.05, min(0.95, rawTargetY)),
             suggestedZoom: max(1.0, min(5.0, suggestedZoom)),
             sceneType: sceneType,
             colorRecipe: colorRecipe,
@@ -2277,7 +2586,13 @@ public final class GeminiService: ObservableObject {
             recommendedPreset: recPreset,
             presetExplanation: presetExpl,
             recommendedEVBias: evRaw ?? colorRecipe.exposureBias,
-            lightingScene: lightingScene
+            lightingScene: lightingScene,
+            subjectX: subjectX,
+            subjectY: subjectY,
+            compositionAnchorX: compX,
+            compositionAnchorY: compY,
+            estimatedSubjectSize: estSize,
+            shotScale: shotScale
         )
     }
 

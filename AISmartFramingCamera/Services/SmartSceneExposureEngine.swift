@@ -248,16 +248,25 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
         sceneContext: DetectedSceneType
     ) -> SceneLumaMetrics {
         guard let pixelBuffer = pixelBuffer,
-              CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA,
               CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else {
             return syntheticFallbackMetrics(ev100: ev100, sceneContext: sceneContext)
         }
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer), width > 0, height > 0 else {
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let isBiPlanar = (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                          format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        let isBGRA = (format == kCVPixelFormatType_32BGRA)
+
+        guard isBiPlanar || isBGRA else {
+            return syntheticFallbackMetrics(ev100: ev100, sceneContext: sceneContext)
+        }
+
+        let width = isBiPlanar ? CVPixelBufferGetWidthOfPlane(pixelBuffer, 0) : CVPixelBufferGetWidth(pixelBuffer)
+        let height = isBiPlanar ? CVPixelBufferGetHeightOfPlane(pixelBuffer, 0) : CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = isBiPlanar ? CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0) : CVPixelBufferGetBytesPerRow(pixelBuffer)
+        guard let baseAddress = isBiPlanar ? CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) : CVPixelBufferGetBaseAddress(pixelBuffer),
+              width > 0, height > 0 else {
             return syntheticFallbackMetrics(ev100: ev100, sceneContext: sceneContext)
         }
 
@@ -285,11 +294,16 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
             let rowOffset = y * bytesPerRow
             let normY = CGFloat(y) / CGFloat(height)
             for x in stride(from: startX, to: endX, by: stepX) {
-                let offset = rowOffset + x * 4
-                let b = Float(data[offset])
-                let g = Float(data[offset + 1])
-                let r = Float(data[offset + 2])
-                let lum = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 255.0
+                let lum: Float
+                if isBiPlanar {
+                    lum = Float(data[rowOffset + x]) / 255.0
+                } else {
+                    let offset = rowOffset + x * 4
+                    let b = Float(data[offset])
+                    let g = Float(data[offset + 1])
+                    let r = Float(data[offset + 2])
+                    lum = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 255.0
+                }
 
                 totalOverall += lum
                 countTotal += 1
