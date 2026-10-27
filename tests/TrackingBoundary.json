@@ -75,13 +75,13 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
       "end": "                // Optical centre is always fixed",
-      "sha256": "756dccf2c112317bef0b900cbc91956584a89c1a193de5b14e066e95a0752a3f"
+      "sha256": "2fde07a7a5c8dc4bf27663d24130259b9f05539833481b96a31fb16c53ff978a"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "struct TargetCircleView: View {",
       "end": "// MARK: - Guidance Ray",
-      "sha256": "40c9d4289d260a38ef492c6ba4d3536ef31387c22b1db3db0102b8187d118b59"
+      "sha256": "654c2c67d742ab50154cde9811e390a167485b3f9b2d954fc8843d41433ca350"
     }
   ]
 }

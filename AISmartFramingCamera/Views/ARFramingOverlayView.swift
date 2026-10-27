@@ -94,25 +94,46 @@ public struct ARFramingOverlayView: View {
                     let isDocked = hypot(projectedScreen.x - targetScreen.x,
                                          projectedScreen.y - targetScreen.y) > 0.5
 
-                    // Đường chỉ dẫn nối từ Tâm Giữa (0.5, 0.5) -> Target Vàng
+                    // Lực hút nam châm mượt mà kiểu SenseTime / Kapi Cam (Magnetic Snap)
+                    let rawDistToCenter = hypot(targetScreen.x - screenCenter.x, targetScreen.y - screenCenter.y)
+                    let snapThresholdScreen: CGFloat = 26.0
+                    let isSnapped = (viewModel.isMagneticSnapped || rawDistToCenter <= snapThresholdScreen) && !isDocked
+
+                    // Khi vào vùng hút, tọa độ tự động hít dính về tâm theo đường cong lò xo
+                    let effectiveTargetScreen: CGPoint
+                    if isSnapped {
+                        let pull = pow(min(1.0, rawDistToCenter / snapThresholdScreen), 2.2)
+                        effectiveTargetScreen = CGPoint(
+                            x: screenCenter.x + (targetScreen.x - screenCenter.x) * pull * 0.10,
+                            y: screenCenter.y + (targetScreen.y - screenCenter.y) * pull * 0.10
+                        )
+                    } else {
+                        effectiveTargetScreen = targetScreen
+                    }
+
+                    // Sợi dây đứt nét & Mũi tên dẫn đường (Dash Arrow Guidance)
                     if viewModel.showGuidanceRay {
                         GuidanceRayLine(
                             from: screenCenter,
-                            to: targetScreen,
+                            to: effectiveTargetScreen,
                             dashOffset: dashOffset,
-                            distance: viewModel.alignmentDistance
+                            distance: viewModel.alignmentDistance,
+                            isAligned: viewModel.isPerfectAlignment,
+                            isSnapped: isSnapped
                         )
                         .transaction { $0.animation = nil }
                     }
 
-                    // Target Vàng
+                    // Vòng ngắm đa trạng thái (Target Ring)
                     TargetCircleView(
                         isAligned: viewModel.isPerfectAlignment,
                         radarPulse: radarPulse,
                         radarOpacity: radarOpacity,
-                        trackingQuality: viewModel.trackingQuality
+                        trackingQuality: viewModel.trackingQuality,
+                        isSnapped: isSnapped
                     )
-                    .position(targetScreen)
+                    .position(effectiveTargetScreen)
+                    .animation(.spring(response: 0.22, dampingFraction: 0.68), value: isSnapped)
                     .transaction { $0.animation = nil }
 
                     if isDocked {
@@ -348,8 +369,8 @@ public struct ARFramingOverlayView: View {
         withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
             radarPulse = 1.40; radarOpacity = 0.15
         }
-        withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
-            dashOffset = -20
+        withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+            dashOffset = -22
         }
     }
 }
@@ -427,9 +448,10 @@ struct TargetCircleView: View {
     let radarPulse: CGFloat
     let radarOpacity: Double
     let trackingQuality: TrackingQuality
+    var isSnapped: Bool = false
 
     private var ringGradient: LinearGradient {
-        if isAligned {
+        if isAligned || isSnapped {
             return LinearGradient(
                 colors: [Color(red: 0.20, green: 0.95, blue: 0.55), Color(red: 0.05, green: 0.80, blue: 0.40)],
                 startPoint: .topLeading,
@@ -438,8 +460,12 @@ struct TargetCircleView: View {
         }
         switch trackingQuality {
         case .locked, .predicting, .reacquiring:
-            // Logo app gradient: Electric Cyan (#28B6F2) -> Iris Violet (#7863F2)
-            return AlignTheme.signatureGradient
+            // Gradient sang trọng vàng kim pha xanh cyan kiểu SenseTime
+            return LinearGradient(
+                colors: [Color(red: 1.0, green: 0.84, blue: 0.20), Color(red: 0.16, green: 0.71, blue: 0.96)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         case .lost:
             return LinearGradient(
                 colors: [Color.red, Color.orange],
@@ -450,41 +476,46 @@ struct TargetCircleView: View {
     }
 
     private var shadowGlowColor: Color {
-        if isAligned { return Color.green }
+        if isAligned || isSnapped { return Color.green }
         switch trackingQuality {
-        case .locked, .predicting, .reacquiring: return AlignTheme.electricCyan
+        case .locked, .predicting, .reacquiring: return Color(red: 1.0, green: 0.84, blue: 0.20)
         case .lost: return Color.red
         }
     }
 
     var body: some View {
         ZStack {
-            if !isAligned {
+            // Vòng hào quang thở nhịp nhàng (Breathing Outer Halo - stcm.composition.dot.glow.breathing)
+            if !isAligned && !isSnapped {
                 Circle()
-                    .stroke(ringGradient.opacity(radarOpacity * 0.6), lineWidth: 1.2)
-                    .frame(width: 28 * radarPulse, height: 28 * radarPulse)
+                    .stroke(ringGradient.opacity(radarOpacity * 0.45), lineWidth: 1.0)
+                    .frame(width: 36 * radarPulse, height: 36 * radarPulse)
             }
-            Circle()
-                .stroke(ringGradient, lineWidth: isAligned ? 2.4 : 1.8)
-                .frame(width: 28, height: 28)
-                .shadow(color: Color.black.opacity(0.5), radius: 2)
-                .shadow(color: shadowGlowColor.opacity(isAligned ? 0.85 : 0.50), radius: isAligned ? 8 : 4)
 
+            // Vòng tròn mục tiêu chính (Target Ring)
+            Circle()
+                .stroke(ringGradient, lineWidth: (isAligned || isSnapped) ? 2.5 : 1.8)
+                .frame(width: (isAligned || isSnapped) ? 30 : 28, height: (isAligned || isSnapped) ? 30 : 28)
+                .shadow(color: Color.black.opacity(0.5), radius: 2)
+                .shadow(color: shadowGlowColor.opacity((isAligned || isSnapped) ? 0.90 : 0.55), radius: (isAligned || isSnapped) ? 8 : 4)
+                .scaleEffect((isAligned || isSnapped) ? 1.06 : 1.0)
+
+            // Dấu cộng tâm chính xác
             PlusCrosshairShape()
-                .stroke(isAligned ? Color.green : Color.white, lineWidth: isAligned ? 2.0 : 1.5)
+                .stroke((isAligned || isSnapped) ? Color.green : Color.white, lineWidth: (isAligned || isSnapped) ? 2.0 : 1.5)
                 .frame(width: 9, height: 9)
                 .shadow(color: Color.black.opacity(0.5), radius: 1)
 
-            if isAligned {
+            // Hiệu ứng sóng khóa tròn khi Snap/Aligned thành công
+            if isAligned || isSnapped {
                 Circle()
-                    .stroke(Color.green.opacity(0.4), lineWidth: 3.5)
-                    .frame(width: 36, height: 36)
+                    .stroke(Color.green.opacity(0.5), lineWidth: 3.0)
+                    .frame(width: 38, height: 38)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
-        .frame(width: 36, height: 36)
+        .frame(width: 44, height: 44)
         .allowsHitTesting(false)
-        // Status is outside layout. A label appearing must never shift the ring
-        // above its projected point by changing the centre of a VStack.
         .overlay(alignment: .top) {
             if trackingQuality == .reacquiring || trackingQuality == .lost {
                 Text("Đang khôi phục tín hiệu…")
@@ -493,29 +524,90 @@ struct TargetCircleView: View {
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.black.opacity(0.75)))
                     .fixedSize()
-                    .offset(y: 42)
+                    .offset(y: 46)
             }
         }
     }
 }
 
-// MARK: - Guidance Ray
+// MARK: - Guidance Ray (Animated Chevron Dash Arrow - SenseTime / Kapi Style)
+
+struct ChevronArrowHead: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        // Chevron > chỉ thẳng về phía trước theo hướng vector
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        return path
+    }
+}
 
 struct GuidanceRayLine: View {
     let from: CGPoint
     let to: CGPoint
     let dashOffset: CGFloat
     let distance: CGFloat
+    var isAligned: Bool = false
+    var isSnapped: Bool = false
 
     var body: some View {
-        Path { path in
-            path.move(to: from)
-            path.addLine(to: to)
+        let dx = to.x - from.x
+        let dy = to.y - from.y
+        let totalDist = hypot(dx, dy)
+        let fadeOpacity: Double = isSnapped ? 0.0 : (totalDist < 18 ? 0.0 : min(1.0, Double(totalDist - 18) / 25.0))
+
+        if totalDist >= 18 && fadeOpacity > 0.01 {
+            let angle = Angle(radians: Double(atan2(dy, dx)))
+            let startPad: CGFloat = 14.0
+            let endPad: CGFloat = 18.0
+
+            let effectiveStartDist = min(startPad, totalDist * 0.3)
+            let effectiveEndDist = max(effectiveStartDist, totalDist - endPad)
+
+            let startPt = CGPoint(
+                x: from.x + (dx / totalDist) * effectiveStartDist,
+                y: from.y + (dy / totalDist) * effectiveStartDist
+            )
+            let endPt = CGPoint(
+                x: from.x + (dx / totalDist) * effectiveEndDist,
+                y: from.y + (dy / totalDist) * effectiveEndDist
+            )
+
+            let flowGradient = LinearGradient(
+                colors: isAligned
+                    ? [Color.green.opacity(0.15), Color.green.opacity(0.95)]
+                    : [Color.yellow.opacity(0.15), AlignTheme.electricCyan.opacity(0.95)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            ZStack {
+                // Sợi dây đứt nét chuyển động tuần hoàn
+                Path { path in
+                    path.move(to: startPt)
+                    path.addLine(to: endPt)
+                }
+                .stroke(
+                    flowGradient,
+                    style: StrokeStyle(lineWidth: 2.0, lineCap: .round, dash: [6, 5], dashPhase: dashOffset)
+                )
+                .shadow(color: (isAligned ? Color.green : Color.yellow).opacity(0.4), radius: 3)
+
+                // Đầu mũi tên Chevron (Dash Arrowhead) hướng vào tâm target
+                ChevronArrowHead()
+                    .stroke(
+                        isAligned ? Color.green : AlignTheme.electricCyan,
+                        style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round)
+                    )
+                    .frame(width: 9, height: 11)
+                    .rotationEffect(angle)
+                    .position(endPt)
+                    .shadow(color: (isAligned ? Color.green : AlignTheme.electricCyan).opacity(0.6), radius: 4)
+            }
+            .opacity(fadeOpacity)
+            .allowsHitTesting(false)
         }
-        .stroke(
-            Color.yellow.opacity(0.65 * Double(min(1.0, distance / 0.1 + 0.4))),
-            style: StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [5, 5], dashPhase: dashOffset)
-        )
     }
 }
 
@@ -550,30 +642,41 @@ struct GeminiAnalyzingBadge: View {
 // MARK: - Live Entity Detection Box & Pro Corner Brackets
 
 struct CornerBracketsShape: Shape {
-    var bracketLength: CGFloat = 12
+    var bracketLength: CGFloat = 14
+    var cornerRadius: CGFloat = 6.0
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let len = min(bracketLength, min(rect.width, rect.height) * 0.35)
+        let maxL = min(rect.width, rect.height) * 0.38
+        let len = min(bracketLength, maxL)
+        let r = max(1.0, min(cornerRadius, len * 0.45))
 
         // Top-Left
         path.move(to: CGPoint(x: rect.minX, y: rect.minY + len))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        path.addQuadCurve(to: CGPoint(x: rect.minX + r, y: rect.minY),
+                          control: CGPoint(x: rect.minX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.minX + len, y: rect.minY))
 
         // Top-Right
         path.move(to: CGPoint(x: rect.maxX - len, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + r),
+                          control: CGPoint(x: rect.maxX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + len))
 
         // Bottom-Right
         path.move(to: CGPoint(x: rect.maxX, y: rect.maxY - len))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - r, y: rect.maxY),
+                          control: CGPoint(x: rect.maxX, y: rect.maxY))
         path.addLine(to: CGPoint(x: rect.maxX - len, y: rect.maxY))
 
         // Bottom-Left
         path.move(to: CGPoint(x: rect.minX + len, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - r),
+                          control: CGPoint(x: rect.minX, y: rect.maxY))
         path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - len))
 
         return path

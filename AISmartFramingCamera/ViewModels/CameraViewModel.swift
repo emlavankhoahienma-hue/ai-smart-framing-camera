@@ -787,6 +787,7 @@ public final class CameraViewModel: ObservableObject {
     /// Distance from current target point to center (0.5, 0.5)
     @Published public var alignmentDistance: CGFloat = 1.0
     @Published public var isPerfectAlignment: Bool = false
+    @Published public var isMagneticSnapped: Bool = false
 
     /// Trạng thái khóa cứng mục tiêu khi tâm trắng khớp với tâm Target (0.5, 0.5)
     @Published public private(set) var isTargetLocked: Bool = false
@@ -2065,6 +2066,7 @@ public final class CameraViewModel: ObservableObject {
         initialTargetPoint = nil
         currentTargetPoint = nil
         isPerfectAlignment = false
+        isMagneticSnapped = false
         liveEntitySmoother.reset()
         liveDetectedEntities = []
         if aiSessionState != .capturing { aiSessionState = .idle }
@@ -3189,6 +3191,18 @@ public final class CameraViewModel: ObservableObject {
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
         let distance = hypot(dx, dy / aspect)
         alignmentDistance = distance
+        let snapOnThreshold: CGFloat = 0.048
+        let snapOffThreshold: CGFloat = 0.058
+        if distance <= snapOnThreshold {
+            if !isMagneticSnapped {
+                isMagneticSnapped = true
+                haptics.triggerMagneticSnap()
+            }
+        } else if distance > snapOffThreshold {
+            if isMagneticSnapped {
+                isMagneticSnapped = false
+            }
+        }
         let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),
             radius: Double(alignmentRadius), freshEvidence: (hasFreshOpticalLock || isTargetLocked) && !isPinchingZoom)
         isPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
