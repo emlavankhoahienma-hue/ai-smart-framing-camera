@@ -133,6 +133,17 @@ public struct SettingsSheetView: View {
                             .padding(.bottom, 24)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
+                    .allowsHitTesting(false)
+                }
+            }
+            .onChangeCompatible(of: toastMessage) { newMsg in
+                guard let newMsg = newMsg, !newMsg.isEmpty else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        if toastMessage == newMsg {
+                            toastMessage = nil
+                        }
+                    }
                 }
             }
             .searchable(text: $searchText, prompt: "Tìm kiếm thông số, cài đặt...")
@@ -796,8 +807,8 @@ struct AIFramingSettingsSection: View {
     var body: some View {
         VStack(spacing: 16) {
             compositionRulesCard
-            compositionFeedbackCard
             aiCloudCard
+            compositionFeedbackCard
         }
     }
 
@@ -1157,26 +1168,64 @@ struct AIFramingSettingsSection: View {
 
                 Divider().background(Color.white.opacity(0.06))
 
-                // 3. Chọn Model theo đúng Hãng được chọn
-                SettingsPickerRow(
-                    title: "Model thẩm mỹ (\(viewModel.geminiService.selectedProvider.shortBadge))",
-                    subtitle: selectedModel.subtitle,
-                    icon: "cpu",
-                    selectedValueString: selectedModel.shortName
-                ) {
-                    Picker("", selection: $selectedModel) {
+                // 3. Chọn Model theo đúng Hãng được chọn (Menu toàn chiều ngang, không ngắt dòng)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("Model AI thẩm mỹ", systemImage: "cpu")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                        Spacer()
+                        Text(viewModel.geminiService.selectedProvider.shortBadge)
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundColor(AlignTheme.electricCyan)
+                    }
+
+                    Menu {
                         ForEach(AIVisionModel.models(for: viewModel.geminiService.selectedProvider)) { model in
-                            Text(model.shortName).tag(model)
+                            Button(action: {
+                                selectedModel = model
+                                viewModel.geminiService.selectedModel = model
+                                viewModel.geminiService.customModelName = ""
+                                customModelInput = ""
+                            }) {
+                                HStack {
+                                    Text(model.shortName)
+                                    if selectedModel == model && viewModel.geminiService.customModelName.isEmpty {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
                         }
+                    } label: {
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(viewModel.geminiService.customModelName.isEmpty ? selectedModel.shortName : "Tùy chỉnh: \(viewModel.geminiService.customModelName)")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+
+                                Text(selectedModel.subtitle)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Color.white.opacity(0.55))
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(AlignTheme.electricCyan)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color(red: 0.06, green: 0.07, blue: 0.09))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
                     }
-                    .pickerStyle(.menu)
-                    .tint(.white)
-                    .frame(maxWidth: 160, alignment: .trailing)
-                    .onChangeCompatible(of: selectedModel) { newModel in
-                        viewModel.geminiService.selectedModel = newModel
-                        viewModel.geminiService.customModelName = ""
-                        customModelInput = ""
-                    }
+                    .buttonStyle(.plain)
                 }
 
                 // Nhập mã Model bất kỳ (hoặc chọn từ danh sách Model tải trực tiếp từ API)
@@ -1717,6 +1766,7 @@ public struct SupportDeveloperView: View {
                         ToastBanner(message: msg)
                             .padding(.bottom, 24)
                     }
+                    .allowsHitTesting(false)
                 }
             }
         )

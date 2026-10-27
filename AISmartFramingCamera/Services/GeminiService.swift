@@ -392,11 +392,11 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "openai/gpt-5.4-nano"
+            return "openai/gpt-4o-mini"
         case .pollinationsGPT54Nano:
-            return "openai/gpt-5.4-nano"
+            return "openai/gpt-4o-mini"
         case .pollinationsGPT54Mini:
-            return "openai/gpt-5.4-mini"
+            return "gemini"
         case .pollinationsOpenAI:
             return "openai/gpt-4o-mini"
         default:
@@ -525,20 +525,22 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
         if provider == .pollinations {
             var cleanModel = preferred.replacingOccurrences(of: ":free", with: "")
-            if cleanModel == "auto" || cleanModel.isEmpty || cleanModel == "openai" {
-                cleanModel = "openai/gpt-5.4-nano"
+            if cleanModel == "auto" || cleanModel.isEmpty || cleanModel.contains("5.4") {
+                cleanModel = "openai/gpt-4o-mini"
+            } else if cleanModel == "openai/4omini" || cleanModel == "4omini" {
+                cleanModel = "openai/gpt-4o-mini"
             } else if cleanModel == "pollinations/gpt-4o-mini" {
                 cleanModel = "openai/gpt-4o-mini"
             } else if cleanModel == "pollinations/gpt-5.4-nano" {
-                cleanModel = "openai/gpt-5.4-nano"
+                cleanModel = "openai/gpt-4o-mini"
             } else if cleanModel == "pollinations/gpt-5.4-mini" {
-                cleanModel = "openai/gpt-5.4-mini"
+                cleanModel = "gemini"
             } else if cleanModel.contains("gemma-4") {
                 cleanModel = "google/gemma-4-31b-it"
             }
 
             var chain = [cleanModel]
-            let candidates = ["openai/gpt-5.4-nano", "openai/gpt-5.4-mini", "openai/gpt-4o-mini", "google/gemma-4-31b-it"]
+            let candidates = ["openai/gpt-4o-mini", "openai", "gemini", "google/gemma-4-31b-it"]
             for cand in candidates {
                 if !chain.contains(cand) {
                     chain.append(cand)
@@ -1935,7 +1937,7 @@ public final class GeminiService: ObservableObject {
             "max_tokens": 1000
         ]
         let lowerModel = modelID.lowercased()
-        if lowerModel.contains("gpt-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4") {
+        if selectedProvider == .openAI && (lowerModel.contains("gpt-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4")) {
             requestBody["response_format"] = ["type": "json_object"]
         }
         if selectedProvider == .openRouter {

@@ -923,23 +923,6 @@ public struct ZoomRevealOverlay: View {
                         .position(x: rect.midX, y: rect.midY)
                         .opacity(strokeOpacity)
                 }
-
-                // 5. Huy hiệu AI ZOOM ở mép trên khung
-                HStack(spacing: 4) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 9, weight: .bold))
-                    Text("AI ZOOM \(String(format: "%.1f", targetDisplayZoom))x")
-                        .font(.system(size: 9, weight: .heavy, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3.5)
-                .background(
-                    Capsule().fill(isRevealing ? AlignTheme.iridescentRainbow : AlignTheme.signatureGradient)
-                )
-                .shadow(color: Color.black.opacity(0.4), radius: 4, x: 0, y: 2)
-                .position(x: rect.midX, y: max(28, rect.minY - 14))
-                .opacity(strokeOpacity)
             }
             .allowsHitTesting(false)
             .animation(.easeInOut(duration: 0.20), value: isEffectActive)

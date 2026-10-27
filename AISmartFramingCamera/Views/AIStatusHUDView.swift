@@ -4,134 +4,60 @@ public struct AIStatusHUDView: View {
     @ObservedObject var viewModel: CameraViewModel
 
     public var body: some View {
-        // Chỉ hiện thanh trạng thái khi phiên căn bố cục đang hoạt động hoặc vừa chụp xong
+        // Chỉ hiện thanh trạng thái duy nhất khi phiên căn bố cục đang hoạt động hoặc vừa chụp xong
         if viewModel.aiSessionState != .idle {
-            VStack(spacing: 5) {
-                HStack(spacing: 6) {
-                    // Status icon
-                    Image(systemName: statusIconName)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(statusAccentColor)
+            HStack(spacing: 7) {
+                // Biểu tượng trạng thái
+                Image(systemName: statusIconName)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(statusAccentColor)
 
-                    // Single clear status text
-                    Text(statusText)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white.opacity(0.95))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
+                // Câu hướng dẫn tinh gọn duy nhất
+                Text(statusText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.95))
+                    .lineLimit(1)
 
-                    // Huy hiệu nhận biết AI Cloud / Local
-                    if viewModel.activeAIIndicatorType == .cloud {
-                        Text("CLOUD")
-                            .font(.system(size: 8, weight: .heavy, design: .rounded))
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(Capsule().fill(Color.yellow))
-                    } else if viewModel.activeAIIndicatorType == .local {
-                        Text("LOCAL")
-                            .font(.system(size: 8, weight: .heavy, design: .rounded))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(Capsule().fill(Color.red))
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1)
-                        )
-                )
-
-                // Chỉ báo kế hoạch 3 bước đồng bộ: Target -> Zoom -> Chỉnh sáng EV
-                if viewModel.aiSessionState.isTargetPlacedOrAligned {
-                    HStack(spacing: 6) {
-                        Label("Target", systemImage: "scope")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundColor(.yellow)
-                        Text("➔")
-                            .font(.system(size: 8))
-                            .foregroundColor(.white.opacity(0.45))
-                        Label(String(format: "%.1fx", viewModel.pendingSuggestedZoom), systemImage: "plus.magnifyingglass")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundColor(.cyan)
-                        Text("➔")
-                            .font(.system(size: 8))
-                            .foregroundColor(.white.opacity(0.45))
-                        Label(String(format: "%+.1f EV", viewModel.plannedEVBias), systemImage: "sun.max.fill")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundColor(viewModel.plannedEVBias > 0 ? .orange : (viewModel.plannedEVBias < 0 ? .blue : .white.opacity(0.85)))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 3.5)
-                    .background(
-                        Capsule()
-                            .fill(Color.black.opacity(0.55))
-                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
-                    )
+                // Chỉ báo Zoom đề xuất tích hợp nhỏ gọn tinh tế ngay trong cùng 1 thanh
+                if viewModel.aiSessionState.isTargetPlacedOrAligned && viewModel.pendingSuggestedZoom > 1.05 {
+                    Text(String(format: "%.1fx", viewModel.pendingSuggestedZoom))
+                        .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.cyan.opacity(0.20)))
                 }
 
-                if case .analyzing = viewModel.aiSessionState,
-                   !viewModel.localCompositionChoices.isEmpty {
-                    Button(action: viewModel.showCompositionPreviews) {
-                        Label("Xem \(viewModel.localCompositionChoices.count) khung gợi ý", systemImage: "rectangle.stack")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .frame(minHeight: 44)
-                            .background(.ultraThinMaterial, in: Capsule())
-                    }
-                    .tint(.yellow)
-                }
-
-                if case .analyzing = viewModel.aiSessionState,
-                   viewModel.localCompositionChoices.isEmpty,
-                   viewModel.localSelectionMessage != nil {
-                    Button("Phân tích lại") {
-                        viewModel.cancelAISession()
-                        viewModel.startAISession()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.yellow)
-                    .foregroundStyle(.black)
-                }
-
-                if viewModel.activeAIIndicatorType == .local, !viewModel.localAnalysisSummary.isEmpty {
-                    Text(viewModel.localAnalysisSummary)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.8))
-                }
-
-                if showsExplanation, !explanation.isEmpty {
-                    Text(explanation)
-                        .font(.system(size: 11, weight: .medium))
+                // Huy hiệu Cloud / Local tinh gọn
+                if viewModel.activeAIIndicatorType == .cloud {
+                    Text("CLOUD")
+                        .font(.system(size: 8, weight: .heavy, design: .rounded))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.yellow))
+                } else if viewModel.activeAIIndicatorType == .local {
+                    Text("LOCAL")
+                        .font(.system(size: 8, weight: .heavy, design: .rounded))
                         .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(3)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: 310)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(.ultraThinMaterial))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.red.opacity(0.85)))
                 }
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        Capsule().stroke(Color.white.opacity(0.16), lineWidth: 1)
+                    )
+            )
+            .shadow(color: Color.black.opacity(0.35), radius: 6, x: 0, y: 2)
             .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            .animation(.easeInOut(duration: 0.25), value: viewModel.aiSessionState)
+            .animation(.easeInOut(duration: 0.22), value: viewModel.aiSessionState)
         }
-    }
-
-    private var showsExplanation: Bool {
-        switch viewModel.aiSessionState {
-        case .targetPlaced, .alignmentPerfect: return true
-        default: return false
-        }
-    }
-
-    private var explanation: String {
-        viewModel.activeAIIndicatorType == .cloud ?
-            viewModel.geminiExplanation : viewModel.localCompositionExplanation
     }
 
     private var statusIconName: String {
