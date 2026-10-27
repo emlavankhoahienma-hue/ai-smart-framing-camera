@@ -361,6 +361,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var displayZoom: CGFloat = 1.0
     @Published public var selectedZoomPreset: CGFloat = 1.0
+    public var zoomFactor: CGFloat { currentZoom }
     public var availableDisplayZoomOptions: [CGFloat] {
         let opts = cameraService.availableDisplayZoomOptions
         return opts.isEmpty ? [1.0, 2.0, 3.0] : opts
@@ -2210,7 +2211,7 @@ public final class CameraViewModel: ObservableObject {
         let (cameraAimPoint, optimalZoom) = GeminiService.computeOptimalFramingGeometry(
             subjectPoint: subjectAnchor,
             compositionAnchor: compositionAnchor,
-            currentZoom: self.zoomFactor,
+            currentZoom: self.currentZoom,
             suggestedZoom: response.suggestedZoom,
             shotScale: response.shotScale,
             subjectSize: baseSubjectSize
