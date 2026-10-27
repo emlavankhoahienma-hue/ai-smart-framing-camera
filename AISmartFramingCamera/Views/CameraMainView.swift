@@ -233,13 +233,6 @@ public struct CameraMainView: View {
         .sheet(isPresented: $viewModel.isCompositionRuleSheetPresented) {
             CompositionRuleSheet(viewModel: viewModel)
         }
-        .sheet(isPresented: $viewModel.isPosePickerPresented) {
-            AIPosePickerBottomSheet(
-                selectedCategory: $viewModel.selectedPoseCategory,
-                activeTemplate: $viewModel.activePoseTemplate,
-                isPresented: $viewModel.isPosePickerPresented
-            )
-        }
         .sheet(isPresented: $viewModel.isShowingGallerySheet) {
             PhotoGallerySheetView(viewModel: viewModel)
         }
@@ -412,22 +405,6 @@ struct TopCameraBar: View {
             }
             .buttonStyle(PlainButtonStyle())
             .accessibilityLabel("Chế độ Dual Camera Picture-in-Picture")
-
-            // 5.5. AI Pose Guide (48 Poses) Toggle Button
-            Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.prepare()
-                generator.impactOccurred()
-                viewModel.togglePosePicker()
-            }) {
-                Image(systemName: viewModel.activePoseTemplate != nil ? "figure.walk.motion" : "figure.walk")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(viewModel.activePoseTemplate != nil ? Color(red: 0.06, green: 0.91, blue: 1.00) : Color.white.opacity(0.85))
-                    .frame(width: 34, height: 36)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Tạo dáng bố cục AI Pose Guide")
 
             // 6. Settings Sheet Button (Gear Icon)
             Button(action: {

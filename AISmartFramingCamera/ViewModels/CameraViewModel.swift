@@ -21,7 +21,6 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var isVideo = false
     var isAIVideoDirectorActive = false
     var isDualCameraActive = false
-    var activePoseTemplate: AIPoseTemplate? = nil
 }
 
 /// Owns frame-rate work on AVFoundation's serial sample-buffer queue. UI state is
@@ -37,7 +36,6 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     private var lastFocusPeakingComputeTime: CFTimeInterval = 0
     private var lastSuggestionUpdateTime: CFTimeInterval = 0
     private var lastVisionProcessTime: CFTimeInterval = 0
-    private var lastPoseComputeTime: CFTimeInterval = 0
 
     @MainActor
     func attach(to owner: CameraViewModel) {
@@ -130,27 +128,6 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         latestPixelBuffer = pixelBuffer
         latestFrameContext = frame
         stateLock.unlock()
-
-        if let template = snapshot.activePoseTemplate, now - lastPoseComputeTime >= 0.10 {
-            lastPoseComputeTime = now
-            let request = VNDetectHumanBodyPoseRequest()
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
-            do {
-                try handler.perform([request])
-                if let observation = request.results?.first {
-                    let result = AIPoseAlignmentEngine.shared.evaluate(observation: observation, template: template)
-                    DispatchQueue.main.async { [weak self] in
-                        self?.owner?.applyPoseAlignmentResult(result)
-                    }
-                } else {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.owner?.clearPoseAlignment()
-                    }
-                }
-            } catch {
-                // graceful ignore
-            }
-        }
 
         guard !snapshot.isSettingsVisible else { return }
 
@@ -338,17 +315,6 @@ public final class CameraViewModel: ObservableObject {
         didSet { updateFrameProcessingConfiguration() }
     }
     @Published public private(set) var recordingState: CameraRecordingState = .idle
-
-    // MARK: - AI Pose Guide State (48 Dáng Tạo Mẫu Nghệ Thuật)
-    @Published public var activePoseTemplate: AIPoseTemplate? = nil {
-        didSet { updateFrameProcessingConfiguration() }
-    }
-    @Published public var isPosePickerPresented: Bool = false
-    @Published public var selectedPoseCategory: AIPoseCategory = .leftThird
-    @Published public var poseAlignmentScore: Double = 0.0
-    @Published public var isPoseMatched: Bool = false
-    @Published public var livePoseJoints: [AIPoseJoint: CGPoint] = [:]
-    @Published public var poseFeedbackMessage: String = ""
     private var wantsVideoRecording = false
     private var pendingCaptureMode: CameraCaptureMode?
     private var modeTransitionGeneration: UInt64 = 0
@@ -1394,8 +1360,7 @@ public final class CameraViewModel: ObservableObject {
                 showHistogramInViewfinder: showHistogramInViewfinder,
                 isVideo: captureMode.isVideo,
                 isAIVideoDirectorActive: isAIVideoDirectorActive,
-                isDualCameraActive: isDualCameraActive,
-                activePoseTemplate: activePoseTemplate
+                isDualCameraActive: isDualCameraActive
             )
         )
     }
