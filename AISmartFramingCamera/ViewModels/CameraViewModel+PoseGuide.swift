@@ -28,36 +28,21 @@ extension CameraViewModel {
         isPosePickerPresented.toggle()
     }
 
-    public func evaluateLivePose(in pixelBuffer: CVPixelBuffer) {
-        guard let template = activePoseTemplate else { return }
-        let request = VNDetectHumanBodyPoseRequest()
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
-        do {
-            try handler.perform([request])
-            if let observation = request.results?.first {
-                let result = AIPoseAlignmentEngine.shared.evaluate(observation: observation, template: template)
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    let wasMatched = self.isPoseMatched
-                    self.poseAlignmentScore = result.score
-                    self.isPoseMatched = result.isMatched
-                    self.livePoseJoints = result.recognizedJoints
-                    self.poseFeedbackMessage = result.feedbackMessage
-                    if !wasMatched && result.isMatched {
-                        self.haptics.triggerMagneticSnap()
-                    }
-                }
-            } else {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    self.poseAlignmentScore = max(0.0, self.poseAlignmentScore * 0.85)
-                    self.isPoseMatched = false
-                    self.livePoseJoints = [:]
-                    self.poseFeedbackMessage = "Chưa phát hiện dáng người"
-                }
-            }
-        } catch {
-            // graceful ignore
+    public func applyPoseAlignmentResult(_ result: AIPoseAlignmentResult) {
+        let wasMatched = self.isPoseMatched
+        self.poseAlignmentScore = result.score
+        self.isPoseMatched = result.isMatched
+        self.livePoseJoints = result.recognizedJoints
+        self.poseFeedbackMessage = result.feedbackMessage
+        if !wasMatched && result.isMatched {
+            self.haptics.triggerMagneticSnap()
         }
+    }
+
+    public func clearPoseAlignment() {
+        self.poseAlignmentScore = max(0.0, self.poseAlignmentScore * 0.85)
+        self.isPoseMatched = false
+        self.livePoseJoints = [:]
+        self.poseFeedbackMessage = "Chưa phát hiện dáng người"
     }
 }
