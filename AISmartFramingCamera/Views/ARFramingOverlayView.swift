@@ -100,16 +100,17 @@ public struct ARFramingOverlayView: View {
                     let isSnapped = (viewModel.isMagneticSnapped || rawDistToCenter <= snapThresholdScreen) && !isDocked
 
                     // Khi vào vùng hút, tọa độ tự động hít dính về tâm theo đường cong lò xo
-                    let effectiveTargetScreen: CGPoint
-                    if isSnapped {
-                        let pull = pow(min(1.0, rawDistToCenter / snapThresholdScreen), 2.2)
-                        effectiveTargetScreen = CGPoint(
-                            x: screenCenter.x + (targetScreen.x - screenCenter.x) * pull * 0.10,
-                            y: screenCenter.y + (targetScreen.y - screenCenter.y) * pull * 0.10
-                        )
-                    } else {
-                        effectiveTargetScreen = targetScreen
-                    }
+                    let effectiveTargetScreen: CGPoint = {
+                        if isSnapped {
+                            let pull = pow(min(1.0, rawDistToCenter / snapThresholdScreen), 2.2)
+                            return CGPoint(
+                                x: screenCenter.x + (targetScreen.x - screenCenter.x) * pull * 0.10,
+                                y: screenCenter.y + (targetScreen.y - screenCenter.y) * pull * 0.10
+                            )
+                        } else {
+                            return targetScreen
+                        }
+                    }()
 
                     // Sợi dây đứt nét & Mũi tên dẫn đường (Dash Arrow Guidance)
                     if viewModel.showGuidanceRay {

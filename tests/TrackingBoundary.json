@@ -75,7 +75,7 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
       "end": "                // Optical centre is always fixed",
-      "sha256": "2fde07a7a5c8dc4bf27663d24130259b9f05539833481b96a31fb16c53ff978a"
+      "sha256": "f1daf0159540220c58be2adff0bdceaf8e865a15114788ba772a037b51fc2946"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
