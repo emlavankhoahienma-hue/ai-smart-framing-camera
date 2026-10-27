@@ -19,6 +19,39 @@ struct LocalFramingPlan: Sendable {
     let explanation: String
     let usesCenter: Bool
     let preferenceKey: String
+    var recommendedEVBias: CGFloat = 0.0
+
+    init(
+        subjectPoint: CGPoint,
+        subjectRect: CGRect,
+        cropProtectionRect: CGRect,
+        aimPointInSource: CGPoint,
+        aimWorldRay: SIMD3<Double>,
+        zoom: CGFloat,
+        confidence: Double,
+        minimumAutoselectConfidence: Double,
+        intent: LocalCompositionIntent,
+        score: Double,
+        explanation: String,
+        usesCenter: Bool,
+        preferenceKey: String,
+        recommendedEVBias: CGFloat = 0.0
+    ) {
+        self.subjectPoint = subjectPoint
+        self.subjectRect = subjectRect
+        self.cropProtectionRect = cropProtectionRect
+        self.aimPointInSource = aimPointInSource
+        self.aimWorldRay = aimWorldRay
+        self.zoom = zoom
+        self.confidence = confidence
+        self.minimumAutoselectConfidence = minimumAutoselectConfidence
+        self.intent = intent
+        self.score = score
+        self.explanation = explanation
+        self.usesCenter = usesCenter
+        self.preferenceKey = preferenceKey
+        self.recommendedEVBias = recommendedEVBias
+    }
 }
 
 

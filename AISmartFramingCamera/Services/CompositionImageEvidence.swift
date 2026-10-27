@@ -61,7 +61,7 @@ final class CompositionImageRenderer {
     }
 
     func raster(image: CIImage, saliency: CVPixelBuffer?, objectness: CVPixelBuffer? = nil) -> CompositionRaster? {
-        let side = 32
+        let side = 64
         guard let small = render(image, size: CGSize(width: side, height: side)) else { return nil }
         var bytes = [UInt8](repeating: 0, count: side * side * 4)
         let drawn = bytes.withUnsafeMutableBytes { storage -> Bool in
@@ -80,13 +80,17 @@ final class CompositionImageRenderer {
             luma[i] = (red + green + blue) / 255.0
         }
         var edges = [Double](repeating: 0, count: side * side)
+        var edgeAngles = [Double](repeating: 0, count: side * side)
         for y in 0..<side {
             for x in 0..<side {
                 let left = luma[y * side + max(0, x - 1)]
                 let right = luma[y * side + min(side - 1, x + 1)]
                 let top = luma[max(0, y - 1) * side + x]
                 let bottom = luma[min(side - 1, y + 1) * side + x]
-                edges[y * side + x] = min(1, hypot(right - left, bottom - top) * 2)
+                let dx = right - left
+                let dy = bottom - top
+                edges[y * side + x] = min(1, hypot(dx, dy) * 2)
+                edgeAngles[y * side + x] = atan2(dy, dx)
             }
         }
         let measured = saliency.flatMap { attentionMap($0, side: side) }
@@ -99,7 +103,7 @@ final class CompositionImageRenderer {
             return min(1, 0.7 * edges[index] + 0.3 * abs(value - mean))
         }
         return CompositionRaster(side: side, luminance: luma, attention: attention,
-                                 edges: edges, hasAttention: measured != nil || foreground != nil)
+                                 edges: edges, edgeAngles: edgeAngles, hasAttention: measured != nil || foreground != nil)
     }
 
     func preview(image: CIImage, corners: [CGPoint], aspect: Double) -> CGImage? {

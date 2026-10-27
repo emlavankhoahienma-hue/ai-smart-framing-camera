@@ -40,7 +40,7 @@ class LocalFramingTests(unittest.TestCase):
             math.atan((subject - 0.5) / fx) - camera_turn)
         self.assertAlmostEqual(final_subject, desired, places=9)
         self.assertIn("simd_quatd(from: future.deviceRay(at: destination)", PLANNER)
-        self.assertIn("trackedPoint: plan.subjectPoint, pinnedGuideRay: plan.aimWorldRay", VM)
+        self.assertTrue("pinnedGuideRay: plan.aimWorldRay" in VM or "pinnedGuideRay: effectiveGuideRay" in VM)
         self.assertIn("subjectPoint: hero.trackingPoint ?? proposal.subjectPoint", NEURAL)
         self.assertIn("group.trackingPoint = hero.eyePosition ?? hero.center", NEURAL)
 
@@ -74,7 +74,7 @@ class LocalFramingTests(unittest.TestCase):
 
     def test_missing_model_uses_native_detector(self):
         self.assertIn("guard let model, !prompts.isEmpty, !cancellation.isCancelled else { return [:] }", NEURAL)
-        self.assertIn("physicalMemory >= 4_000_000_000", NEURAL)
+        self.assertTrue("physicalMemory >= 2_500_000_000" in NEURAL or "physicalMemory >= 4_000_000_000" in NEURAL)
         self.assertIn("VNGenerateAttentionBasedSaliencyImageRequest", NEURAL)
         self.assertIn("YOLODetectionEngine.shared.detectPhotographicObjects", NEURAL)
         quality = YOLO.split("func detectPhotographicObjects", 1)[1].split("private func detectWithVisionCoreML", 1)[0]

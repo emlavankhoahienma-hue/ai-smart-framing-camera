@@ -2691,7 +2691,7 @@ public final class CameraViewModel: ObservableObject {
             exposureDuration: cameraService.currentExposureDuration,
             aperture: cameraService.currentAperture
         )
-        self.plannedEVBias = evaluatedFraming.recommendedEVBias
+        self.plannedEVBias = plan.recommendedEVBias != 0.0 ? Float(plan.recommendedEVBias) : evaluatedFraming.recommendedEVBias
         self.plannedLightingScene = evaluatedFraming.lightingScene
         self.plannedLightingDescription = evaluatedFraming.lightingRationale
 

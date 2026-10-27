@@ -247,11 +247,22 @@ struct CompositionRaster: Sendable {
     let luminance: [Double]
     let attention: [Double]
     let edges: [Double]
+    let edgeAngles: [Double]
     let hasAttention: Bool
+
+    init(side: Int, luminance: [Double], attention: [Double], edges: [Double], edgeAngles: [Double] = [], hasAttention: Bool) {
+        self.side = side
+        self.luminance = luminance
+        self.attention = attention
+        self.edges = edges
+        self.edgeAngles = edgeAngles.isEmpty ? [Double](repeating: 0, count: side * side) : edgeAngles
+        self.hasAttention = hasAttention
+    }
 
     var isValid: Bool {
         (8...64).contains(side) && luminance.count == side * side &&
         attention.count == luminance.count && edges.count == luminance.count &&
+        edgeAngles.count == luminance.count &&
         luminance.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
         attention.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
         edges.allSatisfy { $0.isFinite && (0...1).contains($0) }
@@ -336,6 +347,165 @@ struct CompositionRaster: Sendable {
         }
         return best?.0
     }
+
+    /// Hough/Radon accumulator grid 16x16 on [0.05...0.95]^2 to find converging leading lines.
+    var vanishingPoint: (point: CGPoint, confidence: Double, rayAngles: [Double])? {
+        guard isValid, !edgeAngles.isEmpty else { return nil }
+        let gridRes = 16
+        var accum = [Double](repeating: 0, count: gridRes * gridRes)
+        var rayAnglesCollected = [Double]()
+        let cellRadius = 0.055
+        var totalEdgeWeight = 0.0
+
+        for y in 0..<side {
+            for x in 0..<side {
+                let i = y * side + x
+                let e = edges[i]
+                guard e >= 0.14 else { continue }
+                totalEdgeWeight += e
+                let theta = edgeAngles[i] + (.pi / 2.0)
+                if rayAnglesCollected.count < 32 { rayAnglesCollected.append(theta) }
+                let px = (Double(x) + 0.5) / Double(side)
+                let py = (Double(y) + 0.5) / Double(side)
+                let a = -sin(theta)
+                let b = cos(theta)
+                let c = -(a * px + b * py)
+
+                for gy in 0..<gridRes {
+                    let cy = 0.05 + (Double(gy) + 0.5) / Double(gridRes) * 0.90
+                    for gx in 0..<gridRes {
+                        let cx = 0.05 + (Double(gx) + 0.5) / Double(gridRes) * 0.90
+                        let dist = abs(a * cx + b * cy + c)
+                        if dist < cellRadius {
+                            accum[gy * gridRes + gx] += e * (1.0 - dist / cellRadius)
+                        }
+                    }
+                }
+            }
+        }
+        guard totalEdgeWeight > 0.5, let maxVal = accum.max(), maxVal > 0 else { return nil }
+        let confidence = min(1.0, maxVal / (totalEdgeWeight * 0.28))
+        guard confidence >= 0.28, let bestIdx = accum.firstIndex(of: maxVal) else { return nil }
+        let bestGx = bestIdx % gridRes
+        let bestGy = bestIdx / gridRes
+        let bestPoint = CGPoint(
+            x: 0.05 + (Double(bestGx) + 0.5) / Double(gridRes) * 0.90,
+            y: 0.05 + (Double(bestGy) + 0.5) / Double(gridRes) * 0.90
+        )
+        return (point: bestPoint, confidence: confidence, rayAngles: rayAnglesCollected)
+    }
+
+    /// Frame-in-frame structural aperture (inner opening surrounded by peripheral border).
+    var frameInFrameAperture: (innerRect: CGRect, strength: Double)? {
+        guard isValid else { return nil }
+        var borderEdgeSum = 0.0, borderEdgeCount = 0.0
+        var coreEdgeSum = 0.0, coreEdgeCount = 0.0
+        var borderAttentionSum = 0.0, borderAttentionCount = 0.0
+        var coreAttentionSum = 0.0, coreAttentionCount = 0.0
+
+        let borderFraction = 0.20
+        let minCore = Int(Double(side) * borderFraction)
+        let maxCore = Int(Double(side) * (1.0 - borderFraction))
+
+        for y in 0..<side {
+            for x in 0..<side {
+                let i = y * side + x
+                let isBorder = x < minCore || x >= maxCore || y < minCore || y >= maxCore
+                if isBorder {
+                    borderEdgeSum += edges[i]; borderEdgeCount += 1
+                    borderAttentionSum += attention[i]; borderAttentionCount += 1
+                } else {
+                    coreEdgeSum += edges[i]; coreEdgeCount += 1
+                    coreAttentionSum += attention[i]; coreAttentionCount += 1
+                }
+            }
+        }
+        guard borderEdgeCount > 0, coreEdgeCount > 0 else { return nil }
+        let borderEdgeDensity = borderEdgeSum / borderEdgeCount
+        let coreEdgeDensity = coreEdgeSum / coreEdgeCount
+        let borderAttnDensity = borderAttentionSum / max(1.0, borderAttentionCount)
+        let coreAttnDensity = coreAttentionSum / max(1.0, coreAttentionCount)
+
+        let edgeRatio = borderEdgeDensity / max(0.01, coreEdgeDensity)
+        let attnRatio = coreAttnDensity / max(0.01, borderAttnDensity)
+        guard borderEdgeDensity >= 0.12 && (edgeRatio >= 1.25 || attnRatio >= 1.35) else { return nil }
+
+        let strength = min(1.0, (edgeRatio * 0.4 + attnRatio * 0.6 - 1.0) * 0.8)
+        guard strength >= 0.25 else { return nil }
+        let innerRect = CGRect(x: 0.18, y: 0.18, width: 0.64, height: 0.64)
+        return (innerRect: innerRect, strength: strength)
+    }
+
+    /// Negative space map negSpace[i] = (1.0 - attention[i]) * exp(-3.5 * edges[i])
+    /// Returns the openness vector, dominant direction, and optimal anchor offset for lead room.
+    func negativeSpaceVector(around anchor: CGPoint, gaze: CGFloat) -> (direction: CGVector, openness: Double, optimalAnchorOffset: CGPoint) {
+        guard isValid else { return (CGVector.zero, 0, CGPoint.zero) }
+        var leftNeg = 0.0, leftCount = 0.0
+        var rightNeg = 0.0, rightCount = 0.0
+        var topNeg = 0.0, topCount = 0.0
+        var bottomNeg = 0.0, bottomCount = 0.0
+
+        for y in 0..<side {
+            let py = (Double(y) + 0.5) / Double(side)
+            for x in 0..<side {
+                let px = (Double(x) + 0.5) / Double(side)
+                let i = y * side + x
+                let ns = (1.0 - attention[i]) * exp(-3.5 * edges[i])
+                if px < Double(anchor.x) { leftNeg += ns; leftCount += 1 }
+                else { rightNeg += ns; rightCount += 1 }
+                if py < Double(anchor.y) { topNeg += ns; topCount += 1 }
+                else { bottomNeg += ns; bottomCount += 1 }
+            }
+        }
+        let leftMean = leftCount > 0 ? leftNeg / leftCount : 0
+        let rightMean = rightCount > 0 ? rightNeg / rightCount : 0
+        let topMean = topCount > 0 ? topNeg / topCount : 0
+        let bottomMean = bottomCount > 0 ? bottomNeg / bottomCount : 0
+
+        let dx = rightMean - leftMean
+        let dy = bottomMean - topMean
+        let openness = min(1.0, (leftMean + rightMean + topMean + bottomMean) * 0.25 * 2.0)
+
+        var offsetX: CGFloat = 0.0
+        if abs(gaze) > 0.10 {
+            offsetX = gaze > 0 ? -0.10 : 0.10
+        } else if abs(dx) > 0.08 {
+            offsetX = dx > 0 ? -0.08 : 0.08
+        }
+        let offsetY: CGFloat = (dy > 0.10) ? -0.05 : 0.0
+        return (direction: CGVector(dx: dx, dy: dy), openness: openness, optimalAnchorOffset: CGPoint(x: offsetX, y: offsetY))
+    }
+
+    /// Visual torque balance (Steelyard Visual Balance) inside cropRect.
+    /// Returns balance score approaching 1.0 when visual moments balance around crop center.
+    func visualTorqueBalance(heroRect: CGRect, cropRect: CGRect) -> Double {
+        guard isValid, cropRect.width > 0, cropRect.height > 0 else { return 0.5 }
+        let cx = Double(cropRect.midX)
+        let cy = Double(cropRect.midY)
+        var sumTorqueX = 0.0
+        var sumTorqueY = 0.0
+        var totalWeight = 0.0
+
+        for y in 0..<side {
+            let py = (Double(y) + 0.5) / Double(side)
+            for x in 0..<side {
+                let px = (Double(x) + 0.5) / Double(side)
+                let p = CGPoint(x: px, y: py)
+                guard cropRect.contains(p) else { continue }
+                let i = y * side + x
+                let lumaContrast = abs(luminance[i] - 0.5) * 2.0
+                let w = attention[i] * (0.6 + 0.4 * lumaContrast)
+                let distNormX = (px - cx) / Double(cropRect.width)
+                let distNormY = (py - cy) / Double(cropRect.height)
+                sumTorqueX += distNormX * w
+                sumTorqueY += distNormY * w
+                totalWeight += w
+            }
+        }
+        guard totalWeight > 0.01 else { return 0.5 }
+        let torqueMagnitude = hypot(sumTorqueX / totalWeight, sumTorqueY / totalWeight)
+        return max(0.0, 1.0 - min(1.0, torqueMagnitude * 2.8))
+    }
 }
 
 struct CompositionProposal: Sendable {
@@ -353,6 +523,7 @@ struct CompositionProposal: Sendable {
     let explanation: String
     let usesCenter: Bool
     var retainedAttention: Double = 1
+    var recommendedEVBias: CGFloat = 0.0
 
     var isUnchangedView: Bool {
         let original = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),
@@ -380,6 +551,7 @@ enum CompositionPlanner {
         portraitBounds: CGRect?, raster: CompositionRaster, calibration: TrackingCalibration,
         currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
         incidentalBounds: [CGRect] = [], proposalLimit: Int = 36, refining: [CompositionProposal] = [],
+        poseProfile: AnatomicalPoseProfile? = nil,
         isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         let perIntent = max(6, proposalLimit / max(1, intents.count))
         let batches = intents.map { intent -> [CompositionProposal] in
@@ -395,7 +567,7 @@ enum CompositionPlanner {
             return proposals(subjects: [framed], intents: [intent], raster: raster, calibration: calibration,
                 currentZoom: currentZoom, allowedZooms: allowedZooms, protectedBounds: protectedBounds,
                 incidentalBounds: incidentalBounds, proposalLimit: perIntent,
-                refining: refining.filter { $0.intent == intent }, isCancelled: isCancelled)
+                refining: refining.filter { $0.intent == intent }, poseProfile: poseProfile, isCancelled: isCancelled)
         }
         let candidates = batches.flatMap { $0 }
         var result = diverse(candidates, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
@@ -411,6 +583,7 @@ enum CompositionPlanner {
                           currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
                           incidentalBounds: [CGRect] = [],
                           proposalLimit: Int = 6, refining: [CompositionProposal] = [],
+                          poseProfile: AnatomicalPoseProfile? = nil,
                           isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         guard raster.isValid, calibration.isValid, currentZoom.isFinite, currentZoom > 0 else { return [] }
         let horizonHint = raster.horizon
@@ -506,18 +679,29 @@ enum CompositionPlanner {
                     let ratioAdjustment = area < desiredArea ? -0.020 * min(1.0, max(0.0, log(ratio))) : 0.020 * abs(log(ratio))
                     let contextWeight = intent.preservesContext ? 0.10 : 0.05
                     let contextFitWeight = intent.preservesContext ? 0.08 : 0.04
+                    let evBias = computeOptimalEVBias(raster: raster, heroRect: box, aimPoint: aim.point, zoom: zoom, scene: intent)
+                    let torqueBalance = raster.visualTorqueBalance(heroRect: box, cropRect: CGRect(x: 0, y: 0, width: 1, height: 1))
+                    var anatomicalPenaltyValue = 0.0
+                    if let poseProfile {
+                        let check = PortraitFramingEvidence.anatomicalPenalty(cropRect: box, subjectBounds: subject.bounds, profile: poseProfile, intent: intent)
+                        if check.penalty >= 2.0 {
+                            return nil
+                        }
+                        anatomicalPenaltyValue = check.penalty * 0.14
+                    }
                     let score = 0.26 * sizeFit + 0.34 * placement + 0.10 * headroom +
                         0.08 * space + 0.06 * edgeSafety + contextWeight * context +
                         contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
-                        0.02 * horizonFit + intentPrior + ruleOfThirdsBonus -
-                        0.015 * motion - ratioAdjustment
+                        0.02 * horizonFit + 0.06 * torqueBalance - anatomicalPenaltyValue +
+                        intentPrior + ruleOfThirdsBonus - 0.015 * motion - ratioAdjustment
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: sourceCorners.map(\.point), rotation: rotation, zoom: zoom,
                         evidenceConfidence: min(1, max(0, subject.confidence)), score: score,
                         explanation: explanation(intent: intent, gaze: subject.gaze,
                             cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0),
-                        usesCenter: abs(destination.x - 0.5) < 0.055, retainedAttention: metrics.retention)
+                        usesCenter: abs(destination.x - 0.5) < 0.055, retainedAttention: metrics.retention,
+                        recommendedEVBias: evBias)
                 }
                 if !refining.isEmpty {
                     for seed in refining where seed.subjectIndex == subject.index && seed.intent == intent {
@@ -644,11 +828,97 @@ enum CompositionPlanner {
         return CGPoint(x: x, y: y)
     }
 
+    static func computeOptimalEVBias(
+        raster: CompositionRaster,
+        heroRect: CGRect,
+        aimPoint: CGPoint,
+        zoom: CGFloat,
+        scene: LocalCompositionIntent
+    ) -> CGFloat {
+        guard raster.isValid else { return 0.0 }
+        let targetLuma: Double
+        switch scene {
+        case .portrait: targetLuma = 0.54
+        case .animal: targetLuma = 0.53
+        case .food, .closeUp: targetLuma = 0.50
+        case .landscape, .street: targetLuma = 0.44
+        case .architecture: targetLuma = 0.46
+        case .environmentalPortrait, .group, .object: targetLuma = 0.48
+        }
+
+        var heroLumaSum = 0.0, heroCount = 0.0
+        var centerLumaSum = 0.0, centerCount = 0.0
+        let centerRadius = 0.22
+
+        for y in 0..<raster.side {
+            let py = (Double(y) + 0.5) / Double(raster.side)
+            for x in 0..<raster.side {
+                let px = (Double(x) + 0.5) / Double(raster.side)
+                let p = CGPoint(x: px, y: py)
+                let luma = raster.luminance[y * raster.side + x]
+                if heroRect.contains(p) {
+                    heroLumaSum += luma; heroCount += 1
+                }
+                if hypot(px - Double(aimPoint.x), py - Double(aimPoint.y)) < centerRadius {
+                    centerLumaSum += luma; centerCount += 1
+                }
+            }
+        }
+        let heroLuma = heroCount > 0 ? heroLumaSum / heroCount : 0.48
+        let centerLuma = centerCount > 0 ? centerLumaSum / centerCount : 0.48
+        let measuredLuma = heroCount > 0 ? (0.65 * heroLuma + 0.35 * centerLuma) : centerLuma
+
+        let evDelta = log2(targetLuma / max(0.08, measuredLuma))
+        return CGFloat(min(1.5, max(-1.5, evDelta)))
+    }
+
     private static func dynamicPlacements(subject: CompositionSubject, intent: LocalCompositionIntent,
                                           desired: CGPoint, raster: CompositionRaster) -> [CGPoint] {
         var points: [CGPoint] = [desired, subject.anchor, CGPoint(x: 0.5, y: 0.5)]
 
-        // 1. Dynamic visual mass equilibrium (counterbalance environmental saliency)
+        // Strategy A: Vanishing Point Alignment (Leading Lines convergence)
+        if let vp = raster.vanishingPoint, vp.confidence >= 0.28 {
+            let dx = subject.anchor.x - vp.point.x
+            let dy = subject.anchor.y - vp.point.y
+            let len = hypot(dx, dy)
+            if len > 0.08 {
+                let linePoint1 = CGPoint(
+                    x: min(0.85, max(0.15, vp.point.x + dx * 0.65)),
+                    y: min(0.85, max(0.15, vp.point.y + dy * 0.65))
+                )
+                let linePoint2 = CGPoint(
+                    x: min(0.85, max(0.15, vp.point.x + dx * 0.35)),
+                    y: min(0.85, max(0.15, vp.point.y + dy * 0.35))
+                )
+                points.append(linePoint1)
+                points.append(linePoint2)
+            }
+        }
+
+        // Strategy B: Frame-in-Frame Aperture
+        if let aperture = raster.frameInFrameAperture, aperture.strength >= 0.30 {
+            let inner = aperture.innerRect
+            let centerInAperture = CGPoint(x: inner.midX, y: inner.midY)
+            points.append(centerInAperture)
+            let thirdInAperture = CGPoint(
+                x: inner.minX + inner.width * (subject.anchor.x < 0.5 ? 0.382 : 0.618),
+                y: inner.minY + inner.height * 0.382
+            )
+            points.append(thirdInAperture)
+        }
+
+        // Strategy C: Negative Space & Look Space Vector
+        let negSpace = raster.negativeSpaceVector(around: desired, gaze: subject.gaze)
+        if negSpace.openness > 0.15 {
+            let leadOffset = negSpace.optimalAnchorOffset
+            let leadPoint = CGPoint(
+                x: min(0.82, max(0.18, desired.x + leadOffset.x)),
+                y: min(0.82, max(0.18, desired.y + leadOffset.y))
+            )
+            points.append(leadPoint)
+        }
+
+        // Strategy D: Dynamic visual mass equilibrium (counterbalance environmental saliency)
         if let com = raster.visualCenterOfMass {
             let dx = Double(com.x - 0.5)
             let dy = Double(com.y - 0.5)
@@ -659,7 +929,7 @@ enum CompositionPlanner {
             points.append(balancePoint)
         }
 
-        // 2. Dynamic gaze extension along line of sight
+        // Dynamic gaze extension along line of sight
         let lead = Double(subject.gaze)
         if abs(lead) > 0.08 {
             let gazeExtend = CGPoint(
@@ -669,7 +939,7 @@ enum CompositionPlanner {
             points.append(gazeExtend)
         }
 
-        // 3. Dynamic Golden Section / Rule of Thirds power intersections
+        // Dynamic Golden Section / Rule of Thirds power intersections
         let goldenX = [0.382, 0.618]
         let goldenY = [0.382, 0.618]
         for gx in goldenX {
@@ -681,7 +951,7 @@ enum CompositionPlanner {
         points.append(CGPoint(x: 0.618, y: 0.5))
         points.append(CGPoint(x: 0.5, y: 0.382))
 
-        // 4. Subtle continuous micro-variations around desired point
+        // Subtle continuous micro-variations around desired point
         for dx in [-0.045, 0.045] {
             for dy in [-0.04, 0.04] {
                 let p = CGPoint(x: min(0.80, max(0.20, desired.x + CGFloat(dx))),
@@ -690,7 +960,7 @@ enum CompositionPlanner {
             }
         }
 
-        // 5. Intent-specific compositional framing points
+        // Intent-specific compositional framing points
         switch intent {
         case .landscape, .architecture:
             if let h = raster.horizon {

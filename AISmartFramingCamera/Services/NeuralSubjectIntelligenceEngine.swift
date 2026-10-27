@@ -45,7 +45,7 @@ private final class SemanticCropRanker: @unchecked Sendable {
     private func loadIfAvailable() {
         guard !attemptedLoad else { return }
         attemptedLoad = true
-        guard ProcessInfo.processInfo.physicalMemory >= 4_000_000_000,
+        guard ProcessInfo.processInfo.physicalMemory >= 2_500_000_000,
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
               !ProcessInfo.processInfo.isLowPowerModeEnabled,
@@ -242,12 +242,16 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             hero.boundingBox.width * hero.boundingBox.height > 0.45
         let intents = compositionIntents(output, hero: hero)
         var portraitBounds: CGRect?
+        var poseProfile: AnatomicalPoseProfile?
         if hero.category == .human, !hero.isGroup, !hero.faceBounds.isEmpty {
             let poseRequest = VNDetectHumanBodyPoseRequest()
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: frame.orientation, options: [:])
             if (try? cancellation.perform(poseRequest, with: handler)) != nil {
+                let observations = poseRequest.results ?? []
                 portraitBounds = PortraitFramingEvidence.bounds(body: hero.boundingBox,
-                    faces: hero.faceBounds, observations: poseRequest.results ?? [])
+                    faces: hero.faceBounds, observations: observations)
+                poseProfile = PortraitFramingEvidence.extractProfile(body: hero.boundingBox,
+                    faces: hero.faceBounds, observations: observations)
             }
         }
         if portraitBounds == nil && (hero.category == .human || hero.category == .face) && !hero.isGroup {
@@ -255,11 +259,16 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             let torsoHeight = min(box.height, max(0.22, box.height * 0.60))
             portraitBounds = CGRect(x: box.minX, y: box.minY, width: box.width, height: torsoHeight)
         }
+        if poseProfile == nil && (hero.category == .human || hero.category == .face) {
+            poseProfile = PortraitFramingEvidence.extractProfile(body: hero.boundingBox,
+                faces: hero.faceBounds, observations: [])
+        }
         // Release the semantic encoder before loading the composition specialist,
         // especially on iPhone XS. Detection and group membership remain unchanged.
-        SemanticCropRanker.shared.endAnalysis()
-        let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
-            ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.physicalMemory < 6_000_000_000
+        autoreleasepool {
+            SemanticCropRanker.shared.endAnalysis()
+        }
+        let constrained = ProcessInfo.processInfo.thermalState == .critical
         func proposals(refining seeds: [CompositionProposal] = []) -> [CompositionProposal] {
             CompositionPlanner.photographicProposals(subject: subject, intents: intents,
                 portraitBounds: portraitBounds, raster: raster, calibration: frame.calibration,
@@ -267,7 +276,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 protectedBounds: hero.companionBounds,
                 incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) } +
                     output.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox),
-                proposalLimit: seeds.isEmpty ? (constrained ? 16 : 20) : (constrained ? 8 : 10), refining: seeds,
+                proposalLimit: seeds.isEmpty ? (constrained ? 16 : 36) : (constrained ? 8 : 16), refining: seeds,
+                poseProfile: poseProfile,
                 isCancelled: { cancellation.isCancelled })
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
@@ -293,7 +303,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
                     scene: output.detectedScene, category: hero.category) ?? 1),
                 intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + (result.usedSpecialist ? " Đã tối ưu bố cục theo Tỷ lệ vàng và Luật một phần ba." : " Bố cục tự nhiên."),
-                usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey)
+                usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey,
+                recommendedEVBias: proposal.recommendedEVBias)
             return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image,
                                           preservesOriginalFrame: proposal.isUnchangedView)
         }
