@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C20000000000000000000071 /* AIPoseModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000071 /* AIPoseModels.swift */; };
+		C20000000000000000000072 /* AIPoseAlignmentEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000072 /* AIPoseAlignmentEngine.swift */; };
+		C20000000000000000000073 /* AIPoseGuideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000073 /* AIPoseGuideViews.swift */; };
+		C20000000000000000000074 /* CameraViewModel+PoseGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000074 /* CameraViewModel+PoseGuide.swift */; };
 		C20000000000000000000069 /* DualCameraAssetRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000069 /* DualCameraAssetRecorder.swift */; };
 		C20000000000000000000070 /* SmartSceneExposureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000070 /* SmartSceneExposureEngine.swift */; };
 		C20000000000000000000068 /* DualCameraPIPOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000068 /* DualCameraPIPOverlayView.swift */; };
@@ -86,6 +90,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		C10000000000000000000071 /* AIPoseModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPoseModels.swift; sourceTree = "<group>"; };
+		C10000000000000000000072 /* AIPoseAlignmentEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPoseAlignmentEngine.swift; sourceTree = "<group>"; };
+		C10000000000000000000073 /* AIPoseGuideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIPoseGuideViews.swift; sourceTree = "<group>"; };
+		C10000000000000000000074 /* CameraViewModel+PoseGuide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CameraViewModel+PoseGuide.swift"; sourceTree = "<group>"; };
 		C10000000000000000000069 /* DualCameraAssetRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraAssetRecorder.swift; sourceTree = "<group>"; };
 		C10000000000000000000070 /* SmartSceneExposureEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartSceneExposureEngine.swift; sourceTree = "<group>"; };
 		C10000000000000000000068 /* DualCameraPIPOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraPIPOverlayView.swift; sourceTree = "<group>"; };
@@ -212,6 +220,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000002 /* FramingModels.swift */,
+				C10000000000000000000071 /* AIPoseModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -253,6 +262,7 @@
 				C10000000000000000000066 /* CompositionExperiments.swift */,
 				C10000000000000000000069 /* DualCameraAssetRecorder.swift */,
 				C10000000000000000000070 /* SmartSceneExposureEngine.swift */,
+				C10000000000000000000072 /* AIPoseAlignmentEngine.swift */,
 				C10000000000000000000060 /* PhotographicCompositionModel.swift */,
 				C30000000000000000000001 /* FilmSimulations */,
 			);
@@ -295,6 +305,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000009 /* CameraViewModel.swift */,
+				C10000000000000000000074 /* CameraViewModel+PoseGuide.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -305,6 +316,7 @@
 				B1000000000000000000000A /* CameraMainView.swift */,
 				B1000000000000000000000B /* CameraPreviewView.swift */,
 				B1000000000000000000000C /* ARFramingOverlayView.swift */,
+				C10000000000000000000073 /* AIPoseGuideViews.swift */,
 				C10000000000000000000067 /* CompositionDebugOverlayView.swift */,
 				C10000000000000000000068 /* DualCameraPIPOverlayView.swift */,
 				B1000000000000000000000D /* AIStatusHUDView.swift */,
@@ -476,6 +488,10 @@
 				C20000000000000000000068 /* DualCameraPIPOverlayView.swift in Sources */,
 				C20000000000000000000069 /* DualCameraAssetRecorder.swift in Sources */,
 				C20000000000000000000070 /* SmartSceneExposureEngine.swift in Sources */,
+				C20000000000000000000071 /* AIPoseModels.swift in Sources */,
+				C20000000000000000000072 /* AIPoseAlignmentEngine.swift in Sources */,
+				C20000000000000000000073 /* AIPoseGuideViews.swift in Sources */,
+				C20000000000000000000074 /* CameraViewModel+PoseGuide.swift in Sources */,
 				C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -236,6 +236,11 @@ jobs:
             cp -r AISmartFramingCamera/Resources/LUTs/* Payload/AISmartFramingCamera.app/LUTs/
             echo " Đã tích hợp thành công 3D Fuji LUTs vào App Bundle!"
           fi
+          if [ -d "AISmartFramingCamera/Resources/PoseGuides" ]; then
+            mkdir -p Payload/AISmartFramingCamera.app/PoseGuides
+            cp -r AISmartFramingCamera/Resources/PoseGuides/* Payload/AISmartFramingCamera.app/PoseGuides/
+            echo " Đã tích hợp thành công 48 AI Pose Guides vào App Bundle!"
+          fi
           test -d Payload/AISmartFramingCamera.app/SigLIPBaseImage.mlmodelc
           test -s Payload/AISmartFramingCamera.app/SigLIPPrompts.json
           python scripts/verify_model_bundle.py Payload/AISmartFramingCamera.app

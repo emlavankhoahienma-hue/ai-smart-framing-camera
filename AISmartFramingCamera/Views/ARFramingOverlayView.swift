@@ -37,6 +37,17 @@ public struct ARFramingOverlayView: View {
                         .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive)
                 }
 
+                // 1.5. Khung xương tạo dáng AI Pose Guide (48 tư thế chuẩn tỉ lệ vàng)
+                if let poseTemplate = viewModel.activePoseTemplate {
+                    PoseWireframeView(
+                        template: poseTemplate,
+                        liveJoints: viewModel.livePoseJoints,
+                        isMatched: viewModel.isPoseMatched,
+                        size: size
+                    )
+                    .transition(.opacity)
+                }
+
                 // 2. Detected Faces & Multi-Object Preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm và ở chế độ Ảnh)
                 if viewModel.showDetectionBoxes && !viewModel.captureMode.isVideo && viewModel.currentTargetPoint == nil {
                     ForEach(viewModel.heroDetectedEntities) { entity in
@@ -215,6 +226,25 @@ public struct ARFramingOverlayView: View {
 
                         Spacer()
                     }
+                }
+
+                // 8b. AI Pose Guide HUD Card (Thẻ thông báo tiến trình tạo dáng 48 tư thế)
+                if let poseTemplate = viewModel.activePoseTemplate {
+                    VStack {
+                        PoseGuideHUDCard(
+                            template: poseTemplate,
+                            score: viewModel.poseAlignmentScore,
+                            isMatched: viewModel.isPoseMatched,
+                            onClose: {
+                                withAnimation {
+                                    viewModel.selectPoseTemplate(nil)
+                                }
+                            }
+                        )
+                        .padding(.top, topChromeInset + 4)
+                        Spacer()
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
                 // 8c. Thước Đo Cân Bằng Chân Trời (Virtual Horizon Leveler)

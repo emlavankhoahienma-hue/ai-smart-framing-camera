@@ -36,6 +36,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     private var lastFocusPeakingComputeTime: CFTimeInterval = 0
     private var lastSuggestionUpdateTime: CFTimeInterval = 0
     private var lastVisionProcessTime: CFTimeInterval = 0
+    private var lastPoseComputeTime: CFTimeInterval = 0
 
     @MainActor
     func attach(to owner: CameraViewModel) {
@@ -128,6 +129,11 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         latestPixelBuffer = pixelBuffer
         latestFrameContext = frame
         stateLock.unlock()
+
+        if let owner = self.owner, owner.activePoseTemplate != nil, now - lastPoseComputeTime >= 0.10 {
+            lastPoseComputeTime = now
+            owner.evaluateLivePose(in: pixelBuffer)
+        }
 
         guard !snapshot.isSettingsVisible else { return }
 
@@ -315,6 +321,15 @@ public final class CameraViewModel: ObservableObject {
         didSet { updateFrameProcessingConfiguration() }
     }
     @Published public private(set) var recordingState: CameraRecordingState = .idle
+
+    // MARK: - AI Pose Guide State (48 Dáng Tạo Mẫu Nghệ Thuật)
+    @Published public var activePoseTemplate: AIPoseTemplate? = nil
+    @Published public var isPosePickerPresented: Bool = false
+    @Published public var selectedPoseCategory: AIPoseCategory = .leftThird
+    @Published public var poseAlignmentScore: Double = 0.0
+    @Published public var isPoseMatched: Bool = false
+    @Published public var livePoseJoints: [AIPoseJoint: CGPoint] = [:]
+    @Published public var poseFeedbackMessage: String = ""
     private var wantsVideoRecording = false
     private var pendingCaptureMode: CameraCaptureMode?
     private var modeTransitionGeneration: UInt64 = 0
