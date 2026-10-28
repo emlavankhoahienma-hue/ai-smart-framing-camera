@@ -288,7 +288,7 @@ public struct CameraMainView: View {
     }
 }
 
-// MARK: - Top Camera Bar (Flash, Histogram, ISO, EV, Format, 4:3, Windowed Zoom, Settings)
+// MARK: - Top Camera Bar (Flash, Mini Histogram, ISO & Floating Control Panel)
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     let histogramWidth: CGFloat
@@ -315,109 +315,73 @@ struct TopCameraBar: View {
                     .padding(.leading, 4)
             }
 
-            Spacer(minLength: 4)
+            Spacer(minLength: 6)
 
-            // 3. Technical Specs Row: ISO, EV, Format/Codec, 4:3 (Gọn gàng, ổn định, không tràn màn hình khi sang Video)
-            HStack(spacing: 4) {
-                Text(viewModel.liveISO)
-                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.92))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+            // 3. Clean Technical Specs: ISO Display (Tối ưu gọn gàng, bỏ EV+ và định dạng ảnh)
+            Text(viewModel.liveISO)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(.white.opacity(0.92))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
 
-                Text(String(format: "EV%+0.1f", viewModel.exposureBias))
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.88))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: 6)
 
+            // 4. Floating Capsule Control Panel (Windowed Zoom, Dual Cam PIP, Settings)
+            HStack(spacing: 6) {
+                // Windowed Zoom Toggle
                 Button(action: {
-                    let generator = UISelectionFeedbackGenerator()
+                    let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.prepare()
-                    generator.selectionChanged()
-                    if viewModel.captureMode.isVideo {
-                        viewModel.toggleVideoFormat()
-                    } else {
-                        viewModel.togglePhotoFormat()
+                    generator.impactOccurred()
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
+                        viewModel.isWindowedZoomActive.toggle()
                     }
                 }) {
-                    HStack(spacing: 3) {
-                        if viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo {
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 4, height: 4)
-                        }
-                        Text(currentFormatLabel)
-                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2.0)
-                    .background(
-                        viewModel.selectedPhotoFormat == .dng && !viewModel.captureMode.isVideo
-                            ? RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.25))
-                            : RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.12))
-                    )
+                    Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Định dạng: \(currentFormatLabel). Chạm để thay đổi.")
+                .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
 
-                Text(viewModel.captureMode.isVideo ? "16:9" : (viewModel.isWindowedZoomActive ? viewModel.windowedZoomAspectRatio.rawValue : "4:3"))
-                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.88))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .lineLimit(1)
-            .layoutPriority(1)
-
-            Spacer(minLength: 4)
-
-            // 4. Windowed Zoom Mode Toggle Button
-            Button(action: {
-                let generator = UIImpactFeedbackGenerator(style: .light)
-                generator.prepare()
-                generator.impactOccurred()
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
-                    viewModel.isWindowedZoomActive.toggle()
+                // Dual Concurrent Camera (PIP) Toggle
+                Button(action: {
+                    viewModel.toggleDualCamera()
+                }) {
+                    Image(systemName: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(viewModel.isDualCameraActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
-            }) {
-                Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.electricCyan : Color.white.opacity(0.85))
-                    .frame(width: 34, height: 36)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityLabel("Chế độ Dual Camera Picture-in-Picture")
 
-            // 5. Dual Concurrent Camera (PIP) Toggle Button
-            Button(action: {
-                viewModel.toggleDualCamera()
-            }) {
-                Image(systemName: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(viewModel.isDualCameraActive ? AlignTheme.electricCyan : Color.white.opacity(0.85))
-                    .frame(width: 34, height: 36)
-                    .contentShape(Rectangle())
+                // Settings (Icon 6 chấm circle.grid.3x2.fill đồng bộ giao diện tham chiếu)
+                Button(action: {
+                    viewModel.isShowingSettings = true
+                }) {
+                    Image(systemName: "circle.grid.3x2.fill")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.88))
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityLabel("Cài đặt hệ thống")
             }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Chế độ Dual Camera Picture-in-Picture")
-
-            // 6. Settings Sheet Button (Gear Icon)
-            Button(action: {
-                viewModel.isShowingSettings = true
-            }) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white.opacity(0.85))
-                    .frame(width: 34, height: 36)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Cài đặt hệ thống")
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(Color(white: 0.16).opacity(0.88))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                    )
+            )
         }
         .frame(height: 44)
         .frame(maxWidth: .infinity)

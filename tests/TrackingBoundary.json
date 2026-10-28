@@ -51,13 +51,13 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
       "end": "    private func verifyAndCaptureWhenReady()",
-      "sha256": "a79db752e06bf8cb5ce8f6dabdc222218e7392f30b9d8e5509ab275cd42d0963"
+      "sha256": "fa0f368a7b631302fb5b045c29e4eea29a6324c03bd551962736546aae9801de"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "f2b96cbb03147cd91fd945c8262364079b2e9e737e001ecf5f9fcf71ec1758bf"
+      "sha256": "d5a59cb56f3dfd14958d2bb35889e6881d5bfb2c79fda686252b92e9a90b2ed5"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",

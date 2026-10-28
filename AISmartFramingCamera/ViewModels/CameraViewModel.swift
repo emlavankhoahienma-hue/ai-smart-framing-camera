@@ -725,6 +725,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var alignmentState: FramingAlignmentState = .analyzing
     @Published public var isSmartExposureEnabled: Bool = true
     @Published public internal(set) var plannedEVBias: Float = 0.0
+    @Published public internal(set) var postZoomFocusSettledTimestamp: TimeInterval = 0
     @Published public private(set) var plannedLightingScene: String = "normal"
     @Published public private(set) var plannedLightingDescription: String = ""
     @Published public var detectedScene: DetectedSceneType = .general
@@ -3254,12 +3255,21 @@ public final class CameraViewModel: ObservableObject {
         }
         guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
               autoCaptureTask == nil,
+              CACurrentMediaTime() >= postZoomFocusSettledTimestamp,
               (latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp || CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.20) else { return }
         verifyAndCaptureWhenReady()
     }
 
     private func verifyAndCaptureWhenReady() {
         guard autoCaptureTask == nil else { return }
+        let now = CACurrentMediaTime()
+        if now < postZoomFocusSettledTimestamp {
+            let remaining = postZoomFocusSettledTimestamp - now
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0.06, remaining)) { [weak self] in
+                self?.verifyAndCaptureWhenReady()
+            }
+            return
+        }
         let pinGeneration = targetPinGeneration
         autoCaptureTask = Task { [weak self] in
             guard let self else { return }
@@ -3316,6 +3326,10 @@ public final class CameraViewModel: ObservableObject {
                     alignmentGate.reset()
                     lastFailedCaptureOpticalTimestamp = -.infinity
                     lastFailedCaptureAttemptTime = -.infinity
+
+                    // Kích hoạt lấy nét phần cứng tức thì tại mức zoom mới và đệm 0.42s cho thấu kính lấy nét ổn định
+                    self.cameraService.setSmartFocusAndExposure(at: point, focusType: .salientObject)
+                    self.postZoomFocusSettledTimestamp = CACurrentMediaTime() + 0.42
 
                     withAnimation(.easeOut(duration: 0.35)) {
                         self.isRevealingZoomTarget = false
