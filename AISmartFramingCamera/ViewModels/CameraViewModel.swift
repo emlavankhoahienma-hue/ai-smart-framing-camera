@@ -3282,7 +3282,7 @@ public final class CameraViewModel: ObservableObject {
     private func verifyAndCaptureWhenReady() {
         guard autoCaptureTask == nil else { return }
         let now = CACurrentMediaTime()
-        if now < postZoomFocusSettledTimestamp || cameraService.isAdjustingFocus {
+        if now < postZoomFocusSettledTimestamp {
             let remaining = max(0.08, postZoomFocusSettledTimestamp - now)
             DispatchQueue.main.asyncAfter(deadline: .now() + min(0.35, remaining)) { [weak self] in
                 self?.verifyAndCaptureWhenReady()
