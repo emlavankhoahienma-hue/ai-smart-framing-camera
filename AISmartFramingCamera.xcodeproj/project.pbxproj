@@ -306,6 +306,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000009 /* CameraViewModel.swift */,
+				D10000000000000000000074 /* CameraViewModel+UniversalTarget.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
