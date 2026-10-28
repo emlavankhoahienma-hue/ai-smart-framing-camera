@@ -1187,7 +1187,7 @@ public final class CameraViewModel: ObservableObject {
     // Subject extent relative to the optical ROI, so crop checks use the whole
     // subject rather than assuming a small tracking patch is the whole object.
     private var subjectBoundsInTrackingBox: CGRect?
-    private var pinTrackingBox: CGRect?
+    @Published public var pinTrackingBox: CGRect?
 
     private var stateBeforeCapture: AISessionState = .idle
     private var isOneShotCaptured = false
@@ -2799,19 +2799,20 @@ public final class CameraViewModel: ObservableObject {
     }
 
     var alignmentStatusText: String {
-        if !isCameraReady { return "Đang chờ camera sẵn sàng…" }
-        if isPinchingZoom || pendingManualZoomTarget != nil { return "Đang điều chỉnh zoom…" }
-        if isPreparingPinZoom { return "Đang chọn mức zoom phù hợp…" }
-        if zoomAwaitingVerification { return "Đang zoom và xác nhận lại chủ thể…" }
-        if zoomFallbackAfter.isFinite { return "Đang khôi phục khung trước zoom…" }
-        if needsManualShutter {
-            return localSelectionMessage ?? "Chế độ chụp tay · Bấm nút chụp khi vừa ý"
+        switch aiSessionState {
+        case .analyzing:
+            return "Đang phân tích bố cục…"
+        case .targetPlaced:
+            return "Lia máy vào khung"
+        case .alignmentPerfect:
+            return "Khóa nét & Bố cục hoàn hảo"
+        case .capturing:
+            return "Đang chụp…"
+        case .done:
+            return "Đã chụp ảnh"
+        default:
+            return "Bố cục thông minh"
         }
-        if !zoomVerified { return "Chưa xác nhận được zoom · Có thể bấm chụp tay" }
-        if !hasFreshOpticalLock { return "Đang xác nhận lại chủ thể trong ảnh…" }
-        if localCompositionNeedsLevel { return "Giữ máy ngang để cân lại khung" }
-        if autoCaptureTask != nil { return "Đang kiểm tra khung trước khi chụp…" }
-        return isPerfectAlignment ? "Đã khớp · Giữ máy ổn định" : "Di chuyển tâm trắng vào vòng mục tiêu"
     }
 
     var captureStatusText: String {
@@ -3238,6 +3239,15 @@ public final class CameraViewModel: ObservableObject {
         }
         aiSessionState = .alignmentPerfect
         alignmentState = .aligned(score: 1)
+
+        // Khóa nét phần cứng tức thì tại tâm mục tiêu và cấp đệm thời gian 0.50s cho thấu kính lấy nét ổn định
+        if postZoomFocusSettledTimestamp < CACurrentMediaTime() + 0.50 {
+            let focusPoint = currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
+            let devPoint = CameraService.convertUIPointToDevicePoint(focusPoint)
+            cameraService.setSmartFocusAndExposure(at: devPoint, focusType: .salientObject)
+            postZoomFocusSettledTimestamp = CACurrentMediaTime() + 0.50
+        }
+
         guard state == .ready, (hasFreshOpticalLock || isTargetLocked), !isPreparingPinZoom,
               !zoomAwaitingVerification else { return }
         if isAutoZoomEnabled && !hasExecutedAutoZoomForSession {
@@ -3272,9 +3282,9 @@ public final class CameraViewModel: ObservableObject {
     private func verifyAndCaptureWhenReady() {
         guard autoCaptureTask == nil else { return }
         let now = CACurrentMediaTime()
-        if now < postZoomFocusSettledTimestamp {
-            let remaining = postZoomFocusSettledTimestamp - now
-            DispatchQueue.main.asyncAfter(deadline: .now() + max(0.06, remaining)) { [weak self] in
+        if now < postZoomFocusSettledTimestamp || cameraService.isAdjustingFocus {
+            let remaining = max(0.08, postZoomFocusSettledTimestamp - now)
+            DispatchQueue.main.asyncAfter(deadline: .now() + min(0.35, remaining)) { [weak self] in
                 self?.verifyAndCaptureWhenReady()
             }
             return

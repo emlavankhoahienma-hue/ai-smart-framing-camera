@@ -100,18 +100,13 @@ public struct AIStatusHUDView: View {
         case .idle:
             return "Bố cục thông minh"
         case .analyzing:
-            if viewModel.localCompositionChoices.isEmpty, viewModel.localSelectionMessage != nil {
-                return "Chưa có khung để chọn"
-            }
-            if viewModel.activeAIIndicatorType == .cloud {
-                let model = viewModel.activeModelUsedName.isEmpty ? "Cloud" : viewModel.activeModelUsedName
-                return "Đang gửi Cloud AI (\(model))..."
-            }
-            return viewModel.localCompositionChoices.isEmpty ? viewModel.localAnalysisProgress : "Chọn phương án bố cục"
-        case .targetPlaced, .alignmentPerfect:
-            return viewModel.alignmentStatusText
+            return "Đang phân tích bố cục…"
+        case .targetPlaced:
+            return "Lia máy vào khung"
+        case .alignmentPerfect:
+            return "Khóa nét & Bố cục hoàn hảo"
         case .capturing:
-            return viewModel.captureStatusText
+            return "Đang chụp…"
         case .done:
             return "Đã chụp ảnh"
         }

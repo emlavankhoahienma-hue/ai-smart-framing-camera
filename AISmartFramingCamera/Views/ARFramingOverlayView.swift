@@ -128,6 +128,21 @@ public struct ARFramingOverlayView: View {
                         .transaction { $0.animation = nil }
                     }
 
+                    // Khung Bố Cục Chữ Nhật Điện Ảnh (Cinematic Framing Box - Doka Style)
+                    let boxW: CGFloat = max(80, min(size.width * 0.78, (viewModel.pinTrackingBox?.width ?? 0.22) * size.width))
+                    let boxH: CGFloat = max(80, min(size.height * 0.65, (viewModel.pinTrackingBox?.height ?? 0.26) * size.height))
+
+                    TargetFramingBoxView(
+                        width: boxW,
+                        height: boxH,
+                        isAligned: viewModel.isPerfectAlignment,
+                        isSnapped: isSnapped,
+                        trackingQuality: viewModel.trackingQuality
+                    )
+                    .position(effectiveTargetScreen)
+                    .animation(.spring(response: 0.24, dampingFraction: 0.72), value: isSnapped)
+                    .transaction { $0.animation = nil }
+
                     // Vòng ngắm đa trạng thái (Target Ring)
                     TargetCircleView(
                         isAligned: viewModel.isPerfectAlignment,
@@ -444,6 +459,50 @@ struct PlusCrosshairShape: Shape {
         path.move(to: CGPoint(x: rect.midX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
         return path
+    }
+}
+
+
+// MARK: - Target Framing Box (Cinematic Recommended Box - Doka / Sony Alpha Style)
+
+struct TargetFramingBoxView: View {
+    let width: CGFloat
+    let height: CGFloat
+    let isAligned: Bool
+    let isSnapped: Bool
+    let trackingQuality: TrackingQuality
+
+    private var boxAccentColor: Color {
+        if isAligned || isSnapped {
+            return Color(red: 0.20, green: 0.95, blue: 0.55) // Emerald Green
+        }
+        switch trackingQuality {
+        case .locked, .predicting, .reacquiring:
+            return Color(red: 1.0, green: 0.84, blue: 0.20) // Golden Amber
+        case .lost:
+            return Color.red.opacity(0.85)
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            // Viền mỏng thanh mảnh bao quanh khung
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(boxAccentColor.opacity((isAligned || isSnapped) ? 0.38 : 0.20), lineWidth: 1)
+                .frame(width: width, height: height)
+
+            // 4 Góc Thước Ngắm Sắc Nét (Precision Corner Brackets)
+            CornerBracketsShape(bracketLength: 16, cornerRadius: 6)
+                .stroke(
+                    boxAccentColor,
+                    style: StrokeStyle(lineWidth: (isAligned || isSnapped) ? 2.5 : 1.8, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: width, height: height)
+                .shadow(color: Color.black.opacity(0.55), radius: 2)
+                .shadow(color: boxAccentColor.opacity((isAligned || isSnapped) ? 0.75 : 0.35), radius: 6)
+        }
+        .scaleEffect((isAligned || isSnapped) ? 1.02 : 1.0)
+        .allowsHitTesting(false)
     }
 }
 

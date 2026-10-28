@@ -51,13 +51,13 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
       "end": "    private func verifyAndCaptureWhenReady()",
-      "sha256": "fa0f368a7b631302fb5b045c29e4eea29a6324c03bd551962736546aae9801de"
+      "sha256": "0c2696107de0399d468420d0aa3981b84a0aee83d60f8e2afefadf7ce8b17c98"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "81fb164d97e487f0d3e01185073eed47d2d7f4b2dd5c82368fa95caa1889e937"
+      "sha256": "d9385fb6cc80c43de4eb0bdb6f0e53b66c43b5e54ec95a3623e34bf1c1eb387c"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -75,7 +75,7 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
       "end": "                // Optical centre is always fixed",
-      "sha256": "f1daf0159540220c58be2adff0bdceaf8e865a15114788ba772a037b51fc2946"
+      "sha256": "30a6a8c9c64c76f06df54436c35d965d3babffb530359a0cff7dec10798cf3e5"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
