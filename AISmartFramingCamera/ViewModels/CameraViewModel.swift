@@ -639,7 +639,7 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var isPinchingZoom: Bool = false
 
-    @Published public private(set) var pendingSuggestedZoom: CGFloat = 1.0
+    @Published public internal(set) var pendingSuggestedZoom: CGFloat = 1.0
     public private(set) var hasExecutedAutoZoomForSession: Bool = false
     private var lastAutoZoomExecutionTime: Date = .distantPast
 
@@ -724,7 +724,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var framingResult: FramingTargetResult?
     @Published public var alignmentState: FramingAlignmentState = .analyzing
     @Published public var isSmartExposureEnabled: Bool = true
-    @Published public private(set) var plannedEVBias: Float = 0.0
+    @Published public internal(set) var plannedEVBias: Float = 0.0
     @Published public private(set) var plannedLightingScene: String = "normal"
     @Published public private(set) var plannedLightingDescription: String = ""
     @Published public var detectedScene: DetectedSceneType = .general
