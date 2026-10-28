@@ -4175,10 +4175,6 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    public func toggleFilmSimulation() {
-        isFilmSimulationActive.toggle()
-    }
-
     public func startCountdownTimer() {
         countdownTimer?.invalidate()
         countdownSecondsRemaining = captureTimerSeconds
@@ -4187,21 +4183,23 @@ public final class CameraViewModel: ObservableObject {
         generator.impactOccurred()
 
         countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-            guard let self = self else {
-                timer.invalidate()
-                return
-            }
-            if self.countdownSecondsRemaining > 1 {
-                self.countdownSecondsRemaining -= 1
-                let tick = UIImpactFeedbackGenerator(style: .light)
-                tick.impactOccurred()
-            } else {
-                timer.invalidate()
-                self.countdownTimer = nil
-                self.countdownSecondsRemaining = 0
-                let finish = UINotificationFeedbackGenerator()
-                finish.notificationOccurred(.success)
-                self.performDirectPhotoCapture()
+            DispatchQueue.main.async {
+                guard let self = self else {
+                    timer.invalidate()
+                    return
+                }
+                if self.countdownSecondsRemaining > 1 {
+                    self.countdownSecondsRemaining -= 1
+                    let tick = UIImpactFeedbackGenerator(style: .light)
+                    tick.impactOccurred()
+                } else {
+                    timer.invalidate()
+                    self.countdownTimer = nil
+                    self.countdownSecondsRemaining = 0
+                    let finish = UINotificationFeedbackGenerator()
+                    finish.notificationOccurred(.success)
+                    self.performDirectPhotoCapture()
+                }
             }
         }
     }
