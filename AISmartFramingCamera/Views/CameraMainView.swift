@@ -218,6 +218,36 @@ public struct CameraMainView: View {
                         .transition(.opacity)
                         .zIndex(999)
                 }
+
+                // Self-Timer Countdown Center Display
+                if viewModel.countdownSecondsRemaining > 0 {
+                    ZStack {
+                        Circle()
+                            .fill(Color.black.opacity(0.60))
+                            .frame(width: 88, height: 88)
+                        Text("\(viewModel.countdownSecondsRemaining)")
+                            .font(.system(size: 46, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                    .zIndex(500)
+                }
+
+                // Kho Chức Năng Backdrop & Sliding Bottom Drawer
+                if viewModel.isFunctionDrawerOpen {
+                    Color.black.opacity(0.40)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                                viewModel.isFunctionDrawerOpen = false
+                            }
+                        }
+                        .transition(.opacity)
+                        .zIndex(600)
+
+                    CameraFunctionDrawerView(viewModel: viewModel)
+                        .zIndex(601)
+                }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
@@ -288,7 +318,31 @@ public struct CameraMainView: View {
     }
 }
 
-// MARK: - Top Camera Bar (Flash, Mini Histogram, Centered ISO Pill & Floating Capsule Controls)
+// MARK: - Six Dots Icon (Custom Vector 3x2 Grid for Kho Chức Năng Drawer)
+public struct SixDotsIcon: View {
+    var color: Color = .white
+    public init(color: Color = .white) {
+        self.color = color
+    }
+    public var body: some View {
+        HStack(spacing: 3.5) {
+            VStack(spacing: 3.5) {
+                Circle().fill(color).frame(width: 3.5, height: 3.5)
+                Circle().fill(color).frame(width: 3.5, height: 3.5)
+            }
+            VStack(spacing: 3.5) {
+                Circle().fill(color).frame(width: 3.5, height: 3.5)
+                Circle().fill(color).frame(width: 3.5, height: 3.5)
+            }
+            VStack(spacing: 3.5) {
+                Circle().fill(color).frame(width: 3.5, height: 3.5)
+                Circle().fill(color).frame(width: 3.5, height: 3.5)
+            }
+        }
+    }
+}
+
+// MARK: - Top Camera Bar (Flash, Mini Histogram, Centered ISO Pill & 3 Top Capsule Buttons)
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     let histogramWidth: CGFloat
@@ -339,9 +393,25 @@ struct TopCameraBar: View {
 
                 Spacer()
 
-                // Right: Floating Control Capsule (Windowed Zoom, Dual Cam PIP, Settings)
+                // Right: Floating Control Capsule (1: Live Photo, 2: Windowed Zoom, 3: Kho Chức Năng 6-Dots)
                 HStack(spacing: 8) {
-                    // Windowed Zoom Toggle
+                    // 1. Live Photo Toggle Button
+                    Button(action: {
+                        let generator = UIImpactFeedbackGenerator(style: .light)
+                        generator.prepare()
+                        generator.impactOccurred()
+                        viewModel.isLivePhotoEnabled.toggle()
+                    }) {
+                        Image(systemName: viewModel.isLivePhotoEnabled ? "livephoto" : "livephoto.slash")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(viewModel.isLivePhotoEnabled ? AlignTheme.amberGold : Color.white.opacity(0.88))
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel("Chế độ Live Photo")
+
+                    // 2. Windowed Zoom Toggle Button
                     Button(action: {
                         let generator = UIImpactFeedbackGenerator(style: .light)
                         generator.prepare()
@@ -359,31 +429,21 @@ struct TopCameraBar: View {
                     .buttonStyle(PlainButtonStyle())
                     .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
 
-                    // Dual Concurrent Camera (PIP) Toggle
+                    // 3. Nút mở Kho Chức Năng (6-Dots Drawer Button)
                     Button(action: {
-                        viewModel.toggleDualCamera()
+                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                        generator.prepare()
+                        generator.impactOccurred()
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                            viewModel.isFunctionDrawerOpen.toggle()
+                        }
                     }) {
-                        Image(systemName: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(viewModel.isDualCameraActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
+                        SixDotsIcon(color: viewModel.isFunctionDrawerOpen ? AlignTheme.electricCyan : Color.white.opacity(0.88))
                             .frame(width: 30, height: 30)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .accessibilityLabel("Chế độ Dual Camera Picture-in-Picture")
-
-                    // Settings Button (Gear icon - standard, 100% visible, unmistakably Settings)
-                    Button(action: {
-                        viewModel.isShowingSettings = true
-                    }) {
-                        Image(systemName: "gearshape.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.88))
-                            .frame(width: 30, height: 30)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .accessibilityLabel("Cài đặt hệ thống")
+                    .accessibilityLabel("Mở kho chức năng máy ảnh")
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3.5)
@@ -832,5 +892,190 @@ struct CameraHibernationStandbyView: View {
                 isWhiteBackground.toggle()
             }
         }
+    }
+}
+
+
+// MARK: - Drawer Function Item Button
+struct DrawerFunctionButton: View {
+    let icon: String
+    var customIcon: AnyView? = nil
+    let title: String
+    let subtitle: String?
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: {
+            let generator = UIImpactFeedbackGenerator(style: .light)
+            generator.prepare()
+            generator.impactOccurred()
+            action()
+        }) {
+            VStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .fill(isActive ? Color.white.opacity(0.24) : Color(white: 0.18))
+                        .frame(width: 48, height: 48)
+                        .overlay(
+                            Circle()
+                                .stroke(isActive ? AlignTheme.electricCyan : Color.white.opacity(0.12), lineWidth: isActive ? 1.5 : 0.6)
+                        )
+
+                    if let custom = customIcon {
+                        custom
+                    } else {
+                        Image(systemName: icon)
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundColor(isActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
+                    }
+                }
+
+                VStack(spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(isActive ? .white : .white.opacity(0.70))
+                    if let sub = subtitle {
+                        Text(sub)
+                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                            .foregroundColor(isActive ? AlignTheme.electricCyan : .white.opacity(0.45))
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Camera Function Drawer (Kho Chức Năng Nửa Dưới Màn Hình Chuẩn Video)
+struct CameraFunctionDrawerView: View {
+    @ObservedObject var viewModel: CameraViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 18) {
+                // Drag handle bar
+                Capsule()
+                    .fill(Color.white.opacity(0.24))
+                    .frame(width: 36, height: 4)
+                    .padding(.top, 10)
+
+                // 4-Column Grid of Functional Circular Buttons
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 16) {
+                    // Row 1:
+                    // 1. Ratio
+                    DrawerFunctionButton(
+                        icon: "aspectratio",
+                        title: "Tỷ lệ",
+                        subtitle: viewModel.windowedZoomAspectRatio.rawValue,
+                        isActive: viewModel.isWindowedZoomActive,
+                        action: { viewModel.cycleAspectRatio() }
+                    )
+
+                    // 2. Timer
+                    DrawerFunctionButton(
+                        icon: "timer",
+                        title: "Hẹn giờ",
+                        subtitle: viewModel.captureTimerSeconds == 0 ? "Tắt" : "\(viewModel.captureTimerSeconds)s",
+                        isActive: viewModel.captureTimerSeconds > 0,
+                        action: { viewModel.cycleCaptureTimer() }
+                    )
+
+                    // 3. Grid
+                    DrawerFunctionButton(
+                        icon: viewModel.isManualGridVisible ? "grid" : "grid.slash",
+                        title: "Lưới",
+                        subtitle: viewModel.isManualGridVisible ? "Bật" : "Tắt",
+                        isActive: viewModel.isManualGridVisible,
+                        action: { viewModel.isManualGridVisible.toggle() }
+                    )
+
+                    // 4. Level
+                    DrawerFunctionButton(
+                        icon: viewModel.isHorizonLevelerEnabled ? "scope" : "circle.dashed",
+                        title: "Cân bằng",
+                        subtitle: viewModel.isHorizonLevelerEnabled ? "Bật" : "Tắt",
+                        isActive: viewModel.isHorizonLevelerEnabled,
+                        action: { viewModel.isHorizonLevelerEnabled.toggle() }
+                    )
+
+                    // Row 2:
+                    // 5. Dual Camera PIP
+                    DrawerFunctionButton(
+                        icon: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle",
+                        title: "Dual Cam",
+                        subtitle: viewModel.isDualCameraActive ? "Bật" : "Tắt",
+                        isActive: viewModel.isDualCameraActive,
+                        action: { viewModel.toggleDualCamera() }
+                    )
+
+                    // 6. Color Histogram
+                    DrawerFunctionButton(
+                        icon: "chart.bar.xaxis",
+                        title: "Biểu đồ",
+                        subtitle: viewModel.showHistogramInViewfinder ? "Bật" : "Tắt",
+                        isActive: viewModel.showHistogramInViewfinder,
+                        action: { viewModel.showHistogramInViewfinder.toggle() }
+                    )
+
+                    // 7. Format Codec
+                    DrawerFunctionButton(
+                        icon: "doc.badge.gearshape",
+                        title: "Định dạng",
+                        subtitle: viewModel.selectedPhotoFormat.rawValue.uppercased(),
+                        isActive: viewModel.selectedPhotoFormat == .dng,
+                        action: { viewModel.togglePhotoFormat() }
+                    )
+
+                    // 8. Film Simulation
+                    DrawerFunctionButton(
+                        icon: "camera.filters",
+                        title: "Màu phim",
+                        subtitle: viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.displayName : "Tắt",
+                        isActive: viewModel.isFilmSimulationActive,
+                        action: { viewModel.toggleFilmSimulation() }
+                    )
+
+                    // Row 3:
+                    // 9. Deep Settings
+                    DrawerFunctionButton(
+                        icon: "gearshape.fill",
+                        title: "Cài đặt",
+                        subtitle: "Hệ thống",
+                        isActive: false,
+                        action: {
+                            viewModel.isFunctionDrawerOpen = false
+                            viewModel.isShowingSettings = true
+                        }
+                    )
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 28)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(Color(red: 0.09, green: 0.094, blue: 0.106).opacity(0.96))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                    )
+                    .shadow(color: Color.black.opacity(0.70), radius: 24, y: -6)
+            )
+            .gesture(
+                DragGesture(minimumDistance: 15)
+                    .onEnded { value in
+                        if value.translation.height > 40 {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                                viewModel.isFunctionDrawerOpen = false
+                            }
+                        }
+                    }
+            )
+        }
+        .ignoresSafeArea(edges: .bottom)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }

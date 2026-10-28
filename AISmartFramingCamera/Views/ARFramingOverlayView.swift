@@ -30,11 +30,11 @@ public struct ARFramingOverlayView: View {
                         .opacity(1.0)
                 }
 
-                // 1. Composition Grid Lines (hiện khi AI session active)
-                if viewModel.isAISessionActive {
+                // 1. Composition Grid Lines (hiện khi AI session active hoặc người dùng bật thủ công từ kho chức năng)
+                if viewModel.isAISessionActive || viewModel.isManualGridVisible {
                     CompositionGridLines(rule: viewModel.activeCompositionRule, size: size)
-                        .opacity(0.28)
-                        .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive)
+                        .opacity(viewModel.isAISessionActive ? 0.28 : 0.35)
+                        .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive || viewModel.isManualGridVisible)
                 }
 
                 // 2. Detected Faces & Multi-Object Preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm và ở chế độ Ảnh)

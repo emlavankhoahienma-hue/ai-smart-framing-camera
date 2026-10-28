@@ -726,6 +726,15 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isSmartExposureEnabled: Bool = true
     @Published public internal(set) var plannedEVBias: Float = 0.0
     @Published public internal(set) var postZoomFocusSettledTimestamp: TimeInterval = 0
+
+    // MARK: - Kho Chức Năng (Feature Drawer & Quick Tools)
+    @Published public var isFunctionDrawerOpen: Bool = false
+    @Published public var isManualGridVisible: Bool = false {
+        didSet { UserDefaults.standard.set(isManualGridVisible, forKey: "isManualGridVisible") }
+    }
+    @Published public var captureTimerSeconds: Int = 0 // 0s, 3s, 10s
+    @Published public var countdownSecondsRemaining: Int = 0
+    private var countdownTimer: Timer? = nil
     @Published public private(set) var plannedLightingScene: String = "normal"
     @Published public private(set) var plannedLightingDescription: String = ""
     @Published public var detectedScene: DetectedSceneType = .general
@@ -4149,12 +4158,77 @@ public final class CameraViewModel: ObservableObject {
     }
 
 
-    // MARK: - Manual Shutter Click (Nút chụp màu trắng)
+    // MARK: - Manual Shutter Click & Self-Timer
+    public func cycleCaptureTimer() {
+        switch captureTimerSeconds {
+        case 0: captureTimerSeconds = 3
+        case 3: captureTimerSeconds = 10
+        default: captureTimerSeconds = 0
+        }
+    }
+
+    public func cycleAspectRatio() {
+        switch windowedZoomAspectRatio {
+        case .ratio3_4: windowedZoomAspectRatio = .ratio1_1
+        case .ratio1_1: windowedZoomAspectRatio = .ratio16_9
+        case .ratio16_9: windowedZoomAspectRatio = .ratio3_4
+        }
+    }
+
+    public func toggleFilmSimulation() {
+        isFilmSimulationActive.toggle()
+    }
+
+    public func startCountdownTimer() {
+        countdownTimer?.invalidate()
+        countdownSecondsRemaining = captureTimerSeconds
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.prepare()
+        generator.impactOccurred()
+
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+            if self.countdownSecondsRemaining > 1 {
+                self.countdownSecondsRemaining -= 1
+                let tick = UIImpactFeedbackGenerator(style: .light)
+                tick.impactOccurred()
+            } else {
+                timer.invalidate()
+                self.countdownTimer = nil
+                self.countdownSecondsRemaining = 0
+                let finish = UINotificationFeedbackGenerator()
+                finish.notificationOccurred(.success)
+                self.performDirectPhotoCapture()
+            }
+        }
+    }
+
+    public func cancelCountdownTimer() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        countdownSecondsRemaining = 0
+    }
+
     public func takePhotoManual() {
         if captureMode.isVideo {
             toggleVideoRecording()
             return
         }
+        if countdownSecondsRemaining > 0 {
+            cancelCountdownTimer()
+            return
+        }
+        if captureTimerSeconds > 0 {
+            startCountdownTimer()
+            return
+        }
+        performDirectPhotoCapture()
+    }
+
+    public func performDirectPhotoCapture() {
         guard (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
               !isCameraHibernating, pendingCaptureMode == nil,
               recordingState == .idle,
