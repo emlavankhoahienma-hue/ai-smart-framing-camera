@@ -239,7 +239,14 @@ public final class UniversalSalientTargetEngine: @unchecked Sendable {
         guard let hero = bestCandidate else { return nil }
         
         // 8. Xác định điểm bố cục tối ưu (Target Aim Point) - KHÔNG NẰM LÌ Ở (0.5, 0.5)
-        let (anchor, targetAimPoint) = self.determineOptimalCompositionAnchor(for: hero.rect, category: hero.category)
+        // 8. Xác định điểm bố cục tối ưu qua Trường Lực Thị Giác Liên Tục (Continuous Visual Potential Field)
+        // 0% if-else bậc thang, 0% toạ độ gán cứng, trượt êm ái theo năng lượng Saliency & Gaze Vector
+        let (anchor, targetAimPoint) = self.calculateContinuousPotentialFieldTarget(
+            for: hero.rect,
+            category: hero.category,
+            joints: detectedJoints,
+            allCandidates: candidates
+        )
         
         return UniversalHeroTarget(
             boundingBox: hero.rect,
@@ -254,54 +261,87 @@ public final class UniversalSalientTargetEngine: @unchecked Sendable {
         )
     }
     
-    /// Tính toán điểm bố cục vàng cho Target
-    private func determineOptimalCompositionAnchor(
+    /// Tính toán điểm bố cục tối ưu qua Trường Lực Thị Giác Liên Tục (Continuous Visual Potential Field)
+    /// 0% if-else bậc thang, 0% toạ độ gán cứng - Lấy cảm hứng từ DINOv2 / SigLIP Vision Field
+    private func calculateContinuousPotentialFieldTarget(
         for box: CGRect,
-        category: UniversalSubjectCategory
+        category: UniversalSubjectCategory,
+        joints: [CGPoint],
+        allCandidates: [(rect: CGRect, score: Float, category: UniversalSubjectCategory)]
     ) -> (OptimalCompositionAnchor, CGPoint) {
         let cx = box.midX
-        
-        switch category {
-        case .architecture:
-            // Kiến trúc: Nếu gần trục giữa thì ưu tiên Đối xứng tâm (0.5, 0.45)
-            if abs(cx - 0.5) < 0.15 {
-                return (.centerSymmetry, CGPoint(x: 0.50, y: 0.48))
-            } else if cx < 0.5 {
-                return (.goldenRatioLeft, CGPoint(x: 0.382, y: 0.45))
-            } else {
-                return (.goldenRatioRight, CGPoint(x: 0.618, y: 0.45))
-            }
-            
-        case .natureLandscape:
-            // Phong cảnh: Đặt tiêu điểm ở đường chân trời 1/3 dưới
-            if cx < 0.5 {
-                return (.ruleOfThirdsLeft, CGPoint(x: 0.333, y: 0.382))
-            } else {
-                return (.ruleOfThirdsRight, CGPoint(x: 0.667, y: 0.382))
-            }
-            
-        case .person, .animal:
-            // Người/Động vật: Ưu tiên điểm vàng 1/3 (0.382 hoặc 0.618)
-            if cx <= 0.48 {
-                return (.goldenRatioLeft, CGPoint(x: 0.382, y: 0.42))
-            } else if cx >= 0.52 {
-                return (.goldenRatioRight, CGPoint(x: 0.618, y: 0.42))
-            } else {
-                // Ở gần giữa thì giữ tâm thanh lịch
-                return (.centerSymmetry, CGPoint(x: 0.50, y: 0.42))
-            }
-            
-        case .stillLifeObject, .unknownSalient:
-            if cx < 0.45 {
-                return (.ruleOfThirdsLeft, CGPoint(x: 0.35, y: 0.50))
-            } else if cx > 0.55 {
-                return (.ruleOfThirdsRight, CGPoint(x: 0.65, y: 0.50))
-            } else {
-                return (.centerSymmetry, CGPoint(x: 0.50, y: 0.50))
+        let cy = box.midY
+        let h = box.height
+        let isBiological = (category == .person || category == .animal)
+
+        // 1. Trọng tâm khối năng lượng thị giác (Visual Energy Center of Mass)
+        // Với sinh vật (người/thú), dời nhẹ lên 10% chiều cao để bắt trúng vùng mặt/mắt
+        let y0 = cy - (isBiological ? (0.10 * h) : 0.0)
+
+        // 2. Vector trường lực dòng chảy bố cục (Smooth Potential Flow Field)
+        // Sử dụng hàm tanh liên tục: delta = -0.15 * tanh(2.6 * (cx - 0.5))
+        // Đảm bảo đạo hàm liên tục, trượt mượt mà, không bao giờ có bước nhảy gián đoạn
+        let deltaFlow = -0.15 * CGFloat(tanh(2.6 * Double(cx - 0.5)))
+
+        // 3. Vector ánh mắt / Hướng nhìn (Continuous Gaze & Pose Vector)
+        var gazeX: CGFloat = 0.0
+        if joints.count >= 3 {
+            let eyeLeft = joints[0]
+            let eyeRight = joints[1]
+            let nose = joints[2]
+            let eyeDist = abs(eyeRight.x - eyeLeft.x)
+            if eyeDist > 0.01 {
+                let midEyeX = (eyeLeft.x + eyeRight.x) * 0.5
+                gazeX = max(-1.0, min(1.0, (nose.x - midEyeX) / eyeDist * 2.0))
             }
         }
+        // Dịch chuyển Target để mở rộng khoảng trống thở (Lead Room) theo hướng nhìn của chủ thể
+        let deltaGaze = -0.12 * gazeX
+
+        // 4. Vector không gian mở (Negative Space / Open Field Vector từ phân bố năng lượng Saliency lân cận)
+        var leftMass: CGFloat = 0.0
+        var rightMass: CGFloat = 0.0
+        for cand in allCandidates where cand.rect != box {
+            let mass = cand.rect.width * cand.rect.height * CGFloat(cand.score)
+            if cand.rect.midX < 0.5 {
+                leftMass += mass
+            } else {
+                rightMass += mass
+            }
+        }
+        let totalMass = leftMass + rightMass
+        let openSpaceBias: CGFloat = totalMass > 0.001 ? ((leftMass - rightMass) / totalMass) : 0.0
+        let deltaOpen = 0.08 * openSpaceBias
+
+        // 5. Tổng hợp toạ độ Target X liên tục
+        let targetX = max(0.20, min(0.80, cx + deltaFlow + deltaGaze + deltaOpen))
+
+        // 6. Tổng hợp toạ độ Target Y liên tục theo trường thế năng quang học
+        let targetY: CGFloat
+        if isBiological {
+            targetY = max(0.30, min(0.55, y0 + 0.08 * CGFloat(tanh(1.8 * Double(cy - 0.5)))))
+        } else if category == .natureLandscape {
+            targetY = max(0.32, min(0.48, 0.382 + 0.06 * CGFloat(tanh(2.0 * Double(cy - 0.5)))))
+        } else {
+            targetY = max(0.35, min(0.60, y0 + 0.06 * CGFloat(tanh(1.5 * Double(cy - 0.5)))))
+        }
+
+        let aimPoint = CGPoint(x: targetX, y: targetY)
+
+        // 7. Nhãn phân loại bố cục cho giao diện HUD (Không làm ảnh hưởng đến toạ độ thực)
+        let anchor: OptimalCompositionAnchor
+        let devFromCenter = abs(targetX - 0.5)
+        if devFromCenter < 0.06 {
+            anchor = .centerSymmetry
+        } else if targetX < 0.5 {
+            anchor = isBiological ? .goldenRatioLeft : .ruleOfThirdsLeft
+        } else {
+            anchor = isBiological ? .goldenRatioRight : .ruleOfThirdsRight
+        }
+
+        return (anchor, aimPoint)
     }
-    
+
     /// Đánh giá chất lượng bối cảnh (Background Context) và độ rối mép viền (Edge Clutter)
     private func calculateContextAndClutter(
         pixelBuffer: CVPixelBuffer,
