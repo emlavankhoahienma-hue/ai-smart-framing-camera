@@ -288,100 +288,114 @@ public struct CameraMainView: View {
     }
 }
 
-// MARK: - Top Camera Bar (Flash, Mini Histogram, ISO & Floating Control Panel)
+// MARK: - Top Camera Bar (Flash, Mini Histogram, Centered ISO Pill & Floating Capsule Controls)
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     let histogramWidth: CGFloat
 
     var body: some View {
-        HStack(alignment: .center, spacing: 0) {
-            // 1. Flash Toggle Button
-            Button(action: {
-                viewModel.toggleFlash()
-            }) {
-                Image(systemName: flashIconName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.85) : AlignTheme.amberGold)
-                    .frame(width: 36, height: 36)
-                    .contentShape(Rectangle())
+        ZStack {
+            // Layer 1: Center-Aligned Live ISO Pill (Always 100% horizontally centered on screen)
+            HStack(spacing: 4) {
+                Text("ISO")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.60))
+                Text(viewModel.currentLiveISO > 0 ? "\(Int(round(viewModel.currentLiveISO)))" : "AUTO")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.95))
             }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Đèn flash")
-
-            // 2. Mini Live Color Histogram
-            if viewModel.showHistogramInViewfinder {
-                LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
-                    .frame(height: 26)
-                    .padding(.leading, 4)
-            }
-
-            Spacer(minLength: 6)
-
-            // 3. Clean Technical Specs: ISO Display (Tối ưu gọn gàng, bỏ EV+ và định dạng ảnh)
-            Text(viewModel.liveISO)
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.92))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-
-            Spacer(minLength: 6)
-
-            // 4. Floating Capsule Control Panel (Windowed Zoom, Dual Cam PIP, Settings)
-            HStack(spacing: 6) {
-                // Windowed Zoom Toggle
-                Button(action: {
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.prepare()
-                    generator.impactOccurred()
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
-                        viewModel.isWindowedZoomActive.toggle()
-                    }
-                }) {
-                    Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
-
-                // Dual Concurrent Camera (PIP) Toggle
-                Button(action: {
-                    viewModel.toggleDualCamera()
-                }) {
-                    Image(systemName: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(viewModel.isDualCameraActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Chế độ Dual Camera Picture-in-Picture")
-
-                // Settings (Icon 6 chấm circle.grid.3x2.fill đồng bộ giao diện tham chiếu)
-                Button(action: {
-                    viewModel.isShowingSettings = true
-                }) {
-                    Image(systemName: "circle.grid.3x2.fill")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.88))
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Cài đặt hệ thống")
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4.5)
             .background(
                 Capsule()
                     .fill(Color(white: 0.16).opacity(0.88))
                     .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                        Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.6)
                     )
             )
+
+            // Layer 2: Left and Right Toolbar Items
+            HStack(alignment: .center, spacing: 0) {
+                // Left: Flash & Live Color Histogram
+                HStack(spacing: 4) {
+                    Button(action: {
+                        viewModel.toggleFlash()
+                    }) {
+                        Image(systemName: flashIconName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.85) : AlignTheme.amberGold)
+                            .frame(width: 34, height: 34)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel("Đèn flash")
+
+                    if viewModel.showHistogramInViewfinder {
+                        LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
+                            .frame(height: 26)
+                            .padding(.leading, 2)
+                    }
+                }
+
+                Spacer()
+
+                // Right: Floating Control Capsule (Windowed Zoom, Dual Cam PIP, Settings)
+                HStack(spacing: 8) {
+                    // Windowed Zoom Toggle
+                    Button(action: {
+                        let generator = UIImpactFeedbackGenerator(style: .light)
+                        generator.prepare()
+                        generator.impactOccurred()
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
+                            viewModel.isWindowedZoomActive.toggle()
+                        }
+                    }) {
+                        Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
+
+                    // Dual Concurrent Camera (PIP) Toggle
+                    Button(action: {
+                        viewModel.toggleDualCamera()
+                    }) {
+                        Image(systemName: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(viewModel.isDualCameraActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel("Chế độ Dual Camera Picture-in-Picture")
+
+                    // Settings Button (Gear icon - standard, 100% visible, unmistakably Settings)
+                    Button(action: {
+                        viewModel.isShowingSettings = true
+                    }) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.88))
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel("Cài đặt hệ thống")
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3.5)
+                .background(
+                    Capsule()
+                        .fill(Color(white: 0.16).opacity(0.88))
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                        )
+                )
+            }
         }
         .frame(height: 44)
         .frame(maxWidth: .infinity)
