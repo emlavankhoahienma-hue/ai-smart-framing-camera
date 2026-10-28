@@ -9,10 +9,13 @@ extension CameraViewModel {
     /// Kích hoạt chuỗi phân tích vạn vật không gò bó (Universal Target T* -> Zoom Z* -> Bù sáng EV*)
     @MainActor
     public func analyzeUniversalHeroComposition(pixelBuffer: CVPixelBuffer) {
-        // Thu thập các nhận diện có sẵn (YOLO, Face, Pose)
-        let knownDetections: [(rect: CGRect, label: String, confidence: Float)] = detectedSubjects.map { sub in
-            let label = sub.category.rawValue
-            return (sub.normalizedRect, label, Float(sub.confidence))
+        // Thu thập các nhận diện có sẵn (YOLO, Face, Pose) từ ViewModel
+        var knownDetections: [(rect: CGRect, label: String, confidence: Float)] = []
+        for r in self.detectedSubjectRects {
+            knownDetections.append((r, "subject", 0.90))
+        }
+        for f in self.detectedFaceRects {
+            knownDetections.append((f, "person", 0.95))
         }
         
         UniversalSalientTargetEngine.shared.analyzeFrame(
@@ -24,14 +27,14 @@ extension CameraViewModel {
             // Tính toán kế hoạch hợp nhất (Aesthetic Zoom + EV*)
             let frameSize = CGSize(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
             
-            // Lấy histogram độ sáng hiện tại từ RealtimeHistogramEngine nếu có
-            let histogram = RealtimeHistogramEngine.shared.latestLuminanceHistogram
+            // Lấy độ sáng trung bình hiện tại từ RealtimeHistogramEngine
+            let currentLuma = RealtimeHistogramEngine.shared.averageLuminance
             
             let unifiedPlan = AestheticZoomPlanner.shared.planUnifiedComposition(
                 target: hero,
                 frameSize: frameSize,
                 currentZoom: self.displayZoom,
-                luminanceHistogram: histogram
+                averageLuminance: currentLuma
             )
             
             self.applyUnifiedAestheticPlan(unifiedPlan, heroTarget: hero)
@@ -44,7 +47,7 @@ extension CameraViewModel {
         // 1. Cập nhật Target Aim Point (Điểm căn tâm tối ưu bố cục thay vì dính ở 0.5, 0.5)
         self.initialTargetPoint = plan.targetAimPoint
         self.currentTargetPoint = plan.targetAimPoint
-        self.activeCompositionGuide = .ruleOfThirds
+        self.activeCompositionRule = .ruleOfThirds
         
         // 2. Cập nhật mức Zoom tối ưu Z* được đề xuất
         self.pendingSuggestedZoom = plan.recommendedZoomFactor

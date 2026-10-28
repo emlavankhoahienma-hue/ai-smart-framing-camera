@@ -4,6 +4,7 @@ import CoreMedia
 import Vision
 import CoreImage
 import Accelerate
+import QuartzCore
 
 /// Phân loại chủ thể vạn vật không bị giới hạn nhãn
 public enum UniversalSubjectCategory: String, Codable, Sendable {
@@ -212,7 +213,6 @@ public final class UniversalSalientTargetEngine: @unchecked Sendable {
         for cand in candidates {
             let box = cand.rect
             let cx = box.midX
-            let cy = box.midY
             let area = Float(box.width * box.height)
             
             // Diện tích lý tưởng (không quá bé < 2%, không choán toàn màn hình > 85%)
@@ -307,9 +307,6 @@ public final class UniversalSalientTargetEngine: @unchecked Sendable {
         pixelBuffer: CVPixelBuffer,
         salientRects: [CGRect]
     ) -> (contextScore: Float, clutterScore: Float) {
-        // Tỷ lệ chiếm diện tích của các vật thể nổi bật ngoài chủ thể chính
-        let totalSalientArea = salientRects.reduce(0.0) { $0 + ($1.width * $1.height) }
-        
         // Kiểm tra số lượng vật thể gây nhiễu sát mép khung hình
         let edgeIntrusions = salientRects.filter { r in
             return r.minX < 0.05 || r.maxX > 0.95 || r.minY < 0.05 || r.maxY > 0.95

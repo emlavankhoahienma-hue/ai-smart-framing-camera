@@ -52,7 +52,7 @@ public final class AestheticZoomPlanner: Sendable {
         target: UniversalHeroTarget,
         frameSize: CGSize,
         currentZoom: CGFloat,
-        luminanceHistogram: [Float] = [],
+        averageLuminance: Float = 0.5,
         availableLenses: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera, .builtInUltraWideCamera, .builtInTelephotoCamera]
     ) -> UnifiedAestheticPlan {
         let box = target.boundingBox
@@ -69,7 +69,7 @@ public final class AestheticZoomPlanner: Sendable {
         // 2. Tính mức Zoom thô theo tỷ lệ lấp đầy vàng
         var calculatedZoom = dynamicRho / targetHeight
         
-        // Giới hạn trong khoảng an toàn quang học di động [0.5x .. 15.0x]
+        // Giới hạn trong khoảng an toàn quang học di động [0.5x .. 10.0x]
         calculatedZoom = max(0.5, min(10.0, calculatedZoom))
         
         // 3. Áp dụng Màng lọc No-Amputation (Chống cắt cụt khớp xương & Chân trời)
@@ -85,7 +85,7 @@ public final class AestheticZoomPlanner: Sendable {
         // 5. Phân tích Độ sáng môi trường & Tính toán EV* tối ưu
         let (lightingCond, evBias) = self.calculateEnvironmentalEV(
             target: target,
-            luminanceHistogram: luminanceHistogram
+            averageLuminance: averageLuminance
         )
         
         let rationale = "Dynamic rho=\(String(format: "%.2f", dynamicRho)), Zoom=\(String(format: "%.2fx", safeZoom)), EV=\(String(format: "%+.1f", evBias)) EV"
@@ -151,10 +151,8 @@ public final class AestheticZoomPlanner: Sendable {
         if !target.keypointJoints.isEmpty {
             for joint in target.keypointJoints {
                 // Kiểm tra xem khớp có bị đường biên cắt cúp đè trúng không
-                // Toạ độ sau khi zoom giả định:
                 let distToEdgeY = min(joint.y, 1.0 - joint.y)
                 if distToEdgeY < 0.04 { // Nằm sát mép cắt nguy hiểm < 4%
-                    // Lùi zoom 15% để giữ trọn vẹn khớp chân/tay
                     finalZoom *= 0.85
                     isSafe = false
                     break
@@ -191,36 +189,16 @@ public final class AestheticZoomPlanner: Sendable {
     /// Tính toán độ sáng môi trường EV* chống cháy sáng và tối mù
     private func calculateEnvironmentalEV(
         target: UniversalHeroTarget,
-        luminanceHistogram: [Float]
+        averageLuminance: Float
     ) -> (AestheticLightingCondition, Float) {
-        guard !luminanceHistogram.isEmpty else {
+        if averageLuminance < 0.22 {
+            return (.lowLightNight, +0.3)
+        } else if averageLuminance > 0.72 {
+            return (.highContrastHarshSun, -0.4)
+        } else if target.backgroundContextScore > 0.75 && target.edgeClutterScore < 0.35 && averageLuminance > 0.50 {
+            return (.backlitSilhouette, +0.7)
+        } else {
             return (.normalBalanced, 0.0)
         }
-        
-        let count = luminanceHistogram.count
-        let shadowBinSum = luminanceHistogram[0..<max(1, count / 4)].reduce(0, +)
-        let highlightBinSum = luminanceHistogram[max(0, count * 3 / 4)..<count].reduce(0, +)
-        let totalSum = max(0.0001, luminanceHistogram.reduce(0, +))
-        
-        let shadowRatio = shadowBinSum / totalSum
-        let highlightRatio = highlightBinSum / totalSum
-        
-        // 1. Nhận diện Ngược sáng (Backlit): Vùng sáng nền lớn nhưng chủ thể là bóng tối
-        if highlightRatio > 0.35 && shadowRatio > 0.30 {
-            // Bù sáng +0.7 EV đến +1.0 EV để làm rõ mặt/chủ thể
-            return (.backlitSilhouette, +0.7)
-        }
-        // 2. Nắng gắt (Harsh Sunlight / High Contrast): Tránh cháy sáng bầu trời
-        else if highlightRatio > 0.45 {
-            // Hạ sáng -0.3 EV đến -0.5 EV để giữ chi tiết vùng mây và da
-            return (.highContrastHarshSun, -0.4)
-        }
-        // 3. Thiếu sáng ban đêm (Low-Light):
-        else if shadowRatio > 0.65 {
-            // Bù sáng nhẹ +0.3 EV kèm giữ tương phản đêm
-            return (.lowLightNight, +0.3)
-        }
-        
-        return (.normalBalanced, 0.0)
     }
 }

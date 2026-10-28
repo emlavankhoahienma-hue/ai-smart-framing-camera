@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import CoreMedia
+import QuartzCore
 
 /// Bộ lọc Kalman 2D cho Bounding Box [x, y, w, h, vx, vy, vw, vh]
 public final class BoundingBoxKalmanFilter2D: @unchecked Sendable {
