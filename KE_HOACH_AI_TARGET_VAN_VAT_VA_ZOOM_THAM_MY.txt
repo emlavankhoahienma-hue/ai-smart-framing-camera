@@ -1,0 +1,381 @@
+================================================================================
+KẾ HOẠCH TRIỂN KHAI TOÀN DIỆN (FULL SPECIFICATION PLAN)
+HỆ THỐNG AI TARGET VẠN VẬT (T*) & BỘ ĐIỀU PHỐI ZOOM THẨM MỸ (Z*)
+DỰ ÁN: ALIGNAI SMART FRAMING CAMERA (iOS 17.0+ / 18+)
+================================================================================
+
+TÀI LIỆU DÀNH CHO: Kỹ sư R&D, Nhà phát triển Computer Vision, Lập trình viên iOS
+NGÀY LẬP: Tháng 10/2026
+MÃ TÀI LIỆU: ALIGN-SPEC-UNIVERSAL-TARGET-ZOOM-2026-V1
+
+--------------------------------------------------------------------------------
+MỤC LỤC CHI TIẾT
+--------------------------------------------------------------------------------
+1. TỔNG QUAN YÊU CẦU & MỤC TIÊU CỐT LÕI
+2. BÓC TÁCH MÃ NGUỒN NHỊ PHÂN DOKA CAMERA (跟拍 - FOLLOW v1.7.12)
+   2.1. Cấu trúc thực tế từ file thực thi 9.4MB ARM64 Mach-O
+   2.2. Các Class & Method bám đuổi nội bộ (ORB, FLANN, Kalman 2D)
+   2.3. Bí quyết tối ưu 2-3ms: Local Search Inset & Scaling Optimization
+   2.4. Phân tích phản biện: Ưu điểm cần học & Điểm yếu chí mạng phải tránh
+3. NGUYÊN LÝ KHOA HỌC: QUY LUẬT NHÂN QUẢ 2 BƯỚC (T* -> Z*)
+   3.1. Giai đoạn 1: Phát hiện Chủ thể Anh hùng Vạn vật (T*)
+   3.2. Giai đoạn 2: Điều phối Zoom Thẩm mỹ Phi Tùy tiện (Z*)
+   3.3. Danh mục các sai lầm cấm kỵ ("Tránh dùng gì")
+4. THIẾT KẾ KIẾN TRÚC VÀ ĐẶC TẢ CHI TIẾT 3 MODULE MỚI
+   4.1. Module 1: UniversalSalientTargetEngine.swift
+   4.2. Module 2: AestheticZoomPlanner.swift
+   4.3. Module 3: LocalPatchTrackingOptimizer.swift
+5. NGUYÊN TẮC BẢO VỆ MÃ NGUỒN & RANH GIỚI BẢO MẬT (BOUNDARIES)
+6. LỘ TRÌNH TRIỂN KHAI TỪNG BƯỚC (PHASE 1 -> PHASE 6)
+7. BỘ KIỂM THỬ HỒI QUY 10 KỊCH BẢN CHUYÊN SÂU (BENCHMARK SUITE)
+8. CÁC ĐỀ XUẤT THIẾT KẾ GIAO DIỆN KÍNH NGẮM (HUD & HAPTIC)
+
+================================================================================
+1. TỔNG QUAN YÊU CẦU & MỤC TIÊU CỐT LÕI
+================================================================================
+
+Hệ thống chụp ảnh thông minh hiện tại đã có khả năng bám đuổi không gian 6-DoF
+ESKF trên mặt cầu Lie SO(3) rất ổn định. Tuy nhiên, nút thắt lớn nhất của các ứng
+dụng camera AI hiện nay (kể cả Kapi hay Doka) là:
+
+1. Phụ thuộc vào các nhãn nhận diện người/mặt thông thường:
+   - Nếu chụp tĩnh vật, bông hoa, thú cưng, toà nhà, tác phẩm điêu khắc nghệ thuật,
+     hoặc cảnh biển núi thì AI "mù tịt" hoặc chỉ dựa vào điểm chạm thô sơ.
+2. Gò bó vào các quy tắc AI cứng nhắc:
+   - Ép buộc mọi bức ảnh phải đưa vào giao điểm 1/3 (Rule of Thirds) khiến cảnh kiến
+     trúc đối xứng hoặc phong cảnh hùng vĩ bị méo mó, biến dạng ý đồ nghệ thuật.
+3. Hiện tượng Zoom tùy tiện, vô tổ chức (Arbitrary Digital Zoom):
+   - Người dùng tự zoom bừa bãi làm vỡ hạt (pixelated), hoặc AI tự zoom khiến mép
+     ảnh cắt ngang đầu gối, mắt cá chân, cổ tay (hiện tượng Amputation) hoặc làm
+     cụt đỉnh chóp toà nhà.
+
+MỤC TIÊU CỐT LÕI CỦA KẾ HOẠCH NÀY:
+- Xây dựng bộ não AI cục bộ (On-Device Local AI) đẳng cấp cao (High-end Model).
+- Nhận diện chính xác Target Anh Hùng (Hero Target T*) cho VẠN VẬT (con người toàn
+  thân, cảnh vật, thiên nhiên, kiến trúc, động vật, đồ vật, hàng tỉ thứ khác).
+- Thiết lập quy luật nhân quả tuyệt đối:
+  [Xác định Target T*] ---> [Tính toán Mức Zoom Z* tối ưu tương ứng].
+- Không zoom bừa, giữ khoảng thở bố cục (Negative Space, Headroom, Lead room),
+  ưu tiên nhảy tiêu cự quang học vật lý phần cứng (0.5x, 1.0x, 2.0x In-Sensor, 5.0x).
+- Kế thừa và cải tiến bí quyết bám đuổi siêu tốc dưới 3ms từ Doka Camera:
+  Local Search ROI Inset + Scaling Optimization + Kalman Filter 2D.
+
+================================================================================
+2. BÓC TÁCH MÃ NGUỒN NHỊ PHÂN DOKA CAMERA (跟拍 - FOLLOW v1.7.12)
+================================================================================
+
+2.1. CẤU TRÚC THỰC TẾ TỪ FILE THỰC THI 9.4MB ARM64 MACH-O
+Qua phân tích nhị phân file `Payload/Follow.app/Follow` (Bundle ID: com.ydgn.dokacamera):
+- Tổng dung lượng file thực thi: 9.413.360 bytes.
+- ĐẶC BIỆT: Doka KHÔNG chứa bất kỳ file trọng số mạng nơ-ron cục bộ nào (.mlmodelc,
+  .onnx, .tflite đều bằng 0 byte).
+- Toàn bộ cơ chế bám đuổi của Doka dựa trên mô hình lai (Hybrid):
+  [Apple Vision Framework] + [OpenCV C++ Feature Matching] + [Kalman Filter 2D].
+
+2.2. CÁC CLASS & METHOD BÁM ĐUỔI NỘI BỘ
+Các biểu tượng (Symbols) và cấu trúc class nguyên bản được tìm thấy trong Doka:
+
+A. Class `_TtC6Follow18ORBTemplateMatcher`:
+   - `delegate`: ORBTemplateMatcherDelegate
+   - `featureMatcher`: FeatureMatcher
+   - `orbMatcher`: Cầu nối xuống module C++ ORBMather
+   - `templateImage`: Ảnh mẫu hạt nhân (Seed Image)
+   - `smoothedRect`: Toạ độ Bounding Box sau khi lọc nhiễu
+   - `lastValidRect`, `lastValidCenter`: Lưu toạ độ hợp lệ gần nhất
+   - `kalmanFilter`: Tham chiếu tới `_TtC6Follow14KalmanFilter2D`
+   - `consecutiveFailures`: Đếm số frame trượt mục tiêu liên tiếp
+   - `maxConsecutiveFailures`: Ngưỡng mất dấu tối đa
+   - `stabilityThreshold`, `trackingConfidence`, `isStableTracking`
+
+B. Class `_TtC6Follow21ImageTemplateMatching`:
+   - `templateMatchingThreshold`: Float
+   - `smoothingFactor`: Float
+   - `enableSmoothing`: Bool
+   - `enableLocalSearch`: Bool (Tối ưu tìm kiếm cục bộ)
+   - `localSearchInset`: UIEdgeInsets (Khoảng lề mở rộng quanh mục tiêu)
+   - `enableScalingOptimization`: Bool (Tối ưu co giãn kích thước)
+   - `maxScaledWidth`: CGFloat (Giới hạn bề ngang ảnh khi so khớp)
+   - `lastMatchRect`: CGRect
+   - `isTracking`: Bool
+
+C. Module C++ `ORBMather`:
+   - `findTargetWithORB:templateImage:threshold:`
+   - `findTargetWithORB_Flann_RotationScale:templateImage:threshold:`
+   - `findTargetWithAKAZE:templateImage:threshold:`
+   - `computeOrbDescriptors`: Trích xuất 500 điểm đặc trưng và 32-byte binary descriptors.
+   - `cvflann::LshIndex<cvflann::Hamming>`: Khớp vector nhị phân dùng phép tính phần
+     cứng popcount (XOR nhị phân) siêu tốc.
+
+2.3. BÍ QUYẾT TỐI ƯU 2-3MS CỦA DOKA CAMERA
+Lý do Doka bám theo vật thể cực nhanh và máy mát rượi là nhờ 2 kỹ thuật then chốt:
+1. `enableLocalSearch`: Doka không quét toàn bộ bức ảnh 1080p hay 4K ở mỗi frame.
+   Nó dùng `localSearchInset` (vùng đệm lân cận khoảng 15-25% quanh `lastMatchRect`)
+   để giới hạn không gian tìm kiếm.
+2. `enableScalingOptimization`: Thu nhỏ ảnh tìm kiếm về `maxScaledWidth` (khoảng
+   320px - 480px) trước khi đưa vào OpenCV. Số lượng pixel giảm 80%, thời gian tính
+   toán giảm từ 25ms xuống còn dưới 3ms.
+
+2.4. PHÂN TÍCH PHẢN BIỆN: ƯU ĐIỂM CẦN HỌC & ĐIỂM YẾU CHÍ MẠNG PHẢI TRÁNH
+- ĐIỂM HAY CẦN HỌC:
+  + Kỹ thuật Local Search ROI Inset để giảm tải tính toán cho CPU/GPU.
+  + Cơ chế trích xuất ảnh hạt nhân (Seed Crop) cho phép khóa bất kỳ vật thể nào
+    khi người dùng chạm tay vào màn hình.
+  + Bộ lọc Kalman Filter 2D loại bỏ hoàn toàn vi rung từ tay cầm máy.
+
+- ĐIỂM YẾU CHÍ MẠNG CẦN TRÁNH:
+  + Mù ngữ nghĩa (Semantic Blindness): Doka chỉ nhận diện điểm góc tương phản (FAST
+    corners). Nó không phân biệt được đâu là chủ thể nghệ thuật và đâu là rác hình ảnh
+    (ví dụ: mã vạch trên tường, bụi rậm hỗn loạn, hoa văn áo).
+  + Thất bại trước vật thể phẳng/mịn (Textureless Failure): Với những vật thể có bề
+    mặt trơn (áo trắng trơn, tường nhà, nền trời, mặt nước phẳng lặng, sương mù),
+    ORB tìm ra 0 điểm đặc trưng và Doka lập tức rơi vào trạng thái mất dấu (`consecutiveFailures`).
+  + Không có AI tính toán mức Zoom thẩm mỹ: Doka để người dùng tự zoom bừa hoặc zoom
+    cố định theo mẫu, dễ làm cụt mất bố cục.
+
+================================================================================
+3. NGUYÊN LÝ KHOA HỌC: QUY LUẬT NHÂN QUẢ 2 BƯỚC (T* -> Z*)
+================================================================================
+
+3.1. GIAI ĐOẠN 1: PHÁT HIỆN CHỦ THỂ ANH HÙNG VẠN VẬT (T*)
+Để nhận diện được mọi thứ trên đời mà không bị phụ thuộc vào 80 nhãn thô sơ của YOLO:
+
+A. Năng lượng Nổi bật Thị giác Vô hướng (Class-Agnostic Visual Saliency):
+   - Tận dụng `VNGenerateAttentionBasedSaliencyImageRequest` chạy trực tiếp trên
+     Apple Neural Engine (ANE) với 0% CPU overhead.
+   - Kết hợp thuật toán Biên độ Phổ (Spectral Residual Saliency) từ Fourier Transform:
+     I(x, y) ---> FFT ---> Trừ phổ biên độ trung bình logarit ---> IFFT ---> Bản đồ Saliency.
+     Cơ chế này triệt tiêu các hoa văn lặp lại của nền (lá cây, sóng biển, gạch lát)
+     và làm nổi bật thực thể đơn lẻ (người, tách trà, con mèo, toà tháp).
+
+B. Hàm Tối Ưu Hóa Chọn Chủ Thể Anh Hùng (Hero Subject Energy Function):
+   Với mỗi vùng ứng viên B_i = [x, y, w, h], điểm số được tính:
+   Score(B_i) = w1 * SalientDensity(B_i) 
+              + w2 * CentralityScore(B_i) 
+              + w3 * ContrastRatio(B_i) 
+              - w4 * BoundaryPenalty(B_i)
+   Vùng có Score(B_i) cao nhất chính là Hero Target T*.
+
+3.2. GIAI ĐOẠN 2: ĐIỀU PHỐI ZOOM THẨM MỸ PHI TÙY TIỆN (Z*)
+Sau khi đã xác định được Bounding Box của Target T* = [x, y, w, h]:
+
+A. Quy tắc Tỷ Lệ Lấp Đầy Vàng (Golden Fill Ratio):
+   Nghiên cứu bố cục nhiếp ảnh (GAICD Dataset, DeepGaze) chỉ ra rằng diện tích
+   chủ thể chính phải chiếm một tỷ lệ vàng rho* so với chiều cao khung hình:
+   - Chân dung người / Động vật: rho* = 0.42 - 0.52 (chiếm ~1/2 chiều cao ảnh)
+   - Tĩnh vật / Ẩm thực / Macro: rho* = 0.32 - 0.40 (tạo độ thoáng xung quanh)
+   - Kiến trúc / Phong cảnh:     rho* = 0.50 - 0.65 (ôm trọn công trình hùng vĩ)
+
+   Công thức tính mức Zoom thô:
+   Z_raw = (rho* * H_frame) / h_T*
+
+B. Quy Tắc Không Cắt Cụt (No-Amputation Rule):
+   - Cấm cắt ngang khớp giải phẫu: Đầu gối (Knee), Cổ chân (Ankle), Khuỷu tay (Elbow),
+     Cổ (Neck). Nếu đường biên zoom Z_raw rơi đúng vào các toạ độ khớp này, thuật toán
+     tự động hạ mức zoom xuống điểm an toàn liền kề.
+   - Bảo toàn khoảng thở đỉnh đầu: Headroom >= 12% chiều cao ảnh.
+   - Bảo toàn khoảng thở hướng nhìn: Lead room >= 15% bề ngang ảnh.
+   - Bảo toàn đường chân trời: Với phong cảnh, không để mức zoom cắt ngang đường tiếp
+     giáp giữa trời và đất/biển ở khoảng 1/2 khung hình (tránh chia đôi bức ảnh).
+
+C. Lựa Chọn Tiêu Cự Quang Học Phần Cứng (Physical Prime Lens Stepping):
+   iPhone hỗ trợ nhiều ống kính vật lý. Thuật toán luôn chọn ống kính quang học tối ưu:
+   - Z* < 0.8x  : Chuyển ống kính Ultra-Wide (0.5x, góc 13mm)
+   - 0.8x <= Z* < 1.7x : Chuyển ống kính Wide chính (1.0x, góc 24mm)
+   - 1.7x <= Z* < 3.5x : Kích hoạt chế độ cảm biến Quad-Bayer 48MP Crop (2.0x, góc 48mm, không suy hao)
+   - Z* >= 3.5x : Chuyển ống kính Telephoto (5.0x, góc 120mm)
+
+3.3. DANH MỤC CÁC SAI LẦM CẤM KỴ ("TRÁNH DÙNG GÌ")
+1. KHÔNG dùng YOLO classification làm điều kiện tiên quyết để tìm mục tiêu:
+   Vì YOLO chỉ học được vài chục nhãn có sẵn; gặp những vật thể trừu tượng là hỏng.
+2. KHÔNG ép buộc mọi bức ảnh dời về điểm 1/3 (Rule of Thirds):
+   Bố cục kiến trúc đối xứng hoặc mặt hồ tĩnh lặng cần căn giữa (Center-Weight Symmetry).
+3. KHÔNG sử dụng Digital Zoom phóng đại quá mức:
+   Chỉ cho phép zoom số mượt trong khoảng quang học cảm biến cho phép; tuyệt đối không
+   zoom nội suy pixel gây noise hạt bể ảnh.
+4. KHÔNG quét toàn bộ khung hình ở mỗi chu kỳ:
+   Luôn áp dụng Local Search ROI Inset để tiết kiệm pin và giữ tốc độ 60 FPS.
+
+================================================================================
+4. THIẾT KẾ KIẾN TRÚC VÀ ĐẶC TẢ CHI TIẾT 3 MODULE MỚI
+================================================================================
+
+4.1. MODULE 1: UniversalSalientTargetEngine.swift
+- Vị trí: `AISmartFramingCamera/Services/UniversalSalientTargetEngine.swift`
+- Trách nhiệm: Tìm ra Hero Target T* cho vạn vật (người, động vật, kiến trúc, cây cối, tĩnh vật).
+- Thuộc tính chính:
+  + `saliencyRequest: VNGenerateAttentionBasedSaliencyImageRequest`: Chạy trên ANE.
+  + `minSalientAreaRatio: CGFloat = 0.04`: Ngưỡng diện tích nhỏ nhất để coi là chủ thể.
+  + `maxSalientAreaRatio: CGFloat = 0.85`: Ngưỡng loại trừ phông nền bao trùm.
+  + `currentHeroTarget: SalientSubjectCandidate?`: Lưu trữ kết quả chủ thể anh hùng.
+- Phương thức chính:
+  + `detectUniversalHeroTarget(in pixelBuffer: CVPixelBuffer, completion: @escaping (SalientSubjectCandidate?) -> Void)`
+  + `calculateSpectralSaliencyMap(from image: CIImage) -> CIImage`
+  + `rankCandidates(_ candidates: [SalientSubjectCandidate]) -> SalientSubjectCandidate?`
+
+4.2. MODULE 2: AestheticZoomPlanner.swift
+- Vị trí: `AISmartFramingCamera/Services/AestheticZoomPlanner.swift`
+- Trách nhiệm: Tính toán mức Zoom Z* lý tưởng và lựa chọn ống kính quang học vật lý.
+- Cấu trúc dữ liệu:
+  + `struct AestheticZoomProposal`:
+    * `recommendedZoomFactor: CGFloat`: Mức zoom đề xuất (ví dụ: 1.45x, 2.0x, 5.0x)
+    * `targetOpticalLens: AVCaptureDevice.DeviceType`: Ống kính quang học tương ứng
+    * `fillRatio: CGFloat`: Tỷ lệ lấp đầy đạt được
+    * `headroomPadding: CGFloat`: Khoảng thở đầu
+    * `leadroomPadding: CGFloat`: Khoảng thở hướng nhìn
+    * `isAmputationSafe: Bool`: Cờ xác nhận an toàn giải phẫu
+    * `compositionStyle: CompositionStyle`: (.centerSymmetry, .ruleOfThirds, .goldenSpiral, .landscapeHorizon)
+- Phương thức chính:
+  + `computeIdealAestheticZoom(for target: SalientSubjectCandidate, in frameSize: CGSize, currentZoom: CGFloat) -> AestheticZoomProposal`
+  + `applyNoAmputationGuard(to proposal: inout AestheticZoomProposal, target: SalientSubjectCandidate)`
+  + `resolvePhysicalCameraLens(for zoomFactor: CGFloat) -> (AVCaptureDevice.DeviceType, CGFloat)`
+
+4.3. MODULE 3: LocalPatchTrackingOptimizer.swift
+- Vị trí: `AISmartFramingCamera/Services/LocalPatchTrackingOptimizer.swift`
+- Trách nhiệm: Cung cấp cơ chế bám siêu nhẹ 2-3ms lấy cảm hứng từ Doka.
+- Thuộc tính chính:
+  + `localSearchMargin: CGFloat = 0.20`: Vùng đệm 20% quanh vị trí cũ.
+  + `maxProcessingResolution: CGSize = CGSize(width: 384, height: 384)`: Độ phân giải thu nhỏ.
+  + `kalmanFilter: BoundingBoxKalmanFilter2D`: Bộ lọc Kalman 2D cho [x, y, w, h, vx, vy, vw, vh].
+  + `consecutiveFailures: Int`: Bộ đếm số lần trượt mục tiêu.
+  + `maxAllowedFailures: Int = 6`: Giới hạn 100ms trước khi kích hoạt tìm kiếm lại.
+- Phương thức chính:
+  + `cropLocalSearchROI(from fullBuffer: CVPixelBuffer, previousBox: CGRect) -> (CVPixelBuffer, CGRect)`
+  + `updateTracking(with measuredBox: CGRect?, timestamp: CFTimeInterval) -> CGRect`
+  + `resetTracking(with seedBox: CGRect)`
+
+================================================================================
+5. NGUYÊN TẮC BẢO VỆ MÃ NGUỒN & RANH GIỚI BẢO MẬT (BOUNDARIES)
+================================================================================
+
+Dự án sở hữu 2 tệp kiểm soát ranh giới cốt lõi:
+1. `tests/TrackingBoundary.json` (17 ranh giới được bảo vệ nghiêm ngặt)
+2. `tests/PhotographicDetectionBoundary.json` (3 ranh giới được bảo vệ nghiêm ngặt)
+
+QUY TẮC BẤT DI BẤT DỊCH:
+- Không chỉnh sửa trực tiếp vào các hàm đã được tính mã băm SHA256 trong:
+  + `VisionFramingEngine.swift`
+  + `SpatialTrackingEngine.swift`
+  + `StreetSpatialTrackingEngine.swift`
+  + `TargetPatchFlow.swift`
+  + `TrackingGeometry.swift`
+  + `NeuralTargetTracker.swift`
+  + `LiveEntityTracker.swift`
+  + `CameraService.swift`
+  + Các đoạn code chỉ định trong `CameraViewModel.swift` và `ARFramingOverlayView.swift`
+- Mọi module mới (`UniversalSalientTargetEngine`, `AestheticZoomPlanner`,
+  `LocalPatchTrackingOptimizer`) được xây dựng dưới dạng **dịch vụ độc lập (Independent Services)**
+  và chỉ tương tác qua các interface mở rộng hoặc delegate, đảm bảo lệnh chạy:
+  `python scripts/verify_tracking_boundary.py` LUÔN BÁO PASS 100%.
+
+================================================================================
+6. LỘ TRÌNH TRIỂN KHAI TỪNG BƯỚC (PHASE 1 -> PHASE 6)
+================================================================================
+
+SƠ ĐỒ TIẾN TRÌNH:
+[Bước 1: UniversalSalientTargetEngine]
+       |
+       v
+[Bước 2: AestheticZoomPlanner]
+       |
+       v
+[Bước 3: LocalPatchTrackingOptimizer]
+       |
+       v
+[Bước 4: Tích hợp vào CameraViewModel (An toàn)]
+       |
+       v
+[Bước 5: Viết bộ Test Hồi Quy 10 Scenario Benchmark]
+       |
+       v
+[Bước 6: Xác minh Boundary & Build IPA GitHub Actions]
+
+CHI TIẾT TỪNG BƯỚC:
+
+- BƯỚC 1: Xây dựng `UniversalSalientTargetEngine.swift`
+  + Cài đặt Apple Vision Saliency ANE request.
+  + Cài đặt hàm xếp hạng năng lượng Hero Target S(x, y).
+  + Chạy thử nghiệm phân tích trên các frame ảnh tĩnh vật và phong cảnh.
+
+- BƯỚC 2: Xây dựng `AestheticZoomPlanner.swift`
+  + Cài đặt công thức Golden Fill Ratio rho*.
+  + Cài đặt bộ lọc No-Amputation Guard kiểm tra khớp xương và chân trời.
+  + Cài đặt bộ chuyển đổi ống kính quang học iPhone vật lý.
+
+- BƯỚC 3: Xây dựng `LocalPatchTrackingOptimizer.swift`
+  + Cài đặt thuật toán Local Search ROI Inset (20% margin).
+  + Cài đặt Scaling Optimization (384px) và bộ lọc Kalman 2D.
+  + Cài đặt cơ chế kiểm soát `consecutiveFailures`.
+
+- BƯỚC 4: Tích hợp an toàn vào `CameraViewModel.swift`
+  + Bổ sung luồng kết nối giữa phát hiện vạn vật và tính toán zoom đề xuất.
+  + Đảm bảo không xâm phạm bất kỳ khối mã nào trong `TrackingBoundary.json`.
+
+- BƯỚC 5: Xây dựng Bộ Kiểm Thử Hồi Quy 10 Kịch Bản Chuyên Sâu
+  + Viết script Python `scripts/test_universal_target_and_zoom.py`.
+  + Mô phỏng và xuất telemetry đánh giá độ chính xác của 10 kịch bản.
+
+- BƯỚC 6: Kiểm tra Tính Toàn Vẹn & Xuất Bản Bản Build
+  + Chạy `verify_tracking_boundary.py` (bắt buộc PASS 100%).
+  + Chạy `check_swift_brackets.py` (bắt buộc 0 lỗi cú pháp).
+  + Commit mã nguồn và đẩy lên GitHub Actions để tự động đóng gói IPA không chứng chỉ.
+
+================================================================================
+7. BỘ KIỂM THỬ HỒI QUY 10 KỊCH BẢN CHUYÊN SÂU (BENCHMARK SUITE)
+================================================================================
+
+Bộ kiểm thử sẽ tự động chạy qua 10 kịch bản chụp thực tế khắt khe:
+
+1. Kịch bản 1 — Chân dung Người Toàn Thân (Full-Body Person):
+   - Đánh giá: Target T* bao trọn toàn bộ cơ thể.
+   - Zoom Z*: Giữ khoảng thở đỉnh đầu (Headroom >= 12%), không cắt ngang cổ chân.
+2. Kịch bản 2 — Cận cảnh Đồ vật / Tĩnh vật / Ẩm thực (Macro / Still Life):
+   - Đánh giá: Target T* khóa chính xác cốc nước/đĩa bánh, không bị lừa bởi hoa văn bàn.
+   - Zoom Z*: Tỷ lệ lấp đầy 35%, phông nền mờ ảo nhẹ.
+3. Kịch bản 3 — Kiến trúc Tòa nhà Cao tầng (Architecture Horizon):
+   - Đánh giá: Nhận diện cả khối công trình kiến trúc.
+   - Zoom Z*: Không cắt cụt chóp tháp; bảo toàn đường chân trời.
+4. Kịch bản 4 — Cảnh Thiên nhiên / Hoàng hôn Biển (Nature Landscape):
+   - Đánh giá: Xác định mặt trời / hòn đảo là tiêu điểm thị giác anh hùng.
+   - Zoom Z*: Giữ góc rộng 0.5x hoặc 1.0x, bố cục đường chân trời ở tỷ lệ vàng 1/3 hoặc 2/3.
+5. Kịch bản 5 — Động vật / Thú cưng đang chuyển động (Pet / Animal Tracking):
+   - Đánh giá: Bám dính con chó/mèo mà không bị mất dấu khi chạy nhảy.
+   - Zoom Z*: Zoom linh hoạt thích ứng giữ thú cưng trong vùng trung tâm an toàn.
+6. Kịch bản 6 — Phương tiện Giao thông Đường phố (Vehicle Motion):
+   - Đánh giá: Bắt trúng chiếc xe di chuyển trên nền đường phố phức tạp.
+   - Zoom Z*: Tự động chừa khoảng thở phía trước đầu xe (Lead room >= 15%).
+7. Kịch bản 7 — Tác phẩm Điêu khắc / Hiện vật Bảo tàng (Museum Sculpture):
+   - Đánh giá: Nhận diện tượng đá không có trong nhãn của YOLO/COCO.
+   - Zoom Z*: Bố cục đối xứng trục trung tâm trang nghiêm.
+8. Kịch bản 8 — Nhóm Người 2-3 Đối tượng (Multi-Subject Selection):
+   - Đánh giá: Nhận diện cả nhóm là một khối thực thể thống nhất hoặc chọn chủ thể trung tâm.
+   - Zoom Z*: Không zoom quá hẹp làm cắt mất người đứng ngoài rìa.
+9. Kịch bản 9 — Chụp Ngược Sáng / Silhouette Bóng Mờ (Backlit Saliency):
+   - Đánh giá: Phổ tương phản vẫn nhận dạng được hình khối đen trên nền trời sáng rực.
+   - Zoom Z*: Cân bằng đo sáng trung tâm chủ thể.
+10. Kịch bản 10 — Thử nghiệm Zoom Đột Ngột Chống Cắt Cụt Khớp (Anti-Amputation Stress Test):
+    - Đánh giá: Khi thay đổi khoảng cách đột ngột từ 5m về 1.5m, thuật toán tự động chặn
+      lại trước khi đường cắt chạm vào đầu gối hoặc cổ người mẫu.
+
+================================================================================
+8. CÁC ĐỀ XUẤT THIẾT KẾ GIAO DIỆN KÍNH NGẮM (HUD & HAPTIC)
+================================================================================
+
+1. Chỉ báo Target Đa Năng trên Kính Ngắm:
+   - Khi phát hiện được Hero Target T*: Xuất hiện vòng tròn hào quang màu vàng hổ phách
+     (Amber Gold Ring) nhấp nháy êm dịu, kèm chấm tâm lấy nét.
+   - Nếu là người: Có ký hiệu nhận diện nhỏ gọn góc trên bên phải khung.
+   - Nếu là cảnh quan/vật thể: Khung bo góc mềm mại ôm lấy thực thể.
+
+2. Thước đo Zoom Đề Xuất Thông Minh:
+   - Trên thanh trượt tiêu cự (0.5x, 1x, 2x, 5x), xuất hiện một vạch sáng thông minh
+     được đánh dấu ngôi sao vàng nhỏ tại vị trí Z* (ví dụ: 1.8x).
+   - Khi người dùng chạm nhẹ hoặc kéo gần tới vạch Z*, máy rung phản hồi nam châm
+     (Magnetic Snap Haptic) hít nhẹ vào đúng mức tiêu cự hoàn hảo.
+
+3. Dây Dắt Nét & Tối Ưu Bám Đuổi (Lấy cảm hứng từ Doka):
+   - Khi di chuyển máy, đường dây nét nối từ tâm kính ngắm tới Target phát xung nhịp
+     60 FPS cực mượt, thể hiện trạng thái bám dính chắc chắn.
+
+================================================================================
+KẾT THÚC VĂN BẢN ĐẶC TẢ KẾ HOẠCH
+================================================================================
