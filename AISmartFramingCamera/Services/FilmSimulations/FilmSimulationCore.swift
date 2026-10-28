@@ -135,14 +135,36 @@ public enum FilmSimulationCore {
         return blend.outputImage?.cropped(to: extent) ?? input
     }
 
-    // MARK: - 2. Digital CCD Sensor Noise (Nhieu hat cam bien dien tu Digicam Y2K)
-    public static func applyDigitalCCDNoise(_ input: CIImage, intensity: Float) -> CIImage {
+    // MARK: - 2. Digital CCD Sensor Noise (Nhieu hat cam bien dien tu Digicam Y2K thuc te tu Kapi CCD)
+    public static func applyDigitalCCDNoise(_ input: CIImage, intensity: Float, frameIndex: Int? = nil) -> CIImage {
         guard intensity > 0.01 else { return input }
-        guard let random = CIFilter(name: "CIRandomGenerator")?.outputImage else { return input }
         let extent = input.extent
+
+        // 1. Uu tien nap texture hat CCD thuc te trich xuat tu phan cung digicam
+        if let authenticNoise = CCDNoiseTextureLoader.shared.getNoiseImage(index: frameIndex) {
+            guard let tileFilter = CIFilter(name: "CIAffineTile") else { return input }
+            tileFilter.setValue(authenticNoise, forKey: kCIInputImageKey)
+            tileFilter.setValue(NSValue(cgAffineTransform: .identity), forKey: kCIInputTransformKey)
+            guard let tiled = tileFilter.outputImage?.cropped(to: extent) else { return input }
+
+            guard let opacity = CIFilter(name: "CIColorMatrix") else { return input }
+            opacity.setValue(tiled, forKey: kCIInputImageKey)
+            opacity.setValue(CIVector(x: 1, y: 0, z: 0, w: 0), forKey: "inputRVector")
+            opacity.setValue(CIVector(x: 0, y: 1, z: 0, w: 0), forKey: "inputGVector")
+            opacity.setValue(CIVector(x: 0, y: 0, z: 1, w: 0), forKey: "inputBVector")
+            opacity.setValue(CIVector(x: 0, y: 0, z: 0, w: CGFloat(min(0.40, intensity * 0.35))), forKey: "inputAVector")
+            guard let controlled = opacity.outputImage else { return input }
+
+            guard let blend = CIFilter(name: "CISoftLightBlendMode") else { return input }
+            blend.setValue(controlled, forKey: kCIInputImageKey)
+            blend.setValue(input, forKey: kCIInputBackgroundImageKey)
+            return blend.outputImage?.cropped(to: extent) ?? input
+        }
+
+        // 2. Du phong (Fallback) tao hat ngau nhien khi chua nap duoc tep texture
+        guard let random = CIFilter(name: "CIRandomGenerator")?.outputImage else { return input }
         let cropped = random.cropped(to: extent)
 
-        // Nhieu cam bien ky thuat so CCD co hat min, chua mot phan sac mau chroma noise nhe
         guard let noiseControls = CIFilter(name: "CIColorControls") else { return input }
         noiseControls.setValue(cropped, forKey: kCIInputImageKey)
         noiseControls.setValue(0.20, forKey: kCIInputSaturationKey)
@@ -161,6 +183,46 @@ public enum FilmSimulationCore {
         blend.setValue(controlled, forKey: kCIInputImageKey)
         blend.setValue(input, forKey: kCIInputBackgroundImageKey)
         return blend.outputImage?.cropped(to: extent) ?? input
+    }
+
+    // MARK: - Authentic CCD Sensor Texture Cache
+    public final class CCDNoiseTextureLoader: @unchecked Sendable {
+        public static let shared = CCDNoiseTextureLoader()
+        private var noiseImages: [CIImage] = []
+        private let lock = NSLock()
+        private var isLoaded = false
+
+        private init() {}
+
+        public func getNoiseImage(index: Int? = nil) -> CIImage? {
+            lock.lock()
+            if !isLoaded {
+                loadTextures()
+            }
+            guard !noiseImages.isEmpty else {
+                lock.unlock()
+                return nil
+            }
+            let idx = index ?? Int.random(in: 0..<noiseImages.count)
+            let img = noiseImages[idx % noiseImages.count]
+            lock.unlock()
+            return img
+        }
+
+        private func loadTextures() {
+            isLoaded = true
+            var loaded: [CIImage] = []
+            for i in 0..<15 {
+                let name = String(format: "noise_%02d", i)
+                if let url = Bundle.main.url(forResource: name, withExtension: "png") ??
+                             Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "Noise") {
+                    if let ci = CIImage(contentsOf: url) {
+                        loaded.append(ci)
+                    }
+                }
+            }
+            noiseImages = loaded
+        }
     }
 
     // MARK: - 3. Highlight Halation & Red Glow (Quang do bop nguon sang dac trung CineStill 800T)

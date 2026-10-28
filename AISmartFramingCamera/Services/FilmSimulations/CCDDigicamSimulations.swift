@@ -27,6 +27,13 @@ public enum CCDDigicamSimulations {
 
     // MARK: - 1. Sony CCD1 Cyber-shot (Cam bien Super HAD CCD, mau tuoi ruc, xanh la va xanh bien bat mat)
     private static func applyCCD1Cyber(_ input: CIImage) -> CIImage {
+        // Tich hop 3D LUT goc Classic CCD Y2K qua CIColorCube
+        if let lutData = FilmSimulationCore.load3DLUT(named: "CCD-ClassicY2K") {
+            var out = FilmSimulationCore.applyColorCube(input, cubeData: lutData, dimension: 32)
+            out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.25, radius: 7.5)
+            out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
+            return out
+        }
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 1.05, y: -0.02, z: -0.02, w: 0),
@@ -121,6 +128,13 @@ public enum CCDDigicamSimulations {
 
     // MARK: - 5. G-CCD Gold (Mau vang ruc ro anh kim, hoang hon thap nien 2000)
     private static func applyGCCDGold(_ input: CIImage) -> CIImage {
+        // Tich hop 3D LUT goc Golden CCD qua CIColorCube
+        if let lutData = FilmSimulationCore.load3DLUT(named: "CCD-GoldenCCD") {
+            var out = FilmSimulationCore.applyColorCube(input, cubeData: lutData, dimension: 32)
+            out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.28, radius: 9.0)
+            out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.14)
+            return FilmSimulationCore.applyVignette(out, intensity: 0.22, radius: 2.0)
+        }
         var out = FilmSimulationCore.applyTempTint(input, neutralTemp: 6500, targetTemp: 7300, targetTint: 3.8)
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.12, saturation: 1.16)
         out = FilmSimulationCore.applyToneCurve(

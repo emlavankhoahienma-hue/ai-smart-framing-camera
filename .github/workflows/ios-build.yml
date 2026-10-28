@@ -236,6 +236,12 @@ jobs:
             cp -r AISmartFramingCamera/Resources/LUTs/* Payload/AISmartFramingCamera.app/LUTs/
             echo " Đã tích hợp thành công 3D Fuji LUTs vào App Bundle!"
           fi
+          if [ -d "AISmartFramingCamera/Resources/Noise" ]; then
+            mkdir -p Payload/AISmartFramingCamera.app/Noise
+            cp -r AISmartFramingCamera/Resources/Noise/* Payload/AISmartFramingCamera.app/
+            cp -r AISmartFramingCamera/Resources/Noise/* Payload/AISmartFramingCamera.app/Noise/
+            echo " Đã tích hợp thành công Authentic CCD Noise Textures vào App Bundle!"
+          fi
           test -d Payload/AISmartFramingCamera.app/SigLIPBaseImage.mlmodelc
           test -s Payload/AISmartFramingCamera.app/SigLIPPrompts.json
           python scripts/verify_model_bundle.py Payload/AISmartFramingCamera.app

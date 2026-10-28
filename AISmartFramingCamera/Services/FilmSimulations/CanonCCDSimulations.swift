@@ -27,6 +27,13 @@ public enum CanonCCDSimulations {
 
     // MARK: - 1. PowerShot G (Cam bien CCD kinh dien, mau da am ap Canon Colors, bau troi xanh trong)
     private static func applyPowerShotG(_ input: CIImage) -> CIImage {
+        // Tich hop 3D LUT goc Canon G7X Mark II qua CIColorCube
+        if let lutData = FilmSimulationCore.load3DLUT(named: "Canon-G7XMarkII") {
+            var out = FilmSimulationCore.applyColorCube(input, cubeData: lutData, dimension: 32)
+            out = FilmSimulationCore.applyCCDBloom(out, intensity: 0.20, radius: 7.0)
+            out = FilmSimulationCore.applyDigitalCCDNoise(out, intensity: 0.12)
+            return out
+        }
         var out = FilmSimulationCore.applyColorMatrix(
             input,
             red: CIVector(x: 1.06, y: -0.01, z: -0.01, w: 0),

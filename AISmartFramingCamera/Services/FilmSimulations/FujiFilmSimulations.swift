@@ -179,6 +179,12 @@ public enum FujiFilmSimulations {
 
     // MARK: - 7. Fuji X100 (Cam bien X-Trans, vi tuong phan sac net, mau sac tu nhien)
     private static func applyFujiX100(_ input: CIImage) -> CIImage {
+        // Tich hop 3D LUT goc Fuji X-T30 qua CIColorCube
+        if let lutData = FilmSimulationCore.load3DLUT(named: "Fuji-XT30") {
+            var out = FilmSimulationCore.applyColorCube(input, cubeData: lutData, dimension: 32)
+            out = FilmSimulationCore.applyOrganicGrain(out, intensity: 0.12, grainSize: 1.2)
+            return FilmSimulationCore.applyVignette(out, intensity: 0.16, radius: 2.2)
+        }
         var out = FilmSimulationCore.applyTempTint(input, neutralTemp: 6500, targetTemp: 6420, targetTint: -0.8)
         out = FilmSimulationCore.applyColorControls(out, contrast: 1.08, saturation: 0.96)
         out = FilmSimulationCore.applyToneCurve(
