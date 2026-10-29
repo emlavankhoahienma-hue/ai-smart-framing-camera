@@ -174,7 +174,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .pollinations: return "openai/gpt-5.4-nano"
         case .googleGemini: return "gemini-2.0-flash"
-        case .groq:         return "llama-3.2-11b-vision-preview"
+        case .groq:         return "qwen/qwen3.8-27b"
         case .openRouter:   return "google/gemini-2.0-flash-exp:free"
         case .openAI:       return "gpt-4o-mini"
         case .anthropic:    return "claude-3-5-sonnet-20241022"
@@ -212,6 +212,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     case gemini20FlashLiteDirect = "gemini-2.0-flash-lite-preview-02-05"
     case gemini15FlashDirect = "gemini-1.5-flash"
     case gemini20FlashFree = "google/gemini-2.0-flash-exp:free"
+    case groqQwen38 = "qwen/qwen3.8-27b"
     case groqLlama32_11BDirect = "llama-3.2-11b-vision-preview"
     case groqLlama32_90BDirect = "llama-3.2-90b-vision-preview"
     case freeVision = "google/gemma-4-31b-it:free"
@@ -268,8 +269,9 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Flash Lite (Google AI • Siêu tốc)"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash (Google AI • 1500 lượt/ngày free)"
         case .gemini20FlashFree:      return "Gemini 2.0 Flash (OpenRouter • Miễn phí)"
-        case .groqLlama32_11BDirect:  return "Llama 3.2 11B Vision (Groq LPU Siêu tốc • Free)"
-        case .groqLlama32_90BDirect:  return "Llama 3.2 90B Vision (Groq LPU Chất lượng cao • Free)"
+        case .groqQwen38:             return "Qwen 3.8 27B Vision (Groq LPU Siêu tốc • Free)"
+        case .groqLlama32_11BDirect:  return "Llama 3.2 11B Vision (Groq • Cũ/Ngừng hỗ trợ)"
+        case .groqLlama32_90BDirect:  return "Llama 3.2 90B Vision (Groq • Cũ/Ngừng hỗ trợ)"
         case .freeVision:         return "Gemma 4 31B Vision (Miễn phí)"
         case .gemini25FlashFree:  return "Gemini 2.5 Flash (Miễn phí)"
         case .qwen3VLFree:        return "Qwen 3 VL 32B (Miễn phí)"
@@ -323,6 +325,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Lite"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash"
         case .gemini20FlashFree:      return "Gemini 2.0 Free"
+        case .groqQwen38:             return "Qwen 3.8 27B"
         case .groqLlama32_11BDirect:  return "Llama 3.2 11B (Groq)"
         case .groqLlama32_90BDirect:  return "Llama 3.2 90B (Groq)"
         case .freeVision:             return "Gemma 4 31B"
@@ -377,8 +380,10 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             return "Phân tích ảnh qua GPT-4o Mini trên Pollinations AI (yêu cầu tài khoản có Pollen)"
         case .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
             return "Trực tiếp Google AI Studio — Hạn mức miễn phí 1.500 lượt/ngày cực lớn"
+        case .groqQwen38:
+            return "Groq LPU chip chuyên dụng — Nhận diện thị giác siêu tốc < 0.8 giây hoàn toàn miễn phí"
         case .groqLlama32_11BDirect, .groqLlama32_90BDirect:
-            return "Groq LPU chip chuyên dụng — Tốc độ xử lý siêu tốc < 0.8 giây hoàn toàn miễn phí"
+            return "Groq LPU chip chuyên dụng — Model cũ (khuyến nghị dùng Qwen 3.8 27B)"
         case .gemini20FlashFree, .freeVision, .gemini25FlashFree, .qwen3VLFree, .llama4MaverickFree:
             return "Miễn phí qua OpenRouter — tự động xoay vòng dự phòng khi quá tải"
         case .gemini31FlashLite, .gemini25Flash, .gemini20Flash, .gemini15Flash8B, .gpt5Mini, .gpt41Mini, .gpt4oMini, .o3Mini:
@@ -439,12 +444,10 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .groq:
             return [
                 .autoStrongest,
-                .groqLlama32_11BDirect,
-                .groqLlama32_90BDirect,
-                .llamaVision,
+                .groqQwen38,
                 .groqLlama33,
-                .groqLlama32_90B,
-                .llama4MaverickFree
+                .groqLlama32_11BDirect,
+                .groqLlama32_90BDirect
             ]
         case .openAI:
             return [
@@ -492,7 +495,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         switch provider {
         case .pollinations: return .pollinationsGPT54Nano
         case .googleGemini: return .gemini20FlashDirect
-        case .groq: return .groqLlama32_11BDirect
+        case .groq: return .groqQwen38
         case .openAI: return .gpt4oMini
         case .anthropic: return .claude37Sonnet
         case .deepSeek: return .deepseekChat
@@ -572,16 +575,17 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             }
         } else if provider == .groq {
             var cleanModel = preferred
-            if cleanModel.hasPrefix("groq/") || cleanModel.hasPrefix("meta-llama/") {
-                let parts = cleanModel.split(separator: "/")
-                if parts.count == 2 { cleanModel = String(parts[1]) }
+            if cleanModel.hasPrefix("groq/") {
+                cleanModel = String(cleanModel.dropFirst("groq/".count))
             }
             cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
-            if cleanModel == "auto" { cleanModel = "llama-3.2-11b-vision-preview" }
-            if selected != .autoStrongest {
+            if cleanModel == "auto" || cleanModel == "llama-3.2-11b-vision-preview" || cleanModel == "llama-3.2-90b-vision-preview" || cleanModel.isEmpty {
+                cleanModel = "qwen/qwen3.8-27b"
+            }
+            if selected != .autoStrongest && cleanModel != "llama-3.2-11b-vision-preview" && cleanModel != "llama-3.2-90b-vision-preview" {
                 return [cleanModel]
             }
-            return [cleanModel, "llama-3.2-11b-vision-preview"]
+            return [cleanModel, "qwen/qwen3.8-27b"]
         } else if provider == .openAI {
             var cleanModel = preferred
             if cleanModel.hasPrefix("openai/") {
@@ -972,13 +976,27 @@ public final class GeminiService: ObservableObject {
 
     public var activeModelID: String {
         let custom = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !custom.isEmpty { return custom }
+        if !custom.isEmpty {
+            if selectedProvider == .groq && (custom == "llama-3.2-11b-vision-preview" || custom == "llama-3.2-90b-vision-preview") {
+                return "qwen/qwen3.8-27b"
+            }
+            return custom
+        }
         if selectedProvider == .pollinations {
             return selectedModel.technicalModelID
         }
         let raw = selectedModel.technicalModelID
         if selectedProvider == .googleGemini && raw.hasPrefix("google/") {
             return String(raw.dropFirst("google/".count)).replacingOccurrences(of: ":free", with: "")
+        }
+        if selectedProvider == .groq {
+            if raw == "llama-3.2-11b-vision-preview" || raw == "llama-3.2-90b-vision-preview" || raw == "auto" {
+                return "qwen/qwen3.8-27b"
+            }
+            if raw.hasPrefix("groq/") {
+                return String(raw.dropFirst("groq/".count)).replacingOccurrences(of: ":free", with: "")
+            }
+            return raw.replacingOccurrences(of: ":free", with: "")
         }
         if selectedProvider != .openRouter && raw.contains("/") {
             let parts = raw.split(separator: "/")
@@ -1130,6 +1148,9 @@ public final class GeminiService: ObservableObject {
                 return .freeVision
             }
             if let model = AIVisionModel(rawValue: saved) {
+                if selectedProvider == .groq && (model == .groqLlama32_11BDirect || model == .groqLlama32_90BDirect) {
+                    return .groqQwen38
+                }
                 return model
             }
             return .freeVision
@@ -2052,8 +2073,8 @@ public final class GeminiService: ObservableObject {
             "max_tokens": 1000
         ]
         let lowerModel = modelID.lowercased()
-        if (selectedProvider == .openAI || selectedProvider == .googleGemini) &&
-           (lowerModel.contains("gpt-") || lowerModel.contains("gemini-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4")) {
+        if (selectedProvider == .openAI || selectedProvider == .googleGemini || selectedProvider == .groq) &&
+           (lowerModel.contains("gpt-") || lowerModel.contains("gemini-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4") || lowerModel.contains("qwen")) {
             requestBody["response_format"] = ["type": "json_object"]
         }
         if selectedProvider == .openRouter {
