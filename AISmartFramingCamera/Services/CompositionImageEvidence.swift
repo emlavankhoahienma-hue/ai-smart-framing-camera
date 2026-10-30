@@ -109,7 +109,21 @@ final class CompositionImageRenderer {
     func preview(image: CIImage, corners: [CGPoint], aspect: Double) -> CGImage? {
         guard corners.count == 4, aspect.isFinite, aspect > 0,
               corners.allSatisfy({ $0.x.isFinite && $0.y.isFinite &&
-                  (-0.0001...1.0001).contains($0.x) && (-0.0001...1.0001).contains($0.y) }) else { return nil }
+                  (-0.42...1.42).contains($0.x) && (-0.42...1.42).contains($0.y) }) else { return nil }
+        // Tránh vệt sọc clamped/mirror padding đánh lừa mạng DINOv2 (Charm) & SAMP-Net khi xoay 3D ở 1.0x:
+        // Dịch nhẹ cửa sổ lấy mẫu preview vào trong miền pixel thật [0, 1] để đánh giá chất lượng hình ảnh thực
+        let minX = corners.map(\.x).min() ?? 0
+        let maxX = corners.map(\.x).max() ?? 1
+        let minY = corners.map(\.y).min() ?? 0
+        let maxY = corners.map(\.y).max() ?? 1
+        let shiftX: CGFloat = minX < 0 ? -minX : (maxX > 1 ? 1 - maxX : 0)
+        let shiftY: CGFloat = minY < 0 ? -minY : (maxY > 1 ? 1 - maxY : 0)
+        let safeCorners = corners.map { pt in
+            CGPoint(
+                x: min(1.0, max(0.0, pt.x + shiftX)),
+                y: min(1.0, max(0.0, pt.y + shiftY))
+            )
+        }
         let extent = image.extent
         func point(_ normalized: CGPoint) -> CGPoint {
             CGPoint(x: extent.minX + normalized.x * extent.width,
@@ -117,8 +131,8 @@ final class CompositionImageRenderer {
         }
         let correction = CIFilter.perspectiveCorrection()
         correction.inputImage = image
-        correction.topLeft = point(corners[0]); correction.topRight = point(corners[1])
-        correction.bottomRight = point(corners[2]); correction.bottomLeft = point(corners[3])
+        correction.topLeft = point(safeCorners[0]); correction.topRight = point(safeCorners[1])
+        correction.bottomRight = point(safeCorners[2]); correction.bottomLeft = point(safeCorners[3])
         guard let output = correction.outputImage else { return nil }
         let height = min(288.0, 448 / max(1, aspect))
         return render(output, size: CGSize(width: max(1, (height * aspect).rounded()), height: height))

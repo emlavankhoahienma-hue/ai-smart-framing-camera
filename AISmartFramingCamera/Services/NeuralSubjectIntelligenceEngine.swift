@@ -96,8 +96,8 @@ private final class SemanticCropRanker: @unchecked Sendable {
 
     func sceneHint(scores: [String: Double], candidates: [NeuralSubjectCandidate]) -> DetectedSceneType? {
         let ordered = scores.sorted { $0.value > $1.value }
-        guard let best = ordered.first, best.value >= 0.25,
-              ordered.count < 2 || best.value - ordered[1].value >= 0.025 else { return nil }
+        guard let best = ordered.first, best.value >= 0.22,
+              ordered.count < 2 || best.value - ordered[1].value >= 0.018 else { return nil }
         switch best.key {
         case "building": return .architecture
         case "landscape", "person_scenery": return .landscape
@@ -113,6 +113,47 @@ private final class SemanticCropRanker: @unchecked Sendable {
         default: return nil
         }
     }
+
+    func extractSemanticGuidance(scores: [String: Double], candidates: [NeuralSubjectCandidate]) -> SemanticSceneGuidance {
+        guard !scores.isEmpty else { return .neutral }
+        let wideScore = max(
+            scores["landscape"] ?? 0,
+            scores["person_scenery"] ?? 0,
+            scores["building"] ?? 0,
+            scores["street"] ?? 0,
+            scores["sky"] ?? 0,
+            scores["water"] ?? 0,
+            scores["group"] ?? 0
+        )
+        let tightScore = max(
+            scores["flower"] ?? 0,
+            scores["macro"] ?? 0,
+            scores["food"] ?? 0,
+            (scores["person"] ?? 0) * 0.92,
+            (scores["animal"] ?? 0) * 0.92
+        )
+        let shotScaleBias = max(-1.0, min(1.0, (tightScore - wideScore) * 3.0))
+        let contextWeight = max(0.15, min(0.95, 0.50 + (wideScore - tightScore) * 1.8))
+        return SemanticSceneGuidance(
+            shotScaleBias: shotScaleBias,
+            contextPreservationWeight: contextWeight,
+            primarySceneHint: sceneHint(scores: scores, candidates: candidates),
+            affinities: scores
+        )
+    }
+}
+
+public struct SemanticSceneGuidance: Sendable {
+    public let shotScaleBias: Double
+    public let contextPreservationWeight: Double
+    public let primarySceneHint: DetectedSceneType?
+    public let affinities: [String: Double]
+    public static let neutral = SemanticSceneGuidance(
+        shotScaleBias: 0.0,
+        contextPreservationWeight: 0.50,
+        primarySceneHint: nil,
+        affinities: [:]
+    )
 }
 
 /// Ứng viên chủ thể được AI phát hiện và xếp hạng
@@ -154,6 +195,7 @@ public struct NeuralAnalysisOutput: Sendable {
     public let usedSemanticModel: Bool
     var compositionRaster: CompositionRaster?
     var semanticAffinities: [String: Double] = [:]
+    var semanticGuidance: SemanticSceneGuidance = .neutral
     var primaryFaceCount: Int { allCandidates.first?.faceBounds.count ?? 0 }
 
     public init(
@@ -497,19 +539,30 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         candidates = rankedDistinct(candidates, raster: raster)
         if let group = coherentGroup(candidates, raster: raster) { candidates.insert(group, at: 0) }
         var scene = sceneType(completed.contains(ObjectIdentifier(classification)) ? classification.results ?? [] : [])
-        let semantics = SemanticCropRanker.shared.sceneEvidence(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
-        if let hint = SemanticCropRanker.shared.sceneHint(scores: semantics, candidates: candidates), scene == .general { scene = hint }
+        let (semantics, guidance, didUseSigLIP): ([String: Double], SemanticSceneGuidance, Bool) = autoreleasepool {
+            let scores = SemanticCropRanker.shared.sceneEvidence(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+            let semGuidance = SemanticCropRanker.shared.extractSemanticGuidance(scores: scores, candidates: candidates)
+            let produced = SemanticCropRanker.shared.didProduceEvidence
+            // Giải phóng ngay model SigLIP nặng khỏi RAM trước khi nạp SAMPComposition & CharmAesthetics (an toàn tuyệt đối cho máy 4GB RAM)
+            SemanticCropRanker.shared.endAnalysis()
+            return (scores, semGuidance, produced)
+        }
+        if let hint = guidance.primarySceneHint, scene == .general { scene = hint }
         if scene == .general, let hero = candidates.first {
-            if hero.category == .human || hero.category == .face { scene = .portrait }
-            else if hero.category == .animal { scene = .pet }
+            if hero.category == .human || hero.category == .face {
+                scene = (guidance.contextPreservationWeight >= 0.62) ? .landscape : .portrait
+            } else if hero.category == .animal {
+                scene = .pet
+            }
         }
         guard !cancellation.isCancelled else { return nil }
         var output = NeuralAnalysisOutput(allCandidates: candidates, detectedScene: scene,
             allFaceRects: faceCandidates.map(\.boundingBox), primaryEyePosition: candidates.first?.eyePosition,
             lookingDirection: CGVector(dx: candidates.first?.gaze ?? 0, dy: 0),
-            usedSemanticModel: SemanticCropRanker.shared.didProduceEvidence)
+            usedSemanticModel: didUseSigLIP)
         output.compositionRaster = raster
         output.semanticAffinities = semantics
+        output.semanticGuidance = guidance
         return output
     }
 

@@ -26,8 +26,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
 
     public func loadYOLOModel() {
         let highMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
-        let names = highMemory ? ["yolov26_ane", "yolov26_416_fp16", "yolo26s", "yolo26n", "yolo12s", "yolo12n"] :
-                                 ["yolov26_ane", "yolov26_416_fp16", "yolo26n", "yolo26s", "yolo12n", "yolo12s"]
+        let names = highMemory ? ["yolo12s", "yolo12n", "yolov26_ane", "yolov26_416_fp16", "yolo26s", "yolo26n"] :
+                                 ["yolo12n", "yolo12s", "yolov26_416_fp16", "yolov26_ane", "yolo26n", "yolo26s"]
         for name in names {
             if let modelResult = makeModel(named: name, computeUnits: .all) {
                 modelLock.withLock {
@@ -86,11 +86,15 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         }
         return autoreleasepool {
             guard !cancellation.isCancelled else { return [] }
-            guard let modelResult = makeModel(named: "yolov26_416_fp16", computeUnits: .cpuAndNeuralEngine) ??
-                                    makeModel(named: "yolov26_ane", computeUnits: .all) ??
-                                    makeModel(named: "yolo26s", computeUnits: .all) ??
-                                    makeModel(named: "yolo12s", computeUnits: .all),
-                  let vnModel = modelResult.vnModel else {
+            let preferredVisionModels = ["yolo12s", "yolo12n", "yolo26s", "yolo26n"]
+            var resolvedVNModel: VNCoreMLModel? = nil
+            for modelName in preferredVisionModels {
+                if let res = makeModel(named: modelName, computeUnits: .all), let vn = res.vnModel {
+                    resolvedVNModel = vn
+                    break
+                }
+            }
+            guard let vnModel = resolvedVNModel else {
                 return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
             }
             return detectWithVisionCoreML(vnModel: vnModel, pixelBuffer: pixelBuffer, orientation: orientation,
