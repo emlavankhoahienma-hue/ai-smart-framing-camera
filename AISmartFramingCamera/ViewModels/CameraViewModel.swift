@@ -725,7 +725,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var alignmentState: FramingAlignmentState = .analyzing
     @Published public var isSmartExposureEnabled: Bool = true
     @Published public internal(set) var plannedEVBias: Float = 0.0
-    @Published public internal(set) var postZoomFocusSettledTimestamp: TimeInterval = 0
+    private var autoFocusPolicy = AutoFocusCapturePolicy()
 
     // MARK: - Kho Chức Năng (Feature Drawer & Quick Tools)
     @Published public var isFunctionDrawerOpen: Bool = false
@@ -3235,13 +3235,8 @@ public final class CameraViewModel: ObservableObject {
         aiSessionState = .alignmentPerfect
         alignmentState = .aligned(score: 1)
 
-        // Khóa nét phần cứng tức thì tại tâm mục tiêu và cấp đệm thời gian 0.50s cho thấu kính lấy nét ổn định
-        if postZoomFocusSettledTimestamp < CACurrentMediaTime() + 0.50 {
-            let focusPoint = currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
-            let devPoint = CameraService.convertUIPointToDevicePoint(focusPoint)
-            cameraService.setSmartFocusAndExposure(at: devPoint, focusType: .salientObject)
-            postZoomFocusSettledTimestamp = CACurrentMediaTime() + 0.50
-        }
+        // Một lệnh lấy nét cho mỗi lần ghim mục tiêu / mức zoom; việc chụp chỉ chờ thấu kính ổn định thật sự
+        requestAutoFocusIfNeeded()
 
         guard state == .ready, (hasFreshOpticalLock || isTargetLocked), !isPreparingPinZoom,
               !zoomAwaitingVerification else { return }
@@ -3269,17 +3264,36 @@ public final class CameraViewModel: ObservableObject {
         }
         guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
               autoCaptureTask == nil,
-              CACurrentMediaTime() >= postZoomFocusSettledTimestamp,
+              isFocusReadyForCapture,
               (latestOpticalFrameTimestamp > lastFailedCaptureOpticalTimestamp || CACurrentMediaTime() - lastFailedCaptureAttemptTime >= 0.20) else { return }
         verifyAndCaptureWhenReady()
     }
 
+    /// evaluateAlignment runs on every tracking frame. Focus is requested once per target pin and hardware
+    /// zoom; re-arming here each frame would hold the capture gate closed forever.
+    private func requestAutoFocusIfNeeded() {
+        guard !zoomAwaitingVerification,
+              autoFocusPolicy.needsRequest(pinGeneration: targetPinGeneration, zoom: Double(displayZoom)) else { return }
+        issueAutoFocus()
+    }
+
+    /// Focus on the tracked subject (not the aim reticle, which is deliberately offset by the composition).
+    private func issueAutoFocus() {
+        let subjectPoint = (hasFreshOpticalLock ? latestOpticalPoint : nil) ?? currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
+        cameraService.setSmartFocusAndExposure(at: CameraService.convertUIPointToDevicePoint(subjectPoint),
+                                               focusType: .salientObject)
+        autoFocusPolicy.markRequested(pinGeneration: targetPinGeneration, zoom: Double(displayZoom),
+                                      at: CACurrentMediaTime())
+    }
+
+    private var isFocusReadyForCapture: Bool {
+        autoFocusPolicy.isReadyForCapture(now: CACurrentMediaTime(), lensSettled: cameraService.isFocusSettled)
+    }
+
     private func verifyAndCaptureWhenReady() {
-        guard autoCaptureTask == nil else { return }
-        let now = CACurrentMediaTime()
-        if now < postZoomFocusSettledTimestamp {
-            let remaining = max(0.08, postZoomFocusSettledTimestamp - now)
-            DispatchQueue.main.asyncAfter(deadline: .now() + min(0.35, remaining)) { [weak self] in
+        guard autoCaptureTask == nil, aiSessionState == .alignmentPerfect else { return }
+        if !isFocusReadyForCapture {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
                 self?.verifyAndCaptureWhenReady()
             }
             return
@@ -3345,9 +3359,8 @@ public final class CameraViewModel: ObservableObject {
                     lastFailedCaptureOpticalTimestamp = -.infinity
                     lastFailedCaptureAttemptTime = -.infinity
 
-                    // Kích hoạt lấy nét phần cứng tức thì tại mức zoom mới và đệm 0.42s cho thấu kính lấy nét ổn định
-                    self.cameraService.setSmartFocusAndExposure(at: point, focusType: .salientObject)
-                    self.postZoomFocusSettledTimestamp = CACurrentMediaTime() + 0.42
+                    // Lấy nét ngay tại mức zoom mới; việc chụp chờ thấu kính báo đã ổn định
+                    self.issueAutoFocus()
 
                     withAnimation(.easeOut(duration: 0.35)) {
                         self.isRevealingZoomTarget = false

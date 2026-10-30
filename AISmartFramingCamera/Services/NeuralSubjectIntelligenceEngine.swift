@@ -393,9 +393,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let contoursReq = VNDetectContoursRequest()
         contoursReq.contrastAdjustment = 1.6
         contoursReq.detectsDarkOnLight = true
-        contoursReq.maximumImageDimension = 256
+        contoursReq.maximumImageDimension = 192
         let personSegReq = VNGeneratePersonSegmentationRequest()
-        personSegReq.qualityLevel = .balanced
+        personSegReq.qualityLevel = .fast
         personSegReq.outputPixelFormat = kCVPixelFormatType_OneComponent8
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         var completed = Set<ObjectIdentifier>()

@@ -7,10 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		D20000000000000000000071 /* UniversalSalientTargetEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000071 /* UniversalSalientTargetEngine.swift */; };
-		D20000000000000000000072 /* AestheticZoomPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000072 /* AestheticZoomPlanner.swift */; };
-		D20000000000000000000073 /* LocalPatchTrackingOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000073 /* LocalPatchTrackingOptimizer.swift */; };
-		D20000000000000000000074 /* CameraViewModel+UniversalTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000074 /* CameraViewModel+UniversalTarget.swift */; };
 		C20000000000000000000069 /* DualCameraAssetRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000069 /* DualCameraAssetRecorder.swift */; };
 		C20000000000000000000070 /* SmartSceneExposureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000070 /* SmartSceneExposureEngine.swift */; };
 		C20000000000000000000068 /* DualCameraPIPOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000068 /* DualCameraPIPOverlayView.swift */; };
@@ -90,10 +86,6 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		D10000000000000000000071 /* UniversalSalientTargetEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UniversalSalientTargetEngine.swift; sourceTree = "<group>"; };
-		D10000000000000000000072 /* AestheticZoomPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AestheticZoomPlanner.swift; sourceTree = "<group>"; };
-		D10000000000000000000073 /* LocalPatchTrackingOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPatchTrackingOptimizer.swift; sourceTree = "<group>"; };
-		D10000000000000000000074 /* CameraViewModel+UniversalTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CameraViewModel+UniversalTarget.swift"; sourceTree = "<group>"; };
 		C10000000000000000000069 /* DualCameraAssetRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraAssetRecorder.swift; sourceTree = "<group>"; };
 		C10000000000000000000070 /* SmartSceneExposureEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartSceneExposureEngine.swift; sourceTree = "<group>"; };
 		C10000000000000000000068 /* DualCameraPIPOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraPIPOverlayView.swift; sourceTree = "<group>"; };
@@ -257,9 +249,6 @@
 				C10000000000000000000062 /* CharmPhotographicModel.swift */,
 				C10000000000000000000063 /* PortraitFramingEvidence.swift */,
 				C10000000000000000000064 /* CompositionTuning.swift */,
-				D10000000000000000000071 /* UniversalSalientTargetEngine.swift */,
-				D10000000000000000000072 /* AestheticZoomPlanner.swift */,
-				D10000000000000000000073 /* LocalPatchTrackingOptimizer.swift */,
 				C10000000000000000000065 /* CompositionPureCalculations.swift */,
 				C10000000000000000000066 /* CompositionExperiments.swift */,
 				C10000000000000000000069 /* DualCameraAssetRecorder.swift */,
@@ -306,7 +295,6 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000009 /* CameraViewModel.swift */,
-				D10000000000000000000074 /* CameraViewModel+UniversalTarget.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -482,10 +470,6 @@
 				C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */,
 				C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */,
 				C20000000000000000000064 /* CompositionTuning.swift in Sources */,
-				D20000000000000000000071 /* UniversalSalientTargetEngine.swift in Sources */,
-				D20000000000000000000072 /* AestheticZoomPlanner.swift in Sources */,
-				D20000000000000000000073 /* LocalPatchTrackingOptimizer.swift in Sources */,
-				D20000000000000000000074 /* CameraViewModel+UniversalTarget.swift in Sources */,
 				C20000000000000000000065 /* CompositionPureCalculations.swift in Sources */,
 				C20000000000000000000066 /* CompositionExperiments.swift in Sources */,
 				C20000000000000000000067 /* CompositionDebugOverlayView.swift in Sources */,

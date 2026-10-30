@@ -1835,6 +1835,12 @@ public final class CameraService: NSObject {
         return (isoVal.isFinite && isoVal > 0) ? isoVal : 100.0
     }
 
+    /// True once the lens has stopped hunting. Callers pair this with a bounded timeout.
+    public var isFocusSettled: Bool {
+        guard let camera = activeCamera else { return true }
+        return !camera.isAdjustingFocus
+    }
+
     public var currentExposureDuration: Double {
         guard let camera = activeCamera else { return 0.016 }
         let dur = CMTimeGetSeconds(camera.exposureDuration)

@@ -95,6 +95,44 @@ enum CaptureTransitionRegression {
             }
             try require(state == .ready, "Restored target never resumed capture")
         }
+        try run("focus is requested once per target and zoom and never re-armed by per-frame alignment updates") {
+            var policy = AutoFocusCapturePolicy()
+            try require(policy.needsRequest(pinGeneration: 3, zoom: 1), "first aligned frame skipped focus")
+            policy.markRequested(pinGeneration: 3, zoom: 1, at: 10)
+            for _ in 1...120 {
+                try require(!policy.needsRequest(pinGeneration: 3, zoom: 1), "a per-frame update re-armed focus")
+            }
+            try require(policy.needsRequest(pinGeneration: 4, zoom: 1), "a new target skipped focus")
+            try require(policy.needsRequest(pinGeneration: 3, zoom: 2), "a zoom change skipped focus")
+            try require(!policy.needsRequest(pinGeneration: 3, zoom: 1.05), "zoom jitter refocused")
+            try require(!policy.needsRequest(pinGeneration: 3, zoom: .nan), "invalid zoom requested focus")
+        }
+        try run("capture waits for the lens but never longer than the timeout") {
+            var policy = AutoFocusCapturePolicy()
+            policy.markRequested(pinGeneration: 1, zoom: 1, at: 10)
+            try require(!policy.isReadyForCapture(now: 10.05, lensSettled: true), "captured before the focus command took effect")
+            try require(!policy.isReadyForCapture(now: 10.4, lensSettled: false), "captured while the lens was still hunting")
+            try require(policy.isReadyForCapture(now: 10.2, lensSettled: true), "a settled lens still blocked capture")
+            try require(policy.isReadyForCapture(now: 10.95, lensSettled: false), "a lens that never settles blocked capture forever")
+            try require(!policy.isReadyForCapture(now: .nan, lensSettled: true), "an invalid clock authorized capture")
+        }
+        try run("aligned frames at camera rate reach capture quickly after autofocus") {
+            for fps in [30.0, 60.0] {
+                var policy = AutoFocusCapturePolicy()
+                var captureAt: Double?
+                let settledFrame = Int(fps * 0.2)
+                for i in 0...Int(fps * 3) {
+                    let time = 20 + Double(i) / fps
+                    if policy.needsRequest(pinGeneration: 1, zoom: 1) {
+                        policy.markRequested(pinGeneration: 1, zoom: 1, at: time)
+                    }
+                    if captureAt == nil, policy.isReadyForCapture(now: time, lensSettled: i >= settledFrame) {
+                        captureAt = time
+                    }
+                }
+                try require((captureAt ?? .infinity) - 20 <= 0.35, "capture starved at \(fps) fps")
+            }
+        }
         print("Capture transition regressions: \(passed) passed")
     }
 }

@@ -493,6 +493,53 @@ enum CompositionPlanningRegression {
             let bgScore = HeroSubjectPolicy.score(bounds: distantPerson, kind: .person, confidence: 0.82, evidence: bgEvidence, hasFace: false)
             try require(fgScore > bgScore, "distant faceless background person outranked foreground tabletop object")
         }
+        try run("undersized subjects are tightened wherever they sit and for every subject kind") {
+            let scenes: [(CGRect, CompositionSubjectKind, LocalCompositionIntent)] = [
+                (CGRect(x: 0.43, y: 0.40, width: 0.12, height: 0.16), .object, .object),
+                (CGRect(x: 0.24, y: 0.36, width: 0.12, height: 0.15), .object, .object),
+                (CGRect(x: 0.66, y: 0.46, width: 0.12, height: 0.14), .animal, .animal),
+                (CGRect(x: 0.42, y: 0.52, width: 0.11, height: 0.11), .object, .food)
+            ]
+            for (rect, kind, intent) in scenes {
+                let plans = CompositionPlanner.proposals(subjects: [subject(rect: rect, kind: kind)], intents: [intent],
+                    raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], proposalLimit: 36)
+                guard let baseline = plans.first(where: \.isUnchangedView),
+                      let best = plans.max(by: { $0.score < $1.score }) else {
+                    throw Failure(description: "missing baseline or ranking for \(intent)")
+                }
+                try require(CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: baseline.sizeRatio),
+                            "\(intent): a subject far below its target size was not flagged for zoom")
+                try require(best.zoom >= 1.4, "\(intent): best frame stayed wide at \(best.zoom)x for a tiny subject")
+                try require(CompositionPreferencePolicy.tightensTowardTarget(sizeRatio: best.sizeRatio, original: baseline.sizeRatio),
+                            "\(intent): best frame did not move the subject toward its target size")
+            }
+        }
+        try run("a subject that already fills its target size is not over-zoomed") {
+            let rect = CGRect(x: 0.25, y: 0.22, width: 0.50, height: 0.56)
+            let plans = CompositionPlanner.proposals(subjects: [subject(rect: rect, kind: .object)], intents: [.object],
+                raster: raster(), calibration: .fallback(), currentZoom: 1, allowedZooms: [1, 2, 3], proposalLimit: 36)
+            guard let baseline = plans.first(where: \.isUnchangedView),
+                  let best = plans.max(by: { $0.score < $1.score }) else {
+                throw Failure(description: "missing baseline or ranking for a large subject")
+            }
+            try require(!CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: baseline.sizeRatio),
+                        "a well-sized subject was flagged for zoom")
+            try require(best.zoom <= 1.35, "a well-sized subject was zoomed to \(best.zoom)x")
+        }
+        try run("shot-scale prior only authorizes a tighter crop for an undersized subject") {
+            try require(CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: 0.30), "undersized subject ignored")
+            try require(!CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: 0.80), "adequate subject flagged")
+            try require(!CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: .nan), "invalid size flagged")
+            try require(CompositionPreferencePolicy.tightensTowardTarget(sizeRatio: 0.45, original: 0.30), "clear tightening rejected")
+            try require(!CompositionPreferencePolicy.tightensTowardTarget(sizeRatio: 0.32, original: 0.30), "marginal crop counted as tightening")
+            try require(!CompositionPreferencePolicy.tightensTowardTarget(sizeRatio: 2.4, original: 0.30), "overshooting crop counted as tightening")
+            let reached = CompositionPreferencePolicy.shotScaleBonus(sizeRatio: 1.0, original: 0.25)
+            let halfway = CompositionPreferencePolicy.shotScaleBonus(sizeRatio: 0.625, original: 0.25)
+            try require(abs(reached - CompositionPreferencePolicy.shotScaleBonusWeight) < 1e-9, "reaching the target size earned a partial bonus")
+            try require(abs(halfway - reached / 2) < 1e-9, "bonus is not proportional to progress")
+            try require(CompositionPreferencePolicy.shotScaleBonus(sizeRatio: 0.26, original: 0.25) == 0, "negligible crop earned a bonus")
+            try require(CompositionPreferencePolicy.shotScaleBonus(sizeRatio: 2.4, original: 0.25) == 0, "overshoot earned a bonus")
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

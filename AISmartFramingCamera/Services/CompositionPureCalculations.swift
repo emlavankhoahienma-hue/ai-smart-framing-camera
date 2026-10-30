@@ -269,3 +269,37 @@ public enum CompositionPureCalculations {
         return nil
     }
 }
+
+/// Autofocus bookkeeping for the aligned-target -> capture hand-off. Alignment is evaluated on every
+/// tracking frame, so a focus request must be remembered per target pin and hardware zoom. Re-arming a
+/// settle timer on each frame keeps the shutter gate closed forever.
+struct AutoFocusCapturePolicy {
+    /// Time the lens needs before `isAdjustingFocus` can be trusted after a focus command.
+    static let minimumDwell: TimeInterval = 0.16
+    /// A lens that never reports settled must not block the shutter indefinitely.
+    static let timeout: TimeInterval = 0.9
+    static let zoomTolerance = 0.08
+
+    private var pinGeneration: UInt64?
+    private var zoom = 0.0
+    private var requestedAt: TimeInterval = -.infinity
+
+    func needsRequest(pinGeneration: UInt64, zoom: Double) -> Bool {
+        guard zoom.isFinite else { return false }
+        return self.pinGeneration != pinGeneration || abs(self.zoom - zoom) > Self.zoomTolerance
+    }
+
+    mutating func markRequested(pinGeneration: UInt64, zoom: Double, at time: TimeInterval) {
+        guard zoom.isFinite, time.isFinite else { return }
+        self.pinGeneration = pinGeneration
+        self.zoom = zoom
+        requestedAt = time
+    }
+
+    func isReadyForCapture(now: TimeInterval, lensSettled: Bool) -> Bool {
+        guard now.isFinite else { return false }
+        let elapsed = now - requestedAt
+        guard elapsed >= Self.minimumDwell else { return false }
+        return lensSettled || elapsed >= Self.timeout
+    }
+}

@@ -158,12 +158,31 @@ final class CompositionAestheticSearch {
         }
         let baseline = evaluated.first { $0.proposal.isUnchangedView }
         let originalZoom = baseline?.proposal.zoom
+        // Shot-scale prior: a subject filling under half of the size its intent wants must be tightened
+        // unless the learned models clearly object. Without this the full frame wins on resolution alone.
+        let zoomNeeded = baseline.map {
+            CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio)
+        } ?? false
         // Compare the two models jointly. A fixed SAMP-only 0.10/0.12-rating
         // veto prevented useful zoom even when the aesthetic model preferred it.
         let eligible = evaluated.filter { view in
             if view.proposal.isUnchangedView { return true }
             guard usedSpecialist, let baseline, let originalZoom else { return true }
             if view.proposal.zoom <= originalZoom * 1.08 { return true }
+            if zoomNeeded, CompositionPreferencePolicy.tightensTowardTarget(
+                sizeRatio: view.proposal.sizeRatio, original: baseline.proposal.sizeRatio) {
+                let withinTolerance = view.proposal.score >=
+                    baseline.proposal.score - CompositionPreferencePolicy.necessaryCropTolerance
+                guard let composition = view.assessment, let originalComposition = baseline.assessment else {
+                    return withinTolerance
+                }
+                if let aesthetics = view.aesthetics, let originalAesthetics = baseline.aesthetics {
+                    return withinTolerance && CompositionPreferencePolicy.consistent(
+                        composition: composition.mean, aesthetics: aesthetics.mean,
+                        originalComposition: originalComposition.mean, originalAesthetics: originalAesthetics.mean)
+                }
+                return withinTolerance && composition.mean >= originalComposition.mean - 0.35
+            }
             guard let composition = view.assessment, let originalComposition = baseline.assessment else {
                 return view.proposal.score >= (baseline.proposal.score - 0.05)
             }
@@ -181,6 +200,12 @@ final class CompositionAestheticSearch {
         }
         if let baseline, !selected.contains(where: { $0.proposal.isUnchangedView }) {
             selected = Array(selected.prefix(2)) + [baseline]
+        }
+        if zoomNeeded, let baseline {
+            for index in selected.indices where !selected[index].proposal.isUnchangedView {
+                selected[index].proposal.score += CompositionPreferencePolicy.shotScaleBonus(
+                    sizeRatio: selected[index].proposal.sizeRatio, original: baseline.proposal.sizeRatio)
+            }
         }
         // The view model compares the leading two scores before auto-selection.
         // Restoring the original frame must not leave a stronger runner-up third.
@@ -232,6 +257,28 @@ enum CompositionPreferencePolicy {
         let geomW = 0.36 + fieldBoost
         return compW * (composition - 1) / 4 + aesthW * (aesthetics - 1) / 4 +
             geomW * min(1, max(0, geometry))
+    }
+
+    /// Below this share of its intent's target area the unchanged frame leaves the subject too small.
+    static let undersizedSubjectRatio = 0.50
+    /// How far a necessary tighter crop may trail the wide frame before the models' objection stands.
+    static let necessaryCropTolerance = 0.05
+    static let shotScaleBonusWeight = 0.07
+
+    static func zoomIsNecessary(originalSizeRatio: Double) -> Bool {
+        originalSizeRatio.isFinite && originalSizeRatio > 0 && originalSizeRatio < undersizedSubjectRatio
+    }
+
+    /// A crop that clearly moves the subject toward its target size without overshooting it.
+    static func tightensTowardTarget(sizeRatio: Double, original: Double) -> Bool {
+        sizeRatio.isFinite && original.isFinite && original > 0 &&
+            sizeRatio >= original * 1.25 && sizeRatio <= 1.6
+    }
+
+    static func shotScaleBonus(sizeRatio: Double, original: Double) -> Double {
+        guard tightensTowardTarget(sizeRatio: sizeRatio, original: original) else { return 0 }
+        let progress = (min(1, sizeRatio) - original) / max(0.001, 1 - original)
+        return shotScaleBonusWeight * min(1, max(0, progress))
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {

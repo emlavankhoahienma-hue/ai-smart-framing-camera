@@ -39,7 +39,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "598943ce4260dea582d0d78a761d95521a4908c528ecc3483338330965b29b36"
+      "sha256": "bae29326a27ba4881f712f79c8ad06348ab75a9cf760abfd614b384408f59e81"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -51,13 +51,13 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
       "end": "    private func verifyAndCaptureWhenReady()",
-      "sha256": "0c2696107de0399d468420d0aa3981b84a0aee83d60f8e2afefadf7ce8b17c98"
+      "sha256": "42692b0c90f3b221387452e8cb749bd29c7655befa1098e37c8b919aa3c2b5f1"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "0e5da5f58e0b02789d7866e0d43f7982f35154913bcd32ffee01e625014ff8c6"
+      "sha256": "0aea75be34126afd7d6201d6f4b5984eb61cca2f1110ede10f99ac03be36c013"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",

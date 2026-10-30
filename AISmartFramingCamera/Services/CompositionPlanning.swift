@@ -543,6 +543,8 @@ struct CompositionProposal: Sendable {
     var recommendedEVBias: CGFloat = 0.0
     var outOfBoundsFraction: Double = 0.0
     var continuousFieldScore: Double = 0.0
+    /// Subject area divided by the intent's target area. Below 1 the subject is smaller than the shot wants.
+    var sizeRatio: Double = 1
 
     var isUnchangedView: Bool {
         let original = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0),
@@ -746,7 +748,8 @@ enum CompositionPlanner {
                         explanation: explanation(intent: intent, gaze: subject.gaze,
                             cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0),
                         usesCenter: abs(destination.x - 0.5) < 0.055, retainedAttention: metrics.retention,
-                        recommendedEVBias: evBias, outOfBoundsFraction: oobFraction, continuousFieldScore: score)
+                        recommendedEVBias: evBias, outOfBoundsFraction: oobFraction, continuousFieldScore: score,
+                        sizeRatio: subject.kind == .scenery ? 1 : area / max(0.001, effectiveDesiredArea))
                 }
                 if !refining.isEmpty {
                     for seed in refining where seed.subjectIndex == subject.index && seed.intent == intent {
