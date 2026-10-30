@@ -2537,8 +2537,8 @@ public final class CameraViewModel: ObservableObject {
         } else {
             activeEngineSource = .appleNeuralEngine(scene: output.detectedScene.localizedName)
         }
-        // AI decides the best photographic composition and zoom; accept the active photographic plan directly
-        let activeChoice = localCompositionChoices.first(where: { !$0.preservesOriginalFrame }) ?? localCompositionChoices.first
+        // AI decides the best photographic composition and zoom; accept the top-ranked photographic plan directly
+        let activeChoice = localCompositionChoices.first
         if let first = activeChoice,
            CACurrentMediaTime() - source.frame.timestamp <= 30,
            first.plan.confidence >= first.plan.minimumAutoselectConfidence {
@@ -2712,15 +2712,10 @@ public final class CameraViewModel: ObservableObject {
         self.plannedLightingDescription = evaluatedFraming.lightingRationale
 
         // Phản biện 3 & 4: Hợp nhất 1 đường ống quyết định duy nhất (Single Source of Truth).
-        // Tin tưởng trực tiếp tọa độ Aim 3D (aimWorldRay) và mức Zoom ngữ cảnh từ bộ lập kế hoạch + SAMP-Net + DINOv2 (Charm).
-        var sourceAimPoint = plan.aimPointInSource
-        var effectiveGuideRay = plan.aimWorldRay
-        let anchorDistFromCenter = hypot(anchor.x - 0.5, anchor.y - 0.5)
+        // Tin tưởng tuyệt đối tọa độ Aim 3D (aimWorldRay) và mức Zoom ngữ cảnh từ bộ lập kế hoạch + SAMP-Net + DINOv2 (Charm).
+        let sourceAimPoint = plan.aimPointInSource
+        let effectiveGuideRay = plan.aimWorldRay
         let planDistFromCenter = hypot(sourceAimPoint.x - 0.5, sourceAimPoint.y - 0.5)
-        if planDistFromCenter < 0.035 && anchorDistFromCenter < 0.065 && detectedScene != .architecture && !plan.usesCenter {
-            sourceAimPoint = evaluatedFraming.targetPoint
-            effectiveGuideRay = source.pose.act(source.frame.calibration.deviceRay(at: sourceAimPoint))
-        }
 
         var effectiveZoom = plan.zoom
         effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(

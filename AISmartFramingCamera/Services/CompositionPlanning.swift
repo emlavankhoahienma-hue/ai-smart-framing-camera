@@ -131,6 +131,9 @@ struct CompositionSubject: Sendable {
     let importance: Double
     let gaze: CGFloat
     var allowsAttentionCrop = false
+    var verticalGaze: CGFloat = 0
+    var shotScaleBias: Double = 0
+    var contextPreservationWeight: Double = 0.5
 }
 
 /// Photographic importance is independent of detector certainty. In particular,
@@ -141,6 +144,7 @@ struct SubjectVisualEvidence: Sendable {
     let separation: Double
     let detail: Double
     let exposure: Double
+    var foregroundDepth: Double = 0.5
 }
 
 enum HeroSubjectPolicy {
@@ -181,13 +185,13 @@ enum HeroSubjectPolicy {
         let visual: Double
         if let e = evidence {
             visual = 0.18 * e.attentionDensity + 0.15 * sqrt(max(0, e.attentionShare)) +
-                0.10 * e.separation + 0.06 * e.detail * e.exposure
+                0.10 * e.separation + 0.06 * e.detail * e.exposure + 0.07 * max(0, e.foregroundDepth - 0.35)
         } else { visual = 0.20 * scale }
         let tierMultiplier: Double
         switch kind {
         case .person, .group:
-            let distantBystander = !hasFace && area < 0.045 && bounds.maxY < 0.60
-            tierMultiplier = hasFace ? 1.30 : (distantBystander ? 0.58 : 1.12)
+            let distantBystander = !hasFace && (area < 0.045 || (evidence?.foregroundDepth ?? 0.5) < 0.28) && bounds.maxY < 0.60
+            tierMultiplier = hasFace ? 1.30 : (distantBystander ? 0.52 : 1.12)
         case .face: tierMultiplier = 1.20
         case .animal: tierMultiplier = 1.10
         case .object:
@@ -249,14 +253,19 @@ struct CompositionRaster: Sendable {
     let edges: [Double]
     let edgeAngles: [Double]
     let hasAttention: Bool
+    let foregroundDepth: [Double]
+    var measuredHorizon: (y: CGFloat, confidence: Double)? = nil
+    var measuredVanishingPoint: (point: CGPoint, confidence: Double, rayAngles: [Double])? = nil
 
-    init(side: Int, luminance: [Double], attention: [Double], edges: [Double], edgeAngles: [Double] = [], hasAttention: Bool) {
+    init(side: Int, luminance: [Double], attention: [Double], edges: [Double], edgeAngles: [Double] = [],
+         hasAttention: Bool, foregroundDepth: [Double] = []) {
         self.side = side
         self.luminance = luminance
         self.attention = attention
         self.edges = edges
         self.edgeAngles = edgeAngles.isEmpty ? [Double](repeating: 0, count: side * side) : edgeAngles
         self.hasAttention = hasAttention
+        self.foregroundDepth = foregroundDepth.count == side * side ? foregroundDepth : [Double](repeating: 0.5, count: side * side)
     }
 
     var isValid: Bool {
@@ -277,7 +286,7 @@ struct CompositionRaster: Sendable {
 
     func evidence(in rect: CGRect) -> SubjectVisualEvidence? {
         guard isValid, rect.width > 0, rect.height > 0 else { return nil }
-        var count = 0.0, light = 0.0, square = 0.0, detail = 0.0, mass = 0.0
+        var count = 0.0, light = 0.0, square = 0.0, detail = 0.0, mass = 0.0, fgSum = 0.0
         var outside = 0.0, outsideCount = 0.0
         let surround = rect.insetBy(dx: -0.08, dy: -0.08)
         for y in 0..<side {
@@ -286,7 +295,7 @@ struct CompositionRaster: Sendable {
                 let p = CGPoint(x: (Double(x) + 0.5) / Double(side), y: (Double(y) + 0.5) / Double(side))
                 if rect.contains(p) {
                     count += 1; light += luminance[i]; square += luminance[i] * luminance[i]
-                    mass += attention[i]; detail += edges[i]
+                    mass += attention[i]; detail += edges[i]; fgSum += foregroundDepth[i]
                 } else if surround.contains(p) { outside += luminance[i]; outsideCount += 1 }
             }
         }
@@ -297,7 +306,8 @@ struct CompositionRaster: Sendable {
         return SubjectVisualEvidence(attentionDensity: mass / count,
             attentionShare: mass / max(0.001, attention.reduce(0, +)),
             separation: min(1, abs(mean - outside / max(1, outsideCount)) * 3),
-            detail: min(1, (max(0, detail / count - 0.015) + max(0, contrast - 0.01)) * 2), exposure: exposure)
+            detail: min(1, (max(0, detail / count - 0.015) + max(0, contrast - 0.01)) * 2),
+            exposure: exposure, foregroundDepth: fgSum / count)
     }
 
     var visualCenterOfMass: CGPoint? {
@@ -318,6 +328,9 @@ struct CompositionRaster: Sendable {
     /// A line needs edge support across the image, not just a local bright patch.
     var horizon: (y: CGFloat, confidence: Double)? {
         guard isValid else { return nil }
+        if let mh = measuredHorizon, mh.confidence >= 0.25, (0.12...0.88).contains(mh.y) {
+            return mh
+        }
         var best: (CGFloat, Double)?
         for y in side / 5..<(side * 4 / 5) {
             var energy = 0.0, supported = 0.0
@@ -348,9 +361,13 @@ struct CompositionRaster: Sendable {
         return best?.0
     }
 
-    /// Hough/Radon accumulator grid 16x16 on [0.05...0.95]^2 to find converging leading lines.
+    /// Hough/Radon accumulator grid 16x16 on [0.05...0.95]^2 fused with RANSAC VNDetectContoursRequest vanishing point.
     var vanishingPoint: (point: CGPoint, confidence: Double, rayAngles: [Double])? {
-        guard isValid, !edgeAngles.isEmpty else { return nil }
+        guard isValid else { return nil }
+        if let mvp = measuredVanishingPoint, mvp.confidence >= 0.32 {
+            return mvp
+        }
+        guard !edgeAngles.isEmpty else { return measuredVanishingPoint }
         let gridRes = 16
         var accum = [Double](repeating: 0, count: gridRes * gridRes)
         var rayAnglesCollected = [Double]()
@@ -565,7 +582,8 @@ enum CompositionPlanner {
             } else { bounds = subject.bounds }
             let framed = CompositionSubject(index: subject.index, bounds: bounds, anchor: subject.anchor,
                 kind: subject.kind, confidence: subject.confidence, importance: subject.importance, gaze: subject.gaze,
-                allowsAttentionCrop: subject.allowsAttentionCrop)
+                allowsAttentionCrop: subject.allowsAttentionCrop, verticalGaze: subject.verticalGaze,
+                shotScaleBias: subject.shotScaleBias, contextPreservationWeight: subject.contextPreservationWeight)
             return proposals(subjects: [framed], intents: [intent], raster: raster, calibration: calibration,
                 currentZoom: currentZoom, allowedZooms: allowedZooms, protectedBounds: protectedBounds,
                 incidentalBounds: incidentalBounds, proposalLimit: perIntent,
@@ -652,8 +670,9 @@ enum CompositionPlanner {
                     case .closeUp, .food: desiredArea = CompositionTuning.desiredAreaFood
                     case .animal, .object: desiredArea = CompositionTuning.desiredAreaAnimal
                     }
+                    let effectiveDesiredArea = desiredArea * exp(0.24 * min(1.0, max(-1.0, subject.shotScaleBias)))
                     let area = Double(box.width * box.height)
-                    let sizeFit = subject.kind == .scenery ? 1 : exp(-pow(log(max(0.001, area) / desiredArea), 2) / 1.6)
+                    let sizeFit = subject.kind == .scenery ? 1 : exp(-pow(log(max(0.001, area) / effectiveDesiredArea), 2) / 1.6)
                     let placement = exp(-12 * pow(Double(destination.x - desired.x), 2) -
                                         10 * pow(Double(destination.y - desired.y), 2))
                     let context = intent.preservesContext && raster.hasAttention ? metrics.retention : 1
@@ -691,13 +710,16 @@ enum CompositionPlanner {
                     let thirdY = min(abs(Double(destination.y) - CompositionTuning.portraitEyeLineY),
                                      abs(Double(destination.y) - Double(CompositionTuning.goldenSectionRight)))
                     let ruleOfThirdsBonus = CompositionTuning.ruleOfThirdsBonusWeight * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
-                    // Phản biện 3: Phạt khi điểm đặt chủ thể đích P* (destination) rơi vào tâm chết (0.5, 0.5) ở cảnh không đối xứng.
-                    // TUYỆT ĐỐI KHÔNG phạt khi khoảng cách lia máy (aim.point - 0.5) nhỏ!
+                    // Phản biện 3: Khi chủ thể đã ở sẵn vị trí đẹp (S_subject ≈ P*), giữ Target tại (0.5, 0.5) để xác nhận khớp tâm.
+                    // Chỉ phạt tâm chết khi điểm đặt đích (destination) nằm ở tâm chết mà điểm mong muốn (desired) lại lệch tâm.
+                    let subjectDistToDesired = hypot(Double(subject.anchor.x - desired.x), Double(subject.anchor.y - desired.y))
+                    let desiredDistFromCenter = hypot(Double(desired.x - 0.5), Double(desired.y - 0.5))
                     let destDistFromCenter = hypot(Double(destination.x - 0.5), Double(destination.y - 0.5))
-                    let deadCenterDestPenalty = (intent != .architecture && metrics.symmetry < 0.78)
+                    let deadCenterDestPenalty = (!unchanged && intent != .architecture && metrics.symmetry < 0.78 && desiredDistFromCenter > 0.05)
                         ? 0.15 * exp(-32.0 * destDistFromCenter * destDistFromCenter)
                         : 0.0
-                    let ratioAdjustment = area < desiredArea ? -0.045 * min(1.0, max(0.0, log(ratio))) : 0.028 * abs(log(ratio))
+                    let alreadyAlignedBonus = (unchanged && subjectDistToDesired < 0.048 && abs(log(max(0.001, area) / effectiveDesiredArea)) < 0.30) ? 0.065 : 0.0
+                    let ratioAdjustment = area < effectiveDesiredArea ? -0.045 * min(1.0, max(0.0, log(ratio))) : 0.028 * abs(log(ratio))
                     let contextWeight = intent.preservesContext ? 0.11 : 0.05
                     let contextFitWeight = intent.preservesContext ? 0.09 : 0.04
                     let evBias = computeOptimalEVBias(raster: raster, heroRect: box, aimPoint: aim.point, zoom: zoom, scene: intent)
@@ -719,7 +741,7 @@ enum CompositionPlanner {
                         0.09 * space + 0.06 * edgeSafety + contextWeight * context +
                         contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
                         0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue +
-                        intentPrior + ruleOfThirdsBonus - deadCenterDestPenalty - ratioAdjustment
+                        intentPrior + ruleOfThirdsBonus + alreadyAlignedBonus - deadCenterDestPenalty - ratioAdjustment
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: observedCornerPoints, rotation: rotation, zoom: zoom,
@@ -845,13 +867,20 @@ enum CompositionPlanner {
             return CGPoint(x: x, y: y)
         }
 
-        let y: Double
+        let vGazeBias = -0.035 * tanh(2.0 * Double(subject.verticalGaze))
+        var finalX = x
+        var finalY: Double
         if person {
-            y = min(0.44, max(0.33, CompositionTuning.portraitEyeLineY + 0.03 * tanh(1.8 * (cy - 0.42))))
+            finalY = min(0.44, max(0.33, CompositionTuning.portraitEyeLineY + 0.03 * tanh(1.8 * (cy - 0.42)) + vGazeBias))
         } else {
-            y = min(0.62, max(0.36, 0.46 + 0.12 * tanh(2.2 * (cy - 0.48))))
+            finalY = min(0.62, max(0.36, 0.46 + 0.12 * tanh(2.2 * (cy - 0.48)) + vGazeBias))
         }
-        return CGPoint(x: x, y: y)
+        if let vp = raster.vanishingPoint, vp.confidence >= 0.32 {
+            let vpWeight = min(0.26, vp.confidence * 0.30)
+            finalX = min(0.68, max(0.32, (1.0 - vpWeight) * finalX + vpWeight * Double(vp.point.x)))
+            finalY = min(0.64, max(0.32, (1.0 - vpWeight * 0.7) * finalY + (vpWeight * 0.7) * Double(vp.point.y)))
+        }
+        return CGPoint(x: finalX, y: finalY)
     }
 
     static func computeOptimalEVBias(

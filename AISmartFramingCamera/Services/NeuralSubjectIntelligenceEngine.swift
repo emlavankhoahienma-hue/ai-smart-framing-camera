@@ -160,6 +160,7 @@ public struct NeuralSubjectCandidate: Identifiable, Sendable {
     public var prominenceScore: Double
     var eyePosition: CGPoint? = nil
     var gaze: CGFloat = 0
+    var verticalGaze: CGFloat = 0
     var companionBounds: [CGRect] = []
     var faceBounds: [CGRect] = []
     var trackingPoint: CGPoint? = nil
@@ -273,11 +274,14 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         guard let raster = output.compositionRaster else {
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
         }
-        var subject = CompositionSubject(index: 0, bounds: hero.boundingBox,
+        let subject = CompositionSubject(index: 0, bounds: hero.boundingBox,
             anchor: hero.eyePosition ?? hero.center, kind: hero.isGroup ? .group : kind(hero.category),
-            confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
-        subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention &&
-            hero.boundingBox.width * hero.boundingBox.height > 0.12
+            confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze,
+            allowsAttentionCrop: hero.isAttentionRegion && raster.hasAttention &&
+                hero.boundingBox.width * hero.boundingBox.height > 0.12,
+            verticalGaze: hero.verticalGaze,
+            shotScaleBias: output.semanticGuidance.shotScaleBias,
+            contextPreservationWeight: output.semanticGuidance.contextPreservationWeight)
         let intents = compositionIntents(output, hero: hero)
         var portraitBounds: CGRect?
         var poseProfile: AnatomicalPoseProfile?
@@ -314,7 +318,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 protectedBounds: hero.companionBounds,
                 incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) } +
                     output.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox),
-                proposalLimit: seeds.isEmpty ? (constrained ? 16 : 36) : (constrained ? 8 : 16), refining: seeds,
+                proposalLimit: seeds.isEmpty ? (constrained ? 8 : 10) : (constrained ? 4 : 6), refining: seeds,
                 poseProfile: poseProfile,
                 isCancelled: { cancellation.isCancelled })
         }
@@ -385,9 +389,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let objectness = VNGenerateObjectnessBasedSaliencyImageRequest()
         let attention = VNGenerateAttentionBasedSaliencyImageRequest()
         let classification = VNClassifyImageRequest()
+        let horizonReq = VNDetectHorizonRequest()
+        let contoursReq = VNDetectContoursRequest()
+        contoursReq.contrastAdjustment = 1.6
+        contoursReq.detectsDarkOnLight = true
+        contoursReq.maximumImageDimension = 256
+        let personSegReq = VNGeneratePersonSegmentationRequest()
+        personSegReq.qualityLevel = .balanced
+        personSegReq.outputPixelFormat = kCVPixelFormatType_OneComponent8
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         var completed = Set<ObjectIdentifier>()
-        for request in [bodies, faces, animals, objectness, attention, classification] as [VNRequest] {
+        for request in [bodies, faces, animals, objectness, attention, classification, horizonReq, contoursReq, personSegReq] as [VNRequest] {
             if cancellation.isCancelled { return nil }
             do { try cancellation.perform(request, with: handler); completed.insert(ObjectIdentifier(request)) }
             catch {
@@ -395,10 +407,24 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 CameraLogger.warning("Vision bỏ qua một bằng chứng: \(error)", category: .ai)
             }
         }
+        let fgMaskBuffer = completed.contains(ObjectIdentifier(personSegReq)) ? personSegReq.results?.first?.pixelBuffer : nil
+        var measuredHorizon: (y: CGFloat, confidence: Double)? = nil
+        if completed.contains(ObjectIdentifier(horizonReq)), let hObs = horizonReq.results?.first, hObs.confidence >= 0.25 {
+            let angleOffset = CGFloat(tan(Double(hObs.angle)) * 0.15)
+            let hy = min(0.85, max(0.15, 0.5 + angleOffset))
+            measuredHorizon = (y: hy, confidence: Double(hObs.confidence))
+        }
+        var measuredVP: (point: CGPoint, confidence: Double, rayAngles: [Double])? = nil
+        if completed.contains(ObjectIdentifier(contoursReq)), let cObs = contoursReq.results?.first {
+            measuredVP = renderer.extractRANSACVanishingPoint(from: cObs, foregroundMask: fgMaskBuffer)
+        }
         let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
         let raster = renderer.raster(image: image,
             saliency: completed.contains(ObjectIdentifier(attention)) ? attention.results?.first?.pixelBuffer : nil,
-            objectness: completed.contains(ObjectIdentifier(objectness)) ? objectness.results?.first?.pixelBuffer : nil)
+            objectness: completed.contains(ObjectIdentifier(objectness)) ? objectness.results?.first?.pixelBuffer : nil,
+            foregroundMask: fgMaskBuffer,
+            measuredHorizon: measuredHorizon,
+            measuredVanishingPoint: measuredVP)
         var candidates = YOLODetectionEngine.shared.detectPhotographicObjects(
             pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         var faceCandidates: [NeuralSubjectCandidate] = []
@@ -415,7 +441,25 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     c.eyePosition = CGPoint(x: face.boundingBox.minX + x * face.boundingBox.width,
                                             y: 1 - face.boundingBox.minY - y * face.boundingBox.height)
                 }
-                if let yaw = face.yaw?.doubleValue, yaw.isFinite { c.gaze = CGFloat(sin(yaw)) }
+                var gazeX: CGFloat = 0
+                var gazeY: CGFloat = 0
+                if let yaw = face.yaw?.doubleValue, yaw.isFinite { gazeX = CGFloat(sin(yaw)) }
+                if let pitch = face.pitch?.doubleValue, pitch.isFinite { gazeY = CGFloat(sin(pitch)) }
+                if let lEye = face.landmarks?.leftEye?.normalizedPoints, !lEye.isEmpty,
+                   let rEye = face.landmarks?.rightEye?.normalizedPoints, !rEye.isEmpty,
+                   let lPupil = face.landmarks?.leftPupil?.normalizedPoints.first,
+                   let rPupil = face.landmarks?.rightPupil?.normalizedPoints.first {
+                    let lCx = lEye.reduce(CGFloat(0)) { $0 + $1.x } / CGFloat(lEye.count)
+                    let lCy = lEye.reduce(CGFloat(0)) { $0 + $1.y } / CGFloat(lEye.count)
+                    let rCx = rEye.reduce(CGFloat(0)) { $0 + $1.x } / CGFloat(rEye.count)
+                    let rCy = rEye.reduce(CGFloat(0)) { $0 + $1.y } / CGFloat(rEye.count)
+                    let pupilDx = ((lPupil.x - lCx) + (rPupil.x - rCx)) * 0.5
+                    let pupilDy = ((lPupil.y - lCy) + (rPupil.y - rCy)) * 0.5
+                    gazeX = max(-1.0, min(1.0, gazeX * 0.72 + pupilDx * 2.2))
+                    gazeY = max(-1.0, min(1.0, gazeY * 0.70 - pupilDy * 2.0))
+                }
+                c.gaze = gazeX
+                c.verticalGaze = gazeY
                 faceCandidates.append(c)
             }
         }
@@ -529,6 +573,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 candidates[i].boundingBox = box.union(face.boundingBox)
                 candidates[i].eyePosition = face.eyePosition ?? face.center
                 candidates[i].gaze = face.gaze
+                candidates[i].verticalGaze = face.verticalGaze
                 candidates[i].companionBounds = [face.boundingBox]
                 candidates[i].faceBounds = [face.boundingBox]
             }

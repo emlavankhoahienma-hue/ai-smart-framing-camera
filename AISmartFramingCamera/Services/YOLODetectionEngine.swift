@@ -25,9 +25,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     public init() { loadYOLOModel() }
 
     public func loadYOLOModel() {
-        let highMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
-        let names = highMemory ? ["yolo12s", "yolo12n", "yolov26_ane", "yolov26_416_fp16", "yolo26s", "yolo26n"] :
-                                 ["yolo12n", "yolo12s", "yolov26_416_fp16", "yolov26_ane", "yolo26n", "yolo26s"]
+        let names = ["yolo12s", "yolo12n", "yolov26_ane", "yolov26_416_fp16", "yolo26s", "yolo26n"]
         for name in names {
             if let modelResult = makeModel(named: name, computeUnits: .all) {
                 modelLock.withLock {
@@ -86,12 +84,28 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         }
         return autoreleasepool {
             guard !cancellation.isCancelled else { return [] }
-            let preferredVisionModels = ["yolo12s", "yolo12n", "yolo26s", "yolo26n"]
-            var resolvedVNModel: VNCoreMLModel? = nil
-            for modelName in preferredVisionModels {
-                if let res = makeModel(named: modelName, computeUnits: .all), let vn = res.vnModel {
-                    resolvedVNModel = vn
-                    break
+            let cachedVN: VNCoreMLModel? = modelLock.withLock {
+                if let loaded = loadedModelName, (loaded == "yolo12s" || loaded == "yolo12n"), let vn = yoloCoreMLModel {
+                    return vn
+                }
+                return nil
+            }
+            var resolvedVNModel: VNCoreMLModel? = cachedVN
+            if resolvedVNModel == nil {
+                let preferredVisionModels = ["yolo12s", "yolo12n", "yolo26s", "yolo26n"]
+                for modelName in preferredVisionModels {
+                    if let res = makeModel(named: modelName, computeUnits: .all), let vn = res.vnModel {
+                        resolvedVNModel = vn
+                        modelLock.withLock {
+                            if yoloCoreMLModel == nil {
+                                yoloCoreMLModel = vn
+                                yoloNativeMLModel = res.mlModel
+                                isDedicatedYOLO26ANE = false
+                                loadedModelName = modelName
+                            }
+                        }
+                        break
+                    }
                 }
             }
             guard let vnModel = resolvedVNModel else {
@@ -426,7 +440,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                     }
                     
                     guard let uiRect = self.clippedValidBox(rawRect) else { continue }
-                    guard uiRect.width >= 0.04, uiRect.height >= 0.04, uiRect.width <= 0.95, uiRect.height <= 0.95 else { continue }
+                    guard uiRect.width >= 0.022, uiRect.height >= 0.022, uiRect.width <= 0.95, uiRect.height <= 0.95 else { continue }
                     let aspectRatio = uiRect.width / max(0.001, uiRect.height)
                     guard aspectRatio >= 0.15 && aspectRatio <= 6.5 else { continue }
                     
