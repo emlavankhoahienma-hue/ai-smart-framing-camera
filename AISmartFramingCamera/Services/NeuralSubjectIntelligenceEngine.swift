@@ -116,24 +116,18 @@ private final class SemanticCropRanker: @unchecked Sendable {
 
     func extractSemanticGuidance(scores: [String: Double], candidates: [NeuralSubjectCandidate]) -> SemanticSceneGuidance {
         guard !scores.isEmpty else { return .neutral }
-        let wideScore = max(
-            scores["landscape"] ?? 0,
-            scores["person_scenery"] ?? 0,
-            scores["building"] ?? 0,
-            scores["street"] ?? 0,
-            scores["sky"] ?? 0,
-            scores["water"] ?? 0,
-            scores["group"] ?? 0
-        )
-        let tightScore = max(
-            scores["flower"] ?? 0,
-            scores["macro"] ?? 0,
-            scores["food"] ?? 0,
-            (scores["person"] ?? 0) * 0.92,
-            (scores["animal"] ?? 0) * 0.92
-        )
-        let shotScaleBias = max(-1.0, min(1.0, (tightScore - wideScore) * 3.0))
-        let contextWeight = max(0.15, min(0.95, 0.50 + (wideScore - tightScore) * 1.8))
+        var wideScore: Double = 0.0
+        for key in ["landscape", "person_scenery", "building", "street", "sky", "water", "group"] {
+            if let v = scores[key], v > wideScore { wideScore = v }
+        }
+        var tightScore: Double = 0.0
+        for key in ["flower", "macro", "food"] {
+            if let v = scores[key], v > tightScore { tightScore = v }
+        }
+        if let vp = scores["person"], vp * 0.92 > tightScore { tightScore = vp * 0.92 }
+        if let va = scores["animal"], va * 0.92 > tightScore { tightScore = va * 0.92 }
+        let shotScaleBias: Double = max(-1.0, min(1.0, (tightScore - wideScore) * 3.0))
+        let contextWeight: Double = max(0.15, min(0.95, 0.50 + (wideScore - tightScore) * 1.8))
         return SemanticSceneGuidance(
             shotScaleBias: shotScaleBias,
             contextPreservationWeight: contextWeight,
