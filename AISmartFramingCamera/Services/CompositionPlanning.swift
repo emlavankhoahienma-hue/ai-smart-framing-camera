@@ -672,12 +672,38 @@ enum CompositionPlanner {
                             horizonFit = 1 - horizon.confidence * min(1, distance * 4)
                         }
                     }
-                    let oobSum = sourceCorners.reduce(0.0) { acc, corner in
-                        let dx = max(0.0, Double(-corner.point.x), Double(corner.point.x - 1.0))
-                        let dy = max(0.0, Double(-corner.point.y), Double(corner.point.y - 1.0))
+                    let rawCornerPoints = sourceCorners.map(\.point)
+                    let oobSum = rawCornerPoints.reduce(0.0) { acc, pt in
+                        let dx = max(0.0, Double(-pt.x), Double(pt.x - 1.0))
+                        let dy = max(0.0, Double(-pt.y), Double(pt.y - 1.0))
                         return acc + hypot(dx, dy)
                     }
                     let oobFraction = min(1.0, oobSum / 0.85)
+                    let observedCornerPoints: [CGPoint] = {
+                        guard !unchanged && oobSum > 0.000001 else { return rawCornerPoints }
+                        let minX = rawCornerPoints.map(\.x).min() ?? 0
+                        let maxX = rawCornerPoints.map(\.x).max() ?? 1
+                        let minY = rawCornerPoints.map(\.y).min() ?? 0
+                        let maxY = rawCornerPoints.map(\.y).max() ?? 1
+                        let span = max(0.001, max(maxX - minX, maxY - minY))
+                        let maxAllowedSpan = max(0.76, 0.93 - 0.14 * CGFloat(oobFraction))
+                        let scale = min(1.0, maxAllowedSpan / span)
+                        let cx = (minX + maxX) * 0.5
+                        let cy = (minY + maxY) * 0.5
+                        let scaled = rawCornerPoints.map {
+                            CGPoint(x: cx + (.x - cx) * scale, y: cy + (.y - cy) * scale)
+                        }
+                        let sMinX = scaled.map(\.x).min() ?? 0
+                        let sMaxX = scaled.map(\.x).max() ?? 1
+                        let sMinY = scaled.map(\.y).min() ?? 0
+                        let sMaxY = scaled.map(\.y).max() ?? 1
+                        let shiftX: CGFloat = sMinX < 0.002 ? (0.002 - sMinX) : (sMaxX > 0.998 ? (0.998 - sMaxX) : 0)
+                        let shiftY: CGFloat = sMinY < 0.002 ? (0.002 - sMinY) : (sMaxY > 0.998 ? (0.998 - sMaxY) : 0)
+                        return scaled.map {
+                            CGPoint(x: min(0.999, max(0.001, .x + shiftX)),
+                                    y: min(0.999, max(0.001, .y + shiftY)))
+                        }
+                    }()
                     let intentPrior = intent == intents.first ? 0.045 : (intents.contains(intent) ? 0.02 : 0)
                     let thirdX = min(abs(Double(destination.x) - Double(CompositionTuning.goldenSectionLeft)),
                                      abs(Double(destination.x) - Double(CompositionTuning.goldenSectionRight)))
@@ -710,7 +736,7 @@ enum CompositionPlanner {
                         intentPrior + ruleOfThirdsBonus - deadCenterDestPenalty - ratioAdjustment
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
-                        sourceCorners: sourceCorners.map(\.point), rotation: rotation, zoom: zoom,
+                        sourceCorners: observedCornerPoints, rotation: rotation, zoom: zoom,
                         evidenceConfidence: min(1, max(0, subject.confidence)), score: score,
                         explanation: explanation(intent: intent, gaze: subject.gaze,
                             cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0),
