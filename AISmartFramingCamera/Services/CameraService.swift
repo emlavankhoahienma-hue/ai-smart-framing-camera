@@ -283,7 +283,7 @@ public final class CameraService: NSObject {
         let targetWidth = option.width
         let targetHeight = option.height
         let targetFPS = option.fps
-        return camera.formats.filter { format in
+        let matched = camera.formats.filter { format in
             let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             let maxDim = max(dims.width, dims.height)
             let minDim = min(dims.width, dims.height)
@@ -293,6 +293,16 @@ public final class CameraService: NSObject {
             return format.videoSupportedFrameRateRanges.contains { range in
                 range.minFrameRate <= (targetFPS + 1.5) && range.maxFrameRate >= (targetFPS - 1.5)
             }
+        }
+        return matched.sorted { f1, f2 in
+            // Ưu tiên góc nhìn rộng nhất (videoFieldOfView lớn nhất) để tránh các format bị crop tâm 1.4x-1.6x
+            if abs(f1.videoFieldOfView - f2.videoFieldOfView) > 0.5 {
+                return f1.videoFieldOfView > f2.videoFieldOfView
+            }
+            if f1.isVideoBinned != f2.isVideoBinned {
+                return f1.isVideoBinned
+            }
+            return false
         }
     }
 
@@ -1180,6 +1190,7 @@ public final class CameraService: NSObject {
             }
 
             // 8. Kết nối Audio Input và Audio Output vào MultiCamSession để quay video có âm thanh
+            self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataQueue)
             if let audioDev = AVCaptureDevice.default(for: .audio),
                let aInput = try? AVCaptureDeviceInput(device: audioDev),
                multiSession.canAddInput(aInput) {
@@ -1196,6 +1207,10 @@ public final class CameraService: NSObject {
             }
 
             multiSession.commitConfiguration()
+
+            if self.currentCaptureMode.isVideo {
+                self.configureAudioSessionForStereoCapture()
+            }
 
             guard multiSession.hardwareCost <= 1.0, multiSession.systemPressureCost <= 1.0 else {
                 CameraLogger.warning("MultiCam vượt ngân sách phần cứng (hw: \(multiSession.hardwareCost), pressure: \(multiSession.systemPressureCost))", category: .capture)
@@ -1296,9 +1311,19 @@ public final class CameraService: NSObject {
                 self.captureSession.startRunning()
             }
             if let cam = self.activeCamera {
+                self.configureConstituentDeviceSwitching(for: cam)
                 self.minZoom = cam.minAvailableVideoZoomFactor
-                self.maxZoom = cam.maxAvailableVideoZoomFactor
+                self.maxZoom = min(cam.maxAvailableVideoZoomFactor, 10.0)
+                let restoredZoom = self.convertDisplayZoomToDeviceZoom(self.defaultDisplayZoom)
+                if let _ = try? cam.lockForConfiguration() {
+                    cam.videoZoomFactor = max(self.minZoom, min(restoredZoom, self.maxZoom))
+                    cam.unlockForConfiguration()
+                }
                 self.currentZoom = cam.videoZoomFactor
+                let syncedZoom = self.currentZoom
+                DispatchQueue.main.async {
+                    self.delegate?.cameraService(self, didChangeZoomFactor: syncedZoom)
+                }
             }
             self.publishSessionRunning(self.captureSession.isRunning && !self.captureSession.isInterrupted, force: true)
             self.applyCaptureModeIfPossible()
@@ -1718,6 +1743,55 @@ public final class CameraService: NSObject {
             let canSwitchDevice = self.recordingState == .idle && !self.movieFileOutput.isRecording && allowPhysicalSwitch
             let targetLens = self.resolveOpticalLensTarget(for: displayZoom)
 
+            // Neu may co Virtual Multi-Camera (builtInTripleCamera / builtInDualCamera / builtInDualWideCamera),
+            // TUYET DOI GIU NGUYEN Virtual Multi-Camera de Apple ISP tu dong chuyen sang ong kinh Telephoto vat ly
+            // voi do tre 0ms, co hieu ung chuyen tieu cu muot ma nhu app Camera goc va giu nguyen ghep anh Deep Fusion!
+            if let virtualMultiCam = self.multiCameraDevice {
+                if self.activeCamera != virtualMultiCam && canSwitchDevice {
+                    let canUseMultiInCurrentMode: Bool = {
+                        if self.currentCaptureMode.isVideo {
+                            return !Self.findCandidateVideoFormats(for: virtualMultiCam, option: self.selectedVideoFormatOption).isEmpty
+                        }
+                        return true
+                    }()
+                    if canUseMultiInCurrentMode {
+                        if self.switchInputDeviceInternal(to: virtualMultiCam, initialDisplayZoom: displayZoom) {
+                            if self.currentCaptureMode.isVideo {
+                                self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
+                            }
+                        }
+                    }
+                }
+
+                if self.activeCamera == virtualMultiCam, let currentCam = self.activeCamera {
+                    self.currentOpticalLensTarget = targetLens
+                    let targetDevZoom = self.convertDisplayZoomToDeviceZoom(displayZoom)
+                    do {
+                        try currentCam.lockForConfiguration()
+                        defer { currentCam.unlockForConfiguration() }
+                        self.configureConstituentDeviceSwitching(for: currentCam)
+                        if smooth {
+                            let currentDevZ = max(1.0, currentCam.videoZoomFactor)
+                            let octaves = abs(log2(Double(max(1.0, targetDevZoom) / currentDevZ)))
+                            let adaptiveRate = Float(max(Double(rate), min(14.0, max(6.5, octaves * 9.5))))
+                            currentCam.ramp(toVideoZoomFactor: targetDevZoom, withRate: adaptiveRate)
+                        } else {
+                            currentCam.videoZoomFactor = targetDevZoom
+                        }
+                        let actualDevZoom = currentCam.videoZoomFactor
+                        self.currentZoom = actualDevZoom
+                        DispatchQueue.main.async {
+                            self.delegate?.cameraService(self, didChangeZoomFactor: actualDevZoom)
+                            completion?(actualDevZoom)
+                        }
+                    } catch {
+                        CameraLogger.error("CameraService: Loi cai dat zoom tren virtual multi-camera", error: error, category: .capture)
+                        rejected()
+                    }
+                    return
+                }
+            }
+
             if targetLens == .telephoto, let teleCamera = self.telephotoCameraDevice {
                 if self.activeCamera != teleCamera && canSwitchDevice {
                     CameraLogger.info("CameraService: Chuyen input session sang camera Telephoto vat ly (.builtInTelephotoCamera) cho zoom \(displayZoom)x", category: .capture)
@@ -1920,6 +1994,8 @@ public final class CameraService: NSObject {
     }
 
     /// Thiết lập lấy nét & đo sáng thông minh tự động (Smart Continuous AF/AE)
+    /// Giữ nguyên đo sáng ma trận toàn khung (Matrix Metering tại tâm 0.5, 0.5) cho .salientObject/.aiTarget/.center
+    /// để bảo vệ bầu trời ngoài trời không bao giờ bị cháy sáng hay nhấp nháy!
     public func setSmartFocusAndExposure(at devicePoint: CGPoint, focusType: SmartFocusType = .salientObject) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
@@ -1928,39 +2004,43 @@ public final class CameraService: NSObject {
                 try camera.lockForConfiguration()
                 defer { camera.unlockForConfiguration() }
                 let clampedPoint = CGPoint(
-                    x: max(0.01, min(0.99, devicePoint.x)),
-                    y: max(0.01, min(0.99, devicePoint.y))
+                    x: max(0.05, min(0.95, devicePoint.x)),
+                    y: max(0.05, min(0.95, devicePoint.y))
                 )
-                if camera.isSmoothAutoFocusSupported {
+                if camera.isSmoothAutoFocusSupported && !camera.isSmoothAutoFocusEnabled {
                     camera.isSmoothAutoFocusEnabled = true
                 }
                 if camera.isFocusPointOfInterestSupported {
-                    camera.focusPointOfInterest = clampedPoint
-                    if camera.isFocusModeSupported(.continuousAutoFocus) {
+                    let focusDelta = hypot(camera.focusPointOfInterest.x - clampedPoint.x, camera.focusPointOfInterest.y - clampedPoint.y)
+                    if focusDelta >= 0.045 {
+                        camera.focusPointOfInterest = clampedPoint
+                    }
+                    if camera.isFocusModeSupported(.continuousAutoFocus) && camera.focusMode != .continuousAutoFocus {
                         camera.focusMode = .continuousAutoFocus
-                    } else if camera.isFocusModeSupported(.autoFocus) {
+                    } else if !camera.isFocusModeSupported(.continuousAutoFocus) && camera.isFocusModeSupported(.autoFocus) && camera.focusMode != .autoFocus {
                         camera.focusMode = .autoFocus
                     }
                 }
+                // Quan trọng: Tuyệt đối giữ exposurePointOfInterest ở (0.5, 0.5) cho cảnh vật để ISP Apple
+                // dùng Matrix Metering + Smart HDR bảo vệ bầu trời ngoài trời không bị cháy sáng hay nháy sáng!
                 let exposurePoint: CGPoint
                 switch focusType {
                 case .face:
-                    exposurePoint = CGPoint(x: clampedPoint.x * 0.8 + 0.5 * 0.2, y: clampedPoint.y * 0.8 + 0.5 * 0.2)
-                case .salientObject, .aiTarget:
-                    exposurePoint = CGPoint(x: clampedPoint.x * 0.3 + 0.5 * 0.7, y: clampedPoint.y * 0.3 + 0.5 * 0.7)
-                case .center:
+                    exposurePoint = CGPoint(x: clampedPoint.x * 0.35 + 0.5 * 0.65, y: clampedPoint.y * 0.35 + 0.5 * 0.65)
+                case .salientObject, .aiTarget, .center:
                     exposurePoint = CGPoint(x: 0.5, y: 0.5)
                 }
                 let clampedExposurePoint = CGPoint(
-                    x: max(0.01, min(0.99, exposurePoint.x)),
-                    y: max(0.01, min(0.99, exposurePoint.y))
+                    x: max(0.05, min(0.95, exposurePoint.x)),
+                    y: max(0.05, min(0.95, exposurePoint.y))
                 )
-                if camera.isExposurePointOfInterestSupported {
-                    camera.exposurePointOfInterest = clampedExposurePoint
-                    if camera.isExposureModeSupported(.continuousAutoExposure) {
+                if camera.isExposurePointOfInterestSupported && camera.exposureMode != .locked {
+                    let expDelta = hypot(camera.exposurePointOfInterest.x - clampedExposurePoint.x, camera.exposurePointOfInterest.y - clampedExposurePoint.y)
+                    if expDelta >= 0.05 {
+                        camera.exposurePointOfInterest = clampedExposurePoint
+                    }
+                    if camera.isExposureModeSupported(.continuousAutoExposure) && camera.exposureMode != .continuousAutoExposure {
                         camera.exposureMode = .continuousAutoExposure
-                    } else if camera.isExposureModeSupported(.autoExpose) {
-                        camera.exposureMode = .autoExpose
                     }
                 }
             } catch {
@@ -2471,7 +2551,8 @@ public final class CameraService: NSObject {
         let targetHeight = effectiveOption.height
         let targetFPS = effectiveOption.fps
 
-        // Chon format phan cung chuan sac net, YUV 420, khong giat lag
+        // Chon format phan cung chuan sac net, goc nhin rong nhat (khong crop sensor), YUV 420, khong giat lag
+        let preservedDisplayZoom = self.convertDeviceZoomToDisplayZoom(self.currentZoom)
         let selectedFormat = candidates.sorted { f1, f2 in
             let dims1 = CMVideoFormatDescriptionGetDimensions(f1.formatDescription)
             let dims2 = CMVideoFormatDescriptionGetDimensions(f2.formatDescription)
@@ -2483,6 +2564,14 @@ public final class CameraService: NSObject {
             let maxFPS2 = f2.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0
             if (maxFPS1 >= (targetFPS - 1.5)) != (maxFPS2 >= (targetFPS - 1.5)) {
                 return maxFPS1 >= (targetFPS - 1.5)
+            }
+
+            if abs(f1.videoFieldOfView - f2.videoFieldOfView) > 0.5 {
+                return f1.videoFieldOfView > f2.videoFieldOfView
+            }
+
+            if f1.isVideoBinned != f2.isVideoBinned {
+                return f1.isVideoBinned
             }
 
             let sub1 = CMFormatDescriptionGetMediaSubType(f1.formatDescription)
@@ -2515,6 +2604,16 @@ public final class CameraService: NSObject {
                 self.captureSession.sessionPreset = .inputPriority
             }
             targetCamera.activeFormat = targetFormat
+            self.minZoom = targetCamera.minAvailableVideoZoomFactor
+            self.maxZoom = min(targetCamera.maxAvailableVideoZoomFactor, 10.0)
+            let syncedDevZoom = self.convertDisplayZoomToDeviceZoom(max(0.5, preservedDisplayZoom))
+            targetCamera.videoZoomFactor = max(self.minZoom, min(syncedDevZoom, self.maxZoom))
+            self.currentZoom = targetCamera.videoZoomFactor
+            let reportedZoom = self.currentZoom
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.delegate?.cameraService(self, didChangeZoomFactor: reportedZoom)
+            }
 
             let matchingRange = targetFormat.videoSupportedFrameRateRanges.first(where: {
                 $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
@@ -2547,7 +2646,7 @@ public final class CameraService: NSObject {
                 targetCamera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
             if targetCamera.activeFormat.isVideoHDRSupported {
-                targetCamera.automaticallyAdjustsVideoHDREnabled = false
+                targetCamera.automaticallyAdjustsVideoHDREnabled = true
             }
 
             sessionCommitted = true
@@ -2602,6 +2701,13 @@ public final class CameraService: NSObject {
     private func applyCaptureModeIfPossible() {
         if isDualCameraActive {
             currentCaptureMode = desiredCaptureMode
+            if desiredCaptureMode.isVideo {
+                self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataQueue)
+                self.configureAudioSessionForStereoCapture()
+                DispatchQueue.main.async { [weak self] in
+                    self?.onActiveVideoFormatChanged?("1080P 30FPS · DUAL PIP")
+                }
+            }
             completePendingMode(true)
             return
         }
@@ -2686,6 +2792,20 @@ public final class CameraService: NSObject {
                     defer { camera.unlockForConfiguration() }
                     if camera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
                         camera.activeColorSpace = .P3_D65
+                    }
+                    if camera.activeFormat.isVideoHDRSupported {
+                        camera.automaticallyAdjustsVideoHDREnabled = true
+                    }
+                    self.configureConstituentDeviceSwitching(for: camera)
+                    self.minZoom = camera.minAvailableVideoZoomFactor
+                    self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
+                    let targetPhotoZoom = self.convertDisplayZoomToDeviceZoom(self.defaultDisplayZoom)
+                    camera.videoZoomFactor = max(self.minZoom, min(targetPhotoZoom, self.maxZoom))
+                    self.currentZoom = camera.videoZoomFactor
+                    let syncedZoom = self.currentZoom
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.delegate?.cameraService(self, didChangeZoomFactor: syncedZoom)
                     }
                 } catch {
                     CameraLogger.error("CameraService: Khong the khoi phuc P3 color space", error: error, category: .capture)

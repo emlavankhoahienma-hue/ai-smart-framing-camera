@@ -31,7 +31,8 @@ public struct CameraPreviewView: UIViewRepresentable {
         if viewModel.previewLayer !== activeLayer {
             viewModel.previewLayer = activeLayer
         }
-        let targetGravity: AVLayerVideoGravity = .resizeAspectFill
+        // Chế độ Quay Video (16:9 / 9:16): dùng .resizeAspect trong khung ngắm để hiển thị trọn vẹn 100% khung hình 1.0x đúng như file video quay ra, không bị phóng đại 1.33x-1.5x do .resizeAspectFill cắt vào khung 3:4!
+        let targetGravity: AVLayerVideoGravity = (viewModel.captureMode.isVideo && !isDual) ? .resizeAspect : .resizeAspectFill
         if uiView.previewLayer?.videoGravity != targetGravity {
             CATransaction.begin()
             CATransaction.setAnimationDuration(0.20)
@@ -41,6 +42,7 @@ public struct CameraPreviewView: UIViewRepresentable {
         uiView.updateMetalPreviewState(
             isActive: viewModel.isFilmSimulationActive,
             isDualCamera: isDual,
+            isVideoMode: viewModel.captureMode.isVideo && !isDual,
             preset: viewModel.selectedFilmPreset,
             intensity: Float(viewModel.filmSimulationIntensity)
         )
@@ -116,6 +118,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private let stateLock = NSLock()
     private var isRenderingActive: Bool = false
     private var isDualCameraMode: Bool = false
+    private var isVideoAspectFit: Bool = false
     private var currentPreset: FilmPreset = .standard
     private var currentIntensity: Float = 1.0
 
@@ -125,6 +128,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var lastPreset: FilmPreset = .standard
     private var lastIntensity: Float = 1.0
     private var lastFilterActive: Bool = false
+    private var lastVideoAspectFit: Bool = false
     private var lastDrawableSize: CGSize = .zero
 
     init?(device: MTLDevice, viewModel: CameraViewModel) {
@@ -139,10 +143,11 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         super.init()
     }
 
-    func updateState(isActive: Bool, isDualCamera: Bool, preset: FilmPreset, intensity: Float) {
+    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, preset: FilmPreset, intensity: Float) {
         stateLock.lock()
         self.isRenderingActive = isActive && preset != .standard
         self.isDualCameraMode = isDualCamera
+        self.isVideoAspectFit = isVideoMode
         self.currentPreset = preset
         self.currentIntensity = intensity
         stateLock.unlock()
@@ -153,12 +158,12 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     func draw(in view: MTKView) {
         stateLock.lock()
         let filterActive = isRenderingActive
-        let dualActive = isDualCameraMode
+        let videoAspectFit = isVideoAspectFit
         let preset = currentPreset
         let intensity = currentIntensity
         stateLock.unlock()
 
-        guard filterActive || dualActive else { return }
+        guard filterActive else { return }
         guard let vm = self.viewModel,
               let pixelBuffer = vm.cameraService.currentMultiCamPixelBuffer() ?? vm.latestCameraPixelBuffer() else { return }
 
@@ -173,6 +178,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         // Optimization: reuse last filtered image if buffer, preset, intensity and size haven't changed
         if pixelBuffer === lastProcessedBuffer,
            filterActive == lastFilterActive,
+           videoAspectFit == lastVideoAspectFit,
            preset == lastPreset,
            abs(intensity - lastIntensity) < 0.005,
            drawableSize == lastDrawableSize,
@@ -185,7 +191,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
             let scaleX = drawableSize.width / rawExtent.width
             let scaleY = drawableSize.height / rawExtent.height
-            let scale = max(scaleX, scaleY)
+            let scale = videoAspectFit ? min(scaleX, scaleY) : max(scaleX, scaleY)
 
             let scaledW = rawExtent.width * scale
             let scaledH = rawExtent.height * scale
@@ -194,10 +200,12 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
             // Downscale directly to viewport dimensions and crop before applying heavy multi-pass filter graph.
             // This reduces pixel count from ~12MP down to ~1.8MP (6.7x speedup, rock-solid 60 FPS).
-            let viewportCI = inputCI
-                .transformed(by: CGAffineTransform(scaleX: scale, y: scale)
+            let transformedCI = inputCI
+                .transformed(by: CGAffineTransform(translationX: -rawExtent.minX, y: -rawExtent.minY)
+                    .concatenating(CGAffineTransform(scaleX: scale, y: scale))
                     .concatenating(CGAffineTransform(translationX: ox, y: oy)))
-                .cropped(to: CGRect(origin: .zero, size: drawableSize))
+            let bgBlack = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: drawableSize))
+            let viewportCI = transformedCI.composited(over: bgBlack).cropped(to: CGRect(origin: .zero, size: drawableSize))
 
             let filteredCI: CIImage
             if filterActive && preset != .standard {
@@ -233,6 +241,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
             lastProcessedBuffer = pixelBuffer
             lastFilteredCI = filteredCI
             lastFilterActive = filterActive
+            lastVideoAspectFit = videoAspectFit
             lastPreset = preset
             lastIntensity = intensity
             lastDrawableSize = drawableSize
@@ -351,16 +360,28 @@ public class PreviewContainerView: UIView {
         insertSubview(mtk, belowSubview: focusRingView)
     }
 
-    public func updateMetalPreviewState(isActive: Bool, isDualCamera: Bool, preset: FilmPreset, intensity: Float) {
-        let shouldRender = (isActive && preset != .standard) || isDualCamera
-        metalRenderer?.updateState(isActive: isActive, isDualCamera: isDualCamera, preset: preset, intensity: intensity)
+    public func updateMetalPreviewState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool = false, preset: FilmPreset, intensity: Float) {
+        // Chỉ kích hoạt MTKView khi đang bật bộ lọc màu khác .standard (tránh render chồng 2 lớp với multiCamPrimaryPreviewLayer trong Dual Camera)
+        let shouldRender = (isActive && preset != .standard)
+        metalRenderer?.updateState(isActive: isActive, isDualCamera: isDualCamera, isVideoMode: isVideoMode, preset: preset, intensity: intensity)
 
+        if isDualCamera {
+            dualPrimaryContainerView.isHidden = shouldRender || (multiCamOverlayLayer == nil)
+        }
         if metalView?.isHidden != !shouldRender {
             metalView?.isHidden = !shouldRender
         }
         if metalView?.isPaused != !shouldRender {
             metalView?.isPaused = !shouldRender
         }
+    }
+
+    public func animateLensTransition() {
+        let transition = CATransition()
+        transition.duration = 0.16
+        transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        transition.type = .fade
+        layer.add(transition, forKey: "opticalLensSwitchTransition")
     }
 
     private var currentDisplayScale: CGFloat {

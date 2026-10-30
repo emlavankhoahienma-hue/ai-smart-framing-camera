@@ -181,41 +181,60 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
             let scaleMultiplier = self.pipScale
             self.stateLock.unlock()
 
-            let width = CVPixelBufferGetWidth(backBuffer)
-            let height = CVPixelBufferGetHeight(backBuffer)
-            guard width > 0, height > 0 else { return }
-
-            let backCI = CIImage(cvPixelBuffer: backBuffer)
-            let finalCI: CIImage
-
-            if let frontBuffer {
-                let frontCI = CIImage(cvPixelBuffer: frontBuffer)
-                finalCI = Self.compositePIP(
-                    frontCI: frontCI,
-                    over: backCI,
-                    canvasWidth: CGFloat(width),
-                    canvasHeight: CGFloat(height),
-                    corner: corner,
-                    scaleMultiplier: scaleMultiplier
-                )
-            } else {
-                finalCI = backCI
-            }
-
             var targetBuffer: CVPixelBuffer?
             if let pool = adaptor.pixelBufferPool ?? self.pixelBufferPool {
                 CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &targetBuffer)
             }
+            let inWidth = CVPixelBufferGetWidth(backBuffer)
+            let inHeight = CVPixelBufferGetHeight(backBuffer)
+            guard inWidth > 0, inHeight > 0 else { return }
+
             if targetBuffer == nil {
                 let attrs: [CFString: Any] = [
                     kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA),
-                    kCVPixelBufferWidthKey: width,
-                    kCVPixelBufferHeightKey: height,
+                    kCVPixelBufferWidthKey: inWidth,
+                    kCVPixelBufferHeightKey: inHeight,
                     kCVPixelFormatOpenGLESCompatibility: true
                 ]
-                CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &targetBuffer)
+                CVPixelBufferCreate(kCFAllocatorDefault, inWidth, inHeight, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &targetBuffer)
             }
             guard let outBuffer = targetBuffer else { return }
+            let outWidth = CVPixelBufferGetWidth(outBuffer)
+            let outHeight = CVPixelBufferGetHeight(outBuffer)
+            guard outWidth > 0, outHeight > 0 else { return }
+
+            let rawBackCI = CIImage(cvPixelBuffer: backBuffer)
+            let bExt = rawBackCI.extent
+            let normalizedBack: CIImage
+            if bExt.width > 0 && bExt.height > 0 && (Int(bExt.width) != outWidth || Int(bExt.height) != outHeight || bExt.minX != 0 || bExt.minY != 0) {
+                let sx = CGFloat(outWidth) / bExt.width
+                let sy = CGFloat(outHeight) / bExt.height
+                let s = max(sx, sy)
+                let ox = (CGFloat(outWidth) - bExt.width * s) / 2.0
+                let oy = (CGFloat(outHeight) - bExt.height * s) / 2.0
+                normalizedBack = rawBackCI
+                    .transformed(by: CGAffineTransform(translationX: -bExt.minX, y: -bExt.minY)
+                        .concatenating(CGAffineTransform(scaleX: s, y: s))
+                        .concatenating(CGAffineTransform(translationX: ox, y: oy)))
+                    .cropped(to: CGRect(x: 0, y: 0, width: outWidth, height: outHeight))
+            } else {
+                normalizedBack = rawBackCI
+            }
+
+            let finalCI: CIImage
+            if let frontBuffer {
+                let frontCI = CIImage(cvPixelBuffer: frontBuffer)
+                finalCI = Self.compositePIP(
+                    frontCI: frontCI,
+                    over: normalizedBack,
+                    canvasWidth: CGFloat(outWidth),
+                    canvasHeight: CGFloat(outHeight),
+                    corner: corner,
+                    scaleMultiplier: scaleMultiplier
+                )
+            } else {
+                finalCI = normalizedBack
+            }
 
             self.ciContext.render(finalCI, to: outBuffer)
             adaptor.append(outBuffer, withPresentationTime: pts)
@@ -336,7 +355,8 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
             targetY = margin + round(canvasHeight * 0.07)
         }
 
-        // Scale và crop cam trước vừa khít khung PIP
+        // Chuẩn hóa gốc tọa độ (0,0) trước khi scale và crop cam trước vừa khít khung PIP
+        let normalizedFront = frontCI.transformed(by: CGAffineTransform(translationX: -fExtent.minX, y: -fExtent.minY))
         let scaleX = pipWidth / fExtent.width
         let scaleY = pipHeight / fExtent.height
         let scale = max(scaleX, scaleY)
@@ -345,21 +365,25 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
         let offsetX = (pipWidth - scaledW) / 2.0
         let offsetY = (pipHeight - scaledH) / 2.0
 
-        let scaledFront = frontCI
+        let scaledFront = normalizedFront
             .transformed(by: CGAffineTransform(scaleX: scale, y: scale)
                 .concatenating(CGAffineTransform(translationX: offsetX, y: offsetY)))
             .cropped(to: CGRect(x: 0, y: 0, width: pipWidth, height: pipHeight))
 
-        // Bo tròn góc PIP (Radius 16px) bằng Alpha Mask với nền trắng để giữ trọn vùng vẽ
-        let cornerRadius: CGFloat = 16.0
-        let maskRect = CGRect(x: 0, y: 0, width: pipWidth, height: pipHeight)
-        let maskImage = createRoundedRectMask(size: maskRect.size, cornerRadius: cornerRadius)
+        // Bo tròn góc PIP + viền trắng sắc nét bằng filter phần cứng GPU CIRoundedRectangleGenerator (0 cấp phát RAM CPU mỗi frame!)
+        let cornerRadius: CGFloat = max(14.0, round(pipWidth * 0.06))
+        let borderWidth: CGFloat = max(2.5, round(pipWidth * 0.012))
+        let innerRect = CGRect(x: borderWidth, y: borderWidth, width: max(1, pipWidth - borderWidth * 2), height: max(1, pipHeight - borderWidth * 2))
+        let outerRect = CGRect(x: 0, y: 0, width: pipWidth, height: pipHeight)
+
+        let innerMask = createRoundedRectMask(rect: innerRect, cornerRadius: max(8.0, cornerRadius - borderWidth))
+        let outerBorder = createRoundedRectMask(rect: outerRect, cornerRadius: cornerRadius, color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.92))
 
         let maskedFront: CIImage
-        if let mask = maskImage,
+        if let mask = innerMask,
            let blendFilter = CIFilter(name: "CIBlendWithAlphaMask") {
             blendFilter.setValue(scaledFront, forKey: kCIInputImageKey)
-            blendFilter.setValue(CIImage.empty(), forKey: kCIInputBackgroundImageKey)
+            blendFilter.setValue(outerBorder ?? CIImage.empty(), forKey: kCIInputBackgroundImageKey)
             blendFilter.setValue(mask, forKey: kCIInputMaskImageKey)
             maskedFront = blendFilter.outputImage ?? scaledFront
         } else {
@@ -370,19 +394,14 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
         let positionedFront = maskedFront.transformed(by: CGAffineTransform(translationX: targetX, y: targetY))
 
         // Lồng ghép lên trên ảnh nền camera sau
-        return positionedFront.composited(over: backCI)
+        return positionedFront.composited(over: backCI).cropped(to: CGRect(x: 0, y: 0, width: canvasWidth, height: canvasHeight))
     }
 
-    private static func createRoundedRectMask(size: CGSize, cornerRadius: CGFloat) -> CIImage? {
-        let renderer = UIGraphicsImageRenderer(size: size)
-        let uiImage = renderer.image { ctx in
-            UIColor.clear.setFill()
-            ctx.fill(CGRect(origin: .zero, size: size))
-            UIColor.white.setFill()
-            let path = UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: cornerRadius)
-            path.fill()
-        }
-        guard let cg = uiImage.cgImage else { return nil }
-        return CIImage(cgImage: cg)
+    private static func createRoundedRectMask(rect: CGRect, cornerRadius: CGFloat, color: CIColor = .white) -> CIImage? {
+        guard let filter = CIFilter(name: "CIRoundedRectangleGenerator") else { return nil }
+        filter.setValue(CIVector(cgRect: rect), forKey: "inputExtent")
+        filter.setValue(cornerRadius, forKey: "inputRadius")
+        filter.setValue(color, forKey: "inputColor")
+        return filter.outputImage
     }
 }

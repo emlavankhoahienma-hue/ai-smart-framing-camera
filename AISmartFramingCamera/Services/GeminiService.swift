@@ -208,17 +208,26 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     case pollinationsGPT54Nano = "pollinations/gpt-5.4-nano"
     case pollinationsGPT54Mini = "pollinations/gpt-5.4-mini"
     case pollinationsOpenAI = "pollinations/gpt-4o-mini"
+    case gemini25FlashDirect = "gemini-2.5-flash"
+    case gemini25FlashLiteDirect = "gemini-2.5-flash-lite-preview-06-17"
     case gemini20FlashDirect = "gemini-2.0-flash"
     case gemini20FlashLiteDirect = "gemini-2.0-flash-lite-preview-02-05"
     case gemini15FlashDirect = "gemini-1.5-flash"
     case gemini20FlashFree = "google/gemini-2.0-flash-exp:free"
+    case groqLlama4Scout = "meta-llama/llama-4-scout-17b-16e-instruct"
+    case groqLlama4Maverick = "meta-llama/llama-4-maverick-17b-128e-instruct"
     case groqQwen38 = "qwen/qwen3.8-27b"
     case groqLlama32_11BDirect = "llama-3.2-11b-vision-preview"
     case groqLlama32_90BDirect = "llama-3.2-90b-vision-preview"
     case freeVision = "google/gemma-4-31b-it:free"
     case gemini25FlashFree = "google/gemini-2.5-flash-preview:free"
+    case qwen25VL72BFree = "qwen/qwen2.5-vl-72b-instruct:free"
+    case qwen25VL32BFree = "qwen/qwen2.5-vl-32b-instruct:free"
     case qwen3VLFree = "qwen/qwen3-vl-32b-instruct:free"
     case llama4MaverickFree = "meta-llama/llama-4-maverick:free"
+    case llama4ScoutFree = "meta-llama/llama-4-scout:free"
+    case pixtral12BFree = "mistralai/pixtral-12b:free"
+    case kimiVLThinkingFree = "moonshotai/kimi-vl-a3b-thinking:free"
     case autoStrongest = "auto"
     case gemini31FlashLite = "google/gemini-3.1-flash-lite-preview"
     case gemini31Pro = "google/gemini-3.1-pro-preview"
@@ -265,17 +274,26 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinationsGPT54Nano:  return "GPT-5.4 Nano (Pollinations • Miễn phí 100%)"
         case .pollinationsGPT54Mini:  return "GPT-5.4 Mini (Pollinations • Miễn phí 100%)"
         case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations AI • Cần Pollen)"
+        case .gemini25FlashDirect:    return "Gemini 2.5 Flash (Google AI • Chuyên gia Nhiếp ảnh • Free)"
+        case .gemini25FlashLiteDirect:return "Gemini 2.5 Flash Lite (Google AI • Siêu tốc <0.6s • Free)"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash (Trực tiếp Google AI • Miễn phí cao)"
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Flash Lite (Google AI • Siêu tốc)"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash (Google AI • 1500 lượt/ngày free)"
         case .gemini20FlashFree:      return "Gemini 2.0 Flash (OpenRouter • Miễn phí)"
+        case .groqLlama4Scout:        return "Llama 4 Scout 17B Vision (Groq LPU • Chuyên Ảnh • Free)"
+        case .groqLlama4Maverick:     return "Llama 4 Maverick 17B Vision (Groq LPU • Siêu tốc • Free)"
         case .groqQwen38:             return "Qwen 3.8 27B Vision (Groq LPU Siêu tốc • Free)"
         case .groqLlama32_11BDirect:  return "Llama 3.2 11B Vision (Groq • Cũ/Ngừng hỗ trợ)"
         case .groqLlama32_90BDirect:  return "Llama 3.2 90B Vision (Groq • Cũ/Ngừng hỗ trợ)"
         case .freeVision:         return "Gemma 4 31B Vision (Miễn phí)"
-        case .gemini25FlashFree:  return "Gemini 2.5 Flash (Miễn phí)"
+        case .gemini25FlashFree:  return "Gemini 2.5 Flash (OpenRouter • Miễn phí)"
+        case .qwen25VL72BFree:    return "Qwen 2.5 VL 72B (Bậc thầy Bố cục & Màu • Miễn phí)"
+        case .qwen25VL32BFree:    return "Qwen 2.5 VL 32B (Chuyên gia Nhiếp ảnh • Miễn phí)"
         case .qwen3VLFree:        return "Qwen 3 VL 32B (Miễn phí)"
         case .llama4MaverickFree: return "Llama 4 Maverick 17B (Miễn phí)"
+        case .llama4ScoutFree:    return "Llama 4 Scout 17B (OpenRouter • Miễn phí)"
+        case .pixtral12BFree:     return "Mistral Pixtral 12B Vision (Nhiếp ảnh • Miễn phí)"
+        case .kimiVLThinkingFree: return "Kimi VL Thinking (Suy luận Bố cục 3D • Miễn phí)"
         case .autoStrongest:      return "Tự động chọn Model 2026 mạnh nhất"
         case .gemini31FlashLite:  return "Gemini 3.1 Flash Lite (2026 Siêu tốc)"
         case .gemini31Pro:        return "Gemini 3.1 Pro (2026 Cao cấp)"
@@ -321,17 +339,26 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinationsGPT54Nano:  return "GPT-5.4 Nano"
         case .pollinationsGPT54Mini:  return "GPT-5.4 Mini"
         case .pollinationsOpenAI:     return "GPT-4o Mini"
+        case .gemini25FlashDirect:    return "Gemini 2.5 Flash"
+        case .gemini25FlashLiteDirect:return "Gemini 2.5 Lite"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash"
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Lite"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash"
         case .gemini20FlashFree:      return "Gemini 2.0 Free"
+        case .groqLlama4Scout:        return "Llama 4 Scout"
+        case .groqLlama4Maverick:     return "Llama 4 Maverick"
         case .groqQwen38:             return "Qwen 3.8 27B"
         case .groqLlama32_11BDirect:  return "Llama 3.2 11B (Groq)"
         case .groqLlama32_90BDirect:  return "Llama 3.2 90B (Groq)"
         case .freeVision:             return "Gemma 4 31B"
         case .gemini25FlashFree:      return "Gemini 2.5 Free"
+        case .qwen25VL72BFree:        return "Qwen 2.5 VL 72B"
+        case .qwen25VL32BFree:        return "Qwen 2.5 VL 32B"
         case .qwen3VLFree:            return "Qwen 3 VL"
         case .llama4MaverickFree:     return "Llama 4 Maverick"
+        case .llama4ScoutFree:        return "Llama 4 Scout"
+        case .pixtral12BFree:         return "Pixtral 12B"
+        case .kimiVLThinkingFree:     return "Kimi VL 3D"
         case .autoStrongest:          return "Auto Mạnh Nhất"
         case .gemini31FlashLite:      return "Gemini 3.1 Lite"
         case .gemini31Pro:            return "Gemini 3.1 Pro"
@@ -378,14 +405,14 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             return "Phân tích ảnh trực tiếp từ Pollinations AI — Miễn phí 100%, không tốn Pollen"
         case .pollinationsOpenAI:
             return "Phân tích ảnh qua GPT-4o Mini trên Pollinations AI (yêu cầu tài khoản có Pollen)"
-        case .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
-            return "Trực tiếp Google AI Studio — Hạn mức miễn phí 1.500 lượt/ngày cực lớn"
-        case .groqQwen38:
-            return "Groq LPU chip chuyên dụng — Nhận diện thị giác siêu tốc < 0.8 giây hoàn toàn miễn phí"
+        case .gemini25FlashDirect, .gemini25FlashLiteDirect, .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
+            return "Trực tiếp Google AI Studio — Chuyên gia Bố cục & Ánh sáng, miễn phí 1.500 lượt/ngày"
+        case .groqLlama4Scout, .groqLlama4Maverick, .groqQwen38:
+            return "Groq LPU chip chuyên dụng — Nhận diện thị giác siêu tốc < 0.6 giây hoàn toàn miễn phí"
         case .groqLlama32_11BDirect, .groqLlama32_90BDirect:
-            return "Groq LPU chip chuyên dụng — Model cũ (khuyến nghị dùng Qwen 3.8 27B)"
-        case .gemini20FlashFree, .freeVision, .gemini25FlashFree, .qwen3VLFree, .llama4MaverickFree:
-            return "Miễn phí qua OpenRouter — tự động xoay vòng dự phòng khi quá tải"
+            return "Groq LPU chip chuyên dụng — Model cũ (khuyến nghị dùng Llama 4 Scout / Qwen)"
+        case .gemini20FlashFree, .freeVision, .gemini25FlashFree, .qwen25VL72BFree, .qwen25VL32BFree, .qwen3VLFree, .llama4MaverickFree, .llama4ScoutFree, .pixtral12BFree, .kimiVLThinkingFree:
+            return "Model chuyên Nhiếp ảnh & Thị giác miễn phí qua OpenRouter — tự động xoay vòng dự phòng"
         case .gemini31FlashLite, .gemini25Flash, .gemini20Flash, .gemini15Flash8B, .gpt5Mini, .gpt41Mini, .gpt4oMini, .o3Mini:
             return "Tốc độ phản hồi cực nhanh (<1.2s), tối ưu tiết kiệm token"
         case .gemini31Pro, .gemini25Pro, .gemini20ProExp, .gpt5, .gpt45, .gpt4o, .claude45Sonnet, .claude4Sonnet, .claude37Sonnet, .o1, .o4MiniHigh:
@@ -424,6 +451,8 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .googleGemini:
             return [
                 .autoStrongest,
+                .gemini25FlashDirect,
+                .gemini25FlashLiteDirect,
                 .gemini20FlashDirect,
                 .gemini15FlashDirect,
                 .gemini20FlashLiteDirect,
@@ -444,6 +473,8 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .groq:
             return [
                 .autoStrongest,
+                .groqLlama4Scout,
+                .groqLlama4Maverick,
                 .groqQwen38,
                 .groqLlama33,
                 .groqLlama32_11BDirect,
@@ -507,7 +538,10 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public static var autoFallbackChain: [String] {
         [
+            "qwen/qwen2.5-vl-72b-instruct:free",
             "google/gemini-2.0-flash-exp:free",
+            "google/gemini-2.5-flash-preview:free",
+            "meta-llama/llama-4-maverick:free",
             "google/gemma-4-31b-it:free",
             "openai/gpt-4.1-mini"
         ]
@@ -515,11 +549,16 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public static var freeFallbackChain: [String] {
         [
+            "qwen/qwen2.5-vl-72b-instruct:free",
             "google/gemini-2.0-flash-exp:free",
-            "google/gemma-4-31b-it:free",
             "google/gemini-2.5-flash-preview:free",
+            "qwen/qwen2.5-vl-32b-instruct:free",
+            "meta-llama/llama-4-maverick:free",
+            "meta-llama/llama-4-scout:free",
+            "mistralai/pixtral-12b:free",
+            "moonshotai/kimi-vl-a3b-thinking:free",
             "qwen/qwen3-vl-32b-instruct:free",
-            "meta-llama/llama-4-maverick:free"
+            "google/gemma-4-31b-it:free"
         ]
     }
 
@@ -2376,25 +2415,26 @@ public final class GeminiService: ObservableObject {
         }
 
         return """
-        You are a World-Class Director of Photography (DoP). Analyze this viewfinder frame with professional artistic precision.
-        Sensor cues: \(hints)
-        COORDINATE SYSTEM & VISUAL GRID (Set-of-Mark Grounding):
-        - The image is overlaid with a calibrated 10x10 coordinate grid (Columns A to J from x=0.0 to 1.0; Rows 1 to 10 from y=0.0 to 1.0, fine ticks every 0.05).
-        - Use these grid intersections and cell references (e.g. D4, F3) to pinpoint coordinates with sub-pixel accuracy!
-        - Top-left is (0.0, 0.0), bottom-right is (1.0, 1.0).
+        You are an Academy-Award-Winning Master Director of Photography (DoP) and 3D Optical Composition Architect.
+        Sensor telemetry & hardware cues: \(hints)
 
-        MANDATORY CINEMATOGRAPHY RULES:
-        1. SUBJECT ANCHOR (subject_x, subject_y, subject_w, subject_h): Locate the exact optical focal point of the primary subject in the CURRENT frame (lock onto dominant eye/face center for people/pets, or primary focal center for objects/landscapes). NEVER output (0.5, 0.5) if the subject is off-center.
-        2. COMPOSITION POWER POINT (composition_x, composition_y): Choose the ideal aesthetic screen position where the subject anchor SHOULD sit after framing:
-           - Rule of Thirds / Golden Ratio: e.g. (0.38, 0.38), (0.62, 0.38), (0.33, 0.33), (0.67, 0.33) with generous lead room in the gaze direction.
-           - Center Symmetry: (0.50, 0.44) ONLY if architectural/strict bilateral symmetry.
-        3. OPTIMAL ZOOM (shot_scale & suggested_zoom):
-           - Choose shot_scale from ["close_up", "medium_portrait", "full_body", "environmental", "wide"].
-           - Compute suggested_zoom in [1.0..3.0] (prefer prime lens steps: 1.0, 1.2, 1.5, 2.0, 2.5, 3.0) so the subject fills the ideal proportion for shot_scale WITHOUT clipping head/limbs (must not exceed safe_max_zoom=\(String(format: "%.2f", safeMaxZoomHint))).
-        4. SMART EXPOSURE (ev_bias in [-1.5..+1.5], lighting_scene in ["backlit","night","sunset","harsh_sun","indoor_warm","normal"]).
+        1. CALIBRATED 10x10 SET-OF-MARK COORDINATE GRID:
+        - The viewfinder frame is overlaid with a 10x10 optical grid (Columns A..J from x=0.0..1.0; Rows 1..10 from y=0.0..1.0; fine sub-ticks every 0.05).
+        - Top-left is (0.0, 0.0), bottom-right is (1.0, 1.0). Read the exact grid cell of the hero subject before outputting numbers.
 
-        Return ONLY ONE raw valid JSON object (no markdown fences, no extra text):
-        {"subject_x":0.44,"subject_y":0.36,"subject_w":0.28,"subject_h":0.42,"composition_x":0.38,"composition_y":0.38,"target_x":0.44,"target_y":0.36,"shot_scale":"medium_portrait","suggested_zoom":1.5,"ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Classic Chrome","preset_explanation":"Tôn da tự nhiên và chiều sâu điện ảnh","explanation":"Khóa nét mắt chủ thể và đặt vào điểm mạnh Tỷ lệ vàng 1/3 kèm zoom 1.5x (35mm)","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.0,"saturation":1.04,"contrast":1.03,"shadow_lift":0.02,"highlight_roll":0.95,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng ánh sáng tự nhiên"}}
+        2. 5-LAYER 3D PHOTOGRAPHIC INTELLIGENCE RULES:
+        - LAYER A (3D Foreground/Midground Subject Separation): Lock strictly onto the TRUE primary foreground/midground hero subject (dominant eye/bridge of nose for people/pets, hero product/cup/vehicle/landmark for objects). NEVER lock onto tiny background pedestrians, edge clutter, or empty floor/sky! NEVER output (0.5, 0.5) unless the subject is truly centered.
+        - LAYER B (3D Gaze, Body Pose & Lead Room): Determine the subject's 3D gaze/facing direction (left/right/up/down). Place `composition_x, composition_y` on the OPPOSITE Golden Ratio (0.382 or 0.618) or Rule-of-Thirds (0.333 or 0.667) power point so at least 55%-65% of the frame opens up as breathing space (Lead Room) in front of the subject's eyes or motion vector!
+        - LAYER C (Leading Lines, Vanishing Point & Horizon Harmony): If architectural corridors, roads, bridges, or table edges converge to a Vanishing Point, align `composition_x, composition_y` with the vanishing point or golden symmetry axis (x=0.50, y=0.44). Keep horizons level on y=0.382 or y=0.618.
+        - LAYER D (Decisive Optical Focal Length & Zoom Selection):
+          * Evaluate subject occupancy (`subject_w`, `subject_h`). If the hero subject is small or distant (`subject_h < 0.34` or surrounded by distracting clutter), DECISIVELY ZOOM IN using prime optical steps: `1.2` (28mm), `1.5` (35mm Street/Environmental), `2.0` (50mm Standard Portrait), `2.5` (65mm), or `3.0` (77mm Telephoto Compression).
+          * Only keep `suggested_zoom = 1.0` (24mm Wide) for grand landscapes, full-architecture symmetry, or when the subject already fills `> 45%` of the frame.
+          * Never exceed `safe_max_zoom=\(String(format: "%.2f", safeMaxZoomHint))` so the head, hands, or key edges are never clipped.
+        - LAYER E (Highlight-Safe Exposure & Color Science):
+          * Protect outdoor skies from blowing out: if bright sky/harsh daylight is visible (`harsh_sun`), set negative `ev_bias` (-0.3 to -0.7) and `highlight_roll` (0.82..0.90). If backlit portrait (`backlit`), lift shadows (`shadow_lift`: 0.08..0.16, `ev_bias`: +0.2..+0.5).
+
+        Return ONLY ONE valid raw JSON object (no markdown fences, Vietnamese explanations):
+        {"subject_x":0.44,"subject_y":0.36,"subject_w":0.28,"subject_h":0.42,"composition_x":0.38,"composition_y":0.38,"target_x":0.44,"target_y":0.36,"shot_scale":"medium_portrait","suggested_zoom":1.5,"ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Classic Chrome","preset_explanation":"Tôn da tự nhiên, giữ chi tiết vùng sáng bầu trời và chiều sâu 3D","explanation":"Khóa nét mắt chủ thể tiền cảnh, mở khoảng thở Lead Room theo hướng nhìn về điểm mạnh Tỷ lệ vàng 0.38 kèm tiêu cự 1.5x (35mm)","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.0,"saturation":1.04,"contrast":1.03,"shadow_lift":0.04,"highlight_roll":0.90,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng ánh sáng ma trận, bảo vệ vùng sáng bầu trời"}}
         """
     }
     // MARK: - Mathematical Constraint Solver for Dual-Anchor Framing & Optimal Zoom

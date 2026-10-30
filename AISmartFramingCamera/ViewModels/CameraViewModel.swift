@@ -3596,7 +3596,11 @@ public final class CameraViewModel: ObservableObject {
         guard displayZoomVal.isFinite, (isCameraReady || isDualCameraActive), !isShutterPressing, !isCameraHibernating else { return }
         cancelAIZoomForGesture()
         haptics.triggerSelectionChange()
+        let prevZoom = displayZoom
         selectedZoomPreset = displayZoomVal
+        if abs(displayZoomVal - prevZoom) >= 0.45 {
+            previewContainerView?.animateLensTransition()
+        }
         requestManualZoom(displayZoomVal, smooth: true)
     }
 
@@ -4015,7 +4019,13 @@ public final class CameraViewModel: ObservableObject {
             return
         }
 
-        let requiredCooldown: TimeInterval = (type == .face) ? 0.65 : 1.1
+        // Khi ở chế độ rảnh (chưa khóa AI target), chỉ tự động lấy nét nhẹ theo khuôn mặt rõ ràng;
+        // KHÔNG gọi lặp lại trên .salientObject mỗi 1.1s để tránh làm ISP đổi điểm lấy nét/đo sáng gây nháy sáng ngoài trời!
+        if aiSessionState == .idle && type == .salientObject {
+            return
+        }
+
+        let requiredCooldown: TimeInterval = (type == .face) ? 0.85 : 1.6
         guard pendingSmartFocusStableCount >= 2, now - lastSmartFocusExposureTime >= requiredCooldown else { return }
 
         smoothedSmartFocusPoint = CGPoint(
