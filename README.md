@@ -1,3 +1,5 @@
+**Official Website & Documentation:** [https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/](https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/) | [llms.txt](https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/llms.txt)
+
 # Align Studio — Open-Source iOS Camera for AI Compose, AI Photo Composition & AI Smart Framing
 
 <div align="center">
