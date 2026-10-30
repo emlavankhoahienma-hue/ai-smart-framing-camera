@@ -168,7 +168,9 @@ public struct NeuralSubjectCandidate: Identifiable, Sendable {
     // The preserved candidate format identifies Vision saliency regions by this
     // fixed internal label. YOLO class labels never use it. A region is a field
     // of attention, not a physical object whose complete outline must be kept.
-    var isAttentionRegion: Bool { category == .foregroundObject && (label == "Vùng nổi bật" || label == "Chủ thể tiền cảnh") }
+    var isAttentionRegion: Bool {
+        category == .foregroundObject && (label == "Vùng nổi bật" || label == "Chủ thể tiền cảnh" || label == "Vùng trọng tâm" || label == "Vùng chi tiết")
+    }
     
     public var center: CGPoint {
         CGPoint(x: boundingBox.midX, y: boundingBox.midY)
@@ -461,9 +463,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     let label = (isObjectness && area <= 0.42) ? "Chủ thể tiền cảnh" : "Vùng nổi bật"
                     let baseAdjusted = (isObjectness && area <= 0.42) ? min(0.92, region.confidence * 1.05) : region.confidence * 0.82
                     let adjustedConfidence = hasExplicitDetectorCandidate ? min(0.68, baseAdjusted * 0.85) : baseAdjusted
-                    if var c = candidate(visionRect: region.boundingBox, category: .foregroundObject,
+                    if let c = candidate(visionRect: region.boundingBox, category: .foregroundObject,
                                          confidence: adjustedConfidence, label: label) {
-                        c.isAttentionRegion = !isObjectness || area > 0.22
                         if area <= 0.42 {
                             tightSaliencyCandidates.append(c)
                         } else {
@@ -487,14 +488,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     let bx = min(max(0.04, com.x - bw / 2), 1 - bw - 0.04)
                     let by = min(max(0.04, com.y - bh / 2), 1 - bh - 0.04)
                     let box = CGRect(x: bx, y: by, width: bw, height: bh)
-                    var c = NeuralSubjectCandidate(
+                    let c = NeuralSubjectCandidate(
                         boundingBox: box,
                         category: .foregroundObject,
                         confidence: Float(max(0.40, comVal)),
                         label: "Vùng trọng tâm",
                         prominenceScore: 0.22
                     )
-                    c.isAttentionRegion = true
                     candidates.append(c)
                 }
             }
@@ -507,14 +507,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 let box = CGRect(x: bx, y: by, width: bw, height: bh)
                 let isFarFromFirst = candidates.first.map { hypot($0.center.x - anchor.x, $0.center.y - anchor.y) > 0.25 } ?? true
                 if isFarFromFirst {
-                    var c = NeuralSubjectCandidate(
+                    let c = NeuralSubjectCandidate(
                         boundingBox: box,
                         category: .foregroundObject,
                         confidence: Float(max(0.38, anchorVal)),
                         label: "Vùng chi tiết",
                         prominenceScore: 0.18
                     )
-                    c.isAttentionRegion = true
                     candidates.append(c)
                 }
             }
