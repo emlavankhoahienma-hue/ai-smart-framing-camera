@@ -263,7 +263,7 @@ struct CompositionRaster: Sendable {
         self.luminance = luminance
         self.attention = attention
         self.edges = edges
-        self.edgeAngles = edgeAngles.isEmpty ? [Double](repeating: 0, count: side * side) : edgeAngles
+        self.edgeAngles = edgeAngles.count == side * side ? edgeAngles : []
         self.hasAttention = hasAttention
         self.foregroundDepth = foregroundDepth.count == side * side ? foregroundDepth : [Double](repeating: 0.5, count: side * side)
     }
@@ -271,7 +271,7 @@ struct CompositionRaster: Sendable {
     var isValid: Bool {
         (8...64).contains(side) && luminance.count == side * side &&
         attention.count == luminance.count && edges.count == luminance.count &&
-        edgeAngles.count == luminance.count &&
+        (edgeAngles.isEmpty || edgeAngles.count == luminance.count) &&
         luminance.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
         attention.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
         edges.allSatisfy { $0.isFinite && (0...1).contains($0) }
@@ -710,15 +710,12 @@ enum CompositionPlanner {
                     let thirdY = min(abs(Double(destination.y) - CompositionTuning.portraitEyeLineY),
                                      abs(Double(destination.y) - Double(CompositionTuning.goldenSectionRight)))
                     let ruleOfThirdsBonus = CompositionTuning.ruleOfThirdsBonusWeight * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
-                    // Phản biện 3: Khi chủ thể đã ở sẵn vị trí đẹp (S_subject ≈ P*), giữ Target tại (0.5, 0.5) để xác nhận khớp tâm.
-                    // Chỉ phạt tâm chết khi điểm đặt đích (destination) nằm ở tâm chết mà điểm mong muốn (desired) lại lệch tâm.
-                    let subjectDistToDesired = hypot(Double(subject.anchor.x - desired.x), Double(subject.anchor.y - desired.y))
-                    let desiredDistFromCenter = hypot(Double(desired.x - 0.5), Double(desired.y - 0.5))
+                    // Phản biện 3: Phạt khi điểm đặt chủ thể đích P* (destination) rơi vào tâm chết (0.5, 0.5) ở cảnh không đối xứng.
+                    // TUYỆT ĐỐI KHÔNG phạt khi khoảng cách lia máy (aim.point - 0.5) nhỏ!
                     let destDistFromCenter = hypot(Double(destination.x - 0.5), Double(destination.y - 0.5))
-                    let deadCenterDestPenalty = (!unchanged && intent != .architecture && metrics.symmetry < 0.78 && desiredDistFromCenter > 0.05)
+                    let deadCenterDestPenalty = (intent != .architecture && metrics.symmetry < 0.78)
                         ? 0.15 * exp(-32.0 * destDistFromCenter * destDistFromCenter)
                         : 0.0
-                    let alreadyAlignedBonus = (unchanged && subjectDistToDesired < 0.048 && abs(log(max(0.001, area) / effectiveDesiredArea)) < 0.30) ? 0.065 : 0.0
                     let ratioAdjustment = area < effectiveDesiredArea ? -0.045 * min(1.0, max(0.0, log(ratio))) : 0.028 * abs(log(ratio))
                     let contextWeight = intent.preservesContext ? 0.11 : 0.05
                     let contextFitWeight = intent.preservesContext ? 0.09 : 0.04
@@ -741,7 +738,7 @@ enum CompositionPlanner {
                         0.09 * space + 0.06 * edgeSafety + contextWeight * context +
                         contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
                         0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue +
-                        intentPrior + ruleOfThirdsBonus + alreadyAlignedBonus - deadCenterDestPenalty - ratioAdjustment
+                        intentPrior + ruleOfThirdsBonus - deadCenterDestPenalty - ratioAdjustment
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: observedCornerPoints, rotation: rotation, zoom: zoom,
