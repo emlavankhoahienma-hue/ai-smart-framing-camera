@@ -43,8 +43,12 @@ final class CompositionAestheticSearch {
                     var proposal = candidate
                     if let assessment {
                         assessedCount += 1
-                        // Expected expert rating is not detector confidence.
-                        proposal.score = 0.50 * (assessment.mean - 1) / 4 + 0.50 * candidate.score
+                        // Phản biện 2: Khi xoay camera 3D ở 1.0x (outOfBoundsFraction > 0), cửa sổ preview bị giới hạn trong [0, 1]
+                        // nên ưu tiên trọng số Trường Thế Năng Thị Giác 3D (candidate.continuousFieldScore) để không bị thiên vị cho khung đứng yên
+                        let oobWeight = min(0.32, candidate.outOfBoundsFraction * 0.45)
+                        let specialistWeight = 0.46 - oobWeight
+                        let fieldWeight = 0.54 + oobWeight
+                        proposal.score = specialistWeight * (assessment.mean - 1) / 4 + fieldWeight * candidate.score
                     } else if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
                         proposal.score += aesthetic * 0.075
                     }
@@ -131,8 +135,12 @@ final class CompositionAestheticSearch {
                     }
                     pool[index].aesthetics = assessment
                     if let composition = pool[index].assessment, let aesthetics = pool[index].aesthetics,
-                       let score = CompositionPreferencePolicy.score(composition: composition.mean,
-                           aesthetics: aesthetics.mean, geometry: pool[index].geometryScore) {
+                       let score = CompositionPreferencePolicy.score(
+                           composition: composition.mean,
+                           aesthetics: aesthetics.mean,
+                           geometry: pool[index].geometryScore,
+                           outOfBoundsFraction: pool[index].proposal.outOfBoundsFraction
+                       ) {
                         pool[index].proposal.score = score
                         modernCount += 1
                     }
@@ -215,11 +223,15 @@ enum CompositionPreferencePolicy {
             composition >= originalComposition - 0.20 && aesthetics >= originalAesthetics - 0.20
     }
 
-    static func score(composition: Double, aesthetics: Double, geometry: Double) -> Double? {
+    static func score(composition: Double, aesthetics: Double, geometry: Double, outOfBoundsFraction: Double = 0.0) -> Double? {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
-        return 0.45 * (composition - 1) / 4 + 0.40 * (aesthetics - 1) / 4 +
-            0.15 * min(1, max(0, geometry))
+        let fieldBoost = min(0.28, max(0.0, outOfBoundsFraction * 0.38))
+        let compW = 0.38 - fieldBoost * 0.55
+        let aesthW = 0.34 - fieldBoost * 0.45
+        let geomW = 0.28 + fieldBoost
+        return compW * (composition - 1) / 4 + aesthW * (aesthetics - 1) / 4 +
+            geomW * min(1, max(0, geometry))
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {

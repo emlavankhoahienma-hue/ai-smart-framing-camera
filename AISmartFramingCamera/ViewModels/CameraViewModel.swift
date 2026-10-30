@@ -2711,21 +2711,18 @@ public final class CameraViewModel: ObservableObject {
         self.plannedLightingScene = evaluatedFraming.lightingScene
         self.plannedLightingDescription = evaluatedFraming.lightingRationale
 
+        // Phản biện 3 & 4: Hợp nhất 1 đường ống quyết định duy nhất (Single Source of Truth).
+        // Tin tưởng trực tiếp tọa độ Aim 3D (aimWorldRay) và mức Zoom ngữ cảnh từ bộ lập kế hoạch + SAMP-Net + DINOv2 (Charm).
         var sourceAimPoint = plan.aimPointInSource
         var effectiveGuideRay = plan.aimWorldRay
+        let anchorDistFromCenter = hypot(anchor.x - 0.5, anchor.y - 0.5)
         let planDistFromCenter = hypot(sourceAimPoint.x - 0.5, sourceAimPoint.y - 0.5)
-        // Khắc phục triệt để lỗi Target nằm lì ở tâm (0.5, 0.5):
-        // Khi static crop ở 1x không dịch được góc ảnh ra ngoài [0, 1], dùng phép chiếu hướng xoay máy 3D
-        // từ CompositionCalculator để dẫn đường đưa chủ thể vào điểm mạnh Tỷ lệ vàng / 1/3.
-        if planDistFromCenter < 0.09 && detectedScene != .architecture {
+        if planDistFromCenter < 0.035 && anchorDistFromCenter < 0.065 && detectedScene != .architecture && !plan.usesCenter {
             sourceAimPoint = evaluatedFraming.targetPoint
             effectiveGuideRay = source.pose.act(source.frame.calibration.deviceRay(at: sourceAimPoint))
         }
 
         var effectiveZoom = plan.zoom
-        if effectiveZoom <= displayZoom * 1.12 && evaluatedFraming.recommendedZoomFactor > effectiveZoom * 1.12 {
-            effectiveZoom = evaluatedFraming.recommendedZoomFactor
-        }
         effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(
             cameraService.convertDisplayZoomToDeviceZoom(effectiveZoom))
 

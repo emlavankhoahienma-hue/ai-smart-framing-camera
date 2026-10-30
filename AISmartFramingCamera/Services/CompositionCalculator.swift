@@ -606,25 +606,24 @@ public final class CompositionCalculator: @unchecked Sendable {
                 }
             }
 
-            // Yếu tố 3: Cân bằng trọng lượng thị giác & Chống bẫy tâm (Off-Center Guidance Fitness)
-            // Tránh lỗi cũ: exp(-4 * d^2) đạt đỉnh ở d=0 khiến Target luôn bị hút về (0.5, 0.5).
-            // Nay: ưu tiên khoảng dẫn hướng bố cục rõ ràng (d ~ 0.10 - 0.24) trừ khi chụp kiến trúc đối xứng.
-            let targetDistFromCenter = hypot(Double(target.x - 0.5), Double(target.y - 0.5))
+            // Yếu tố 3 (Phản biện 3): Đánh giá vị trí đặt chủ thể đích P* (pGrid) thay vì khoảng cách dịch chuyển Target!
+            // Nếu chủ thể đã nằm sẵn ở điểm mạnh P* (anchor ~ pGrid => target ~ 0.5), TUYỆT ĐỐI KHÔNG phạt mà phải giữ nguyên để xác nhận khóa nét!
+            let gridDistFromCenter = hypot(Double(pGrid.x - 0.5), Double(pGrid.y - 0.5))
+            let subjectToGridDist = hypot(Double(anchor.x - pGrid.x), Double(anchor.y - pGrid.y))
             let balanceScore: Double
             if sceneType == .architecture && item.rule == .centerSymmetry {
-                balanceScore = exp(-4.0 * pow(targetDistFromCenter, 2))
+                balanceScore = exp(-6.0 * pow(gridDistFromCenter, 2))
             } else {
-                balanceScore = exp(-9.5 * pow(targetDistFromCenter - 0.145, 2))
+                let gridPowerFitness = exp(-12.0 * pow(gridDistFromCenter - 0.165, 2))
+                let proximityFit = exp(-3.5 * pow(subjectToGridDist, 2))
+                balanceScore = 0.72 * gridPowerFitness + 0.28 * proximityFit
             }
 
-            // Phạt mạnh giả thuyết đặt Target nằm lì ở chính giữa màn hình (0.5, 0.5)
+            // Chỉ phạt khi điểm đặt chủ thể đích P* (pGrid) nằm ở tâm chết (0.5, 0.5) với cảnh không đối xứng
             var centerTrapPenalty = 0.0
             if sceneType != .architecture {
-                if item.rule == .centerSymmetry {
-                    centerTrapPenalty += 0.38
-                }
-                if targetDistFromCenter < 0.085 {
-                    centerTrapPenalty += (0.085 - targetDistFromCenter) * 3.8
+                if item.rule == .centerSymmetry || gridDistFromCenter < 0.06 {
+                    centerTrapPenalty += 0.36
                 }
             }
 
@@ -651,7 +650,7 @@ public final class CompositionCalculator: @unchecked Sendable {
                 temporalBonus += 0.08
             }
             let distToActiveGrid = hypot(Double(pGrid.x - activeWinningGridPoint.x), Double(pGrid.y - activeWinningGridPoint.y))
-            if distToActiveGrid < 0.08 && targetDistFromCenter >= 0.075 {
+            if distToActiveGrid < 0.08 && gridDistFromCenter >= 0.08 {
                 temporalBonus += 0.10
             }
 
