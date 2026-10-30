@@ -679,31 +679,12 @@ enum CompositionPlanner {
                         return acc + hypot(dx, dy)
                     }
                     let oobFraction = min(1.0, oobSum / 0.85)
-                    let observedCornerPoints: [CGPoint] = {
-                        guard !unchanged && oobSum > 0.000001 else { return rawCornerPoints }
-                        let minX = rawCornerPoints.map(\.x).min() ?? 0
-                        let maxX = rawCornerPoints.map(\.x).max() ?? 1
-                        let minY = rawCornerPoints.map(\.y).min() ?? 0
-                        let maxY = rawCornerPoints.map(\.y).max() ?? 1
-                        let span = max(0.001, max(maxX - minX, maxY - minY))
-                        let maxAllowedSpan = max(0.76, 0.93 - 0.14 * CGFloat(oobFraction))
-                        let scale = min(1.0, maxAllowedSpan / span)
-                        let cx = (minX + maxX) * 0.5
-                        let cy = (minY + maxY) * 0.5
-                        let scaled = rawCornerPoints.map {
-                            CGPoint(x: cx + (.x - cx) * scale, y: cy + (.y - cy) * scale)
-                        }
-                        let sMinX = scaled.map(\.x).min() ?? 0
-                        let sMaxX = scaled.map(\.x).max() ?? 1
-                        let sMinY = scaled.map(\.y).min() ?? 0
-                        let sMaxY = scaled.map(\.y).max() ?? 1
-                        let shiftX: CGFloat = sMinX < 0.002 ? (0.002 - sMinX) : (sMaxX > 0.998 ? (0.998 - sMaxX) : 0)
-                        let shiftY: CGFloat = sMinY < 0.002 ? (0.002 - sMinY) : (sMaxY > 0.998 ? (0.998 - sMaxY) : 0)
-                        return scaled.map {
-                            CGPoint(x: min(0.999, max(0.001, .x + shiftX)),
-                                    y: min(0.999, max(0.001, .y + shiftY)))
-                        }
-                    }()
+                    let observedCornerPoints = observedSourceQuad(
+                        rawCornerPoints,
+                        unchanged: unchanged,
+                        oobSum: oobSum,
+                        oobFraction: oobFraction
+                    )
                     let intentPrior = intent == intents.first ? 0.045 : (intents.contains(intent) ? 0.02 : 0)
                     let thirdX = min(abs(Double(destination.x) - Double(CompositionTuning.goldenSectionLeft)),
                                      abs(Double(destination.x) - Double(CompositionTuning.goldenSectionRight)))
@@ -1230,6 +1211,49 @@ enum CompositionPlanner {
     private static func inside(_ point: CGPoint, margin: CGFloat) -> Bool {
         point.x.isFinite && point.y.isFinite && point.x >= margin && point.y >= margin &&
         point.x <= 1 - margin && point.y <= 1 - margin
+    }
+
+    private static func observedSourceQuad(_ rawPoints: [CGPoint], unchanged: Bool,
+                                           oobSum: Double, oobFraction: Double) -> [CGPoint] {
+        guard !unchanged && oobSum > 0.000001, rawPoints.count == 4 else { return rawPoints }
+        var minX = rawPoints[0].x, maxX = rawPoints[0].x
+        var minY = rawPoints[0].y, maxY = rawPoints[0].y
+        for pt in rawPoints {
+            if pt.x < minX { minX = pt.x }
+            if pt.x > maxX { maxX = pt.x }
+            if pt.y < minY { minY = pt.y }
+            if pt.y > maxY { maxY = pt.y }
+        }
+        let spanX = maxX - minX
+        let spanY = maxY - minY
+        let span = max(0.001, max(spanX, spanY))
+        let maxAllowedSpan: CGFloat = max(0.76, 0.93 - 0.14 * CGFloat(oobFraction))
+        let scale: CGFloat = min(1.0, maxAllowedSpan / span)
+        let cx: CGFloat = (minX + maxX) * 0.5
+        let cy: CGFloat = (minY + maxY) * 0.5
+        var scaled: [CGPoint] = []
+        scaled.reserveCapacity(4)
+        var sMinX: CGFloat = 10.0, sMaxX: CGFloat = -10.0
+        var sMinY: CGFloat = 10.0, sMaxY: CGFloat = -10.0
+        for pt in rawPoints {
+            let sx = cx + (pt.x - cx) * scale
+            let sy = cy + (pt.y - cy) * scale
+            scaled.append(CGPoint(x: sx, y: sy))
+            if sx < sMinX { sMinX = sx }
+            if sx > sMaxX { sMaxX = sx }
+            if sy < sMinY { sMinY = sy }
+            if sy > sMaxY { sMaxY = sy }
+        }
+        let shiftX: CGFloat = sMinX < 0.002 ? (0.002 - sMinX) : (sMaxX > 0.998 ? (0.998 - sMaxX) : 0)
+        let shiftY: CGFloat = sMinY < 0.002 ? (0.002 - sMinY) : (sMaxY > 0.998 ? (0.998 - sMaxY) : 0)
+        var out: [CGPoint] = []
+        out.reserveCapacity(4)
+        for pt in scaled {
+            let ox = min(0.999, max(0.001, pt.x + shiftX))
+            let oy = min(0.999, max(0.001, pt.y + shiftY))
+            out.append(CGPoint(x: ox, y: oy))
+        }
+        return out
     }
 
     private static func safe(_ rect: CGRect, original: CGRect) -> Bool {
