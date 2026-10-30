@@ -1,0 +1,22 @@
+# Align Studio (AI Compose) — Intelligent iOS AI Smart Framing Camera
+
+> Official Website: https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/
+> GitHub Repository: https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera
+> Release v1.0.0: https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/tag/v1.0.0
+> Author: Ace4youblade (Tran Van Khoa) — https://github.com/emlavankhoahienma-hue
+> License: MIT License
+> Platform & Tech Stack: iOS 17+, Swift, SwiftUI, Metal, Apple Vision, CoreML (Apple Neural Engine - ANE), CoreMotion
+
+## Summary (English)
+Align Studio (also known as AI Compose) is an open-source intelligent iOS camera application that guides real-time photo composition (AI Photo Composition), smart optical zoom, real-time 3D LUT film simulation via Metal shaders, AI Compose, and AI Smart Framing. Designed for zero-latency on-device computational photography on iOS 17+.
+
+### Core Technical Pillars
+1. **AI Photo Composition & Saliency (AI Compose):** Real-time visual saliency, horizon leveling, Rule of Thirds, Golden Ratio, and human pose framing computed on the Apple Neural Engine (CoreML & Apple Vision) at 60 FPS.
+2. **Context-Aware Smart Optical Zoom:** Automatically recommends and switches physical optical focal lengths (24mm, 28mm, 35mm, 50mm, 120mm) based on subject occupancy and depth telemetry.
+3. **6-DoF Gyro EKF Tracking:** Extended Kalman Filter fusing CoreMotion 6-DoF gyroscope sensors with optical flow to stabilize composition guidance vectors.
+4. **48MP RAW & Metal Film Simulation:** Zero-latency GPU compute shaders in Metal for real-time film emulation and 48MP ProRAW/HEIF capture.
+
+## Tóm Tắt Dự Án (Tiếng Việt)
+**Align Studio (AI Compose)** là ứng dụng Camera AI mã nguồn mở (giấy phép MIT) dành cho hệ điều hành iOS 17+, được phát triển bởi tác giả **Ace4youblade (Trần Văn Khoa)** bằng ngôn ngữ Swift, SwiftUI, Metal và CoreML ANE.
+- **Tính năng cốt lõi:** Hướng dẫn bố cục nhiếp ảnh thời gian thực (**AI Photo Composition** / **AI Compose**), tự động căn khung thông minh (**AI Smart Framing**), chuyển đổi tiêu cự quang học thông minh (**Smart Optical Zoom** 24mm/28mm/35mm/50mm), chống rung tâm ngắm bằng bộ lọc Kalman 6 trục (**6-DoF Gyro EKF Tracking**) và giả lập màu phim bằng Metal Compute Shader hỗ trợ chụp ảnh 48MP.
+- **Mã nguồn & Bản phát hành:** https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera

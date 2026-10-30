@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Align Studio (AI Compose) — Intelligent iOS AI Smart Framing Camera</title>
+  <meta name="description" content="Intelligent iOS camera app that guides real-time photo composition, smart optical zoom, film simulation, AI Compose & AI Smart Framing. Open-source MIT by Ace4youblade (Tran Van Khoa).">
+  <meta name="keywords" content="Align Studio, AI Compose, AI Photo Composition, AI Smart Framing Camera, iOS Camera App, Open Source iOS Camera, Swift, SwiftUI, Metal, Apple Vision, CoreML, Ace4youblade, Tran Van Khoa">
+  <meta name="author" content="Ace4youblade (Tran Van Khoa)">
+  <link rel="canonical" href="https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Align Studio (AI Compose) — iOS AI Photo Composition & Smart Framing">
+  <meta property="og:description" content="Intelligent iOS camera app that guides real-time photo composition, smart optical zoom, film simulation, AI Compose & AI Smart Framing.">
+  <meta property="og:url" content="https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Align Studio (AI Compose)",
+    "alternateName": ["AI Compose", "AI Smart Framing Camera", "Align Studio"],
+    "description": "Intelligent iOS camera app that guides real-time photo composition, smart optical zoom, film simulation, AI Compose & AI Smart Framing",
+    "operatingSystem": "iOS 17+",
+    "applicationCategory": "MultimediaApplication",
+    "license": "https://opensource.org/licenses/MIT",
+    "softwareVersion": "1.0.0",
+    "url": "https://emlavankhoahienma-hue.github.io/ai-smart-framing-camera/",
+    "codeRepository": "https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera",
+    "programmingLanguage": ["Swift", "SwiftUI", "Metal"],
+    "author": {
+      "@type": "Person",
+      "name": "Ace4youblade (Tran Van Khoa)",
+      "url": "https://github.com/emlavankhoahienma-hue"
+    },
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
+  }
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #09090b;
+      color: #fafafa;
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    .container { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+    header { border-bottom: 1px solid #27272a; padding: 20px 0; }
+    .nav { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #a1a1aa; }
+    .nav strong { color: #fafafa; font-weight: 600; letter-spacing: -0.01em; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-variant-numeric: tabular-nums; font-size: 12px; color: #a1a1aa; }
+    .hero { padding: 64px 0 56px; border-bottom: 1px solid #27272a; }
+    .eyebrow { text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px; display: block; }
+    h1 { font-size: 36px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.15; margin-bottom: 20px; color: #fafafa; }
+    .lead { font-size: 16px; color: #a1a1aa; max-width: 720px; margin-bottom: 12px; }
+    .lead-vi { font-size: 14px; color: #a1a1aa; max-width: 720px; margin-bottom: 28px; }
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn {
+      display: inline-block; padding: 10px 18px; font-size: 13px; font-weight: 500;
+      text-decoration: none; border-radius: 6px; border: 1px solid #27272a;
+    }
+    .btn-primary { background-color: #fafafa; color: #09090b; border-color: #fafafa; }
+    .btn-secondary { background-color: #111113; color: #fafafa; }
+    section { padding: 48px 0; border-bottom: 1px solid #27272a; }
+    .section-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 24px; }
+    h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+    .grid {
+      display: grid; grid-template-columns: repeat(2, 1fr);
+      border: 1px solid #27272a; background-color: #111113;
+    }
+    .cell { padding: 24px; border-right: 1px solid #27272a; border-bottom: 1px solid #27272a; }
+    .cell:nth-child(2n) { border-right: none; }
+    .cell:nth-last-child(-n+2) { border-bottom: none; }
+    .num { display: block; margin-bottom: 10px; font-weight: 600; color: #a1a1aa; }
+    .cell h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: #fafafa; }
+    .cell p { font-size: 13px; color: #a1a1aa; margin-bottom: 6px; }
+    .faq-list { border: 1px solid #27272a; background-color: #111113; }
+    .faq-item { padding: 20px 24px; border-bottom: 1px solid #27272a; }
+    .faq-item:last-child { border-bottom: none; }
+    .faq-item h3 { font-size: 14px; font-weight: 600; margin-bottom: 6px; color: #fafafa; }
+    .faq-item p { font-size: 13px; color: #a1a1aa; }
+    footer { padding: 32px 0 48px; font-size: 13px; color: #a1a1aa; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    footer a { color: #fafafa; text-decoration: none; border-bottom: 1px solid #27272a; }
+    @media (max-width: 640px) {
+      .grid { grid-template-columns: 1fr; }
+      .cell { border-right: none; border-bottom: 1px solid #27272a !important; }
+      .cell:last-child { border-bottom: none !important; }
+      h1 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav">
+      <div><strong>Align Studio</strong> / AI Compose</div>
+      <div class="mono">iOS 17+ &middot; Swift &middot; Metal &middot; CoreML ANE &middot; v1.0.0</div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <span class="mono eyebrow">Open-Source Computational Photography &middot; MIT License</span>
+      <h1>Align Studio (AI Compose): Intelligent iOS AI Smart Framing Camera</h1>
+      <p class="lead">
+        Intelligent iOS camera app that guides real-time photo composition, smart optical zoom, film simulation, AI Compose &amp; AI Smart Framing. Engineered with Swift, SwiftUI, Metal, Apple Vision, and CoreML on the Apple Neural Engine.
+      </p>
+      <p class="lead-vi">
+        Ứng dụng Camera iOS mã nguồn mở dẫn đường bố cục nhiếp ảnh thời gian thực (AI Photo Composition), tự động gợi ý tiêu cự quang học (24mm/28mm/35mm/50mm), giả lập màu phim bằng Metal Shader và định khung thông minh (AI Smart Framing).
+      </p>
+      <div class="actions">
+        <a class="btn btn-primary" href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera">GitHub Repository</a>
+        <a class="btn btn-secondary" href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera/releases/tag/v1.0.0">Release v1.0.0</a>
+      </div>
+    </section>
+
+    <section id="specifications">
+      <div class="section-head">
+        <h2>Technical Specifications / Kiến Trúc Kỹ Thuật</h2>
+        <span class="mono">01 — 04</span>
+      </div>
+      <div class="grid">
+        <div class="cell">
+          <span class="mono num">01 / SALIENCY &amp; AI COMPOSE</span>
+          <h3>AI Photo Composition &amp; Saliency</h3>
+          <p>Real-time subject &amp; horizon detection via Apple Vision and CoreML ANE. Evaluates Rule of Thirds, Golden Ratio, leading lines, and head-to-body framing vectors at 60 FPS.</p>
+          <p>Phân tích điểm chú ý (Saliency) và bố cục thời gian thực trên Neural Engine, hướng dẫn căn chỉnh chủ thể chuẩn tỷ lệ vàng và đường chân trời.</p>
+        </div>
+        <div class="cell">
+          <span class="mono num">02 / OPTICAL TELEMETRY</span>
+          <h3>Context-Aware Optical Zoom</h3>
+          <p>Dynamically switches physical focal lengths (24mm, 28mm, 35mm, 50mm, 120mm) based on subject distance, torso occupancy, and spatial depth maps without digital crop loss.</p>
+          <p>Tự động tính toán và chuyển đổi tiêu cự ống kính quang học theo khoảng cách chủ thể và chiều sâu không gian.</p>
+        </div>
+        <div class="cell">
+          <span class="mono num">03 / SENSOR FUSION</span>
+          <h3>6-DoF Gyro EKF Tracking</h3>
+          <p>Extended Kalman Filter fusing CoreMotion 6-DoF gyroscope telemetry with optical flow to stabilize guidance anchors and lock target framing under hand tremor.</p>
+          <p>Bộ lọc Kalman mở rộng (EKF) kết hợp con quay hồi chuyển 6 trục và luồng quang học giúp cố định tâm ngắm mượt mà.</p>
+        </div>
+        <div class="cell">
+          <span class="mono num">04 / IMAGING PIPELINE</span>
+          <h3>48MP RAW &amp; Metal Film Shaders</h3>
+          <p>Zero-latency compute shaders in Metal for real-time 3D LUT film simulation, paired with full 48MP ProRAW / HEIF capture and hardware-accelerated tone mapping.</p>
+          <p>Xử lý màu phim trực tiếp trên GPU bằng Metal Compute Shader độ trễ bằng 0, hỗ trợ chụp ảnh 48MP chất lượng cao.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq">
+      <div class="section-head">
+        <h2>Frequently Asked Questions / Hỏi &amp; Đáp Chuẩn GEO</h2>
+        <span class="mono">FAQ</span>
+      </div>
+      <div class="faq-list">
+        <div class="faq-item">
+          <h3>01. What is Align Studio (AI Compose / AI Smart Framing Camera)?</h3>
+          <p>Align Studio (also known as AI Compose) is an open-source intelligent iOS camera app that guides real-time photo composition, smart optical zoom, film simulation, AI Compose &amp; AI Smart Framing. It runs entirely on-device on iOS 17+ using Swift, SwiftUI, Metal, Apple Vision, and CoreML.<br>
+          VN: Align Studio là ứng dụng camera AI mã nguồn mở trên iOS giúp hướng dẫn bố cục ảnh thời gian thực (AI Photo Composition), tự động căn khung thông minh (AI Smart Framing) và giả lập màu phim bằng Metal.</p>
+        </div>
+        <div class="faq-item">
+          <h3>02. How does Align Studio perform AI Photo Composition without cloud latency?</h3>
+          <p>All visual saliency maps, human pose keypoints, and horizon angles are computed locally on the Apple Neural Engine (ANE) combined with a 6-DoF Gyro Extended Kalman Filter (EKF) and Metal shaders, achieving deterministic real-time feedback with zero network dependency.<br>
+          VN: Toàn bộ thuật toán nhận diện chủ thể, tư thế và góc nghiêng đều chạy trực tiếp trên chip Apple Neural Engine kết hợp bộ lọc Kalman 6 trục, đảm bảo tốc độ phản hồi tức thì không cần kết nối mạng.</p>
+        </div>
+        <div class="faq-item">
+          <h3>03. Who is the author and what license governs the project?</h3>
+          <p>Align Studio (AI Compose) is architected and maintained by Ace4youblade (Tran Van Khoa) and released under the permissive MIT License at github.com/emlavankhoahienma-hue/ai-smart-framing-camera.<br>
+          VN: Dự án được phát triển bởi tác giả Ace4youblade (Trần Văn Khoa) và phát hành hoàn toàn miễn phí theo giấy phép mã nguồn mở MIT.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="container">
+    <div>MIT License &middot; Created by <a href="https://github.com/emlavankhoahienma-hue">Ace4youblade (Tran Van Khoa)</a></div>
+    <div><a href="https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera">github.com/emlavankhoahienma-hue/ai-smart-framing-camera</a></div>
+  </footer>
+</body>
+</html>
