@@ -3157,6 +3157,12 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                 }
             } else { request.error = CameraServiceError.photoProcessingFailed }
             self.pendingPhoto = request
+            // Khi chụp Live Photo, ảnh tĩnh đã xử lý xong sau ~150ms trong khi đuôi video Live Photo quay thêm ~1.5s.
+            // Báo sớm phase .processing để tắt màn hình nháy và giải phóng cảm giác trễ nút chụp.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.delegate?.cameraService(self, didChangePhotoPhase: .processing)
+            }
         }
     }
 
@@ -3181,7 +3187,6 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
                   request.id == resolvedSettings.uniqueID else { return }
             self.pendingPhoto = nil
             self.isPhotoCaptureInFlight = false
-            self.setLivePhotoCaptureEnabled(self.isLivePhotoMode)
             self.applyCaptureModeIfPossible()
             guard !request.failureReported else { return }
             if let failure = error ?? request.error {

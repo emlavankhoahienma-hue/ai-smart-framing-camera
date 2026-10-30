@@ -201,7 +201,30 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
             let filteredCI: CIImage
             if filterActive && preset != .standard {
-                filteredCI = FilmFilterEngine.shared.applyPreset(to: viewportCI, preset: preset, intensity: intensity) ?? viewportCI
+                let maxWorkingDim: CGFloat = 960.0
+                let longSide = max(drawableSize.width, drawableSize.height)
+                let workingScale: CGFloat = (longSide > maxWorkingDim && longSide > 0) ? (maxWorkingDim / longSide) : 1.0
+                let workingInput = workingScale < 0.999
+                    ? viewportCI.transformed(by: CGAffineTransform(scaleX: workingScale, y: workingScale))
+                    : viewportCI
+                let effectivePreset = preset.isAIFullAuto ? (vm.aiRecommendedPreset ?? vm.detectedScene.recommendedFilter) : preset
+                var workingOut = FilmFilterEngine.shared.applyPreset(
+                    to: workingInput,
+                    preset: effectivePreset,
+                    intensity: intensity,
+                    isRealtimePreview: true
+                ) ?? workingInput
+                if preset.isAIFullAuto, let aiParams = vm.currentAIColorParams {
+                    workingOut = FilmFilterEngine.shared.applyAIColorParameters(to: workingOut, params: aiParams) ?? workingOut
+                }
+                if workingScale < 0.999 {
+                    let invScale = 1.0 / workingScale
+                    filteredCI = workingOut
+                        .transformed(by: CGAffineTransform(scaleX: invScale, y: invScale))
+                        .cropped(to: CGRect(origin: .zero, size: drawableSize))
+                } else {
+                    filteredCI = workingOut
+                }
             } else {
                 filteredCI = viewportCI
             }
@@ -312,7 +335,7 @@ public class PreviewContainerView: UIView {
         let mtk = MTKView(frame: bounds, device: metalDevice)
         mtk.framebufferOnly = false
         mtk.colorPixelFormat = .bgra8Unorm
-        mtk.preferredFramesPerSecond = 60
+        mtk.preferredFramesPerSecond = 30
         mtk.isPaused = true
         mtk.enableSetNeedsDisplay = false
         mtk.isUserInteractionEnabled = false

@@ -649,7 +649,7 @@ public final class CameraViewModel: ObservableObject {
         guard targetZoom.isFinite, currentZoom.isFinite else { return }
         guard aiSessionState == .alignmentPerfect, !isPinchingZoom,
               !hasExecutedAutoZoomForSession, !zoomAwaitingVerification,
-              hasFreshOpticalLock, canZoomCurrentSubject(to: targetZoom) else { return }
+              (hasFreshOpticalLock || isTargetLocked), canZoomCurrentSubject(to: targetZoom) else { return }
 
         // Cooldown: Tối thiểu 0.8s giữa các lần tự động zoom (tránh spam, nhưng không chặn người dùng khi căn chỉnh)
         let now = Date()
@@ -700,17 +700,17 @@ public final class CameraViewModel: ObservableObject {
             lockOnProgress = 1.0
         }
 
-        // Giai đoạn 3: Giữ vùng zoom để người xem quan sát rõ (~0.62s) rồi mới Bung khung & Zoom mượt 60fps
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.62) { [weak self] in
+        // Giai đoạn 3: Phản hồi Zoom quang học nhanh, dứt khoát (~0.24s) và mượt 60fps
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) { [weak self] in
             guard let self = self, self.targetPinGeneration == pinGeneration,
                   self.zoomAwaitingVerification, !self.isPinchingZoom else { return }
             self.isZoomRampPhase = true
             let delta = Double(abs(targetDeviceZoom - self.currentZoom))
-            let rampDuration: Double = 0.48
-            let smoothRate = Float(max(1.2, min(16.0, delta / rampDuration)))
+            let rampDuration: Double = 0.36
+            let smoothRate = Float(max(1.8, min(18.0, delta / rampDuration)))
             self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: smoothRate)
 
-            withAnimation(.timingCurve(0.2, 0.8, 0.2, 1.0, duration: 0.48)) {
+            withAnimation(.timingCurve(0.2, 0.8, 0.2, 1.0, duration: 0.36)) {
                 self.zoomExpansionProgress = 1.0
             }
         }
@@ -3173,10 +3173,13 @@ public final class CameraViewModel: ObservableObject {
         let projectedMaxX = cx + (box.maxX - cx) * ratio
         let projectedMinY = cy + (box.minY - cy) * ratio
         let projectedMaxY = cy + (box.maxY - cy) * ratio
-        let centerInside = (0.04...0.96).contains((projectedMinX + projectedMaxX) * 0.5) &&
-            (0.04...0.96).contains((projectedMinY + projectedMaxY) * 0.5)
-        let boundsReasonable = projectedMinX >= -0.12 && projectedMaxX <= 1.12 &&
-            projectedMinY >= -0.06 && projectedMaxY <= 1.18
+        let isPortraitIntent = (localCompositionIntent == .portrait || localCompositionIntent == .environmentalPortrait || detectedScene == .portrait)
+        let midY = isPortraitIntent ? (projectedMinY + min(projectedMaxY, projectedMinY + (projectedMaxY - projectedMinY) * 0.65)) * 0.5 : (projectedMinY + projectedMaxY) * 0.5
+        let centerInside = (0.03...0.97).contains((projectedMinX + projectedMaxX) * 0.5) &&
+            (0.03...0.97).contains(midY)
+        let maxAllowedY: CGFloat = isPortraitIntent ? 1.52 : 1.24
+        let boundsReasonable = projectedMinX >= -0.18 && projectedMaxX <= 1.18 &&
+            projectedMinY >= -0.10 && projectedMaxY <= maxAllowedY
         return centerInside && boundsReasonable
     }
 
@@ -3324,7 +3327,11 @@ public final class CameraViewModel: ObservableObject {
             if reached {
                 if reachedAt == nil { reachedAt = CACurrentMediaTime() }
                 if latestOpticalFrameTimestamp > (reachedAt ?? .infinity) + 0.05 || CACurrentMediaTime() - (reachedAt ?? 0) >= 0.12 {
-                    guard await verifyPostZoomFaces(after: (reachedAt ?? CACurrentMediaTime())) else {
+                    let facesOK = await verifyPostZoomFaces(after: (reachedAt ?? CACurrentMediaTime()))
+                    if !facesOK {
+                        if CACurrentMediaTime() - (reachedAt ?? 0) < 0.75 {
+                            continue
+                        }
                         restoreOriginalZoomAfterVerificationFailure()
                         return
                     }
@@ -3423,10 +3430,9 @@ public final class CameraViewModel: ObservableObject {
         } onCancel: { cancellation.cancel() }
         guard !Task.isCancelled, let faces = rectangles,
               CACurrentMediaTime() - snapshot.1.timestamp <= 0.50 else { return false }
-        return faces.count >= min(1, postZoomFaceCount) && faces.allSatisfy {
-            let r = $0
-            return r.minX >= 0.01 && r.maxX <= 0.99 &&
-                   r.minY >= 0.01 && r.maxY <= 0.99
+        return faces.contains { r in
+            r.minX >= 0.01 && r.maxX <= 0.99 &&
+            r.minY >= 0.01 && r.maxY <= 0.99
         }
     }
 
@@ -3659,7 +3665,6 @@ public final class CameraViewModel: ObservableObject {
 
     public func selectPreset(_ preset: FilmPreset) {
         haptics.triggerSelectionChange()
-        FilmFilterEngine.shared.clearCache()
         withAnimation(.easeInOut) {
             if preset == .standard {
                 isFilmSimulationActive = false
@@ -3682,7 +3687,6 @@ public final class CameraViewModel: ObservableObject {
 
     public func toggleFilmSimulation() {
         haptics.triggerSelectionChange()
-        FilmFilterEngine.shared.clearCache()
         withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
             isFilmSimulationActive.toggle()
             if !isFilmSimulationActive {
@@ -3697,7 +3701,6 @@ public final class CameraViewModel: ObservableObject {
 
     public func disableFilmSimulation() {
         haptics.triggerSelectionChange()
-        FilmFilterEngine.shared.clearCache()
         withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
             isFilmSimulationActive = false
             isAIFullColorEnabled = false
@@ -4277,14 +4280,15 @@ public final class CameraViewModel: ObservableObject {
     private var captureProcessingSettings: PhotoProcessingSettings?
 
     private func currentPhotoProcessingSettings() -> PhotoProcessingSettings {
-        let apply = isFilmSimulationActive || isAIFullColorEnabled
+        let hasActivePreset = isFilmSimulationActive || isAIFullColorEnabled || selectedFilmPreset != .standard
         let preset: FilmPreset
-        if !isFilmSimulationActive {
+        if !hasActivePreset {
             preset = .standard
         } else {
             preset = selectedFilmPreset.isAIFullAuto ?
                 (aiRecommendedPreset ?? detectedScene.recommendedFilter) : selectedFilmPreset
         }
+        let apply = hasActivePreset
         return PhotoProcessingSettings(preset: preset, scene: detectedScene, rule: activeCompositionRule,
             params: isAIFullColorEnabled ?
                 (geminiColorRecipe?.asAIColorParameters ?? currentAIColorParams ?? detectedScene.aiFullColorParameters) : nil,
@@ -4421,9 +4425,9 @@ public final class CameraViewModel: ObservableObject {
                     }
                     let mainData = (item.preservesOriginalFile ? item.rawPhotoData : nil) ??
                         item.processedCompanionData ??
-                        item.rawPhotoData ??
                         Self.encodeRenderedPhoto(item.processedImage, sourceData: item.rawPhotoData,
-                                                 format: item.saveFormat)
+                                                 format: item.saveFormat) ??
+                        item.rawPhotoData
                     guard let mainData else { return nil }
                     let originalData = saveOriginal ? (item.rawPhotoData ??
                         Self.encodeRenderedPhoto(item.originalImage, sourceData: nil,
@@ -4656,8 +4660,15 @@ extension CameraViewModel: CameraServiceDelegate {
                 if hasColorEdits {
                     processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(
                         to: effectiveSourcePhoto, preset: effectivePreset, params: finalColorParams, intensity: appliedIntensity) ?? effectiveSourcePhoto
-                    FilmFilterEngine.shared.clearCache()
                 }
+            }
+
+            let preservesOriginal = (format == .dng || (!isWindowed && !hasColorEdits)) && rawData != nil
+            let encodedEditedData: Data? = autoreleasepool {
+                if format != .dng && !preservesOriginal {
+                    return Self.encodeRenderedPhoto(processedImageResult, sourceData: rawData, format: format)
+                }
+                return processedCompanionData
             }
 
             // Nếu là RAW DNG: Lưu trực tiếp tệp nguyên bản vào thư mục Documents/RAW của App ngay lập tức
@@ -4674,9 +4685,9 @@ extension CameraViewModel: CameraServiceDelegate {
                 originalImage: effectiveSourcePhoto,
                 processedImage: processedImageResult,
                 rawPhotoData: rawData,
-                processedCompanionData: processedCompanionData,
+                processedCompanionData: encodedEditedData,
                 saveFormat: format,
-                preservesOriginalFile: (format == .dng || (!isWindowed && !hasColorEdits)) && rawData != nil,
+                preservesOriginalFile: preservesOriginal,
                 rawLocalFileURL: localRawURL,
                 livePhotoMovieURL: livePhotoMovieURL,
                 sceneType: activeScene,
@@ -4688,30 +4699,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 aiColorParameters: finalColorParams
             )
 
-            // Lưu vĩnh viễn ảnh vào kho nội bộ app Align Studio (Documents/AlignStudioCaptures) để không bao giờ mất khi thoát app
-            let persistedData: Data?
-            if format == .dng {
-                persistedData = rawData
-            } else if item.preservesOriginalFile, let raw = rawData {
-                persistedData = raw
-            } else {
-                persistedData = processedCompanionData ?? Self.encodeRenderedPhoto(processedImageResult, sourceData: rawData, format: format)
-            }
-            if let dataToSave = persistedData {
-                AppPhotoStorageService.shared.persistCapture(
-                    id: item.id,
-                    image: processedImageResult,
-                    mainData: dataToSave,
-                    format: format,
-                    sceneType: activeScene,
-                    preset: isFilmActive ? effectivePreset : .standard,
-                    compositionRule: activeRule,
-                    score: score,
-                    iso: iso,
-                    shutterSpeed: shutterSpeed
-                )
-            }
-
+            // Mở khóa nút chụp và cập nhật UI ngay lập tức trước khi ghi đĩa nền để triệt tiêu độ trễ Live Photo
             DispatchQueue.main.async {
                 CameraLogger.success("Render bộ lọc hoàn tất, hiển thị xem trước & lưu ảnh (LivePhoto: \(item.isLivePhoto))", category: .capture)
                 self.isShutterPressing = false
@@ -4725,6 +4713,32 @@ extension CameraViewModel: CameraServiceDelegate {
                 self.applyPendingCaptureModeIfPossible()
                 self.presentPendingMediaPreviewIfPossible()
                 self.savePhotoToLibrary(item)
+            }
+
+            // Lưu vĩnh viễn ảnh vào kho nội bộ app Align Studio trên luồng nền (tái sử dụng encodedEditedData, không mã hóa lần 2)
+            let persistedData: Data?
+            if format == .dng {
+                persistedData = rawData
+            } else if item.preservesOriginalFile, let raw = rawData {
+                persistedData = raw
+            } else {
+                persistedData = encodedEditedData
+            }
+            if let dataToSave = persistedData {
+                autoreleasepool {
+                    AppPhotoStorageService.shared.persistCapture(
+                        id: item.id,
+                        image: processedImageResult,
+                        mainData: dataToSave,
+                        format: format,
+                        sceneType: activeScene,
+                        preset: isFilmActive ? effectivePreset : .standard,
+                        compositionRule: activeRule,
+                        score: score,
+                        iso: iso,
+                        shutterSpeed: shutterSpeed
+                    )
+                }
             }
         }
     }

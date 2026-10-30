@@ -7,6 +7,10 @@ import CoreGraphics
 /// Highlight Halation Glow, CCD Sensor Bloom, Lens Diffusion, Chroma Bleed, Light Leak, va LCD Dither.
 public enum FilmSimulationCore {
 
+    /// Cờ chế độ xem trước 30fps thời gian thực: bỏ qua các bước GaussianBlur đa tầng nặng GPU,
+    /// nhưng vẫn giữ nguyên 100% chất lượng quang hóa đa tầng khi chụp và xuất ảnh tĩnh.
+    public nonisolated(unsafe) static var isRealtimePreview: Bool = false
+
     // MARK: - Color Matrix Transformation (Pha tron pho mau quang hoc)
     public static func applyColorMatrix(
         _ input: CIImage,
@@ -114,15 +118,21 @@ public enum FilmSimulationCore {
         monoFilter.setValue(1.15, forKey: kCIInputContrastKey)
         guard let monoNoise = monoFilter.outputImage else { return input }
 
-        // Lam mo nhe de tao hinh khoi hat bac huu co
-        guard let blurFilter = CIFilter(name: "CIGaussianBlur") else { return input }
-        blurFilter.setValue(monoNoise, forKey: kCIInputImageKey)
-        blurFilter.setValue(grainSize, forKey: kCIInputRadiusKey)
-        guard let blurredNoise = blurFilter.outputImage?.cropped(to: extent) else { return input }
+        // Khi chạy xem trước trực tiếp (Realtime Preview), bỏ qua CIGaussianBlur trên hạt nhiễu để tiết kiệm GPU
+        let effectiveNoise: CIImage
+        if isRealtimePreview {
+            effectiveNoise = monoNoise
+        } else {
+            guard let blurFilter = CIFilter(name: "CIGaussianBlur") else { return input }
+            blurFilter.setValue(monoNoise, forKey: kCIInputImageKey)
+            blurFilter.setValue(grainSize, forKey: kCIInputRadiusKey)
+            guard let blurredNoise = blurFilter.outputImage?.cropped(to: extent) else { return input }
+            effectiveNoise = blurredNoise
+        }
 
         // Dieu tiet do trong suot cua lop hat
         guard let opacityFilter = CIFilter(name: "CIColorMatrix") else { return input }
-        opacityFilter.setValue(blurredNoise, forKey: kCIInputImageKey)
+        opacityFilter.setValue(effectiveNoise, forKey: kCIInputImageKey)
         opacityFilter.setValue(CIVector(x: 1, y: 0, z: 0, w: 0), forKey: "inputRVector")
         opacityFilter.setValue(CIVector(x: 0, y: 1, z: 0, w: 0), forKey: "inputGVector")
         opacityFilter.setValue(CIVector(x: 0, y: 0, z: 1, w: 0), forKey: "inputBVector")
@@ -231,7 +241,7 @@ public enum FilmSimulationCore {
         intensity: Float = 0.32,
         radius: Float = 14.0
     ) -> CIImage {
-        guard intensity > 0.01 else { return input }
+        guard intensity > 0.01, !isRealtimePreview else { return input }
         let extent = input.extent
         let dim = max(extent.width, extent.height)
         let scaleFactor = max(0.2, min(8.0, dim / 1000.0))
@@ -274,7 +284,7 @@ public enum FilmSimulationCore {
         intensity: Float = 0.22,
         radius: Float = 9.0
     ) -> CIImage {
-        guard intensity > 0.01 else { return input }
+        guard intensity > 0.01, !isRealtimePreview else { return input }
         let extent = input.extent
         let dim = max(extent.width, extent.height)
         let scaleFactor = max(0.2, min(8.0, dim / 1000.0))
@@ -293,7 +303,7 @@ public enum FilmSimulationCore {
         intensity: Float = 0.18,
         radius: Float = 10.0
     ) -> CIImage {
-        guard intensity > 0.01 else { return input }
+        guard intensity > 0.01, !isRealtimePreview else { return input }
         let extent = input.extent
         let dim = max(extent.width, extent.height)
         let scaleFactor = max(0.2, min(8.0, dim / 1000.0))

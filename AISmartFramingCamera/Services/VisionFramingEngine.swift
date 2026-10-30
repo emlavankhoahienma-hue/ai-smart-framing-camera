@@ -368,7 +368,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             // Full scene analysis runs once on the detached AI capture. Preview
             // uses ~7 Hz detection; liveEntitySmoother ensures fluid 60 FPS UI.
             // Tracking retains its full ~32 FPS admission budget.
-            guard !busy, now - lastAdmission >= (active ? 1 / 32.0 : 1 / 7.0) else { return nil }
+            guard !busy, now - lastAdmission >= (active ? 1 / 30.0 : 1 / 3.0) else { return nil }
             busy = true; lastAdmission = now
             let capture = captureNext; captureNext = false
             return (generation, active, capture)
@@ -1307,7 +1307,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
         var classifyRequest: VNClassifyImageRequest? = nil
         var saliencyRequest: VNGenerateAttentionBasedSaliencyImageRequest? = nil
         var objectnessRequest: VNGenerateObjectnessBasedSaliencyImageRequest? = nil
-        var maskRequestObj: Any? = nil
 
         if runSlowRequests {
             let hReq = VNDetectHorizonRequest()
@@ -1325,12 +1324,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
             let oReq = VNGenerateObjectnessBasedSaliencyImageRequest()
             objectnessRequest = oReq
             visionRequests.append(oReq)
-
-            if #available(iOS 17.0, *) {
-                let maskReq = VNGenerateForegroundInstanceMaskRequest()
-                maskRequestObj = maskReq
-                visionRequests.append(maskReq)
-            }
         }
 
         if (try? handler.perform(visionRequests)) != nil {
@@ -1434,14 +1427,6 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 }
                 cachedSaliencyPoints = newSaliencyPoints
                 cachedSaliencyRects = newSaliencyRects
-                if #available(iOS 17.0, *), let req = maskRequestObj as? VNGenerateForegroundInstanceMaskRequest,
-                   let observation = req.results?.first {
-                    for instance in observation.allInstances {
-                        if let masked = try? observation.generateMaskedImage(ofInstances: [instance], from: handler, croppedToInstancesExtent: false) {
-                            _ = masked
-                        }
-                    }
-                }
             }
         }
 
@@ -1475,14 +1460,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
         }
 
-        // 2. Real YOLO CoreML
-        if YOLODetectionEngine.shared.hasYOLOModel {
+        // 2. Real YOLO CoreML (chỉ chạy ở nhịp đầy đủ khi AI active hoặc ở nhịp slowRequest khi idle để chống nóng máy)
+        if YOLODetectionEngine.shared.hasYOLOModel && (!isIdlePreviewMode || runSlowRequests) {
             let yoloCandidates = YOLODetectionEngine.shared.detectObjects(
                 pixelBuffer: buffer,
                 orientation: orientation,
                 cancellation: CompositionAnalysisCancellation()
             )
-            for c in yoloCandidates where c.confidence >= 0.48 {
+            for c in yoloCandidates where c.confidence >= 0.34 {
                 guard c.boundingBox.width >= 0.04, c.boundingBox.height >= 0.04,
                       c.boundingBox.width <= 0.95, c.boundingBox.height <= 0.95 else { continue }
                 candidates.append(LiveDetectedEntity(

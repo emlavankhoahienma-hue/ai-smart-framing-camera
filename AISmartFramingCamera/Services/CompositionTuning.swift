@@ -7,7 +7,7 @@ public enum CompositionTuning {
 
     // MARK: - 1. YOLO Detection & Box Filtering
     /// Nguong tin cay toi thieu de chap nhan mot candidate tu YOLO model
-    public static let yoloConfidenceThreshold: Float = 0.48
+    public static let yoloConfidenceThreshold: Float = 0.32
 
     /// Kich thuoc toi thieu cua bounding box (ty le tren chieu dai/rong 0...1)
     public static let minBoxDimension: CGFloat = 0.04
@@ -56,12 +56,12 @@ public enum CompositionTuning {
     public static let centerDistanceDecay: Double = 0.7
 
     // MARK: - 3. Target Desired Area Fraction (Dien tich mong muon theo y do)
-    public static let desiredAreaPortrait: Double = 0.28
-    public static let desiredAreaFace: Double = 0.065
-    public static let desiredAreaFood: Double = 0.30
-    public static let desiredAreaCloseUp: Double = 0.32
-    public static let desiredAreaAnimal: Double = 0.25
-    public static let desiredAreaGroup: Double = 0.36
+    public static let desiredAreaPortrait: Double = 0.31
+    public static let desiredAreaFace: Double = 0.095
+    public static let desiredAreaFood: Double = 0.34
+    public static let desiredAreaCloseUp: Double = 0.35
+    public static let desiredAreaAnimal: Double = 0.28
+    public static let desiredAreaGroup: Double = 0.38
     public static let desiredAreaEnvironment: Double = 0.22
     public static let desiredAreaStreet: Double = 0.22
     public static let desiredAreaLandscape: Double = 0.15

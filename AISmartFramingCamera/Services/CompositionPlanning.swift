@@ -697,20 +697,25 @@ enum CompositionPlanner {
                     let deadCenterDestPenalty = (intent != .architecture && metrics.symmetry < 0.78)
                         ? 0.15 * exp(-32.0 * destDistFromCenter * destDistFromCenter)
                         : 0.0
-                    let ratioAdjustment = area < desiredArea ? -0.015 * min(1.0, max(0.0, log(ratio))) : 0.032 * abs(log(ratio))
+                    let ratioAdjustment = area < desiredArea ? -0.045 * min(1.0, max(0.0, log(ratio))) : 0.028 * abs(log(ratio))
                     let contextWeight = intent.preservesContext ? 0.11 : 0.05
                     let contextFitWeight = intent.preservesContext ? 0.09 : 0.04
                     let evBias = computeOptimalEVBias(raster: raster, heroRect: box, aimPoint: aim.point, zoom: zoom, scene: intent)
                     let torqueBalance = raster.visualTorqueBalance(heroRect: box, cropRect: CGRect(x: 0, y: 0, width: 1, height: 1))
                     var anatomicalPenaltyValue = 0.0
                     if let poseProfile {
-                        let check = PortraitFramingEvidence.anatomicalPenalty(cropRect: box, subjectBounds: subject.bounds, profile: poseProfile, intent: intent)
-                        if check.penalty >= 2.0 {
+                        let cMinX = max(0.0, rawCornerPoints.map(\.x).min() ?? 0.0)
+                        let cMaxX = min(1.0, rawCornerPoints.map(\.x).max() ?? 1.0)
+                        let cMinY = max(0.0, rawCornerPoints.map(\.y).min() ?? 0.0)
+                        let cMaxY = min(1.0, rawCornerPoints.map(\.y).max() ?? 1.0)
+                        let sourceViewport = CGRect(x: cMinX, y: cMinY, width: max(0.05, cMaxX - cMinX), height: max(0.05, cMaxY - cMinY))
+                        let check = PortraitFramingEvidence.anatomicalPenalty(cropRect: sourceViewport, subjectBounds: subject.bounds, profile: poseProfile, intent: intent)
+                        if !unchanged && check.penalty >= 3.2 {
                             return nil
                         }
-                        anatomicalPenaltyValue = check.penalty * 0.14
+                        anatomicalPenaltyValue = min(0.18, check.penalty * 0.08)
                     }
-                    let score = 0.25 * sizeFit + 0.36 * placement + 0.10 * headroom +
+                    let score = 0.29 * sizeFit + 0.35 * placement + 0.10 * headroom +
                         0.09 * space + 0.06 * edgeSafety + contextWeight * context +
                         contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
                         0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue +

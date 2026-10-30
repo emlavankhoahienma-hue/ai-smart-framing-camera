@@ -8,7 +8,7 @@
     {
       "path": "AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift",
       "start": "    private func analyzeCapturedFrame(",
-      "sha256": "ade1dcc3321f762ea1052d8c04c31b17d1196c4e5e9b23dc071f4e7adee1fe8c"
+      "sha256": "2806cf4849a7796bff8cb85dcae6b4bde3c50fb2cc281faae8f29ae85ad90b20"
     },
     {
       "path": "AISmartFramingCamera/Services/CompositionPlanning.swift",

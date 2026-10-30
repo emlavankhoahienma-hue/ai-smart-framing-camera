@@ -820,7 +820,6 @@ public struct CapturedPhotoPreviewView: View {
         generator.prepare()
         generator.selectionChanged()
 
-        FilmFilterEngine.shared.clearCache()
         renderGeneration += 1
         let generation = renderGeneration
         let sharpen = isAISharpnessEnabled
@@ -828,14 +827,17 @@ public struct CapturedPhotoPreviewView: View {
         let original = item.originalImage
         let params = currentAIParams
         DispatchQueue.global(qos: .userInitiated).async {
-            let rendered = FilmFilterEngine.shared.applyPresetAndAIParameters(to: original, preset: preset, params: params) ?? original
+            let rendered = autoreleasepool {
+                FilmFilterEngine.shared.applyPresetAndAIParameters(to: original, preset: preset, params: params) ?? original
+            }
             let finalImage: CGImage
             if sharpen {
-                finalImage = FilmFilterEngine.shared.applySubtleAISharpness(to: rendered, intensity: 0.50) ?? rendered
+                finalImage = autoreleasepool {
+                    FilmFilterEngine.shared.applySubtleAISharpness(to: rendered, intensity: 0.50) ?? rendered
+                }
             } else {
                 finalImage = rendered
             }
-            FilmFilterEngine.shared.clearCache()
             DispatchQueue.main.async {
                 guard self.renderGeneration == generation else { return }
                 self.baseProcessedImage = rendered
@@ -941,12 +943,12 @@ public struct CapturedPhotoPreviewView: View {
         let paramsToSave = aiParams ?? currentAIParams ?? item.aiColorParameters
 
         if let vm = viewModel {
-            // Giữ trọn vẹn Live Photo: ghép đôi với video pairedMovie gốc và nhúng Content Identifier
+            // Giữ trọn vẹn Live Photo: đặt processedCompanionData = nil để mã hóa lại cgImage đã áp màu mới kèm metadata Live Photo
             let updatedItem = CapturedPhotoItem(
                 originalImage: item.originalImage,
                 processedImage: cgImage,
                 rawPhotoData: item.rawPhotoData,
-                processedCompanionData: item.processedCompanionData,
+                processedCompanionData: nil,
                 saveFormat: item.saveFormat,
                 preservesOriginalFile: false,
                 livePhotoMovieURL: item.livePhotoMovieURL,

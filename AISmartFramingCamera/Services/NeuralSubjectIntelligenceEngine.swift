@@ -275,7 +275,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             anchor: hero.eyePosition ?? hero.center, kind: hero.isGroup ? .group : kind(hero.category),
             confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
         subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention &&
-            hero.boundingBox.width * hero.boundingBox.height > 0.45
+            hero.boundingBox.width * hero.boundingBox.height > 0.12
         let intents = compositionIntents(output, hero: hero)
         var portraitBounds: CGRect?
         var poseProfile: AnatomicalPoseProfile?
@@ -427,7 +427,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 let hasYoloPerson = candidates.contains {
                     $0.category == .human && $0.boundingBox.intersects(upright)
                 }
-                guard hasMatchingFace || hasYoloPerson else { continue }
+                guard hasMatchingFace || hasYoloPerson || body.confidence >= 0.62 else { continue }
                 if let c = candidate(visionRect: body.boundingBox, category: .human, confidence: body.confidence, label: "Người") {
                     candidates.append(c)
                 }
@@ -442,6 +442,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 }
             }
         }
+        let hasExplicitDetectorCandidate = !candidates.isEmpty || !faceCandidates.isEmpty
         let hasProminentSemanticSubject = candidates.contains {
             ($0.category == .human || $0.category == .animal) &&
             $0.confidence >= 0.52 &&
@@ -458,9 +459,11 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     guard area >= 0.012 && area <= 0.78 else { continue }
                     let isObjectness = (index == 0)
                     let label = (isObjectness && area <= 0.42) ? "Chủ thể tiền cảnh" : "Vùng nổi bật"
-                    let adjustedConfidence = (isObjectness && area <= 0.42) ? min(0.98, region.confidence * 1.15) : region.confidence * 0.88
-                    if let c = candidate(visionRect: region.boundingBox, category: .foregroundObject,
+                    let baseAdjusted = (isObjectness && area <= 0.42) ? min(0.92, region.confidence * 1.05) : region.confidence * 0.82
+                    let adjustedConfidence = hasExplicitDetectorCandidate ? min(0.68, baseAdjusted * 0.85) : baseAdjusted
+                    if var c = candidate(visionRect: region.boundingBox, category: .foregroundObject,
                                          confidence: adjustedConfidence, label: label) {
+                        c.isAttentionRegion = !isObjectness || area > 0.22
                         if area <= 0.42 {
                             tightSaliencyCandidates.append(c)
                         } else {
@@ -484,13 +487,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     let bx = min(max(0.04, com.x - bw / 2), 1 - bw - 0.04)
                     let by = min(max(0.04, com.y - bh / 2), 1 - bh - 0.04)
                     let box = CGRect(x: bx, y: by, width: bw, height: bh)
-                    candidates.append(NeuralSubjectCandidate(
+                    var c = NeuralSubjectCandidate(
                         boundingBox: box,
                         category: .foregroundObject,
                         confidence: Float(max(0.40, comVal)),
                         label: "Vùng trọng tâm",
                         prominenceScore: 0.22
-                    ))
+                    )
+                    c.isAttentionRegion = true
+                    candidates.append(c)
                 }
             }
             if let anchor = r.sceneryAnchor {
@@ -502,13 +507,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 let box = CGRect(x: bx, y: by, width: bw, height: bh)
                 let isFarFromFirst = candidates.first.map { hypot($0.center.x - anchor.x, $0.center.y - anchor.y) > 0.25 } ?? true
                 if isFarFromFirst {
-                    candidates.append(NeuralSubjectCandidate(
+                    var c = NeuralSubjectCandidate(
                         boundingBox: box,
                         category: .foregroundObject,
                         confidence: Float(max(0.38, anchorVal)),
                         label: "Vùng chi tiết",
                         prominenceScore: 0.18
-                    ))
+                    )
+                    c.isAttentionRegion = true
+                    candidates.append(c)
                 }
             }
         }

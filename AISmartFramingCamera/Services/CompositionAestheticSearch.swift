@@ -220,16 +220,16 @@ enum CompositionPreferencePolicy {
                            originalComposition: Double, originalAesthetics: Double) -> Bool {
         let ratings = [composition, aesthetics, originalComposition, originalAesthetics]
         return ratings.allSatisfy { $0.isFinite && (1...5).contains($0) } &&
-            composition >= originalComposition - 0.20 && aesthetics >= originalAesthetics - 0.20
+            composition >= originalComposition - 0.42 && aesthetics >= originalAesthetics - 0.42
     }
 
     static func score(composition: Double, aesthetics: Double, geometry: Double, outOfBoundsFraction: Double = 0.0) -> Double? {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
         let fieldBoost = min(0.28, max(0.0, outOfBoundsFraction * 0.38))
-        let compW = 0.38 - fieldBoost * 0.55
-        let aesthW = 0.34 - fieldBoost * 0.45
-        let geomW = 0.28 + fieldBoost
+        let compW = 0.33 - fieldBoost * 0.55
+        let aesthW = 0.31 - fieldBoost * 0.45
+        let geomW = 0.36 + fieldBoost
         return compW * (composition - 1) / 4 + aesthW * (aesthetics - 1) / 4 +
             geomW * min(1, max(0, geometry))
     }

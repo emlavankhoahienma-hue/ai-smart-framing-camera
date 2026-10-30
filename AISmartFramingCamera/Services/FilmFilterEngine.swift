@@ -42,9 +42,12 @@ public final class FilmFilterEngine {
         )
     }
 
-    public func applyPreset(to inputImage: CIImage, preset: FilmPreset, intensity: Float = 1.0) -> CIImage? {
+    public func applyPreset(to inputImage: CIImage, preset: FilmPreset, intensity: Float = 1.0, isRealtimePreview: Bool = false) -> CIImage? {
         guard preset != .standard && preset != .aiFullAuto else { return inputImage }
         guard intensity > 0.001 else { return inputImage }
+        let prevRealtime = FilmSimulationCore.isRealtimePreview
+        FilmSimulationCore.isRealtimePreview = isRealtimePreview
+        defer { FilmSimulationCore.isRealtimePreview = prevRealtime }
 
         let fullSimulated: CIImage?
         switch preset {
