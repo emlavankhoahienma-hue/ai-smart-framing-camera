@@ -4726,7 +4726,7 @@ extension CameraViewModel: CameraServiceDelegate {
             }
             if let dataToSave = persistedData {
                 autoreleasepool {
-                    AppPhotoStorageService.shared.persistCapture(
+                    _ = AppPhotoStorageService.shared.persistCapture(
                         id: item.id,
                         image: processedImageResult,
                         mainData: dataToSave,
