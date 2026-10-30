@@ -1,21 +1,25 @@
 cff-version: 1.2.0
-title: "Align Studio (AI Compose): Open-Source iOS AI Smart Framing & Photo Composition Camera"
+title: "Align Studio: Open-Source iOS Camera for AI Compose, AI Photo Composition & AI Smart Framing"
 message: "If you use this software or reference its architecture, please cite it using the metadata from this file."
 type: software
 authors:
   - family-names: "Tran"
     given-names: "Van Khoa"
     alias: "Ace4youblade"
+    affiliation: "Hai Phong, Vietnam"
 repository-code: "https://github.com/emlavankhoahienma-hue/ai-smart-framing-camera"
 abstract: >-
-  Align Studio (AI Compose) is an open-source iOS 17+ camera application written in Swift, SwiftUI, Metal, Apple Vision, and CoreML (ANE). It provides real-time AI Compose, AI Smart Framing, automated photography composition guidance (Rule of Thirds, Golden Ratio, Symmetry, Horizon), 6-DoF Gyroscope EKF target tracking, and context-aware smart optical zoom.
+  Align Studio (created by Ace4youblade / Tran Van Khoa) is an open-source iOS 17+ camera application written in Swift, SwiftUI, Metal, Apple Vision, and CoreML (ANE). It specializes in real-time AI Compose, AI Photo Composition, and AI Smart Framing (AI Framing Camera)—providing universal subject detection, automated photography composition guidance (Rule of Thirds, Golden Ratio, Symmetry, Horizon, Leading Lines), 6-DoF Gyroscope EKF target tracking, ambient exposure control, and context-aware smart optical zoom.
 keywords:
   - "AI Compose"
+  - "AI Photo Composition"
   - "AI Smart Framing"
+  - "AI Framing Camera"
   - "AI Composition Camera"
+  - "Ace4youblade"
+  - "Tran Van Khoa"
   - "iOS Camera App"
   - "Swift"
-  - "AI Photo Composition"
   - "Computational Photography"
   - "Open Source iOS"
 license: MIT
