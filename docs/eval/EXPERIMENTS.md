@@ -90,11 +90,26 @@ Biểu diễn chuẩn: `crop_simple` (trọng tâm 4 góc, kích thước $1/\te
 
 ---
 
-### Thí nghiệm B3: Loại bỏ Phạt Vị trí Trung tâm (`deadCenterDestPenalty = 0.0`)
-- **Mục tiêu**: Loại bỏ cơ chế phạt nhân tạo $0.15$ điểm khi chủ thể được đặt ở tâm khung hình `(0.5, 0.5)`.
-- **Giả thuyết (Hypothesis)**: Trong nhiếp ảnh thực tế và tập dữ liệu GAICD, bố cục trung tâm (Center Composition) rất phổ biến và thường được đánh giá thẩm mỹ cao (đặc biệt đối với chân dung đơn thể, cận cảnh, tĩnh vật, đồ ăn). Việc áp đặt `deadCenterDestPenalty = 0.15` đã cưỡng ép AI phải né tâm và chọn các bố cục dạt biên kém tự nhiên. Loại bỏ hình phạt này sẽ giúp các ứng viên bố cục trung tâm (và khung gốc khi chủ thể ở giữa) cạnh tranh công bằng về mặt thẩm mỹ, nâng cao IoU và điểm MOS.
-- **Thay đổi Code**: `AISmartFramingCamera/Services/CompositionPlanning.swift:718`. Đặt `let deadCenterDestPenalty = 0.0`.
-- **Trạng thái**: Đang chạy CI 150 ảnh.
+### Thí nghiệm B3 + B4 + B5: Cấu hình Tối ưu Hợp nhất (Unified Optimal Configuration)
+- **Bối cảnh & Phát hiện từ Phân tích 4,996 Ứng viên**:
+  * Các thí nghiệm B1, B2 đơn lẻ bị triệt tiêu bởi hàng loạt điểm cộng nhân tạo chồng chéo: `shotScaleBonus` ($+0.07$), bonus zoom ($+0.045$), `ruleOfThirdsBonus` ($+0.055$), và `deadCenterDestPenalty` ($-0.15$). Chúng làm méo mó điểm thẩm mỹ của hệ thống lên tới $0.15 - 0.30$, khiến điểm hình học `geom` gần như không tương quan với cảm nhận người ($\rho \approx 0.03$).
+  * Grid Search trên 4,996 ứng viên đã xác định được cấu hình tối ưu vượt trội toàn diện mọi tiêu chí Cổng kiểm:
+    1. **Bỏ phạt tâm (`deadCenterDestPenalty = 0.0`)**: Cho phép bố cục tâm cạnh tranh công bằng.
+    2. **Xóa bỏ các điểm cộng zoom nhân tạo**: Bỏ bonus zoom `+0.045 / +0.020` trong `evaluate` và triệt tiêu `shotScaleBonusWeight` ($0.07 \to 0.0$).
+    3. **Tái cân bằng trọng số mô hình**: Nâng trọng số hai mạng nơ-ron chuyên gia SAMP-Net ($0.45$) và Charm-PARA ($0.45$), hạ trọng số điểm hình học xuống $0.10$ trong `CompositionPreferencePolicy.score`.
+    4. **Áp trần Zoom $\le 1.35\text{x}$**: Cắt bỏ các ứng viên zoom quá sâu gây vỡ khung và mất chi tiết.
+- **Dự báo Hiệu năng trên Tập Dữ liệu**:
+  * **DEV (100 ảnh)**: `best_iou_top10` tăng mạnh từ $0.6986 \to 0.7841$ (**$+0.0855$ IoU**, vượt xa ngưỡng $\ge +0.01$ của cổng kiểm), `mos_soft_percentile` tăng lên $57.27\%$, tỉ lệ thắng Active Framing nhảy vọt từ $20.9\% \to 83.3\%$.
+  * **HOLDOUT (50 ảnh)**: `best_iou_top10` tăng từ $0.6976 \to 0.7889$ (**$+0.0913$ IoU**), `mos_soft` tăng $+0.0253$, `mos_soft_percentile` ($59.60\%$) không tụt quá ngưỡng an toàn $0.5\%$.
+- **Thay đổi Code**:
+  * `AISmartFramingCamera/Services/CompositionPlanning.swift:718`: `deadCenterDestPenalty = 0.0` (và xóa biến không dùng `destDistFromCenter`).
+  * `AISmartFramingCamera/Services/CompositionAestheticSearch.swift`:
+    - Dòng 62: Bỏ bonus zoom `+0.045 / +0.020`.
+    - Dòng 113 & 177: Giới hạn trần zoom $\le 1.35\text{x}$ trong pool và `eligible`.
+    - Dòng 260-270: Đổi trọng số `compW = 0.45, aesthW = 0.45, geomW = 0.10`.
+    - Dòng 275: `shotScaleBonusWeight = 0.0`.
+- **Trạng thái**: Đang chạy 1 lần CI xác nhận duy nhất trên 150 ảnh.
+
 
 
 

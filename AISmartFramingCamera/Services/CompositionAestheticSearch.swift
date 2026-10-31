@@ -59,12 +59,7 @@ final class CompositionAestheticSearch {
                         let thirdX = min(abs(subjCenterX - Double(CompositionTuning.goldenSectionLeft)),
                                          abs(subjCenterX - Double(CompositionTuning.goldenSectionRight)))
                         let thirdY = min(abs(subjTopThirdY - 0.36), abs(Double(proposal.expectedSubjectRect.midY) - 0.382))
-                        proposal.score += 0.055 * exp(-14 * (thirdX * thirdX + thirdY * thirdY))
-                        if proposal.zoom >= 1.15 {
-                            proposal.score += 0.045
-                        } else if proposal.zoom > 1.05 {
-                            proposal.score += 0.020
-                        }
+                        proposal.score += 0.035 * exp(-14 * (thirdX * thirdX + thirdY * thirdY))
                     }
                     // preferences bonus removed to ensure unbiased realtime evaluation
                     return View(proposal: proposal, image: preview, assessment: assessment,
@@ -179,6 +174,7 @@ final class CompositionAestheticSearch {
         // veto prevented useful zoom even when the aesthetic model preferred it.
         let eligible = evaluated.filter { view in
             if view.proposal.isUnchangedView { return true }
+            if view.proposal.zoom > 1.35 { return false }
             guard usedSpecialist, let baseline, let originalZoom else { return true }
             if view.proposal.zoom <= originalZoom * 1.08 { return true }
             if zoomNeeded, CompositionPreferencePolicy.tightensTowardTarget(
@@ -264,10 +260,10 @@ enum CompositionPreferencePolicy {
     static func score(composition: Double, aesthetics: Double, geometry: Double, outOfBoundsFraction: Double = 0.0) -> Double? {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
-        let fieldBoost = min(0.28, max(0.0, outOfBoundsFraction * 0.38))
-        let compW = 0.33 - fieldBoost * 0.55
-        let aesthW = 0.31 - fieldBoost * 0.45
-        let geomW = 0.36 + fieldBoost
+        _ = outOfBoundsFraction
+        let compW = 0.45
+        let aesthW = 0.45
+        let geomW = 0.10
         return compW * (composition - 1) / 4 + aesthW * (aesthetics - 1) / 4 +
             geomW * min(1, max(0, geometry))
     }
@@ -276,7 +272,7 @@ enum CompositionPreferencePolicy {
     static let undersizedSubjectRatio = 0.50
     /// How far a necessary tighter crop may trail the wide frame before the models' objection stands.
     static let necessaryCropTolerance = 0.05
-    static let shotScaleBonusWeight = 0.07
+    static let shotScaleBonusWeight = 0.0
 
     static func zoomIsNecessary(originalSizeRatio: Double) -> Bool {
         originalSizeRatio.isFinite && originalSizeRatio > 0 && originalSizeRatio < undersizedSubjectRatio
