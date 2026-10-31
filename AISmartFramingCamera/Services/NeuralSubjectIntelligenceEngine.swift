@@ -342,8 +342,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     attentionRegion: subject.allowsAttentionCrop),
                 aimPointInSource: proposal.aimPoint, aimWorldRay: pose.act(proposal.rotation.act(SIMD3(0, 0, -1))),
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
-                minimumAutoselectConfidence: max(0.72, LocalAutoselectCalibration.threshold(
-                    scene: output.detectedScene, category: hero.category) ?? 1),
+                minimumAutoselectConfidence: (output.detectedScene == .night ? 0.42 :
+                    (LocalAutoselectCalibration.threshold(scene: output.detectedScene, category: hero.category) ?? 0.56)),
                 intent: proposal.intent, score: proposal.score, explanation: proposal.explanation + (result.usedSpecialist ? " Đã tối ưu bố cục theo Tỷ lệ vàng và Luật một phần ba." : " Bố cục tự nhiên."),
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey,
                 recommendedEVBias: proposal.recommendedEVBias)

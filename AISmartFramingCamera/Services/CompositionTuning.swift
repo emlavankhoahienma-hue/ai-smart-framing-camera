@@ -6,8 +6,8 @@ import CoreGraphics
 public enum CompositionTuning {
 
     // MARK: - 1. YOLO Detection & Box Filtering
-    /// Nguong tin cay toi thieu de chap nhan mot candidate tu YOLO model
-    public static let yoloConfidenceThreshold: Float = 0.28
+    /// Nguong tin cay toi thieu de chap nhan mot candidate tu YOLO model (binh thuong: 0.26, trong toi: 0.16)
+    public static let yoloConfidenceThreshold: Float = 0.26
     public static let yoloLowLightConfidenceThreshold: Float = 0.16
 
     /// Kich thuoc toi thieu cua bounding box (ty le tren chieu dai/rong 0...1)

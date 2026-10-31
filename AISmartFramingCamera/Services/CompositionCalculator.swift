@@ -747,18 +747,41 @@ public final class CompositionCalculator: @unchecked Sendable {
 
             // Yếu tố 1: Mật độ và Độ lấp đầy Tuyến tính Hài hòa (Linear Occupancy Fitness)
             let focalDensityScore: Double
-            if baseLinearSize1x < 0.06 {
-                // Phong cảnh / thiên nhiên không có thực thể: dựa trên Saliency và Clutter
+            let isActualSubject = (evidence.focalCategory == .human || evidence.focalCategory == .face ||
+                                   evidence.focalCategory == .animal || evidence.focalCategory == .salientObject)
+            
+            if baseLinearSize1x < 0.08 && !isActualSubject {
+                // Phong cảnh / thiên nhiên thực sự không có chủ thể: giữ 1.0x tự nhiên
                 if z <= 1.05 {
                     focalDensityScore = (1.0 - evidence.focalSaliencyRatio) * 0.45 + 0.20
                 } else {
                     focalDensityScore = evidence.focalSaliencyRatio * min(1.0, sqrt(Double(z)) * 0.55) * 0.40
                 }
             } else {
-                let optimalLinearSize = (evidence.detectedScene == .landscape || evidence.detectedScene == .architecture) ? 0.28 : 0.52
+                // Có chủ thể rõ ràng (hoặc người/vật thể ở cự ly xa):
+                // Kích thích Smart Telephoto Zoom (1.8x - 2.5x) theo cơ chế Đa cự ly (Multi-scale Framing)
+                let optimalLinearSize: Double
+                if isActualSubject && baseLinearSize1x < 0.12 {
+                    // Chủ thể ở xa: mục tiêu phóng đại để chiếm 40% - 55% khung hình chân dung/đặc tả
+                    optimalLinearSize = 0.48
+                } else if evidence.detectedScene == .landscape || evidence.detectedScene == .architecture {
+                    optimalLinearSize = 0.28
+                } else {
+                    optimalLinearSize = 0.52
+                }
+
                 let sizeFitness = exp(-pow(log(max(0.02, projectedLinearSize) / optimalLinearSize), 2) / 0.55)
                 let saliencyGain = min(1.0, evidence.focalSaliencyRatio * sqrt(Double(z)))
-                focalDensityScore = 0.38 * sizeFitness + 0.12 * saliencyGain
+                
+                // Khuyến khích phóng đại khi chủ thể nhỏ ở xa
+                let distantSubjectBonus: Double
+                if isActualSubject && baseLinearSize1x < 0.10 && z >= 1.5 && z <= 3.0 {
+                    distantSubjectBonus = 0.22 * (1.0 - baseLinearSize1x / 0.10)
+                } else {
+                    distantSubjectBonus = 0.0
+                }
+                
+                focalDensityScore = 0.38 * sizeFitness + 0.12 * saliencyGain + distantSubjectBonus
             }
 
             // Yếu tố 2: Lợi ích Cắt bỏ Rác rìa khung (Edge Clutter Removal Gain)

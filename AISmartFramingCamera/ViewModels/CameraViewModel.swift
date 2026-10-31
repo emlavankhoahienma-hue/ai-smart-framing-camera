@@ -3198,8 +3198,9 @@ public final class CameraViewModel: ObservableObject {
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
         let distance = hypot(dx, dy / aspect)
         alignmentDistance = distance
-        let snapOnThreshold: CGFloat = 0.048
-        let snapOffThreshold: CGFloat = 0.058
+        let effectiveRadius = max(alignmentRadius, 0.048)
+        let snapOnThreshold: CGFloat = effectiveRadius * 1.05
+        let snapOffThreshold: CGFloat = effectiveRadius * 1.35
         if distance <= snapOnThreshold {
             if !isMagneticSnapped {
                 isMagneticSnapped = true
@@ -3211,7 +3212,7 @@ public final class CameraViewModel: ObservableObject {
             }
         }
         let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),
-            radius: Double(alignmentRadius), freshEvidence: (hasFreshOpticalLock || isTargetLocked) && !isPinchingZoom)
+            radius: Double(effectiveRadius), freshEvidence: (hasFreshOpticalLock || isTargetLocked) && !isPinchingZoom)
         isPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
         if !isTargetLocked && state == .ready && !localCompositionNeedsLevel {
             lockHardTarget()
@@ -3258,6 +3259,8 @@ public final class CameraViewModel: ObservableObject {
                     hasExecutedAutoZoomForSession = true
                     if zoomAwaitingVerification { return }
                 }
+                // Khong khoa hasExecutedAutoZoomForSession neu chua zoom thanh cong,
+                // de khi nguoi dung dua chu the vao tam thi he thong van tu dong zoom!
             }
         }
         guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
@@ -3310,7 +3313,7 @@ public final class CameraViewModel: ObservableObject {
             if cropSafe { self.postZoomRecovery.reset() }
             if self.aiSessionState == .alignmentPerfect && !self.isShutterPressing &&
                 (self.hasFreshOpticalLock || self.isTargetLocked) && self.alignmentGate.isAligned &&
-                self.alignmentDistance <= self.alignmentRadius * 1.6 &&
+                self.alignmentDistance <= max(self.alignmentRadius, 0.048) * 1.8 &&
                 !self.zoomAwaitingVerification && self.zoomVerified &&
                 !self.isPinchingZoom && !self.isPreparingPinZoom &&
                 self.allowsAutoCaptureForCurrentTarget && self.isAutoCaptureOnAlignEnabled &&
