@@ -142,10 +142,12 @@ jobs:
           python scripts/prepare_composition_photos.py --per-scene 5
           python scripts/export_composition_coreml.py --photos validation/photos
           xcrun coremlc compile SAMPComposition.mlpackage .
+          pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
           python scripts/export_charm_coreml.py --photos validation/photos
           xcrun coremlc compile CharmAesthetics.mlpackage .
           test -d SAMPComposition.mlmodelc
           test -d CharmAesthetics.mlmodelc
+          test -f CharmPositionEmbedding.bin
           echo "Hoàn thành SAMP & Charm trong $(( $(date +%s) - start_time ))s."
 
       - name: 10. Chạy Swift Pipeline Evaluation Runner
@@ -157,17 +159,24 @@ jobs:
           fi
           echo "Bắt đầu chạy evaluation với limit = $LIMIT ..."
           
-          python scripts/validate_composition_photos.py \
+          if ! python scripts/validate_composition_photos.py \
             --eval-dir eval_images \
             --eval-out eval_results.json \
-            --limit "$LIMIT"
+            --limit "$LIMIT"; then
+            echo "::error::Swift Evaluation Runner thất bại khi thực thi trên tập ảnh eval_images!"
+            exit 1
+          fi
           
-          test -s eval_results.json
+          if [ ! -s eval_results.json ]; then
+            echo "::error::eval_results.json không tồn tại hoặc bị rỗng sau khi chạy runner!"
+            exit 1
+          fi
           echo "Đã tạo thành công eval_results.json ($(wc -c < eval_results.json | tr -d ' ') bytes) trong $(( $(date +%s) - start_time ))s."
 
       - name: 11. Upload duy nhất file eval_results.json làm Artifact
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: eval-results-${{ github.run_number }}
           path: eval_results.json
-          if-no-files-found: error
+          if-no-files-found: ignore
