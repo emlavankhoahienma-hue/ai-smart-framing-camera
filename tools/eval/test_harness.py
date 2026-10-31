@@ -88,6 +88,20 @@ def test_crop_simple_hand_values():
     assert ec.crop_simple([1.0] * 8, -1.0) is None
 
 
+def test_mos_soft_hand_values():
+    # Only GT with IoU >= 0.5 included
+    gt = [{"rect": [0, 0, 1, 1], "mos": 3.0}, {"rect": [0, 0, 0.5, 0.5], "mos": 1.0}]
+    assert ec.mos_soft([0, 0, 1, 1], gt) == pytest.approx(3.0)
+
+    # Weighted blend: g1 IoU 0.8 -> w1=0.8^4=0.4096; g2 IoU 1.0 -> w2=1.0
+    gt2 = [{"rect": [0, 0, 1, 1], "mos": 2.0}, {"rect": [0, 0, 0.8, 1], "mos": 4.0}]
+    expected = (0.4096 * 2.0 + 1.0 * 4.0) / (0.4096 + 1.0)
+    assert ec.mos_soft([0, 0, 0.8, 1], gt2) == pytest.approx(expected)
+
+    # Disjoint -> no crop >= 0.5 -> None
+    assert ec.mos_soft([0.9, 0.9, 0.1, 0.1], gt2) is None
+
+
 # ------------------------------------------------------------------ matching
 GT = [{"rect": [0, 0, .5, .5], "mos": 3.0}, {"rect": [.5, .5, .5, .5], "mos": 4.0}]
 

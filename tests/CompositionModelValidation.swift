@@ -421,6 +421,34 @@ extension CompositionModelValidation {
             record["scores"] = ["samp": evalOptional(best.assessment?.mean), "charm": evalOptional(best.aesthetics?.mean),
                                 "geom": evalNumber(best.geometryScore), "final": evalNumber(best.proposal.score)] as [String: Any]
             record["num_candidates"] = result.assessedCount
+            var candList: [[String: Any]] = []
+            for v in result.allEvaluatedViews {
+                var cRec: [String: Any] = [:]
+                let vCorners = v.proposal.sourceCorners
+                cRec["zoom"] = evalNumber(Double(v.proposal.zoom))
+                cRec["intent"] = v.proposal.intent.rawValue
+                cRec["is_unchanged"] = v.proposal.isUnchangedView
+                cRec["is_selected"] = (vCorners == best.proposal.sourceCorners &&
+                                       v.proposal.zoom == best.proposal.zoom &&
+                                       v.proposal.intent == best.proposal.intent)
+                if vCorners.count == 4 {
+                    cRec["source_corners_raw"] = evalNumbers(vCorners.flatMap { [Double($0.x), Double($0.y)] })
+                    let cXs = vCorners.map { Double($0.x) }, cYs = vCorners.map { Double($0.y) }
+                    let cMinX = max(0.0, cXs.min() ?? 0.0), cMaxX = min(1.0, cXs.max() ?? 1.0)
+                    let cMinY = max(0.0, cYs.min() ?? 0.0), cMaxY = min(1.0, cYs.max() ?? 1.0)
+                    if cMaxX > cMinX, cMaxY > cMinY {
+                        cRec["crop_rect"] = evalNumbers([cMinX, cMinY, cMaxX - cMinX, cMaxY - cMinY])
+                    }
+                }
+                cRec["scores"] = [
+                    "samp": evalOptional(v.assessment?.mean),
+                    "charm": evalOptional(v.aesthetics?.mean),
+                    "geom": evalNumber(v.geometryScore),
+                    "final": evalNumber(v.proposal.score)
+                ] as [String: Any]
+                candList.append(cRec)
+            }
+            record["candidates"] = candList
             record["timing_ms"] = ["detection": milliseconds(detectionStart, detectionEnd),
                                    "planning": milliseconds(planningStart, planningEnd),
                                    "scoring": milliseconds(planningEnd, searchEnd),

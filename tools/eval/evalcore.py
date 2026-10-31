@@ -122,13 +122,44 @@ def best_iou_top10(crop: Rect, gt: Sequence[dict]) -> float:
 def metrics_for_crop(crop: Rect, gt: Sequence[dict]) -> dict:
     valid_gt = [item for item in gt if item["mos"] >= 0]
     matched_iou, matched_mos = best_match(crop, valid_gt)
+    ms = mos_soft(crop, valid_gt)
     return {
         "matched_iou": matched_iou,
         "matched_mos": matched_mos if matched_mos is not None else "unmatched",
         "mos_percentile": None if matched_mos is None else mos_percentile(matched_mos, [g["mos"] for g in valid_gt]),
         "best_iou": best_iou_vs_top(crop, valid_gt),
         "best_iou_top10": best_iou_top10(crop, valid_gt),
+        "mos_soft": ms,
+        "mos_soft_percentile": mos_soft_percentile(ms, valid_gt),
     }
+
+
+def mos_soft(crop: Rect, gt: Sequence[dict], min_iou: float = 0.50, power: float = 4.0) -> float | None:
+    """Soft MOS score: weighted average of annotated crops with IoU >= min_iou, weight = IoU^power.
+    Returns None if no crop satisfies IoU >= min_iou.
+    """
+    valid = [item for item in gt if item["mos"] >= 0]
+    weights = []
+    values = []
+    for item in valid:
+        v_iou = iou(crop, item["rect"])
+        if v_iou >= min_iou:
+            w = v_iou ** power
+            weights.append(w)
+            values.append(w * item["mos"])
+    if not weights or sum(weights) == 0:
+        return None
+    return sum(values) / sum(weights)
+
+
+def mos_soft_percentile(soft_val: float | None, gt: Sequence[dict]) -> float | None:
+    """Weak percentile rank (0..100) of soft_val within the image's valid MOS distribution."""
+    if soft_val is None:
+        return None
+    valid_mos = [item["mos"] for item in gt if item["mos"] >= 0]
+    if not valid_mos:
+        return None
+    return mos_percentile(soft_val, valid_mos)
 
 
 def clamp_rect(rect: Rect) -> list[float]:

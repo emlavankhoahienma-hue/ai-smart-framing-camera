@@ -19,6 +19,7 @@ final class CompositionAestheticSearch {
         let canAutoselect: Bool
         let usedSpecialist: Bool
         var modernAssessmentCount = 0
+        var allEvaluatedViews: [View] = []
     }
 
     private let renderer: CompositionImageRenderer
@@ -90,6 +91,7 @@ final class CompositionAestheticSearch {
         }
         // Release the first scorer before loading the 2025 aesthetic specialist.
         specialist = nil
+        var allEvaluated = evaluated
         var modernCount = 0
         if requiresModernModel || aestheticModelURL != nil {
             var indices: [Int] = []
@@ -150,6 +152,16 @@ final class CompositionAestheticSearch {
                 progress("Không nạp được Charm. Đang chuẩn bị các khung để chọn thủ công…")
             }
             modern = nil
+            for poolItem in pool {
+                if let matchIdx = allEvaluated.firstIndex(where: {
+                    $0.proposal.sourceCorners == poolItem.proposal.sourceCorners &&
+                    $0.proposal.zoom == poolItem.proposal.zoom &&
+                    $0.proposal.intent == poolItem.proposal.intent
+                }) {
+                    allEvaluated[matchIdx].aesthetics = poolItem.aesthetics
+                    allEvaluated[matchIdx].proposal.score = poolItem.proposal.score
+                }
+            }
             usedSpecialist = usedSpecialist && !pool.isEmpty && modernCount == pool.count
             evaluated = pool
             if !usedSpecialist {
@@ -234,7 +246,8 @@ final class CompositionAestheticSearch {
         }
         return Result(views: selected, assessedCount: assessedCount,
                       canAutoselect: usedSpecialist && robust && assessedCount >= 10, usedSpecialist: usedSpecialist,
-                      modernAssessmentCount: modernCount)
+                      modernAssessmentCount: modernCount,
+                      allEvaluatedViews: allEvaluated)
     }
 }
 
