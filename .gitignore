@@ -54,7 +54,8 @@ build_artifacts/
 data/GAICD/
 eval_input/
 debug/
-eval_runs/*/vis/
+eval_runs/
+eval_results.json
 __pycache__/
 .pytest_cache/
 fake_results.json
