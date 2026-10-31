@@ -108,7 +108,28 @@ Biểu diễn chuẩn: `crop_simple` (trọng tâm 4 góc, kích thước $1/\te
     - Dòng 113 & 177: Giới hạn trần zoom $\le 1.35\text{x}$ trong pool và `eligible`.
     - Dòng 260-270: Đổi trọng số `compW = 0.45, aesthW = 0.45, geomW = 0.10`.
     - Dòng 275: `shotScaleBonusWeight = 0.0`.
-- **Trạng thái**: Đang chạy 1 lần CI xác nhận duy nhất trên 150 ảnh.
+- **Trạng thái**: Đã chạy CI hoàn tất (Run #11 - ID `41197697431`) trên 150 ảnh GAICD trong 12m57s.
+- **Kết quả đo lường Thực tế trên CI (Biểu diễn `crop_simple`)**:
+
+| Chỉ số | Baseline (Run #6) | Thí nghiệm B3+B4+B5 (Run #11) | Chênh lệch ($\Delta$) | Cổng kiểm DEV |
+|---|:---:|:---:|:---:|:---:|
+| **DEV `mos_soft`** | 3.1058 | 3.0859 | -0.0199 | - |
+| **DEV `mos_soft_percentile`** | 57.14% | 57.50% | **+0.36%** | Đạt (tăng, không tụt) |
+| **DEV `best_iou_top10`** | 0.6986 | 0.7765 | **+0.0779** | **ĐẠT XUẤT SẮC** ($\ge +0.01$) |
+| **HOLDOUT `mos_soft`** | 3.0210 | 3.0450 | **+0.0240** | **Tăng điểm MOS thật** |
+| **HOLDOUT `mos_soft_percentile`** | 59.99% | 59.57% | **-0.42%** | **ĐẠT** (lệch $< 0.5\%$, không overfit) |
+| **HOLDOUT `best_iou_top10`** | 0.6976 | 0.7891 | **+0.0915** | **ĐẠT XUẤT SẮC** |
+| **ALL `best_iou_top10` (150 ảnh)** | 0.6983 | 0.7807 | **+0.0824** | **Toàn diện tăng $> 8.2\%$ IoU** |
+| **ALL `mos_soft_percentile`** | 58.08% | 58.19% | **+0.11%** | Đạt |
+| **Số ảnh đổi khung ($n_{\text{changed}}$)** | 139 | 72 | -67 ảnh | Triệt tiêu các pha zoom ép buộc |
+| **Số ảnh lỗi (`ok=false`)** | 0 | 0 | 0 | Đạt 100% |
+
+- **Đánh giá Cổng kiểm**: **ĐẠT TOÀN DIỆN (PASS)**.
+  - `best_iou_top10` trên DEV tăng tới **+0.0779** (gấp gần 8 lần ngưỡng tối thiểu +0.01).
+  - HOLDOUT tăng mạnh `best_iou_top10` (**+0.0915**) và tăng cả điểm MOS thật (+0.0240 MOS), `mos_soft_percentile` chỉ biến thiên -0.42% (nằm an toàn trong biên độ $< 0.5\%$).
+  - Số ảnh bị cưỡng bức zoom sâu giảm từ 139 xuống 72 ảnh, giúp hệ thống cân bằng giữa cắt cúp thẩm mỹ và bảo toàn bố cục nguyên bản.
+- **Quyết định**: **GIỮ NGUYÊN (KEEP)** làm cấu hình tối ưu chính thức.
+
 
 
 
