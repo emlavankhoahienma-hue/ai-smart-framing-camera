@@ -19,6 +19,7 @@ final class CompositionAestheticSearch {
         let canAutoselect: Bool
         let usedSpecialist: Bool
         var modernAssessmentCount = 0
+        var allEvaluatedViews: [View] = []
     }
 
     private let renderer: CompositionImageRenderer
@@ -58,12 +59,7 @@ final class CompositionAestheticSearch {
                         let thirdX = min(abs(subjCenterX - Double(CompositionTuning.goldenSectionLeft)),
                                          abs(subjCenterX - Double(CompositionTuning.goldenSectionRight)))
                         let thirdY = min(abs(subjTopThirdY - 0.36), abs(Double(proposal.expectedSubjectRect.midY) - 0.382))
-                        proposal.score += 0.055 * exp(-14 * (thirdX * thirdX + thirdY * thirdY))
-                        if proposal.zoom >= 1.15 {
-                            proposal.score += 0.045
-                        } else if proposal.zoom > 1.05 {
-                            proposal.score += 0.020
-                        }
+                        proposal.score += 0.035 * exp(-14 * (thirdX * thirdX + thirdY * thirdY))
                     }
                     // preferences bonus removed to ensure unbiased realtime evaluation
                     return View(proposal: proposal, image: preview, assessment: assessment,
@@ -90,6 +86,7 @@ final class CompositionAestheticSearch {
         }
         // Release the first scorer before loading the 2025 aesthetic specialist.
         specialist = nil
+        var allEvaluated = evaluated
         var modernCount = 0
         if requiresModernModel || aestheticModelURL != nil {
             var indices: [Int] = []
@@ -107,8 +104,12 @@ final class CompositionAestheticSearch {
             }
             // A strong tighter view must reach the second model even when the
             // old whole-image composition scorer slightly prefers the wide view.
-            let sourceZoom = evaluated.first(where: { $0.proposal.isUnchangedView })?.proposal.zoom ?? 1
-            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 }
+            let baseView = evaluated.first(where: { $0.proposal.isUnchangedView })
+            let sourceZoom = baseView?.proposal.zoom ?? 1
+            let baseArea = baseView.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
+            let allowTwoX = baseArea > 0.0001 && baseArea < 0.08
+            let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
+            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
             for index in zoomed.prefix(4) { include(index) }
             let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
@@ -150,6 +151,16 @@ final class CompositionAestheticSearch {
                 progress("Không nạp được Charm. Đang chuẩn bị các khung để chọn thủ công…")
             }
             modern = nil
+            for poolItem in pool {
+                if let matchIdx = allEvaluated.firstIndex(where: {
+                    $0.proposal.sourceCorners == poolItem.proposal.sourceCorners &&
+                    $0.proposal.zoom == poolItem.proposal.zoom &&
+                    $0.proposal.intent == poolItem.proposal.intent
+                }) {
+                    allEvaluated[matchIdx].aesthetics = poolItem.aesthetics
+                    allEvaluated[matchIdx].proposal.score = poolItem.proposal.score
+                }
+            }
             usedSpecialist = usedSpecialist && !pool.isEmpty && modernCount == pool.count
             evaluated = pool
             if !usedSpecialist {
@@ -158,6 +169,9 @@ final class CompositionAestheticSearch {
         }
         let baseline = evaluated.first { $0.proposal.isUnchangedView }
         let originalZoom = baseline?.proposal.zoom
+        let baseSubjectArea = baseline.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
+        let allowTwoX = baseSubjectArea > 0.0001 && baseSubjectArea < 0.08
+        let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
         // Shot-scale prior: a subject filling under half of the size its intent wants must be tightened
         // unless the learned models clearly object. Without this the full frame wins on resolution alone.
         let zoomNeeded = baseline.map {
@@ -167,6 +181,7 @@ final class CompositionAestheticSearch {
         // veto prevented useful zoom even when the aesthetic model preferred it.
         let eligible = evaluated.filter { view in
             if view.proposal.isUnchangedView { return true }
+            if view.proposal.zoom > maxAllowedZoom { return false }
             guard usedSpecialist, let baseline, let originalZoom else { return true }
             if view.proposal.zoom <= originalZoom * 1.08 { return true }
             if zoomNeeded, CompositionPreferencePolicy.tightensTowardTarget(
@@ -234,7 +249,8 @@ final class CompositionAestheticSearch {
         }
         return Result(views: selected, assessedCount: assessedCount,
                       canAutoselect: usedSpecialist && robust && assessedCount >= 10, usedSpecialist: usedSpecialist,
-                      modernAssessmentCount: modernCount)
+                      modernAssessmentCount: modernCount,
+                      allEvaluatedViews: allEvaluated)
     }
 }
 
@@ -251,10 +267,10 @@ enum CompositionPreferencePolicy {
     static func score(composition: Double, aesthetics: Double, geometry: Double, outOfBoundsFraction: Double = 0.0) -> Double? {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
-        let fieldBoost = min(0.28, max(0.0, outOfBoundsFraction * 0.38))
-        let compW = 0.33 - fieldBoost * 0.55
-        let aesthW = 0.31 - fieldBoost * 0.45
-        let geomW = 0.36 + fieldBoost
+        _ = outOfBoundsFraction
+        let compW = 0.45
+        let aesthW = 0.45
+        let geomW = 0.10
         return compW * (composition - 1) / 4 + aesthW * (aesthetics - 1) / 4 +
             geomW * min(1, max(0, geometry))
     }
@@ -263,7 +279,7 @@ enum CompositionPreferencePolicy {
     static let undersizedSubjectRatio = 0.50
     /// How far a necessary tighter crop may trail the wide frame before the models' objection stands.
     static let necessaryCropTolerance = 0.05
-    static let shotScaleBonusWeight = 0.07
+    static let shotScaleBonusWeight = 0.0
 
     static func zoomIsNecessary(originalSizeRatio: Double) -> Bool {
         originalSizeRatio.isFinite && originalSizeRatio > 0 && originalSizeRatio < undersizedSubjectRatio

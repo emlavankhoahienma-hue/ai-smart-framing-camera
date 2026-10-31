@@ -1,0 +1,152 @@
+{
+  "ALL": {
+    "n": 150,
+    "n_changed": 139,
+    "performance": {
+      "selected": {
+        "mos_soft": 3.0777466213845113,
+        "mos_soft_percentile": 58.08308426029214,
+        "best_iou_top10": 0.6982869894955808
+      },
+      "oracle": {
+        "mos_soft": 3.2632156763750544,
+        "mos_soft_percentile": 66.29809429288034,
+        "best_iou_top10": 0.7530137629369239
+      },
+      "median": {
+        "mos_soft": 3.0661510877635316,
+        "mos_soft_percentile": 58.16222206835003,
+        "best_iou_top10": 0.7804791980109262
+      },
+      "full_frame": {
+        "mos_soft": 3.0637876256069827,
+        "mos_soft_percentile": 57.66675791287756,
+        "best_iou_top10": 0.7710284695312087
+      },
+      "center_same_zoom": {
+        "mos_soft": 3.045318690219491,
+        "mos_soft_percentile": 56.870012983882255,
+        "best_iou_top10": 0.7108314017321012
+      }
+    },
+    "correlations": {
+      "samp": 0.0839323536503884,
+      "charm": 0.07426814988290399,
+      "geom": 0.029908802159166987,
+      "final": 0.06153928001410146
+    },
+    "counts": {
+      "has_unchanged": 150,
+      "unchanged_is_oracle": 40,
+      "oracle_beats_full_frame": 88,
+      "oracle_beats_full_frame_percentile": 84
+    },
+    "active_framing_wins": {
+      "n_changed": 139,
+      "wins_mos_soft": 30,
+      "win_rate_mos_soft": 0.2158273381294964,
+      "wins_best_iou_top10": 22,
+      "win_rate_best_iou_top10": 0.15827338129496402
+    }
+  },
+  "DEV": {
+    "n": 100,
+    "n_changed": 91,
+    "performance": {
+      "selected": {
+        "mos_soft": 3.105789868297287,
+        "mos_soft_percentile": 57.14035886616106,
+        "best_iou_top10": 0.6986423518253447
+      },
+      "oracle": {
+        "mos_soft": 3.28519959705947,
+        "mos_soft_percentile": 66.3120405760975,
+        "best_iou_top10": 0.7435979735802098
+      },
+      "median": {
+        "mos_soft": 3.086158147853084,
+        "mos_soft_percentile": 57.23141231593039,
+        "best_iou_top10": 0.781487247475735
+      },
+      "full_frame": {
+        "mos_soft": 3.077025607257084,
+        "mos_soft_percentile": 56.9169517149056,
+        "best_iou_top10": 0.7665654502839149
+      },
+      "center_same_zoom": {
+        "mos_soft": 3.0767077860505894,
+        "mos_soft_percentile": 55.87739985667905,
+        "best_iou_top10": 0.7089625420138599
+      }
+    },
+    "correlations": {
+      "samp": 0.058379530929480235,
+      "charm": 0.0553356282271945,
+      "geom": 0.041610329133532194,
+      "final": 0.06323911030811755
+    },
+    "counts": {
+      "has_unchanged": 100,
+      "unchanged_is_oracle": 24,
+      "oracle_beats_full_frame": 62,
+      "oracle_beats_full_frame_percentile": 59
+    },
+    "active_framing_wins": {
+      "n_changed": 91,
+      "wins_mos_soft": 19,
+      "win_rate_mos_soft": 0.2087912087912088,
+      "wins_best_iou_top10": 15,
+      "win_rate_best_iou_top10": 0.16483516483516483
+    }
+  },
+  "HOLDOUT": {
+    "n": 50,
+    "n_changed": 48,
+    "performance": {
+      "selected": {
+        "mos_soft": 3.0209924312038927,
+        "mos_soft_percentile": 59.99098089127171,
+        "best_iou_top10": 0.697576264836053
+      },
+      "oracle": {
+        "mos_soft": 3.2192478350062244,
+        "mos_soft_percentile": 66.27020172644602,
+        "best_iou_top10": 0.7718453416503523
+      },
+      "median": {
+        "mos_soft": 3.0261369675844265,
+        "mos_soft_percentile": 60.02384157318931,
+        "best_iou_top10": 0.7784630990813086
+      },
+      "full_frame": {
+        "mos_soft": 3.037311662306779,
+        "mos_soft_percentile": 59.1663703088215,
+        "best_iou_top10": 0.7799545080257961
+      },
+      "center_same_zoom": {
+        "mos_soft": 2.982540498557294,
+        "mos_soft_percentile": 58.855239238288675,
+        "best_iou_top10": 0.714569121168584
+      }
+    },
+    "correlations": {
+      "samp": 0.1350379990922047,
+      "charm": 0.11456043956043956,
+      "geom": 0.006505748210436581,
+      "final": 0.058139619426069274
+    },
+    "counts": {
+      "has_unchanged": 50,
+      "unchanged_is_oracle": 16,
+      "oracle_beats_full_frame": 26,
+      "oracle_beats_full_frame_percentile": 25
+    },
+    "active_framing_wins": {
+      "n_changed": 48,
+      "wins_mos_soft": 11,
+      "win_rate_mos_soft": 0.22916666666666666,
+      "wins_best_iou_top10": 7,
+      "win_rate_best_iou_top10": 0.14583333333333334
+    }
+  }
+}

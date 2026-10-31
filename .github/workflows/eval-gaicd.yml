@@ -1,0 +1,203 @@
+name: Offline GAICD Evaluation Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Số ảnh tối đa để đánh giá (mặc định: 5; đặt 150 để chạy trọn bộ eval set)'
+        required: true
+        default: '5'
+        type: string
+      data_repo:
+        description: 'Tên repo private chứa release asset ảnh zip (mặc định: emlavankhoahienma-hue/eval-data)'
+        required: false
+        default: 'emlavankhoahienma-hue/eval-data'
+        type: string
+      data_tag:
+        description: 'Release tag chứa file eval_images.zip (mặc định: v1)'
+        required: false
+        default: 'v1'
+        type: string
+      fov_sweep:
+        description: 'Chạy kiểm tra FOV sweep (45, 69, 90 độ) trên limit ảnh'
+        required: false
+        default: 'false'
+        type: string
+  push:
+    branches:
+      - eval-harness
+    paths:
+      - 'tests/**'
+      - 'tools/eval/**'
+      - '.github/workflows/eval-gaicd.yml'
+      - 'scripts/validate_composition_photos.py'
+
+jobs:
+  evaluate:
+    name: Evaluate Pipeline on macOS
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      TQDM_DISABLE: "1"
+      TQDM_MONITOR_INTERVAL: "0"
+
+    steps:
+      - name: 1. Checkout source code
+        uses: actions/checkout@v7
+
+      - name: 2. Kiểm tra token truy cập repo ảnh private
+        run: |
+          if [ -z "${{ secrets.EVAL_DATA_TOKEN }}" ]; then
+            echo "::error::Thiếu secret EVAL_DATA_TOKEN! Repo chứa ảnh eval là private nên cần token chỉ-đọc để tải release asset."
+            echo "Xem hướng dẫn chi tiết từng bước tại docs/eval/CI_SETUP.md để tạo token và lưu vào Secret."
+            exit 1
+          fi
+          echo "Secret EVAL_DATA_TOKEN đã được cấu hình hợp lệ."
+
+      - name: 3. Set up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: 4. Khôi phục cache models (.model-cache)
+        uses: actions/cache@v5
+        with:
+          path: .model-cache
+          key: composition-cadb-samp-charm-v2
+          restore-keys: composition-cadb-samp-v1
+
+      - name: 5. Tải ảnh đánh giá từ repo private (Release Asset)
+        env:
+          GH_TOKEN: ${{ secrets.EVAL_DATA_TOKEN }}
+        run: |
+          start_time=$(date +%s)
+          TARGET_REPO="${{ inputs.data_repo || 'emlavankhoahienma-hue/eval-data' }}"
+          TARGET_TAG="${{ inputs.data_tag || 'v1' }}"
+          echo "Đang tải release asset eval_images.zip từ repo: $TARGET_REPO (tag: $TARGET_TAG) ..."
+          mkdir -p eval_download eval_images
+          
+          if ! gh release download "$TARGET_TAG" --repo "$TARGET_REPO" --pattern "eval_images.zip" --dir eval_download; then
+            echo "Thử tải eval_images.zip từ release mới nhất (latest) ..."
+            gh release download --repo "$TARGET_REPO" --pattern "eval_images.zip" --dir eval_download
+          fi
+          
+          if [ ! -f eval_download/eval_images.zip ]; then
+            echo "::error::Không tìm thấy file eval_images.zip trong Release của repo $TARGET_REPO."
+            exit 1
+          fi
+
+          echo "Giải nén file ảnh eval_images.zip vào eval_images/ ..."
+          unzip -q eval_download/eval_images.zip -d eval_images
+          
+          # Nếu file zip chứa thư mục con, đưa tất cả ảnh về thẳng thư mục gốc eval_images/
+          find eval_images -mindepth 2 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" \) -exec mv {} eval_images/ \;
+          
+          TOTAL_IMAGES=$(ls -1 eval_images/*.[jJ][pP]*[gG] eval_images/*.[pP][nN][gG] 2>/dev/null | wc -l | tr -d ' ')
+          echo "Đã sẵn sàng $TOTAL_IMAGES ảnh trong eval_images/ (thời gian: $(( $(date +%s) - start_time ))s)."
+          if [ "$TOTAL_IMAGES" -eq 0 ]; then
+            echo "::error::Không tìm thấy ảnh jpg/png nào sau khi giải nén!"
+            exit 1
+          fi
+
+      - name: 6. Cài đặt thư viện CoreML & Ultralytics
+        run: |
+          start_time=$(date +%s)
+          pip install --upgrade pip
+          pip install "torch==2.5.1" "torchvision==0.20.1" "numpy==1.26.4" \
+            "coremltools==9.0" "opencv-python-headless==4.11.0.86" \
+            "einops==0.8.1" "scipy==1.15.3" "Pillow==11.0.0" \
+            "transformers==4.46.3" "tokenizers==0.20.3" "sentencepiece==0.2.0" \
+            "huggingface_hub==0.26.2" "safetensors==0.4.5" \
+            "ultralytics==8.4.178" "ml-collections==0.1.1"
+          echo "Hoàn thành cài đặt dependencies trong $(( $(date +%s) - start_time ))s."
+
+      - name: 7. Export & Biên dịch Pretrained YOLO12s / YOLO12n (COCO)
+        env:
+          PYTHONWARNINGS: ignore
+        run: |
+          start_time=$(date +%s)
+          curl --fail --location --retry 3 \
+            https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12n.pt \
+            --output yolo12n.pt
+          curl --fail --location --retry 3 \
+            https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12s.pt \
+            --output yolo12s.pt
+          echo "419ff3dca37d69bacc93a50fa0c186a1c6f9fe62fae0f108b0872829689e9ca6  yolo12n.pt" | shasum -a 256 --check
+          echo "e915c2c4286e3f6f8610ef106fa3f94a7b8c19b30eccede5887e22c33ef75f58  yolo12s.pt" | shasum -a 256 --check
+          python -c "from ultralytics import YOLO; YOLO('yolo12n.pt').export(format='coreml', nms=True, half=True); YOLO('yolo12s.pt').export(format='coreml', nms=True, half=True)"
+          xcrun coremlc compile yolo12n.mlpackage .
+          xcrun coremlc compile yolo12s.mlpackage .
+          test -d yolo12n.mlmodelc
+          test -d yolo12s.mlmodelc
+          echo "Hoàn thành YOLO12 trong $(( $(date +%s) - start_time ))s."
+
+      - name: 8. Export & Biên dịch Pinned SigLIP Base Image
+        run: |
+          start_time=$(date +%s)
+          python scripts/export_siglip_coreml.py
+          xcrun coremlc compile SigLIPBaseImage.mlpackage .
+          test -d SigLIPBaseImage.mlmodelc
+          test -s SigLIPPrompts.json
+          test -s SigLIPModelManifest.json
+          echo "Hoàn thành SigLIP trong $(( $(date +%s) - start_time ))s."
+
+      - name: 9. Export & Biên dịch SAMP-Net và Charm-PARA
+        run: |
+          start_time=$(date +%s)
+          python scripts/prepare_composition_photos.py --per-scene 5
+          python scripts/export_composition_coreml.py --photos validation/photos
+          xcrun coremlc compile SAMPComposition.mlpackage .
+          pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
+          python scripts/export_charm_coreml.py --photos validation/photos
+          xcrun coremlc compile CharmAesthetics.mlpackage .
+          test -d SAMPComposition.mlmodelc
+          test -d CharmAesthetics.mlmodelc
+          test -f CharmPositionEmbedding.bin
+          echo "Hoàn thành SAMP & Charm trong $(( $(date +%s) - start_time ))s."
+
+      - name: 10. Chạy Swift Pipeline Evaluation Runner
+        run: |
+          start_time=$(date +%s)
+          LIMIT="${{ inputs.limit }}"
+          if [ -z "$LIMIT" ]; then
+            LIMIT="5"
+          fi
+          FOV_SWEEP="${{ inputs.fov_sweep }}"
+          if [ "$FOV_SWEEP" = "true" ]; then
+            echo "Bắt đầu chạy FOV sweep (45, 69, 90 độ) với limit = $LIMIT ..."
+            for fov in 45 69 90; do
+              echo ">>> Đang chạy --eval-fov $fov ..."
+              if ! python scripts/validate_composition_photos.py \
+                --eval-dir eval_images \
+                --eval-out "eval_results_fov${fov}.json" \
+                --limit "$LIMIT" \
+                --eval-fov "$fov"; then
+                echo "::error::Swift Evaluation Runner thất bại khi chạy với FOV=$fov!"
+                exit 1
+              fi
+            done
+            cp eval_results_fov69.json eval_results.json
+          else
+            echo "Bắt đầu chạy evaluation với limit = $LIMIT ..."
+            if ! python scripts/validate_composition_photos.py \
+              --eval-dir eval_images \
+              --eval-out eval_results.json \
+              --limit "$LIMIT"; then
+              echo "::error::Swift Evaluation Runner thất bại khi thực thi trên tập ảnh eval_images!"
+              exit 1
+            fi
+          fi
+          
+          if [ ! -s eval_results.json ]; then
+            echo "::error::eval_results.json không tồn tại hoặc bị rỗng sau khi chạy runner!"
+            exit 1
+          fi
+          echo "Đã tạo thành công eval_results.json ($(wc -c < eval_results.json | tr -d ' ') bytes) trong $(( $(date +%s) - start_time ))s."
+
+      - name: 11. Upload file kết quả đánh giá làm Artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: eval-results-${{ github.run_number }}
+          path: eval_results*.json
+          if-no-files-found: ignore

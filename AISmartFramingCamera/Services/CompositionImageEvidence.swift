@@ -212,18 +212,20 @@ final class CompositionImageRenderer {
                   (-0.42...1.42).contains($0.x) && (-0.42...1.42).contains($0.y) }) else { return nil }
         // Tránh vệt sọc clamped/mirror padding đánh lừa mạng DINOv2 (Charm) & SAMP-Net khi xoay 3D ở 1.0x:
         // Dịch nhẹ cửa sổ lấy mẫu preview vào trong miền pixel thật [0, 1] để đánh giá chất lượng hình ảnh thực
-        let minX = corners.map(\.x).min() ?? 0
-        let maxX = corners.map(\.x).max() ?? 1
-        let minY = corners.map(\.y).min() ?? 0
-        let maxY = corners.map(\.y).max() ?? 1
-        let shiftX: CGFloat = minX < 0 ? -minX : (maxX > 1 ? 1 - maxX : 0)
-        let shiftY: CGFloat = minY < 0 ? -minY : (maxY > 1 ? 1 - maxY : 0)
-        let safeCorners = corners.map { pt in
-            CGPoint(
-                x: min(1.0, max(0.0, pt.x + shiftX)),
-                y: min(1.0, max(0.0, pt.y + shiftY))
-            )
-        }
+        // Cắt khung phẳng thẳng đứng 0° (Axis-Aligned Crop) theo Mục 4.2 để chống biến dạng
+        // hình thang (keystoning 10°-18°) giúp mạng SAMP và Charm chấm điểm trung thực tỉ lệ hình học:
+        let minX = max(0.0, min(1.0, corners.map(\.x).min() ?? 0.0))
+        let maxX = max(0.0, min(1.0, corners.map(\.x).max() ?? 1.0))
+        let minY = max(0.0, min(1.0, corners.map(\.y).min() ?? 0.0))
+        let maxY = max(0.0, min(1.0, corners.map(\.y).max() ?? 1.0))
+        let spanW = max(0.01, maxX - minX)
+        let spanH = max(0.01, maxY - minY)
+        let safeCorners = [
+            CGPoint(x: minX, y: minY),
+            CGPoint(x: minX + spanW, y: minY),
+            CGPoint(x: minX + spanW, y: minY + spanH),
+            CGPoint(x: minX, y: minY + spanH)
+        ]
         let extent = image.extent
         func point(_ normalized: CGPoint) -> CGPoint {
             CGPoint(x: extent.minX + normalized.x * extent.width,

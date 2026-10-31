@@ -22,6 +22,7 @@ enum CompositionModelValidation {
     }
 
     static func main() throws {
+        if CommandLine.arguments.contains("--eval-dir") { try evalMain(); return }
         let photos = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         let modelURL = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
         let output = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
@@ -237,5 +238,229 @@ enum CompositionModelValidation {
         }
         try save(best.image, to: output.appendingPathComponent(file.lastPathComponent))
         return detailed
+    }
+}
+
+// MARK: - EVAL_MODE: offline evaluation runner (docs/eval). Not used by the app or by the existing validation modes.
+// The pipeline calls below mirror `searchPhoto` (same recognition -> proposals -> aesthetic search sequence and
+// arguments) but record results instead of asserting crop-protection invariants. No production file is touched.
+extension CompositionModelValidation {
+    /// Edge-tilt threshold (degrees) above which the proposal quad is flagged `is_rotated`.
+    /// 1.0 deg: over a full frame width the quad's edge drifts ~1.7% of its length, which already inflates the
+    /// axis-aligned bounding box enough to lower IoU against upright GAICD crops; smaller tilts are indistinguishable
+    /// from rounding. The raw tilt is also exported (`max_edge_tilt_deg`) so other thresholds can be applied offline.
+    static let evalRotationThresholdDegrees = 1.0
+
+    static func evalArgument(_ name: String) -> String? {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: name), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+
+    static func evalNumber(_ value: Double) -> Any {
+        if value.isFinite { return value }
+        return NSNull()
+    }
+
+    static func evalOptional(_ value: Double?) -> Any {
+        guard let value else { return NSNull() }
+        return evalNumber(value)
+    }
+
+    static func evalNumbers(_ values: [Double]) -> Any {
+        if values.allSatisfy({ $0.isFinite }) { return values }
+        return NSNull()
+    }
+
+    static func evalDeviceDescription() -> String {
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "x86_64"
+        #endif
+        let info = ProcessInfo.processInfo
+        return "\(info.operatingSystemVersionString) \(architecture) cpus=\(info.processorCount)"
+    }
+
+    static func evalMain() throws {
+        guard let directoryPath = evalArgument("--eval-dir"), let outputPath = evalArgument("--eval-out"),
+              CommandLine.arguments.count > 2 else {
+            throw Failure(message: "Eval mode needs --eval-dir and --eval-out; positional argument 2 must be SAMPComposition.mlmodelc")
+        }
+        let modelURL = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+        let limit = evalArgument("--limit").flatMap { Int($0) }
+        var expectedSizes: [String: [Int]] = [:]
+        if let evalSetPath = evalArgument("--eval-set") {
+            let data = try Data(contentsOf: URL(fileURLWithPath: evalSetPath))
+            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let images = root["images"] as? [[String: Any]] else {
+                throw Failure(message: "Cannot parse --eval-set")
+            }
+            for item in images {
+                if let name = item["image"] as? String, let width = item["w"] as? Int, let height = item["h"] as? Int {
+                    expectedSizes[name] = [width, height]
+                }
+            }
+        }
+        let directory = URL(fileURLWithPath: directoryPath, isDirectory: true)
+        var files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { ["jpg", "jpeg", "png"].contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        if let limit, limit >= 0 { files = Array(files.prefix(limit)) }
+        let renderer = CompositionImageRenderer()
+        let device = evalDeviceDescription()
+        var records: [[String: Any]] = []
+        var okCount = 0
+        for (position, file) in files.enumerated() {
+            let record: [String: Any] = autoreleasepool {
+                evalPhoto(file: file, expectedSize: expectedSizes[file.lastPathComponent], modelURL: modelURL,
+                          renderer: renderer, device: device)
+            }
+            let succeeded = (record["ok"] as? Bool) == true
+            if succeeded { okCount += 1 }
+            records.append(record)
+            print("Eval \(position + 1)/\(files.count): ok=\(succeeded)")
+            fflush(stdout)
+        }
+        let outputURL = URL(fileURLWithPath: outputPath)
+        try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: records, options: [.prettyPrinted, .sortedKeys]).write(to: outputURL)
+        print("EVAL DONE: \(records.count) images, \(okCount) ok")
+    }
+
+    static func evalPhoto(file: URL, expectedSize: [Int]?, modelURL: URL, renderer: CompositionImageRenderer,
+                          device: String) -> [String: Any] {
+        var record: [String: Any] = [
+            "image": file.lastPathComponent, "image_w": NSNull(), "image_h": NSNull(), "ok": false, "error": NSNull(),
+            "hero_subject_box": NSNull(), "scene_intent": NSNull(), "target_P": NSNull(),
+            "zoom_current": NSNull(), "zoom_ideal": NSNull(), "zoom_final": NSNull(),
+            "crop_rect": NSNull(), "source_corners_raw": NSNull(), "is_rotated": NSNull(), "max_edge_tilt_deg": NSNull(),
+            "scores": ["samp": NSNull(), "charm": NSNull(), "geom": NSNull(), "final": NSNull()] as [String: Any],
+            "num_candidates": NSNull(), "timing_ms": NSNull(), "device": device, "impl": "swift_ci_macos"]
+        let started = ProcessInfo.processInfo.systemUptime
+        func milliseconds(_ from: TimeInterval, _ to: TimeInterval) -> Double { (to - from) * 1000 }
+        do {
+            let source = try image(file)
+            record["image_w"] = source.width
+            record["image_h"] = source.height
+            if let expectedSize, expectedSize != [source.width, source.height] {
+                throw Failure(message: "Image size mismatch: read \(source.width)x\(source.height), eval_set \(expectedSize[0])x\(expectedSize[1])")
+            }
+            let pixels = try pixelBuffer(source)
+            let analyzer = NativeSubjectAnalysis(renderer: renderer)
+            let detectionStart = ProcessInfo.processInfo.systemUptime
+            guard let detected = analyzer.analyze(pixels) else { throw Failure(message: "Production recognition failed") }
+            let detectionEnd = ProcessInfo.processInfo.systemUptime
+            guard let hero = detected.allCandidates.first, let raster = detected.compositionRaster else {
+                throw Failure(message: "no_subject: production recognition returned no hero subject or raster")
+            }
+            let bounds = hero.boundingBox
+            let kind = analyzer.subjectKind(hero)
+            let intents = analyzer.intents(detected, hero: hero)
+            let ownFaces = hero.faceBounds
+            let incidentalPets = detected.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox)
+            let incidentalFaces = detected.allFaceRects.filter { !ownFaces.contains($0) }
+            var portraitBounds: CGRect?
+            if hero.category == .human, !hero.isGroup, !ownFaces.isEmpty {
+                let pose = VNDetectHumanBodyPoseRequest()
+                try VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up).perform([pose])
+                portraitBounds = PortraitFramingEvidence.bounds(body: bounds, faces: ownFaces, observations: pose.results ?? [])
+            }
+            var subject = CompositionSubject(index: 0, bounds: bounds,
+                anchor: hero.eyePosition ?? hero.center, kind: kind,
+                confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
+            subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention && bounds.width * bounds.height > 0.45
+            let ci = CIImage(cvPixelBuffer: pixels)
+            let fov = evalArgument("--eval-fov").flatMap(Double.init) ?? CompositionTuning.defaultCameraFOVWide
+            let calibration = TrackingCalibration.fallback(fovLongDegrees: fov, aspect: Double(source.width) / Double(source.height))
+            func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
+                CompositionPlanner.photographicProposals(subject: subject, intents: intents, portraitBounds: portraitBounds,
+                    raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
+                    protectedBounds: hero.companionBounds, incidentalBounds: incidentalPets + incidentalFaces,
+                    proposalLimit: seeds.isEmpty ? 36 : 18, refining: seeds)
+            }
+            let planningStart = ProcessInfo.processInfo.systemUptime
+            let broad = proposals()
+            let planningEnd = ProcessInfo.processInfo.systemUptime
+            guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: broad,
+                image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
+                aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
+                positionURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmPositionEmbedding.bin"),
+                requiresModernModel: true,
+                cancellation: CompositionAnalysisCancellation(), progress: { _ in }, refine: { proposals($0) }),
+                let best = result.views.first else {
+                throw Failure(message: "search_failed: no composition views (proposals \(broad.count))")
+            }
+            let searchEnd = ProcessInfo.processInfo.systemUptime
+
+            let corners = best.proposal.sourceCorners
+            let width = Double(source.width), height = Double(source.height)
+            if corners.count == 4 {
+                let xs = corners.map { Double($0.x) }, ys = corners.map { Double($0.y) }
+                record["source_corners_raw"] = evalNumbers(corners.flatMap { [Double($0.x), Double($0.y)] })
+                // Axis-aligned bounding box of sourceCorners clamped to [0,1]; an APPROXIMATION of the quad (see SCHEMA.md).
+                let minX = max(0.0, xs.min() ?? 0.0), maxX = min(1.0, xs.max() ?? 1.0)
+                let minY = max(0.0, ys.min() ?? 0.0), maxY = min(1.0, ys.max() ?? 1.0)
+                if maxX > minX, maxY > minY {
+                    record["crop_rect"] = evalNumbers([minX, minY, maxX - minX, maxY - minY])
+                }
+                var maxTilt = 0.0
+                for index in 0..<4 {
+                    let from = corners[index], to = corners[(index + 1) % 4]
+                    let angle = abs(atan2((Double(to.y) - Double(from.y)) * height, (Double(to.x) - Double(from.x)) * width)) * 180 / Double.pi
+                    maxTilt = max(maxTilt, min(angle, abs(angle - 90), abs(angle - 180)))
+                }
+                record["max_edge_tilt_deg"] = evalNumber(maxTilt)
+                record["is_rotated"] = maxTilt > evalRotationThresholdDegrees
+            }
+            record["hero_subject_box"] = evalNumbers([Double(bounds.minX), Double(bounds.minY), Double(bounds.width), Double(bounds.height)])
+            record["scene_intent"] = best.proposal.intent.rawValue
+            record["zoom_current"] = 1.0
+            record["zoom_final"] = evalNumber(Double(best.proposal.zoom))
+            record["eval_fov"] = evalNumber(fov)
+            record["scores"] = ["samp": evalOptional(best.assessment?.mean), "charm": evalOptional(best.aesthetics?.mean),
+                                "geom": evalNumber(best.geometryScore), "final": evalNumber(best.proposal.score)] as [String: Any]
+            record["num_candidates"] = result.assessedCount
+            var candList: [[String: Any]] = []
+            for v in result.allEvaluatedViews {
+                var cRec: [String: Any] = [:]
+                let vCorners = v.proposal.sourceCorners
+                cRec["zoom"] = evalNumber(Double(v.proposal.zoom))
+                cRec["intent"] = v.proposal.intent.rawValue
+                cRec["is_unchanged"] = v.proposal.isUnchangedView
+                cRec["is_selected"] = (vCorners == best.proposal.sourceCorners &&
+                                       v.proposal.zoom == best.proposal.zoom &&
+                                       v.proposal.intent == best.proposal.intent)
+                if vCorners.count == 4 {
+                    cRec["source_corners_raw"] = evalNumbers(vCorners.flatMap { [Double($0.x), Double($0.y)] })
+                    let cXs = vCorners.map { Double($0.x) }, cYs = vCorners.map { Double($0.y) }
+                    let cMinX = max(0.0, cXs.min() ?? 0.0), cMaxX = min(1.0, cXs.max() ?? 1.0)
+                    let cMinY = max(0.0, cYs.min() ?? 0.0), cMaxY = min(1.0, cYs.max() ?? 1.0)
+                    if cMaxX > cMinX, cMaxY > cMinY {
+                        cRec["crop_rect"] = evalNumbers([cMinX, cMinY, cMaxX - cMinX, cMaxY - cMinY])
+                    }
+                }
+                cRec["scores"] = [
+                    "samp": evalOptional(v.assessment?.mean),
+                    "charm": evalOptional(v.aesthetics?.mean),
+                    "geom": evalNumber(v.geometryScore),
+                    "final": evalNumber(v.proposal.score)
+                ] as [String: Any]
+                candList.append(cRec)
+            }
+            record["candidates"] = candList
+            record["timing_ms"] = ["detection": milliseconds(detectionStart, detectionEnd),
+                                   "planning": milliseconds(planningStart, planningEnd),
+                                   "scoring": milliseconds(planningEnd, searchEnd),
+                                   "total": milliseconds(started, searchEnd)] as [String: Any]
+            record["ok"] = true
+        } catch let failure as Failure {
+            record["error"] = failure.message
+            record["timing_ms"] = ["total": milliseconds(started, ProcessInfo.processInfo.systemUptime)] as [String: Any]
+        } catch {
+            record["error"] = "\(error)"
+            record["timing_ms"] = ["total": milliseconds(started, ProcessInfo.processInfo.systemUptime)] as [String: Any]
+        }
+        return record
     }
 }
