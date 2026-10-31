@@ -228,7 +228,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                   let confArray = output.featureValue(for: "confidence")?.multiArrayValue else {
                 return []
             }
-            return parseDedicatedANETensors(coords: coordsArray, conf: confArray, cancellation: cancellation)
+            let isLowLight = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer) < 0.35
+            let dynamicThreshold = isLowLight ? CompositionTuning.yoloLowLightConfidenceThreshold : CompositionTuning.yoloConfidenceThreshold
+            return parseDedicatedANETensors(coords: coordsArray, conf: confArray, threshold: dynamicThreshold, cancellation: cancellation)
         } catch {
             if cancellation.isCancelled { return [] }
             CameraLogger.error("Lỗi suy luận YOLOv26 ANE Dedicated Model", error: error, category: .ai)
@@ -239,6 +241,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     private func parseDedicatedANETensors(
         coords: MLMultiArray,
         conf: MLMultiArray,
+        threshold: Float = CompositionTuning.yoloConfidenceThreshold,
         cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
         if !hasLoggedExperimentC {
@@ -278,8 +281,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
 
         guard numBoxes > 0, numClasses > 0 else { return [] }
         var rawCandidates: [NeuralSubjectCandidate] = []
-        let isLowLight = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer) < 0.35
-        let baseThreshold: Float = isLowLight ? CompositionTuning.yoloLowLightConfidenceThreshold : CompositionTuning.yoloConfidenceThreshold
+        let baseThreshold: Float = threshold
 
         let coordsCapacity = max(coords.count, numBoxes * coordBoxStride)
         let confCapacity = max(conf.count, numBoxes * confBoxStride)
