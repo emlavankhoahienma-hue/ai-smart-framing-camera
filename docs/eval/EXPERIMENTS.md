@@ -64,10 +64,30 @@ Biểu diễn chuẩn: `crop_simple` (trọng tâm 4 góc, kích thước $1/\te
 ---
 
 ### Thí nghiệm B2: Cổng Bảo thủ (Conservative Margin $\tau = 0.05$ over Identity Candidate)
+- **Commit**: `0c20175`
+- **CI Run ID**: `41195562835` (Run #8)
 - **Mục tiêu**: Ngăn chặn hệ thống rời bỏ khung hình gốc an toàn (Full Frame) khi các ứng viên cắt cúp chỉ nhỉnh hơn một lượng điểm rất nhỏ nằm trong khoảng nhiễu đánh giá ($\rho \approx 0.06$).
-- **Giả thuyết (Hypothesis)**: Bằng cách áp dụng ngưỡng bảo thủ $\tau = 0.05$, chỉ khi ứng viên cắt cúp mới có điểm `score` vượt trội hơn khung gốc ít nhất $0.05$ thì AI mới thay đổi khung ngắm. Ngưỡng này giúp giữ lại khung gốc ở các trường hợp mô hình không chắc chắn, triệt tiêu các lần cắt cúp tai hại, từ đó nâng cao `best_iou_top10` (dự kiến $+0.015$ trên DEV và $+0.021$ trên HOLDOUT) và tăng độ ổn định của toàn hệ thống.
+- **Giả thuyết (Hypothesis)**: Bằng cách áp dụng ngưỡng bảo thủ $\tau = 0.05$, chỉ khi ứng viên cắt cúp mới có điểm `score` vượt trội hơn khung gốc ít nhất $0.05$ thì AI mới thay đổi khung ngắm. Ngưỡng này giúp giữ lại khung gốc ở các trường hợp mô hình không chắc chắn, triệt tiêu các lần cắt cúp tai hại, từ đó nâng cao `best_iou_top10` và tăng độ ổn định của toàn hệ thống.
 - **Thay đổi Code**: `AISmartFramingCamera/Services/CompositionAestheticSearch.swift:225-236`. Sau khi sắp xếp `selected`, nếu `best` không phải `baseline` và `best.proposal.score < baseline.proposal.score + 0.05`, ưu tiên đưa `baseline` lên vị trí đầu tiên (`selected.first`).
-- **Trạng thái**: Đang chạy CI 150 ảnh.
+- **Kết quả đo lường (Biểu diễn `crop_simple`)**:
+
+| Chỉ số | Baseline (Run #6) | Thí nghiệm B2 | Chênh lệch ($\Delta$) | Cổng kiểm DEV |
+|---|:---:|:---:|:---:|:---:|
+| **DEV `mos_soft`** | 3.1058 | 3.1058 | 0.0000 | - |
+| **DEV `mos_soft_percentile`** | 57.14% | 57.14% | **0.00%** | Chưa đạt ($\ge +1.0$) |
+| **DEV `best_iou_top10`** | 0.6986 | 0.6986 | **0.0000** | Chưa đạt ($\ge +0.01$) |
+| **DEV Active Win Rate (`mos_soft`)** | 20.9% | 22.4% | +1.5% | Đạt |
+| **DEV Active Win Rate (`iou_top10`)** | 16.5% | 17.6% | +1.1% | Đạt |
+| **HOLDOUT `mos_soft_percentile`** | 59.99% | 59.99% | 0.00% | Đạt |
+| **HOLDOUT `best_iou_top10`** | 0.6976 | 0.6976 | 0.0000 | Đạt |
+| **Số ảnh đổi khung ($n_{\text{changed}}$)** | 139 | 129 | -10 ảnh | 10 ảnh 1.0x lệch tâm đã về Full Frame |
+| **Số ảnh lỗi (`ok=false`)** | 0 | 0 | 0 | Đạt |
+
+- **Đánh giá Cổng kiểm**: **KHÔNG ĐẠT (FAIL)**.
+  - Ngưỡng $\tau = 0.05$ chỉ kéo được 10 ảnh 1.0x xoay góc về lại Full Frame (nhưng với 1.0x thì `crop_simple` vốn đã bị kẹp thành $[0, 0, 1, 1]$ nên điểm không đổi).
+  - Đối với các ảnh zoom ($> 1.05$), pipeline hiện tại tự cộng dồn các điểm cộng nhân tạo: `shotScaleBonus` ($+0.07$), bonus zoom ($+0.045$), và rule-of-thirds bonus ($+0.055$), khiến khoảng cách điểm giữa ứng viên zoom và baseline luôn $> 0.11 - 0.15$. Do đó, $\tau = 0.05$ là quá nhỏ để chặn các quyết định zoom sai lệch.
+- **Quyết định**: **HOÀN TÁC (`git revert`)** code Swift, ghi nhận phát hiện quan trọng về các điểm thưởng nhân tạo cho thí nghiệm B4/B5.
+
 
 
 
