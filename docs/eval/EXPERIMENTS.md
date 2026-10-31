@@ -61,4 +61,13 @@ Biểu diễn chuẩn: `crop_simple` (trọng tâm 4 góc, kích thước $1/\te
   - Nguyên nhân: Việc ép roll quanh trục Z về 0 chỉ triệt tiêu góc xoay trục Z thuần túy, nhưng phép chiếu phối cảnh 3D khi camera Yaw và Pitch vẫn tạo ra biến dạng hình thang (keystoning) trên mặt phẳng ảnh 2D, khiến `is_rotated` vẫn duy trì ở 141/150 ảnh với độ nghiêng mép trung bình 9.53°.
 - **Quyết định**: **HOÀN TÁC (`git revert`)** code Swift, giữ nguyên nhật ký thí nghiệm.
 
+---
+
+### Thí nghiệm B2: Cổng Bảo thủ (Conservative Margin $\tau = 0.05$ over Identity Candidate)
+- **Mục tiêu**: Ngăn chặn hệ thống rời bỏ khung hình gốc an toàn (Full Frame) khi các ứng viên cắt cúp chỉ nhỉnh hơn một lượng điểm rất nhỏ nằm trong khoảng nhiễu đánh giá ($\rho \approx 0.06$).
+- **Giả thuyết (Hypothesis)**: Bằng cách áp dụng ngưỡng bảo thủ $\tau = 0.05$, chỉ khi ứng viên cắt cúp mới có điểm `score` vượt trội hơn khung gốc ít nhất $0.05$ thì AI mới thay đổi khung ngắm. Ngưỡng này giúp giữ lại khung gốc ở các trường hợp mô hình không chắc chắn, triệt tiêu các lần cắt cúp tai hại, từ đó nâng cao `best_iou_top10` (dự kiến $+0.015$ trên DEV và $+0.021$ trên HOLDOUT) và tăng độ ổn định của toàn hệ thống.
+- **Thay đổi Code**: `AISmartFramingCamera/Services/CompositionAestheticSearch.swift:225-236`. Sau khi sắp xếp `selected`, nếu `best` không phải `baseline` và `best.proposal.score < baseline.proposal.score + 0.05`, ưu tiên đưa `baseline` lên vị trí đầu tiên (`selected.first`).
+- **Trạng thái**: Đang chạy CI 150 ảnh.
+
+
 

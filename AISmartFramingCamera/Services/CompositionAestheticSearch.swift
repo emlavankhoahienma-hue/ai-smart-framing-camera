@@ -222,6 +222,17 @@ final class CompositionAestheticSearch {
         // The view model compares the leading two scores before auto-selection.
         // Restoring the original frame must not leave a stronger runner-up third.
         selected.sort { $0.proposal.score > $1.proposal.score }
+        // Cổng bảo thủ (conservative margin tau): Chỉ rời khỏi identity view nếu ứng viên tốt nhất
+        // vượt trội hơn ít nhất tau điểm (tránh nhiễu xếp hạng của mô hình khi tương quan thấp).
+        if let baseline, let best = selected.first, !best.proposal.isUnchangedView {
+            let conservativeMargin = 0.05
+            if best.proposal.score < baseline.proposal.score + conservativeMargin {
+                if let baselineIndex = selected.firstIndex(where: { $0.proposal.isUnchangedView }) {
+                    let item = selected.remove(at: baselineIndex)
+                    selected.insert(item, at: 0)
+                }
+            }
+        }
         var robust = false
         if usedSpecialist, let best = selected.first {
             if best.proposal.isUnchangedView {
