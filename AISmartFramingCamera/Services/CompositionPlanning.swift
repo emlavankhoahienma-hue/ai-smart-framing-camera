@@ -647,11 +647,11 @@ enum CompositionPlanner {
                     guard sourceCorners.allSatisfy({ $0.isInFront && inside($0.point, margin: -0.36) }),
                           let box = project(subject.bounds, from: calibration, to: future, rotation: rotation),
                           let anchorBox = project(protectedAnchor, from: calibration, to: future, rotation: rotation),
-                          safe(anchorBox, original: protectedAnchor),
+                          safe(anchorBox, original: protectedAnchor, isHero: true),
                           (!cropAttention || visibleFraction(box) >= 0.40),
                           protectedRects.allSatisfy({ original in
                               guard let rect = project(original, from: calibration, to: future, rotation: rotation) else { return false }
-                              return safe(rect, original: original)
+                              return safe(rect, original: original, isHero: original == protectedAnchor)
                           }), incidentalRects.allSatisfy({ original in
                               guard let rect = project(original, from: calibration, to: future, rotation: rotation) else { return true }
                               let fraction = visibleFraction(rect)
@@ -1291,11 +1291,11 @@ enum CompositionPlanner {
         return out
     }
 
-    private static func safe(_ rect: CGRect, original: CGRect) -> Bool {
-        // Protect subject head and lateral core while permitting natural photographic vertical cropping
-        rect.minX >= min(0.025, original.minX) - 0.08 &&
-        rect.minY >= min(0.025, original.minY) - 0.00001 &&
-        rect.maxX <= max(0.975, original.maxX) + 0.08 &&
-        rect.maxY <= 1.28
+    private static func safe(_ rect: CGRect, original: CGRect, isHero: Bool = false) -> Bool {
+        let maxAllowedY = isHero ? 1.28 : (max(0.975, original.maxY) + 0.00001)
+        return rect.minX >= min(0.025, original.minX) - 0.00001 &&
+            rect.minY >= min(0.025, original.minY) - 0.00001 &&
+            rect.maxX <= max(0.975, original.maxX) + 0.00001 &&
+            rect.maxY <= maxAllowedY
     }
 }
