@@ -786,6 +786,40 @@ public struct GeminiFramingResponse {
         self.estimatedSubjectSize = estimatedSubjectSize
         self.shotScale = shotScale
     }
+
+    public func toScanResp(isPlan2: Bool = false) -> ScanResp {
+        let focalLengthStr: String
+        if suggestedZoom <= 1.15 {
+            focalLengthStr = "26mm"
+        } else if suggestedZoom <= 1.65 {
+            focalLengthStr = "35mm"
+        } else if suggestedZoom <= 2.2 {
+            focalLengthStr = "50mm"
+        } else {
+            focalLengthStr = "70mm"
+        }
+        let width = estimatedSubjectSize?.width ?? 0.28
+        let height = estimatedSubjectSize?.height ?? 0.38
+        let normX = max(0.0, min(1.0 - width, targetX - width / 2.0))
+        let normY = max(0.0, min(1.0 - height, targetY - height / 2.0))
+        let subArea = SubAreaRectNormModel(x: normX, y: normY, w: width, h: height)
+        let filter = AiCameraFilterModel(
+            filterName: recommendedPreset.displayName,
+            reason: presetExplanation
+        )
+        let data = ScanRespData(
+            subAreaRectNorm: subArea,
+            exifFocalLength: focalLengthStr,
+            recommendedZoom: suggestedZoom,
+            bodyRange: shotScale,
+            composeReason: compositionRule.displayName,
+            aiCameraFilter: filter,
+            recommendedEVBias: recommendedEVBias ?? colorRecipe.exposureBias,
+            isTargetMatch: true,
+            isPlan2Telephoto: isPlan2
+        )
+        return ScanResp(code: 200, msg: "success", data: data)
+    }
 }
 
 // MARK: - Errors

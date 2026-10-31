@@ -2187,3 +2187,87 @@ public final class AppPhotoStorageService: @unchecked Sendable {
         return UIImage(cgImage: scaledCG).jpegData(compressionQuality: 0.80)
     }
 }
+
+
+// MARK: - Doka Unified AI Scan Specification (ScanResp & SubAreaRectNorm)
+
+public struct SubAreaRectNormModel: Codable, Equatable, Sendable {
+    public var x: CGFloat
+    public var y: CGFloat
+    public var w: CGFloat
+    public var h: CGFloat
+
+    public init(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat) {
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+    }
+
+    public var asCGRect: CGRect {
+        CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    /// Tâm chuẩn hóa của khung bố cục tối ưu:
+    /// X_target = SubAreaRectNorm.x + SubAreaRectNorm.w / 2
+    /// Y_target = SubAreaRectNorm.y + SubAreaRectNorm.h / 2
+    public var targetCenterNorm: CGPoint {
+        CGPoint(x: x + w / 2.0, y: y + h / 2.0)
+    }
+}
+
+public struct AiCameraFilterModel: Codable, Equatable, Sendable {
+    public var filterName: String
+    public var reason: String
+
+    public init(filterName: String, reason: String) {
+        self.filterName = filterName
+        self.reason = reason
+    }
+}
+
+public struct ScanRespData: Codable, Equatable, Sendable {
+    public var subAreaRectNorm: SubAreaRectNormModel
+    public var exifFocalLength: String
+    public var recommendedZoom: CGFloat
+    public var bodyRange: String
+    public var composeReason: String
+    public var aiCameraFilter: AiCameraFilterModel
+    public var recommendedEVBias: Float
+    public var isTargetMatch: Bool
+    public var isPlan2Telephoto: Bool
+
+    public init(
+        subAreaRectNorm: SubAreaRectNormModel,
+        exifFocalLength: String,
+        recommendedZoom: CGFloat,
+        bodyRange: String,
+        composeReason: String,
+        aiCameraFilter: AiCameraFilterModel,
+        recommendedEVBias: Float = 0.0,
+        isTargetMatch: Bool = true,
+        isPlan2Telephoto: Bool = false
+    ) {
+        self.subAreaRectNorm = subAreaRectNorm
+        self.exifFocalLength = exifFocalLength
+        self.recommendedZoom = recommendedZoom
+        self.bodyRange = bodyRange
+        self.composeReason = composeReason
+        self.aiCameraFilter = aiCameraFilter
+        self.recommendedEVBias = recommendedEVBias
+        self.isTargetMatch = isTargetMatch
+        self.isPlan2Telephoto = isPlan2Telephoto
+    }
+}
+
+public struct ScanResp: Codable, Equatable, Sendable {
+    public var code: Int
+    public var msg: String
+    public var data: ScanRespData
+
+    public init(code: Int = 200, msg: String = "success", data: ScanRespData) {
+        self.code = code
+        self.msg = msg
+        self.data = data
+    }
+}

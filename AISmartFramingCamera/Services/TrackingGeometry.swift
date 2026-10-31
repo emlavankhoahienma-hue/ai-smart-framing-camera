@@ -207,7 +207,7 @@ struct AlignmentCaptureGate {
             isAligned = true
             lastGoodTime = time
             dwell += dt
-            return dwell >= 0.22 ? .ready : .holding
+            return dwell >= 0.28 ? .ready : .holding
         }
         if isAligned, distance <= radius * 2.2,
            let lastGoodTime, time - lastGoodTime <= 0.35 {

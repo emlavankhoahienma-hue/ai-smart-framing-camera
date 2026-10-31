@@ -264,6 +264,9 @@ public final class CameraViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(isAIFullColorEnabled, forKey: "isAIFullColorEnabled") }
     }
     @Published public var aiRecommendedPreset: FilmPreset? = nil
+    // MARK: - Doka Unified AI Scan Specification (ScanResp & Plan 2)
+    @Published public private(set) var latestScanResp: ScanResp? = nil
+    public private(set) var aiComposeTimes: Int = 0
     @Published public var aiPresetMatchReason: String? = nil
     @Published public var isAutoZoomEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isAutoZoomEnabled, forKey: "isAutoZoomEnabled") }
@@ -1874,6 +1877,7 @@ public final class CameraViewModel: ObservableObject {
         let isOperational = isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning
         guard isOperational, recordingState == .idle else { return }
         unlockHardTargetLock()
+        latestScanResp = nil
         if isWindowedZoomActive { isWindowedZoomActive = false }
         targetPinGeneration &+= 1
         alignmentGate.reset()
@@ -1886,6 +1890,7 @@ public final class CameraViewModel: ObservableObject {
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         haptics.triggerSelectionChange()
+        self.aiComposeTimes += 1
         self.aiSessionGeneration += 1
         let requestGeneration = self.aiSessionGeneration
 
@@ -2200,12 +2205,17 @@ public final class CameraViewModel: ObservableObject {
         self.activeModelUsedName = response.modelUsed
         self.activeEngineSource = .geminiCloud(model: response.modelUsed)
         self.geminiLatencyMs = response.latencyMs
-        self.aiSuggestedZoom = response.suggestedZoom
-        self.pendingSuggestedZoom = response.suggestedZoom
+        let isPlan2 = self.aiComposeTimes >= 2 || (response.estimatedSubjectSize != nil && (response.estimatedSubjectSize!.width * response.estimatedSubjectSize!.height) < 0.10)
+        let effectiveZoom = (isPlan2 && response.suggestedZoom < 1.7) ? 2.0 : response.suggestedZoom
+        self.aiSuggestedZoom = effectiveZoom
+        self.pendingSuggestedZoom = effectiveZoom
         self.hasExecutedAutoZoomForSession = false
 
         self.aiRecommendedPreset = response.recommendedPreset
         self.aiPresetMatchReason = response.presetExplanation
+
+        let scan = response.toScanResp(isPlan2: isPlan2)
+        self.latestScanResp = scan
 
         if isAIFullColorEnabled {
             currentAIColorParams = response.colorRecipe.asAIColorParameters
@@ -2748,6 +2758,42 @@ public final class CameraViewModel: ObservableObject {
         localCompositionIntent = plan.intent
         let zoomText = abs(effectiveZoom - displayZoom) > 0.12 ? String(format: " · Smart Zoom %.1fx", effectiveZoom) : ""
         localCompositionExplanation = plan.explanation + zoomText
+
+        // Doka Unified ScanResp for Local AI (SAMP-Net 0.45 + Charm 0.45 + Geometry 0.10)
+        let isPlan2 = self.aiComposeTimes >= 2 || (plan.subjectRect.width * plan.subjectRect.height < 0.10)
+        let focalLengthStr: String
+        if effectiveZoom <= 1.15 {
+            focalLengthStr = "26mm"
+        } else if effectiveZoom <= 1.65 {
+            focalLengthStr = "35mm"
+        } else if effectiveZoom <= 2.2 {
+            focalLengthStr = "50mm"
+        } else {
+            focalLengthStr = "70mm"
+        }
+        let subArea = SubAreaRectNormModel(
+            x: max(0.0, min(1.0, plan.cropProtectionRect.minX)),
+            y: max(0.0, min(1.0, plan.cropProtectionRect.minY)),
+            w: max(0.05, min(1.0, plan.cropProtectionRect.width)),
+            h: max(0.05, min(1.0, plan.cropProtectionRect.height))
+        )
+        let filterModel = AiCameraFilterModel(
+            filterName: self.aiRecommendedPreset?.displayName ?? "Auto",
+            reason: self.aiPresetMatchReason ?? "Tự động cân bằng bối cảnh"
+        )
+        let scanData = ScanRespData(
+            subAreaRectNorm: subArea,
+            exifFocalLength: focalLengthStr,
+            recommendedZoom: effectiveZoom,
+            bodyRange: plan.intent.rawValue,
+            composeReason: activeCompositionRule.displayName,
+            aiCameraFilter: filterModel,
+            recommendedEVBias: self.plannedEVBias,
+            isTargetMatch: true,
+            isPlan2Telephoto: isPlan2
+        )
+        self.latestScanResp = ScanResp(code: 200, msg: "success", data: scanData)
+
         framingResult = FramingTargetResult(targetPoint: liveAimPoint,
             currentCenter: CGPoint(x: 0.5, y: 0.5),
             offsetVector: CGVector(dx: dx, dy: dy), distance: distance,

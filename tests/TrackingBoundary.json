@@ -19,7 +19,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
-      "sha256": "cfaf3f7ca79a47f40299e835d0f5b0897b58d453922a68eb4c15cf457b58db27"
+      "sha256": "6a6101469fcf1a1f2535ba6bf4e75f01d48182f55fffe60019a49388a19ca60a"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralTargetTracker.swift",
