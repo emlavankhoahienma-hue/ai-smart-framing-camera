@@ -748,7 +748,7 @@ public final class CompositionCalculator: @unchecked Sendable {
             // Yếu tố 1: Mật độ và Độ lấp đầy Tuyến tính Hài hòa (Linear Occupancy Fitness)
             let focalDensityScore: Double
             let isActualSubject = (evidence.focalCategory == .human || evidence.focalCategory == .face ||
-                                   evidence.focalCategory == .animal || evidence.focalCategory == .salientObject)
+                                   evidence.focalCategory == .animal || evidence.focalCategory == .foregroundObject)
             
             if baseLinearSize1x < 0.08 && !isActualSubject {
                 // Phong cảnh / thiên nhiên thực sự không có chủ thể: giữ 1.0x tự nhiên
