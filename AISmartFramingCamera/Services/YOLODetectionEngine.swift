@@ -278,7 +278,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
 
         guard numBoxes > 0, numClasses > 0 else { return [] }
         var rawCandidates: [NeuralSubjectCandidate] = []
-        let baseThreshold: Float = CompositionTuning.yoloConfidenceThreshold
+        let isLowLight = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer) < 0.35
+        let baseThreshold: Float = isLowLight ? CompositionTuning.yoloLowLightConfidenceThreshold : CompositionTuning.yoloConfidenceThreshold
 
         let coordsCapacity = max(coords.count, numBoxes * coordBoxStride)
         let confCapacity = max(conf.count, numBoxes * confBoxStride)
@@ -406,7 +407,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         }
 
         var detectedCandidates: [NeuralSubjectCandidate] = []
-        let threshold = CompositionTuning.yoloConfidenceThreshold
+        let isLowLight = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer) < 0.35
+        let threshold = isLowLight ? CompositionTuning.yoloLowLightConfidenceThreshold : CompositionTuning.yoloConfidenceThreshold
 
         let request = VNCoreMLRequest(model: vnModel) { [weak self] req, error in
             guard let self = self, error == nil else { return }

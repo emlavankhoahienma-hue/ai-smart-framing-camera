@@ -425,11 +425,14 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             foregroundMask: fgMaskBuffer,
             measuredHorizon: measuredHorizon,
             measuredVanishingPoint: measuredVP)
+        let sceneLuma = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer)
+        let isLowLight = sceneLuma < 0.35
         var candidates = YOLODetectionEngine.shared.detectPhotographicObjects(
             pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         var faceCandidates: [NeuralSubjectCandidate] = []
         if completed.contains(ObjectIdentifier(faces)) {
-            for face in faces.results ?? [] where face.confidence >= 0.40 {
+            let faceMinConf: Float = isLowLight ? 0.25 : 0.40
+            for face in faces.results ?? [] where face.confidence >= faceMinConf {
                 guard var c = candidate(visionRect: face.boundingBox, category: .face,
                                         confidence: face.confidence, label: "Khuôn mặt") else { continue }
                 c.faceBounds = [c.boundingBox]
@@ -464,7 +467,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         if completed.contains(ObjectIdentifier(bodies)) {
-            for body in bodies.results ?? [] where body.confidence >= 0.40 {
+            let bodyMinConf: Float = isLowLight ? 0.28 : 0.40
+            let bodyFallbackConf: Float = isLowLight ? 0.38 : 0.62
+            for body in bodies.results ?? [] where body.confidence >= bodyMinConf {
                 let upright = CompositionPureCalculations.visionToUprightRect(body.boundingBox)
                 let hasMatchingFace = faceCandidates.contains { face in
                     upright.contains(CGPoint(x: face.boundingBox.midX, y: face.boundingBox.midY)) ||
@@ -473,7 +478,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 let hasYoloPerson = candidates.contains {
                     $0.category == .human && $0.boundingBox.intersects(upright)
                 }
-                guard hasMatchingFace || hasYoloPerson || body.confidence >= 0.62 else { continue }
+                guard hasMatchingFace || hasYoloPerson || body.confidence >= bodyFallbackConf else { continue }
                 if let c = candidate(visionRect: body.boundingBox, category: .human, confidence: body.confidence, label: "Người") {
                     candidates.append(c)
                 }
@@ -500,7 +505,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             var tightSaliencyCandidates: [NeuralSubjectCandidate] = []
             var broadSaliencyCandidates: [NeuralSubjectCandidate] = []
             for (index, observation) in [objectness.results?.first, attention.results?.first].compactMap({ $0 }).enumerated() {
-                for region in observation.salientObjects ?? [] where region.confidence >= 0.30 {
+                let salMinConf: Float = isLowLight ? 0.18 : 0.30
+            for region in observation.salientObjects ?? [] where region.confidence >= salMinConf {
                     let area = region.boundingBox.width * region.boundingBox.height
                     guard area >= 0.012 && area <= 0.78 else { continue }
                     let isObjectness = (index == 0)

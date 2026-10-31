@@ -275,9 +275,9 @@ public enum CompositionPureCalculations {
 /// settle timer on each frame keeps the shutter gate closed forever.
 struct AutoFocusCapturePolicy {
     /// Time the lens needs before `isAdjustingFocus` can be trusted after a focus command.
-    static let minimumDwell: TimeInterval = 0.16
+    static let minimumDwell: TimeInterval = 0.10
     /// A lens that never reports settled must not block the shutter indefinitely.
-    static let timeout: TimeInterval = 0.9
+    static let timeout: TimeInterval = 0.45
     static let zoomTolerance = 0.08
 
     private var pinGeneration: UInt64?

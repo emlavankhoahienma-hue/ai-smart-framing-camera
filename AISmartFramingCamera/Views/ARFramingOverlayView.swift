@@ -480,7 +480,8 @@ struct TargetCircleView: View {
     }
 
     private var shadowGlowColor: Color {
-        if isAligned || isSnapped { return Color.green }
+        if isAligned { return Color.green }
+        if isSnapped { return AlignTheme.electricCyan }
         switch trackingQuality {
         case .locked, .predicting, .reacquiring: return Color(red: 1.0, green: 0.84, blue: 0.20)
         case .lost: return Color.red
@@ -506,14 +507,17 @@ struct TargetCircleView: View {
 
             // Dấu cộng tâm chính xác
             PlusCrosshairShape()
-                .stroke((isAligned || isSnapped) ? Color.green : Color.white, lineWidth: (isAligned || isSnapped) ? 2.0 : 1.5)
+                .stroke(isAligned ? Color.green : (isSnapped ? AlignTheme.electricCyan : Color.white), lineWidth: isAligned ? 2.5 : 1.5)
                 .frame(width: 9, height: 9)
                 .shadow(color: Color.black.opacity(0.5), radius: 1)
 
             // Hiệu ứng sóng khóa tròn khi Snap/Aligned thành công
-            if isAligned || isSnapped {
+            if isAligned {
                 Circle()
                     .stroke(Color.green.opacity(0.5), lineWidth: 3.0)
+            } else if isSnapped {
+                Circle()
+                    .stroke(AlignTheme.electricCyan.opacity(0.4), lineWidth: 2.0)
                     .frame(width: 38, height: 38)
                     .transition(.scale.combined(with: .opacity))
             }

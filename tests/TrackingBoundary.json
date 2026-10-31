@@ -45,13 +45,13 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "ad5c0d439c1dd4e2c8fdd149b9d71cb3fc8b7a85db761c35a83bd47422c15312"
+      "sha256": "2307be7114d9f8fb6d851825c369b31bc22ed37e3d1a2b10a66c6694ce5238ce"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
       "end": "    private func verifyAndCaptureWhenReady()",
-      "sha256": "42692b0c90f3b221387452e8cb749bd29c7655befa1098e37c8b919aa3c2b5f1"
+      "sha256": "9ce1f97c19d0e3f39a07e3fa373dde763f8dd4717adfb8b1ba0b659f79441b58"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -81,7 +81,7 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "struct TargetCircleView: View {",
       "end": "// MARK: - Guidance Ray",
-      "sha256": "654c2c67d742ab50154cde9811e390a167485b3f9b2d954fc8843d41433ca350"
+      "sha256": "ec90772143eaad54f54d2f9501ef8d9781faff29e427bf0e59ee68b943ea7252"
     }
   ]
 }

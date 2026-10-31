@@ -107,7 +107,7 @@ final class CompositionAestheticSearch {
             let baseView = evaluated.first(where: { $0.proposal.isUnchangedView })
             let sourceZoom = baseView?.proposal.zoom ?? 1
             let baseArea = baseView.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
-            let allowTwoX = baseArea > 0.0001 && baseArea < 0.08
+            let allowTwoX = baseArea > 0.0001 && baseArea < 0.22
             let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
             let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
@@ -170,7 +170,7 @@ final class CompositionAestheticSearch {
         let baseline = evaluated.first { $0.proposal.isUnchangedView }
         let originalZoom = baseline?.proposal.zoom
         let baseSubjectArea = baseline.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
-        let allowTwoX = baseSubjectArea > 0.0001 && baseSubjectArea < 0.08
+        let allowTwoX = baseSubjectArea > 0.0001 && baseSubjectArea < 0.22
         let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
         // Shot-scale prior: a subject filling under half of the size its intent wants must be tightened
         // unless the learned models clearly object. Without this the full frame wins on resolution alone.
@@ -261,7 +261,7 @@ enum CompositionPreferencePolicy {
                            originalComposition: Double, originalAesthetics: Double) -> Bool {
         let ratings = [composition, aesthetics, originalComposition, originalAesthetics]
         return ratings.allSatisfy { $0.isFinite && (1...5).contains($0) } &&
-            composition >= originalComposition - 0.42 && aesthetics >= originalAesthetics - 0.42
+            composition >= originalComposition - 0.45 && aesthetics >= originalAesthetics - 0.65
     }
 
     static func score(composition: Double, aesthetics: Double, geometry: Double, outOfBoundsFraction: Double = 0.0) -> Double? {

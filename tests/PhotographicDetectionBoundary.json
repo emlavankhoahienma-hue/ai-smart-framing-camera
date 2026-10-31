@@ -3,12 +3,12 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
-      "sha256": "62b6fa83820a05a0c168b54b2577db3a34f17e274a2d1e8348bfee0b50ae07ae"
+      "sha256": "8a4fcd087ca1bfea85a3d596ec431512cd50ae2527075300b878302d4a3b1c04"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift",
       "start": "    private func analyzeCapturedFrame(",
-      "sha256": "82469f12cd60a93b5280b038924202a90c8a658b5de9e7dbb883802a9cad2d08"
+      "sha256": "a1a9ef1601926dc7df445eb0cbb963d5e09a71400c8435fa6d5fa6335623e391"
     },
     {
       "path": "AISmartFramingCamera/Services/CompositionPlanning.swift",

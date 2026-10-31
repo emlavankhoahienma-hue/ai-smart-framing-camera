@@ -847,6 +847,7 @@ public final class CameraViewModel: ObservableObject {
     private func unlockHardTargetLock() {
         guard isTargetLocked else { return }
         isTargetLocked = false
+        hasExecutedAutoZoomForSession = false
         lockedDevicePose = nil
         alignmentGate.unlockTarget()
         // Kích hoạt chuyển tiếp mượt (Smooth Unlock Handoff) từ (0.5, 0.5) sang vị trí mới
@@ -3172,9 +3173,9 @@ public final class CameraViewModel: ObservableObject {
         let midY = isPortraitIntent ? (projectedMinY + min(projectedMaxY, projectedMinY + (projectedMaxY - projectedMinY) * 0.65)) * 0.5 : (projectedMinY + projectedMaxY) * 0.5
         let centerInside = (0.03...0.97).contains((projectedMinX + projectedMaxX) * 0.5) &&
             (0.03...0.97).contains(midY)
-        let maxAllowedY: CGFloat = isPortraitIntent ? 1.52 : 1.24
-        let boundsReasonable = projectedMinX >= -0.18 && projectedMaxX <= 1.18 &&
-            projectedMinY >= -0.10 && projectedMaxY <= maxAllowedY
+        let maxAllowedY: CGFloat = isPortraitIntent ? 1.65 : 1.38
+        let boundsReasonable = projectedMinX >= -0.28 && projectedMaxX <= 1.28 &&
+            projectedMinY >= -0.18 && projectedMaxY <= maxAllowedY
         return centerInside && boundsReasonable
     }
 
@@ -3217,6 +3218,7 @@ public final class CameraViewModel: ObservableObject {
         }
         guard state != .outside else {
             autoCaptureTask?.cancel(); autoCaptureTask = nil
+            hasExecutedAutoZoomForSession = false
             lastFailedCaptureOpticalTimestamp = -.infinity
             lastFailedCaptureAttemptTime = -.infinity
             if !zoomAwaitingVerification && pendingManualZoomTarget == nil {
@@ -3255,11 +3257,7 @@ public final class CameraViewModel: ObservableObject {
                     applyAISuggestedZoom(target, force: true)
                     hasExecutedAutoZoomForSession = true
                     if zoomAwaitingVerification { return }
-                } else {
-                    hasExecutedAutoZoomForSession = true
                 }
-            } else {
-                hasExecutedAutoZoomForSession = true
             }
         }
         guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,

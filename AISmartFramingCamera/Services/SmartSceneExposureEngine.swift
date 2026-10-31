@@ -79,6 +79,32 @@ public struct SceneLumaMetrics: Sendable {
 
 /// Hệ thống trí tuệ nhân tạo đo sáng & điều chỉnh EV thông minh theo môi trường (Smart Scene-Aware Exposure Engine)
 public final class SmartSceneExposureEngine: @unchecked Sendable {
+    /// Ước lượng độ sáng trung bình toàn cảnh siêu nhanh (<0.05ms) trực tiếp từ Y-Plane của CVPixelBuffer
+    public static func estimateSceneLuminance(from pixelBuffer: CVPixelBuffer) -> Float {
+        guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return 0.5 }
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let isBiPlanar = (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                          format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        guard isBiPlanar, let baseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return 0.5 }
+        let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+        let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+        let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+        var sum: Float = 0
+        let stepX = max(1, width / 16)
+        let stepY = max(1, height / 16)
+        var count: Float = 0
+        for y in stride(from: stepY / 2, to: height, by: stepY) {
+            let row = ptr.advanced(by: y * bytesPerRow)
+            for x in stride(from: stepX / 2, to: width, by: stepX) {
+                sum += Float(row[x]) / 255.0
+                count += 1
+            }
+        }
+        return count > 0 ? sum / count : 0.5
+    }
+
     public static let shared = SmartSceneExposureEngine()
 
     private init() {}
