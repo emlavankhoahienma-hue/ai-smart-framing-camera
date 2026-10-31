@@ -799,7 +799,7 @@ enum CompositionPlanner {
                 if proposalLimit > 6 {
                     result.append(contentsOf: seeds)
                 } else {
-                    result.append(contentsOf: seeds.sorted { $0.score > $1.score }.prefix(6))
+                    result.append(contentsOf: diverse(seeds, limit: 6, raySeparation: 0.03, zoomSeparation: 0.06))
                 }
             }
         }
@@ -807,7 +807,7 @@ enum CompositionPlanner {
         if !refining.isEmpty {
             return diverse(result, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
         }
-        guard proposalLimit > 6 else { return diverse(result, limit: proposalLimit) }
+        guard proposalLimit > 6 else { return diverse(result, limit: proposalLimit, raySeparation: 0.04, zoomSeparation: 0.08) }
         // Preserve a no-change baseline and explore several focal lengths and
         // directions, including crops that do not match the heuristic's favourite.
         var selected = result.filter(\.isUnchangedView).prefix(1).map { $0 }
@@ -1069,6 +1069,10 @@ enum CompositionPlanner {
         if maxZoom > currentZoom {
             let subtle = min(maxZoom, currentZoom * 1.08)
             options.insert(subtle)
+            if maxZoom > currentZoom * 1.25 {
+                let mid = sqrt(currentZoom * maxZoom)
+                options.insert(mid)
+            }
         }
 
         // Hardware optical zooms within range
