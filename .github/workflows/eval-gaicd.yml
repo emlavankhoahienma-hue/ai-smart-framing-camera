@@ -9,9 +9,14 @@ on:
         default: '5'
         type: string
       data_repo:
-        description: 'Tên repo private chứa release asset ảnh zip (mặc định: <owner>/eval-data)'
+        description: 'Tên repo private chứa release asset ảnh zip (mặc định: emlavankhoahienma-hue/eval-data)'
         required: false
-        default: ''
+        default: 'emlavankhoahienma-hue/eval-data'
+        type: string
+      data_tag:
+        description: 'Release tag chứa file eval_images.zip (mặc định: v1)'
+        required: false
+        default: 'v1'
         type: string
   push:
     branches:
@@ -61,22 +66,23 @@ jobs:
           GH_TOKEN: ${{ secrets.EVAL_DATA_TOKEN }}
         run: |
           start_time=$(date +%s)
-          TARGET_REPO="${{ inputs.data_repo }}"
-          if [ -z "$TARGET_REPO" ]; then
-            TARGET_REPO="${{ github.repository_owner }}/eval-data"
-          fi
-          echo "Đang tải release asset từ repo: $TARGET_REPO ..."
+          TARGET_REPO="${{ inputs.data_repo || 'emlavankhoahienma-hue/eval-data' }}"
+          TARGET_TAG="${{ inputs.data_tag || 'v1' }}"
+          echo "Đang tải release asset eval_images.zip từ repo: $TARGET_REPO (tag: $TARGET_TAG) ..."
           mkdir -p eval_download eval_images
-          gh release download --repo "$TARGET_REPO" --pattern "*.zip" --dir eval_download
           
-          ZIP_COUNT=$(ls -1 eval_download/*.zip 2>/dev/null | wc -l | tr -d ' ')
-          if [ "$ZIP_COUNT" -eq 0 ]; then
-            echo "::error::Không tìm thấy file .zip nào trong Release của repo $TARGET_REPO."
+          if ! gh release download "$TARGET_TAG" --repo "$TARGET_REPO" --pattern "eval_images.zip" --dir eval_download; then
+            echo "Thử tải eval_images.zip từ release mới nhất (latest) ..."
+            gh release download --repo "$TARGET_REPO" --pattern "eval_images.zip" --dir eval_download
+          fi
+          
+          if [ ! -f eval_download/eval_images.zip ]; then
+            echo "::error::Không tìm thấy file eval_images.zip trong Release của repo $TARGET_REPO."
             exit 1
           fi
 
-          echo "Giải nén file ảnh vào eval_images/ ..."
-          unzip -q eval_download/*.zip -d eval_images
+          echo "Giải nén file ảnh eval_images.zip vào eval_images/ ..."
+          unzip -q eval_download/eval_images.zip -d eval_images
           
           # Nếu file zip chứa thư mục con, đưa tất cả ảnh về thẳng thư mục gốc eval_images/
           find eval_images -mindepth 2 -type f \( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" \) -exec mv {} eval_images/ \;

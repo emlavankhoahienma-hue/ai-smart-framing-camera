@@ -45,18 +45,18 @@ Tài liệu này hướng dẫn chi tiết từng bước bấm chuột và dòn
 1. Đăng nhập vào GitHub trên trình duyệt.
 2. Bấm vào biểu tượng dấu **`+`** ở góc trên cùng bên phải màn hình ➔ chọn **New repository**.
 3. Điền các thông tin:
-   - **Repository name**: `eval-data`
+   - **Repository name**: `eval-data` (đường dẫn đầy đủ: `emlavankhoahienma-hue/eval-data`)
    - Chọn chế độ: **`Private`** (bắt buộc chọn Private để ảnh không bị công khai ra ngoài).
    - Tích chọn: **Add a README file**.
    - Bấm nút **Create repository**.
 4. Tạo Release và tải file zip lên:
-   - Tại trang repo `eval-data` vừa tạo, nhìn sang cột bên phải mục **Releases** ➔ bấm **Create a new release** (hoặc truy cập đường dẫn: `https://github.com/<tên_tài_khoản>/eval-data/releases/new`).
-   - Mục **Choose a tag**: gõ `v1.0` ➔ bấm **Create new tag: v1.0**.
-   - Mục **Release title**: gõ `GAICD Eval Images`.
+   - Tại trang repo `eval-data` vừa tạo, nhìn sang cột bên phải mục **Releases** ➔ bấm **Create a new release** (hoặc truy cập đường dẫn: `https://github.com/emlavankhoahienma-hue/eval-data/releases/new`).
+   - Mục **Choose a tag**: gõ `v1` ➔ bấm **Create new tag: v1**.
+   - Mục **Release title**: gõ `GAICD Eval Images v1`.
    - Mục **Attach binaries by dropping them here or selecting them**: kéo thả file `eval_images.zip` từ máy tính vào ô này.
    - Chờ file zip tải lên xong (hiện vạch xanh 100%) ➔ bấm nút xanh **Publish release**.
 
-**Kiểm tra kết quả Bước 2:** Bạn nhìn thấy release `v1.0` có đính kèm file `eval_images.zip`.
+**Kiểm tra kết quả Bước 2:** Bạn nhìn thấy release tag `v1` có đính kèm file `eval_images.zip`.
 
 ---
 
