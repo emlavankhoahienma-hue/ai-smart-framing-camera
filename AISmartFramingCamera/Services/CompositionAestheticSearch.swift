@@ -104,8 +104,12 @@ final class CompositionAestheticSearch {
             }
             // A strong tighter view must reach the second model even when the
             // old whole-image composition scorer slightly prefers the wide view.
-            let sourceZoom = evaluated.first(where: { $0.proposal.isUnchangedView })?.proposal.zoom ?? 1
-            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 }
+            let baseView = evaluated.first(where: { $0.proposal.isUnchangedView })
+            let sourceZoom = baseView?.proposal.zoom ?? 1
+            let baseArea = baseView.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
+            let allowTwoX = baseArea > 0.0001 && baseArea < 0.08
+            let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
+            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
             for index in zoomed.prefix(4) { include(index) }
             let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
@@ -165,6 +169,9 @@ final class CompositionAestheticSearch {
         }
         let baseline = evaluated.first { $0.proposal.isUnchangedView }
         let originalZoom = baseline?.proposal.zoom
+        let baseSubjectArea = baseline.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
+        let allowTwoX = baseSubjectArea > 0.0001 && baseSubjectArea < 0.08
+        let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
         // Shot-scale prior: a subject filling under half of the size its intent wants must be tightened
         // unless the learned models clearly object. Without this the full frame wins on resolution alone.
         let zoomNeeded = baseline.map {
@@ -174,7 +181,7 @@ final class CompositionAestheticSearch {
         // veto prevented useful zoom even when the aesthetic model preferred it.
         let eligible = evaluated.filter { view in
             if view.proposal.isUnchangedView { return true }
-            if view.proposal.zoom > 1.35 { return false }
+            if view.proposal.zoom > maxAllowedZoom { return false }
             guard usedSpecialist, let baseline, let originalZoom else { return true }
             if view.proposal.zoom <= originalZoom * 1.08 { return true }
             if zoomNeeded, CompositionPreferencePolicy.tightensTowardTarget(
