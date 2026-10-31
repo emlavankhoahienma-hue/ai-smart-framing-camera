@@ -55,6 +55,39 @@ def test_norm_to_pixel_roundtrip_and_hand_value():
     assert back == pytest.approx([37, 11, 211, 90])
 
 
+# ------------------------------------------------------------------ crop representations
+def test_center_same_zoom_hand_values():
+    assert ec.center_same_zoom(1.0) == [0.0, 0.0, 1.0, 1.0]
+    assert ec.center_same_zoom(2.0) == [0.25, 0.25, 0.5, 0.5]
+    assert ec.center_same_zoom(1.25) == pytest.approx([0.1, 0.1, 0.8, 0.8])
+    assert ec.center_same_zoom(0.5) == [0.0, 0.0, 1.0, 1.0]
+    assert ec.center_same_zoom(None) == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_crop_simple_hand_values():
+    # centered quad at (0.5, 0.5), zoom 2.0 -> [0.25, 0.25, 0.5, 0.5]
+    c_centered = [0.2, 0.2, 0.8, 0.2, 0.8, 0.8, 0.2, 0.8]
+    assert ec.crop_simple(c_centered, 2.0) == pytest.approx([0.25, 0.25, 0.5, 0.5])
+
+    # off-center quad with centroid (0.3, 0.3), zoom 2.0 -> [0.05, 0.05, 0.5, 0.5]
+    c_offcenter = [0.1, 0.1, 0.5, 0.1, 0.5, 0.5, 0.1, 0.5]
+    assert ec.crop_simple(c_offcenter, 2.0) == pytest.approx([0.05, 0.05, 0.5, 0.5])
+
+    # overflow right-bottom: centroid (0.9, 0.9), zoom 2.0 -> clamped to [0.5, 0.5, 0.5, 0.5]
+    c_rb_overflow = [0.7, 0.7, 1.1, 0.7, 1.1, 1.1, 0.7, 1.1]
+    assert ec.crop_simple(c_rb_overflow, 2.0) == pytest.approx([0.5, 0.5, 0.5, 0.5])
+
+    # overflow left-top: centroid (0.1, 0.1), zoom 2.0 -> clamped to [0.0, 0.0, 0.5, 0.5]
+    c_lt_overflow = [-0.1, -0.1, 0.3, -0.1, 0.3, 0.3, -0.1, 0.3]
+    assert ec.crop_simple(c_lt_overflow, 2.0) == pytest.approx([0.0, 0.0, 0.5, 0.5])
+
+    # invalid inputs
+    assert ec.crop_simple(None, 2.0) is None
+    assert ec.crop_simple([1.0] * 7, 2.0) is None
+    assert ec.crop_simple([1.0] * 8, 0.0) is None
+    assert ec.crop_simple([1.0] * 8, -1.0) is None
+
+
 # ------------------------------------------------------------------ matching
 GT = [{"rect": [0, 0, .5, .5], "mos": 3.0}, {"rect": [.5, .5, .5, .5], "mos": 4.0}]
 

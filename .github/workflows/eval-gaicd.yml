@@ -18,6 +18,11 @@ on:
         required: false
         default: 'v1'
         type: string
+      fov_sweep:
+        description: 'Chạy kiểm tra FOV sweep (45, 69, 90 độ) trên limit ảnh'
+        required: false
+        default: 'false'
+        type: string
   push:
     branches:
       - eval-harness
@@ -157,14 +162,30 @@ jobs:
           if [ -z "$LIMIT" ]; then
             LIMIT="5"
           fi
-          echo "Bắt đầu chạy evaluation với limit = $LIMIT ..."
-          
-          if ! python scripts/validate_composition_photos.py \
-            --eval-dir eval_images \
-            --eval-out eval_results.json \
-            --limit "$LIMIT"; then
-            echo "::error::Swift Evaluation Runner thất bại khi thực thi trên tập ảnh eval_images!"
-            exit 1
+          FOV_SWEEP="${{ inputs.fov_sweep }}"
+          if [ "$FOV_SWEEP" = "true" ]; then
+            echo "Bắt đầu chạy FOV sweep (45, 69, 90 độ) với limit = $LIMIT ..."
+            for fov in 45 69 90; do
+              echo ">>> Đang chạy --eval-fov $fov ..."
+              if ! python scripts/validate_composition_photos.py \
+                --eval-dir eval_images \
+                --eval-out "eval_results_fov${fov}.json" \
+                --limit "$LIMIT" \
+                --eval-fov "$fov"; then
+                echo "::error::Swift Evaluation Runner thất bại khi chạy với FOV=$fov!"
+                exit 1
+              fi
+            done
+            cp eval_results_fov69.json eval_results.json
+          else
+            echo "Bắt đầu chạy evaluation với limit = $LIMIT ..."
+            if ! python scripts/validate_composition_photos.py \
+              --eval-dir eval_images \
+              --eval-out eval_results.json \
+              --limit "$LIMIT"; then
+              echo "::error::Swift Evaluation Runner thất bại khi thực thi trên tập ảnh eval_images!"
+              exit 1
+            fi
           fi
           
           if [ ! -s eval_results.json ]; then
@@ -173,10 +194,10 @@ jobs:
           fi
           echo "Đã tạo thành công eval_results.json ($(wc -c < eval_results.json | tr -d ' ') bytes) trong $(( $(date +%s) - start_time ))s."
 
-      - name: 11. Upload duy nhất file eval_results.json làm Artifact
+      - name: 11. Upload file kết quả đánh giá làm Artifact
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: eval-results-${{ github.run_number }}
-          path: eval_results.json
+          path: eval_results*.json
           if-no-files-found: ignore

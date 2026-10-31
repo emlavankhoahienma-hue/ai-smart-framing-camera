@@ -371,7 +371,8 @@ extension CompositionModelValidation {
                 confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze)
             subject.allowsAttentionCrop = hero.isAttentionRegion && raster.hasAttention && bounds.width * bounds.height > 0.45
             let ci = CIImage(cvPixelBuffer: pixels)
-            let calibration = TrackingCalibration.fallback(aspect: Double(source.width) / Double(source.height))
+            let fov = evalArgument("--eval-fov").flatMap(Double.init) ?? CompositionTuning.defaultCameraFOVWide
+            let calibration = TrackingCalibration.fallback(fovLongDegrees: fov, aspect: Double(source.width) / Double(source.height))
             func proposals(_ seeds: [CompositionProposal] = []) -> [CompositionProposal] {
                 CompositionPlanner.photographicProposals(subject: subject, intents: intents, portraitBounds: portraitBounds,
                     raster: raster, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
@@ -416,6 +417,7 @@ extension CompositionModelValidation {
             record["scene_intent"] = best.proposal.intent.rawValue
             record["zoom_current"] = 1.0
             record["zoom_final"] = evalNumber(Double(best.proposal.zoom))
+            record["eval_fov"] = evalNumber(fov)
             record["scores"] = ["samp": evalOptional(best.assessment?.mean), "charm": evalOptional(best.aesthetics?.mean),
                                 "geom": evalNumber(best.geometryScore), "final": evalNumber(best.proposal.score)] as [String: Any]
             record["num_candidates"] = result.assessedCount

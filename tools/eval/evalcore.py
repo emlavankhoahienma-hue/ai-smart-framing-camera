@@ -138,6 +138,49 @@ def clamp_rect(rect: Rect) -> list[float]:
     return [x, y, max(0.0, min(w, 1.0 - x)), max(0.0, min(h, 1.0 - y))]
 
 
+def crop_simple(corners: Sequence[float] | None, zoom_final: float | None) -> list[float] | None:
+    """Compute crop_simple representation:
+    - Center (cx, cy) = centroid of 4 corners from source_corners_raw: sum(x_i)/4, sum(y_i)/4
+    - Normalized size = 1.0 / zoom_final for both width and height (preserves image aspect ratio)
+    - Shift into image bounds [0, 1] if overflowing.
+    Note: if corners were clamped at 0.002 / 0.998 by observedSourceQuad, centroid may be slightly biased.
+    """
+    if corners is None or len(corners) != 8:
+        return None
+    if zoom_final is None or not isinstance(zoom_final, (int, float)) or not math.isfinite(zoom_final) or zoom_final <= 0:
+        return None
+    xs = [corners[i] for i in (0, 2, 4, 6)]
+    ys = [corners[i] for i in (1, 3, 5, 7)]
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in xs + ys):
+        return None
+    cx = sum(xs) / 4.0
+    cy = sum(ys) / 4.0
+    w = min(1.0, max(0.0, 1.0 / float(zoom_final)))
+    h = min(1.0, max(0.0, 1.0 / float(zoom_final)))
+    x = cx - w / 2.0
+    y = cy - h / 2.0
+    if x < 0.0:
+        x = 0.0
+    elif x + w > 1.0:
+        x = max(0.0, 1.0 - w)
+    if y < 0.0:
+        y = 0.0
+    elif y + h > 1.0:
+        y = max(0.0, 1.0 - h)
+    return [x, y, w, h]
+
+
+def center_same_zoom(zoom_final: float | None) -> list[float]:
+    """Center crop with size 1 / zoom_final in normalized coordinates [0, 1].
+    Used to isolate the effect of CENTER placement vs ZOOM.
+    """
+    if zoom_final is None or not isinstance(zoom_final, (int, float)) or not math.isfinite(zoom_final) or zoom_final <= 0:
+        return [0.0, 0.0, 1.0, 1.0]
+    w = min(1.0, max(0.0, 1.0 / float(zoom_final)))
+    h = min(1.0, max(0.0, 1.0 / float(zoom_final)))
+    return [(1.0 - w) / 2.0, (1.0 - h) / 2.0, w, h]
+
+
 def center_crop_same_size(crop: Rect) -> list[float]:
     """Crop with the same width/height (hence area and aspect) as `crop`, centred in the frame."""
     _, _, w, h = crop
