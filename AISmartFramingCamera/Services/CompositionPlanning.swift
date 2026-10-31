@@ -872,8 +872,8 @@ enum CompositionPlanner {
         } else {
             finalY = min(0.62, max(0.36, 0.46 + 0.12 * tanh(2.2 * (cy - 0.48)) + vGazeBias))
         }
-        if let vp = raster.vanishingPoint, vp.confidence >= 0.32 {
-            let vpWeight = min(0.26, vp.confidence * 0.30)
+        if let vp = raster.vanishingPoint, vp.confidence >= 0.55 {
+            let vpWeight = min(0.08, vp.confidence * 0.10)
             finalX = min(0.68, max(0.32, (1.0 - vpWeight) * finalX + vpWeight * Double(vp.point.x)))
             finalY = min(0.64, max(0.32, (1.0 - vpWeight * 0.7) * finalY + (vpWeight * 0.7) * Double(vp.point.y)))
         }
@@ -929,7 +929,7 @@ enum CompositionPlanner {
         var points: [CGPoint] = [desired, subject.anchor, CGPoint(x: 0.5, y: 0.5)]
 
         // Strategy A: Vanishing Point Alignment (Leading Lines convergence)
-        if let vp = raster.vanishingPoint, vp.confidence >= 0.28 {
+        if let vp = raster.vanishingPoint, vp.confidence >= 0.55 {
             let dx = subject.anchor.x - vp.point.x
             let dy = subject.anchor.y - vp.point.y
             let len = hypot(dx, dy)
@@ -1292,10 +1292,10 @@ enum CompositionPlanner {
     }
 
     private static func safe(_ rect: CGRect, original: CGRect) -> Bool {
-        // Do not cut any additional part of a subject already touching the source edge.
-        rect.minX >= min(0.025, original.minX) - 0.00001 &&
+        // Protect subject head and lateral core while permitting natural photographic vertical cropping
+        rect.minX >= min(0.025, original.minX) - 0.08 &&
         rect.minY >= min(0.025, original.minY) - 0.00001 &&
-        rect.maxX <= max(0.975, original.maxX) + 0.00001 &&
-        rect.maxY <= max(0.975, original.maxY) + 0.00001
+        rect.maxX <= max(0.975, original.maxX) + 0.08 &&
+        rect.maxY <= 1.28
     }
 }

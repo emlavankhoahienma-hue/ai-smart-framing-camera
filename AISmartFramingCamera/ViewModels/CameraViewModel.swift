@@ -3173,9 +3173,9 @@ public final class CameraViewModel: ObservableObject {
         let midY = isPortraitIntent ? (projectedMinY + min(projectedMaxY, projectedMinY + (projectedMaxY - projectedMinY) * 0.65)) * 0.5 : (projectedMinY + projectedMaxY) * 0.5
         let centerInside = (0.03...0.97).contains((projectedMinX + projectedMaxX) * 0.5) &&
             (0.03...0.97).contains(midY)
-        let maxAllowedY: CGFloat = isPortraitIntent ? 1.65 : 1.38
-        let boundsReasonable = projectedMinX >= -0.28 && projectedMaxX <= 1.28 &&
-            projectedMinY >= -0.18 && projectedMaxY <= maxAllowedY
+        let maxAllowedY: CGFloat = isPortraitIntent ? 1.75 : 1.55
+        let boundsReasonable = projectedMinX >= -0.45 && projectedMaxX <= 1.45 &&
+            projectedMinY >= -0.25 && projectedMaxY <= maxAllowedY
         return centerInside && boundsReasonable
     }
 
@@ -3336,7 +3336,7 @@ public final class CameraViewModel: ObservableObject {
                 if latestOpticalFrameTimestamp > (reachedAt ?? .infinity) + 0.05 || CACurrentMediaTime() - (reachedAt ?? 0) >= 0.12 {
                     let facesOK = await verifyPostZoomFaces(after: (reachedAt ?? CACurrentMediaTime()))
                     if !facesOK {
-                        if CACurrentMediaTime() - (reachedAt ?? 0) < 0.75 {
+                        if CACurrentMediaTime() - (reachedAt ?? 0) < 1.20 {
                             continue
                         }
                         restoreOriginalZoomAfterVerificationFailure()
@@ -3391,7 +3391,7 @@ public final class CameraViewModel: ObservableObject {
         lastFailedCaptureAttemptTime = -.infinity
         let originalDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(zoomRevealStartDisplayZoom)
         cameraService.setZoomFactor(originalDeviceZoom)
-        hasExecutedAutoZoomForSession = true
+        hasExecutedAutoZoomForSession = false
         withAnimation(.easeOut(duration: 0.30)) {
             self.isRevealingZoomTarget = false
             self.isZoomRampPhase = false

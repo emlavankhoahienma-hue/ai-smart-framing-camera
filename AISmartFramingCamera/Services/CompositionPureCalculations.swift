@@ -180,9 +180,11 @@ public enum CompositionPureCalculations {
         let destY = min(0.62, max(0.36, Double(targetPoint.y)))
 
         if boxWidth > 0 && boxHeight > 0 {
-            let maxRatioX = (2.0 * min(destX - safetyMargin, 1.0 - safetyMargin - destX)) / boxWidth
-            let maxRatioY = (2.0 * min(destY - safetyMargin, 1.0 - safetyMargin - destY)) / boxHeight
-            let maxAllowedRatio = max(1.0, min(maxRatioX, maxRatioY))
+            let availableX = 2.0 * min(destX - safetyMargin, 1.0 - safetyMargin - destX)
+            let maxRatioX = max(1.0, availableX / max(0.04, boxWidth * 0.75))
+            let topOffset = max(0.04, Double(targetPoint.y) - (destY - boxHeight * 0.35))
+            let maxRatioYTop = (destY - safetyMargin) / max(0.04, topOffset)
+            let maxAllowedRatio = max(1.0, min(maxRatioX, maxRatioYTop))
             zoomCandidate = min(zoomCandidate, currentZoom * maxAllowedRatio)
         }
 

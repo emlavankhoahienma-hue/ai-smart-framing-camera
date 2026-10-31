@@ -107,7 +107,7 @@ final class CompositionAestheticSearch {
             let baseView = evaluated.first(where: { $0.proposal.isUnchangedView })
             let sourceZoom = baseView?.proposal.zoom ?? 1
             let baseArea = baseView.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
-            let allowTwoX = baseArea > 0.0001 && baseArea < 0.22
+            let allowTwoX = baseArea > 0.0001 && baseArea < 0.25
             let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
             let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
@@ -170,7 +170,7 @@ final class CompositionAestheticSearch {
         let baseline = evaluated.first { $0.proposal.isUnchangedView }
         let originalZoom = baseline?.proposal.zoom
         let baseSubjectArea = baseline.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
-        let allowTwoX = baseSubjectArea > 0.0001 && baseSubjectArea < 0.22
+        let allowTwoX = baseSubjectArea > 0.0001 && baseSubjectArea < 0.25
         let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
         // Shot-scale prior: a subject filling under half of the size its intent wants must be tightened
         // unless the learned models clearly object. Without this the full frame wins on resolution alone.
@@ -276,7 +276,7 @@ enum CompositionPreferencePolicy {
     }
 
     /// Below this share of its intent's target area the unchanged frame leaves the subject too small.
-    static let undersizedSubjectRatio = 0.50
+    static let undersizedSubjectRatio = 0.75
     /// How far a necessary tighter crop may trail the wide frame before the models' objection stands.
     static let necessaryCropTolerance = 0.05
     static let shotScaleBonusWeight = 0.0
@@ -298,6 +298,6 @@ enum CompositionPreferencePolicy {
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {
-        score.isFinite && original.isFinite && score >= original + 0.008
+        score.isFinite && original.isFinite && score >= original + 0.002
     }
 }

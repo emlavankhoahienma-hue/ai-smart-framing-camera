@@ -426,12 +426,12 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             measuredHorizon: measuredHorizon,
             measuredVanishingPoint: measuredVP)
         let sceneLuma = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer)
-        let isLowLight = sceneLuma < 0.35
+        let isLowLight = sceneLuma < 0.42
         var candidates = YOLODetectionEngine.shared.detectPhotographicObjects(
             pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         var faceCandidates: [NeuralSubjectCandidate] = []
         if completed.contains(ObjectIdentifier(faces)) {
-            let faceMinConf: Float = isLowLight ? 0.25 : 0.40
+            let faceMinConf: Float = isLowLight ? 0.20 : 0.30
             for face in faces.results ?? [] where face.confidence >= faceMinConf {
                 guard var c = candidate(visionRect: face.boundingBox, category: .face,
                                         confidence: face.confidence, label: "Khuôn mặt") else { continue }
@@ -467,8 +467,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         if completed.contains(ObjectIdentifier(bodies)) {
-            let bodyMinConf: Float = isLowLight ? 0.28 : 0.40
-            let bodyFallbackConf: Float = isLowLight ? 0.38 : 0.62
+            let bodyMinConf: Float = isLowLight ? 0.22 : 0.32
+            let bodyFallbackConf: Float = isLowLight ? 0.32 : 0.45
             for body in bodies.results ?? [] where body.confidence >= bodyMinConf {
                 let upright = CompositionPureCalculations.visionToUprightRect(body.boundingBox)
                 let hasMatchingFace = faceCandidates.contains { face in
@@ -485,7 +485,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         if completed.contains(ObjectIdentifier(animals)) {
-            for animal in animals.results ?? [] where animal.confidence >= 0.45 {
+            let animalMinConf: Float = isLowLight ? 0.28 : 0.35
+            for animal in animals.results ?? [] where animal.confidence >= animalMinConf {
                 let label = animal.labels.first?.identifier.lowercased() ?? ""
                 if let c = candidate(visionRect: animal.boundingBox, category: .animal, confidence: animal.confidence,
                                      label: label.contains("cat") ? "Mèo" : (label.contains("dog") ? "Chó" : "Động vật")) {

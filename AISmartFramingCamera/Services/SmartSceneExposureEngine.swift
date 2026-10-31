@@ -86,23 +86,45 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
         let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
         let isBiPlanar = (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
                           format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
-        guard isBiPlanar, let baseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return 0.5 }
-        let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
-        let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
-        let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
-        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
-        var sum: Float = 0
-        let stepX = max(1, width / 16)
-        let stepY = max(1, height / 16)
-        var count: Float = 0
-        for y in stride(from: stepY / 2, to: height, by: stepY) {
-            let row = ptr.advanced(by: y * bytesPerRow)
-            for x in stride(from: stepX / 2, to: width, by: stepX) {
-                sum += Float(row[x]) / 255.0
-                count += 1
+        if isBiPlanar, let baseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) {
+            let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+            let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+            let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+            let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+            var sum: Float = 0
+            let stepX = max(1, width / 16)
+            let stepY = max(1, height / 16)
+            var count: Float = 0
+            for y in stride(from: stepY / 2, to: height, by: stepY) {
+                let row = ptr.advanced(by: y * bytesPerRow)
+                for x in stride(from: stepX / 2, to: width, by: stepX) {
+                    sum += Float(row[x]) / 255.0
+                    count += 1
+                }
             }
+            return count > 0 ? sum / count : 0.5
+        } else if let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) {
+            let width = CVPixelBufferGetWidth(pixelBuffer)
+            let height = CVPixelBufferGetHeight(pixelBuffer)
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+            let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+            var sum: Float = 0
+            let stepX = max(1, width / 16)
+            let stepY = max(1, height / 16)
+            var count: Float = 0
+            for y in stride(from: stepY / 2, to: height, by: stepY) {
+                let row = ptr.advanced(by: y * bytesPerRow)
+                for x in stride(from: stepX / 2, to: width, by: stepX) {
+                    let b = Float(row[x * 4]) / 255.0
+                    let g = Float(row[x * 4 + 1]) / 255.0
+                    let r = Float(row[x * 4 + 2]) / 255.0
+                    sum += 0.299 * r + 0.587 * g + 0.114 * b
+                    count += 1
+                }
+            }
+            return count > 0 ? sum / count : 0.5
         }
-        return count > 0 ? sum / count : 0.5
+        return 0.5
     }
 
     public static let shared = SmartSceneExposureEngine()
