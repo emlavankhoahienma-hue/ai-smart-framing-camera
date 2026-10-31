@@ -48,3 +48,15 @@ SigLIPPrompts.json
 # Build artifacts
 build_artifacts/
 
+
+# Offline eval harness (GAICD images are Flickr photos: never commit)
+.venv/
+data/GAICD/
+eval_input/
+debug/
+eval_runs/*/vis/
+__pycache__/
+.pytest_cache/
+fake_results.json
+eval_images.zip
+eval_set.json

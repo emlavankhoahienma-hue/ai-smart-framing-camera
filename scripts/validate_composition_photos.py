@@ -14,7 +14,7 @@ import subprocess
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--parity-only", action="store_true")
-args = parser.parse_args()
+args, passthrough = parser.parse_known_args()  # extra flags (e.g. --eval-dir) go to the Swift CLI
 root = Path(__file__).resolve().parents[1]
 output = root / "validation/swift"
 output.mkdir(parents=True, exist_ok=True)
@@ -79,4 +79,4 @@ subprocess.run(["xcrun", "swiftc", "-O", "-warnings-as-errors",
                 *[str(root / "AISmartFramingCamera/Services" / name) for name in files], str(generated),
                 str(root / "tests/CompositionModelValidation.swift"), "-o", str(executable)], check=True)
 subprocess.run([str(executable), str(root / "validation/photos"), str(root / "SAMPComposition.mlmodelc"),
-                str(output), *(["--parity-only"] if args.parity_only else [])], check=True)
+                str(output), *(["--parity-only"] if args.parity_only else []), *passthrough], check=True)
