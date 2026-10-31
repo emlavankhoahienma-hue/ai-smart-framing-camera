@@ -114,12 +114,27 @@ public func deviceRay(at point: CGPoint) -> SIMD3<Double> {
 3. **Kẹp biên và bù lồi trong `observedSourceQuad`**:
    `CompositionPlanning.swift:1250-1290`: Tứ giác thô có thể vượt ra ngoài biên ảnh tới margin $-0.36$. `observedSourceQuad` thu nhỏ (`scale`) và tịnh tiến (`shiftX`, `shiftY`) để ép các góc vào khoảng $[0.002, 0.998]$, làm méo thêm hình học của khung.
 
-### 3.2. Vision Horizon có bơm góc Roll không?
+### 3.2. Kiểm chứng thực nghiệm giả thuyết FOV (CI Runner trên 30 ảnh)
+Hiện tại app dùng FOV mặc định `CompositionTuning.defaultCameraFOVWide = 69.0°` (lấy từ thông số camera góc rộng thực tế của iPhone).
+Để kiểm chứng xem giả thuyết "xoay do FOV giả lập" có đúng không, workflow CI đã thực thi sweep 30 ảnh với 3 mức FOV: $45^\circ$, $69^\circ$ (gốc), và $90^\circ$:
+
+| Mức FOV | n | is_rotated (%) | Tilt Mean | Tilt Median | Tilt Max | best_iou_top10 Mean | best_iou Mean |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **FOV 45°** | 30 | 25 / 30 (**83.3%**) | **4.36°** | **5.11°** | **10.84°** | 0.6685 | 0.5821 |
+| **FOV 69°** (gốc) | 30 | 27 / 30 (**90.0%**) | **10.53°** | **12.10°** | **25.18°** | 0.6899 | 0.6020 |
+| **FOV 90°** | 30 | 26 / 30 (**86.7%**) | **13.84°** | **14.92°** | **31.25°** | 0.7223 | 0.6318 |
+
+**Kết luận thực nghiệm:**
+1. **Biên độ góc nghiêng (Tilt Angle)** tỉ lệ thuận với FOV: Khi giảm FOV từ $69^\circ$ xuống $45^\circ$, góc nghiêng trung bình giảm hơn một nửa (từ $10.53^\circ$ xuống $4.36^\circ$).
+2. **Tỉ lệ xoay (`is_rotated`)**: Vẫn ở mức rất cao ($> 83\%$) ngay cả ở FOV $45^\circ$ vì ngưỡng `max_edge_tilt_deg > 1.0°` vẫn bị vi phạm.
+3. **Nguyên nhân cốt lõi**: FOV chỉ đóng vai trò **khuếch đại hoặc thu hẹp độ nghiêng**, nhưng **NGUYÊN NHÂN GỐC TẠO RA XOAY** nằm ở công thức `simd_quatd` (không khóa vector Up).
+
+### 3.3. Vision Horizon có bơm góc Roll không?
 **Kết luận: KHÔNG.**
 - Trong `CompositionPlanning.swift:611`, `raster.horizon` chỉ trả về `(y: CGFloat, confidence: Double)?` (chỉ có cao độ $Y$ và độ tin cậy, không hề có góc nghiêng).
 - Tại dòng 689–694, `horizon` chỉ được dùng để tính điểm thưởng bố cục `horizonFit` (đo khoảng cách từ đường chân trời tới tỷ lệ vàng $0.382$ hoặc $0.618$). Nó hoàn toàn không can thiệp vào biến `rotation`.
 
-### 3.3. Kết luận về Hiện tượng Xoay
+### 3.4. Kết luận về Hiện tượng Xoay
 Xoay **vừa là đặc tính cố ý của camera 3D thời gian thực, vừa là hiệu ứng phụ của cách chạy trên ảnh tĩnh 2D (b)**:
 - **Trên iPhone thực tế (Live Camera AR)**: App định hướng là camera 6-DoF với cảm biến con quay hồi chuyển (IMU/EKF). Khi người dùng lia máy trong không gian 3D, khung ngắm AR cần xoay theo góc nhìn của camera thế giới thực để hướng dẫn người chụp nghiêng/lia máy.
 - **Trên ảnh tĩnh 2D (GAICD Dataset)**: Khi áp dụng thuật toán xoay 3D lên một bức ảnh phẳng cố định mà không khóa trục đứng (`up = (0, 1, 0)`), việc tự động tính `simd_quatd(from: r1, to: r2)` tạo ra góc roll ảo và biến dạng phối cảnh hình thang không cần thiết, làm giảm IoU so với các crop thẳng đứng chuẩn của GAICD.
