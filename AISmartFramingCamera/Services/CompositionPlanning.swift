@@ -638,8 +638,16 @@ enum CompositionPlanner {
                     let ratio = Double(zoom / currentZoom)
                     let future = TrackingCalibration(fx: calibration.fx * ratio, fy: calibration.fy * ratio,
                         cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect, isMeasured: false)
-                    let rotation = simd_quatd(from: future.deviceRay(at: destination),
-                                             to: calibration.deviceRay(at: subject.anchor))
+                    let rawRotation = simd_quatd(from: future.deviceRay(at: destination),
+                                                 to: calibration.deviceRay(at: subject.anchor))
+                    let twistNorm = hypot(rawRotation.vector.z, rawRotation.vector.w)
+                    let rotation: simd_quatd
+                    if twistNorm > 1e-12 {
+                        let twistInv = simd_quatd(ix: 0, iy: 0, iz: -rawRotation.vector.z / twistNorm, r: rawRotation.vector.w / twistNorm)
+                        rotation = simd_normalize(rawRotation * twistInv)
+                    } else {
+                        rotation = rawRotation
+                    }
                     let sourceCorners = corners.map {
                         calibration.project(deviceRay: rotation.act(future.deviceRay(at: $0)))
                     }
