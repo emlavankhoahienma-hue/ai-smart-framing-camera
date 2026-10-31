@@ -24,6 +24,8 @@ public enum CompositionRule: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    public var displayName: String { displayNameVietnamese }
+
     public var displayNameVietnamese: String {
         switch self {
         case .ruleOfThirds: return "Quy tắc 1/3"
