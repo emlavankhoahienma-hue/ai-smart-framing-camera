@@ -88,6 +88,15 @@ Biểu diễn chuẩn: `crop_simple` (trọng tâm 4 góc, kích thước $1/\te
   - Đối với các ảnh zoom ($> 1.05$), pipeline hiện tại tự cộng dồn các điểm cộng nhân tạo: `shotScaleBonus` ($+0.07$), bonus zoom ($+0.045$), và rule-of-thirds bonus ($+0.055$), khiến khoảng cách điểm giữa ứng viên zoom và baseline luôn $> 0.11 - 0.15$. Do đó, $\tau = 0.05$ là quá nhỏ để chặn các quyết định zoom sai lệch.
 - **Quyết định**: **HOÀN TÁC (`git revert`)** code Swift, ghi nhận phát hiện quan trọng về các điểm thưởng nhân tạo cho thí nghiệm B4/B5.
 
+---
+
+### Thí nghiệm B3: Loại bỏ Phạt Vị trí Trung tâm (`deadCenterDestPenalty = 0.0`)
+- **Mục tiêu**: Loại bỏ cơ chế phạt nhân tạo $0.15$ điểm khi chủ thể được đặt ở tâm khung hình `(0.5, 0.5)`.
+- **Giả thuyết (Hypothesis)**: Trong nhiếp ảnh thực tế và tập dữ liệu GAICD, bố cục trung tâm (Center Composition) rất phổ biến và thường được đánh giá thẩm mỹ cao (đặc biệt đối với chân dung đơn thể, cận cảnh, tĩnh vật, đồ ăn). Việc áp đặt `deadCenterDestPenalty = 0.15` đã cưỡng ép AI phải né tâm và chọn các bố cục dạt biên kém tự nhiên. Loại bỏ hình phạt này sẽ giúp các ứng viên bố cục trung tâm (và khung gốc khi chủ thể ở giữa) cạnh tranh công bằng về mặt thẩm mỹ, nâng cao IoU và điểm MOS.
+- **Thay đổi Code**: `AISmartFramingCamera/Services/CompositionPlanning.swift:718`. Đặt `let deadCenterDestPenalty = 0.0`.
+- **Trạng thái**: Đang chạy CI 150 ảnh.
+
+
 
 
 

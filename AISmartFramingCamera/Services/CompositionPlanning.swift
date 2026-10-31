@@ -715,9 +715,7 @@ enum CompositionPlanner {
                     // Phản biện 3: Phạt khi điểm đặt chủ thể đích P* (destination) rơi vào tâm chết (0.5, 0.5) ở cảnh không đối xứng.
                     // TUYỆT ĐỐI KHÔNG phạt khi khoảng cách lia máy (aim.point - 0.5) nhỏ!
                     let destDistFromCenter = hypot(Double(destination.x - 0.5), Double(destination.y - 0.5))
-                    let deadCenterDestPenalty = (intent != .architecture && metrics.symmetry < 0.78)
-                        ? 0.15 * exp(-32.0 * destDistFromCenter * destDistFromCenter)
-                        : 0.0
+                    let deadCenterDestPenalty = 0.0
                     let ratioAdjustment = area < effectiveDesiredArea ? -0.045 * min(1.0, max(0.0, log(ratio))) : 0.028 * abs(log(ratio))
                     let contextWeight = intent.preservesContext ? 0.11 : 0.05
                     let contextFitWeight = intent.preservesContext ? 0.09 : 0.04
