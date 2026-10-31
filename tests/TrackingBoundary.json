@@ -19,7 +19,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
-      "sha256": "6582272aa458f72adf103fc6be5b4ca283160febc0192c33b1d0980f232b484e"
+      "sha256": "cfaf3f7ca79a47f40299e835d0f5b0897b58d453922a68eb4c15cf457b58db27"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralTargetTracker.swift",
@@ -51,13 +51,13 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
       "end": "    private func verifyAndCaptureWhenReady()",
-      "sha256": "9ce1f97c19d0e3f39a07e3fa373dde763f8dd4717adfb8b1ba0b659f79441b58"
+      "sha256": "5f9b77ba983355c7a9f478889ba6117e4d6cff347e58ad4fd563cc073462926c"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "d9e27fbf6244266949ed62e75756d2d7a1dcb5fa11ac46feff09befa3523fb07"
+      "sha256": "0e24b776b94e15824b33b84017dbaf9a8b714aa51e8208d2f48a06f2a248af40"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
