@@ -143,7 +143,9 @@ public final class CameraService: NSObject {
     // Virtual Multi-Camera Mapping (Apple Camera App style: 0.5x, 1x, 2x, 3x/5x)
     public private(set) var displayMultiplier: CGFloat = 1.0
     public private(set) var hasUltraWideLens: Bool = false
-    public private(set) var availableDisplayZoomOptions: [CGFloat] = [1.0, 2.0, 3.0]
+    public private(set) var isSimulatedUltraWideActive: Bool = false
+    public private(set) var simulatedUltraWideFactor: CGFloat = 1.0
+    public private(set) var availableDisplayZoomOptions: [CGFloat] = [0.5, 1.0, 2.0, 3.0]
     public private(set) var defaultDisplayZoom: CGFloat = 1.0
 
     // Optical Telephoto Lens Hardware Tracking
@@ -221,6 +223,9 @@ public final class CameraService: NSObject {
             let optical = telephotoOpticalDisplayZoom ?? 2.0
             return max(1.0, min(displayZoom / optical, maxZoom))
         }
+        if !hasUltraWideLens && displayZoom < 1.0 {
+            return minZoom
+        }
         guard displayMultiplier.isFinite, displayMultiplier > 0 else {
             return max(minZoom, min(defaultDisplayZoom, maxZoom))
         }
@@ -237,6 +242,9 @@ public final class CameraService: NSObject {
         if activeCamera?.deviceType == .builtInTelephotoCamera {
             let optical = telephotoOpticalDisplayZoom ?? 2.0
             return deviceZoom * optical
+        }
+        if !hasUltraWideLens && isSimulatedUltraWideActive {
+            return simulatedUltraWideFactor
         }
         guard displayMultiplier.isFinite, displayMultiplier > 0 else {
             return defaultDisplayZoom
@@ -554,7 +562,7 @@ public final class CameraService: NSObject {
                 self.displayMultiplier = 1.0
                 self.hasUltraWideLens = false
                 self.defaultDisplayZoom = 1.0
-                var options: [CGFloat] = [1.0, teleZoom]
+                var options: [CGFloat] = [0.5, 1.0, teleZoom]
                 if self.maxZoom >= 3.0 && !options.contains(3.0) { options.append(3.0) }
                 if self.maxZoom >= 5.0 && !options.contains(5.0) { options.append(5.0) }
                 options = options.filter { $0 <= self.maxZoom && $0 <= 10.0 }
@@ -575,7 +583,7 @@ public final class CameraService: NSObject {
                 self.displayMultiplier = 1.0
                 self.hasUltraWideLens = false
                 self.defaultDisplayZoom = 1.0
-                var options: [CGFloat] = [1.0, 2.0]
+                var options: [CGFloat] = [0.5, 1.0, 2.0]
                 if self.maxZoom >= 3.0 && !options.contains(3.0) { options.append(3.0) }
                 if self.maxZoom >= 5.0 && !options.contains(5.0) { options.append(5.0) }
                 options = options.filter { $0 <= self.maxZoom && $0 <= 10.0 }
@@ -1512,7 +1520,7 @@ public final class CameraService: NSObject {
                     self.maxZoom = newMaxZoom
                     self.displayMultiplier = wideBase
                     self.hasUltraWideLens = wideBase > 1
-                    self.availableDisplayZoomOptions = (wideBase > 1 ? [0.5, 1, 2, 3, 5] : [1, 2, 3, 5])
+                    self.availableDisplayZoomOptions = [0.5, 1, 2, 3, 5]
                         .filter { $0 * wideBase <= self.maxZoom }
                     self.defaultDisplayZoom = 1.0
 
@@ -1737,6 +1745,19 @@ public final class CameraService: NSObject {
                     self.setZoomFactor(devZoom, completion: completion)
                 }
                 return
+            }
+
+            if displayZoom < 0.99 {
+                if !self.hasUltraWideLens {
+                    self.isSimulatedUltraWideActive = true
+                    self.simulatedUltraWideFactor = displayZoom
+                } else {
+                    self.isSimulatedUltraWideActive = false
+                    self.simulatedUltraWideFactor = 1.0
+                }
+            } else {
+                self.isSimulatedUltraWideActive = false
+                self.simulatedUltraWideFactor = 1.0
             }
 
             let teleOptical = self.telephotoOpticalDisplayZoom ?? 2.0

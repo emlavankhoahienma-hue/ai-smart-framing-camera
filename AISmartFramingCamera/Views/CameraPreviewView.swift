@@ -43,6 +43,8 @@ public struct CameraPreviewView: UIViewRepresentable {
             isActive: viewModel.isFilmSimulationActive,
             isDualCamera: isDual,
             isVideoMode: viewModel.captureMode.isVideo && !isDual,
+            isSimulatedUltraWide: viewModel.isSimulatedUltraWideActive,
+            simulatedFactor: viewModel.simulatedUltraWideFactor,
             preset: viewModel.selectedFilmPreset,
             intensity: Float(viewModel.filmSimulationIntensity)
         )
@@ -119,6 +121,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var isRenderingActive: Bool = false
     private var isDualCameraMode: Bool = false
     private var isVideoAspectFit: Bool = false
+    private var isSimulatedUltraWide: Bool = false
+    private var simulatedFactor: CGFloat = 0.5
     private var currentPreset: FilmPreset = .standard
     private var currentIntensity: Float = 1.0
 
@@ -143,11 +147,13 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         super.init()
     }
 
-    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, preset: FilmPreset, intensity: Float) {
+    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, preset: FilmPreset, intensity: Float) {
         stateLock.lock()
-        self.isRenderingActive = isActive && preset != .standard
+        self.isRenderingActive = (isActive && preset != .standard) || isSimulatedUltraWide
         self.isDualCameraMode = isDualCamera
         self.isVideoAspectFit = isVideoMode
+        self.isSimulatedUltraWide = isSimulatedUltraWide
+        self.simulatedFactor = simulatedFactor
         self.currentPreset = preset
         self.currentIntensity = intensity
         stateLock.unlock()
@@ -159,6 +165,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         stateLock.lock()
         let filterActive = isRenderingActive
         let videoAspectFit = isVideoAspectFit
+        let simUW = isSimulatedUltraWide
+        let simFactor = simulatedFactor
         let preset = currentPreset
         let intensity = currentIntensity
         stateLock.unlock()
@@ -206,6 +214,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
                     .concatenating(CGAffineTransform(translationX: ox, y: oy)))
             let bgBlack = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: drawableSize))
             let viewportCI = transformedCI.composited(over: bgBlack).cropped(to: CGRect(origin: .zero, size: drawableSize))
+            let unwarpedCI: CIImage = simUW ? UltraWideWarpEngine.shared.applySimulatedUltraWide(to: viewportCI, factor: simFactor) : viewportCI
 
             let filteredCI: CIImage
             if filterActive && preset != .standard {
@@ -213,8 +222,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
                 let longSide = max(drawableSize.width, drawableSize.height)
                 let workingScale: CGFloat = (longSide > maxWorkingDim && longSide > 0) ? (maxWorkingDim / longSide) : 1.0
                 let workingInput = workingScale < 0.999
-                    ? viewportCI.transformed(by: CGAffineTransform(scaleX: workingScale, y: workingScale))
-                    : viewportCI
+                    ? unwarpedCI.transformed(by: CGAffineTransform(scaleX: workingScale, y: workingScale))
+                    : unwarpedCI
                 let effectivePreset = preset.isAIFullAuto ? (vm.aiRecommendedPreset ?? vm.detectedScene.recommendedFilter) : preset
                 var workingOut = FilmFilterEngine.shared.applyPreset(
                     to: workingInput,
@@ -234,7 +243,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
                     filteredCI = workingOut
                 }
             } else {
-                filteredCI = viewportCI
+                filteredCI = unwarpedCI
             }
             finalImageToRender = filteredCI
 
@@ -344,7 +353,7 @@ public class PreviewContainerView: UIView {
         let mtk = MTKView(frame: bounds, device: metalDevice)
         mtk.framebufferOnly = false
         mtk.colorPixelFormat = .bgra8Unorm
-        mtk.preferredFramesPerSecond = 30
+        mtk.preferredFramesPerSecond = 60
         mtk.isPaused = true
         mtk.enableSetNeedsDisplay = false
         mtk.isUserInteractionEnabled = false
@@ -360,10 +369,10 @@ public class PreviewContainerView: UIView {
         insertSubview(mtk, belowSubview: focusRingView)
     }
 
-    public func updateMetalPreviewState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool = false, preset: FilmPreset, intensity: Float) {
+    public func updateMetalPreviewState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool = false, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, preset: FilmPreset, intensity: Float) {
         // Chỉ kích hoạt MTKView khi đang bật bộ lọc màu khác .standard (tránh render chồng 2 lớp với multiCamPrimaryPreviewLayer trong Dual Camera)
-        let shouldRender = (isActive && preset != .standard)
-        metalRenderer?.updateState(isActive: isActive, isDualCamera: isDualCamera, isVideoMode: isVideoMode, preset: preset, intensity: intensity)
+        let shouldRender = (isActive && preset != .standard) || isSimulatedUltraWide
+        metalRenderer?.updateState(isActive: isActive, isDualCamera: isDualCamera, isVideoMode: isVideoMode, isSimulatedUltraWide: isSimulatedUltraWide, simulatedFactor: simulatedFactor, preset: preset, intensity: intensity)
 
         if isDualCamera {
             dualPrimaryContainerView.isHidden = shouldRender || (multiCamOverlayLayer == nil)

@@ -489,15 +489,11 @@ struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
     private var zoomOptions: [CGFloat] {
-        let opts = viewModel.cameraService.availableDisplayZoomOptions.filter { $0 < 4.9 }
-        if !opts.isEmpty {
-            return opts
+        var opts = viewModel.cameraService.availableDisplayZoomOptions.filter {  < 4.9 }
+        if !opts.contains(0.5) {
+            opts.insert(0.5, at: 0)
         }
-        if viewModel.cameraService.hasUltraWideLens {
-            return [0.5, 1.0, 2.0, 3.0]
-        } else {
-            return [1.0, 2.0, 3.0]
-        }
+        return opts.sorted()
     }
 
     var body: some View {

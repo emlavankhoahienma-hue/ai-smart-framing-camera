@@ -364,10 +364,13 @@ public final class CameraViewModel: ObservableObject {
     @Published public var currentZoom: CGFloat = 1.0
     @Published public var displayZoom: CGFloat = 1.0
     @Published public var selectedZoomPreset: CGFloat = 1.0
+    @Published public var isSimulatedUltraWideActive: Bool = false
+    @Published public var simulatedUltraWideFactor: CGFloat = 1.0
     public var zoomFactor: CGFloat { currentZoom }
     public var availableDisplayZoomOptions: [CGFloat] {
         let opts = cameraService.availableDisplayZoomOptions
-        return opts.isEmpty ? [1.0, 2.0, 3.0] : opts
+        if opts.isEmpty { return [0.5, 1.0, 2.0, 3.0] }
+        return opts.contains(0.5) ? opts : ([0.5] + opts).sorted()
     }
     @Published public var activeZoomHUDText: String? = nil
     @Published public var isZoomHUDVisible: Bool = false
@@ -3582,6 +3585,15 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func requestManualZoom(_ displayZoomVal: CGFloat, smooth: Bool = false) {
+        if displayZoomVal < 0.99 && !cameraService.hasUltraWideLens {
+            self.isSimulatedUltraWideActive = true
+            self.simulatedUltraWideFactor = displayZoomVal
+            self.displayZoom = displayZoomVal
+            self.selectedZoomPreset = 0.5
+        } else if displayZoomVal >= 0.99 {
+            self.isSimulatedUltraWideActive = false
+            self.simulatedUltraWideFactor = 1.0
+        }
         presentZoomChangeHUD(displayZoom: displayZoomVal)
         let requestID = UUID()
         manualZoomRequestID = requestID
@@ -4345,6 +4357,8 @@ public final class CameraViewModel: ObservableObject {
         let aspect: WindowedZoomAspectRatio
         let score: Double
         let baseOpticalZoom: CGFloat
+        let isSimulatedUltraWide: Bool
+        let simulatedUltraWideFactor: CGFloat
     }
     private var captureProcessingSettings: PhotoProcessingSettings?
 
@@ -4364,7 +4378,9 @@ public final class CameraViewModel: ObservableObject {
             applyFilm: apply, crop: isWindowedZoomActive && windowedZoomFocalLength > 24.5, focalLength: windowedZoomFocalLength,
             aspect: windowedZoomAspectRatio,
             score: stateBeforeCapture == .alignmentPerfect ? 1 : (framingResult?.alignmentScore ?? 0.8),
-            baseOpticalZoom: displayZoom)
+            baseOpticalZoom: displayZoom,
+            isSimulatedUltraWide: isSimulatedUltraWideActive,
+            simulatedUltraWideFactor: simulatedUltraWideFactor)
     }
 
     private func captureNativePhoto(highResolution: Bool) {
@@ -4682,6 +4698,8 @@ extension CameraViewModel: CameraServiceDelegate {
         let activeRule = settings.rule
         let score = settings.score
         let isFilmActive = settings.applyFilm && format != .dng
+        let isSimulatedUW = settings.isSimulatedUltraWide && format != .dng
+        let simUWFactor = settings.simulatedUltraWideFactor
         let isWindowed = settings.crop && format != .dng
         let windowFocal = settings.focalLength
         let windowAspect = settings.aspect
@@ -4724,15 +4742,22 @@ extension CameraViewModel: CameraServiceDelegate {
                 effectiveSourcePhoto = photo
             }
 
-            var processedImageResult: CGImage = effectiveSourcePhoto
+            let photoAfterCropOrSim: CGImage
+            if isSimulatedUW {
+                photoAfterCropOrSim = UltraWideWarpEngine.shared.applySimulatedUltraWide(to: effectiveSourcePhoto, factor: simUWFactor) ?? effectiveSourcePhoto
+            } else {
+                photoAfterCropOrSim = effectiveSourcePhoto
+            }
+
+            var processedImageResult: CGImage = photoAfterCropOrSim
             autoreleasepool {
                 if hasColorEdits {
                     processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(
-                        to: effectiveSourcePhoto, preset: effectivePreset, params: finalColorParams, intensity: appliedIntensity) ?? effectiveSourcePhoto
+                        to: photoAfterCropOrSim, preset: effectivePreset, params: finalColorParams, intensity: appliedIntensity) ?? photoAfterCropOrSim
                 }
             }
 
-            let preservesOriginal = (format == .dng || (!isWindowed && !hasColorEdits)) && rawData != nil
+            let preservesOriginal = (format == .dng || (!isWindowed && !hasColorEdits && !isSimulatedUW)) && rawData != nil
             let encodedEditedData: Data? = autoreleasepool {
                 if format != .dng && !preservesOriginal {
                     return Self.encodeRenderedPhoto(processedImageResult, sourceData: rawData, format: format)
@@ -4850,6 +4875,8 @@ extension CameraViewModel: CameraServiceDelegate {
 
     public func cameraService(_ service: CameraService, didChangeZoomFactor zoom: CGFloat) {
         self.currentZoom = zoom
+        self.isSimulatedUltraWideActive = service.isSimulatedUltraWideActive
+        self.simulatedUltraWideFactor = service.simulatedUltraWideFactor
         self.displayZoom = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
         SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
         finishManualZoomIfSettled(zoom)
