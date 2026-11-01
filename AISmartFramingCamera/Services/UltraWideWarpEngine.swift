@@ -4,14 +4,10 @@ import CoreGraphics
 import Metal
 
 /// Động cơ Giả lập Quang học Góc Siêu rộng (Simulated Ultra-Wide 0.5x Full Frame Engine)
-/// Áp dụng thuật toán Radial Panini / Barrel-to-Rectilinear Ultra-Wide Warp:
-/// u_src = u * (alpha + (1.0 - alpha) * pow(abs(u), k))
-/// v_src = v * (alpha + (1.0 - alpha) * pow(abs(v), k))
-/// Tuyệt đối bảo toàn biên: khi |u| = 1.0 thì u_src = ±1.0, tràn viền 100% không viền đen.
+/// Sử dụng CIFilter CIBumpDistortion nguyên bản của Apple (100% GPU Metal, không warning, không viền đen).
 public final class UltraWideWarpEngine: @unchecked Sendable {
     public static let shared = UltraWideWarpEngine()
 
-    private let warpKernel: CIWarpKernel?
     private let ciContext: CIContext
 
     public init() {
@@ -23,63 +19,22 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         } else {
             self.ciContext = CIContext(options: [.useSoftwareRenderer: false])
         }
-
-        let metalKernelSource = """
-        #include <CoreImage/CoreImage.h>
-        using namespace metal;
-
-        extern "C" {
-            namespace coreimage {
-                float2 ultraWideRadialPaniniWarp(float2 extentOrigin, float2 extentSize, float alpha, float k, destination dest) {
-                    float2 p = dest.coord() - extentOrigin;
-                    float2 uv = (p / extentSize - 0.5) * 2.0;
-                    float u = clamp(uv.x, -1.0, 1.0);
-                    float v = clamp(uv.y, -1.0, 1.0);
-                    float absU = abs(u);
-                    float absV = abs(v);
-                    float u_src = u * (alpha + (1.0 - alpha) * pow(absU, k));
-                    float v_src = v * (alpha + (1.0 - alpha) * pow(absV, k));
-                    return (float2(u_src, v_src) * 0.5 + 0.5) * extentSize + extentOrigin;
-                }
-            }
-        }
-        """
-        if let kernels = try? CIKernel.kernels(withMetalString: metalKernelSource),
-           let warp = kernels.first(where: { $0.name == "ultraWideRadialPaniniWarp" }) as? CIWarpKernel {
-            self.warpKernel = warp
-        } else {
-            self.warpKernel = nil
-        }
     }
 
     public func applySimulatedUltraWide(to image: CIImage, factor: CGFloat = 0.5) -> CIImage {
         let extent = image.extent
-        guard extent.width > 0, extent.height > 0 else { return image }
-
-        // alpha ≈ 1.38 - 1.45 ở mức 0.5x, k ≈ 2.1
-        let clampedFactor = max(0.40, min(1.0, factor))
-        let t = Float((1.0 - clampedFactor) / 0.5)
-        let alpha = 1.0 + t * 0.42
-        let k: Float = 2.1
-
-        guard let kernel = warpKernel else {
-            let s = 1.0 / CGFloat(alpha)
-            let tForm = CGAffineTransform(translationX: -extent.midX, y: -extent.midY)
-                .concatenating(CGAffineTransform(scaleX: s, y: s))
-                .concatenating(CGAffineTransform(translationX: extent.midX, y: extent.midY))
-            return image.transformed(by: tForm).cropped(to: extent)
-        }
-
-        let originVec = CIVector(x: extent.origin.x, y: extent.origin.y)
-        let sizeVec = CIVector(x: extent.width, y: extent.height)
-
-        let warped = kernel.apply(
-            extent: extent,
-            roiCallback: { _, _ in extent },
-            image: image,
-            arguments: [originVec, sizeVec, NSNumber(value: alpha), NSNumber(value: k)]
-        )
-        return warped ?? image
+        guard extent.width > 1, extent.height > 1 else { return image }
+        let center = CIVector(x: extent.midX, y: extent.midY)
+        let radius = hypot(extent.width, extent.height) * 0.54
+        let clamped = image.clampedToExtent()
+        guard let filter = CIFilter(name: "CIBumpDistortion") else { return image }
+        filter.setValue(clamped, forKey: kCIInputImageKey)
+        filter.setValue(center, forKey: kCIInputCenterKey)
+        filter.setValue(radius, forKey: kCIInputRadiusKey)
+        // inputScale âm (-0.48) thu nhỏ chủ thể ở tâm lùi xa ra như ống kính 0.5x và kéo giãn mượt vùng rìa tràn khít 100% khung hình:
+        let intensity = Float(min(max((1.0 - factor) * 0.95, 0.25), 0.55))
+        filter.setValue(-intensity, forKey: kCIInputScaleKey)
+        return (filter.outputImage ?? image).cropped(to: extent)
     }
 
     public func applySimulatedUltraWide(to cgImage: CGImage, factor: CGFloat = 0.5) -> CGImage? {
