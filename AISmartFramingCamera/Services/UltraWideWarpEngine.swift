@@ -24,20 +24,32 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             self.ciContext = CIContext(options: [.useSoftwareRenderer: false])
         }
 
-        let kernelSource = """
-        kernel vec2 ultraWideRadialPaniniWarp(vec2 extentOrigin, vec2 extentSize, float alpha, float k) {
-            vec2 p = destCoord() - extentOrigin;
-            vec2 uv = (p / extentSize - 0.5) * 2.0;
-            float u = clamp(uv.x, -1.0, 1.0);
-            float v = clamp(uv.y, -1.0, 1.0);
-            float absU = abs(u);
-            float absV = abs(v);
-            float u_src = u * (alpha + (1.0 - alpha) * pow(absU, k));
-            float v_src = v * (alpha + (1.0 - alpha) * pow(absV, k));
-            return (vec2(u_src, v_src) * 0.5 + 0.5) * extentSize + extentOrigin;
+        let metalKernelSource = """
+        #include <CoreImage/CoreImage.h>
+        using namespace metal;
+
+        extern "C" {
+            namespace coreimage {
+                float2 ultraWideRadialPaniniWarp(float2 extentOrigin, float2 extentSize, float alpha, float k, destination dest) {
+                    float2 p = dest.coord() - extentOrigin;
+                    float2 uv = (p / extentSize - 0.5) * 2.0;
+                    float u = clamp(uv.x, -1.0, 1.0);
+                    float v = clamp(uv.y, -1.0, 1.0);
+                    float absU = abs(u);
+                    float absV = abs(v);
+                    float u_src = u * (alpha + (1.0 - alpha) * pow(absU, k));
+                    float v_src = v * (alpha + (1.0 - alpha) * pow(absV, k));
+                    return (float2(u_src, v_src) * 0.5 + 0.5) * extentSize + extentOrigin;
+                }
+            }
         }
         """
-        self.warpKernel = CIWarpKernel(source: kernelSource)
+        if let kernels = try? CIKernel.kernels(withMetalString: metalKernelSource),
+           let warp = kernels.first(where: { $0.name == "ultraWideRadialPaniniWarp" }) as? CIWarpKernel {
+            self.warpKernel = warp
+        } else {
+            self.warpKernel = nil
+        }
     }
 
     public func applySimulatedUltraWide(to image: CIImage, factor: CGFloat = 0.5) -> CIImage {
