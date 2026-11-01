@@ -6,10 +6,11 @@ import Accelerate
 
 /// Động cơ Giả lập Quang học Góc Siêu rộng (Simulated Ultra-Wide 0.5x Full Frame Engine)
 /// Sử dụng Thuật toán Separable Anamorphic SuperView biên dịch trực tiếp qua Metal Compute Pipeline
-/// u_src = (1.0 - beta_x) * u + beta_x * (u * u * u)
-/// v_src = (1.0 - beta_y) * v + beta_y * (v * v * v)
-/// Bảo toàn 100% đường thẳng trục ngang / trục dọc, không méo cong đồng hồ cát ở chế độ Video,
-/// bảo toàn chặt chẽ biên [-1.0, 1.0] -> [-1.0, 1.0], không sinh sọc mã vạch ở 4 cạnh.
+/// u_src = (1.0 + beta_x) * u - beta_x * (u * u * u)
+/// v_src = (1.0 + beta_y) * v - beta_y * (v * v * v)
+/// Đạo hàm tại tâm (1 + beta) > 1.0 mở rộng góc nhìn trung tâm thật sự, không phóng to ngược,
+/// bảo toàn chặt chẽ không gian màu sRGB/P3 không bị bệt trắng (Double Gamma Bleaching),
+/// bảo toàn 100% biên [-1.0, 1.0] -> [-1.0, 1.0], không sinh sọc viền và không viền đen.
 public final class UltraWideWarpEngine: @unchecked Sendable {
     public static let shared = UltraWideWarpEngine()
 
@@ -60,11 +61,11 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         let width = Int(extent.width)
         let height = Int(extent.height)
 
-        // Tính toán tham số beta theo tỷ lệ zoom 0.5x (beta_x = 0.34, beta_y = 0.26)
+        // Mở rộng góc rộng: beta_x = 0.18, beta_y = 0.12 ở mức 0.5x
         let clampedFactor = max(0.35, min(1.0, factor))
         let t = Float((1.0 - clampedFactor) / 0.5)
-        let betaX = max(0.0, min(0.45, t * 0.34))
-        let betaY = max(0.0, min(0.38, t * 0.26))
+        let betaX = max(0.0, min(0.24, t * 0.18))
+        let betaY = max(0.0, min(0.16, t * 0.12))
 
         guard let dev = device,
               let cmdQueue = commandQueue,
@@ -103,13 +104,15 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             outTex = newOut
         }
 
-        // Render CIImage vào inTexture
+        // Bảo toàn chính xác không gian màu gốc, tránh CoreImage áp chồng 2 lần Gamma sRGB (Double Gamma Bleaching)
+        let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+
         ciContext.render(
             image,
             to: inTex,
             commandBuffer: nil,
             bounds: extent,
-            colorSpace: CGColorSpaceCreateDeviceRGB()
+            colorSpace: colorSpace
         )
 
         // Thực thi Metal Compute Shader Separable SuperView
@@ -140,17 +143,18 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         cmdBuffer.commit()
         cmdBuffer.waitUntilCompleted()
 
-        return CIImage(mtlTexture: outTex, options: nil) ?? image
+        return CIImage(mtlTexture: outTex, options: [.colorSpace: colorSpace]) ?? image
     }
 
     public func applySimulatedUltraWide(to cgImage: CGImage, factor: CGFloat = 0.5) -> CGImage? {
-        let ciImage = CIImage(cgImage: cgImage)
+        let colorSpace = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        let ciImage = CIImage(cgImage: cgImage, options: [.colorSpace: colorSpace])
         let warpedCI = applySimulatedUltraWide(to: ciImage, factor: factor)
         return ciContext.createCGImage(
             warpedCI,
             from: warpedCI.extent,
             format: .RGBA8,
-            colorSpace: cgImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+            colorSpace: colorSpace
         )
     }
 }

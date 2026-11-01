@@ -6,11 +6,11 @@ struct SuperViewParams {
     float beta_y;
 };
 
-// Separable Anamorphic SuperView Kernel:
-// u_src = (1.0 - beta_x) * u + beta_x * (u * u * u)
-// v_src = (1.0 - beta_y) * v + beta_y * (v * v * v)
-// Monotonically maps [-1.0, 1.0] to [-1.0, 1.0].
-// Strictly rectilinear along horizontal and vertical axes, zero streaks, zero hourglass pinching.
+// Separable Wide-Angle Expansion Kernel:
+// u_src = (1.0 + beta_x) * u - beta_x * (u * u * u)
+// v_src = (1.0 + beta_y) * v - beta_y * (v * v * v)
+// Derivative at center is (1.0 + beta_x) > 1.0: true wide-angle optical FOV expansion (shrinks center, reveals more surroundings)
+// Boundaries [-1.0, 1.0] map exactly to [-1.0, 1.0], zero black borders, zero streak artifacts.
 kernel void separableSuperViewKernel(
     texture2d<float, access::sample> inTexture [[texture(0)]],
     texture2d<float, access::write> outTexture [[texture(1)]],
@@ -33,9 +33,9 @@ kernel void separableSuperViewKernel(
     float beta_x = params.beta_x;
     float beta_y = params.beta_y;
 
-    // Separable Anamorphic SuperView mapping: [-1, 1] -> [-1, 1]
-    float u_src = (1.0f - beta_x) * u + beta_x * (u * u * u);
-    float v_src = (1.0f - beta_y) * v + beta_y * (v * v * v);
+    // True Wide-Angle Optical Expansion (derivative at center is 1.0 + beta > 1.0):
+    float u_src = (1.0f + beta_x) * u - beta_x * (u * u * u);
+    float v_src = (1.0f + beta_y) * v - beta_y * (v * v * v);
 
     // Map back to normalized UV [0.0, 1.0]
     float2 srcUV = float2(u_src * 0.5f + 0.5f, v_src * 0.5f + 0.5f);
