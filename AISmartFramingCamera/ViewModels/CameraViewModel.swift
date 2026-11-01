@@ -4736,6 +4736,8 @@ extension CameraViewModel: CameraServiceDelegate {
         let windowCenter = self.windowedZoomNormalizedCenter
         let hasColorEdits = isFilmActive && (effectivePreset != .standard || finalColorParams != nil)
         let appliedIntensity = Float(self.filmSimulationIntensity)
+        let isHorizonLock = self.isHorizonLockEnabled
+        let horizonMotion = isHorizonLock ? DeviceMotionService.shared.currentHorizonParams() : (roll: Float(0), zoom: Float(1), shakeX: Float(0), shakeY: Float(0))
 
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -4772,15 +4774,14 @@ extension CameraViewModel: CameraServiceDelegate {
             }
 
             let photoAfterCropOrSim: CGImage
-            if isSimulatedUW || self.isHorizonLockEnabled {
-                let motionParams = self.isHorizonLockEnabled ? DeviceMotionService.shared.currentHorizonParams() : (roll: Float(0), zoom: Float(1), shakeX: Float(0), shakeY: Float(0))
+            if isSimulatedUW || isHorizonLock {
                 photoAfterCropOrSim = UltraWideWarpEngine.shared.applySimulatedUltraWide(
                     to: effectiveSourcePhoto,
                     factor: isSimulatedUW ? simUWFactor : 1.0,
-                    horizonRollAngle: self.isHorizonLockEnabled ? motionParams.roll : 0.0,
-                    horizonZoomScale: self.isHorizonLockEnabled ? motionParams.zoom : 1.0,
-                    horizonShakeX: self.isHorizonLockEnabled ? motionParams.shakeX : 0.0,
-                    horizonShakeY: self.isHorizonLockEnabled ? motionParams.shakeY : 0.0
+                    horizonRollAngle: isHorizonLock ? horizonMotion.roll : 0.0,
+                    horizonZoomScale: isHorizonLock ? horizonMotion.zoom : 1.0,
+                    horizonShakeX: isHorizonLock ? horizonMotion.shakeX : 0.0,
+                    horizonShakeY: isHorizonLock ? horizonMotion.shakeY : 0.0
                 ) ?? effectiveSourcePhoto
             } else {
                 photoAfterCropOrSim = effectiveSourcePhoto
@@ -4794,7 +4795,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 }
             }
 
-            let preservesOriginal = (format == .dng || (!isWindowed && !hasColorEdits && !isSimulatedUW && !self.isHorizonLockEnabled)) && rawData != nil
+            let preservesOriginal = (format == .dng || (!isWindowed && !hasColorEdits && !isSimulatedUW && !isHorizonLock)) && rawData != nil
             let encodedEditedData: Data? = autoreleasepool {
                 if format != .dng && !preservesOriginal {
                     return Self.encodeRenderedPhoto(processedImageResult, sourceData: rawData, format: format)
