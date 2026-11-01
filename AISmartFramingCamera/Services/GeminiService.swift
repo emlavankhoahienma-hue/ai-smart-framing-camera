@@ -425,7 +425,13 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public var technicalModelID: String {
         switch self {
         case .autoStrongest:
-            return "openai/gpt-4o-mini"
+            return "google/gemini-3.7-flash"
+        case .qwen25VL72BFree:
+            return "qwen/qwen2.5-vl-72b-instruct"
+        case .qwen25VL32BFree:
+            return "qwen/qwen2.5-vl-72b-instruct"
+        case .qwen3VLFree:
+            return "qwen/qwen3-vl-30b-a3b-instruct"
         case .pollinationsGPT54Nano:
             return "openai/gpt-4o-mini"
         case .pollinationsGPT54Mini:
@@ -538,33 +544,40 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public static var autoFallbackChain: [String] {
         [
-            "qwen/qwen2.5-vl-72b-instruct:free",
-            "google/gemini-2.0-flash-exp:free",
-            "google/gemini-2.5-flash-preview:free",
-            "meta-llama/llama-4-maverick:free",
-            "google/gemma-4-31b-it:free",
-            "openai/gpt-4.1-mini"
+            "google/gemini-3.7-flash",
+            "google/gemini-2.5-flash"
         ]
     }
 
     public static var freeFallbackChain: [String] {
         [
-            "qwen/qwen2.5-vl-72b-instruct:free",
-            "google/gemini-2.0-flash-exp:free",
-            "google/gemini-2.5-flash-preview:free",
-            "qwen/qwen2.5-vl-32b-instruct:free",
-            "meta-llama/llama-4-maverick:free",
-            "meta-llama/llama-4-scout:free",
-            "mistralai/pixtral-12b:free",
-            "moonshotai/kimi-vl-a3b-thinking:free",
-            "qwen/qwen3-vl-32b-instruct:free",
-            "google/gemma-4-31b-it:free"
+            "google/gemma-4-31b-it:free",
+            "google/gemma-4-26b-a4b-it:free",
+            "nvidia/nemotron-3.5-super-vl:free",
+            "openrouter/free"
         ]
+    }
+
+    public static func normalizeModelID(_ raw: String, provider: AICloudProvider) -> String {
+        let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard provider == .openRouter else { return clean }
+        let lower = clean.lowercased()
+
+        if lower.contains("qwen") && (lower.contains("72b") || lower.contains("73b") || lower.contains("2.5") || lower.contains("vl")) {
+            return "qwen/qwen2.5-vl-72b-instruct"
+        }
+        if lower == "qwen" || lower == "qwen2.5" || lower == "qwen-vl" {
+            return "qwen/qwen2.5-vl-72b-instruct"
+        }
+        if lower.contains("qwen3") || lower.contains("qwen-3") {
+            return "qwen/qwen3-vl-30b-a3b-instruct"
+        }
+        return clean
     }
 
     public static func fallbackChain(selected: AIVisionModel, customModelName: String, provider: AICloudProvider = .openRouter) -> [String] {
         let custom = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        var preferred = custom.isEmpty ? selected.technicalModelID : custom
+        var preferred = (selected == .freeVision || custom.isEmpty) ? selected.technicalModelID : custom
 
         if provider == .pollinations {
             var cleanModel = preferred.replacingOccurrences(of: ":free", with: "")
@@ -657,12 +670,54 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         guard provider == .openRouter else {
             return [preferred]
         }
+
+        if selected == .autoStrongest && custom.isEmpty {
+            return autoFallbackChain
+        }
+
+        preferred = normalizeModelID(preferred, provider: .openRouter)
+
         if selected != .autoStrongest && !custom.isEmpty {
+            if preferred.contains("qwen") {
+                let candidates = [preferred, "google/gemma-4-31b-it:free", "google/gemini-2.5-flash", "openai/gpt-4o-mini"]
+                var chain: [String] = []
+                for cand in candidates {
+                    if !chain.contains(cand) { chain.append(cand) }
+                }
+                return chain
+            }
             return [preferred]
         }
-        let freeOnly = preferred.hasSuffix(":free") || preferred == "openrouter/free"
-        let fallback = freeOnly ? ["google/gemini-2.0-flash-exp:free", "google/gemma-4-31b-it:free"] : ["google/gemini-2.0-flash-exp:free", "openai/gpt-4o-mini"]
-        return [preferred] + fallback.filter { $0 != preferred }
+
+        let freeOnly = (selected == .freeVision) || (preferred.hasSuffix(":free") || preferred == "openrouter/free")
+        if freeOnly {
+            var chain = [preferred]
+            for cand in freeFallbackChain {
+                if !chain.contains(cand) {
+                    chain.append(cand)
+                }
+            }
+            return chain
+        }
+
+        if preferred.contains("qwen") {
+            let candidates = [preferred, "google/gemma-4-31b-it:free", "google/gemini-2.5-flash", "openai/gpt-4o-mini"]
+            var chain: [String] = []
+            for cand in candidates {
+                if !chain.contains(cand) {
+                    chain.append(cand)
+                }
+            }
+            return chain
+        }
+
+        var chain = [preferred]
+        for cand in autoFallbackChain {
+            if !chain.contains(cand) {
+                chain.append(cand)
+            }
+        }
+        return chain
     }
 }
 
@@ -1203,14 +1258,16 @@ public final class GeminiService: ObservableObject {
     }
 
     public var cloudAnalysisDeadline: TimeInterval {
-        if selectedProvider == .pollinations { return 22.0 }
-        let custom = customModelName
-        if custom.hasSuffix(":free") || custom == "openrouter/free" { return 20.0 }
+        if selectedProvider == .pollinations { return 25.0 }
+        let custom = customModelName.lowercased()
+        if custom.contains("qwen") || custom.contains("72b") || custom.contains("73b") || custom.hasSuffix(":free") || custom == "openrouter/free" {
+            return 38.0
+        }
         switch selectedModel {
-        case .freeVision, .gemini25FlashFree, .qwen3VLFree, .llama4MaverickFree:
-            return 20.0
+        case .freeVision, .gemini25FlashFree, .qwen25VL72BFree, .qwen25VL72B, .qwen25VL32BFree, .qwen3VLFree, .llama4MaverickFree:
+            return 38.0
         default:
-            return 16.0
+            return selectedProvider == .openRouter ? 35.0 : 20.0
         }
     }
 
@@ -2103,8 +2160,8 @@ public final class GeminiService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 25.0
-        if modelID.hasSuffix(":free") || modelID == "openrouter/free" {
+        request.timeoutInterval = 35.0
+        if modelID.hasSuffix(":free") || modelID == "openrouter/free" || modelID.contains("qwen") || modelID.contains("72b") || selectedProvider == .openRouter {
             request.timeoutInterval = 45.0
         }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -2281,11 +2338,43 @@ public final class GeminiService: ObservableObject {
     }
 
     public static func hasUsableFraming(_ json: [String: Any]) -> Bool {
-        let x = parseCGFloat(json["subject_x"], defaultVal: parseCGFloat(json["target_x"], defaultVal: .nan))
-        let y = parseCGFloat(json["subject_y"], defaultVal: parseCGFloat(json["target_y"], defaultVal: .nan))
-        let zoom = parseCGFloat(json["suggested_zoom"], defaultVal: .nan)
+        var x = parseCGFloat(json["subject_x"], defaultVal: parseCGFloat(json["target_x"], defaultVal: .nan))
+        var y = parseCGFloat(json["subject_y"], defaultVal: parseCGFloat(json["target_y"], defaultVal: .nan))
+
+        if !x.isFinite || !y.isFinite {
+            if let rect = json["sub_area_rect_norm"] as? [Any], rect.count == 4 {
+                let rx = parseCGFloat(rect[0], defaultVal: 0)
+                let ry = parseCGFloat(rect[1], defaultVal: 0)
+                let rw = parseCGFloat(rect[2], defaultVal: 0)
+                let rh = parseCGFloat(rect[3], defaultVal: 0)
+                x = rx + rw / 2.0
+                y = ry + rh / 2.0
+            } else if let rect = json["SubAreaRectNorm"] as? [Any], rect.count == 4 {
+                let rx = parseCGFloat(rect[0], defaultVal: 0)
+                let ry = parseCGFloat(rect[1], defaultVal: 0)
+                let rw = parseCGFloat(rect[2], defaultVal: 0)
+                let rh = parseCGFloat(rect[3], defaultVal: 0)
+                x = rx + rw / 2.0
+                y = ry + rh / 2.0
+            } else if let targetArr = json["target"] as? [Any], targetArr.count >= 2 {
+                x = parseCGFloat(targetArr[0], defaultVal: .nan)
+                y = parseCGFloat(targetArr[1], defaultVal: .nan)
+            }
+        }
+
+        var zoom = parseCGFloat(json["suggested_zoom"], defaultVal: parseCGFloat(json["recommended_zoom"], defaultVal: parseCGFloat(json["zoom"], defaultVal: .nan)))
+        if !zoom.isFinite, let focalMm = json["ExifFocalLength"] {
+            let mm = parseCGFloat(focalMm, defaultVal: .nan)
+            if mm.isFinite && mm > 0 {
+                zoom = mm / 26.0
+            }
+        }
+        if !zoom.isFinite && x.isFinite && y.isFinite && (0...1).contains(x) && (0...1).contains(y) {
+            zoom = 1.0
+        }
+
         return x.isFinite && y.isFinite && zoom.isFinite &&
-            (0...1).contains(x) && (0...1).contains(y) && (1...5).contains(zoom)
+            (0...1).contains(x) && (0...1).contains(y) && (0.5...5.0).contains(zoom)
     }
 
     // MARK: - Self-Healing JSON Cleaner & Fallback Extractor
@@ -2293,7 +2382,31 @@ public final class GeminiService: ObservableObject {
     public static func cleanAndParseJSON(from rawText: String) -> [String: Any]? {
         var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Strip markdown code fences if present
+        // 1. Strip reasoning/thinking tags (DeepSeek R1 / Qwen thinking / Kimi / Ollama)
+        if let thinkRegex = try? NSRegularExpression(pattern: "(?s)<think>.*?</think>", options: []) {
+            let range = NSRange(location: 0, length: text.utf16.count)
+            text = thinkRegex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+        }
+        if let thoughtRegex = try? NSRegularExpression(pattern: "(?s)<thought>.*?</thought>", options: []) {
+            let range = NSRange(location: 0, length: text.utf16.count)
+            text = thoughtRegex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+        }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 2. Search for ```json ... ``` or ``` ... ``` markdown code block first
+        if let fenceRegex = try? NSRegularExpression(pattern: "(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```", options: []) {
+            let range = NSRange(location: 0, length: text.utf16.count)
+            if let match = fenceRegex.firstMatch(in: text, options: [], range: range),
+               let r = Range(match.range(at: 1), in: text) {
+                let candidate = String(text[r])
+                if let data = candidate.data(using: .utf8),
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    return obj
+                }
+            }
+        }
+
+        // 3. Strip markdown code fences if present
         if text.hasPrefix("```json") {
             text = String(text.dropFirst(7))
         } else if text.hasPrefix("```") {
@@ -2304,19 +2417,19 @@ public final class GeminiService: ObservableObject {
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Locate outermost braces
+        // 4. Locate outermost braces
         if let firstBrace = text.firstIndex(of: "{"),
            let lastBrace = text.lastIndex(of: "}") {
             text = String(text[firstBrace...lastBrace])
         }
 
-        // Direct parse
+        // 5. Direct parse
         if let data = text.data(using: .utf8),
            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             return obj
         }
 
-        // Trailing comma sanitation: e.g. `, }` or `, ]`
+        // 6. Trailing comma sanitation: e.g. `, }` or `, ]`
         if let regex = try? NSRegularExpression(pattern: ",\\s*([}\\]])", options: []) {
             let range = NSRange(location: 0, length: text.utf16.count)
             let sanitized = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "$1")
@@ -2620,8 +2733,32 @@ public final class GeminiService: ObservableObject {
     // MARK: - Response Parsing
 
     private static func parseGeminiResponse(_ json: [String: Any], modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
-        let rawTargetX = parseCGFloat(json["target_x"], defaultVal: 0.5)
-        let rawTargetY = parseCGFloat(json["target_y"], defaultVal: 0.5)
+        var rawTargetX = parseCGFloat(json["target_x"], defaultVal: .nan)
+        var rawTargetY = parseCGFloat(json["target_y"], defaultVal: .nan)
+
+        if !rawTargetX.isFinite || !rawTargetY.isFinite {
+            if let rect = json["sub_area_rect_norm"] as? [Any], rect.count == 4 {
+                let rx = parseCGFloat(rect[0], defaultVal: 0)
+                let ry = parseCGFloat(rect[1], defaultVal: 0)
+                let rw = parseCGFloat(rect[2], defaultVal: 0)
+                let rh = parseCGFloat(rect[3], defaultVal: 0)
+                rawTargetX = rx + rw / 2.0
+                rawTargetY = ry + rh / 2.0
+            } else if let rect = json["SubAreaRectNorm"] as? [Any], rect.count == 4 {
+                let rx = parseCGFloat(rect[0], defaultVal: 0)
+                let ry = parseCGFloat(rect[1], defaultVal: 0)
+                let rw = parseCGFloat(rect[2], defaultVal: 0)
+                let rh = parseCGFloat(rect[3], defaultVal: 0)
+                rawTargetX = rx + rw / 2.0
+                rawTargetY = ry + rh / 2.0
+            } else if let targetArr = json["target"] as? [Any], targetArr.count >= 2 {
+                rawTargetX = parseCGFloat(targetArr[0], defaultVal: 0.5)
+                rawTargetY = parseCGFloat(targetArr[1], defaultVal: 0.5)
+            } else {
+                rawTargetX = parseCGFloat(json["subject_x"], defaultVal: 0.5)
+                rawTargetY = parseCGFloat(json["subject_y"], defaultVal: 0.5)
+            }
+        }
         let subjectX = parseCGFloat(json["subject_x"], defaultVal: rawTargetX)
         let subjectY = parseCGFloat(json["subject_y"], defaultVal: rawTargetY)
         let compX = parseCGFloat(json["composition_x"], defaultVal: 0.5)
@@ -2635,7 +2772,13 @@ public final class GeminiService: ObservableObject {
             estSize = CGSize(width: sw, height: sh)
         }
 
-        let suggestedZoom = parseCGFloat(json["suggested_zoom"], defaultVal: 1.0)
+        var suggestedZoom = parseCGFloat(json["suggested_zoom"], defaultVal: parseCGFloat(json["recommended_zoom"], defaultVal: parseCGFloat(json["zoom"], defaultVal: 1.0)))
+        if let focalMm = json["ExifFocalLength"] {
+            let mm = parseCGFloat(focalMm, defaultVal: .nan)
+            if mm.isFinite && mm > 0 {
+                suggestedZoom = mm / 26.0
+            }
+        }
         let explanation = (json["explanation"] as? String) ?? "AI phân tích bố cục hoàn tất"
 
         let sceneType = parseSceneType((json["scene_type"] as? String) ?? "general")
@@ -2719,7 +2862,15 @@ public final class GeminiService: ObservableObject {
         } else if let f = val as? Float {
             parsed = Double(f)
         } else if let s = val as? String {
-            parsed = Double(s)
+            var clean = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if clean.lowercased().hasSuffix("x") {
+                clean = String(clean.dropLast()).trimmingCharacters(in: .whitespaces)
+            } else if clean.lowercased().hasSuffix("mm") {
+                if let mm = Double(clean.dropLast(2).trimmingCharacters(in: .whitespaces)) {
+                    clean = String(mm / 26.0)
+                }
+            }
+            parsed = Double(clean)
         } else {
             parsed = nil
         }

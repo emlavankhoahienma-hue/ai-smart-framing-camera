@@ -2191,13 +2191,12 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func handleGeminiResponse(_ response: GeminiFramingResponse) {
-        guard response.targetX.isFinite, response.targetY.isFinite,
-              (0...1).contains(response.targetX), (0...1).contains(response.targetY),
-              response.suggestedZoom.isFinite, response.suggestedZoom > 0 else {
-            geminiError = "AI trả về tọa độ hoặc mức zoom không hợp lệ; đã chuyển sang AI trên máy"
-            analyzeCloudCaptureLocally()
-            return
-        }
+        let rawX = response.targetX.isFinite ? response.targetX : 0.5
+        let rawY = response.targetY.isFinite ? response.targetY : 0.5
+        let safeX = max(0.05, min(0.95, rawX))
+        let safeY = max(0.05, min(0.95, rawY))
+        let safeZoom = max(1.0, min(5.0, (response.suggestedZoom.isFinite && response.suggestedZoom > 0) ? response.suggestedZoom : 1.0))
+
         self.geminiColorRecipe = response.colorRecipe
         self.geminiExplanation = response.explanation
         self.detectedScene = response.sceneType
@@ -2207,7 +2206,7 @@ public final class CameraViewModel: ObservableObject {
         self.activeEngineSource = .geminiCloud(model: response.modelUsed)
         self.geminiLatencyMs = response.latencyMs
         let isPlan2 = self.aiComposeTimes >= 2 || (response.estimatedSubjectSize != nil && (response.estimatedSubjectSize!.width * response.estimatedSubjectSize!.height) < 0.10)
-        let effectiveZoom = (isPlan2 && response.suggestedZoom < 1.7) ? 2.0 : response.suggestedZoom
+        let effectiveZoom = (isPlan2 && safeZoom < 1.7) ? 2.0 : safeZoom
         self.aiSuggestedZoom = effectiveZoom
         self.pendingSuggestedZoom = effectiveZoom
         self.hasExecutedAutoZoomForSession = false
