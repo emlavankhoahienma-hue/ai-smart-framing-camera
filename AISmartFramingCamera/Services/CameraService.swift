@@ -223,15 +223,8 @@ public final class CameraService: NSObject {
             let optical = telephotoOpticalDisplayZoom ?? 2.0
             return max(1.0, min(displayZoom / optical, maxZoom))
         }
-        if !hasUltraWideLens {
-            if displayZoom < 0.99 {
-                return minZoom
-            } else if displayZoom < 2.0 {
-                let devZoom = 1.22 + (displayZoom - 1.0) * 0.78
-                return max(minZoom, min(devZoom, maxZoom))
-            } else {
-                return max(minZoom, min(displayZoom, maxZoom))
-            }
+        if !hasUltraWideLens && displayZoom < 1.0 {
+            return minZoom
         }
         guard displayMultiplier.isFinite, displayMultiplier > 0 else {
             return max(minZoom, min(defaultDisplayZoom, maxZoom))
@@ -250,17 +243,8 @@ public final class CameraService: NSObject {
             let optical = telephotoOpticalDisplayZoom ?? 2.0
             return deviceZoom * optical
         }
-        if !hasUltraWideLens {
-            if isSimulatedUltraWideActive {
-                return simulatedUltraWideFactor
-            }
-            if deviceZoom <= 1.05 {
-                return 0.5
-            }
-            if deviceZoom < 2.0 {
-                return 1.0 + (deviceZoom - 1.22) / 0.78
-            }
-            return deviceZoom
+        if !hasUltraWideLens && isSimulatedUltraWideActive {
+            return simulatedUltraWideFactor
         }
         guard displayMultiplier.isFinite, displayMultiplier > 0 else {
             return defaultDisplayZoom
