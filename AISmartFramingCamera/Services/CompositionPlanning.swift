@@ -1041,7 +1041,7 @@ enum CompositionPlanner {
         case .animal, .object: desiredArea = CompositionTuning.desiredAreaAnimal
         }
 
-        if intent == .landscape || subject.kind == .scenery {
+        if subject.kind == .scenery {
             return [currentZoom]
         }
         var options: Set<CGFloat> = [currentZoom]

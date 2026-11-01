@@ -510,6 +510,11 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             for region in observation.salientObjects ?? [] where region.confidence >= salMinConf {
                     let area = region.boundingBox.width * region.boundingBox.height
                     guard area >= 0.012 && area <= 0.78 else { continue }
+                    // Loại bỏ chướng ngại vật sát biên khung hình (khung cửa sổ, vách tường, lan can ban công)
+                    let b = region.boundingBox
+                    let isSideOccluder = (b.minX <= 0.03 || b.maxX >= 0.97) && (b.height >= 0.55 || b.width >= 0.55)
+                    let isBottomOccluder = b.maxY >= 0.96 && b.height <= 0.35 && b.width >= 0.50
+                    guard !isSideOccluder && !isBottomOccluder else { continue }
                     let isObjectness = (index == 0)
                     let label = (isObjectness && area <= 0.42) ? "Chủ thể tiền cảnh" : "Vùng nổi bật"
                     let baseAdjusted = (isObjectness && area <= 0.42) ? min(0.92, region.confidence * 1.05) : region.confidence * 0.82

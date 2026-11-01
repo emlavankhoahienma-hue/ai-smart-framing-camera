@@ -175,7 +175,8 @@ final class CompositionAestheticSearch {
         // Shot-scale prior: a subject filling under half of the size its intent wants must be tightened
         // unless the learned models clearly object. Without this the full frame wins on resolution alone.
         let zoomNeeded = baseline.map {
-            CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio)
+            CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio) ||
+            ($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height < 0.12)
         } ?? false
         // Compare the two models jointly. A fixed SAMP-only 0.10/0.12-rating
         // veto prevented useful zoom even when the aesthetic model preferred it.
@@ -279,7 +280,7 @@ enum CompositionPreferencePolicy {
     static let undersizedSubjectRatio = 0.75
     /// How far a necessary tighter crop may trail the wide frame before the models' objection stands.
     static let necessaryCropTolerance = 0.05
-    static let shotScaleBonusWeight = 0.0
+    static let shotScaleBonusWeight = 0.05
 
     static func zoomIsNecessary(originalSizeRatio: Double) -> Bool {
         originalSizeRatio.isFinite && originalSizeRatio > 0 && originalSizeRatio < undersizedSubjectRatio

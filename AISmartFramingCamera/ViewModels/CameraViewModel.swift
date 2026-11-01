@@ -887,11 +887,12 @@ public final class CameraViewModel: ObservableObject {
             let distanceToCenter = hypot(currentEstimated.x - 0.5, currentEstimated.y - 0.5)
             let exitRadius = max(0.06, Double(alignmentRadius) * 2.2)
 
-            let subjectStillNear = distanceToCenter <= exitRadius && hasFreshOpticalLock
+            let isMovingSubject = detectedScene == .portrait || detectedScene == .pet
+            let subjectStillNear = distanceToCenter <= exitRadius && (!isMovingSubject || hasFreshOpticalLock)
             if subjectStillNear {
                 lastSubjectInLockTime = now
-            } else if now - lastSubjectInLockTime > 0.40 {
-                // Chủ thể đã thực sự rời xa tâm khóa > 400ms trong khi máy đứng yên
+            } else if now - lastSubjectInLockTime > 0.60 {
+                // Chủ thể đã thực sự rời xa tâm khóa > 600ms trong khi máy đứng yên
                 return true
             }
         }
@@ -2589,8 +2590,10 @@ public final class CameraViewModel: ObservableObject {
             let aimPoint = evaluatedFraming.targetPoint
             self.activeCompositionRule = evaluatedFraming.optimalRule
             self.framingResult = evaluatedFraming
-            self.pendingSuggestedZoom = evaluatedFraming.recommendedZoomFactor
-            self.aiSuggestedZoom = evaluatedFraming.recommendedZoomFactor
+            let isDistant = first.boundingBox.width * first.boundingBox.height < 0.10
+            let zoomTarget = ((self.aiComposeTimes >= 2 || isDistant) && evaluatedFraming.recommendedZoomFactor < 1.7) ? 2.0 : evaluatedFraming.recommendedZoomFactor
+            self.pendingSuggestedZoom = zoomTarget
+            self.aiSuggestedZoom = zoomTarget
             self.plannedEVBias = evaluatedFraming.recommendedEVBias
             self.plannedLightingScene = evaluatedFraming.lightingScene
             self.plannedLightingDescription = evaluatedFraming.lightingRationale
@@ -2760,7 +2763,11 @@ public final class CameraViewModel: ObservableObject {
         localCompositionExplanation = plan.explanation + zoomText
 
         // Doka Unified ScanResp for Local AI (SAMP-Net 0.45 + Charm 0.45 + Geometry 0.10)
-        let isPlan2 = self.aiComposeTimes >= 2 || (plan.subjectRect.width * plan.subjectRect.height < 0.10)
+        let isDistantSubject = (plan.subjectRect.width * plan.subjectRect.height < 0.10)
+        let isPlan2 = self.aiComposeTimes >= 2 || isDistantSubject
+        if (isPlan2 || isDistantSubject) && effectiveZoom < 1.7 {
+            effectiveZoom = 2.0 // Plan 2: Telephoto 50mm (2.0x) cho chủ thể xa / bấm AI lần 2
+        }
         let focalLengthStr: String
         if effectiveZoom <= 1.15 {
             focalLengthStr = "26mm"
