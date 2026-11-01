@@ -2230,15 +2230,9 @@ public final class CameraViewModel: ObservableObject {
         let subjectRect = normalizedSubjectRect(cloudTrackingSource?.subjectRect)
         let baseSubjectSize = response.estimatedSubjectSize ?? subjectRect?.size ?? CGSize(width: 0.25, height: 0.35)
 
-        // Tính toán hình học bố cục tối ưu:
-        let (cameraAimPoint, optimalZoom) = GeminiService.computeOptimalFramingGeometry(
-            subjectPoint: subjectAnchor,
-            compositionAnchor: compositionAnchor,
-            currentZoom: self.currentZoom,
-            suggestedZoom: response.suggestedZoom,
-            shotScale: response.shotScale,
-            subjectSize: baseSubjectSize
-        )
+        // Giữ nguyên 100% tọa độ dẫn hướng bố cục do Cloud AI trả về (không kéo ép lệch về faceCenter)
+        let aimPoint = CGPoint(x: response.targetX, y: response.targetY)
+        let optimalZoom = response.suggestedZoom
 
         let effectiveRect = subjectRect ?? CGRect(
             x: max(0.02, subjectAnchor.x - 0.12),
@@ -2246,9 +2240,6 @@ public final class CameraViewModel: ObservableObject {
             width: 0.24,
             height: 0.32
         )
-
-        // Áp dụng trực tiếp Target, Zoom và EV từ Chuyên gia Cloud AI
-        let aimPoint = cameraAimPoint
         let center = CGPoint(x: 0.5, y: 0.5)
         let dx = aimPoint.x - center.x
         let dy = aimPoint.y - center.y
@@ -2761,12 +2752,9 @@ public final class CameraViewModel: ObservableObject {
         let zoomText = abs(effectiveZoom - displayZoom) > 0.12 ? String(format: " · Smart Zoom %.1fx", effectiveZoom) : ""
         localCompositionExplanation = plan.explanation + zoomText
 
-        // Doka Unified ScanResp for Local AI (SAMP-Net 0.45 + Charm 0.45 + Geometry 0.10)
-        let isDistantSubject = (plan.subjectRect.width * plan.subjectRect.height < 0.10)
-        let isPlan2 = self.aiComposeTimes >= 2 || isDistantSubject
-        if (isPlan2 || isDistantSubject) && effectiveZoom < 1.7 {
-            effectiveZoom = 2.0 // Plan 2: Telephoto 50mm (2.0x) cho chủ thể xa / bấm AI lần 2
-        }
+        // Doka Unified ScanResp for Local AI: Tin tưởng 100% mức Zoom được SAMP-Net và Charm-PARA chấm điểm
+        let isPlan2 = self.aiComposeTimes >= 2
+
         let focalLengthStr: String
         if effectiveZoom <= 1.15 {
             focalLengthStr = "26mm"
@@ -2777,12 +2765,20 @@ public final class CameraViewModel: ObservableObject {
         } else {
             focalLengthStr = "70mm"
         }
+
+        // Khung cắt tối ưu 2D chuẩn Doka SubAreaRectNorm & Tâm mục tiêu thực tế
+        let cropW = min(1.0, 1.0 / effectiveZoom)
+        let cropH = min(1.0, 1.0 / effectiveZoom)
+        let cropX = max(0.0, min(1.0 - cropW, sourceAimPoint.x - cropW / 2.0))
+        let cropY = max(0.0, min(1.0 - cropH, sourceAimPoint.y - cropH / 2.0))
+        let targetCenter = CGPoint(x: cropX + cropW / 2.0, y: cropY + cropH / 2.0)
         let subArea = SubAreaRectNormModel(
-            x: max(0.0, min(1.0, plan.cropProtectionRect.minX)),
-            y: max(0.0, min(1.0, plan.cropProtectionRect.minY)),
-            w: max(0.05, min(1.0, plan.cropProtectionRect.width)),
-            h: max(0.05, min(1.0, plan.cropProtectionRect.height))
+            x: cropX,
+            y: cropY,
+            w: cropW,
+            h: cropH
         )
+
         let filterModel = AiCameraFilterModel(
             filterName: self.aiRecommendedPreset?.displayName ?? "Auto",
             reason: self.aiPresetMatchReason ?? "Tự động cân bằng bối cảnh"
@@ -2800,12 +2796,29 @@ public final class CameraViewModel: ObservableObject {
         )
         self.latestScanResp = ScanResp(code: 200, msg: "success", data: scanData)
 
-        framingResult = FramingTargetResult(targetPoint: liveAimPoint,
+        // Cập nhật tia dẫn hướng và tọa độ liveAimPoint theo đúng tâm SubAreaRectNorm
+        let finalGuideRay = source.pose.act(source.frame.calibration.deviceRay(at: targetCenter))
+        var finalLiveAim = targetCenter
+        if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
+           let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
+                ?? SpatialTrackingEngine.shared.latestPose() {
+            let projectedAim = currentFrame.calibration.project(
+                deviceRay: currentPose.inverse.act(finalGuideRay))
+            if projectedAim.point.x.isFinite, projectedAim.point.y.isFinite {
+                finalLiveAim = projectedAim.point
+            }
+        }
+        let finalDx = finalLiveAim.x - 0.5
+        let finalDy = finalLiveAim.y - 0.5
+        let finalDistance = hypot(finalDx, finalDy)
+        let finalAngle = atan2(finalDy, finalDx) * 180 / .pi
+
+        framingResult = FramingTargetResult(targetPoint: finalLiveAim,
             currentCenter: CGPoint(x: 0.5, y: 0.5),
-            offsetVector: CGVector(dx: dx, dy: dy), distance: distance,
-            angleDegrees: angle < 0 ? angle + 360 : angle,
-            alignmentScore: max(0, min(1, 1 - Double(distance / 0.40))),
-            isAligned: distance <= calculator.alignmentTolerance,
+            offsetVector: CGVector(dx: finalDx, dy: finalDy), distance: finalDistance,
+            angleDegrees: finalAngle < 0 ? finalAngle + 360 : finalAngle,
+            alignmentScore: max(0, min(1, 1 - Double(finalDistance / 0.40))),
+            isAligned: finalDistance <= calculator.alignmentTolerance,
             recommendedZoomFactor: effectiveZoom, optimalRule: activeCompositionRule,
             guideDescription: localCompositionExplanation)
         pendingSuggestedZoom = effectiveZoom
@@ -2817,11 +2830,11 @@ public final class CameraViewModel: ObservableObject {
         localSuggestionRects = []
         detectedSubjectRects = []
         localSelectionMessage = nil
-        // Track the physical subject with Vision/EKF while guiding the reticle along effectiveGuideRay.
+        // Khóa target chuẩn xác vào tâm thực của khung SubAreaRectNorm
         let trackedSubjectPoint = hero?.trackingPoint ?? anchor
-        pinTargetAndStartMotion(at: liveAimPoint,
+        pinTargetAndStartMotion(at: finalLiveAim,
             subjectRect: plan.subjectRect, source: source,
-            trackedPoint: trackedSubjectPoint, pinnedGuideRay: effectiveGuideRay)
+            trackedPoint: trackedSubjectPoint, pinnedGuideRay: finalGuideRay)
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
