@@ -107,6 +107,38 @@ public struct CameraMainView: View {
                                     .transition(.scale(scale: 0.85).combined(with: .opacity))
                             }
 
+                            // 360° Horizon Lock HUD Vector Feedback Badge (Top Trailing)
+                            if viewModel.isHorizonLockEnabled {
+                                VStack {
+                                    HStack {
+                                        Spacer()
+                                        HStack(spacing: 5) {
+                                            Image(systemName: "level.fill")
+                                                .font(.system(size: 10, weight: .bold))
+                                                .foregroundColor(AlignTheme.electricCyan)
+                                            Text("360° KHÓA")
+                                                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                                .foregroundColor(AlignTheme.platinumWhite)
+                                        }
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            Capsule()
+                                                .fill(AlignTheme.obsidianBlack.opacity(0.85))
+                                                .overlay(
+                                                    Capsule()
+                                                        .stroke(AlignTheme.rimGradient, lineWidth: 0.8)
+                                                )
+                                        )
+                                        .shadow(color: AlignTheme.electricCyan.opacity(0.35), radius: 6)
+                                        .padding(.top, 14)
+                                        .padding(.trailing, 14)
+                                    }
+                                    Spacer()
+                                }
+                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                            }
+
                             // Optical Zoom HUD Feedback Badge
                             if viewModel.isZoomHUDVisible, let hudText = viewModel.activeZoomHUDText {
                                 VStack {
@@ -996,6 +1028,15 @@ struct CameraFunctionDrawerView: View {
                         subtitle: viewModel.isHorizonLevelerEnabled ? "Bật" : "Tắt",
                         isActive: viewModel.isHorizonLevelerEnabled,
                         action: { viewModel.isHorizonLevelerEnabled.toggle() }
+                    )
+
+                    // 5. 360° Horizon Lock (Khóa Đường Chân Trời 360°)
+                    DrawerFunctionButton(
+                        icon: viewModel.isHorizonLockEnabled ? "level.fill" : "level",
+                        title: "Chân trời",
+                        subtitle: viewModel.isHorizonLockEnabled ? "360° Khóa" : "Tắt",
+                        isActive: viewModel.isHorizonLockEnabled,
+                        action: { viewModel.toggleHorizonLock() }
                     )
 
                     // Row 2:

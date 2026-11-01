@@ -5,14 +5,12 @@ struct SuperViewParams {
     float beta_x;
     float beta_y;
     float edge_sharpen;
+    float roll_angle;       // Goc bu tru tu horizonRollAngle (0.0 neu tat Horizon Lock)
+    float zoom_scale;       // He so tu horizonAdaptiveZoom (1.0 neu tat Horizon Lock)
+    float shake_x;          // Bu rung +-0.03 truc X
+    float shake_y;          // Bu rung +-0.03 truc Y
 };
 
-// Separable Wide-Angle Expansion Kernel with Edge Micro-Sharpening:
-// u_src = (1.0 + beta_x) * u - beta_x * (u * u * u)
-// v_src = (1.0 + beta_y) * v - beta_y * (v * v * v)
-// Derivative at center is (1.0 + beta_x) > 1.0: true wide-angle optical FOV expansion.
-// Boundaries [-1.0, 1.0] map exactly to [-1.0, 1.0], zero black borders, zero streak artifacts.
-// Micro-sharpening is applied proportionally to radial distance, keeping periphery crisp.
 kernel void separableSuperViewKernel(
     texture2d<float, access::sample> inTexture [[texture(0)]],
     texture2d<float, access::write> outTexture [[texture(1)]],
@@ -30,14 +28,29 @@ kernel void separableSuperViewKernel(
     float u = ((float(gid.x) + 0.5f) / w - 0.5f) * 2.0f;
     float v = ((float(gid.y) + 0.5f) / h - 0.5f) * 2.0f;
 
-    // Cong thuc tach truc mo rong FOV: dao ham tai tam (1 + beta) > 1, khop khit bien +-1.0
-    float u_src = (1.0f + params.beta_x) * u - params.beta_x * (u * u * u);
-    float v_src = (1.0f + params.beta_y) * v - params.beta_y * (v * v * v);
-    float2 srcUV = clamp(float2(u_src * 0.5f + 0.5f, v_src * 0.5f + 0.5f), 0.0f, 1.0f);
+    // 1. Bien doi 0.5x SuperView (neu bat 0.5x):
+    float u_w = (1.0f + params.beta_x) * u - params.beta_x * (u * u * u);
+    float v_w = (1.0f + params.beta_y) * v - params.beta_y * (v * v * v);
 
+    // 2. Xoay bu tru 360 do Horizon Lock trong khong gian vat ly dang huong (khong meo det khi xoay 90 do, khong lo goc den):
+    if (params.zoom_scale > 1.001f || abs(params.roll_angle) > 0.0005f) {
+        float minDim = min(w, h);
+        float2 metricScale = float2(w / minDim, h / minDim);
+        float2 metricPos = float2(u_w * metricScale.x, v_w * metricScale.y) / params.zoom_scale;
+        float c = cos(params.roll_angle);
+        float sn = sin(params.roll_angle);
+        float2 rotatedMetric = float2(
+            metricPos.x * c - metricPos.y * sn,
+            metricPos.x * sn + metricPos.y * c
+        );
+        u_w = (rotatedMetric.x / metricScale.x) + params.shake_x;
+        v_w = (rotatedMetric.y / metricScale.y) + params.shake_y;
+    }
+
+    float2 srcUV = clamp(float2(u_w * 0.5f + 0.5f, v_w * 0.5f + 0.5f), 0.0f, 1.0f);
     float4 centerColor = inTexture.sample(s, srcUV);
 
-    // Bu do net vi mo o vung ria ngoai (Unsharp Mask ty le thuan voi khoang cach ra bien)
+    // 3. Lam net vi mo vung ria (Edge Micro-Sharpening):
     float radialDistSq = u * u + v * v;
     float sharpenStrength = clamp((radialDistSq - 0.15f) * 0.65f, 0.0f, 1.0f) * params.edge_sharpen;
     if (sharpenStrength > 0.01f) {

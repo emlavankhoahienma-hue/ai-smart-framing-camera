@@ -4,13 +4,8 @@ import CoreGraphics
 import Metal
 
 /// Động cơ Giả lập Quang học Góc Siêu rộng (Simulated Ultra-Wide 0.5x Full Frame Engine)
-/// Sử dụng Thuật toán Separable Anamorphic SuperView biên dịch trực tiếp qua Metal Compute Pipeline
-/// u_src = (1.0 + beta_x) * u - beta_x * (u * u * u)
-/// v_src = (1.0 + beta_y) * v - beta_y * (v * v * v)
-/// Đạo hàm tại tâm (1 + beta) > 1.0 mở rộng góc nhìn trung tâm thật sự, không phóng to ngược,
-/// bù độ nét vi mô vùng rìa (Edge Micro-Sharpening) để ảnh sắc nét từ tâm ra 4 góc,
-/// bảo toàn chặt chẽ không gian màu sRGB/P3 không bị bệt trắng (Double Gamma Bleaching),
-/// tái sử dụng bộ đệm Texture (Texture Pooling) chống nóng máy và tràn RAM ở 60 FPS.
+/// Tích hợp Khóa Đường Chân Trời 360° (360° Horizon Lock) đẳng hướng 1-Pass trên GPU Metal
+/// Kết hợp SuperView Anamorphic + Velocity-Adaptive Roll & Adaptive Dynamic Zoom
 public final class UltraWideWarpEngine: @unchecked Sendable {
     public static let shared = UltraWideWarpEngine()
 
@@ -28,6 +23,10 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         var beta_x: Float
         var beta_y: Float
         var edge_sharpen: Float
+        var roll_angle: Float
+        var zoom_scale: Float
+        var shake_x: Float
+        var shake_y: Float
     }
 
     public init() {
@@ -53,14 +52,20 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         }
     }
 
-    public func applySimulatedUltraWide(to image: CIImage, factor: CGFloat = 0.5) -> CIImage {
+    public func applySimulatedUltraWide(
+        to image: CIImage,
+        factor: CGFloat = 0.5,
+        horizonRollAngle: Float = 0.0,
+        horizonZoomScale: Float = 1.0,
+        horizonShakeX: Float = 0.0,
+        horizonShakeY: Float = 0.0
+    ) -> CIImage {
         let extent = image.extent
         guard extent.width > 1, extent.height > 1 else { return image }
 
         let width = Int(extent.width)
         let height = Int(extent.height)
 
-        // PHẦN 3: Nội suy mượt hệ số beta & edge_sharpen khi chuyển tiếp giữa 0.5x <-> 1.0x
         let progress = Float(min(max((1.0 - factor) / 0.5, 0.0), 1.0))
         let betaX: Float = 0.20 * progress
         let betaY: Float = 0.14 * progress
@@ -72,7 +77,6 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             return image
         }
 
-        // PHẦN 1: Tối ưu bộ đệm Texture tái sử dụng (Texture Pooling)
         textureLock.lock()
         defer { textureLock.unlock() }
 
@@ -102,7 +106,6 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             outTex = newOut
         }
 
-        // Bảo toàn chính xác không gian màu gốc, tránh CoreImage áp chồng 2 lần Gamma sRGB
         let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
 
         ciContext.render(
@@ -113,7 +116,6 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             colorSpace: colorSpace
         )
 
-        // Thực thi Metal Compute Shader Separable SuperView kèm Edge Micro-Sharpening
         guard let cmdBuffer = cmdQueue.makeCommandBuffer(),
               let encoder = cmdBuffer.makeComputeCommandEncoder() else {
             return image
@@ -123,7 +125,15 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         encoder.setTexture(inTex, index: 0)
         encoder.setTexture(outTex, index: 1)
 
-        var params = SuperViewParams(beta_x: betaX, beta_y: betaY, edge_sharpen: edgeSharpen)
+        var params = SuperViewParams(
+            beta_x: betaX,
+            beta_y: betaY,
+            edge_sharpen: edgeSharpen,
+            roll_angle: horizonRollAngle,
+            zoom_scale: horizonZoomScale,
+            shake_x: horizonShakeX,
+            shake_y: horizonShakeY
+        )
         encoder.setBytes(&params, length: MemoryLayout<SuperViewParams>.stride, index: 0)
 
         let w = pState.threadExecutionWidth
@@ -144,10 +154,24 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         return CIImage(mtlTexture: outTex, options: [.colorSpace: colorSpace]) ?? image
     }
 
-    public func applySimulatedUltraWide(to cgImage: CGImage, factor: CGFloat = 0.5) -> CGImage? {
+    public func applySimulatedUltraWide(
+        to cgImage: CGImage,
+        factor: CGFloat = 0.5,
+        horizonRollAngle: Float = 0.0,
+        horizonZoomScale: Float = 1.0,
+        horizonShakeX: Float = 0.0,
+        horizonShakeY: Float = 0.0
+    ) -> CGImage? {
         let colorSpace = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
         let ciImage = CIImage(cgImage: cgImage, options: [.colorSpace: colorSpace])
-        let warpedCI = applySimulatedUltraWide(to: ciImage, factor: factor)
+        let warpedCI = applySimulatedUltraWide(
+            to: ciImage,
+            factor: factor,
+            horizonRollAngle: horizonRollAngle,
+            horizonZoomScale: horizonZoomScale,
+            horizonShakeX: horizonShakeX,
+            horizonShakeY: horizonShakeY
+        )
         return ciContext.createCGImage(
             warpedCI,
             from: warpedCI.extent,

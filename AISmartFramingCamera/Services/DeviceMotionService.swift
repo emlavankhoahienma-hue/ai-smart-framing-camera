@@ -18,6 +18,15 @@ public final class DeviceMotionService: @unchecked Sendable {
     private var reference: simd_quatd?
     private var motionCallback: ((CGFloat, CGFloat) -> Void)?
 
+    // Horizon Lock 360° state (Velocity-Adaptive Circular EMA + Adaptive Dynamic Zoom)
+    public private(set) var horizonRollAngle: Float = 0.0
+    public private(set) var horizonAdaptiveZoom: Float = 1.12
+    public private(set) var horizonShakeX: Float = 0.0
+    public private(set) var horizonShakeY: Float = 0.0
+    private var smoothedCosRoll: Float = 1.0
+    private var smoothedSinRoll: Float = 0.0
+    private var isHorizonTrackingActive: Bool = false
+
     public var onMotionUpdate: ((CGFloat, CGFloat) -> Void)? {
         get { lock.withLock { motionCallback } }
         set { lock.withLock { motionCallback = newValue } }
@@ -69,8 +78,25 @@ public final class DeviceMotionService: @unchecked Sendable {
         }
     }
 
+    public func setHorizonTrackingActive(_ active: Bool) {
+        lock.withLock {
+            isHorizonTrackingActive = active
+            if active {
+                startIfNeeded()
+            } else {
+                stopIfUnused()
+            }
+        }
+    }
+
+    public func currentHorizonParams() -> (roll: Float, zoom: Float, shakeX: Float, shakeY: Float) {
+        lock.withLock {
+            (horizonRollAngle, horizonAdaptiveZoom, horizonShakeX, horizonShakeY)
+        }
+    }
+
     private func stopIfUnused() {
-        if subscribers.isEmpty && !legacyActive {
+        if subscribers.isEmpty && !legacyActive && !isHorizonTrackingActive {
             streamGeneration &+= 1
             manager.stopDeviceMotionUpdates()
         }
@@ -80,9 +106,37 @@ public final class DeviceMotionService: @unchecked Sendable {
         guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
         streamGeneration &+= 1
         let epoch = streamGeneration
-        manager.deviceMotionUpdateInterval = 1 / 60.0
+        manager.deviceMotionUpdateInterval = 1.0 / 200.0
         manager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: queue) { [weak self] motion, _ in
             guard let self, let motion else { return }
+
+            let gx = Float(motion.gravity.x)
+            let gy = Float(motion.gravity.y)
+            let rawRoll = atan2(gx, -gy) // Góc trọng lực thực tế [-pi, +pi]
+
+            // 1. Velocity-Adaptive Circular EMA (Làm mượt trên sin/cos để vượt qua +-180 độ mượt tuyệt đối)
+            let currentAngle = atan2(self.smoothedSinRoll, self.smoothedCosRoll)
+            let angleDelta = abs(atan2(sin(rawRoll - currentAngle), cos(rawRoll - currentAngle)))
+            let gyroSpeed = Float(abs(motion.rotationRate.z))
+            let adaptiveAlpha = min(max(0.06 + gyroSpeed * 0.12 + angleDelta * 0.45, 0.06), 0.55)
+
+            self.smoothedCosRoll = self.smoothedCosRoll * (1.0 - adaptiveAlpha) + cos(rawRoll) * adaptiveAlpha
+            self.smoothedSinRoll = self.smoothedSinRoll * (1.0 - adaptiveAlpha) + sin(rawRoll) * adaptiveAlpha
+            let calculatedRoll = atan2(self.smoothedSinRoll, self.smoothedCosRoll)
+            self.horizonRollAngle = calculatedRoll
+
+            // 2. Adaptive Dynamic Zoom (Cầm thẳng 0 độ chỉ zoom nhẹ 1.12x; nghiêng tới đâu tự tăng zoom giấu 4 góc đen)
+            let absCos = abs(cos(calculatedRoll))
+            let absSin = abs(sin(calculatedRoll))
+            let aspect: Float = 4.0 / 3.0
+            let neededGeometricScale = max(1.12, min(1.55, absCos + aspect * absSin))
+            self.horizonAdaptiveZoom = self.horizonAdaptiveZoom * 0.85 + neededGeometricScale * 0.15
+
+            // 3. Bù rung tay vi mô ngang/dọc (+-3%)
+            let rateX = Float(motion.rotationRate.x)
+            let rateY = Float(motion.rotationRate.y)
+            self.horizonShakeX = (self.horizonShakeX * 0.85) + min(max(rateY * 0.006, -0.03), 0.03)
+            self.horizonShakeY = (self.horizonShakeY * 0.85) + min(max(rateX * 0.006, -0.03), 0.03)
             let r = motion.attitude.rotationMatrix
             // CoreMotion DCM maps reference -> device. Invert to unproject an
             // image ray into the reference frame. No Euler angles or rate gains.

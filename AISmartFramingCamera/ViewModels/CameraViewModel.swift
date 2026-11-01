@@ -73,9 +73,19 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         let snapshot = configuration
         stateLock.unlock()
 
-        // Zero-Cost Gate 1: Khi đang ngủ đông hoặc đang quay video,
-        // lập tức thoát ngay mà không chạy bất kỳ tác vụ AI Vision, YOLO, Optical Flow, Histogram hay Peaking nào!
-        guard !snapshot.isHibernating && !snapshot.isRecordingVideo else { return }
+        // Zero-Cost Gate 1: Khi đang ngủ đông, lập tức thoát ngay
+        guard !snapshot.isHibernating else { return }
+
+        // Luôn ghi nhận frame CVPixelBuffer mới nhất để MTKView (0.5x SuperView, Film Simulation, Horizon Lock)
+        // tiếp tục hiển thị 60 FPS mượt mà cả trong lúc đang bấm quay video!
+        if let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            stateLock.lock()
+            latestPixelBuffer = pixelBuffer
+            stateLock.unlock()
+        }
+
+        // Khi đang quay video: Bỏ qua toàn bộ AI tracking và Vision nặng nề để đảm bảo hiệu năng
+        guard !snapshot.isRecordingVideo else { return }
 
         // Zero-Cost Gate 2: Trong chế độ Video chuẩn (không bật AI Video Director),
         // TUYỆT ĐỐI KHÔNG nạp VisionFramingEngine, YOLOv12 hay tracking để đạt 60 FPS cứng, hoàn toàn không giật lag!
@@ -436,6 +446,14 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Sun Exposure Slider & Horizon Leveler
     @Published public var isShowingSunSlider: Bool = false
     @Published public var activeSunExposureBias: Float = 0.0
+
+    // MARK: - Khóa Đường Chân Trời 360° (360° Horizon Lock)
+    @Published public var isHorizonLockEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isHorizonLockEnabled, forKey: "isHorizonLockEnabled")
+            DeviceMotionService.shared.setHorizonTrackingActive(isHorizonLockEnabled)
+        }
+    }
 
     // MARK: - Thước Đo Cân Bằng Chân Trời (Horizon Leveler) & Hiệu Chuẩn Gyro
     @Published public var isHorizonLevelerEnabled: Bool = true {
@@ -1281,6 +1299,10 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "isHorizonLevelerEnabled") != nil {
             self.isHorizonLevelerEnabled = defaults.bool(forKey: "isHorizonLevelerEnabled")
+        }
+        if defaults.object(forKey: "isHorizonLockEnabled") != nil {
+            self.isHorizonLockEnabled = defaults.bool(forKey: "isHorizonLockEnabled")
+            DeviceMotionService.shared.setHorizonTrackingActive(self.isHorizonLockEnabled)
         }
         if defaults.object(forKey: "gyroRollOffsetDegrees") != nil {
             self.gyroRollOffsetDegrees = defaults.double(forKey: "gyroRollOffsetDegrees")
@@ -3770,6 +3792,13 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    public func toggleHorizonLock() {
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+            isHorizonLockEnabled.toggle()
+        }
+    }
+
     public func latestCameraPixelBuffer() -> CVPixelBuffer? {
         return frameProcessor.latestPixelBufferSnapshot()
     }
@@ -4743,8 +4772,16 @@ extension CameraViewModel: CameraServiceDelegate {
             }
 
             let photoAfterCropOrSim: CGImage
-            if isSimulatedUW {
-                photoAfterCropOrSim = UltraWideWarpEngine.shared.applySimulatedUltraWide(to: effectiveSourcePhoto, factor: simUWFactor) ?? effectiveSourcePhoto
+            if isSimulatedUW || self.isHorizonLockEnabled {
+                let motionParams = self.isHorizonLockEnabled ? DeviceMotionService.shared.currentHorizonParams() : (roll: Float(0), zoom: Float(1), shakeX: Float(0), shakeY: Float(0))
+                photoAfterCropOrSim = UltraWideWarpEngine.shared.applySimulatedUltraWide(
+                    to: effectiveSourcePhoto,
+                    factor: isSimulatedUW ? simUWFactor : 1.0,
+                    horizonRollAngle: self.isHorizonLockEnabled ? motionParams.roll : 0.0,
+                    horizonZoomScale: self.isHorizonLockEnabled ? motionParams.zoom : 1.0,
+                    horizonShakeX: self.isHorizonLockEnabled ? motionParams.shakeX : 0.0,
+                    horizonShakeY: self.isHorizonLockEnabled ? motionParams.shakeY : 0.0
+                ) ?? effectiveSourcePhoto
             } else {
                 photoAfterCropOrSim = effectiveSourcePhoto
             }
@@ -4757,7 +4794,7 @@ extension CameraViewModel: CameraServiceDelegate {
                 }
             }
 
-            let preservesOriginal = (format == .dng || (!isWindowed && !hasColorEdits && !isSimulatedUW)) && rawData != nil
+            let preservesOriginal = (format == .dng || (!isWindowed && !hasColorEdits && !isSimulatedUW && !self.isHorizonLockEnabled)) && rawData != nil
             let encodedEditedData: Data? = autoreleasepool {
                 if format != .dng && !preservesOriginal {
                     return Self.encodeRenderedPhoto(processedImageResult, sourceData: rawData, format: format)
