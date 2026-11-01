@@ -3211,7 +3211,7 @@ public final class CameraViewModel: ObservableObject {
 
     private func canZoomCurrentSubject(to target: CGFloat) -> Bool {
         guard displayZoom > 0, target > 0 else { return false }
-        if abs(target - pendingSuggestedZoom) <= 0.05 || abs(target - aiSuggestedZoom) <= 0.05 {
+        if abs(target - pendingSuggestedZoom) <= 0.05 || (aiSuggestedZoom.map { z in abs(target - z) <= 0.05 } ?? false) {
             return true
         }
         guard let box = currentSubjectCropBox else { return true }

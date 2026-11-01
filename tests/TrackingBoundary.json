@@ -45,7 +45,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "345b89e87fb3885fd990a8c5e8f124c0fcb4e60e401e024fa4a4e2f6102df88e"
+      "sha256": "63d339c4a3e91bcaca64fcecb3a768778cde7f2fe8463e38dd24b3635215792b"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
