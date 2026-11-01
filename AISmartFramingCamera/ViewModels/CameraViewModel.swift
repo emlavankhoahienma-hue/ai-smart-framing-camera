@@ -2831,8 +2831,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     var localCompositionNeedsLevel: Bool {
-        (localCompositionIntent == .landscape || localCompositionIntent == .architecture ||
-         localCompositionIntent == .environmentalPortrait) && abs(currentRollDegrees) > 3
+        guard isHorizonLevelerEnabled else { return false }
+        let isLandscapeOrArch = (localCompositionIntent == .landscape || localCompositionIntent == .architecture ||
+                                 localCompositionIntent == .environmentalPortrait)
+        return isLandscapeOrArch && abs(currentRollDegrees) > 8.0
     }
 
     var needsManualShutter: Bool {
@@ -3199,7 +3201,7 @@ public final class CameraViewModel: ObservableObject {
         }
         // Fallback: If Spatial Fusion has confirmed lock and target is on-screen
         let spatial = SpatialTrackingEngine.shared
-        if spatial.isTrackingActive && (trackingQuality == .locked || trackingQuality == .predicting),
+        if spatial.isTrackingActive,
            let current = currentTargetPoint,
            (0...1).contains(current.x), (0...1).contains(current.y) {
             return true
@@ -3209,6 +3211,9 @@ public final class CameraViewModel: ObservableObject {
 
     private func canZoomCurrentSubject(to target: CGFloat) -> Bool {
         guard displayZoom > 0, target > 0 else { return false }
+        if abs(target - pendingSuggestedZoom) <= 0.05 || abs(target - aiSuggestedZoom) <= 0.05 {
+            return true
+        }
         guard let box = currentSubjectCropBox else { return true }
         let k = latestOpticalCalibration ?? TrackingCalibration.fallback(fovLongDegrees: cameraService.effectiveVideoFieldOfView, zoom: Double(displayZoom))
         let ratio = target / displayZoom
@@ -3218,13 +3223,10 @@ public final class CameraViewModel: ObservableObject {
         let projectedMinY = cy + (box.minY - cy) * ratio
         let projectedMaxY = cy + (box.maxY - cy) * ratio
         let isPortraitIntent = (localCompositionIntent == .portrait || localCompositionIntent == .environmentalPortrait || detectedScene == .portrait)
-        let midY = isPortraitIntent ? (projectedMinY + min(projectedMaxY, projectedMinY + (projectedMaxY - projectedMinY) * 0.65)) * 0.5 : (projectedMinY + projectedMaxY) * 0.5
-        let centerInside = (0.03...0.97).contains((projectedMinX + projectedMaxX) * 0.5) &&
-            (0.03...0.97).contains(midY)
         let maxAllowedY: CGFloat = isPortraitIntent ? 1.75 : 1.55
-        let boundsReasonable = projectedMinX >= -0.45 && projectedMaxX <= 1.45 &&
-            projectedMinY >= -0.25 && projectedMaxY <= maxAllowedY
-        return centerInside && boundsReasonable
+        let boundsReasonable = projectedMinX >= -0.65 && projectedMaxX <= 1.65 &&
+            projectedMinY >= -0.45 && projectedMaxY <= maxAllowedY
+        return boundsReasonable
     }
 
     private var alignmentRadius: CGFloat {

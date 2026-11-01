@@ -45,7 +45,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "c871602e25a1ca9a4316a9a25e11e95d40e57520aa2ac2aa568b9164a432a16b"
+      "sha256": "345b89e87fb3885fd990a8c5e8f124c0fcb4e60e401e024fa4a4e2f6102df88e"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -81,7 +81,7 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "struct TargetCircleView: View {",
       "end": "// MARK: - Guidance Ray",
-      "sha256": "ec90772143eaad54f54d2f9501ef8d9781faff29e427bf0e59ee68b943ea7252"
+      "sha256": "bddaf1410cde4aa5511026d77d984d574d0887c71bf563be4610001821bd3c14"
     }
   ]
 }

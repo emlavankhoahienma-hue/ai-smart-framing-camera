@@ -455,9 +455,16 @@ struct TargetCircleView: View {
     var isSnapped: Bool = false
 
     private var ringGradient: LinearGradient {
-        if isAligned || isSnapped {
+        if isAligned {
             return LinearGradient(
                 colors: [Color(red: 0.20, green: 0.95, blue: 0.55), Color(red: 0.05, green: 0.80, blue: 0.40)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+        if isSnapped {
+            return LinearGradient(
+                colors: [AlignTheme.amberGold, AlignTheme.electricCyan],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
