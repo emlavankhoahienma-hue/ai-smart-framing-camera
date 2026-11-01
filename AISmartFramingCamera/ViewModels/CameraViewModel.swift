@@ -2226,13 +2226,11 @@ public final class CameraViewModel: ObservableObject {
         }
 
         let subjectAnchor = CGPoint(x: response.subjectX, y: response.subjectY)
-        let compositionAnchor = CGPoint(x: response.compositionAnchorX, y: response.compositionAnchorY)
         let subjectRect = normalizedSubjectRect(cloudTrackingSource?.subjectRect)
-        let baseSubjectSize = response.estimatedSubjectSize ?? subjectRect?.size ?? CGSize(width: 0.25, height: 0.35)
 
         // Giữ nguyên 100% tọa độ dẫn hướng bố cục do Cloud AI trả về (không kéo ép lệch về faceCenter)
-        let aimPoint = CGPoint(x: response.targetX, y: response.targetY)
-        let optimalZoom = response.suggestedZoom
+        let aimPoint = CGPoint(x: safeX, y: safeY)
+        let optimalZoom = safeZoom
 
         let effectiveRect = subjectRect ?? CGRect(
             x: max(0.02, subjectAnchor.x - 0.12),
@@ -2718,27 +2716,12 @@ public final class CameraViewModel: ObservableObject {
         // Phản biện 3 & 4: Hợp nhất 1 đường ống quyết định duy nhất (Single Source of Truth).
         // Tin tưởng tuyệt đối tọa độ Aim 3D (aimWorldRay) và mức Zoom ngữ cảnh từ bộ lập kế hoạch + SAMP-Net + DINOv2 (Charm).
         let sourceAimPoint = plan.aimPointInSource
-        let effectiveGuideRay = plan.aimWorldRay
         let planDistFromCenter = hypot(sourceAimPoint.x - 0.5, sourceAimPoint.y - 0.5)
 
         var effectiveZoom = plan.zoom
         effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(
             cameraService.convertDisplayZoomToDeviceZoom(effectiveZoom))
 
-        var liveAimPoint = sourceAimPoint
-        if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
-           let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
-                ?? SpatialTrackingEngine.shared.latestPose() {
-            let projectedAim = currentFrame.calibration.project(
-                deviceRay: currentPose.inverse.act(effectiveGuideRay))
-            if projectedAim.point.x.isFinite, projectedAim.point.y.isFinite {
-                liveAimPoint = projectedAim.point
-            }
-        }
-        let dx = liveAimPoint.x - 0.5
-        let dy = liveAimPoint.y - 0.5
-        let distance = hypot(dx, dy)
-        let angle = atan2(dy, dx) * 180 / .pi
         if planDistFromCenter < 0.09 && detectedScene != .architecture {
             activeCompositionRule = evaluatedFraming.optimalRule
         } else if plan.explanation.contains("Tỷ lệ vàng") || plan.explanation.contains("Golden") {
