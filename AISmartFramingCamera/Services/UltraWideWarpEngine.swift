@@ -2,15 +2,15 @@ import Foundation
 import CoreImage
 import CoreGraphics
 import Metal
-import Accelerate
 
 /// Động cơ Giả lập Quang học Góc Siêu rộng (Simulated Ultra-Wide 0.5x Full Frame Engine)
 /// Sử dụng Thuật toán Separable Anamorphic SuperView biên dịch trực tiếp qua Metal Compute Pipeline
 /// u_src = (1.0 + beta_x) * u - beta_x * (u * u * u)
 /// v_src = (1.0 + beta_y) * v - beta_y * (v * v * v)
 /// Đạo hàm tại tâm (1 + beta) > 1.0 mở rộng góc nhìn trung tâm thật sự, không phóng to ngược,
+/// bù độ nét vi mô vùng rìa (Edge Micro-Sharpening) để ảnh sắc nét từ tâm ra 4 góc,
 /// bảo toàn chặt chẽ không gian màu sRGB/P3 không bị bệt trắng (Double Gamma Bleaching),
-/// bảo toàn 100% biên [-1.0, 1.0] -> [-1.0, 1.0], không sinh sọc viền và không viền đen.
+/// tái sử dụng bộ đệm Texture (Texture Pooling) chống nóng máy và tràn RAM ở 60 FPS.
 public final class UltraWideWarpEngine: @unchecked Sendable {
     public static let shared = UltraWideWarpEngine()
 
@@ -20,15 +20,14 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
     private let ciContext: CIContext
     private let textureLock = NSLock()
 
-    // Texture cache tránh cấp phát lặp lại ở 60 FPS
-    private var cachedInTexture: MTLTexture?
-    private var cachedOutTexture: MTLTexture?
-    private var cachedWidth: Int = 0
-    private var cachedHeight: Int = 0
+    // Bộ đệm Texture tái sử dụng (Texture Pooling) chống cấp phát lặp lại ở 60 FPS
+    private var pooledInTex: MTLTexture?
+    private var pooledOutTex: MTLTexture?
 
     private struct SuperViewParams {
         var beta_x: Float
         var beta_y: Float
+        var edge_sharpen: Float
     }
 
     public init() {
@@ -61,11 +60,11 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         let width = Int(extent.width)
         let height = Int(extent.height)
 
-        // Mở rộng góc rộng: beta_x = 0.18, beta_y = 0.12 ở mức 0.5x
-        let clampedFactor = max(0.35, min(1.0, factor))
-        let t = Float((1.0 - clampedFactor) / 0.5)
-        let betaX = max(0.0, min(0.24, t * 0.18))
-        let betaY = max(0.0, min(0.16, t * 0.12))
+        // PHẦN 3: Nội suy mượt hệ số beta & edge_sharpen khi chuyển tiếp giữa 0.5x <-> 1.0x
+        let progress = Float(min(max((1.0 - factor) / 0.5, 0.0), 1.0))
+        let betaX: Float = 0.18 * progress
+        let betaY: Float = 0.12 * progress
+        let edgeSharpen: Float = 0.32 * progress
 
         guard let dev = device,
               let cmdQueue = commandQueue,
@@ -73,16 +72,17 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             return image
         }
 
+        // PHẦN 1: Tối ưu bộ đệm Texture tái sử dụng (Texture Pooling)
         textureLock.lock()
         defer { textureLock.unlock() }
 
         let inTex: MTLTexture
         let outTex: MTLTexture
 
-        if let cachedIn = cachedInTexture, let cachedOut = cachedOutTexture,
-           cachedWidth == width, cachedHeight == height {
-            inTex = cachedIn
-            outTex = cachedOut
+        if let pIn = pooledInTex, let pOut = pooledOutTex,
+           pIn.width == width, pIn.height == height {
+            inTex = pIn
+            outTex = pOut
         } else {
             let desc = MTLTextureDescriptor.texture2DDescriptor(
                 pixelFormat: .rgba8Unorm,
@@ -96,15 +96,13 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
                   let newOut = dev.makeTexture(descriptor: desc) else {
                 return image
             }
-            cachedInTexture = newIn
-            cachedOutTexture = newOut
-            cachedWidth = width
-            cachedHeight = height
+            pooledInTex = newIn
+            pooledOutTex = newOut
             inTex = newIn
             outTex = newOut
         }
 
-        // Bảo toàn chính xác không gian màu gốc, tránh CoreImage áp chồng 2 lần Gamma sRGB (Double Gamma Bleaching)
+        // Bảo toàn chính xác không gian màu gốc, tránh CoreImage áp chồng 2 lần Gamma sRGB
         let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
 
         ciContext.render(
@@ -115,7 +113,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             colorSpace: colorSpace
         )
 
-        // Thực thi Metal Compute Shader Separable SuperView
+        // Thực thi Metal Compute Shader Separable SuperView kèm Edge Micro-Sharpening
         guard let cmdBuffer = cmdQueue.makeCommandBuffer(),
               let encoder = cmdBuffer.makeComputeCommandEncoder() else {
             return image
@@ -125,7 +123,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         encoder.setTexture(inTex, index: 0)
         encoder.setTexture(outTex, index: 1)
 
-        var params = SuperViewParams(beta_x: betaX, beta_y: betaY)
+        var params = SuperViewParams(beta_x: betaX, beta_y: betaY, edge_sharpen: edgeSharpen)
         encoder.setBytes(&params, length: MemoryLayout<SuperViewParams>.stride, index: 0)
 
         let w = pState.threadExecutionWidth
