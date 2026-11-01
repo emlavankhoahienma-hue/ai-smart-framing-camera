@@ -31,8 +31,8 @@ public struct CameraPreviewView: UIViewRepresentable {
         if viewModel.previewLayer !== activeLayer {
             viewModel.previewLayer = activeLayer
         }
-        // Chế độ Quay Video (16:9 / 9:16): dùng .resizeAspect trong khung ngắm để hiển thị trọn vẹn 100% khung hình 1.0x đúng như file video quay ra, không bị phóng đại 1.33x-1.5x do .resizeAspectFill cắt vào khung 3:4!
-        let targetGravity: AVLayerVideoGravity = (viewModel.captureMode.isVideo && !isDual && !viewModel.isSimulatedUltraWideActive) ? .resizeAspect : .resizeAspectFill
+        // Khung ngam co dinh 4:3 dong nhat giua Anh va Video, luon dat videoGravity = .resizeAspectFill de lap day 100% khung ngam, xoa sach 2 dai den hai ben
+        let targetGravity: AVLayerVideoGravity = .resizeAspectFill
         if uiView.previewLayer?.videoGravity != targetGravity {
             CATransaction.begin()
             CATransaction.setAnimationDuration(0.20)
@@ -42,7 +42,7 @@ public struct CameraPreviewView: UIViewRepresentable {
         uiView.updateMetalPreviewState(
             isActive: viewModel.isFilmSimulationActive,
             isDualCamera: isDual,
-            isVideoMode: viewModel.captureMode.isVideo && !isDual && !viewModel.isSimulatedUltraWideActive,
+            isVideoMode: false,
             isSimulatedUltraWide: viewModel.isSimulatedUltraWideActive,
             simulatedFactor: viewModel.simulatedUltraWideFactor,
             preset: viewModel.selectedFilmPreset,
@@ -199,7 +199,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
             let scaleX = drawableSize.width / rawExtent.width
             let scaleY = drawableSize.height / rawExtent.height
-            let scale = (videoAspectFit && !simUW) ? min(scaleX, scaleY) : max(scaleX, scaleY)
+            let scale = max(scaleX, scaleY)
 
             let scaledW = rawExtent.width * scale
             let scaledH = rawExtent.height * scale

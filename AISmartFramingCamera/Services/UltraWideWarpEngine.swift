@@ -62,8 +62,8 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
 
         // PHẦN 3: Nội suy mượt hệ số beta & edge_sharpen khi chuyển tiếp giữa 0.5x <-> 1.0x
         let progress = Float(min(max((1.0 - factor) / 0.5, 0.0), 1.0))
-        let betaX: Float = 0.18 * progress
-        let betaY: Float = 0.12 * progress
+        let betaX: Float = 0.20 * progress
+        let betaY: Float = 0.14 * progress
         let edgeSharpen: Float = 0.32 * progress
 
         guard let dev = device,
