@@ -489,7 +489,7 @@ struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
     private var zoomOptions: [CGFloat] {
-        var opts = viewModel.cameraService.availableDisplayZoomOptions.filter {  < 4.9 }
+        var opts = viewModel.cameraService.availableDisplayZoomOptions.filter { $0 < 4.9 }
         if !opts.contains(0.5) {
             opts.insert(0.5, at: 0)
         }
