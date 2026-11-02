@@ -4776,6 +4776,7 @@ extension CameraViewModel: CameraServiceDelegate {
         let watermarkTheme = self.masterWatermarkTheme
         let watermarkLogo = self.masterWatermarkLogoStyle
         let watermarkCustomLogo = self.masterWatermarkCustomLogoImage
+        let captureDisplayZoom = self.displayZoom
 
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -4834,7 +4835,7 @@ extension CameraViewModel: CameraServiceDelegate {
             }
 
             if isMasterWatermark {
-                let focal = isWindowed ? windowFocal : (self.displayZoom >= 1.9 ? 52.0 : (self.displayZoom <= 0.6 ? 13.0 : 24.0))
+                let focal = isWindowed ? windowFocal : (captureDisplayZoom >= 1.9 ? 52.0 : (captureDisplayZoom <= 0.6 ? 13.0 : 24.0))
                 let specs = PhotoWatermarkSpecs.from(iso: iso, shutterSpeed: shutterSpeed, focalLength: focal, aperture: 1.8)
                 if let framed = MasterWatermarkRenderer.shared.renderWatermark(
                     on: processedImageResult,
