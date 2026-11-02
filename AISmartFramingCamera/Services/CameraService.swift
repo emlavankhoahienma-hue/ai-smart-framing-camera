@@ -147,7 +147,7 @@ public final class CameraService: NSObject {
     public var isHorizonLockActive: Bool = false
     public var activeFilmPreset: FilmPreset? = nil
     public var activeFilmIntensity: Float = 1.0
-    public var activeAIColorParams: FilmSimulationAIColorParameters? = nil
+    public var activeAIColorParams: AIColorParameters? = nil
     public var simulatedUltraWideFactor: CGFloat = 1.0
     public private(set) var availableDisplayZoomOptions: [CGFloat] = [0.5, 1.0, 2.0, 3.0]
     public private(set) var defaultDisplayZoom: CGFloat = 1.0

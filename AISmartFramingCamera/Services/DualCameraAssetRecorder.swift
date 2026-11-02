@@ -433,7 +433,7 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
     public var simulatedFactor: CGFloat = 0.5
     public var filmPreset: FilmPreset? = nil
     public var filmIntensity: Float = 1.0
-    public var aiColorParams: FilmSimulationAIColorParameters? = nil
+    public var aiColorParams: AIColorParameters? = nil
 
     public var isRecording: Bool {
         stateLock.lock()
