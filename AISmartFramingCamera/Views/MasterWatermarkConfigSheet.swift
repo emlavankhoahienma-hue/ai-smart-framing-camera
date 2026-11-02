@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 
+@MainActor
 public struct MasterWatermarkConfigSheet: View {
     @ObservedObject var viewModel: CameraViewModel
     @Environment(\.dismiss) private var dismiss
@@ -140,6 +141,9 @@ public struct MasterWatermarkConfigSheet: View {
     // MARK: - 4. Huy Hiệu Logo
     @ViewBuilder
     private var logoSection: some View {
+        let hasCustomLogo = viewModel.masterWatermarkCustomLogoImage != nil
+        let isCustomStyle = viewModel.masterWatermarkLogoStyle == .custom
+
         VStack(alignment: .leading, spacing: 12) {
             Text("HUY HIỆU LOGO")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -154,20 +158,20 @@ public struct MasterWatermarkConfigSheet: View {
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                 HStack {
                     Image(systemName: "photo.badge.plus")
-                    Text(viewModel.masterWatermarkCustomLogoImage != nil ? "Đã chọn Logo từ Thư viện (Nhấn để đổi)" : "Tải Logo từ Thư viện ảnh")
+                    Text(hasCustomLogo ? "Đã chọn Logo từ Thư viện (Nhấn để đổi)" : "Tải Logo từ Thư viện ảnh")
                         .font(.system(size: 13, weight: .medium))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .background(viewModel.masterWatermarkLogoStyle == .custom ? Color.yellow.opacity(0.2) : Color.white.opacity(0.06))
-                .foregroundColor(viewModel.masterWatermarkLogoStyle == .custom ? .yellow : .white)
+                .background(isCustomStyle ? Color.yellow.opacity(0.2) : Color.white.opacity(0.06))
+                .foregroundColor(isCustomStyle ? .yellow : .white)
                 .cornerRadius(10)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(viewModel.masterWatermarkLogoStyle == .custom ? Color.yellow : Color.clear, lineWidth: 1.5)
+                        .stroke(isCustomStyle ? Color.yellow : Color.clear, lineWidth: 1.5)
                 )
             }
-            .onChange(of: selectedPhotoItem) { newItem in
+            .onChangeCompatible(of: selectedPhotoItem) { newItem in
                 handlePhotoSelection(newItem)
             }
         }
@@ -181,9 +185,7 @@ public struct MasterWatermarkConfigSheet: View {
         Task {
             if let data = try? await item.loadTransferable(type: Data.self),
                let uiImg = UIImage(data: data) {
-                await MainActor.run {
-                    viewModel.setMasterWatermarkCustomLogo(uiImg)
-                }
+                viewModel.setMasterWatermarkCustomLogo(uiImg)
             }
         }
     }
