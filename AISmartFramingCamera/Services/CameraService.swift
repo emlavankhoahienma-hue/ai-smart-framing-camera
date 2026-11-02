@@ -143,7 +143,7 @@ public final class CameraService: NSObject {
     // Virtual Multi-Camera Mapping (Apple Camera App style: 0.5x, 1x, 2x, 3x/5x)
     public private(set) var displayMultiplier: CGFloat = 1.0
     public private(set) var hasUltraWideLens: Bool = false
-    public private(set) var isSimulatedUltraWideActive: Bool = false
+    public var isSimulatedUltraWideActive: Bool = false
     public var isHorizonLockActive: Bool = false
     public var activeFilmPreset: FilmPreset? = nil
     public var activeFilmIntensity: Float = 1.0
