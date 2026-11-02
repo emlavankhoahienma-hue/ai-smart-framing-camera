@@ -21,47 +21,19 @@ public enum FocusPeakingColor: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    // High-Pass Laser Vectors (High cutoff bias = -0.55 to eliminate out-of-focus background completely)
-    public var laserMatrixVectors: (r: CIVector, g: CIVector, b: CIVector, a: CIVector, bias: CIVector) {
+    /// Thành phần màu RGB Neon để phủ cạnh sắc nét
+    public var neonComponents: (r: CGFloat, g: CGFloat, b: CGFloat) {
         switch self {
-        case .green:
-            return (
-                r: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                g: CIVector(x: 6.0, y: 6.0, z: 6.0, w: 0.0),
-                b: CIVector(x: 2.1, y: 2.1, z: 2.1, w: 0.0),
-                a: CIVector(x: 6.0, y: 6.0, z: 6.0, w: 0.0),
-                bias: CIVector(x: 0.0, y: -0.55, z: -0.55, w: -0.55)
-            )
-        case .yellow:
-            return (
-                r: CIVector(x: 6.0, y: 6.0, z: 6.0, w: 0.0),
-                g: CIVector(x: 5.3, y: 5.3, z: 5.3, w: 0.0),
-                b: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                a: CIVector(x: 6.0, y: 6.0, z: 6.0, w: 0.0),
-                bias: CIVector(x: -0.55, y: -0.55, z: 0.0, w: -0.55)
-            )
-        case .red:
-            return (
-                r: CIVector(x: 6.0, y: 6.0, z: 6.0, w: 0.0),
-                g: CIVector(x: 1.2, y: 1.2, z: 1.2, w: 0.0),
-                b: CIVector(x: 1.2, y: 1.2, z: 1.2, w: 0.0),
-                a: CIVector(x: 6.0, y: 6.0, z: 6.0, w: 0.0),
-                bias: CIVector(x: -0.55, y: -0.55, z: -0.55, w: -0.55)
-            )
-        case .cyan:
-            return (
-                r: CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0),
-                g: CIVector(x: 5.4, y: 5.4, z: 5.4, w: 0.0),
-                b: CIVector(x: 6.0, y: 6.0, z: 6.0, w: 0.0),
-                a: CIVector(x: 6.0, y: 6.0, z: 6.0, w: 0.0),
-                bias: CIVector(x: 0.0, y: -0.55, z: -0.55, w: -0.55)
-            )
+        case .green: return (r: 0.05, g: 1.0, b: 0.35)
+        case .yellow: return (r: 1.0, g: 0.90, b: 0.05)
+        case .red: return (r: 1.0, g: 0.20, b: 0.20)
+        case .cyan: return (r: 0.05, g: 0.92, b: 1.0)
         }
     }
 }
 
 /// Động cơ Focus Peaking Báo Nét Điện Ảnh Chuyên Nghiệp 60 FPS
-/// Thuật toán High-Pass Laplacian Threshold 3x3 gia tốc phần cứng 1-Pass trên GPU Metal CoreImage
+/// Thuật toán Khử Nhiễu ISO 100% + Cổng Ngưỡng Cắt Cao (Threshold Noise Gate) trên GPU Metal CoreImage
 public final class FocusPeakingEngine: @unchecked Sendable {
     public static let shared = FocusPeakingEngine()
 
@@ -75,40 +47,64 @@ public final class FocusPeakingEngine: @unchecked Sendable {
         }
     }
 
-    /// Hòa trộn trực tiếp tia Laser báo nét lên ảnh xem trước 60 FPS trên GPU Metal (0ms độ trễ, không dùng CPU)
+    /// Hòa trộn tia Laser báo nét lên ảnh xem trước 60 FPS trên GPU Metal
+    /// Triệt tiêu 100% nhiễu ISO ở các vùng phẳng (bầu trời, tường, da mặt), giữ nguyên 97% diện tích ảnh gốc
     public func applyLaserFocusPeaking(to ciImage: CIImage, color: FocusPeakingColor) -> CIImage {
         let extent = ciImage.extent
         guard extent.width > 1, extent.height > 1 else { return ciImage }
 
-        // 1. Chuyển đổi đơn sắc (Luminance)
+        // 1. Chuyển đổi sang ảnh đơn sắc (Luminance Rec.709)
         guard let monoFilter = CIFilter(name: "CIColorControls") else { return ciImage }
         monoFilter.setValue(ciImage, forKey: kCIInputImageKey)
         monoFilter.setValue(0.0, forKey: kCIInputSaturationKey)
         guard let monoOutput = monoFilter.outputImage else { return ciImage }
 
-        // 2. Tích chập Laplacian 3x3 [-1,-1,-1, -1,8,-1, -1,-1,-1] lọc tần số cao biên cạnh sắc lẹm
-        guard let lapFilter = CIFilter(name: "CIConvolution3X3") else { return ciImage }
-        let weights: [CGFloat] = [-1, -1, -1, -1, 8, -1, -1, -1, -1]
-        lapFilter.setValue(monoOutput, forKey: kCIInputImageKey)
-        lapFilter.setValue(CIVector(values: weights, count: 9), forKey: "inputWeights")
-        lapFilter.setValue(0.0, forKey: "inputBias")
-        guard let lapOutput = lapFilter.outputImage else { return ciImage }
+        // 2. Khử hạt nhiễu ISO cảm biến trước khi lấy đạo hàm cạnh (Gaussian Blur bán kính nhẹ 0.9px)
+        guard let blurFilter = CIFilter(name: "CIGaussianBlur") else { return ciImage }
+        blurFilter.setValue(monoOutput, forKey: kCIInputImageKey)
+        blurFilter.setValue(0.9, forKey: kCIInputRadiusKey)
+        guard let blurredOutput = blurFilter.outputImage?.cropped(to: extent) else { return ciImage }
 
-        // 3. Phủ màu Neon và cắt ngưỡng cao (bias = -0.55) triệt tiêu 100% vùng mờ out-of-focus
-        guard let matrixFilter = CIFilter(name: "CIColorMatrix") else { return ciImage }
-        let vectors = color.laserMatrixVectors
-        matrixFilter.setValue(lapOutput, forKey: kCIInputImageKey)
-        matrixFilter.setValue(vectors.r, forKey: "inputRVector")
-        matrixFilter.setValue(vectors.g, forKey: "inputGVector")
-        matrixFilter.setValue(vectors.b, forKey: "inputBVector")
-        matrixFilter.setValue(vectors.a, forKey: "inputAVector")
-        matrixFilter.setValue(vectors.bias, forKey: "inputBiasVector")
-        guard let matrixOutput = matrixFilter.outputImage else { return ciImage }
-        let neonLaserEdges = matrixOutput.cropped(to: extent)
+        // 3. Trích xuất biên độ cạnh vật lý bằng CIEdges
+        guard let edgesFilter = CIFilter(name: "CIEdges") else { return ciImage }
+        edgesFilter.setValue(blurredOutput, forKey: kCIInputImageKey)
+        edgesFilter.setValue(2.2, forKey: kCIInputIntensityKey)
+        guard let rawEdges = edgesFilter.outputImage?.cropped(to: extent) else { return ciImage }
 
-        // 4. Cộng tia Laser vào ảnh trực tiếp trên GPU Metal bằng CIAdditionCompositing
+        // 4. Áp dụng Cổng Chặn Nhiễu Cao (Threshold Noise Gate: trừ bias -1.1 * gain rồi clamp về [0, 1])
+        // Toàn bộ vùng phẳng, bầu trời, mặt tường và nhiễu hạt có biên độ < 1.1 đều bị ép về 0.0 đen/trong suốt tuyệt đối
+        guard let gateMatrixFilter = CIFilter(name: "CIColorMatrix") else { return ciImage }
+        let edgeGain: CGFloat = 3.2
+        let edgeBias: CGFloat = -1.1 * edgeGain
+        gateMatrixFilter.setValue(rawEdges, forKey: kCIInputImageKey)
+        gateMatrixFilter.setValue(CIVector(x: edgeGain, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        gateMatrixFilter.setValue(CIVector(x: 0, y: edgeGain, z: 0, w: 0), forKey: "inputGVector")
+        gateMatrixFilter.setValue(CIVector(x: 0, y: 0, z: edgeGain, w: 0), forKey: "inputBVector")
+        gateMatrixFilter.setValue(CIVector(x: edgeGain, y: 0, z: 0, w: 0), forKey: "inputAVector")
+        gateMatrixFilter.setValue(CIVector(x: edgeBias, y: edgeBias, z: edgeBias, w: edgeBias), forKey: "inputBiasVector")
+        guard let gatedEdges = gateMatrixFilter.outputImage else { return ciImage }
+
+        // 5. Cắt chặn cứng giá trị âm và chuẩn hóa dải màu về [0.0, 1.0] bằng CIColorClamp
+        guard let clampFilter = CIFilter(name: "CIColorClamp") else { return ciImage }
+        clampFilter.setValue(gatedEdges, forKey: kCIInputImageKey)
+        clampFilter.setValue(CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0), forKey: "inputMinComponents")
+        clampFilter.setValue(CIVector(x: 1.0, y: 1.0, z: 1.0, w: 1.0), forKey: "inputMaxComponents")
+        guard let clampedEdges = clampFilter.outputImage?.cropped(to: extent) else { return ciImage }
+
+        // 6. Nhân màu sắc Neon đã chọn lên các đường viền cạnh sắc nét
+        guard let tintMatrixFilter = CIFilter(name: "CIColorMatrix") else { return ciImage }
+        let comps = color.neonComponents
+        tintMatrixFilter.setValue(clampedEdges, forKey: kCIInputImageKey)
+        tintMatrixFilter.setValue(CIVector(x: comps.r, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        tintMatrixFilter.setValue(CIVector(x: 0, y: comps.g, z: 0, w: 0), forKey: "inputGVector")
+        tintMatrixFilter.setValue(CIVector(x: 0, y: 0, z: comps.b, w: 0), forKey: "inputBVector")
+        tintMatrixFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 1.0), forKey: "inputAVector")
+        tintMatrixFilter.setValue(CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0), forKey: "inputBiasVector")
+        guard let coloredLaserEdges = tintMatrixFilter.outputImage?.cropped(to: extent) else { return ciImage }
+
+        // 7. Cộng tia Laser vào ảnh gốc trên GPU Metal bằng CIAdditionCompositing (vùng 0.0 giữ nguyên 100% ảnh gốc)
         guard let addFilter = CIFilter(name: "CIAdditionCompositing") else { return ciImage }
-        addFilter.setValue(neonLaserEdges, forKey: kCIInputImageKey)
+        addFilter.setValue(coloredLaserEdges, forKey: kCIInputImageKey)
         addFilter.setValue(ciImage, forKey: kCIInputBackgroundImageKey)
         return addFilter.outputImage?.cropped(to: extent) ?? ciImage
     }

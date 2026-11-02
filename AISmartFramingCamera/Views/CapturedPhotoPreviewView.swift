@@ -436,7 +436,7 @@ public struct CapturedPhotoPreviewView: View {
                                 let specs = PhotoWatermarkSpecs.from(iso: item.iso, shutterSpeed: item.shutterSpeed, focalLength: focal, aperture: 1.8)
                                 let devName = viewModel?.masterWatermarkDeviceName ?? "ALIGN STUDIO ULTRA"
                                 let theme = viewModel?.masterWatermarkTheme ?? .white
-                                let logoStyle = viewModel?.masterWatermarkLogoStyle ?? .leicaRedDot
+                                let logoStyle = viewModel?.masterWatermarkLogoStyle ?? .alignStudio
                                 let customLogo = viewModel?.masterWatermarkCustomLogoImage
                                 if let framed = MasterWatermarkRenderer.shared.renderWatermark(
                                     on: currentProcessedImage,

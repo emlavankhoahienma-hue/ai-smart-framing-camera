@@ -440,7 +440,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public var masterWatermarkTheme: WatermarkTheme = .white {
         didSet { UserDefaults.standard.set(masterWatermarkTheme.rawValue, forKey: "masterWatermarkTheme") }
     }
-    @Published public var masterWatermarkLogoStyle: WatermarkLogoStyle = .leicaRedDot {
+    @Published public var masterWatermarkLogoStyle: WatermarkLogoStyle = .alignStudio {
         didSet { UserDefaults.standard.set(masterWatermarkLogoStyle.rawValue, forKey: "masterWatermarkLogoStyle") }
     }
     @Published public var masterWatermarkCustomLogoImage: UIImage? = nil
@@ -448,7 +448,7 @@ public final class CameraViewModel: ObservableObject {
 
     public func setMasterWatermarkCustomLogo(_ image: UIImage) {
         self.masterWatermarkCustomLogoImage = image
-        self.masterWatermarkLogoStyle = .custom
+        self.masterWatermarkLogoStyle = .customImage
         let logoFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("master_watermark_logo.png")
         if let data = image.pngData() {
             try? data.write(to: logoFileURL)
@@ -1321,6 +1321,8 @@ public final class CameraViewModel: ObservableObject {
         }
         if let logoRaw = defaults.string(forKey: "masterWatermarkLogoStyle"), let style = WatermarkLogoStyle(rawValue: logoRaw) {
             self.masterWatermarkLogoStyle = style
+        } else {
+            self.masterWatermarkLogoStyle = .alignStudio
         }
         let logoFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("master_watermark_logo.png")
         if let imgData = try? Data(contentsOf: logoFileURL), let img = UIImage(data: imgData) {

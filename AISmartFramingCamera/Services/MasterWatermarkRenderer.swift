@@ -33,10 +33,11 @@ public enum WatermarkTheme: String, CaseIterable, Identifiable, Sendable {
 
 // MARK: - Watermark Logo Style
 public enum WatermarkLogoStyle: String, CaseIterable, Identifiable, Sendable {
-    case leicaRedDot = "Chấm Đỏ Leica"
-    case goldBadge = "Vàng Kim Luxury"
-    case monochrome = "Đen Tuyền"
-    case custom = "Ảnh Tùy Chỉnh"
+    case alignStudio = "Align Studio"
+    case appleIcon = "Apple"
+    case aperturePro = "Khẩu Độ Pro"
+    case customImage = "Ảnh Tùy Chỉnh"
+    case none = "Không Logo"
 
     public var id: String { rawValue }
 }
@@ -98,7 +99,7 @@ public final class MasterWatermarkRenderer: @unchecked Sendable {
         on image: CGImage,
         deviceName: String = "ALIGN STUDIO ULTRA",
         theme: WatermarkTheme = .white,
-        logoStyle: WatermarkLogoStyle = .leicaRedDot,
+        logoStyle: WatermarkLogoStyle = .alignStudio,
         customLogo: UIImage? = nil,
         specs: PhotoWatermarkSpecs
     ) -> CGImage? {
@@ -143,7 +144,7 @@ public final class MasterWatermarkRenderer: @unchecked Sendable {
             let deviceY = imgH + (barHeight - deviceSize.height) / 2.0
             deviceAttrString.draw(at: CGPoint(x: hPadding, y: deviceY))
 
-            // 4. Cụm Bên Phải: [Logo Badge]  |  [EXIF Specs]
+            // 4. Cụm Bên Phải: [Logo Badge]  |  [EXIF Specs] (hoặc chỉ [EXIF Specs] nếu .none)
             let specFontSize = round(barHeight * 0.20)
             let specFont = UIFont.monospacedDigitSystemFont(ofSize: specFontSize, weight: .semibold)
             let specAttrs: [NSAttributedString.Key: Any] = [
@@ -155,84 +156,116 @@ public final class MasterWatermarkRenderer: @unchecked Sendable {
             let specAttrString = NSAttributedString(string: specString, attributes: specAttrs)
             let specSize = specAttrString.size()
 
-            let dividerHeight = round(barHeight * 0.42)
-            let dividerWidth = max(1.5, round(barHeight * 0.015))
-            let dividerSpacing = round(barHeight * 0.16)
+            if logoStyle == .none {
+                // Chỉ hiển thị thông số EXIF, không vẽ Logo và đường phân cách
+                let specX = imgW - hPadding - specSize.width
+                let specY = imgH + (barHeight - specSize.height) / 2.0
+                specAttrString.draw(at: CGPoint(x: specX, y: specY))
+            } else {
+                let dividerHeight = round(barHeight * 0.42)
+                let dividerWidth = max(1.5, round(barHeight * 0.015))
+                let dividerSpacing = round(barHeight * 0.16)
+                let logoDiameter = round(barHeight * 0.46)
 
-            let logoDiameter = round(barHeight * 0.46)
+                let rightClusterWidth = logoDiameter + dividerSpacing + dividerWidth + dividerSpacing + specSize.width
+                let rightClusterStartX = imgW - hPadding - rightClusterWidth
 
-            let rightClusterWidth = logoDiameter + dividerSpacing + dividerWidth + dividerSpacing + specSize.width
-            let rightClusterStartX = imgW - hPadding - rightClusterWidth
+                // 4a. Vẽ Logo Badge
+                let logoX = rightClusterStartX
+                let logoY = imgH + (barHeight - logoDiameter) / 2.0
+                let logoRect = CGRect(x: logoX, y: logoY, width: logoDiameter, height: logoDiameter)
+                Self.drawLogoBadge(in: logoRect, context: cgContext, style: logoStyle, theme: theme, customImage: customLogo)
 
-            // 4a. Vẽ Logo Badge Tròn
-            let logoX = rightClusterStartX
-            let logoY = imgH + (barHeight - logoDiameter) / 2.0
-            let logoRect = CGRect(x: logoX, y: logoY, width: logoDiameter, height: logoDiameter)
-            Self.drawLogoBadge(in: logoRect, context: cgContext, style: logoStyle, customImage: customLogo)
+                // 4b. Vẽ Đường Phân Cách Dọc
+                let dividerX = logoX + logoDiameter + dividerSpacing
+                let dividerY = imgH + (barHeight - dividerHeight) / 2.0
+                theme.dividerColor.setFill()
+                cgContext.fill(CGRect(x: dividerX, y: dividerY, width: dividerWidth, height: dividerHeight))
 
-            // 4b. Vẽ Đường Phân Cách Dọc
-            let dividerX = logoX + logoDiameter + dividerSpacing
-            let dividerY = imgH + (barHeight - dividerHeight) / 2.0
-            theme.dividerColor.setFill()
-            cgContext.fill(CGRect(x: dividerX, y: dividerY, width: dividerWidth, height: dividerHeight))
-
-            // 4c. Vẽ Thông Số EXIF
-            let specX = dividerX + dividerWidth + dividerSpacing
-            let specY = imgH + (barHeight - specSize.height) / 2.0
-            specAttrString.draw(at: CGPoint(x: specX, y: specY))
+                // 4c. Vẽ Thông Số EXIF
+                let specX = dividerX + dividerWidth + dividerSpacing
+                let specY = imgH + (barHeight - specSize.height) / 2.0
+                specAttrString.draw(at: CGPoint(x: specX, y: specY))
+            }
         }
 
         return renderedImage.cgImage
     }
 
-    private static func drawLogoBadge(in rect: CGRect, context: CGContext, style: WatermarkLogoStyle, customImage: UIImage?) {
+    private static func drawLogoBadge(in rect: CGRect, context: CGContext, style: WatermarkLogoStyle, theme: WatermarkTheme, customImage: UIImage?) {
         context.saveGState()
-        let path = UIBezierPath(ovalIn: rect)
-        context.addPath(path.cgPath)
-        context.clip()
 
-        if style == .custom, let custom = customImage {
-            custom.draw(in: rect)
-            context.restoreGState()
-            return
-        }
-
-        let circleColor: UIColor
-        let letterColor: UIColor
         switch style {
-        case .leicaRedDot:
-            circleColor = UIColor(red: 0.89, green: 0.02, blue: 0.07, alpha: 1.0)
-            letterColor = .white
-        case .goldBadge:
-            circleColor = UIColor(red: 0.83, green: 0.69, blue: 0.22, alpha: 1.0)
-            letterColor = UIColor(red: 0.12, green: 0.12, blue: 0.12, alpha: 1.0)
-        case .monochrome:
-            circleColor = UIColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1.0)
-            letterColor = .white
-        case .custom:
-            circleColor = UIColor(red: 0.89, green: 0.02, blue: 0.07, alpha: 1.0)
-            letterColor = .white
+        case .alignStudio:
+            // 1. Thử tải ảnh AppLogo chính thức từ bundle của ứng dụng
+            let appLogoImage = UIImage(named: "AppLogo") ??
+                               UIImage(contentsOfFile: Bundle.main.path(forResource: "AppLogo", ofType: "png") ?? "")
+            if let logo = appLogoImage {
+                let clipPath = UIBezierPath(roundedRect: rect, cornerRadius: rect.width * 0.22)
+                context.addPath(clipPath.cgPath)
+                context.clip()
+                logo.draw(in: rect)
+            } else {
+                // Vector huy hiệu Align Studio titanium bo góc cao cấp
+                let clipPath = UIBezierPath(roundedRect: rect, cornerRadius: rect.width * 0.22)
+                context.addPath(clipPath.cgPath)
+                context.clip()
+
+                UIColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 1.0).setFill()
+                context.fill(rect)
+
+                // Chấm đỏ quang học Leica/Align Studio
+                let redDotRadius = rect.width * 0.13
+                let redDotCenter = CGPoint(x: rect.minX + rect.width * 0.32, y: rect.minY + rect.height * 0.35)
+                let redDotRect = CGRect(x: redDotCenter.x - redDotRadius, y: redDotCenter.y - redDotRadius, width: redDotRadius * 2, height: redDotRadius * 2)
+                UIColor(red: 0.89, green: 0.05, blue: 0.10, alpha: 1.0).setFill()
+                context.fillEllipse(in: redDotRect)
+
+                // Vòng ống kính vàng kim hoàng gia
+                let ringRect = rect.insetBy(dx: rect.width * 0.20, dy: rect.height * 0.20)
+                let ringPath = UIBezierPath(ovalIn: ringRect)
+                ringPath.lineWidth = max(1.2, rect.width * 0.07)
+                UIColor(red: 0.88, green: 0.72, blue: 0.24, alpha: 1.0).setStroke()
+                ringPath.stroke()
+            }
+
+        case .appleIcon:
+            let symbolConfig = UIImage.SymbolConfiguration(pointSize: rect.height * 0.76, weight: .semibold)
+            if let appleImg = UIImage(systemName: "apple.logo", withConfiguration: symbolConfig)?.withTintColor(theme.textColor, renderingMode: .alwaysOriginal) {
+                let drawSize = appleImg.size
+                let drawRect = CGRect(
+                    x: rect.midX - drawSize.width / 2.0,
+                    y: rect.midY - drawSize.height / 2.0,
+                    width: drawSize.width,
+                    height: drawSize.height
+                )
+                appleImg.draw(in: drawRect)
+            }
+
+        case .aperturePro:
+            let symbolConfig = UIImage.SymbolConfiguration(pointSize: rect.height * 0.82, weight: .semibold)
+            if let apertureImg = UIImage(systemName: "camera.aperture", withConfiguration: symbolConfig)?.withTintColor(theme.textColor, renderingMode: .alwaysOriginal) {
+                let drawSize = apertureImg.size
+                let drawRect = CGRect(
+                    x: rect.midX - drawSize.width / 2.0,
+                    y: rect.midY - drawSize.height / 2.0,
+                    width: drawSize.width,
+                    height: drawSize.height
+                )
+                apertureImg.draw(in: drawRect)
+            }
+
+        case .customImage:
+            if let custom = customImage {
+                let clipPath = UIBezierPath(roundedRect: rect, cornerRadius: rect.width * 0.22)
+                context.addPath(clipPath.cgPath)
+                context.clip()
+                custom.draw(in: rect)
+            }
+
+        case .none:
+            break
         }
-
-        circleColor.setFill()
-        context.fill(rect)
-
-        let scriptFontSize = round(rect.width * 0.48)
-        let font = UIFont(name: "SnellRoundhand-Bold", size: scriptFontSize) ??
-                   UIFont(name: "Georgia-BoldItalic", size: scriptFontSize) ??
-                   UIFont.systemFont(ofSize: scriptFontSize, weight: .heavy)
-        let scriptAttrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: letterColor
-        ]
-        let scriptText = "Align"
-        let scriptAttrStr = NSAttributedString(string: scriptText, attributes: scriptAttrs)
-        let scriptSize = scriptAttrStr.size()
-        let scriptPoint = CGPoint(
-            x: rect.midX - scriptSize.width / 2.0,
-            y: rect.midY - scriptSize.height / 2.0
-        )
-        scriptAttrStr.draw(at: scriptPoint)
 
         context.restoreGState()
     }

@@ -142,17 +142,18 @@ public struct MasterWatermarkConfigSheet: View {
     @ViewBuilder
     private var logoSection: some View {
         let hasCustomLogo = viewModel.masterWatermarkCustomLogoImage != nil
-        let isCustomStyle = viewModel.masterWatermarkLogoStyle == .custom
+        let isCustomStyle = viewModel.masterWatermarkLogoStyle == .customImage
 
         VStack(alignment: .leading, spacing: 12) {
             Text("HUY HIỆU LOGO")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundColor(.white.opacity(0.5))
 
-            HStack(spacing: 10) {
-                logoStyleButton(title: "Chấm Đỏ", style: .leicaRedDot, color: Color(red: 0.89, green: 0.02, blue: 0.07))
-                logoStyleButton(title: "Vàng Kim", style: .goldBadge, color: Color(red: 0.83, green: 0.69, blue: 0.22))
-                logoStyleButton(title: "Đen Tuyền", style: .monochrome, color: Color(red: 0.15, green: 0.15, blue: 0.15))
+            HStack(spacing: 8) {
+                logoStyleButton(title: "Align Studio", style: .alignStudio, icon: "viewfinder", color: Color.yellow)
+                logoStyleButton(title: "Apple", style: .appleIcon, icon: "apple.logo", color: Color.white)
+                logoStyleButton(title: "Khẩu Độ Pro", style: .aperturePro, icon: "camera.aperture", color: Color(red: 0.35, green: 0.85, blue: 1.0))
+                logoStyleButton(title: "Không Logo", style: .none, icon: "slash.circle", color: Color.gray)
             }
 
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
@@ -205,16 +206,19 @@ public struct MasterWatermarkConfigSheet: View {
         .cornerRadius(14)
     }
 
-    private func logoStyleButton(title: String, style: WatermarkLogoStyle, color: Color) -> some View {
+    private func logoStyleButton(title: String, style: WatermarkLogoStyle, icon: String, color: Color) -> some View {
         Button(action: {
             viewModel.masterWatermarkLogoStyle = style
         }) {
-            VStack(spacing: 6) {
-                Circle()
-                    .fill(color)
-                    .frame(width: 24, height: 24)
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(color)
+                    .frame(height: 20)
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
@@ -229,7 +233,9 @@ public struct MasterWatermarkConfigSheet: View {
     }
 
     private var watermarkMockPreview: some View {
-        HStack {
+        let isNone = viewModel.masterWatermarkLogoStyle == .none
+
+        return HStack {
             Text(viewModel.masterWatermarkDeviceName.isEmpty ? "ALIGN STUDIO ULTRA" : viewModel.masterWatermarkDeviceName.uppercased())
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .tracking(1.0)
@@ -238,26 +244,13 @@ public struct MasterWatermarkConfigSheet: View {
             Spacer()
 
             HStack(spacing: 8) {
-                if viewModel.masterWatermarkLogoStyle == .custom, let img = viewModel.masterWatermarkCustomLogoImage {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 18, height: 18)
-                        .clipShape(Circle())
-                } else {
-                    Circle()
-                        .fill(viewModel.masterWatermarkLogoStyle == .goldBadge ? Color(red: 0.83, green: 0.69, blue: 0.22) : (viewModel.masterWatermarkLogoStyle == .monochrome ? Color(red: 0.15, green: 0.15, blue: 0.15) : Color(red: 0.89, green: 0.02, blue: 0.07)))
-                        .frame(width: 18, height: 18)
-                        .overlay(
-                            Text("A")
-                                .font(.system(size: 10, weight: .heavy, design: .serif))
-                                .foregroundColor(.white)
-                        )
-                }
+                if !isNone {
+                    mockLogoBadgeView
 
-                Rectangle()
-                    .fill(viewModel.masterWatermarkTheme == .white ? Color(red: 0.83, green: 0.83, blue: 0.85) : Color(red: 0.25, green: 0.25, blue: 0.28))
-                    .frame(width: 1.5, height: 14)
+                    Rectangle()
+                        .fill(viewModel.masterWatermarkTheme == .white ? Color(red: 0.83, green: 0.83, blue: 0.85) : Color(red: 0.25, green: 0.25, blue: 0.28))
+                        .frame(width: 1.5, height: 14)
+                }
 
                 Text("70mm  f/1.8  1/250s  ISO800")
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
@@ -268,5 +261,57 @@ public struct MasterWatermarkConfigSheet: View {
         .padding(.vertical, 16)
         .background(viewModel.masterWatermarkTheme == .white ? Color.white : Color(red: 0.04, green: 0.04, blue: 0.05))
         .cornerRadius(8)
+    }
+
+    @ViewBuilder
+    private var mockLogoBadgeView: some View {
+        let themeColor = viewModel.masterWatermarkTheme == .white ? Color(red: 0.07, green: 0.07, blue: 0.07) : Color(red: 0.97, green: 0.98, blue: 0.99)
+
+        switch viewModel.masterWatermarkLogoStyle {
+        case .alignStudio:
+            if let img = UIImage(named: "AppLogo") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "AppLogo", ofType: "png") ?? "") {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color(red: 0.10, green: 0.10, blue: 0.12))
+                        .frame(width: 18, height: 18)
+                    Circle()
+                        .stroke(Color.yellow, lineWidth: 1.5)
+                        .frame(width: 10, height: 10)
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 4, height: 4)
+                }
+            }
+        case .appleIcon:
+            Image(systemName: "apple.logo")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(themeColor)
+                .frame(width: 18, height: 18)
+        case .aperturePro:
+            Image(systemName: "camera.aperture")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(themeColor)
+                .frame(width: 18, height: 18)
+        case .customImage:
+            if let img = viewModel.masterWatermarkCustomLogoImage {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            } else {
+                Image(systemName: "photo.circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(themeColor)
+            }
+        case .none:
+            EmptyView()
+        }
     }
 }
