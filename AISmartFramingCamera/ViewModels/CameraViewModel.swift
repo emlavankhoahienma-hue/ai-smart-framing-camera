@@ -98,15 +98,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             guard !snapshot.isSettingsVisible else { return }
             let now = CACurrentMediaTime()
 
-            if snapshot.isFocusPeakingEnabled, now - lastFocusPeakingComputeTime >= 0.05 {
-                lastFocusPeakingComputeTime = now
-                let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-                FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: snapshot.focusPeakingColor) { [weak self] cgImage in
-                    DispatchQueue.main.async {
-                        self?.owner?.focusPeakingCGImage = cgImage
-                    }
-                }
-            }
+
 
             if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.10 {
                 lastHistogramComputeTime = now
@@ -156,16 +148,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             }
         }
 
-        guard snapshot.isFocusPeakingEnabled,
-              now - lastFocusPeakingComputeTime >= 0.04 else { return }
 
-        lastFocusPeakingComputeTime = now
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        FocusPeakingEngine.shared.processFrame(ciImage: ciImage, color: snapshot.focusPeakingColor) { [weak self] cgImage in
-            DispatchQueue.main.async {
-                self?.owner?.focusPeakingCGImage = cgImage
-            }
-        }
     }
 }
 
@@ -446,6 +429,31 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Sun Exposure Slider & Horizon Leveler
     @Published public var isShowingSunSlider: Bool = false
     @Published public var activeSunExposureBias: Float = 0.0
+
+    // MARK: - Khung Chữ Ký Master (Master Watermark Frame - Xiaomi 15 Ultra Leica)
+    @Published public var isMasterWatermarkEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(isMasterWatermarkEnabled, forKey: "isMasterWatermarkEnabled") }
+    }
+    @Published public var masterWatermarkDeviceName: String = "ALIGN STUDIO ULTRA" {
+        didSet { UserDefaults.standard.set(masterWatermarkDeviceName, forKey: "masterWatermarkDeviceName") }
+    }
+    @Published public var masterWatermarkTheme: WatermarkTheme = .white {
+        didSet { UserDefaults.standard.set(masterWatermarkTheme.rawValue, forKey: "masterWatermarkTheme") }
+    }
+    @Published public var masterWatermarkLogoStyle: WatermarkLogoStyle = .leicaRedDot {
+        didSet { UserDefaults.standard.set(masterWatermarkLogoStyle.rawValue, forKey: "masterWatermarkLogoStyle") }
+    }
+    @Published public var masterWatermarkCustomLogoImage: UIImage? = nil
+    @Published public var isShowingMasterWatermarkConfig: Bool = false
+
+    public func setMasterWatermarkCustomLogo(_ image: UIImage) {
+        self.masterWatermarkCustomLogoImage = image
+        self.masterWatermarkLogoStyle = .custom
+        let logoFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("master_watermark_logo.png")
+        if let data = image.pngData() {
+            try? data.write(to: logoFileURL)
+        }
+    }
 
     // MARK: - Khóa Đường Chân Trời 360° (360° Horizon Lock)
     @Published public var isHorizonLockEnabled: Bool = false {
@@ -1302,6 +1310,23 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "isHorizonLevelerEnabled") != nil {
             self.isHorizonLevelerEnabled = defaults.bool(forKey: "isHorizonLevelerEnabled")
         }
+        if defaults.object(forKey: "isMasterWatermarkEnabled") != nil {
+            self.isMasterWatermarkEnabled = defaults.bool(forKey: "isMasterWatermarkEnabled")
+        }
+        if let devName = defaults.string(forKey: "masterWatermarkDeviceName"), !devName.isEmpty {
+            self.masterWatermarkDeviceName = devName
+        }
+        if let themeRaw = defaults.string(forKey: "masterWatermarkTheme"), let theme = WatermarkTheme(rawValue: themeRaw) {
+            self.masterWatermarkTheme = theme
+        }
+        if let logoRaw = defaults.string(forKey: "masterWatermarkLogoStyle"), let style = WatermarkLogoStyle(rawValue: logoRaw) {
+            self.masterWatermarkLogoStyle = style
+        }
+        let logoFileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("master_watermark_logo.png")
+        if let imgData = try? Data(contentsOf: logoFileURL), let img = UIImage(data: imgData) {
+            self.masterWatermarkCustomLogoImage = img
+        }
+
         if defaults.object(forKey: "isHorizonLockEnabled") != nil {
             self.isHorizonLockEnabled = defaults.bool(forKey: "isHorizonLockEnabled")
             DeviceMotionService.shared.setHorizonTrackingActive(self.isHorizonLockEnabled)
@@ -4746,6 +4771,11 @@ extension CameraViewModel: CameraServiceDelegate {
         let appliedIntensity = Float(self.filmSimulationIntensity)
         let isHorizonLock = self.isHorizonLockEnabled
         let horizonMotion = isHorizonLock ? DeviceMotionService.shared.currentHorizonParams() : (roll: Float(0), zoom: Float(1), shakeX: Float(0), shakeY: Float(0))
+        let isMasterWatermark = self.isMasterWatermarkEnabled && format != .dng
+        let watermarkDevice = self.masterWatermarkDeviceName
+        let watermarkTheme = self.masterWatermarkTheme
+        let watermarkLogo = self.masterWatermarkLogoStyle
+        let watermarkCustomLogo = self.masterWatermarkCustomLogoImage
 
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -4800,6 +4830,21 @@ extension CameraViewModel: CameraServiceDelegate {
                 if hasColorEdits {
                     processedImageResult = FilmFilterEngine.shared.applyPresetAndAIParameters(
                         to: photoAfterCropOrSim, preset: effectivePreset, params: finalColorParams, intensity: appliedIntensity) ?? photoAfterCropOrSim
+                }
+            }
+
+            if isMasterWatermark {
+                let focal = isWindowed ? windowFocal : (self.displayZoom >= 1.9 ? 52.0 : (self.displayZoom <= 0.6 ? 13.0 : 24.0))
+                let specs = PhotoWatermarkSpecs.from(iso: iso, shutterSpeed: shutterSpeed, focalLength: focal, aperture: 1.8)
+                if let framed = MasterWatermarkRenderer.shared.renderWatermark(
+                    on: processedImageResult,
+                    deviceName: watermarkDevice,
+                    theme: watermarkTheme,
+                    logoStyle: watermarkLogo,
+                    customLogo: watermarkCustomLogo,
+                    specs: specs
+                ) {
+                    processedImageResult = framed
                 }
             }
 

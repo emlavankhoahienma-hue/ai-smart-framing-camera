@@ -429,8 +429,39 @@ public struct CapturedPhotoPreviewView: View {
                             }
                         }
 
-                        // 5.2 Action Row: [Lưu ảnh] & [Chia sẻ]
+                        // 5.2 Action Row: [Lưu ảnh], [Khung Master] & [Chia sẻ]
                         HStack(spacing: 10) {
+                            Button(action: {
+                                let focal = (viewModel?.displayZoom ?? 1.0) >= 1.9 ? 52.0 : 24.0
+                                let specs = PhotoWatermarkSpecs.from(iso: item.iso, shutterSpeed: item.shutterSpeed, focalLength: focal, aperture: 1.8)
+                                let devName = viewModel?.masterWatermarkDeviceName ?? "ALIGN STUDIO ULTRA"
+                                let theme = viewModel?.masterWatermarkTheme ?? .white
+                                let logoStyle = viewModel?.masterWatermarkLogoStyle ?? .leicaRedDot
+                                let customLogo = viewModel?.masterWatermarkCustomLogoImage
+                                if let framed = MasterWatermarkRenderer.shared.renderWatermark(
+                                    on: currentProcessedImage,
+                                    deviceName: devName,
+                                    theme: theme,
+                                    logoStyle: logoStyle,
+                                    customLogo: customLogo,
+                                    specs: specs
+                                ) {
+                                    currentProcessedImage = framed
+                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                }
+                            }) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "seal.fill")
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text("Khung Master")
+                                        .font(.system(size: 13, weight: .semibold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 11)
+                                .background(Color.white.opacity(0.12))
+                                .cornerRadius(10)
+                            }
                             // Nút Lưu ảnh
                             Button(action: {
                                 if item.saveFormat == .dng {

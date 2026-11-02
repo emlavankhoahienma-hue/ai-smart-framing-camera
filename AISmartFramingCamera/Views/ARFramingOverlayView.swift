@@ -19,17 +19,6 @@ public struct ARFramingOverlayView: View {
             let bottomChromeInset = max(70, min(96, size.height * 0.18))
 
             ZStack {
-                // 0. Focus Peaking Neon Edges (Báo nét điện ảnh)
-                if viewModel.isFocusPeakingEnabled, let peakingImage = viewModel.focusPeakingCGImage {
-                    Image(decorative: peakingImage, scale: 1.0, orientation: .up)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: size.width, height: size.height)
-                        .clipped()
-                        .allowsHitTesting(false)
-                        .opacity(1.0)
-                }
-
                 // 1. Composition Grid Lines (hiện khi AI session active hoặc người dùng bật thủ công từ kho chức năng)
                 if viewModel.isAISessionActive || viewModel.isManualGridVisible {
                     CompositionGridLines(rule: viewModel.activeCompositionRule, size: size)

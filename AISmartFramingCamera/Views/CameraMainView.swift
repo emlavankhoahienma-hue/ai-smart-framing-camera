@@ -286,6 +286,9 @@ public struct CameraMainView: View {
         .sheet(isPresented: $viewModel.isShowingSettings) {
             SettingsSheetView(viewModel: viewModel)
         }
+        .sheet(isPresented: $viewModel.isShowingMasterWatermarkConfig) {
+            MasterWatermarkConfigSheet(viewModel: viewModel)
+        }
         .sheet(item: $viewModel.compositionPreviewPresentation) { presentation in
             CompositionPreviewSheet(choices: viewModel.localCompositionChoices,
                 onSelect: viewModel.selectCompositionPreview,
@@ -1037,6 +1040,15 @@ struct CameraFunctionDrawerView: View {
                         subtitle: viewModel.isHorizonLockEnabled ? "360° Khóa" : "Tắt",
                         isActive: viewModel.isHorizonLockEnabled,
                         action: { viewModel.toggleHorizonLock() }
+                    )
+
+                    // 6. Khung Chữ Ký Master (Xiaomi 15 Ultra Leica Master Watermark)
+                    DrawerFunctionButton(
+                        icon: viewModel.isMasterWatermarkEnabled ? "seal.fill" : "seal",
+                        title: "Khung Master",
+                        subtitle: viewModel.isMasterWatermarkEnabled ? "Bật" : "Tắt",
+                        isActive: viewModel.isMasterWatermarkEnabled,
+                        action: { viewModel.isMasterWatermarkEnabled.toggle() }
                     )
 
                     // Row 2:

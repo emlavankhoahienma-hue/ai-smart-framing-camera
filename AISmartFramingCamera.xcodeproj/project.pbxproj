@@ -45,6 +45,8 @@
 		B20000000000000000000022 /* PresetThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000025 /* PresetThumbnailProvider.swift */; };
 		B20000000000000000000023 /* StreetSpatialTrackingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */; };
 		B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000027 /* FocusPeakingEngine.swift */; };
+		C20000000000000000000071 /* MasterWatermarkRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000071 /* MasterWatermarkRenderer.swift */; };
+		C20000000000000000000072 /* MasterWatermarkConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000072 /* MasterWatermarkConfigSheet.swift */; };
 		B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000028 /* ProVideoManualControlsService.swift */; };
 		B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000029 /* ProVideoManualControlsView.swift */; };
 		B20000000000000000000027 /* PhotoGallerySheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000037 /* PhotoGallerySheetView.swift */; };
@@ -129,6 +131,8 @@
 		B100000000000000000000025 /* PresetThumbnailProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresetThumbnailProvider.swift; sourceTree = "<group>"; };
 		B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreetSpatialTrackingEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000027 /* FocusPeakingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPeakingEngine.swift; sourceTree = "<group>"; };
+		C10000000000000000000071 /* MasterWatermarkRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterWatermarkRenderer.swift; sourceTree = "<group>"; };
+		C10000000000000000000072 /* MasterWatermarkConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterWatermarkConfigSheet.swift; sourceTree = "<group>"; };
 		B100000000000000000000028 /* ProVideoManualControlsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProVideoManualControlsService.swift; sourceTree = "<group>"; };
 		B100000000000000000000029 /* ProVideoManualControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProVideoManualControlsView.swift; sourceTree = "<group>"; };
 		B100000000000000000000045 /* UltraWideWarpEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UltraWideWarpEngine.swift; sourceTree = "<group>"; };
@@ -246,6 +250,7 @@
 				B100000000000000000000025 /* PresetThumbnailProvider.swift */,
 				B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */,
 				B100000000000000000000027 /* FocusPeakingEngine.swift */,
+				C10000000000000000000071 /* MasterWatermarkRenderer.swift */,
 				B100000000000000000000028 /* ProVideoManualControlsService.swift */,
 				B100000000000000000000045 /* UltraWideWarpEngine.swift */,
 				B100000000000000000000046 /* SeparableSuperView.metal */,
@@ -318,6 +323,7 @@
 				B1000000000000000000000E /* CameraControlsView.swift */,
 				B1000000000000000000000F /* CapturedPhotoPreviewView.swift */,
 				B100000000000000000000010 /* SettingsSheetView.swift */,
+				C10000000000000000000072 /* MasterWatermarkConfigSheet.swift */,
 				B100000000000000000000016 /* VideoPreviewSheetView.swift */,
 				B100000000000000000000022 /* FeedbackView.swift */,
 				B100000000000000000000024 /* LiveColorHistogramHUDView.swift */,
@@ -450,6 +456,8 @@
 				B20000000000000000000022 /* PresetThumbnailProvider.swift in Sources */,
 				B20000000000000000000023 /* StreetSpatialTrackingEngine.swift in Sources */,
 				B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */,
+				C20000000000000000000071 /* MasterWatermarkRenderer.swift in Sources */,
+				C20000000000000000000072 /* MasterWatermarkConfigSheet.swift in Sources */,
 				B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */,
 				B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */,
 				B20000000000000000000045 /* UltraWideWarpEngine.swift in Sources */,

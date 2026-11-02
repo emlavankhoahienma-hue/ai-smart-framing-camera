@@ -46,6 +46,8 @@ public struct CameraPreviewView: UIViewRepresentable {
             isSimulatedUltraWide: viewModel.isSimulatedUltraWideActive,
             simulatedFactor: viewModel.simulatedUltraWideFactor,
             isHorizonLock: viewModel.isHorizonLockEnabled,
+            isFocusPeaking: viewModel.isFocusPeakingEnabled,
+            focusPeakingColor: viewModel.focusPeakingColor,
             preset: viewModel.selectedFilmPreset,
             intensity: Float(viewModel.filmSimulationIntensity)
         )
@@ -126,6 +128,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var isSimulatedUltraWide: Bool = false
     private var simulatedFactor: CGFloat = 0.5
     private var isHorizonLock: Bool = false
+    private var isFocusPeaking: Bool = false
+    private var focusPeakingColor: FocusPeakingColor = .green
     private var currentPreset: FilmPreset = .standard
     private var currentIntensity: Float = 1.0
 
@@ -150,10 +154,12 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         super.init()
     }
 
-    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, preset: FilmPreset, intensity: Float) {
+    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, isFocusPeaking: Bool = false, focusPeakingColor: FocusPeakingColor = .green, preset: FilmPreset, intensity: Float) {
         stateLock.lock()
         self.isFilmFilterActive = isActive && (preset != .standard)
-        self.isRenderingActive = self.isFilmFilterActive || isSimulatedUltraWide || isHorizonLock
+        self.isFocusPeaking = isFocusPeaking
+        self.focusPeakingColor = focusPeakingColor
+        self.isRenderingActive = self.isFilmFilterActive || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
         self.isDualCameraMode = isDualCamera
         self.isVideoAspectFit = isVideoMode
         self.isSimulatedUltraWide = isSimulatedUltraWide
@@ -174,6 +180,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         let simUW = isSimulatedUltraWide
         let simFactor = simulatedFactor
         let isHL = isHorizonLock
+        let isPeaking = isFocusPeaking
+        let peakingColor = focusPeakingColor
         let preset = currentPreset
         let intensity = currentIntensity
         stateLock.unlock()
@@ -191,7 +199,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         let finalImageToRender: CIImage
 
         // Optimization: reuse last filtered image if buffer, preset, intensity and size haven't changed (disable when horizon lock is active)
-        if !isHL,
+        if !isHL && !isPeaking,
            pixelBuffer === lastProcessedBuffer,
            filmActive == lastFilterActive,
            videoAspectFit == lastVideoAspectFit,
@@ -276,7 +284,13 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
             } else {
                 filteredCI = unwarpedCI
             }
-            finalImageToRender = filteredCI
+            let peakedCI: CIImage
+            if isPeaking {
+                peakedCI = FocusPeakingEngine.shared.applyLaserFocusPeaking(to: filteredCI, color: peakingColor)
+            } else {
+                peakedCI = filteredCI
+            }
+            finalImageToRender = peakedCI
 
             lastProcessedBuffer = pixelBuffer
             lastFilteredCI = filteredCI
@@ -400,10 +414,10 @@ public class PreviewContainerView: UIView {
         insertSubview(mtk, belowSubview: focusRingView)
     }
 
-    public func updateMetalPreviewState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool = false, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, preset: FilmPreset, intensity: Float) {
-        // Kich hoat MTKView khi bat bo loc mau, simulated 0.5x, hoac Horizon Lock 360 do
-        let shouldRender = (isActive && preset != .standard) || isSimulatedUltraWide || isHorizonLock
-        metalRenderer?.updateState(isActive: isActive, isDualCamera: isDualCamera, isVideoMode: isVideoMode, isSimulatedUltraWide: isSimulatedUltraWide, simulatedFactor: simulatedFactor, isHorizonLock: isHorizonLock, preset: preset, intensity: intensity)
+    public func updateMetalPreviewState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool = false, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, isFocusPeaking: Bool = false, focusPeakingColor: FocusPeakingColor = .green, preset: FilmPreset, intensity: Float) {
+        // Kich hoat MTKView khi bat bo loc mau, simulated 0.5x, Horizon Lock 360 do, hoac Focus Peaking 60 FPS
+        let shouldRender = (isActive && preset != .standard) || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
+        metalRenderer?.updateState(isActive: isActive, isDualCamera: isDualCamera, isVideoMode: isVideoMode, isSimulatedUltraWide: isSimulatedUltraWide, simulatedFactor: simulatedFactor, isHorizonLock: isHorizonLock, isFocusPeaking: isFocusPeaking, focusPeakingColor: focusPeakingColor, preset: preset, intensity: intensity)
 
         if isDualCamera {
             dualPrimaryContainerView.isHidden = shouldRender || (multiCamOverlayLayer == nil)
