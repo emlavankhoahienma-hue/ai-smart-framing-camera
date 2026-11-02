@@ -452,6 +452,8 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(isHorizonLockEnabled, forKey: "isHorizonLockEnabled")
             DeviceMotionService.shared.setHorizonTrackingActive(isHorizonLockEnabled)
+            cameraService.isHorizonLockActive = isHorizonLockEnabled
+            EffectVideoAssetRecorder.shared.isHorizonLock = isHorizonLockEnabled
         }
     }
 
@@ -3879,6 +3881,12 @@ public final class CameraViewModel: ObservableObject {
             lastRecordedVideoWindowedCenter = CGPoint(x: 0.5, y: 0.5)
         }
         haptics.triggerShutterClick()
+        cameraService.isHorizonLockActive = self.isHorizonLockEnabled
+        cameraService.isSimulatedUltraWideActive = self.isSimulatedUltraWideActive
+        cameraService.simulatedUltraWideFactor = self.simulatedUltraWideFactor
+        cameraService.activeFilmPreset = (self.isFilmSimulationActive && self.selectedFilmPreset != .standard) ? self.selectedFilmPreset : nil
+        cameraService.activeFilmIntensity = Float(self.filmSimulationIntensity)
+        cameraService.activeAIColorParams = self.currentAIColorParams
         cameraService.startRecordingVideo(codec: self.selectedVideoCodec)
     }
 

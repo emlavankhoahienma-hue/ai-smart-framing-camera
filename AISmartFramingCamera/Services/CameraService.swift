@@ -144,7 +144,11 @@ public final class CameraService: NSObject {
     public private(set) var displayMultiplier: CGFloat = 1.0
     public private(set) var hasUltraWideLens: Bool = false
     public private(set) var isSimulatedUltraWideActive: Bool = false
-    public private(set) var simulatedUltraWideFactor: CGFloat = 1.0
+    public var isHorizonLockActive: Bool = false
+    public var activeFilmPreset: FilmPreset? = nil
+    public var activeFilmIntensity: Float = 1.0
+    public var activeAIColorParams: FilmSimulationAIColorParameters? = nil
+    public var simulatedUltraWideFactor: CGFloat = 1.0
     public private(set) var availableDisplayZoomOptions: [CGFloat] = [0.5, 1.0, 2.0, 3.0]
     public private(set) var defaultDisplayZoom: CGFloat = 1.0
 
@@ -2262,6 +2266,49 @@ public final class CameraService: NSObject {
             return
         }
 
+        let isEffectRecording = isHorizonLockActive || isSimulatedUltraWideActive || (activeFilmPreset != nil && activeFilmPreset != .standard)
+        if isEffectRecording {
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("AlignAI_Video_\(UUID().uuidString).mp4")
+            recordingURL = outputURL
+            recordingInterruptionError = nil
+            recordingStopCommandIssued = false
+            publishRecordingState(.starting)
+
+            let effectiveOption = appliedVideoFormatOption ?? selectedVideoFormatOption
+            let dims = CMVideoDimensions(width: 1080, height: 1920)
+            let fps = effectiveOption.fps
+
+            EffectVideoAssetRecorder.shared.isHorizonLock = isHorizonLockActive
+            EffectVideoAssetRecorder.shared.isSimulatedUW = isSimulatedUltraWideActive
+            EffectVideoAssetRecorder.shared.simulatedFactor = simulatedUltraWideFactor
+            EffectVideoAssetRecorder.shared.filmPreset = activeFilmPreset
+            EffectVideoAssetRecorder.shared.filmIntensity = activeFilmIntensity
+            EffectVideoAssetRecorder.shared.aiColorParams = activeAIColorParams
+
+            videoDataOutput.connection(with: .video)?.isEnabled = true
+            audioDataOutput.connection(with: .audio)?.isEnabled = true
+
+            EffectVideoAssetRecorder.shared.startRecording(
+                outputURL: outputURL,
+                dimensions: dims,
+                fps: fps,
+                codec: selectedVideoCodec
+            ) { [weak self] (success: Bool) in
+                guard let self else { return }
+                self.sessionQueue.async {
+                    if success {
+                        self.publishRecordingState(.recording)
+                    } else {
+                        self.wantsRecording = false
+                        self.publishRecordingState(.idle, force: true)
+                        self.reportRecordingFailure(CameraServiceError.recordingUnavailable)
+                    }
+                }
+            }
+            return
+        }
+
         // Tu dong cau hinh / khoi phuc format neu chua ap dung
         if appliedVideoFormatOption == nil || appliedVideoFormatOption != selectedVideoFormatOption {
             configureVideoFormatInternal(option: selectedVideoFormatOption)
@@ -2352,6 +2399,26 @@ public final class CameraService: NSObject {
         if isDualCameraActive {
             publishRecordingState(.stopping)
             DualCameraAssetRecorder.shared.stopRecording { [weak self] (outputURL: URL?, error: Error?) in
+                guard let self else { return }
+                self.sessionQueue.async {
+                    self.publishRecordingState(.idle, force: true)
+                    let finishedURL = outputURL ?? self.recordingURL
+                    self.recordingURL = nil
+                    if let url = finishedURL {
+                        DispatchQueue.main.async {
+                            self.delegate?.cameraService(self, didFinishRecordingVideoAt: url)
+                        }
+                    } else if let error = error {
+                        self.reportRecordingFailure(error)
+                    }
+                }
+            }
+            return
+        }
+
+        if EffectVideoAssetRecorder.shared.isRecording {
+            publishRecordingState(.stopping)
+            EffectVideoAssetRecorder.shared.stopRecording { [weak self] (outputURL: URL?, error: Error?) in
                 guard let self else { return }
                 self.sessionQueue.async {
                     self.publishRecordingState(.idle, force: true)
@@ -3111,6 +3178,8 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         if output == self.audioDataOutput {
             if isDualCameraActive && DualCameraAssetRecorder.shared.isRecording {
                 DualCameraAssetRecorder.shared.appendAudioSampleBuffer(sampleBuffer)
+            } else if EffectVideoAssetRecorder.shared.isRecording {
+                EffectVideoAssetRecorder.shared.appendAudioSampleBuffer(sampleBuffer)
             }
             handleAudioSampleBuffer(sampleBuffer, from: connection)
             return
@@ -3132,6 +3201,13 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
             if isDualCameraActive && DualCameraAssetRecorder.shared.isRecording {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                 DualCameraAssetRecorder.shared.appendBackPixelBuffer(pb, frontBuffer: frontPB, pts: pts)
+            }
+        }
+
+        if output === self.videoDataOutput, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            if EffectVideoAssetRecorder.shared.isRecording {
+                let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                EffectVideoAssetRecorder.shared.appendVideoPixelBuffer(pb, pts: pts)
             }
         }
 

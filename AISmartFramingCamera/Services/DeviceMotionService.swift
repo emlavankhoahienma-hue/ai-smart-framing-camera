@@ -20,7 +20,7 @@ public final class DeviceMotionService: @unchecked Sendable {
 
     // Horizon Lock 360° state (Velocity-Adaptive Circular EMA + Adaptive Dynamic Zoom)
     public private(set) var horizonRollAngle: Float = 0.0
-    public private(set) var horizonAdaptiveZoom: Float = 1.12
+    public private(set) var horizonAdaptiveZoom: Float = 1.02
     public private(set) var horizonShakeX: Float = 0.0
     public private(set) var horizonShakeY: Float = 0.0
     private var smoothedCosRoll: Float = 1.0
@@ -125,12 +125,10 @@ public final class DeviceMotionService: @unchecked Sendable {
             let calculatedRoll = atan2(self.smoothedSinRoll, self.smoothedCosRoll)
             self.horizonRollAngle = calculatedRoll
 
-            // 2. Adaptive Dynamic Zoom (Cầm thẳng 0 độ chỉ zoom nhẹ 1.12x; nghiêng tới đâu tự tăng zoom giấu 4 góc đen)
-            let absCos = abs(cos(calculatedRoll))
-            let absSin = abs(sin(calculatedRoll))
-            let aspect: Float = 4.0 / 3.0
-            let neededGeometricScale = max(1.12, min(1.55, absCos + aspect * absSin))
-            self.horizonAdaptiveZoom = self.horizonAdaptiveZoom * 0.85 + neededGeometricScale * 0.15
+            // 2. Adaptive Dynamic Zoom (Cầm thẳng 0 độ chỉ zoom nhẹ 1.02x; nghiêng tới đâu tự tăng zoom giấu 4 góc đen)
+            let sin2Theta = abs(sin(2.0 * calculatedRoll))
+            let neededScale = Float(1.02 + 0.24 * sin2Theta)
+            self.horizonAdaptiveZoom = self.horizonAdaptiveZoom * 0.85 + neededScale * 0.15
 
             // 3. Bù rung tay vi mô ngang/dọc (+-3%)
             let rateX = Float(motion.rotationRate.x)
