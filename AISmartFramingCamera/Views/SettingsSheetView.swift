@@ -485,6 +485,9 @@ struct PhotoCaptureSettingsSection: View {
     // Nhóm 3: Khung Chữ Ký Master (Leica Style Watermark)
     @ViewBuilder
     private var masterWatermarkCard: some View {
+        let hasCustomLogo = viewModel.masterWatermarkCustomLogoImage != nil
+        let isCustomStyle = viewModel.masterWatermarkLogoStyle == .customImage
+
         SettingsSectionCard(title: "Khung Chữ Ký Master", icon: "viewfinder.circle") {
             VStack(spacing: 0) {
                 SettingsToggleRow(
@@ -546,20 +549,20 @@ struct PhotoCaptureSettingsSection: View {
                                 HStack(spacing: 4) {
                                     Image(systemName: "photo")
                                         .font(.system(size: 10, weight: .bold))
-                                    Text(viewModel.masterWatermarkCustomLogoImage != nil ? "Đã chọn" : "Tự chọn")
-                                        .font(.system(size: 11, weight: viewModel.masterWatermarkLogoStyle == .customImage ? .bold : .medium, design: .rounded))
+                                    Text(hasCustomLogo ? "Đã chọn" : "Tự chọn")
+                                        .font(.system(size: 11, weight: isCustomStyle ? .bold : .medium, design: .rounded))
                                 }
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 6)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(viewModel.masterWatermarkLogoStyle == .customImage ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.18) : Color.white.opacity(0.06))
+                                        .fill(isCustomStyle ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.18) : Color.white.opacity(0.06))
                                 )
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .stroke(viewModel.masterWatermarkLogoStyle == .customImage ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.60) : Color.clear, lineWidth: 1)
+                                        .stroke(isCustomStyle ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.60) : Color.clear, lineWidth: 1)
                                 )
-                                .foregroundColor(viewModel.masterWatermarkLogoStyle == .customImage ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white.opacity(0.70))
+                                .foregroundColor(isCustomStyle ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white.opacity(0.70))
                             }
                             .onChangeCompatible(of: selectedPhotoItem) { item in
                                 guard let item else { return }
