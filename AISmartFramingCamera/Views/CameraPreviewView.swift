@@ -141,6 +141,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var lastFilterActive: Bool = false
     private var lastVideoAspectFit: Bool = false
     private var lastDrawableSize: CGSize = .zero
+    private var lastPeakingActive: Bool = false
+    private var lastPeakingColor: FocusPeakingColor = .green
 
     init?(device: MTLDevice, viewModel: CameraViewModel) {
         self.device = device
@@ -198,8 +200,10 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
         let finalImageToRender: CIImage
 
-        // Optimization: reuse last filtered image if buffer, preset, intensity and size haven't changed (disable when horizon lock is active)
+        // Optimization: reuse last filtered image if buffer, preset, intensity and size haven't changed (disable when horizon lock or peaking is active)
         if !isHL && !isPeaking,
+           isPeaking == lastPeakingActive,
+           peakingColor == lastPeakingColor,
            pixelBuffer === lastProcessedBuffer,
            filmActive == lastFilterActive,
            videoAspectFit == lastVideoAspectFit,
@@ -293,12 +297,14 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
             finalImageToRender = peakedCI
 
             lastProcessedBuffer = pixelBuffer
-            lastFilteredCI = filteredCI
+            lastFilteredCI = finalImageToRender
             lastFilterActive = filmActive
             lastVideoAspectFit = videoAspectFit
             lastPreset = preset
             lastIntensity = intensity
             lastDrawableSize = drawableSize
+            lastPeakingActive = isPeaking
+            lastPeakingColor = peakingColor
         }
 
         let destinationBounds = CGRect(origin: .zero, size: drawableSize)
