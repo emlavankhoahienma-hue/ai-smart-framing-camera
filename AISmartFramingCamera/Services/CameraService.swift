@@ -2096,14 +2096,7 @@ public final class CameraService: NSObject {
                     }
                 }
 
-                // Highlight-Clipping Protection EV: Giữ trọn vẹn chi tiết bầu trời / mây
-                let clipRatio = RealtimeHistogramEngine.shared.highlightClipRatio
-                let avgLum = RealtimeHistogramEngine.shared.averageLuminance
-                if clipRatio > 0.02 || avgLum > 0.72 {
-                    let targetBias: Float = (clipRatio > 0.05 || avgLum > 0.85) ? -0.70 : -0.35
-                    let clampedBias = max(camera.minExposureTargetBias, min(camera.maxExposureTargetBias, targetBias))
-                    camera.setExposureTargetBias(clampedBias, completionHandler: nil)
-                }
+
             } catch {
                 CameraLogger.error("CameraService: Error configuring smart focus & exposure", error: error, category: .capture)
             }
@@ -2325,9 +2318,14 @@ public final class CameraService: NSObject {
             if let camera = self.activeCamera {
                 do {
                     try camera.lockForConfiguration()
-                    if camera.activeFormat.isVideoHDRSupported {
-                        camera.automaticallyAdjustsVideoHDREnabled = true
+                    if camera.isLowLightBoostSupported {
+                        camera.automaticallyEnablesLowLightBoostWhenAvailable = true
                     }
+                    if camera.activeFormat.isVideoHDRSupported {
+                        camera.automaticallyAdjustsVideoHDREnabled = false
+                        camera.isVideoHDREnabled = true
+                    }
+                    camera.setExposureTargetBias(0.0, completionHandler: nil)
                     camera.unlockForConfiguration()
                 } catch {}
             }
@@ -2365,13 +2363,24 @@ public final class CameraService: NSObject {
             configureVideoFormatInternal(option: selectedVideoFormatOption)
         }
 
+        if !captureSession.outputs.contains(movieFileOutput) && captureSession.canAddOutput(movieFileOutput) {
+            captureSession.beginConfiguration()
+            captureSession.addOutput(movieFileOutput)
+            if let connection = movieFileOutput.connection(with: .video) {
+                if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+                if connection.isVideoStabilizationSupported {
+                    connection.preferredVideoStabilizationMode = self.bestVideoStabilizationMode(for: activeCamera)
+                }
+            }
+            captureSession.commitConfiguration()
+        }
+
         guard desiredCaptureMode.isVideo, currentCaptureMode.isVideo,
-              appliedVideoFormatOption != nil,
               !isPhotoCaptureInFlight, captureSession.isRunning, !captureSession.isInterrupted,
               captureSession.outputs.contains(movieFileOutput),
               let camera = activeCamera,
-              let connection = movieFileOutput.connection(with: .video), connection.isActive else {
-            CameraLogger.error("CameraService: Chua san sang quay video (desired: \(desiredCaptureMode.rawValue), current: \(currentCaptureMode.rawValue), applied: \(String(describing: appliedVideoFormatOption?.rawValue)), running: \(captureSession.isRunning))", category: .capture)
+              let connection = movieFileOutput.connection(with: .video) else {
+            CameraLogger.error("CameraService: Chua san sang quay video (desired: \(desiredCaptureMode.rawValue), current: \(currentCaptureMode.rawValue), running: \(captureSession.isRunning))", category: .capture)
             wantsRecording = false
             publishRecordingState(.idle, force: true)
             reportRecordingFailure(CameraServiceError.recordingUnavailable)
@@ -2383,18 +2392,20 @@ public final class CameraService: NSObject {
         let matchingRange = camera.activeFormat.videoSupportedFrameRateRanges.first(where: {
             $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
         })
-        guard let validRange = matchingRange else {
-            CameraLogger.error("CameraService: Active format khong ho tro target FPS \(targetFPS)", category: .capture)
-            wantsRecording = false
-            publishRecordingState(.idle, force: true)
-            reportRecordingFailure(CameraServiceError.recordingUnavailable)
-            return
-        }
+        let validRange = matchingRange ?? camera.activeFormat.videoSupportedFrameRateRanges.first
         do {
             try camera.lockForConfiguration()
-            let frameDuration = validRange.minFrameDuration
-            camera.activeVideoMinFrameDuration = frameDuration
-            camera.activeVideoMaxFrameDuration = frameDuration
+            if let range = validRange {
+                let minDuration = range.minFrameDuration
+                let maxDuration = range.maxFrameDuration
+                if CMTimeCompare(minDuration, camera.activeVideoMaxFrameDuration) > 0 {
+                    camera.activeVideoMaxFrameDuration = maxDuration
+                    camera.activeVideoMinFrameDuration = minDuration
+                } else {
+                    camera.activeVideoMinFrameDuration = minDuration
+                    camera.activeVideoMaxFrameDuration = maxDuration
+                }
+            }
             if camera.isFocusModeSupported(.continuousAutoFocus) {
                 camera.focusMode = .continuousAutoFocus
             }
@@ -2406,17 +2417,16 @@ public final class CameraService: NSObject {
             }
             camera.isSubjectAreaChangeMonitoringEnabled = true
             if camera.isLowLightBoostSupported {
-                camera.automaticallyEnablesLowLightBoostWhenAvailable = false
+                camera.automaticallyEnablesLowLightBoostWhenAvailable = true
             }
             if camera.activeFormat.isVideoHDRSupported {
-                camera.automaticallyAdjustsVideoHDREnabled = true
+                camera.automaticallyAdjustsVideoHDREnabled = false
+                camera.isVideoHDREnabled = true
             }
+            camera.setExposureTargetBias(0.0, completionHandler: nil)
             camera.unlockForConfiguration()
         } catch {
-            wantsRecording = false
-            publishRecordingState(.idle, force: true)
-            reportRecordingFailure(error)
-            return
+            CameraLogger.error("CameraService: Loi cau hinh camera truoc khi quay", error: error, category: .capture)
         }
 
         if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
@@ -2424,7 +2434,7 @@ public final class CameraService: NSObject {
             connection.preferredVideoStabilizationMode = self.bestVideoStabilizationMode(for: camera)
         }
         if let videoDataConn = videoDataOutput.connection(with: .video), videoDataConn.isVideoStabilizationSupported {
-            videoDataConn.preferredVideoStabilizationMode = self.bestVideoStabilizationMode(for: camera)
+            videoDataConn.preferredVideoStabilizationMode = .off
         }
         movieFileOutput.movieFragmentInterval = .invalid
         let availableCodecs = movieFileOutput.availableVideoCodecTypes
@@ -2769,17 +2779,17 @@ public final class CameraService: NSObject {
             let matchingRange = targetFormat.videoSupportedFrameRateRanges.first(where: {
                 $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
             })
-            let frameDuration = matchingRange?.minFrameDuration ?? CMTime(value: 1, timescale: CMTimeScale(round(targetFPS)))
-
-            // Đảm bảo không vi phạm bất biến: activeVideoMinFrameDuration <= activeVideoMaxFrameDuration
-            // Tránh văng NSInvalidArgumentException gây Crash Signal 6 trong AVFCapture
-            let currentMax = targetCamera.activeVideoMaxFrameDuration
-            if CMTimeCompare(frameDuration, currentMax) > 0 {
-                targetCamera.activeVideoMaxFrameDuration = frameDuration
-                targetCamera.activeVideoMinFrameDuration = frameDuration
-            } else {
-                targetCamera.activeVideoMinFrameDuration = frameDuration
-                targetCamera.activeVideoMaxFrameDuration = frameDuration
+            let range = matchingRange ?? targetFormat.videoSupportedFrameRateRanges.first
+            if let validRange = range {
+                let minDuration = validRange.minFrameDuration
+                let maxDuration = validRange.maxFrameDuration
+                if CMTimeCompare(minDuration, targetCamera.activeVideoMaxFrameDuration) > 0 {
+                    targetCamera.activeVideoMaxFrameDuration = maxDuration
+                    targetCamera.activeVideoMinFrameDuration = minDuration
+                } else {
+                    targetCamera.activeVideoMinFrameDuration = minDuration
+                    targetCamera.activeVideoMaxFrameDuration = maxDuration
+                }
             }
 
             if targetCamera.isFocusModeSupported(.continuousAutoFocus) {
@@ -2794,11 +2804,13 @@ public final class CameraService: NSObject {
             targetCamera.isSubjectAreaChangeMonitoringEnabled = true
 
             if targetCamera.isLowLightBoostSupported {
-                targetCamera.automaticallyEnablesLowLightBoostWhenAvailable = false
+                targetCamera.automaticallyEnablesLowLightBoostWhenAvailable = true
             }
             if targetCamera.activeFormat.isVideoHDRSupported {
-                targetCamera.automaticallyAdjustsVideoHDREnabled = true
+                targetCamera.automaticallyAdjustsVideoHDREnabled = false
+                targetCamera.isVideoHDREnabled = true
             }
+            targetCamera.setExposureTargetBias(0.0, completionHandler: nil)
 
             sessionCommitted = true
             self.captureSession.commitConfiguration()
@@ -2897,10 +2909,24 @@ public final class CameraService: NSObject {
                     }
                 }
             }
+            if let videoDataConn = videoDataOutput.connection(with: .video), videoDataConn.isVideoStabilizationSupported {
+                videoDataConn.preferredVideoStabilizationMode = .off
+            }
             if canAddMovie {
                 captureSession.sessionPreset = .inputPriority
             }
             captureSession.commitConfiguration()
+
+            if let camera = self.activeCamera {
+                do {
+                    try camera.lockForConfiguration()
+                    if camera.isLowLightBoostSupported {
+                        camera.automaticallyEnablesLowLightBoostWhenAvailable = true
+                    }
+                    camera.setExposureTargetBias(0.0, completionHandler: nil)
+                    camera.unlockForConfiguration()
+                } catch {}
+            }
 
             guard canAddMovie else {
                 desiredCaptureMode = currentCaptureMode
