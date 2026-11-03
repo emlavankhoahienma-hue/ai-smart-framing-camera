@@ -1017,7 +1017,7 @@ struct CameraFunctionDrawerView: View {
 
                     // 3. Grid
                     DrawerFunctionButton(
-                        icon: viewModel.isManualGridVisible ? "grid" : "grid.slash",
+                        icon: "grid",
                         title: "Lưới",
                         subtitle: viewModel.isManualGridVisible ? "Bật" : "Tắt",
                         isActive: viewModel.isManualGridVisible,

@@ -7,7 +7,13 @@ public struct MasterWatermarkConfigSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
-    private let presetDevices = ["ALIGN STUDIO ULTRA", "XIAOMI 15 ULTRA", "LEICA M11-P", "IPHONE 16 PRO"]
+    private let presetDevices = ["ALIGN STUDIO", "LEICA M11-P", "XIAOMI 15 ULTRA", "IPHONE 16 PRO"]
+
+    // Design Tokens
+    private let canvasColor = Color(red: 12/255, green: 12/255, blue: 14/255)
+    private let cardColor = Color(red: 24/255, green: 24/255, blue: 27/255)
+    private let borderColor = Color(red: 39/255, green: 39/255, blue: 42/255)
+    private let accentColor = Color(red: 56/255, green: 189/255, blue: 248/255)
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -16,17 +22,17 @@ public struct MasterWatermarkConfigSheet: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.08, green: 0.08, blue: 0.10).ignoresSafeArea()
+                canvasColor.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 20) {
+                    VStack(spacing: 16) {
                         watermarkToggleSection
                         deviceNameSection
                         themeSection
                         logoSection
                         previewSection
                     }
-                    .padding()
+                    .padding(16)
                 }
             }
             .navigationTitle("Khung Chữ Ký Master")
@@ -34,8 +40,8 @@ public struct MasterWatermarkConfigSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Xong") { dismiss() }
-                        .foregroundColor(.yellow)
-                        .fontWeight(.bold)
+                        .foregroundColor(accentColor)
+                        .font(.system(size: 16, weight: .semibold))
                 }
             }
         }
@@ -47,20 +53,24 @@ public struct MasterWatermarkConfigSheet: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Đóng Khung Master")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
-                Text("Tự động thêm chữ ký Leica quang học vào ảnh chụp")
+                Text("Tự động đính kèm chữ ký viền ảnh Leica")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(Color(red: 161/255, green: 161/255, blue: 170/255))
             }
             Spacer()
             Toggle("", isOn: $viewModel.isMasterWatermarkEnabled)
                 .labelsHidden()
-                .tint(Color.yellow)
+                .tint(accentColor)
         }
-        .padding()
-        .background(Color.white.opacity(0.06))
-        .cornerRadius(14)
+        .padding(16)
+        .background(cardColor)
+        .cornerRadius(16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(borderColor, lineWidth: 1)
+        )
     }
 
     // MARK: - 2. Tên Thiết Bị / Chữ Ký
@@ -69,12 +79,12 @@ public struct MasterWatermarkConfigSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("TÊN THIẾT BỊ / THƯƠNG HIỆU")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(Color(red: 161/255, green: 161/255, blue: 170/255))
 
             TextField("Nhập tên hiển thị...", text: $viewModel.masterWatermarkDeviceName)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 14, weight: .medium))
                 .padding(12)
-                .background(Color.white.opacity(0.08))
+                .background(Color(red: 36/255, green: 36/255, blue: 41/255))
                 .cornerRadius(10)
                 .foregroundColor(.white)
 
@@ -84,19 +94,27 @@ public struct MasterWatermarkConfigSheet: View {
                         viewModel.masterWatermarkDeviceName = name
                     }) {
                         Text(name)
-                            .font(.system(size: 10, weight: .medium))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(viewModel.masterWatermarkDeviceName == name ? Color.yellow.opacity(0.2) : Color.white.opacity(0.06))
-                            .foregroundColor(viewModel.masterWatermarkDeviceName == name ? .yellow : .white.opacity(0.8))
-                            .cornerRadius(6)
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(viewModel.masterWatermarkDeviceName == name ? accentColor.opacity(0.18) : Color(red: 36/255, green: 36/255, blue: 41/255))
+                            .foregroundColor(viewModel.masterWatermarkDeviceName == name ? accentColor : Color(red: 228/255, green: 228/255, blue: 231/255))
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(viewModel.masterWatermarkDeviceName == name ? accentColor.opacity(0.6) : borderColor, lineWidth: 1)
+                            )
                     }
                 }
             }
         }
-        .padding()
-        .background(Color.white.opacity(0.06))
-        .cornerRadius(14)
+        .padding(16)
+        .background(cardColor)
+        .cornerRadius(16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(borderColor, lineWidth: 1)
+        )
     }
 
     // MARK: - 3. Màu Khung Nền
@@ -105,7 +123,7 @@ public struct MasterWatermarkConfigSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("MÀU NỀN KHUNG")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(Color(red: 161/255, green: 161/255, blue: 170/255))
 
             HStack(spacing: 12) {
                 ForEach(WatermarkTheme.allCases) { theme in
@@ -114,28 +132,32 @@ public struct MasterWatermarkConfigSheet: View {
                     }) {
                         HStack(spacing: 8) {
                             Circle()
-                                .fill(theme == .white ? Color.white : Color(red: 0.1, green: 0.1, blue: 0.12))
-                                .frame(width: 18, height: 18)
-                                .overlay(Circle().stroke(Color.gray.opacity(0.5), lineWidth: 1))
+                                .fill(theme == .white ? Color.white : Color(red: 12/255, green: 12/255, blue: 14/255))
+                                .frame(width: 16, height: 16)
+                                .overlay(Circle().stroke(borderColor, lineWidth: 1))
                             Text(theme.rawValue)
                                 .font(.system(size: 13, weight: .medium))
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(viewModel.masterWatermarkTheme == theme ? Color.yellow.opacity(0.18) : Color.white.opacity(0.06))
-                        .foregroundColor(viewModel.masterWatermarkTheme == theme ? .yellow : .white)
+                        .background(viewModel.masterWatermarkTheme == theme ? accentColor.opacity(0.18) : Color(red: 36/255, green: 36/255, blue: 41/255))
+                        .foregroundColor(viewModel.masterWatermarkTheme == theme ? accentColor : Color(red: 228/255, green: 228/255, blue: 231/255))
                         .cornerRadius(10)
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(viewModel.masterWatermarkTheme == theme ? Color.yellow : Color.clear, lineWidth: 1.5)
+                                .stroke(viewModel.masterWatermarkTheme == theme ? accentColor.opacity(0.6) : borderColor, lineWidth: 1)
                         )
                     }
                 }
             }
         }
-        .padding()
-        .background(Color.white.opacity(0.06))
-        .cornerRadius(14)
+        .padding(16)
+        .background(cardColor)
+        .cornerRadius(16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(borderColor, lineWidth: 1)
+        )
     }
 
     // MARK: - 4. Huy Hiệu Logo
@@ -147,38 +169,43 @@ public struct MasterWatermarkConfigSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("HUY HIỆU LOGO")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(Color(red: 161/255, green: 161/255, blue: 170/255))
 
             HStack(spacing: 8) {
-                logoStyleButton(title: "Align Studio", style: .alignStudio, icon: "viewfinder", color: Color.yellow)
-                logoStyleButton(title: "Apple", style: .appleIcon, icon: "apple.logo", color: Color.white)
-                logoStyleButton(title: "Khẩu Độ Pro", style: .aperturePro, icon: "camera.aperture", color: Color(red: 0.35, green: 0.85, blue: 1.0))
-                logoStyleButton(title: "Không Logo", style: .none, icon: "slash.circle", color: Color.gray)
+                logoStyleButton(title: "Logo App", style: .alignStudio, icon: "viewfinder")
+                logoStyleButton(title: "Apple", style: .appleIcon, icon: "apple.logo")
+                logoStyleButton(title: "Ống kính", style: .aperturePro, icon: "camera.aperture")
+                logoStyleButton(title: "Ẩn", style: .none, icon: "slash.circle")
             }
 
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                HStack {
+                HStack(spacing: 8) {
                     Image(systemName: "photo.badge.plus")
-                    Text(hasCustomLogo ? "Đã chọn Logo từ Thư viện (Nhấn để đổi)" : "Tải Logo từ Thư viện ảnh")
+                        .font(.system(size: 14))
+                    Text(hasCustomLogo ? "Đã chọn ảnh tự chọn (Nhấn để đổi)" : "Tải logo từ Thư viện ảnh")
                         .font(.system(size: 13, weight: .medium))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
-                .background(isCustomStyle ? Color.yellow.opacity(0.2) : Color.white.opacity(0.06))
-                .foregroundColor(isCustomStyle ? .yellow : .white)
+                .background(isCustomStyle ? accentColor.opacity(0.18) : Color(red: 36/255, green: 36/255, blue: 41/255))
+                .foregroundColor(isCustomStyle ? accentColor : Color(red: 228/255, green: 228/255, blue: 231/255))
                 .cornerRadius(10)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(isCustomStyle ? Color.yellow : Color.clear, lineWidth: 1.5)
+                        .stroke(isCustomStyle ? accentColor.opacity(0.6) : borderColor, lineWidth: 1)
                 )
             }
             .onChangeCompatible(of: selectedPhotoItem) { newItem in
                 handlePhotoSelection(newItem)
             }
         }
-        .padding()
-        .background(Color.white.opacity(0.06))
-        .cornerRadius(14)
+        .padding(16)
+        .background(cardColor)
+        .cornerRadius(16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(borderColor, lineWidth: 1)
+        )
     }
 
     private func handlePhotoSelection(_ item: PhotosPickerItem?) {
@@ -197,37 +224,41 @@ public struct MasterWatermarkConfigSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("XEM TRƯỚC KHUNG WATERMARK")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(Color(red: 161/255, green: 161/255, blue: 170/255))
 
             watermarkMockPreview
         }
-        .padding()
-        .background(Color.white.opacity(0.06))
-        .cornerRadius(14)
+        .padding(16)
+        .background(cardColor)
+        .cornerRadius(16)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(borderColor, lineWidth: 1)
+        )
     }
 
-    private func logoStyleButton(title: String, style: WatermarkLogoStyle, icon: String, color: Color) -> some View {
-        Button(action: {
+    private func logoStyleButton(title: String, style: WatermarkLogoStyle, icon: String) -> some View {
+        let isSelected = viewModel.masterWatermarkLogoStyle == style
+        return Button(action: {
             viewModel.masterWatermarkLogoStyle = style
         }) {
             VStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(color)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(isSelected ? accentColor : Color(red: 228/255, green: 228/255, blue: 231/255))
                     .frame(height: 20)
                 Text(title)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 10.5, weight: .medium))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
-            .background(viewModel.masterWatermarkLogoStyle == style ? Color.yellow.opacity(0.18) : Color.white.opacity(0.06))
-            .foregroundColor(viewModel.masterWatermarkLogoStyle == style ? .yellow : .white)
+            .background(isSelected ? accentColor.opacity(0.18) : Color(red: 36/255, green: 36/255, blue: 41/255))
+            .foregroundColor(isSelected ? accentColor : Color(red: 228/255, green: 228/255, blue: 231/255))
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(viewModel.masterWatermarkLogoStyle == style ? Color.yellow : Color.clear, lineWidth: 1.5)
+                    .stroke(isSelected ? accentColor.opacity(0.6) : borderColor, lineWidth: 1)
             )
         }
     }
@@ -236,7 +267,7 @@ public struct MasterWatermarkConfigSheet: View {
         let isNone = viewModel.masterWatermarkLogoStyle == .none
 
         return HStack {
-            Text(viewModel.masterWatermarkDeviceName.isEmpty ? "ALIGN STUDIO ULTRA" : viewModel.masterWatermarkDeviceName.uppercased())
+            Text(viewModel.masterWatermarkDeviceName.isEmpty ? "ALIGN STUDIO" : viewModel.masterWatermarkDeviceName.uppercased())
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .tracking(1.0)
                 .foregroundColor(viewModel.masterWatermarkTheme == .white ? Color(red: 0.07, green: 0.07, blue: 0.07) : Color(red: 0.97, green: 0.98, blue: 0.99))
@@ -281,7 +312,7 @@ public struct MasterWatermarkConfigSheet: View {
                         .fill(Color(red: 0.10, green: 0.10, blue: 0.12))
                         .frame(width: 18, height: 18)
                     Circle()
-                        .stroke(Color.yellow, lineWidth: 1.5)
+                        .stroke(accentColor, lineWidth: 1.5)
                         .frame(width: 10, height: 10)
                     Circle()
                         .fill(Color.red)
