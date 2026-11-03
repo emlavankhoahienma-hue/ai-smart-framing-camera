@@ -105,7 +105,7 @@ public struct SettingsSheetView: View {
                         Spacer()
                         ToastBanner(message: msg)
                             .padding(.bottom, 24)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .transition(AnyTransition.move(edge: .bottom).combined(with: .opacity))
                     }
                     .allowsHitTesting(false)
                 }
@@ -327,6 +327,7 @@ public struct SettingsToggleRow: View {
 // MARK: - ==========================================
 // MARK: - TAB 1: CHỤP ẢNH & QUAY PHIM
 // MARK: - ==========================================
+@MainActor
 struct PhotoCaptureSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
@@ -562,7 +563,7 @@ struct PhotoCaptureSettingsSection: View {
                             }
                             .onChangeCompatible(of: selectedPhotoItem) { item in
                                 guard let item else { return }
-                                Task {
+                                Task { @MainActor in
                                     if let data = try? await item.loadTransferable(type: Data.self),
                                        let img = UIImage(data: data) {
                                         viewModel.setMasterWatermarkCustomLogo(img)
@@ -665,6 +666,7 @@ struct PhotoCaptureSettingsSection: View {
 // MARK: - ==========================================
 // MARK: - TAB 2: AI BỐ CỤC
 // MARK: - ==========================================
+@MainActor
 struct AIFramingSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
     @Binding var geminiKeyInput: String
@@ -813,8 +815,7 @@ struct AIFramingSettingsSection: View {
                             isTestingKey = true
                             testResult = nil
                             viewModel.geminiService.apiKey = clean
-                            let modelToTest = viewModel.geminiService.selectedModel
-                            viewModel.geminiService.testAPIKeyConnection(key: clean, model: modelToTest) { success, msg in
+                            viewModel.geminiService.testAPIKey { success, msg in
                                 DispatchQueue.main.async {
                                     isTestingKey = false
                                     testResult = msg
@@ -942,6 +943,7 @@ struct AIFramingSettingsSection: View {
 // MARK: - ==========================================
 // MARK: - TAB 3: NÂNG CAO
 // MARK: - ==========================================
+@MainActor
 struct AdvancedSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
     @Binding var toastMessage: String?
@@ -1052,5 +1054,26 @@ struct AdvancedSettingsSection: View {
                 .foregroundColor(.white)
         }
         .frame(minHeight: 28)
+    }
+}
+
+// MARK: - Toast Banner View
+@MainActor
+struct ToastBanner: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+            Text(message)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Capsule().fill(Color(red: 0.12, green: 0.12, blue: 0.15)))
+        .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.5), radius: 10, y: 5)
     }
 }
