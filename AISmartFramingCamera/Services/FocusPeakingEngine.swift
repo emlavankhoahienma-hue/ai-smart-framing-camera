@@ -63,21 +63,21 @@ public final class FocusPeakingEngine: @unchecked Sendable {
         // 2. Làm mịn nhẹ hạt nhiễu ISO cảm biến (bán kính 0.65px giữ nguyên độ sắc của cạnh thật)
         guard let blurFilter = CIFilter(name: "CIGaussianBlur") else { return ciImage }
         blurFilter.setValue(monoOutput, forKey: kCIInputImageKey)
-        blurFilter.setValue(0.65, forKey: kCIInputRadiusKey)
+        blurFilter.setValue(0.45, forKey: kCIInputRadiusKey)
         guard let blurredOutput = blurFilter.outputImage?.cropped(to: extent) else { return ciImage }
 
         // 3. Trích xuất biên độ cạnh sắc nét (intensity = 3.6)
         guard let edgesFilter = CIFilter(name: "CIEdges") else { return ciImage }
         edgesFilter.setValue(blurredOutput, forKey: kCIInputImageKey)
-        edgesFilter.setValue(3.6, forKey: kCIInputIntensityKey)
+        edgesFilter.setValue(6.0, forKey: kCIInputIntensityKey)
         guard let rawEdges = edgesFilter.outputImage?.cropped(to: extent) else { return ciImage }
 
         // 4. Cổng chặn nhiễu chuẩn trong miền [0.0, 1.0] (Ngưỡng cắt threshold = 0.25)
         // - Vùng phẳng, bầu trời, tường và nhiễu ISO có giá trị < 0.25 -> ra âm -> bị CIColorClamp ép về 0.0 (trong suốt 100%)
         // - Các cạnh đang lấy nét thật sự có giá trị (0.28 .. 1.0) -> được khuếch đại 4.5x sáng rực thành tia Laser mảnh
         guard let gateMatrixFilter = CIFilter(name: "CIColorMatrix") else { return ciImage }
-        let threshold: CGFloat = 0.25
-        let edgeGain: CGFloat = 4.5
+        let threshold: CGFloat = 0.14
+        let edgeGain: CGFloat = 5.5
         let edgeBias: CGFloat = -threshold * edgeGain
         gateMatrixFilter.setValue(rawEdges, forKey: kCIInputImageKey)
         gateMatrixFilter.setValue(CIVector(x: edgeGain, y: 0, z: 0, w: 0), forKey: "inputRVector")
@@ -98,9 +98,9 @@ public final class FocusPeakingEngine: @unchecked Sendable {
         guard let tintMatrixFilter = CIFilter(name: "CIColorMatrix") else { return ciImage }
         let comps = color.neonComponents
         tintMatrixFilter.setValue(clampedEdges, forKey: kCIInputImageKey)
-        tintMatrixFilter.setValue(CIVector(x: comps.r, y: 0, z: 0, w: 0), forKey: "inputRVector")
-        tintMatrixFilter.setValue(CIVector(x: 0, y: comps.g, z: 0, w: 0), forKey: "inputGVector")
-        tintMatrixFilter.setValue(CIVector(x: 0, y: 0, z: comps.b, w: 0), forKey: "inputBVector")
+        tintMatrixFilter.setValue(CIVector(x: comps.r * 1.6, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        tintMatrixFilter.setValue(CIVector(x: 0, y: comps.g * 1.6, z: 0, w: 0), forKey: "inputGVector")
+        tintMatrixFilter.setValue(CIVector(x: 0, y: 0, z: comps.b * 1.6, w: 0), forKey: "inputBVector")
         tintMatrixFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 1.0), forKey: "inputAVector")
         tintMatrixFilter.setValue(CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0), forKey: "inputBiasVector")
         guard let coloredLaserEdges = tintMatrixFilter.outputImage?.cropped(to: extent) else { return ciImage }

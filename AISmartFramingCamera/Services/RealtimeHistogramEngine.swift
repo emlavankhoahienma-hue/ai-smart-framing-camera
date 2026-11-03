@@ -8,12 +8,20 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
     private let stateLock = NSLock()
     private var smoothedHeights: [CGFloat] = Array(repeating: 0.08, count: 32)
     private var _averageLuminance: Float = 0.5
+    private var _highlightClipRatio: Float = 0.0
     
     /// Do sang trung binh chuan hoa (0.0 = toi hoan toan, 1.0 = sang trang hoan toan)
     public var averageLuminance: Float {
         stateLock.lock()
         defer { stateLock.unlock() }
         return _averageLuminance
+    }
+
+    /// Ty le diem anh vung sang gat (Highlights > 240/255) phan anh nguy co chay sang bau troi
+    public var highlightClipRatio: Float {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _highlightClipRatio
     }
     
     // Palette chuẩn phổ màu như máy ảnh cao cấp (Xanh lam bóng tối -> Lục/Vàng vùng trung -> Cam/Đỏ vùng sáng gắt)
@@ -89,9 +97,12 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
         }
         
         let rawAvg = sampleCount > 0 ? (totalLum / Float(sampleCount)) / 255.0 : 0.5
+        let highHighlightCount = bins[30] + bins[31]
+        let rawClipRatio = sampleCount > 0 ? (highHighlightCount / Float(sampleCount)) : 0.0
         var result: [HistogramBarData] = []
         stateLock.lock()
         _averageLuminance = _averageLuminance * 0.8 + rawAvg * 0.2
+        _highlightClipRatio = _highlightClipRatio * 0.75 + rawClipRatio * 0.25
         for i in 0..<32 {
             let rawNormalized = CGFloat(bins[i] / maxBin)
             let current = smoothedHeights[i]

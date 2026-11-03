@@ -4,6 +4,7 @@ import CoreGraphics
 import CoreImage
 import QuartzCore
 import ImageIO
+import Photos
 
 public protocol CameraServiceDelegate: AnyObject {
     func cameraService(_ service: CameraService, didOutputSampleBuffer sampleBuffer: CMSampleBuffer)
@@ -139,6 +140,7 @@ public final class CameraService: NSObject {
     public private(set) var minZoom: CGFloat = 1.0
     public private(set) var maxZoom: CGFloat = 10.0
     public private(set) var currentCameraPosition: AVCaptureDevice.Position = .back
+    public var isFrontCamera: Bool { currentCameraPosition == .front }
 
     // Virtual Multi-Camera Mapping (Apple Camera App style: 0.5x, 1x, 2x, 3x/5x)
     public private(set) var displayMultiplier: CGFloat = 1.0
@@ -1954,15 +1956,31 @@ public final class CameraService: NSObject {
 
     public var onSubjectAreaDidChange: (() -> Void)?
 
+    /// Chon che do chong rung phan cung ISP cao nhat ma thiet bi ho tro (.cinematicExtendedEnhanced -> .cinematicExtended -> .cinematic -> .standard)
+    public func bestVideoStabilizationMode(for camera: AVCaptureDevice?) -> AVCaptureVideoStabilizationMode {
+        guard let camera else { return .auto }
+        let format = camera.activeFormat
+        if #available(iOS 17.0, *), format.isVideoStabilizationModeSupported(.cinematicExtendedEnhanced) {
+            return .cinematicExtendedEnhanced
+        } else if format.isVideoStabilizationModeSupported(.cinematicExtended) {
+            return .cinematicExtended
+        } else if format.isVideoStabilizationModeSupported(.cinematic) {
+            return .cinematic
+        } else if format.isVideoStabilizationModeSupported(.standard) {
+            return .standard
+        }
+        return .auto
+    }
+
     // MARK: - Smart Focus & Exposure (Apple Camera App Style)
 
     /// Chuyển đổi tọa độ chuẩn hóa UI (Top-Left 0,0) sang tọa độ AVCaptureDevice sensor (Portrait 0,0)
-    public static func convertUIPointToDevicePoint(_ uiPoint: CGPoint) -> CGPoint {
-        // Trên iOS Portrait: AVCaptureDevice point x = UI y, point y = 1.0 - UI x
+    public static func convertUIPointToDevicePoint(_ uiPoint: CGPoint, isFrontCamera: Bool = false) -> CGPoint {
+        // Trên iOS Portrait: AVCaptureDevice point x = UI y, point y = 1.0 - UI x (sau) hoac UI x (truoc)
         let safeX = uiPoint.x.isFinite ? uiPoint.x : 0.5
         let safeY = uiPoint.y.isFinite ? uiPoint.y : 0.5
         let devX = max(0.01, min(0.99, safeY))
-        let devY = max(0.01, min(0.99, 1.0 - safeX))
+        let devY = max(0.01, min(0.99, isFrontCamera ? safeX : 1.0 - safeX))
         return CGPoint(x: devX, y: devY)
     }
 
@@ -2028,16 +2046,23 @@ public final class CameraService: NSObject {
             do {
                 try camera.lockForConfiguration()
                 defer { camera.unlockForConfiguration() }
+
+                // Chuyển đổi từ Portrait Screen (0..1, gốc trên-trái) sang AVCaptureDevice Sensor (Landscape Right):
+                let sensorFocusPoint = self.isFrontCamera
+                    ? CGPoint(x: devicePoint.y, y: devicePoint.x)
+                    : CGPoint(x: devicePoint.y, y: 1.0 - devicePoint.x)
+
                 let clampedPoint = CGPoint(
-                    x: max(0.05, min(0.95, devicePoint.x)),
-                    y: max(0.05, min(0.95, devicePoint.y))
+                    x: max(0.05, min(0.95, sensorFocusPoint.x)),
+                    y: max(0.05, min(0.95, sensorFocusPoint.y))
                 )
+
                 if camera.isSmoothAutoFocusSupported && !camera.isSmoothAutoFocusEnabled {
                     camera.isSmoothAutoFocusEnabled = true
                 }
                 if camera.isFocusPointOfInterestSupported {
                     let focusDelta = hypot(camera.focusPointOfInterest.x - clampedPoint.x, camera.focusPointOfInterest.y - clampedPoint.y)
-                    if focusDelta >= 0.045 {
+                    if focusDelta >= 0.02 {
                         camera.focusPointOfInterest = clampedPoint
                     }
                     if camera.isFocusModeSupported(.continuousAutoFocus) && camera.focusMode != .continuousAutoFocus {
@@ -2046,13 +2071,15 @@ public final class CameraService: NSObject {
                         camera.focusMode = .autoFocus
                     }
                 }
-                // Quan trọng: Tuyệt đối giữ exposurePointOfInterest ở (0.5, 0.5) cho cảnh vật để ISP Apple
-                // dùng Matrix Metering + Smart HDR bảo vệ bầu trời ngoài trời không bị cháy sáng hay nháy sáng!
+
+                // Bảo vệ chống cháy sáng thông minh (Highlight-Clipping Protection EV):
                 let exposurePoint: CGPoint
                 switch focusType {
                 case .face:
-                    exposurePoint = CGPoint(x: clampedPoint.x * 0.35 + 0.5 * 0.65, y: clampedPoint.y * 0.35 + 0.5 * 0.65)
-                case .salientObject, .aiTarget, .center:
+                    exposurePoint = CGPoint(x: clampedPoint.x * 0.40 + 0.5 * 0.60, y: clampedPoint.y * 0.40 + 0.5 * 0.60)
+                case .salientObject, .aiTarget:
+                    exposurePoint = CGPoint(x: clampedPoint.x * 0.30 + 0.5 * 0.70, y: clampedPoint.y * 0.30 + 0.5 * 0.70)
+                case .center:
                     exposurePoint = CGPoint(x: 0.5, y: 0.5)
                 }
                 let clampedExposurePoint = CGPoint(
@@ -2061,12 +2088,21 @@ public final class CameraService: NSObject {
                 )
                 if camera.isExposurePointOfInterestSupported && camera.exposureMode != .locked {
                     let expDelta = hypot(camera.exposurePointOfInterest.x - clampedExposurePoint.x, camera.exposurePointOfInterest.y - clampedExposurePoint.y)
-                    if expDelta >= 0.05 {
+                    if expDelta >= 0.03 {
                         camera.exposurePointOfInterest = clampedExposurePoint
                     }
                     if camera.isExposureModeSupported(.continuousAutoExposure) && camera.exposureMode != .continuousAutoExposure {
                         camera.exposureMode = .continuousAutoExposure
                     }
+                }
+
+                // Highlight-Clipping Protection EV: Giữ trọn vẹn chi tiết bầu trời / mây
+                let clipRatio = RealtimeHistogramEngine.shared.highlightClipRatio
+                let avgLum = RealtimeHistogramEngine.shared.averageLuminance
+                if clipRatio > 0.02 || avgLum > 0.72 {
+                    let targetBias: Float = (clipRatio > 0.05 || avgLum > 0.85) ? -0.70 : -0.35
+                    let clampedBias = max(camera.minExposureTargetBias, min(camera.maxExposureTargetBias, targetBias))
+                    camera.setExposureTargetBias(clampedBias, completionHandler: nil)
                 }
             } catch {
                 CameraLogger.error("CameraService: Error configuring smart focus & exposure", error: error, category: .capture)
@@ -2286,7 +2322,22 @@ public final class CameraService: NSObject {
             EffectVideoAssetRecorder.shared.filmIntensity = activeFilmIntensity
             EffectVideoAssetRecorder.shared.aiColorParams = activeAIColorParams
 
-            videoDataOutput.connection(with: .video)?.isEnabled = true
+            if let camera = self.activeCamera {
+                do {
+                    try camera.lockForConfiguration()
+                    if camera.activeFormat.isVideoHDRSupported {
+                        camera.automaticallyAdjustsVideoHDREnabled = true
+                    }
+                    camera.unlockForConfiguration()
+                } catch {}
+            }
+            if let connection = videoDataOutput.connection(with: .video) {
+                connection.isEnabled = true
+                if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+                if connection.isVideoStabilizationSupported {
+                    connection.preferredVideoStabilizationMode = isHorizonLockActive ? .off : self.bestVideoStabilizationMode(for: self.activeCamera)
+                }
+            }
             audioDataOutput.connection(with: .audio)?.isEnabled = true
 
             EffectVideoAssetRecorder.shared.startRecording(
@@ -2358,7 +2409,7 @@ public final class CameraService: NSObject {
                 camera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
             if camera.activeFormat.isVideoHDRSupported {
-                camera.automaticallyAdjustsVideoHDREnabled = false
+                camera.automaticallyAdjustsVideoHDREnabled = true
             }
             camera.unlockForConfiguration()
         } catch {
@@ -2370,11 +2421,10 @@ public final class CameraService: NSObject {
 
         if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
         if connection.isVideoStabilizationSupported {
-            if camera.activeFormat.isVideoStabilizationModeSupported(.standard) {
-                connection.preferredVideoStabilizationMode = .standard
-            } else {
-                connection.preferredVideoStabilizationMode = .auto
-            }
+            connection.preferredVideoStabilizationMode = self.bestVideoStabilizationMode(for: camera)
+        }
+        if let videoDataConn = videoDataOutput.connection(with: .video), videoDataConn.isVideoStabilizationSupported {
+            videoDataConn.preferredVideoStabilizationMode = self.bestVideoStabilizationMode(for: camera)
         }
         movieFileOutput.movieFragmentInterval = .invalid
         let availableCodecs = movieFileOutput.availableVideoCodecTypes
@@ -2405,6 +2455,12 @@ public final class CameraService: NSObject {
                     let finishedURL = outputURL ?? self.recordingURL
                     self.recordingURL = nil
                     if let url = finishedURL {
+                        if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized ||
+                           PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited {
+                            PHPhotoLibrary.shared().performChanges({
+                                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                            }, completionHandler: nil)
+                        }
                         DispatchQueue.main.async {
                             self.delegate?.cameraService(self, didFinishRecordingVideoAt: url)
                         }
@@ -2425,6 +2481,12 @@ public final class CameraService: NSObject {
                     let finishedURL = outputURL ?? self.recordingURL
                     self.recordingURL = nil
                     if let url = finishedURL {
+                        if PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized ||
+                           PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited {
+                            PHPhotoLibrary.shared().performChanges({
+                                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                            }, completionHandler: nil)
+                        }
                         DispatchQueue.main.async {
                             self.delegate?.cameraService(self, didFinishRecordingVideoAt: url)
                         }
@@ -2522,7 +2584,7 @@ public final class CameraService: NSObject {
             }
             if let connection = movieFileOutput.connection(with: .video) {
                 if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
-                if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
+                if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = self.bestVideoStabilizationMode(for: newCamera) }
             }
             if let connection = photoOutput.connection(with: .video) {
                 configurePhotoConnection(connection)
@@ -2826,7 +2888,7 @@ public final class CameraService: NSObject {
                     captureSession.addOutput(movieFileOutput)
                     if let connection = movieFileOutput.connection(with: .video) {
                         if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
-                        if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .auto }
+                        if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = self.bestVideoStabilizationMode(for: activeCamera) }
                     }
                 } else {
                     canAddMovie = false

@@ -3124,8 +3124,7 @@ public final class CameraViewModel: ObservableObject {
                         y: min(1, max(0, anchorTarget.y)))
         }
         if let focusTarget {
-            let devPoint = CameraService.convertUIPointToDevicePoint(focusTarget)
-            cameraService.setSmartFocusAndExposure(at: devPoint)
+            cameraService.setSmartFocusAndExposure(at: focusTarget)
         }
 
         withAnimation(.easeOut(duration: 0.15)) {
@@ -3231,8 +3230,7 @@ public final class CameraViewModel: ObservableObject {
            (0...1).contains(measurement.point.x),
            (0...1).contains(measurement.point.y) {
             needsFocusOnTrackedSubject = false
-            cameraService.setSmartFocusAndExposure(at:
-                CameraService.convertUIPointToDevicePoint(measurement.point))
+            cameraService.setSmartFocusAndExposure(at: measurement.point)
         }
         if shouldCheckTextureOnNextFrame, let target = currentTargetPoint ?? initialTargetPoint {
             shouldCheckTextureOnNextFrame = false
@@ -3385,7 +3383,7 @@ public final class CameraViewModel: ObservableObject {
     /// Focus on the tracked subject (not the aim reticle, which is deliberately offset by the composition).
     private func issueAutoFocus() {
         let subjectPoint = (hasFreshOpticalLock ? latestOpticalPoint : nil) ?? currentTargetPoint ?? CGPoint(x: 0.5, y: 0.5)
-        cameraService.setSmartFocusAndExposure(at: CameraService.convertUIPointToDevicePoint(subjectPoint),
+        cameraService.setSmartFocusAndExposure(at: subjectPoint,
                                                focusType: .salientObject)
         autoFocusPolicy.markRequested(pinGeneration: targetPinGeneration, zoom: Double(displayZoom),
                                       at: CACurrentMediaTime())
@@ -4116,7 +4114,7 @@ public final class CameraViewModel: ObservableObject {
                 x: focusEMAAlpha * target.x + (1.0 - focusEMAAlpha) * smoothedSmartFocusPoint.x,
                 y: focusEMAAlpha * target.y + (1.0 - focusEMAAlpha) * smoothedSmartFocusPoint.y
             )
-            guard now - lastSmartFocusExposureTime >= 0.45 else { return }
+            guard now - lastSmartFocusExposureTime >= 0.18 else { return }
             applyFocusAndExposure(to: smoothedSmartFocusPoint, source: .aiTarget, force: false, showUI: false)
             return
         }
@@ -4211,13 +4209,13 @@ public final class CameraViewModel: ObservableObject {
         activeFocusSquarePoint = normalizedPoint
         isShowingSunSlider = true
 
-        let devPoint = devicePoint ?? CameraService.convertUIPointToDevicePoint(normalizedPoint)
+        let devPoint = devicePoint ?? CameraService.convertUIPointToDevicePoint(normalizedPoint, isFrontCamera: isFrontCamera)
         cameraService.focusAndExpose(at: devPoint, resetExposureBias: true)
         triggerFocusSquareAnimation(at: normalizedPoint)
     }
 
     public func userDidLongPressToLockAEAF(at normalizedPoint: CGPoint) {
-        let devPoint = CameraService.convertUIPointToDevicePoint(normalizedPoint)
+        let devPoint = CameraService.convertUIPointToDevicePoint(normalizedPoint, isFrontCamera: isFrontCamera)
         lockAEAF(at: normalizedPoint, devicePoint: devPoint)
     }
 
@@ -4298,14 +4296,13 @@ public final class CameraViewModel: ObservableObject {
         let dy = point.y - lastFocusPoint.y
         let dist = sqrt(dx * dx + dy * dy)
 
-        let threshold: CGFloat = (source == .face || source == .aiTarget) ? 0.065 : 0.09
+        let threshold: CGFloat = (source == .face || source == .aiTarget) ? 0.02 : 0.04
         if dist > threshold || force {
             let now = CACurrentMediaTime()
             lastFocusPoint = point
             lastSmartFocusExposureTime = now
             ignoreSubjectAreaChangeUntil = now + 1.8
-            let devicePoint = CameraService.convertUIPointToDevicePoint(point)
-            cameraService.setSmartFocusAndExposure(at: devicePoint, focusType: source)
+            cameraService.setSmartFocusAndExposure(at: point, focusType: source)
             if showUI && !captureMode.isVideo && !isRecordingVideo {
                 triggerFocusSquareAnimation(at: point)
             }
