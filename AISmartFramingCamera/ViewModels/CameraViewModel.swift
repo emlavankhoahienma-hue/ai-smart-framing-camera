@@ -1811,7 +1811,7 @@ public final class CameraViewModel: ObservableObject {
                 if success {
                     self.captureMode = mode
                     self.activeSunExposureBias = 0.0
-                    self.cameraService.setExposure(0.0)
+                    self.setExposure(0.0)
                 } else {
                     self.saveErrorMessage = "Không thể chuyển chế độ camera. Vui lòng thử lại."
                 }

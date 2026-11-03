@@ -1912,6 +1912,10 @@ public final class CameraService: NSObject {
     }
 
     // MARK: - Exposure Bias
+    public func setExposure(_ bias: Float) {
+        setExposureBias(bias)
+    }
+
     public func setExposureBias(_ bias: Float) {
         sessionQueue.async { [weak self] in
             guard let self = self, let camera = self.activeCamera else { return }
