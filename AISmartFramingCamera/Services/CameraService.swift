@@ -1960,7 +1960,7 @@ public final class CameraService: NSObject {
     public func bestVideoStabilizationMode(for camera: AVCaptureDevice?) -> AVCaptureVideoStabilizationMode {
         guard let camera else { return .auto }
         let format = camera.activeFormat
-        if #available(iOS 17.0, *), format.isVideoStabilizationModeSupported(.cinematicExtendedEnhanced) {
+        if #available(iOS 18.0, *), format.isVideoStabilizationModeSupported(.cinematicExtendedEnhanced) {
             return .cinematicExtendedEnhanced
         } else if format.isVideoStabilizationModeSupported(.cinematicExtended) {
             return .cinematicExtended
