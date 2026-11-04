@@ -220,6 +220,14 @@ public struct VideoPreviewSheetView: View {
         let windowAspect = viewModel.lastRecordedVideoWindowedAspect ?? viewModel.windowedZoomAspectRatio
         let infoStyle = viewModel.videoInfoFrameStyle
         let deviceName = viewModel.masterWatermarkDeviceName.isEmpty ? "ALIGN STUDIO" : viewModel.masterWatermarkDeviceName
+        let recordedKeyframes = viewModel.recordedVideoWindowedKeyframes
+        let fallbackKeyframe = WindowedZoomKeyframe(
+            timestamp: 0,
+            focalLength: viewModel.lastRecordedVideoWindowedFocal ?? viewModel.windowedZoomFocalLength,
+            normalizedCenter: viewModel.lastRecordedVideoWindowedCenter,
+            baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom,
+            aspectRatio: viewModel.lastRecordedVideoWindowedAspect ?? viewModel.windowedZoomAspectRatio
+        )
 
         // Đọc track video để xác định độ phân giải gốc
         Task {
@@ -240,7 +248,7 @@ public struct VideoPreviewSheetView: View {
             // Tính toán kích thước Render chuẩn theo Aspect Ratio (không méo hình)
             let targetRenderSize: CGSize
             if applyWindowCrop {
-                targetRenderSize = computeTargetRenderSize(sourceSize: effectiveSourceSize, aspect: windowAspect)
+                targetRenderSize = Self.computeTargetRenderSize(sourceSize: effectiveSourceSize, aspect: windowAspect)
             } else {
                 targetRenderSize = CGSize(
                     width: CGFloat(Int(effectiveSourceSize.width) & ~1),
@@ -257,7 +265,11 @@ public struct VideoPreviewSheetView: View {
 
                 // 1. Cắt Windowed Zoom mượt mà theo Hermite Keyframes
                 if applyWindowCrop {
-                    let state = self.viewModel.interpolatedWindowedState(at: frameTime)
+                    let state = CameraViewModel.interpolateKeyframe(
+                        at: frameTime,
+                        keyframes: recordedKeyframes,
+                        fallback: fallbackKeyframe
+                    )
                     let fractions = state.aspectRatio.windowFractions(
                         focalLength: state.focalLength,
                         baseOpticalZoom: state.baseOpticalZoom,
@@ -316,7 +328,11 @@ public struct VideoPreviewSheetView: View {
                     let subFrame = totalFrames % 60
                     let timecode = String(format: "%02d:%02d:%02d:%02d", tcHour, tcMin, tcSec, subFrame)
 
-                    let currentFocal = applyWindowCrop ? Int(self.viewModel.interpolatedWindowedState(at: frameTime).focalLength) : 24
+                    let currentFocal = applyWindowCrop ? Int(CameraViewModel.interpolateKeyframe(
+                        at: frameTime,
+                        keyframes: recordedKeyframes,
+                        fallback: fallbackKeyframe
+                    ).focalLength) : 24
                     let metadata = VideoFrameMetadata(
                         deviceName: deviceName,
                         lensDescription: "\(currentFocal)mm OPTICAL",
@@ -380,7 +396,7 @@ public struct VideoPreviewSheetView: View {
         }
     }
 
-    private func computeTargetRenderSize(sourceSize: CGSize, aspect: WindowedZoomAspectRatio) -> CGSize {
+    nonisolated private static func computeTargetRenderSize(sourceSize: CGSize, aspect: WindowedZoomAspectRatio) -> CGSize {
         let origW = sourceSize.width
         let origH = sourceSize.height
         let isPortrait = origW <= origH

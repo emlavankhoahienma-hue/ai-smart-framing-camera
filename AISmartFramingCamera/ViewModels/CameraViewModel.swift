@@ -4377,39 +4377,34 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    public func interpolatedWindowedState(at time: TimeInterval) -> WindowedZoomKeyframe {
-        guard !recordedVideoWindowedKeyframes.isEmpty else {
-            return WindowedZoomKeyframe(
-                timestamp: time,
-                focalLength: lastRecordedVideoWindowedFocal ?? windowedZoomFocalLength,
-                normalizedCenter: lastRecordedVideoWindowedCenter,
-                baseOpticalZoom: lastRecordedVideoWindowedBaseZoom,
-                aspectRatio: lastRecordedVideoWindowedAspect ?? windowedZoomAspectRatio
-            )
-        }
+    nonisolated public static func interpolateKeyframe(
+        at time: TimeInterval,
+        keyframes: [WindowedZoomKeyframe],
+        fallback: WindowedZoomKeyframe
+    ) -> WindowedZoomKeyframe {
+        guard !keyframes.isEmpty else { return fallback }
 
-        let frames = recordedVideoWindowedKeyframes
-        if time <= frames.first!.timestamp {
-            return frames.first!
+        if time <= keyframes.first!.timestamp {
+            return keyframes.first!
         }
-        if time >= frames.last!.timestamp {
-            return frames.last!
+        if time >= keyframes.last!.timestamp {
+            return keyframes.last!
         }
 
         var idx = 0
-        while idx < frames.count - 1 && frames[idx + 1].timestamp < time {
+        while idx < keyframes.count - 1 && keyframes[idx + 1].timestamp < time {
             idx += 1
         }
 
-        let k0 = frames[idx]
-        let k1 = frames[min(idx + 1, frames.count - 1)]
+        let k0 = keyframes[idx]
+        let k1 = keyframes[min(idx + 1, keyframes.count - 1)]
         let dt = k1.timestamp - k0.timestamp
         if dt <= 0.001 {
             return k0
         }
 
         let t = max(0.0, min(1.0, (time - k0.timestamp) / dt))
-        // Hermite smoothstep cho chuyen dong lia khung ngam nhu gimbal dien anh
+        // Hermite smoothstep cho chuyển động lia khung ngắm như gimbal điện ảnh
         let smoothT = t * t * (3.0 - 2.0 * t)
 
         let interpFocal = k0.focalLength + (k1.focalLength - k0.focalLength) * smoothT
@@ -4424,6 +4419,17 @@ public final class CameraViewModel: ObservableObject {
             baseOpticalZoom: interpBaseZoom,
             aspectRatio: k0.aspectRatio
         )
+    }
+
+    public func interpolatedWindowedState(at time: TimeInterval) -> WindowedZoomKeyframe {
+        let fallback = WindowedZoomKeyframe(
+            timestamp: time,
+            focalLength: lastRecordedVideoWindowedFocal ?? windowedZoomFocalLength,
+            normalizedCenter: lastRecordedVideoWindowedCenter,
+            baseOpticalZoom: lastRecordedVideoWindowedBaseZoom,
+            aspectRatio: lastRecordedVideoWindowedAspect ?? windowedZoomAspectRatio
+        )
+        return Self.interpolateKeyframe(at: time, keyframes: recordedVideoWindowedKeyframes, fallback: fallback)
     }
 
     public func startCountdownTimer() {
