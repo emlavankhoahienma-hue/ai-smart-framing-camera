@@ -1014,33 +1014,33 @@ struct PhotoCaptureSettingsSection: View {
 
                         HStack(spacing: 8) {
                             Button(action: {
-                                viewModel.masterWatermarkTheme = .classicWhite
+                                viewModel.masterWatermarkTheme = .white
                             }) {
                                 HStack(spacing: 6) {
                                     Circle().fill(Color.white).frame(width: 12, height: 12)
                                     Text("Cổ điển (Trắng)")
-                                        .font(.system(size: 12, weight: viewModel.masterWatermarkTheme == .classicWhite ? .bold : .medium))
+                                        .font(.system(size: 12, weight: viewModel.masterWatermarkTheme == .white ? .bold : .medium))
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
-                                .background(viewModel.masterWatermarkTheme == .classicWhite ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.20) : Color.white.opacity(0.06))
-                                .foregroundColor(viewModel.masterWatermarkTheme == .classicWhite ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white)
+                                .background(viewModel.masterWatermarkTheme == .white ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.20) : Color.white.opacity(0.06))
+                                .foregroundColor(viewModel.masterWatermarkTheme == .white ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white)
                                 .cornerRadius(8)
                             }
                             .buttonStyle(.plain)
 
                             Button(action: {
-                                viewModel.masterWatermarkTheme = .darkObsidian
+                                viewModel.masterWatermarkTheme = .black
                             }) {
                                 HStack(spacing: 6) {
                                     Circle().fill(Color(white: 0.15)).frame(width: 12, height: 12)
                                     Text("Đen nhám (Dark)")
-                                        .font(.system(size: 12, weight: viewModel.masterWatermarkTheme == .darkObsidian ? .bold : .medium))
+                                        .font(.system(size: 12, weight: viewModel.masterWatermarkTheme == .black ? .bold : .medium))
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
-                                .background(viewModel.masterWatermarkTheme == .darkObsidian ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.20) : Color.white.opacity(0.06))
-                                .foregroundColor(viewModel.masterWatermarkTheme == .darkObsidian ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white)
+                                .background(viewModel.masterWatermarkTheme == .black ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.20) : Color.white.opacity(0.06))
+                                .foregroundColor(viewModel.masterWatermarkTheme == .black ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white)
                                 .cornerRadius(8)
                             }
                             .buttonStyle(.plain)
@@ -1170,7 +1170,6 @@ struct PhotoCaptureSettingsSection: View {
         case .uhd30: return "4K · 30 fps"
         case .hd60:  return "1080p · 60 fps"
         case .hd30:  return "1080p · 30 fps"
-        case .vga:   return "VGA · 30 fps"
         @unknown default:
             return opt.rawValue
         }
@@ -1536,21 +1535,48 @@ struct AIFramingSettingsSection: View {
                     // Danh sách Model tiêu chuẩn của Provider
                     let models = AIVisionModel.models(for: viewModel.geminiService.selectedProvider)
                     if !models.isEmpty {
-                        Picker("", selection: $selectedModel) {
-                            ForEach(models) { m in
-                                Text("\(m.displayName) (\(m.badge))").tag(m)
+                        Menu {
+                            ForEach(models) { model in
+                                Button(action: {
+                                    selectedModel = model
+                                    viewModel.geminiService.selectedModel = model
+                                    viewModel.geminiService.customModelName = ""
+                                    customModelInput = ""
+                                }) {
+                                    HStack {
+                                        Text(model.shortName)
+                                        if selectedModel == model && viewModel.geminiService.customModelName.isEmpty {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
                             }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .background(Color(red: 36/255, green: 36/255, blue: 41/255))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .onChangeCompatible(of: selectedModel) { newModel in
-                            viewModel.geminiService.selectedModel = newModel
-                            viewModel.geminiService.customModelName = ""
+                        } label: {
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(viewModel.geminiService.customModelName.isEmpty ? selectedModel.shortName : "Tùy chỉnh: \(viewModel.geminiService.customModelName)")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+
+                                    Text(selectedModel.subtitle)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(Color.white.opacity(0.55))
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(Color.white.opacity(0.40))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color(red: 36/255, green: 36/255, blue: 41/255))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(Color(red: 39/255, green: 39/255, blue: 42/255), lineWidth: 1)
+                            )
                         }
                     }
 
