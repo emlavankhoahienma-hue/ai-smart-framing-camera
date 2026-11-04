@@ -1032,10 +1032,25 @@ public final class CameraViewModel: ObservableObject {
             if isWindowedZoomActive {
                 updateWindowedCameraHardwareZoom()
             }
+            if isRecordingVideo, let start = videoRecordingStartTime, isWindowedZoomActive {
+                let elapsed = Date().timeIntervalSince(start)
+                recordWindowedKeyframeIfNeeded(timestamp: elapsed)
+            }
         }
     }
     @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
-    @Published public var windowedZoomNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    @Published public var windowedZoomNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5) {
+        didSet {
+            if isRecordingVideo, let start = videoRecordingStartTime, isWindowedZoomActive {
+                let elapsed = Date().timeIntervalSince(start)
+                recordWindowedKeyframeIfNeeded(timestamp: elapsed)
+            }
+        }
+    }
+    @Published public var effectiveWindowedBaseZoom: CGFloat = 1.0
+    @Published public var videoInfoFrameStyle: VideoInfoFrameStyle = .off
+    @Published public var recordedVideoWindowedKeyframes: [WindowedZoomKeyframe] = []
+
     @Published public var lastRecordedVideoWindowedFocal: Double? = nil
     @Published public var lastRecordedVideoWindowedAspect: WindowedZoomAspectRatio? = nil
     @Published public var lastRecordedVideoWindowedBaseZoom: CGFloat = 1.0
@@ -3631,6 +3646,7 @@ public final class CameraViewModel: ObservableObject {
             targetDisplayZoom = 1.0
         }
 
+        self.effectiveWindowedBaseZoom = targetDisplayZoom
         cameraService.applyDisplayZoomWithPhysicalLensSwitching(targetDisplayZoom, smooth: true, rate: 4.5, allowPhysicalSwitch: true)
         presentZoomChangeHUD(displayZoom: targetDisplayZoom)
     }
@@ -3896,7 +3912,7 @@ public final class CameraViewModel: ObservableObject {
               (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
               !isCameraHibernating, !isShutterPressing else { return }
         wantsVideoRecording = true
-        if isWindowedZoomActive && windowedZoomFocalLength > 24.5 {
+        if isWindowedZoomActive && (windowedZoomFocalLength > 24.5 || windowedZoomAspectRatio != .ratio3_4) {
             lastRecordedVideoWindowedFocal = windowedZoomFocalLength
             lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
             lastRecordedVideoWindowedBaseZoom = displayZoom
@@ -3926,6 +3942,11 @@ public final class CameraViewModel: ObservableObject {
         let minutes = (totalSec % 3600) / 60
         let seconds = totalSec % 60
         videoRecordingTimeString = String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+
+        // Ghi nhan keyframe quang hoc Windowed Zoom mượt mà theo thoi gian thuc
+        if isWindowedZoomActive {
+            recordWindowedKeyframeIfNeeded(timestamp: elapsed)
+        }
 
         // Khi AI Video Director đang hoạt động và đang quay, tự động đếm nhịp và chuyển tâm mượt mà
         if isAIVideoDirectorActive, let guidance = activeVideoGuidance, !hasCompletedAllWaypoints {
@@ -4329,6 +4350,82 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    public func cycleVideoInfoFrameStyle() {
+        switch videoInfoFrameStyle {
+        case .off: videoInfoFrameStyle = .cinemaBottomBar
+        case .cinemaBottomBar: videoInfoFrameStyle = .galleryMatteFrame
+        case .galleryMatteFrame: videoInfoFrameStyle = .hudTelemetry
+        case .hudTelemetry: videoInfoFrameStyle = .off
+        }
+    }
+
+    // MARK: - Video Windowed Zoom Keyframe Tracking & Smooth Hermite Interpolation
+    public func recordWindowedKeyframeIfNeeded(timestamp: TimeInterval) {
+        guard isRecordingVideo, isWindowedZoomActive else { return }
+        let kf = WindowedZoomKeyframe(
+            timestamp: timestamp,
+            focalLength: windowedZoomFocalLength,
+            normalizedCenter: windowedZoomNormalizedCenter,
+            baseOpticalZoom: displayZoom,
+            aspectRatio: windowedZoomAspectRatio
+        )
+        // Tranh ghi trung keyframe qua gan nhau (< 0.04s)
+        if let last = recordedVideoWindowedKeyframes.last, (timestamp - last.timestamp) < 0.04 {
+            recordedVideoWindowedKeyframes[recordedVideoWindowedKeyframes.count - 1] = kf
+        } else {
+            recordedVideoWindowedKeyframes.append(kf)
+        }
+    }
+
+    public func interpolatedWindowedState(at time: TimeInterval) -> WindowedZoomKeyframe {
+        guard !recordedVideoWindowedKeyframes.isEmpty else {
+            return WindowedZoomKeyframe(
+                timestamp: time,
+                focalLength: lastRecordedVideoWindowedFocal ?? windowedZoomFocalLength,
+                normalizedCenter: lastRecordedVideoWindowedCenter,
+                baseOpticalZoom: lastRecordedVideoWindowedBaseZoom,
+                aspectRatio: lastRecordedVideoWindowedAspect ?? windowedZoomAspectRatio
+            )
+        }
+
+        let frames = recordedVideoWindowedKeyframes
+        if time <= frames.first!.timestamp {
+            return frames.first!
+        }
+        if time >= frames.last!.timestamp {
+            return frames.last!
+        }
+
+        var idx = 0
+        while idx < frames.count - 1 && frames[idx + 1].timestamp < time {
+            idx += 1
+        }
+
+        let k0 = frames[idx]
+        let k1 = frames[min(idx + 1, frames.count - 1)]
+        let dt = k1.timestamp - k0.timestamp
+        if dt <= 0.001 {
+            return k0
+        }
+
+        let t = max(0.0, min(1.0, (time - k0.timestamp) / dt))
+        // Hermite smoothstep cho chuyen dong lia khung ngam nhu gimbal dien anh
+        let smoothT = t * t * (3.0 - 2.0 * t)
+
+        let interpFocal = k0.focalLength + (k1.focalLength - k0.focalLength) * smoothT
+        let interpCenterX = k0.normalizedCenter.x + (k1.normalizedCenter.x - k0.normalizedCenter.x) * CGFloat(smoothT)
+        let interpCenterY = k0.normalizedCenter.y + (k1.normalizedCenter.y - k0.normalizedCenter.y) * CGFloat(smoothT)
+        let interpBaseZoom = k0.baseOpticalZoom + (k1.baseOpticalZoom - k0.baseOpticalZoom) * CGFloat(smoothT)
+
+        return WindowedZoomKeyframe(
+            timestamp: time,
+            focalLength: interpFocal,
+            normalizedCenter: CGPoint(x: interpCenterX, y: interpCenterY),
+            baseOpticalZoom: interpBaseZoom,
+            aspectRatio: k0.aspectRatio
+        )
+    }
+
     public func startCountdownTimer() {
         countdownTimer?.invalidate()
         countdownSecondsRemaining = captureTimerSeconds
@@ -4700,6 +4797,18 @@ extension CameraViewModel: CameraServiceDelegate {
             isRecordingVideo = false
         case .recording:
             isRecordingVideo = true
+            recordedVideoWindowedKeyframes.removeAll()
+            if isWindowedZoomActive {
+                recordedVideoWindowedKeyframes.append(
+                    WindowedZoomKeyframe(
+                        timestamp: 0.0,
+                        focalLength: windowedZoomFocalLength,
+                        normalizedCenter: windowedZoomNormalizedCenter,
+                        baseOpticalZoom: displayZoom,
+                        aspectRatio: windowedZoomAspectRatio
+                    )
+                )
+            }
             if videoRecordingStartTime == nil {
                 videoRecordingStartTime = Date()
                 videoRecordedDurationSeconds = 0
@@ -4786,8 +4895,9 @@ extension CameraViewModel: CameraServiceDelegate {
             // Nếu đang bật Windowed Zoom -> Cắt ảnh gốc 48MP chính xác theo tỉ lệ và kích thước khung ngắm
             let effectiveSourcePhoto: CGImage
             if isWindowed {
-                let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: windowBaseZoom)
-                if fractions.widthFraction < 0.999 && fractions.heightFraction < 0.999 {
+                let photoAspect = CGFloat(photo.width) / CGFloat(max(1, photo.height))
+                let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: windowBaseZoom, containerAspect: photoAspect)
+                if fractions.widthFraction < 0.999 || fractions.heightFraction < 0.999 {
                     let normCenter = windowCenter
                     let origW = CGFloat(photo.width)
                     let origH = CGFloat(photo.height)

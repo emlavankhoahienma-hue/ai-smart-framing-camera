@@ -2,8 +2,8 @@
 //  WindowedZoomOverlayView.swift
 //  AISmartFramingCamera
 //
-//  Khung ngam thu nho quang hoc Rangefinder (Windowed Zoom)
-//  Tu dong phan tich boi canh AI, co gian tieu cu mm va cat anh/video chuan quang hoc.
+//  Khung ngắm quang học Rangefinder (Windowed Zoom)
+//  Tự động phân tích bối cảnh, co giãn tiêu cự mm quang học, hỗ trợ lưới 3x3 và magnetic haptics.
 //
 
 import SwiftUI
@@ -14,17 +14,21 @@ public struct WindowedZoomOverlayView: View {
 
     @State private var gestureInitialFocalLength: Double = 35.0
     @State private var isPinching: Bool = false
+    @State private var lastSnappedPreset: Double? = nil
     @Namespace private var focalPillNamespace
 
     private let presets = WindowedFocalLengthPreset.standardPresets
+    private let magneticPresets: [Double] = [24.0, 28.0, 35.0, 50.0, 85.0]
 
     public init(viewModel: CameraViewModel, containerSize: CGSize) {
         self.viewModel = viewModel
         self.containerSize = containerSize
     }
 
-    private var isFull: Bool {
-        viewModel.windowedZoomFocalLength <= 24.5
+    /// Chỉ ẩn hoàn toàn Mask khi tiêu cự <= 24.5mm VÀ tỷ lệ khớp khung gốc 3:4.
+    /// Nếu ở 24mm mà chọn 1:1 hoặc 16:9, vẫn hiển thị Mask và viền khung để cắt đúng tỷ lệ.
+    private var isUnmodifiedFullView: Bool {
+        viewModel.windowedZoomFocalLength <= 24.5 && viewModel.windowedZoomAspectRatio == .ratio3_4
     }
 
     @State private var dragStartNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
@@ -53,10 +57,17 @@ public struct WindowedZoomOverlayView: View {
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
+    private var dynamicBadgeText: String {
+        let mm = Int(round(viewModel.windowedZoomFocalLength))
+        let aspect = viewModel.windowedZoomAspectRatio.rawValue
+        let opticalTag = viewModel.displayZoom >= 1.95 ? "TELE 2X" : "OPTICAL"
+        return "\(mm)mm • \(aspect) • \(opticalTag)"
+    }
+
     public var body: some View {
         ZStack {
-            // 1. Lop lam toi ngoai vien (Cutout Dimming Mask 38%) - An hoan toan khi chon Full (khong crop)
-            if !isFull {
+            // 1. Lớp làm tối ngoài viền (Cutout Dimming Mask 38%)
+            if !isUnmodifiedFullView {
                 WindowedMaskCutout(windowRect: windowRect)
                     .fill(Color.black.opacity(0.38), style: FillStyle(eoFill: true))
                     .ignoresSafeArea()
@@ -64,15 +75,19 @@ public struct WindowedZoomOverlayView: View {
                     .transition(.opacity)
             }
 
-            // 2. Khung ngam chinh voi vien bo tron nhe 14pt, tam keo va so mm tren dinh
-            if !isFull {
+            // 2. Khung ngắm chính với viền bo tròn nhẹ 14pt, tâm kéo, lưới 3x3 và nhãn tiêu cự
+            if !isUnmodifiedFullView {
                 ZStack(alignment: .center) {
+                    // Viền chính của khung ngắm
                     RoundedRectangle(cornerRadius: 14)
                         .stroke(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.85), lineWidth: isDraggingWindow ? 2.0 : 1.5)
                         .background(Color.white.opacity(0.001))
                         .frame(width: windowRect.width, height: windowRect.height)
 
-                    // Drag Indicator & Optical Crosshair
+                    // Lưới bố cục quang học 3x3 & 4 góc L-Bracket khi đang tương tác
+                    opticalGridView
+
+                    // Drag Indicator & Optical Crosshair tại tâm
                     ZStack {
                         Circle()
                             .stroke(Color.white.opacity(0.45), lineWidth: 1)
@@ -84,11 +99,15 @@ public struct WindowedZoomOverlayView: View {
                 }
                 .frame(width: windowRect.width, height: windowRect.height)
                 .overlay(alignment: .top) {
-                    Text(viewModel.displayZoom >= 1.95 ? "\(Int(round(viewModel.windowedZoomFocalLength)))mm • TELE OPTICAL" : "\(Int(round(viewModel.windowedZoomFocalLength)))mm")
-                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    Text(dynamicBadgeText)
+                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
                         .foregroundColor(isDraggingWindow ? AlignTheme.electricCyan : .white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.black.opacity(0.65)))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
                         .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
-                        .offset(y: -22)
+                        .offset(y: -26)
                 }
                 .position(x: windowRect.midX, y: windowRect.midY)
                 .contentShape(Rectangle())
@@ -129,7 +148,7 @@ public struct WindowedZoomOverlayView: View {
                 .transition(.opacity)
             }
 
-            // 3. Thanh chon tieu cu Prime nhanh (Full, 28mm, 35mm, 50mm, 85mm)
+            // 3. Thanh chọn tiêu cự Prime nhanh (Full, 28mm, 35mm, 50mm, 85mm)
             VStack {
                 Spacer()
                 focalPresetBar
@@ -145,22 +164,73 @@ public struct WindowedZoomOverlayView: View {
                     if !isPinching {
                         isPinching = true
                         gestureInitialFocalLength = viewModel.windowedZoomFocalLength
+                        lastSnappedPreset = nil
                     }
-                    let safeScale = Double(max(0.05, value))
-                    let newFocal = gestureInitialFocalLength / safeScale
-                    let clamped = max(24.0, min(135.0, newFocal))
-                    viewModel.windowedZoomFocalLength = clamped <= 24.5 ? 24.0 : clamped
+                    // Bung 2 ngón tay ra (value > 1.0) -> zoom cận vào chủ thể (tiêu cự mm tăng lên)
+                    let rawFocal = gestureInitialFocalLength * Double(value)
+                    var targetFocal = max(24.0, min(135.0, rawFocal))
+
+                    // Tự động bắt dính nhẹ (magnetic snap) kèm rung phản hồi khi đi qua các mốc chuẩn
+                    var didSnap = false
+                    for preset in magneticPresets {
+                        if abs(targetFocal - preset) <= 0.8 {
+                            targetFocal = preset
+                            if lastSnappedPreset != preset {
+                                lastSnappedPreset = preset
+                                viewModel.haptics.triggerSelectionChange()
+                            }
+                            didSnap = true
+                            break
+                        }
+                    }
+                    if !didSnap {
+                        lastSnappedPreset = nil
+                    }
+
+                    viewModel.windowedZoomFocalLength = targetFocal <= 24.5 ? 24.0 : targetFocal
                 }
                 .onEnded { _ in
                     isPinching = false
+                    lastSnappedPreset = nil
                     viewModel.haptics.triggerSelectionChange()
                 }
         )
     }
 
+    // MARK: - Optical Grid & Leica L-Brackets
+    @ViewBuilder
+    private var opticalGridView: some View {
+        if isDraggingWindow || isPinching {
+            ZStack {
+                // Lưới Rule of Thirds siêu mảnh 0.5pt
+                Path { path in
+                    let w = windowRect.width
+                    let h = windowRect.height
+                    // 2 đường dọc
+                    path.move(to: CGPoint(x: w / 3.0, y: 0))
+                    path.addLine(to: CGPoint(x: w / 3.0, y: h))
+                    path.move(to: CGPoint(x: (2.0 * w) / 3.0, y: 0))
+                    path.addLine(to: CGPoint(x: (2.0 * w) / 3.0, y: h))
+                    // 2 đường ngang
+                    path.move(to: CGPoint(x: 0, y: h / 3.0))
+                    path.addLine(to: CGPoint(x: w, y: h / 3.0))
+                    path.move(to: CGPoint(x: 0, y: (2.0 * h) / 3.0))
+                    path.addLine(to: CGPoint(x: w, y: (2.0 * h) / 3.0))
+                }
+                .stroke(Color.white.opacity(0.28), lineWidth: 0.5)
+
+                // 4 góc L-Bracket đậm chuẩn Rangefinder Leica
+                LeicaCornerBrackets(bracketLength: 14)
+                    .stroke(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.85), lineWidth: 2.0)
+            }
+            .frame(width: windowRect.width, height: windowRect.height)
+            .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+        }
+    }
+
     private func isPresetSelected(_ preset: WindowedFocalLengthPreset) -> Bool {
         if preset.focalLength <= 24.0 {
-            return isFull
+            return isUnmodifiedFullView
         }
         return abs(viewModel.windowedZoomFocalLength - preset.focalLength) < 2.0
     }
@@ -191,6 +261,40 @@ public struct WindowedZoomOverlayView: View {
             Capsule()
                 .fill(Color.black.opacity(0.35))
         )
+    }
+}
+
+// MARK: - 4 Góc L-Bracket Chuẩn Rangefinder Leica
+private struct LeicaCornerBrackets: Shape {
+    let bracketLength: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+        let len = min(bracketLength, min(w, h) / 3.0)
+
+        // Top-Left
+        path.move(to: CGPoint(x: 0, y: len))
+        path.addLine(to: CGPoint(x: 0, y: 0))
+        path.addLine(to: CGPoint(x: len, y: 0))
+
+        // Top-Right
+        path.move(to: CGPoint(x: w - len, y: 0))
+        path.addLine(to: CGPoint(x: w, y: 0))
+        path.addLine(to: CGPoint(x: w, y: len))
+
+        // Bottom-Left
+        path.move(to: CGPoint(x: 0, y: h - len))
+        path.addLine(to: CGPoint(x: 0, y: h))
+        path.addLine(to: CGPoint(x: len, y: h))
+
+        // Bottom-Right
+        path.move(to: CGPoint(x: w - len, y: h))
+        path.addLine(to: CGPoint(x: w, y: h))
+        path.addLine(to: CGPoint(x: w, y: h - len))
+
+        return path
     }
 }
 

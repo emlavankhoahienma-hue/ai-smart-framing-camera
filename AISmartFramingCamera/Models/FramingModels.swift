@@ -1811,29 +1811,43 @@ public enum WindowedZoomAspectRatio: String, CaseIterable, Identifiable, Sendabl
         baseOpticalZoom: CGFloat = 1.0,
         containerAspect: CGFloat = 3.0 / 4.0
     ) -> (widthFraction: CGFloat, heightFraction: CGFloat) {
-        // Khi tieu cu <= 24.0mm (hoac Full / khong zoom), bung rong 100% toan bo viewfinder khong cat anh
-        if focalLength <= 24.0 {
-            return (1.0, 1.0)
-        }
-
-        let focal = max(24.0, min(135.0, focalLength))
-        // Khi zoom quang hoc cam Tele (baseOpticalZoom >= 2.0x), cam thu nhan anh o tieu cu lon hon (vd: 2x = 48mm, 3x = 72mm).
-        // Khung ngam se tinh ti le cat tren nen anh Tele chat luong cao thay vi crop nat anh 1x:
-        let effectiveBaseZoom = max(1.0, baseOpticalZoom)
-        let rawScale = (24.0 * Double(effectiveBaseZoom)) / focal
-        let scale = CGFloat(max(0.10, min(1.0, rawScale)))
-
-        let targetAspect: CGFloat
-        switch self {
-        case .ratio3_4:
-            targetAspect = 3.0 / 4.0
-        case .ratio1_1:
-            targetAspect = 1.0
-        case .ratio16_9:
-            targetAspect = 9.0 / 16.0
-        }
-
         let safeAspect = containerAspect > 0 ? containerAspect : (3.0 / 4.0)
+
+        // Tinh scale dua tren tieu cu quang hoc (Full <= 24.0 van giu scale = 1.0 de tinh dung aspect ratio)
+        let scale: CGFloat
+        if focalLength <= 24.0 {
+            scale = 1.0
+        } else {
+            let focal = max(24.0, min(135.0, focalLength))
+            let effectiveBaseZoom = max(1.0, baseOpticalZoom)
+            let rawScale = (24.0 * Double(effectiveBaseZoom)) / focal
+            scale = CGFloat(max(0.10, min(1.0, rawScale)))
+        }
+
+        // Chuan hoa targetAspect linh hoat theo ca chieu Doc (Portrait) va Ngang (Landscape)
+        let targetAspect: CGFloat
+        if safeAspect <= 1.0 {
+            // Khung hinh Doc (Portrait)
+            switch self {
+            case .ratio3_4:
+                targetAspect = 3.0 / 4.0
+            case .ratio1_1:
+                targetAspect = 1.0
+            case .ratio16_9:
+                targetAspect = 9.0 / 16.0
+            }
+        } else {
+            // Khung hinh Ngang (Landscape)
+            switch self {
+            case .ratio3_4:
+                targetAspect = 4.0 / 3.0
+            case .ratio1_1:
+                targetAspect = 1.0
+            case .ratio16_9:
+                targetAspect = 16.0 / 9.0
+            }
+        }
+
         if safeAspect >= targetAspect {
             let widthFrac = min(1.0, scale * (targetAspect / safeAspect))
             let heightFrac = min(1.0, scale)
@@ -1860,6 +1874,48 @@ public struct WindowedFocalLengthPreset: Identifiable, Equatable, Sendable {
         WindowedFocalLengthPreset(focalLength: 50.0, label: "50mm", sceneRecommendation: "Tieu Chuan Mat Nguoi"),
         WindowedFocalLengthPreset(focalLength: 85.0, label: "85mm", sceneRecommendation: "Chan Dung Hoang Kim")
     ]
+}
+
+// MARK: - Keyframe Chuyen Dong Khung Ngam Khi Quay Video
+public struct WindowedZoomKeyframe: Sendable, Equatable {
+    public let timestamp: TimeInterval
+    public let focalLength: Double
+    public let normalizedCenter: CGPoint
+    public let baseOpticalZoom: CGFloat
+    public let aspectRatio: WindowedZoomAspectRatio
+
+    public init(
+        timestamp: TimeInterval,
+        focalLength: Double,
+        normalizedCenter: CGPoint,
+        baseOpticalZoom: CGFloat,
+        aspectRatio: WindowedZoomAspectRatio
+    ) {
+        self.timestamp = timestamp
+        self.focalLength = focalLength
+        self.normalizedCenter = normalizedCenter
+        self.baseOpticalZoom = baseOpticalZoom
+        self.aspectRatio = aspectRatio
+    }
+}
+
+// MARK: - Kieu Khung Thong Tin Dien Anh Cho Video (Cinema EXIF Frame)
+public enum VideoInfoFrameStyle: String, CaseIterable, Identifiable, Sendable {
+    case off = "Tắt"
+    case cinemaBottomBar = "Thanh Điện Ảnh"
+    case galleryMatteFrame = "Viền Triển Lãm"
+    case hudTelemetry = "Viewfinder HUD"
+
+    public var id: String { rawValue }
+
+    public var icon: String {
+        switch self {
+        case .off: return "rectangle.slash"
+        case .cinemaBottomBar: return "rectangle.bottomthird.inset.filled"
+        case .galleryMatteFrame: return "rectangle.inset.filled"
+        case .hudTelemetry: return "viewfinder"
+        }
+    }
 }
 
 // MARK: - Align Studio Design System & Theme
