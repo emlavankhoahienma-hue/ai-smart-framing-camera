@@ -146,9 +146,9 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
     init?(device: MTLDevice, viewModel: CameraViewModel) {
         self.device = device
-        guard let queue = device.makeCommandQueue() else { return nil }
+        let queue = UltraWideWarpEngine.live.commandQueue ?? device.makeCommandQueue()!
         self.commandQueue = queue
-        self.ciContext = CIContext(mtlDevice: device, options: [
+        self.ciContext = CIContext(mtlCommandQueue: queue, options: [
             .useSoftwareRenderer: false,
             .priorityRequestLow: false
         ])

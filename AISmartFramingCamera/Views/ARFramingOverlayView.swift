@@ -343,16 +343,32 @@ public struct ARFramingOverlayView: View {
     }
 
     private func convertBufferPointToScreen(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
-        return Self.convertBufferPointToScreen(point, in: screenSize)
+        let mapped = viewModel.isSimulatedUltraWideActive
+            ? viewModel.mapSensorPointToDisplay(point, factor: viewModel.simulatedUltraWideFactor)
+            : point
+        return Self.convertBufferPointToScreen(mapped, in: screenSize)
     }
 
     private func convertBufferRectToScreen(_ rect: CGRect, in screenSize: CGSize) -> CGRect {
-        return Self.convertBufferRectToScreen(rect, in: screenSize)
+        let topLeft = convertBufferPointToScreen(rect.origin, in: screenSize)
+        let bottomRight = convertBufferPointToScreen(CGPoint(x: rect.maxX, y: rect.maxY), in: screenSize)
+        return CGRect(
+            x: topLeft.x,
+            y: topLeft.y,
+            width: max(0, bottomRight.x - topLeft.x),
+            height: max(0, bottomRight.y - topLeft.y)
+        )
     }
 
     private func convertScreenPointToBuffer(_ point: CGPoint, in screenSize: CGSize) -> CGPoint {
         let p = TrackingGeometry.bufferPoint(point, size: screenSize,
             aspect: SpatialTrackingEngine.shared.currentBufferAspect)
+        if viewModel.isSimulatedUltraWideActive {
+            let factor = max(0.01, viewModel.simulatedUltraWideFactor)
+            let sensorX = 0.5 + (p.x - 0.5) / factor
+            let sensorY = 0.5 + (p.y - 0.5) / factor
+            return CGPoint(x: max(0, min(1, sensorX)), y: max(0, min(1, sensorY)))
+        }
         // Only user input is clipped to the image domain, never estimator state.
         return CGPoint(x: max(0, min(1, p.x)), y: max(0, min(1, p.y)))
     }
@@ -1087,7 +1103,10 @@ public struct AIVideoDirectorOverlayView: View {
             } else if let guidance = viewModel.activeVideoGuidance {
                 // 2. Trajectory motion path nối các tâm đánh dấu
                 let screenPoints = guidance.waypoints.map { wp in
-                    ARFramingOverlayView.convertBufferPointToScreen(wp.point, in: screenSize)
+                    let mapped = viewModel.isSimulatedUltraWideActive
+                        ? viewModel.mapSensorPointToDisplay(wp.point, factor: viewModel.simulatedUltraWideFactor)
+                        : wp.point
+                    return ARFramingOverlayView.convertBufferPointToScreen(mapped, in: screenSize)
                 }
 
                 TrajectoryPathView(

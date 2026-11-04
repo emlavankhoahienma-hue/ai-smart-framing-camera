@@ -635,7 +635,7 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
             }
 
             if simUW {
-                frameCI = UltraWideWarpEngine.shared.applySimulatedUltraWide(to: frameCI, factor: simFactor)
+                frameCI = UltraWideWarpEngine.live.applySimulatedUltraWide(to: frameCI, factor: simFactor)
             }
 
             if let p = preset, p != .standard {
@@ -647,7 +647,9 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
             }
 
             self.ciContext.render(frameCI, to: outBuffer)
-            adaptor.append(outBuffer, withPresentationTime: pts)
+            if vInput.isReadyForMoreMediaData {
+                adaptor.append(outBuffer, withPresentationTime: pts)
+            }
         }
     }
 

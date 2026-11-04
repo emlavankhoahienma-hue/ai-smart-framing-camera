@@ -362,6 +362,9 @@ public final class CameraViewModel: ObservableObject {
     public var zoomFactor: CGFloat { currentZoom }
     public var availableDisplayZoomOptions: [CGFloat] {
         let opts = cameraService.availableDisplayZoomOptions
+        if !UltraWideWarpEngine.live.isSupported {
+            return opts.filter { $0 >= 0.99 }
+        }
         if opts.isEmpty { return [0.5, 1.0, 2.0, 3.0] }
         return opts.contains(0.5) ? opts : ([0.5] + opts).sorted()
     }
@@ -1601,11 +1604,31 @@ public final class CameraViewModel: ObservableObject {
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
+    // MARK: - Sensor to Display Coordinate Mapping for Simulated 0.5x
+    /// Ánh xạ tọa độ chuẩn hóa từ cảm biến [0...1] sang khung canvas hiển thị khi bật 0.5x giả lập
+    public func mapSensorPointToDisplay(_ p: CGPoint, factor: CGFloat) -> CGPoint {
+        CGPoint(x: 0.5 + (p.x - 0.5) * factor, y: 0.5 + (p.y - 0.5) * factor)
+    }
+
     // MARK: - AVCaptureVideoPreviewLayer Coordinate Mapping
     /// Chuyen doi bounding box chuan hoa [0...1] upright (goc tren-trai) sang toa do hien thi tren preview layer
     public func convertMetadataRectToLayerRect(_ uprightRect: CGRect, in screenSize: CGSize) -> CGRect {
         guard !uprightRect.isEmpty, !uprightRect.isNull else { return .zero }
-        let metadataOutputRect = CompositionPureCalculations.uprightToMetadataOutputRect(uprightRect)
+        let effectiveRect: CGRect
+        if isSimulatedUltraWideActive {
+            let factor = simulatedUltraWideFactor
+            let p1 = mapSensorPointToDisplay(uprightRect.origin, factor: factor)
+            let p2 = mapSensorPointToDisplay(CGPoint(x: uprightRect.maxX, y: uprightRect.maxY), factor: factor)
+            effectiveRect = CGRect(
+                x: min(p1.x, p2.x),
+                y: min(p1.y, p2.y),
+                width: abs(p2.x - p1.x),
+                height: abs(p2.y - p1.y)
+            )
+        } else {
+            effectiveRect = uprightRect
+        }
+        let metadataOutputRect = CompositionPureCalculations.uprightToMetadataOutputRect(effectiveRect)
 
         if let previewLayer = self.previewLayer, previewLayer.bounds.width > 0 && previewLayer.bounds.height > 0 {
             let converted = previewLayer.layerRectConverted(fromMetadataOutputRect: metadataOutputRect)
