@@ -15,10 +15,17 @@ public struct WindowedZoomOverlayView: View {
     @State private var gestureInitialFocalLength: Double = 35.0
     @State private var isPinching: Bool = false
     @State private var lastSnappedPreset: Double? = nil
+    @State private var resizingCorner: CornerPosition? = nil
+    @State private var resizeInitialFocalLength: Double = 35.0
+    @State private var resizeInitialHalfDiag: CGFloat = 100.0
     @Namespace private var focalPillNamespace
 
     private let presets = WindowedFocalLengthPreset.standardPresets
     private let magneticPresets: [Double] = [24.0, 28.0, 35.0, 50.0, 85.0]
+
+    private enum CornerPosition {
+        case topLeft, topRight, bottomLeft, bottomRight
+    }
 
     public init(viewModel: CameraViewModel, containerSize: CGSize) {
         self.viewModel = viewModel
@@ -64,6 +71,27 @@ public struct WindowedZoomOverlayView: View {
         return "\(mm)mm • \(aspect) • \(opticalTag)"
     }
 
+    private func clampNormalizedCenter() {
+        guard containerSize.width > 0, containerSize.height > 0 else { return }
+        let fractions = viewModel.windowedZoomAspectRatio.windowFractions(
+            focalLength: viewModel.windowedZoomFocalLength,
+            baseOpticalZoom: viewModel.displayZoom,
+            containerAspect: containerSize.width / containerSize.height
+        )
+        let halfWFrac = fractions.widthFraction / 2.0
+        let halfHFrac = fractions.heightFraction / 2.0
+        let current = viewModel.windowedZoomNormalizedCenter
+        let clampedX = max(halfWFrac, min(current.x, 1.0 - halfWFrac))
+        let clampedY = max(halfHFrac, min(current.y, 1.0 - halfHFrac))
+        if clampedX != current.x || clampedY != current.y {
+            viewModel.windowedZoomNormalizedCenter = CGPoint(x: clampedX, y: clampedY)
+        }
+    }
+
+    private var isInteracting: Bool {
+        isDraggingWindow || isPinching || resizingCorner != nil
+    }
+
     public var body: some View {
         ZStack {
             // 1. Lớp làm tối ngoài viền (Cutout Dimming Mask 38%)
@@ -75,17 +103,23 @@ public struct WindowedZoomOverlayView: View {
                     .transition(.opacity)
             }
 
-            // 2. Khung ngắm chính với viền bo tròn nhẹ 14pt, tâm kéo, lưới 3x3 và nhãn tiêu cự
+            // 2. Khung ngắm chính với viền bo tròn 14pt, 4 góc kéo resize, tâm ngắm và nhãn tiêu cự
             if !isUnmodifiedFullView {
                 ZStack(alignment: .center) {
                     // Viền chính của khung ngắm
                     RoundedRectangle(cornerRadius: 14)
-                        .stroke(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.85), lineWidth: isDraggingWindow ? 2.0 : 1.5)
+                        .stroke(isInteracting ? AlignTheme.electricCyan : Color.white.opacity(0.85), lineWidth: isInteracting ? 2.0 : 1.5)
                         .background(Color.white.opacity(0.001))
                         .frame(width: windowRect.width, height: windowRect.height)
 
                     // Lưới bố cục quang học 3x3 & 4 góc L-Bracket khi đang tương tác
                     opticalGridView
+
+                    // 4 Tay nắm co giãn kích thước cửa sổ tại 4 góc (Interactive Corner Handles)
+                    cornerResizeHandle(position: .topLeft)
+                    cornerResizeHandle(position: .topRight)
+                    cornerResizeHandle(position: .bottomLeft)
+                    cornerResizeHandle(position: .bottomRight)
 
                     // Drag Indicator & Optical Crosshair tại tâm
                     ZStack {
@@ -93,21 +127,35 @@ public struct WindowedZoomOverlayView: View {
                             .stroke(Color.white.opacity(0.45), lineWidth: 1)
                             .frame(width: 14, height: 14)
                         Circle()
-                            .fill(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.65))
+                            .fill(isInteracting ? AlignTheme.electricCyan : Color.white.opacity(0.65))
                             .frame(width: 4, height: 4)
                     }
                 }
                 .frame(width: windowRect.width, height: windowRect.height)
                 .overlay(alignment: .top) {
-                    Text(dynamicBadgeText)
-                        .font(.system(size: 12.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(isDraggingWindow ? AlignTheme.electricCyan : .white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.black.opacity(0.65)))
-                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+                    Button(action: {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                            viewModel.cycleAspectRatio()
+                            clampNormalizedCenter()
+                        }
+                        viewModel.haptics.triggerSelectionChange()
+                    }) {
+                        HStack(spacing: 5) {
+                            Text(dynamicBadgeText)
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 8.5, weight: .bold))
+                                .opacity(0.7)
+                        }
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundColor(isInteracting ? AlignTheme.electricCyan : .white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3.5)
+                        .background(Capsule().fill(Color.black.opacity(0.70)))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.8))
                         .shadow(color: Color.black.opacity(0.9), radius: 3, x: 0, y: 1)
-                        .offset(y: -26)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .offset(y: -28)
                 }
                 .position(x: windowRect.midX, y: windowRect.midY)
                 .contentShape(Rectangle())
@@ -166,8 +214,10 @@ public struct WindowedZoomOverlayView: View {
                         gestureInitialFocalLength = viewModel.windowedZoomFocalLength
                         lastSnappedPreset = nil
                     }
-                    // Bung 2 ngón tay ra (value > 1.0) -> zoom cận vào chủ thể (tiêu cự mm tăng lên)
-                    let rawFocal = gestureInitialFocalLength * Double(value)
+                    // Bung 2 ngón tay ra (value > 1.0) -> Kích thước cửa sổ to ra (chứa góc nhìn rộng hơn -> tiêu cự mm nhỏ lại)
+                    // Thu 2 ngón tay lại (value < 1.0) -> Kích thước cửa sổ thu nhỏ lại (zoom cận vào chủ thể -> tiêu cự mm tăng lên)
+                    let safeScale = max(0.08, Double(value))
+                    let rawFocal = gestureInitialFocalLength / safeScale
                     var targetFocal = max(24.0, min(135.0, rawFocal))
 
                     // Tự động bắt dính nhẹ (magnetic snap) kèm rung phản hồi khi đi qua các mốc chuẩn
@@ -188,6 +238,8 @@ public struct WindowedZoomOverlayView: View {
                     }
 
                     viewModel.windowedZoomFocalLength = targetFocal <= 24.5 ? 24.0 : targetFocal
+                    viewModel.updateWindowedCameraHardwareZoom()
+                    clampNormalizedCenter()
                 }
                 .onEnded { _ in
                     isPinching = false
@@ -197,10 +249,84 @@ public struct WindowedZoomOverlayView: View {
         )
     }
 
+    // MARK: - Interactive Corner Resize Handles (Kéo 4 góc để co giãn kích thước trực tiếp)
+    @ViewBuilder
+    private func cornerResizeHandle(position: CornerPosition) -> some View {
+        let isCurrent = resizingCorner == position
+        let handleTouchArea: CGFloat = 40
+        let halfW = windowRect.width / 2.0
+        let halfH = windowRect.height / 2.0
+        let xOffset: CGFloat = (position == .topLeft || position == .bottomLeft) ? -halfW : halfW
+        let yOffset: CGFloat = (position == .topLeft || position == .topRight) ? -halfH : halfH
+
+        ZStack {
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: handleTouchArea, height: handleTouchArea)
+                .contentShape(Rectangle())
+
+            // Vòng tròn tay nắm nổi bật khi tương tác
+            Circle()
+                .fill(isCurrent ? AlignTheme.electricCyan : Color.white.opacity(0.85))
+                .frame(width: isCurrent ? 10 : 7, height: isCurrent ? 10 : 7)
+                .shadow(color: isCurrent ? AlignTheme.electricCyan.opacity(0.8) : Color.black.opacity(0.5), radius: 3)
+        }
+        .offset(x: xOffset, y: yOffset)
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .named("windowed_container"))
+                .onChanged { value in
+                    if resizingCorner != position {
+                        resizingCorner = position
+                        resizeInitialFocalLength = viewModel.windowedZoomFocalLength
+                        resizeInitialHalfDiag = hypot(halfW, halfH)
+                    }
+
+                    let tx = value.translation.width
+                    let ty = value.translation.height
+
+                    let currentHalfDiag: CGFloat
+                    switch position {
+                    case .topLeft:
+                        currentHalfDiag = hypot(-halfW + tx, -halfH + ty)
+                    case .topRight:
+                        currentHalfDiag = hypot(halfW + tx, -halfH + ty)
+                    case .bottomLeft:
+                        currentHalfDiag = hypot(-halfW + tx, halfH + ty)
+                    case .bottomRight:
+                        currentHalfDiag = hypot(halfW + tx, halfH + ty)
+                    }
+
+                    let ratio = currentHalfDiag / max(10.0, resizeInitialHalfDiag)
+                    let rawFocal = resizeInitialFocalLength / max(0.1, Double(ratio))
+                    var targetFocal = max(24.0, min(135.0, rawFocal))
+
+                    for preset in magneticPresets {
+                        if abs(targetFocal - preset) <= 0.8 {
+                            targetFocal = preset
+                            if lastSnappedPreset != preset {
+                                lastSnappedPreset = preset
+                                viewModel.haptics.triggerSelectionChange()
+                            }
+                            break
+                        }
+                    }
+
+                    viewModel.windowedZoomFocalLength = targetFocal <= 24.5 ? 24.0 : targetFocal
+                    viewModel.updateWindowedCameraHardwareZoom()
+                    clampNormalizedCenter()
+                }
+                .onEnded { _ in
+                    resizingCorner = nil
+                    lastSnappedPreset = nil
+                    viewModel.haptics.triggerSelectionChange()
+                }
+        )
+    }
+
     // MARK: - Optical Grid & Leica L-Brackets
     @ViewBuilder
     private var opticalGridView: some View {
-        if isDraggingWindow || isPinching {
+        if isInteracting {
             ZStack {
                 // Lưới Rule of Thirds siêu mảnh 0.5pt
                 Path { path in
@@ -221,7 +347,7 @@ public struct WindowedZoomOverlayView: View {
 
                 // 4 góc L-Bracket đậm chuẩn Rangefinder Leica
                 LeicaCornerBrackets(bracketLength: 14)
-                    .stroke(isDraggingWindow ? AlignTheme.electricCyan : Color.white.opacity(0.85), lineWidth: 2.0)
+                    .stroke(isInteracting ? AlignTheme.electricCyan : Color.white.opacity(0.85), lineWidth: 2.0)
             }
             .frame(width: windowRect.width, height: windowRect.height)
             .transition(.opacity.animation(.easeInOut(duration: 0.2)))
@@ -241,6 +367,8 @@ public struct WindowedZoomOverlayView: View {
         generator.selectionChanged()
         withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
             viewModel.windowedZoomFocalLength = preset.focalLength
+            viewModel.updateWindowedCameraHardwareZoom()
+            clampNormalizedCenter()
         }
     }
 
