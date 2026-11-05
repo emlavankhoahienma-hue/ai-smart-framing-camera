@@ -103,7 +103,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
     public var displayName: String {
         switch self {
         case .pollinations: return "Pollinations AI (enter.pollinations.ai)"
-        case .googleGemini: return "Google AI Studio (Gemini 2.0 / 1.5 • Miễn phí cao)"
+        case .googleGemini: return "Google AI Studio (Gemini 3.8 / 3.5 Flash • Interactions API)"
         case .groq:         return "Groq Cloud (LPU Siêu tốc • Miễn phí)"
         case .openRouter:   return "OpenRouter (Đa Model 2026)"
         case .openAI:       return "OpenAI API (GPT-4o / GPT-4.1)"
@@ -131,7 +131,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
     public var defaultChatCompletionsURL: String {
         switch self {
         case .pollinations: return "https://gen.pollinations.ai/v1/chat/completions"
-        case .googleGemini: return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        case .googleGemini: return "https://generativelanguage.googleapis.com/v1beta/interactions"
         case .groq:         return "https://api.groq.com/openai/v1/chat/completions"
         case .openRouter:   return "https://openrouter.ai/api/v1/chat/completions"
         case .openAI:       return "https://api.openai.com/v1/chat/completions"
@@ -145,7 +145,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
     public var defaultModelsURL: String {
         switch self {
         case .pollinations: return "https://gen.pollinations.ai/v1/models"
-        case .googleGemini: return "https://generativelanguage.googleapis.com/v1beta/openai/models"
+        case .googleGemini: return "https://generativelanguage.googleapis.com/v1beta/models"
         case .groq:         return "https://api.groq.com/openai/v1/models"
         case .openRouter:   return "https://openrouter.ai/api/v1/models"
         case .openAI:       return "https://api.openai.com/v1/models"
@@ -173,7 +173,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
     public var defaultModelID: String {
         switch self {
         case .pollinations: return "openai/gpt-5.4-nano"
-        case .googleGemini: return "gemini-2.0-flash"
+        case .googleGemini: return "gemini-3.8-flash"
         case .groq:         return "qwen/qwen3.8-27b"
         case .openRouter:   return "google/gemini-2.0-flash-exp:free"
         case .openAI:       return "gpt-4o-mini"
@@ -208,6 +208,12 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     case pollinationsGPT54Nano = "pollinations/gpt-5.4-nano"
     case pollinationsGPT54Mini = "pollinations/gpt-5.4-mini"
     case pollinationsOpenAI = "pollinations/gpt-4o-mini"
+    // Official 2026 Google Gemini Models (Interactions API & Live API)
+    case gemini38FlashDirect = "gemini-3.8-flash"
+    case gemini35FlashLiteDirect = "gemini-3.5-flash-lite"
+    case gemini31FlashLiteDirect = "gemini-3.1-flash-lite"
+    case gemini4ArgonDirect = "gemini-4-argon"
+    case gemini38Live = "gemini-3.8-live"
     case gemini25FlashDirect = "gemini-2.5-flash"
     case gemini25FlashLiteDirect = "gemini-2.5-flash-lite-preview-06-17"
     case gemini20FlashDirect = "gemini-2.0-flash"
@@ -274,6 +280,11 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinationsGPT54Nano:  return "GPT-5.4 Nano (Pollinations • Miễn phí 100%)"
         case .pollinationsGPT54Mini:  return "GPT-5.4 Mini (Pollinations • Miễn phí 100%)"
         case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations AI • Cần Pollen)"
+        case .gemini38FlashDirect:     return "Gemini 3.8 Flash (Google AI • Chuẩn 2026 • Cực nhanh)"
+        case .gemini35FlashLiteDirect: return "Gemini 3.5 Flash Lite (Google AI • Siêu tốc độ trễ thấp)"
+        case .gemini31FlashLiteDirect: return "Gemini 3.1 Flash Lite (Google AI • Tiết kiệm token)"
+        case .gemini4ArgonDirect:      return "Gemini 4 Argon (Google AI • Đỉnh cao suy luận 2026)"
+        case .gemini38Live:            return "Gemini 3.8 Live (Google AI • Realtime WebSocket Video)"
         case .gemini25FlashDirect:    return "Gemini 2.5 Flash (Google AI • Chuyên gia Nhiếp ảnh • Free)"
         case .gemini25FlashLiteDirect:return "Gemini 2.5 Flash Lite (Google AI • Siêu tốc <0.6s • Free)"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash (Trực tiếp Google AI • Miễn phí cao)"
@@ -457,6 +468,11 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .googleGemini:
             return [
                 .autoStrongest,
+                .gemini38FlashDirect,
+                .gemini35FlashLiteDirect,
+                .gemini31FlashLiteDirect,
+                .gemini4ArgonDirect,
+                .gemini38Live,
                 .gemini25FlashDirect,
                 .gemini25FlashLiteDirect,
                 .gemini20FlashDirect,
@@ -531,7 +547,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public static func defaultModel(for provider: AICloudProvider) -> AIVisionModel {
         switch provider {
         case .pollinations: return .pollinationsGPT54Nano
-        case .googleGemini: return .gemini20FlashDirect
+        case .googleGemini: return .gemini38FlashDirect
         case .groq: return .groqQwen38
         case .openAI: return .gpt4oMini
         case .anthropic: return .claude37Sonnet
@@ -611,20 +627,24 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
                 cleanModel = String(cleanModel.dropFirst("google/".count))
             }
             cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
-            if cleanModel == "gemini-flash-1.5" { cleanModel = "gemini-1.5-flash" }
-            if cleanModel == "gemini-pro-1.5" { cleanModel = "gemini-1.5-pro" }
-            if cleanModel == "gemini-2.0-flash-001" { cleanModel = "gemini-2.0-flash" }
-            if cleanModel == "auto" { cleanModel = "gemini-2.0-flash" }
+            if cleanModel == "gemini-flash-1.5" || cleanModel == "gemini-1.5-flash" || cleanModel == "gemini-2.0-flash" || cleanModel == "gemini-2.5-flash" || cleanModel == "gemini-2.0-flash-001" {
+                cleanModel = "gemini-3.8-flash"
+            }
+            if cleanModel == "gemini-2.5-flash-lite-preview-06-17" || cleanModel == "gemini-2.0-flash-lite-preview-02-05" {
+                cleanModel = "gemini-3.5-flash-lite"
+            }
+            if cleanModel == "gemini-pro-1.5" || cleanModel == "gemini-2.5-pro" || cleanModel == "gemini-3.1-pro-preview" {
+                cleanModel = "gemini-4-argon"
+            }
+            if cleanModel == "auto" || cleanModel.isEmpty {
+                cleanModel = "gemini-3.8-flash"
+            }
 
-            // Người dùng chọn model nào -> chạy trực tiếp model đó, chỉ fallback 1 lần nếu không trả về gì
+            // Fallback chain cho Google Gemini: ưu tiên model đã chọn, sau đó là 3.5 Flash Lite và 3.1 Flash Lite
             if selected != .autoStrongest && !custom.isEmpty {
-                return [cleanModel]
+                return [cleanModel, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
             }
-            if cleanModel == "gemini-1.5-flash" {
-                return ["gemini-1.5-flash", "gemini-2.0-flash"]
-            } else {
-                return [cleanModel, "gemini-1.5-flash"]
-            }
+            return [cleanModel, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
         } else if provider == .groq {
             var cleanModel = preferred
             if cleanModel.hasPrefix("groq/") {
@@ -777,6 +797,80 @@ public struct GeminiColorRecipe {
         colorGrade: .softwarm,
         diagnosis: "Màu sắc tự nhiên cân bằng"
     )
+}
+
+// MARK: - Gemini Structured Output Models (Codable)
+public struct GeminiStructuredFramingOutput: Codable {
+    public let target_x: Double
+    public let target_y: Double
+    public let suggested_zoom: Double
+    public let composition_rule: String
+    public let scene_type: String
+    public let explanation: String
+    public let recommended_preset: String
+    public let preset_explanation: String?
+    public let recommended_ev_bias: Double?
+    public let lighting_scene: String?
+    public let subject_x: Double?
+    public let subject_y: Double?
+    public let composition_anchor_x: Double?
+    public let composition_anchor_y: Double?
+    public let shot_scale: String?
+    public let color_recipe: GeminiStructuredColorRecipe?
+
+    public func toDictionary() -> [String: Any] {
+        var dict: [String: Any] = [
+            "target_x": target_x,
+            "target_y": target_y,
+            "suggested_zoom": suggested_zoom,
+            "composition_rule": composition_rule,
+            "scene_type": scene_type,
+            "explanation": explanation,
+            "recommended_preset": recommended_preset
+        ]
+        if let pExp = preset_explanation { dict["preset_explanation"] = pExp }
+        if let ev = recommended_ev_bias { dict["exposure_bias"] = ev }
+        if let light = lighting_scene { dict["lighting_scene"] = light }
+        if let sx = subject_x { dict["subject_x"] = sx }
+        if let sy = subject_y { dict["subject_y"] = sy }
+        if let cax = composition_anchor_x { dict["composition_x"] = cax }
+        if let cay = composition_anchor_y { dict["composition_y"] = cay }
+        if let scale = shot_scale { dict["shot_scale"] = scale }
+        if let cr = color_recipe {
+            dict["color_recipe"] = cr.toDictionary()
+        }
+        return dict
+    }
+
+    public func toFramingResponse(modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
+        return GeminiService.parseGeminiResponse(toDictionary(), modelUsed: modelUsed, latencyMs: latencyMs)
+    }
+}
+
+public struct GeminiStructuredColorRecipe: Codable {
+    public let exposure_ev: Double?
+    public let contrast: Double?
+    public let highlights: Double?
+    public let shadows: Double?
+    public let warmth: Double?
+    public let tint: Double?
+    public let saturation: Double?
+    public let vibrance: Double?
+    public let sharpness: Double?
+    public let vignette: Double?
+
+    public func toDictionary() -> [String: Any] {
+        var dict: [String: Any] = [:]
+        if let v = exposure_ev { dict["exposure_bias"] = v }
+        if let v = contrast { dict["contrast"] = v }
+        if let v = highlights { dict["highlight_roll"] = v }
+        if let v = shadows { dict["shadow_lift"] = v }
+        if let v = warmth { dict["temperature_k"] = v }
+        if let v = tint { dict["tint_shift"] = v }
+        if let v = saturation { dict["saturation"] = v }
+        if let v = vignette { dict["vignette"] = v }
+        return dict
+    }
 }
 
 public struct GeminiFramingResponse {
@@ -1224,6 +1318,9 @@ public final class GeminiService: ObservableObject {
             if selectedProvider == .anthropic {
                 request.setValue(key, forHTTPHeaderField: "x-api-key")
                 request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            } else if selectedProvider == .googleGemini {
+                request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+                request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
             } else {
                 request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
             }
@@ -1235,11 +1332,21 @@ public final class GeminiService: ObservableObject {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
                 return (false, "HTTP \(code) khi tải danh sách model")
             }
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let arr = json["data"] as? [[String: Any]] else {
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return (false, "Định dạng danh sách model không khớp")
             }
-            let ids: [String] = arr.compactMap { $0["id"] as? String }
+            var ids: [String] = []
+            if let arr = json["data"] as? [[String: Any]] {
+                ids = arr.compactMap { $0["id"] as? String }
+            } else if let modelsArr = json["models"] as? [[String: Any]] {
+                ids = modelsArr.compactMap { m in
+                    guard let name = m["name"] as? String else { return nil }
+                    return name.replacingOccurrences(of: "models/", with: "")
+                }
+            }
+            guard !ids.isEmpty else {
+                return (false, "Không tìm thấy model nào từ danh sách trả về")
+            }
             let prioritized = ids.sorted { a, b in
                 let al = a.lowercased(), bl = b.lowercased()
                 let aVis = al.contains("vl") || al.contains("gemini") || al.contains("gpt-4") || al.contains("gpt-5") || al.contains("claude") || al.contains("vision") || al.contains("gemma-4") || al.contains("llama-4") || al.contains("grok")
@@ -1382,6 +1489,7 @@ public final class GeminiService: ObservableObject {
         }
         if selectedProvider == .googleGemini && !key.isEmpty {
             request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+            request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
         } else if selectedProvider == .anthropic && !key.isEmpty {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
@@ -1391,13 +1499,21 @@ public final class GeminiService: ObservableObject {
             request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
         }
 
-        let body: [String: Any] = [
-            "model": testModel,
-            "messages": [
-                ["role": "user", "content": "Hi"]
-            ],
-            "max_tokens": 10
-        ]
+        let body: [String: Any]
+        if selectedProvider == .googleGemini {
+            body = [
+                "model": testModel,
+                "input": "Hi"
+            ]
+        } else {
+            body = [
+                "model": testModel,
+                "messages": [
+                    ["role": "user", "content": "Hi"]
+                ],
+                "max_tokens": 10
+            ]
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         let startTime = CACurrentMediaTime()
@@ -1926,6 +2042,7 @@ public final class GeminiService: ObservableObject {
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         if selectedProvider == .googleGemini {
             request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+            request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
         } else if selectedProvider == .anthropic {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
@@ -1938,32 +2055,82 @@ public final class GeminiService: ObservableObject {
             request.timeoutInterval = 45
         }
 
-        var requestBody: [String: Any] = [
-            "model": currentModelID,
-            "messages": [
-                [
-                    "role": "user",
-                    "content": [
-                        [
-                            "type": "image_url",
-                            "image_url": [
-                                "url": "data:image/jpeg;base64,\(base64Image)"
-                            ]
-                        ],
-                        [
-                            "type": "text",
-                            "text": prompt
+        var requestBody: [String: Any]
+        if selectedProvider == .googleGemini {
+            let videoGuidanceSchema: [String: Any] = [
+                "type": "object",
+                "properties": [
+                    "shot_style": ["type": "string", "description": "Cinematic shot style title in Vietnamese"],
+                    "movement_direction": ["type": "string", "description": "Movement guidance instruction in Vietnamese"],
+                    "suggested_pacing_seconds": ["type": "number", "description": "Recommended pacing duration in seconds"],
+                    "suggested_zoom": ["type": "number", "description": "Optimal zoom level 1.0 to 3.0"],
+                    "director_tip": ["type": "string", "description": "Professional tip for holding and moving camera in Vietnamese"],
+                    "waypoints": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "id": ["type": "integer"],
+                                "x": ["type": "number", "description": "Normalized waypoint X [0.0..1.0]"],
+                                "y": ["type": "number", "description": "Normalized waypoint Y [0.0..1.0]"],
+                                "label": ["type": "string"],
+                                "action_tip": ["type": "string"],
+                                "duration": ["type": "number"]
+                            ],
+                            "required": ["id", "x", "y", "label", "action_tip", "duration"]
                         ]
                     ]
+                ],
+                "required": ["shot_style", "movement_direction", "suggested_pacing_seconds", "suggested_zoom", "director_tip", "waypoints"]
+            ]
+
+            requestBody = [
+                "model": currentModelID,
+                "input": [
+                    [
+                        "type": "image",
+                        "mime_type": "image/jpeg",
+                        "data": base64Image
+                    ],
+                    [
+                        "type": "text",
+                        "text": prompt
+                    ]
+                ],
+                "response_format": [
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": videoGuidanceSchema
                 ]
-            ],
-            "response_format": ["type": "json_object"],
-            "temperature": 0.40,
-            "top_p": 0.90,
-            "max_tokens": 1024
-        ]
-        if selectedProvider == .openRouter {
-            requestBody["reasoning"] = ["exclude": true]
+            ]
+        } else {
+            requestBody = [
+                "model": currentModelID,
+                "messages": [
+                    [
+                        "role": "user",
+                        "content": [
+                            [
+                                "type": "image_url",
+                                "image_url": [
+                                    "url": "data:image/jpeg;base64,\(base64Image)"
+                                ]
+                            ],
+                            [
+                                "type": "text",
+                                "text": prompt
+                            ]
+                        ]
+                    ]
+                ],
+                "response_format": ["type": "json_object"],
+                "temperature": 0.40,
+                "top_p": 0.90,
+                "max_tokens": 1024
+            ]
+            if selectedProvider == .openRouter {
+                requestBody["reasoning"] = ["exclude": true]
+            }
         }
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
@@ -2058,12 +2225,32 @@ public final class GeminiService: ObservableObject {
             }
 
             var responseText: String?
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let firstChoice = choices.first,
-               let message = firstChoice["message"] as? [String: Any],
-               let text = message["content"] as? String {
-                responseText = text
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let steps = json["steps"] as? [[String: Any]] {
+                    for step in steps {
+                        if step["type"] as? String == "model_output",
+                           let content = step["content"] as? [[String: Any]] {
+                            for item in content {
+                                if item["type"] as? String == "text", let text = item["text"] as? String, !text.isEmpty {
+                                    responseText = text
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+                if responseText == nil, let candidates = json["candidates"] as? [[String: Any]],
+                   let firstCand = candidates.first,
+                   let content = firstCand["content"] as? [String: Any],
+                   let parts = content["parts"] as? [[String: Any]] {
+                    responseText = parts.compactMap { $0["text"] as? String }.joined()
+                }
+                if responseText == nil, let choices = json["choices"] as? [[String: Any]],
+                   let firstChoice = choices.first,
+                   let message = firstChoice["message"] as? [String: Any],
+                   let text = message["content"] as? String {
+                    responseText = text
+                }
             }
 
             // Parse cleanly with self-healing parser; fallback to local guidance if malformed without cascading
@@ -2170,6 +2357,7 @@ public final class GeminiService: ObservableObject {
         }
         if selectedProvider == .googleGemini && !key.isEmpty {
             request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+            request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
         } else if selectedProvider == .anthropic && !key.isEmpty {
             request.setValue(key, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
@@ -2179,36 +2367,100 @@ public final class GeminiService: ObservableObject {
             request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
         }
 
-        var requestBody: [String: Any] = [
-            "model": modelID,
-            "messages": [
-                [
-                    "role": "user",
-                    "content": [
-                        [
-                            "type": "text",
-                            "text": prompt
+        var requestBody: [String: Any]
+        if selectedProvider == .googleGemini {
+            let structuredSchema: [String: Any] = [
+                "type": "object",
+                "properties": [
+                    "target_x": ["type": "number", "description": "Normalized target X focal point [0.0..1.0]"],
+                    "target_y": ["type": "number", "description": "Normalized target Y focal point [0.0..1.0]"],
+                    "suggested_zoom": ["type": "number", "description": "Optimal zoom multiplier 1.0 to 5.0"],
+                    "composition_rule": ["type": "string", "description": "Rule of thirds, golden ratio, center, leading lines, etc."],
+                    "scene_type": ["type": "string", "description": "portrait, landscape, street, macro, architecture, night"],
+                    "explanation": ["type": "string", "description": "Vietnamese photography composition explanation"],
+                    "recommended_preset": ["type": "string", "description": "Leica Standard, Leica Vivid, Leica Monochrome, Kodak Portra 400, Fuji Classic Chrome, etc."],
+                    "preset_explanation": ["type": "string", "description": "Why this film preset matches the scene"],
+                    "recommended_ev_bias": ["type": "number", "description": "Recommended EV exposure bias [-2.0..2.0]"],
+                    "lighting_scene": ["type": "string"],
+                    "subject_x": ["type": "number"],
+                    "subject_y": ["type": "number"],
+                    "composition_anchor_x": ["type": "number"],
+                    "composition_anchor_y": ["type": "number"],
+                    "shot_scale": ["type": "string"],
+                    "color_recipe": [
+                        "type": "object",
+                        "properties": [
+                            "exposure_ev": ["type": "number"],
+                            "contrast": ["type": "number"],
+                            "highlights": ["type": "number"],
+                            "shadows": ["type": "number"],
+                            "warmth": ["type": "number"],
+                            "tint": ["type": "number"],
+                            "saturation": ["type": "number"],
+                            "vibrance": ["type": "number"],
+                            "sharpness": ["type": "number"],
+                            "vignette": ["type": "number"]
                         ],
-                        [
-                            "type": "image_url",
-                            "image_url": [
-                                "url": "data:image/jpeg;base64,\(base64Image)"
+                        "required": ["exposure_ev", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"]
+                    ]
+                ],
+                "required": [
+                    "target_x", "target_y", "suggested_zoom", "composition_rule",
+                    "scene_type", "explanation", "recommended_preset", "color_recipe"
+                ]
+            ]
+
+            requestBody = [
+                "model": modelID,
+                "input": [
+                    [
+                        "type": "image",
+                        "mime_type": "image/jpeg",
+                        "data": base64Image
+                    ],
+                    [
+                        "type": "text",
+                        "text": prompt
+                    ]
+                ],
+                "response_format": [
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": structuredSchema
+                ]
+            ]
+        } else {
+            requestBody = [
+                "model": modelID,
+                "messages": [
+                    [
+                        "role": "user",
+                        "content": [
+                            [
+                                "type": "text",
+                                "text": prompt
+                            ],
+                            [
+                                "type": "image_url",
+                                "image_url": [
+                                    "url": "data:image/jpeg;base64,\(base64Image)"
+                                ]
                             ]
                         ]
                     ]
-                ]
-            ],
-            "temperature": 0.20,
-            "top_p": 0.90,
-            "max_tokens": 1000
-        ]
-        let lowerModel = modelID.lowercased()
-        if (selectedProvider == .openAI || selectedProvider == .googleGemini || selectedProvider == .groq) &&
-           (lowerModel.contains("gpt-") || lowerModel.contains("gemini-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4") || lowerModel.contains("qwen")) {
-            requestBody["response_format"] = ["type": "json_object"]
-        }
-        if selectedProvider == .openRouter {
-            requestBody["reasoning"] = ["exclude": true]
+                ],
+                "temperature": 0.20,
+                "top_p": 0.90,
+                "max_tokens": 1000
+            ]
+            let lowerModel = modelID.lowercased()
+            if (selectedProvider == .openAI || selectedProvider == .groq) &&
+               (lowerModel.contains("gpt-") || lowerModel.contains("gemini-") || lowerModel.contains("o1") || lowerModel.contains("o3") || lowerModel.contains("o4") || lowerModel.contains("qwen")) {
+                requestBody["response_format"] = ["type": "json_object"]
+            }
+            if selectedProvider == .openRouter {
+                requestBody["reasoning"] = ["exclude": true]
+            }
         }
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
@@ -2262,7 +2514,29 @@ public final class GeminiService: ObservableObject {
             var responseText: String?
 
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                if let choices = json["choices"] as? [[String: Any]],
+                // 1. Google Gemini Interactions API (steps -> model_output -> content -> text)
+                if let steps = json["steps"] as? [[String: Any]] {
+                    for step in steps {
+                        if step["type"] as? String == "model_output",
+                           let content = step["content"] as? [[String: Any]] {
+                            for item in content {
+                                if item["type"] as? String == "text", let text = item["text"] as? String, !text.isEmpty {
+                                    responseText = text
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+                // 2. Google Gemini generateContent API (candidates -> content -> parts -> text)
+                if responseText == nil, let candidates = json["candidates"] as? [[String: Any]],
+                   let firstCand = candidates.first,
+                   let content = firstCand["content"] as? [String: Any],
+                   let parts = content["parts"] as? [[String: Any]] {
+                    responseText = parts.compactMap { $0["text"] as? String }.joined()
+                }
+                // 3. OpenAI-compatible choices (OpenRouter, Groq, Pollinations, OpenAI, Anthropic, Custom)
+                if responseText == nil, let choices = json["choices"] as? [[String: Any]],
                    let firstChoice = choices.first,
                    let message = firstChoice["message"] as? [String: Any] {
                     if let text = message["content"] as? String, !text.isEmpty {
@@ -2272,11 +2546,11 @@ public final class GeminiService: ObservableObject {
                     } else if let reasoning = message["reasoning_content"] as? String, !reasoning.isEmpty {
                         responseText = reasoning
                     }
-                } else if let content = json["content"] as? String, !content.isEmpty {
+                } else if responseText == nil, let content = json["content"] as? String, !content.isEmpty {
                     responseText = content
-                } else if let contentArr = json["content"] as? [[String: Any]] {
+                } else if responseText == nil, let contentArr = json["content"] as? [[String: Any]] {
                     responseText = contentArr.compactMap { $0["text"] as? String }.joined()
-                } else if let text = json["text"] as? String, !text.isEmpty {
+                } else if responseText == nil, let text = json["text"] as? String, !text.isEmpty {
                     responseText = text
                 }
             } else if let rawString = String(data: data, encoding: .utf8), !rawString.isEmpty {
@@ -2286,6 +2560,19 @@ public final class GeminiService: ObservableObject {
             guard let text = responseText, !text.isEmpty else {
                 CameraLogger.error("GeminiService: Không thể đọc content từ phản hồi của model \(modelID)", category: .ai)
                 DispatchQueue.main.async { completion(.failure(.invalidResponse)) }
+                return
+            }
+
+            // Attempt 0: Direct Structured Output Codable decoding (Guaranteed 100% precision for Interactions API)
+            if let textData = text.data(using: .utf8),
+               let structured = try? JSONDecoder().decode(GeminiStructuredFramingOutput.self, from: textData) {
+                let result = structured.toFramingResponse(modelUsed: modelID, latencyMs: latency)
+                DispatchQueue.main.async {
+                    self.lastLatencyMs = latency
+                    self.lastModelUsed = modelID
+                    self.lastExplanation = result.explanation
+                    completion(.success(result))
+                }
                 return
             }
 
@@ -2732,7 +3019,7 @@ public final class GeminiService: ObservableObject {
 
     // MARK: - Response Parsing
 
-    private static func parseGeminiResponse(_ json: [String: Any], modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
+    public static func parseGeminiResponse(_ json: [String: Any], modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
         var rawTargetX = parseCGFloat(json["target_x"], defaultVal: .nan)
         var rawTargetY = parseCGFloat(json["target_y"], defaultVal: .nan)
 

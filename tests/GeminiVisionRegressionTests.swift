@@ -45,4 +45,47 @@ final class GeminiVisionRegressionTests: XCTestCase {
             from: "{\"explanation\":\"Đã phân tích\"}", modelUsed: "test", latencyMs: 10
         ))
     }
+
+    func testGoogleGeminiInteractionsFallbackChainUses2026Models() {
+        let chain = AIVisionModel.fallbackChain(
+            selected: .autoStrongest, customModelName: "", provider: .googleGemini
+        )
+        XCTAssertEqual(chain.first, "gemini-3.8-flash")
+        XCTAssertEqual(chain, ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"])
+    }
+
+    func testGeminiStructuredFramingOutputDecoding() {
+        let jsonStr = """
+        {
+            "target_x": 0.33,
+            "target_y": 0.45,
+            "suggested_zoom": 1.5,
+            "composition_rule": "Rule of Thirds",
+            "scene_type": "portrait",
+            "explanation": "Chủ thể tại điểm vàng",
+            "recommended_preset": "Kodak Portra 400",
+            "preset_explanation": "Tone màu ấm",
+            "color_recipe": {
+                "exposure_ev": 0.2,
+                "contrast": 1.1,
+                "highlights": -0.1,
+                "shadows": 0.1,
+                "warmth": 5600,
+                "tint": 0,
+                "saturation": 1.05
+            }
+        }
+        """
+        guard let data = jsonStr.data(using: .utf8),
+              let output = try? JSONDecoder().decode(GeminiStructuredFramingOutput.self, from: data) else {
+            XCTFail("Failed to decode GeminiStructuredFramingOutput")
+            return
+        }
+        let response = output.toFramingResponse(modelUsed: "gemini-3.8-flash", latencyMs: 120)
+        XCTAssertEqual(response.targetX, 0.33)
+        XCTAssertEqual(response.targetY, 0.45)
+        XCTAssertEqual(response.suggestedZoom, 1.5)
+        XCTAssertEqual(response.modelUsed, "gemini-3.8-flash")
+        XCTAssertEqual(response.colorRecipe.temperatureK, 5600)
+    }
 }

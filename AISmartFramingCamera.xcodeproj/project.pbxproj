@@ -89,6 +89,7 @@
 		C2000000000000000000005D /* LiveEntityTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000005D /* LiveEntityTracker.swift */; };
 		C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000060 /* PhotographicCompositionModel.swift */; };
 		C20000000000000000000061 /* CompositionAestheticSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000061 /* CompositionAestheticSearch.swift */; };
+		B20000000000000000000047 /* GeminiLiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000047 /* GeminiLiveService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -176,6 +177,7 @@
 		C1000000000000000000005D /* LiveEntityTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveEntityTracker.swift; sourceTree = "<group>"; };
 		C10000000000000000000060 /* PhotographicCompositionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicCompositionModel.swift; sourceTree = "<group>"; };
 		C10000000000000000000061 /* CompositionAestheticSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionAestheticSearch.swift; sourceTree = "<group>"; };
+		B100000000000000000000047 /* GeminiLiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiLiveService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -239,6 +241,7 @@
 				B10000000000000000000006 /* FilmFilterEngine.swift */,
 				B10000000000000000000007 /* HapticFeedbackService.swift */,
 				B100000000000000000000014 /* GeminiService.swift */,
+				B100000000000000000000047 /* GeminiLiveService.swift */,
 				B100000000000000000000015 /* DeviceMotionService.swift */,
 				B100000000000000000000017 /* CameraLogger.swift */,
 				B100000000000000000000018 /* SpatialTrackingEngine.swift */,
@@ -447,6 +450,7 @@
 				B2000000000000000000000F /* CapturedPhotoPreviewView.swift in Sources */,
 				B20000000000000000000010 /* SettingsSheetView.swift in Sources */,
 				B20000000000000000000011 /* GeminiService.swift in Sources */,
+				B20000000000000000000047 /* GeminiLiveService.swift in Sources */,
 				B20000000000000000000012 /* DeviceMotionService.swift in Sources */,
 				B20000000000000000000013 /* VideoPreviewSheetView.swift in Sources */,
 				B20000000000000000000014 /* CameraLogger.swift in Sources */,
