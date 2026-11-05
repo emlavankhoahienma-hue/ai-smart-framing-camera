@@ -1298,6 +1298,30 @@ public final class GeminiService: ObservableObject {
         }
     }
 
+    // MARK: - HTTP Request Headers Configuration
+    private func configureHeaders(for request: inout URLRequest, key: String) {
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        guard !key.isEmpty else { return }
+
+        switch selectedProvider {
+        case .googleGemini:
+            // Google AI Studio expects x-goog-api-key (and/or ?key= query parameter).
+            // NEVER set "Authorization: Bearer" because Google evaluates it as an OAuth2 token and rejects API keys with HTTP 401.
+            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+            request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
+        case .anthropic:
+            // Anthropic expects x-api-key and anthropic-version
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        case .openRouter:
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+            request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
+        case .pollinations, .groq, .openAI, .deepSeek, .xAI, .custom:
+            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+    }
+
     public func fetchAvailableModels() async -> (Bool, String) {
         let key = apiKey
         var modelsURLStr = selectedProvider.defaultModelsURL
@@ -1309,6 +1333,18 @@ public final class GeminiService: ObservableObject {
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             modelsURLStr = normalized + "/models"
         }
+        if selectedProvider == .googleGemini && !key.isEmpty {
+            if var components = URLComponents(string: modelsURLStr) {
+                var items = components.queryItems ?? []
+                if !items.contains(where: { $0.name == "key" }) {
+                    items.append(URLQueryItem(name: "key", value: key))
+                }
+                components.queryItems = items
+                if let u = components.url {
+                    modelsURLStr = u.absoluteString
+                }
+            }
+        }
         guard let url = URL(string: modelsURLStr) else {
             return (false, "URL danh sách model không hợp lệ")
         }
@@ -1319,17 +1355,7 @@ public final class GeminiService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 8.0
-        if !key.isEmpty {
-            if selectedProvider == .anthropic {
-                request.setValue(key, forHTTPHeaderField: "x-api-key")
-                request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            } else if selectedProvider == .googleGemini {
-                request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-                request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
-            } else {
-                request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            }
-        }
+        configureHeaders(for: &request, key: key)
 
         do {
             let (data, response) = try await urlSession.data(for: request)
@@ -1488,21 +1514,7 @@ public final class GeminiService: ObservableObject {
         if testModel.hasSuffix(":free") || testModel == "openrouter/free" {
             request.timeoutInterval = 45
         }
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
-        if selectedProvider == .googleGemini && !key.isEmpty {
-            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-            request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
-        } else if selectedProvider == .anthropic && !key.isEmpty {
-            request.setValue(key, forHTTPHeaderField: "x-api-key")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        }
-        if selectedProvider == .openRouter {
-            request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
-            request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
-        }
+        configureHeaders(for: &request, key: key)
 
         let body: [String: Any]
         if selectedProvider == .googleGemini {
@@ -1536,7 +1548,7 @@ public final class GeminiService: ObservableObject {
                 return
             }
 
-            if http.statusCode == 200 {
+            if (200...299).contains(http.statusCode) {
                 DispatchQueue.main.async {
                     self.lastModelUsed = testModel
                     self.lastLatencyMs = latency
@@ -2043,22 +2055,10 @@ public final class GeminiService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        if selectedProvider == .googleGemini {
-            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-            request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
-        } else if selectedProvider == .anthropic {
-            request.setValue(key, forHTTPHeaderField: "x-api-key")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        }
-        if selectedProvider == .openRouter {
-            request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
-            request.setValue("AlignAI Video Director", forHTTPHeaderField: "X-Title")
-        }
         if currentModelID.hasSuffix(":free") || currentModelID == "openrouter/free" {
             request.timeoutInterval = 45
         }
+        configureHeaders(for: &request, key: key)
 
         var requestBody: [String: Any]
         if selectedProvider == .googleGemini {
@@ -2356,21 +2356,7 @@ public final class GeminiService: ObservableObject {
         if modelID.hasSuffix(":free") || modelID == "openrouter/free" || modelID.contains("qwen") || modelID.contains("72b") || selectedProvider == .openRouter {
             request.timeoutInterval = 45.0
         }
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
-        if selectedProvider == .googleGemini && !key.isEmpty {
-            request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-            request.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
-        } else if selectedProvider == .anthropic && !key.isEmpty {
-            request.setValue(key, forHTTPHeaderField: "x-api-key")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        }
-        if selectedProvider == .openRouter {
-            request.setValue("https://alignai.studio", forHTTPHeaderField: "HTTP-Referer")
-            request.setValue("AlignAI Studio", forHTTPHeaderField: "X-Title")
-        }
+        configureHeaders(for: &request, key: key)
 
         var requestBody: [String: Any]
         if selectedProvider == .googleGemini {
@@ -2614,17 +2600,35 @@ public final class GeminiService: ObservableObject {
     // MARK: - Helpers
 
     private func buildURL(for modelID: String, key: String) -> URL? {
-        return URL(string: activeEndpointURLString)
+        let endpoint = activeEndpointURLString
+        if selectedProvider == .googleGemini && !key.isEmpty {
+            if var components = URLComponents(string: endpoint) {
+                var queryItems = components.queryItems ?? []
+                if !queryItems.contains(where: { $0.name == "key" }) {
+                    queryItems.append(URLQueryItem(name: "key", value: key))
+                }
+                components.queryItems = queryItems
+                return components.url
+            }
+        }
+        return URL(string: endpoint)
     }
 
     private static func extractErrorMessage(from data: Data) -> String? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-
-        if let errorObj = json["error"] as? [String: Any], let msg = errorObj["message"] as? String {
-            return msg
-        }
-        if let msg = json["message"] as? String {
-            return msg
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let errorObj = json["error"] as? [String: Any], let msg = errorObj["message"] as? String {
+                return msg
+            }
+            if let msg = json["message"] as? String {
+                return msg
+            }
+        } else if let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]], let first = arr.first {
+            if let errorObj = first["error"] as? [String: Any], let msg = errorObj["message"] as? String {
+                return msg
+            }
+            if let msg = first["message"] as? String {
+                return msg
+            }
         }
         return nil
     }
