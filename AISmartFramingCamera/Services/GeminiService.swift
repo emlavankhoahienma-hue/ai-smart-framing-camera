@@ -350,6 +350,11 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinationsGPT54Nano:  return "GPT-5.4 Nano"
         case .pollinationsGPT54Mini:  return "GPT-5.4 Mini"
         case .pollinationsOpenAI:     return "GPT-4o Mini"
+        case .gemini38FlashDirect:    return "Gemini 3.8 Flash"
+        case .gemini35FlashLiteDirect:return "Gemini 3.5 Lite"
+        case .gemini31FlashLiteDirect:return "Gemini 3.1 Lite"
+        case .gemini4ArgonDirect:     return "Gemini 4 Argon"
+        case .gemini38Live:           return "Gemini 3.8 Live"
         case .gemini25FlashDirect:    return "Gemini 2.5 Flash"
         case .gemini25FlashLiteDirect:return "Gemini 2.5 Lite"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash"
@@ -416,7 +421,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             return "Phân tích ảnh trực tiếp từ Pollinations AI — Miễn phí 100%, không tốn Pollen"
         case .pollinationsOpenAI:
             return "Phân tích ảnh qua GPT-4o Mini trên Pollinations AI (yêu cầu tài khoản có Pollen)"
-        case .gemini25FlashDirect, .gemini25FlashLiteDirect, .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
+        case .gemini38FlashDirect, .gemini35FlashLiteDirect, .gemini31FlashLiteDirect, .gemini4ArgonDirect, .gemini38Live, .gemini25FlashDirect, .gemini25FlashLiteDirect, .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
             return "Trực tiếp Google AI Studio — Chuyên gia Bố cục & Ánh sáng, miễn phí 1.500 lượt/ngày"
         case .groqLlama4Scout, .groqLlama4Maverick, .groqQwen38:
             return "Groq LPU chip chuyên dụng — Nhận diện thị giác siêu tốc < 0.6 giây hoàn toàn miễn phí"
