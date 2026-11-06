@@ -233,7 +233,7 @@ public struct VideoPreviewSheetView: View {
         let activeShutterReciprocal = max(1, Int(round(proControls.isAutoShutter ? proControls.measuredLiveShutterSpeed : proControls.currentShutterSpeed)))
         let liveShutterText = "1/\(activeShutterReciprocal)s"
         let liveISOValue = max(25, Int(round(proControls.isAutoISO ? proControls.measuredLiveISO : proControls.currentISO)))
-        let fallbackFPS = viewModel.selectedVideoFormatOption.fps
+        let fallbackFPS = max(1, Int(round(viewModel.selectedVideoFormatOption.fps)))
 
         // Đọc track video để xác định độ phân giải gốc
         Task {
@@ -247,7 +247,7 @@ public struct VideoPreviewSheetView: View {
             let naturalSize = (try? await videoTrack.load(.naturalSize)) ?? CGSize(width: 1080, height: 1920)
             let preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
             let nominalFPS = (try? await videoTrack.load(.nominalFrameRate)) ?? 0
-            let exportFPS = nominalFPS > 0 ? max(1, Int(round(Double(nominalFPS)))) : max(1, fallbackFPS)
+            let exportFPS: Int = nominalFPS > 0 ? max(1, Int(round(Double(nominalFPS)))) : fallbackFPS
 
             // Kích thước hiển thị thực tế sau transform
             let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)

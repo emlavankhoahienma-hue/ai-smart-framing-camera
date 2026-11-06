@@ -1651,10 +1651,10 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
     }
 
-    private func estimateScenePhotometrics(from buffer: CVPixelBuffer) -> (luminance: Float, colorTemperature: Int) {
+    private func estimateScenePhotometrics(from buffer: CVPixelBuffer) -> (luminance: Float, colorTemperature: Float) {
         let format = CVPixelBufferGetPixelFormatType(buffer)
         guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else {
-            return (0.5, 5500)
+            return (0.5, 5500.0)
         }
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
 
@@ -1664,7 +1664,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             let height = CVPixelBufferGetHeight(buffer)
             let stride = CVPixelBufferGetBytesPerRow(buffer)
             guard width >= 16, height >= 16, stride >= width * 4 else {
-                return (0.5, 5500)
+                return (0.5, 5500.0)
             }
             let ptr = base.assumingMemoryBound(to: UInt8.self)
             var sumR: Float = 0
@@ -1696,13 +1696,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
             let Y = 0.2126 * rMean + 0.7152 * gMean + 0.0722 * bMean
             let Z = 0.0193 * rMean + 0.1192 * gMean + 0.9505 * bMean
             let denom = X + Y + Z
-            guard denom > 0.01 else { return (avgLum, 5500) }
+            guard denom > 0.01 else { return (avgLum, 5500.0) }
             let cx = Double(X / denom)
             let cy = Double(Y / denom)
-            guard abs(0.1858 - cy) > 0.001 else { return (avgLum, 5500) }
+            guard abs(0.1858 - cy) > 0.001 else { return (avgLum, 5500.0) }
             let n = (cx - 0.3320) / (0.1858 - cy)
             let cct = 449.0 * pow(n, 3) + 3525.0 * pow(n, 2) + 6823.3 * n + 5520.33
-            let clampedCCT = Int(max(2500.0, min(9500.0, cct.isFinite ? cct : 5500.0)))
+            let clampedCCT = Float(max(2500.0, min(9500.0, cct.isFinite ? cct : 5500.0)))
             return (avgLum, clampedCCT)
         } else if (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
                    format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
@@ -1712,7 +1712,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
             let height = CVPixelBufferGetHeightOfPlane(buffer, 0)
             let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
             guard width >= 16, height >= 16, stride >= width else {
-                return (0.5, 5500)
+                return (0.5, 5500.0)
             }
             let ptr = lumaBase.assumingMemoryBound(to: UInt8.self)
             var sumY: Float = 0
@@ -1726,10 +1726,10 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     sumY += Float(ptr[rowOffset + x]) / 255.0
                 }
             }
-            return (max(0.02, min(0.98, sumY / count)), 5500)
+            return (max(0.02, min(0.98, sumY / count)), 5500.0)
         }
 
-        return (0.5, 5500)
+        return (0.5, 5500.0)
     }
 
     private func deduplicateCandidates(_ list: [LiveDetectedEntity]) -> [LiveDetectedEntity] {
