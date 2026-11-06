@@ -1501,9 +1501,10 @@ public final class GeminiService: ObservableObject {
             var seen = Set<String>()
             let uniqueCapped = prioritized.filter { seen.insert($0).inserted }.prefix(200)
             let capped = Array(uniqueCapped)
+            let finalDescriptions = descriptions
             await MainActor.run {
                 self.discoveredModels = capped
-                self.discoveredModelDescriptions = descriptions
+                self.discoveredModelDescriptions = finalDescriptions
             }
             return (true, "Đã tải \(capped.count) model từ \(selectedProvider.shortBadge) API")
         } catch {

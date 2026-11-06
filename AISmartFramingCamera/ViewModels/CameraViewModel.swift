@@ -124,7 +124,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             visionInterval = 0
         } else if snapshot.isDualCameraActive {
             visionInterval = 1.0 / 5.0
-        } else if VisionFramingEngine.shared.isTrackingActive {
+        } else if SpatialTrackingEngine.shared.isTrackingActive {
             visionInterval = 1.0 / 24.0
         } else {
             visionInterval = 1.0 / 12.0

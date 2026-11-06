@@ -1544,14 +1544,9 @@ struct AIFramingSettingsSection: View {
                         Spacer()
                         Button(action: {
                             Task {
-                                await viewModel.geminiService.fetchAvailableModels()
+                                let (_, msg) = await viewModel.geminiService.fetchAvailableModels()
                                 await MainActor.run {
-                                    let count = viewModel.geminiService.discoveredModels.count
-                                    if count > 0 {
-                                        toastMessage = "Đã tải \(count) model từ \(viewModel.geminiService.selectedProvider.shortBadge) API"
-                                    } else if let err = viewModel.geminiService.lastError {
-                                        toastMessage = err
-                                    }
+                                    toastMessage = msg
                                 }
                             }
                         }) {
