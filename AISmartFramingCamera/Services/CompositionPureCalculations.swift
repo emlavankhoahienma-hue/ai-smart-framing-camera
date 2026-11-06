@@ -175,14 +175,22 @@ public enum CompositionPureCalculations {
         let idealRatio = max(1.0, sqrt(desiredArea / currentArea))
         var zoomCandidate = currentZoom * idealRatio
 
-        let destX = min(0.64, max(0.36, Double(targetPoint.x)))
-        let destY = min(0.62, max(0.36, Double(targetPoint.y)))
+        let destX = min(0.68, max(0.32, Double(targetPoint.x)))
+        let destY = min(0.68, max(0.32, Double(targetPoint.y)))
 
         if boxWidth > 0 && boxHeight > 0 {
+            // Giới hạn biên ngang: đảm bảo chủ thể không bị tràn biên trái/phải
             let availableX = 2.0 * min(destX - safetyMargin, 1.0 - safetyMargin - destX)
+            let maxRatioX = max(1.0, availableX / max(0.03, boxWidth))
+
+            // Giới hạn biên dọc: bảo vệ khoảng thở trên đỉnh đầu (Headroom) cho ảnh chân dung & đối tượng đứng
+            let topAvailable = max(0.05, destY - safetyMargin)
+            let estimatedHeadDistance = max(0.03, min(boxHeight * 0.5, boxHeight * 0.25))
+            let maxRatioHead = max(1.0, topAvailable / estimatedHeadDistance)
+
             let availableY = 2.0 * min(destY - safetyMargin, 1.0 - safetyMargin - destY)
-            let maxRatioX = max(1.0, availableX / max(0.04, boxWidth))
-            let maxRatioY = max(1.0, availableY / max(0.04, boxHeight))
+            let maxRatioY = max(1.0, max(maxRatioHead, availableY / max(0.04, boxHeight)))
+
             let maxAllowedRatio = max(1.0, min(maxRatioX, maxRatioY))
             zoomCandidate = min(zoomCandidate, currentZoom * maxAllowedRatio)
         }

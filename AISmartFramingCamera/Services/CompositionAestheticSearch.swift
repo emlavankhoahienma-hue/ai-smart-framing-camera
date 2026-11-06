@@ -107,9 +107,9 @@ final class CompositionAestheticSearch {
             let baseView = evaluated.first(where: { $0.proposal.isUnchangedView })
             let sourceZoom = baseView?.proposal.zoom ?? 1
             let baseArea = baseView.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
-            let allowTwoX = baseArea > 0.0001 && baseArea < 0.25
-            let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
-            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.25 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
+            // Mở rộng giới hạn zoom thông minh: cho phép khai thác tiêu cự chân dung / telephoto (1.8x - 3.5x)
+            let maxAllowedZoom: CGFloat = baseArea < 0.08 ? 3.5 : (baseArea < 0.22 ? 3.0 : 2.2)
+            let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.20 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
             for index in zoomed.prefix(4) { include(index) }
             let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
@@ -170,13 +170,12 @@ final class CompositionAestheticSearch {
         let baseline = evaluated.first { $0.proposal.isUnchangedView }
         let originalZoom = baseline?.proposal.zoom
         let baseSubjectArea = baseline.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
-        let allowTwoX = baseSubjectArea > 0.0001 && baseSubjectArea < 0.25
-        let maxAllowedZoom: CGFloat = allowTwoX ? 2.0 : 1.35
+        let maxAllowedZoom: CGFloat = baseSubjectArea < 0.08 ? 3.5 : (baseSubjectArea < 0.22 ? 3.0 : 2.2)
         // Shot-scale prior: a subject filling under half of the size its intent wants must be tightened
         // unless the learned models clearly object. Without this the full frame wins on resolution alone.
         let zoomNeeded = baseline.map {
             CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio) ||
-            ($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height < 0.12)
+            ($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height < 0.18)
         } ?? false
         // Compare the two models jointly. A fixed SAMP-only 0.10/0.12-rating
         // veto prevented useful zoom even when the aesthetic model preferred it.
@@ -269,18 +268,18 @@ enum CompositionPreferencePolicy {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
         let clampedOOB = outOfBoundsFraction.isFinite ? min(0.18, max(0.0, outOfBoundsFraction * 0.25)) : 0.0
-        let compW = 0.45 - clampedOOB * 0.5
-        let aesthW = 0.45 - clampedOOB * 0.5
-        let geomW = 0.10 + clampedOOB
+        let compW = 0.40 - clampedOOB * 0.4
+        let aesthW = 0.40 - clampedOOB * 0.4
+        let geomW = 0.20 + clampedOOB
         return compW * (composition - 1) / 4 + aesthW * (aesthetics - 1) / 4 +
             geomW * min(1, max(0, geometry))
     }
 
     /// Below this share of its intent's target area the unchanged frame leaves the subject too small.
-    static let undersizedSubjectRatio = 0.75
+    static let undersizedSubjectRatio = 0.88
     /// How far a necessary tighter crop may trail the wide frame before the models' objection stands.
-    static let necessaryCropTolerance = 0.05
-    static let shotScaleBonusWeight = 0.05
+    static let necessaryCropTolerance = 0.12
+    static let shotScaleBonusWeight = 0.18
 
     static func zoomIsNecessary(originalSizeRatio: Double) -> Bool {
         originalSizeRatio.isFinite && originalSizeRatio > 0 && originalSizeRatio < undersizedSubjectRatio
@@ -289,7 +288,7 @@ enum CompositionPreferencePolicy {
     /// A crop that clearly moves the subject toward its target size without overshooting it.
     static func tightensTowardTarget(sizeRatio: Double, original: Double) -> Bool {
         sizeRatio.isFinite && original.isFinite && original > 0 &&
-            sizeRatio >= original * 1.25 && sizeRatio <= 1.6
+            sizeRatio >= original * 1.15 && sizeRatio <= 2.2
     }
 
     static func shotScaleBonus(sizeRatio: Double, original: Double) -> Double {
@@ -299,6 +298,6 @@ enum CompositionPreferencePolicy {
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {
-        score.isFinite && original.isFinite && score >= original + 0.002
+        score.isFinite && original.isFinite && score >= original - 0.015
     }
 }

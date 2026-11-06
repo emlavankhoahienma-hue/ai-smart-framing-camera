@@ -805,17 +805,20 @@ public final class CompositionCalculator: @unchecked Sendable {
             let placedMaxX = pGrid.x + rightOffset
 
             var integrityPenalty = 0.0
-            // 1. Kiểm tra Headroom: Khoảng thở tối thiểu trên đỉnh đầu là 0.04 (4% khung hình) - Bắt buộc cho mọi chủ thể
-            if placedMinY < 0.04 {
-                integrityPenalty -= 2.2 * Double(0.04 - placedMinY) + 1.80
+            // 1. Kiểm tra Headroom: Khoảng thở trên đỉnh đầu mượt mà, phi tuyến tính
+            if placedMinY < 0.035 {
+                let deficit = Double(0.035 - placedMinY)
+                integrityPenalty -= (25.0 * deficit * deficit + 1.2 * deficit)
             }
 
-            // 2. Kiểm tra Hai biên trái/phải [0.03 ... 0.97] - Bắt buộc cho mọi chủ thể (bảo vệ vai, thân và viền vật thể)
+            // 2. Kiểm tra Hai biên trái/phải [0.03 ... 0.97]
             if placedMinX < 0.03 {
-                integrityPenalty -= 1.6 * Double(0.03 - placedMinX)
+                let deficit = Double(0.03 - placedMinX)
+                integrityPenalty -= (15.0 * deficit * deficit + 1.0 * deficit)
             }
             if placedMaxX > 0.97 {
-                integrityPenalty -= 1.6 * Double(placedMaxX - 0.97)
+                let deficit = Double(placedMaxX - 0.97)
+                integrityPenalty -= (15.0 * deficit * deficit + 1.0 * deficit)
             }
 
             // 3. Tinh chỉnh Cạnh dưới (placedMaxY > 0.97) - Quy tắc Chân dung Bán thân (Medium / Half-body Shot):

@@ -658,7 +658,7 @@ enum CompositionPlanner {
                               return fraction <= 0.02 || fraction >= 0.98
                           }) else { return nil }
                     let aim = calibration.project(deviceRay: rotation.act(SIMD3(0, 0, -1)))
-                    guard aim.isInFront, inside(aim.point, margin: 0) else { return nil }
+                    guard aim.isInFront, inside(aim.point, margin: -0.28) else { return nil }
                     let metrics = measure(raster: raster, subject: subject, box: box,
                         calibration: calibration, future: future, rotation: rotation, protectedPeople: protectedPeople)
                     guard !cropAttention || unchanged || metrics.retention >= 0.82 else { return nil }
@@ -674,9 +674,9 @@ enum CompositionPlanner {
                     }
                     let effectiveDesiredArea = desiredArea * exp(0.24 * min(1.0, max(-1.0, subject.shotScaleBias)))
                     let area = Double(box.width * box.height)
-                    let sizeFit = subject.kind == .scenery ? 1 : exp(-pow(log(max(0.001, area) / effectiveDesiredArea), 2) / 1.6)
-                    let placement = exp(-12 * pow(Double(destination.x - desired.x), 2) -
-                                        10 * pow(Double(destination.y - desired.y), 2))
+                    let sizeFit = subject.kind == .scenery ? 1 : exp(-pow(log(max(0.001, area) / effectiveDesiredArea), 2) / 1.5)
+                    let placement = exp(-8.0 * pow(Double(destination.x - desired.x), 2) -
+                                        7.0 * pow(Double(destination.y - desired.y), 2))
                     let context = intent.preservesContext && raster.hasAttention ? metrics.retention : 1
                     let contextFit = intent.preservesContext ? min(1, 1 / (ratio * ratio * 0.72)) : 1
                     let space = abs(subject.gaze) > 0.12 ? metrics.lookRoom : metrics.balance
@@ -715,8 +715,9 @@ enum CompositionPlanner {
                     // Phản biện 3: Phạt khi điểm đặt chủ thể đích P* (destination) rơi vào tâm chết (0.5, 0.5) ở cảnh không đối xứng.
                     // TUYỆT ĐỐI KHÔNG phạt khi khoảng cách lia máy (aim.point - 0.5) nhỏ!
                     let deadCenterDestPenalty = (intent != .architecture && intent != .group && !unchanged &&
-                        hypot(Double(destination.x - 0.5), Double(destination.y - 0.5)) < 0.03) ? 0.015 : 0.0
-                    let ratioAdjustment = area < effectiveDesiredArea ? -0.045 * min(1.0, max(0.0, log(ratio))) : 0.028 * abs(log(ratio))
+                        hypot(Double(destination.x - 0.5), Double(destination.y - 0.5)) < 0.04) ? 0.20 : 0.0
+                    let zoomProminenceBonus = (area < effectiveDesiredArea && ratio > 1.08) ? 0.08 * min(1.0, log(ratio) / log(2.5)) : 0.0
+                    let ratioAdjustment = area < effectiveDesiredArea ? -0.055 * min(1.0, max(0.0, log(ratio))) : 0.02 * abs(log(ratio))
                     let contextWeight = intent.preservesContext ? 0.11 : 0.05
                     let contextFitWeight = intent.preservesContext ? 0.09 : 0.04
                     let evBias = computeOptimalEVBias(raster: raster, heroRect: box, aimPoint: aim.point, zoom: zoom, scene: intent)
@@ -738,7 +739,7 @@ enum CompositionPlanner {
                         0.09 * space + 0.06 * edgeSafety + contextWeight * context +
                         contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
                         0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue +
-                        intentPrior + ruleOfThirdsBonus - deadCenterDestPenalty - ratioAdjustment
+                        intentPrior + ruleOfThirdsBonus + zoomProminenceBonus - deadCenterDestPenalty - ratioAdjustment
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: observedCornerPoints, rotation: rotation, zoom: zoom,
@@ -845,19 +846,37 @@ enum CompositionPlanner {
         let person = subject.kind == .person || subject.kind == .face || subject.kind == .group
 
         // Trường Thế Năng Thị Giác Liên Tục (Continuous Visual Potential Field):
-        // Kết hợp mượt mà giữa vị trí chủ thể, hướng nhìn (Gaze Lead Room), khoảng trống thở (Negative Space) & trọng tâm bối cảnh
         let negSpace = raster.negativeSpaceVector(around: subject.anchor, gaze: subject.gaze)
         let comX = Double(raster.visualCenterOfMass?.x ?? 0.5)
         let lead = min(1.0, max(-1.0, Double(subject.gaze)))
 
-        let spatialFlowBias = tanh(3.2 * (cx - 0.5))
-        let gazeFlowBias = -tanh(2.4 * lead)
-        let openSpaceBias = -tanh(2.0 * Double(negSpace.direction.dx))
-        let counterbalanceBias = -0.35 * tanh(2.2 * (comX - cx))
+        // 1. Phân định hướng nhìn & khoảng thở (Gaze Lead Room):
+        let targetX: Double
+        if abs(lead) > 0.08 {
+            // Nhìn sang phải (lead > 0) -> Đặt trên trục 1/3 trái (0.36 - 0.382) để mắt nhìn xuyên qua không gian mở
+            // Nhìn sang trái (lead < 0) -> Đặt trên trục 1/3 phải (0.618 - 0.64)
+            targetX = lead > 0 ? (0.382 - 0.02 * min(1.0, lead)) : (0.618 - 0.02 * max(-1.0, lead))
+        } else if intent == .closeUp || intent == .food {
+            // Ảnh đặc tả ẩm thực / tĩnh vật: nếu nằm rất gần giữa thì giữ tâm đối xứng tự nhiên
+            targetX = abs(cx - 0.5) < 0.06 ? 0.50 : (cx < 0.5 ? 0.382 : 0.618)
+        } else {
+            // Khi hướng nhìn trung tính hoặc nhìn thẳng vào ống kính (chân dung, đường phố, thú cưng):
+            // Quy tắc nhiếp ảnh kinh điển: Không bao giờ ép chủ thể vào tâm chết 0.5 trừ ảnh kỷ yếu!
+            let spatialFlow = tanh(2.2 * (cx - 0.5))
+            let openSpaceFlow = -tanh(1.8 * Double(negSpace.direction.dx))
+            let counterbalance = -0.28 * tanh(1.8 * (comX - cx))
+            let lateralSignal = 0.52 * spatialFlow + 0.30 * openSpaceFlow + 0.18 * counterbalance
 
-        let combinedLateralSignal = 0.48 * spatialFlowBias + 0.30 * gazeFlowBias + 0.14 * openSpaceBias + 0.08 * counterbalanceBias
-        let effectiveSign = abs(combinedLateralSignal) < 0.05 ? (cx <= 0.5 ? -1.0 : 1.0) : tanh(3.5 * combinedLateralSignal)
-        let x = min(0.66, max(0.34, 0.5 + 0.122 * effectiveSign))
+            let sign: Double
+            if abs(lateralSignal) > 0.05 {
+                sign = lateralSignal < 0 ? -1.0 : 1.0
+            } else {
+                // Nếu tín hiệu ngang trung tính, phân bổ vào trục 1/3 gần vị trí chủ thể nhất hoặc trục trái (0.382)
+                sign = cx < 0.50 ? -1.0 : (cx > 0.50 ? 1.0 : -1.0)
+            }
+            targetX = 0.5 + 0.118 * sign * (0.85 + 0.15 * min(1.0, abs(lateralSignal)))
+        }
+        let x = min(0.68, max(0.32, targetX))
 
         if intent == .landscape {
             let hY = raster.horizon.map { Double($0.y) } ?? cy
@@ -869,7 +888,11 @@ enum CompositionPlanner {
         var finalX = x
         var finalY: Double
         if person {
-            finalY = min(0.44, max(0.33, CompositionTuning.portraitEyeLineY + 0.03 * tanh(1.8 * (cy - 0.42)) + vGazeBias))
+            let isFullBody = subject.bounds.height > 0.55
+            let eyeLine = isFullBody ? 0.32 : (subject.kind == .face ? 0.35 : 0.36)
+            finalY = min(0.44, max(0.30, eyeLine + 0.03 * tanh(1.8 * (cy - 0.42)) + vGazeBias))
+        } else if intent == .food || intent == .closeUp {
+            finalY = min(0.56, max(0.42, 0.48 + 0.08 * tanh(2.0 * (cy - 0.48)) + vGazeBias))
         } else {
             finalY = min(0.62, max(0.36, 0.46 + 0.12 * tanh(2.2 * (cy - 0.48)) + vGazeBias))
         }
@@ -927,7 +950,10 @@ enum CompositionPlanner {
 
     private static func dynamicPlacements(subject: CompositionSubject, intent: LocalCompositionIntent,
                                           desired: CGPoint, raster: CompositionRaster) -> [CGPoint] {
-        var points: [CGPoint] = [desired, subject.anchor, CGPoint(x: 0.5, y: 0.5)]
+        var points: [CGPoint] = [desired, subject.anchor]
+        if intent == .architecture || intent == .group || intent == .closeUp {
+            points.append(CGPoint(x: 0.5, y: 0.5))
+        }
 
         // Strategy A: Vanishing Point Alignment (Leading Lines convergence)
         if let vp = raster.vanishingPoint, vp.confidence >= 0.55 {
@@ -1057,10 +1083,17 @@ enum CompositionPlanner {
         ))
         options.insert(idealZoom)
 
-        // Continuous variations around ideal zoom
+        // Khám phá tiêu cự nhiếp ảnh chuẩn (Prime Lenses: 1.5x / 35mm, 2.0x / 50mm, 2.5x / 70mm, 3.0x / 85mm)
+        for prime in [1.5, 2.0, 2.5, 3.0] as [CGFloat] {
+            if prime >= currentZoom && prime <= maxZoom {
+                options.insert(prime)
+            }
+        }
+
+        // Biến thể tối ưu quanh idealZoom
         if idealZoom > currentZoom {
-            options.insert(max(currentZoom, min(maxZoom, idealZoom * 0.88)))
-            options.insert(max(currentZoom, min(maxZoom, idealZoom * 1.14)))
+            options.insert(max(currentZoom, min(maxZoom, idealZoom * 0.90)))
+            options.insert(max(currentZoom, min(maxZoom, idealZoom * 1.12)))
         }
 
         // Subtle near-original crop exploration (enables aesthetic comparison vs uncropped baseline)
@@ -1290,7 +1323,7 @@ enum CompositionPlanner {
     }
 
     private static func safe(_ rect: CGRect, original: CGRect, isHero: Bool = false) -> Bool {
-        let maxAllowedY = isHero ? 1.28 : (max(0.975, original.maxY) + 0.00001)
+        let maxAllowedY = isHero ? 3.0 : (max(0.975, original.maxY) + 0.00001)
         return rect.minX >= min(0.025, original.minX) - 0.00001 &&
             rect.minY >= min(0.025, original.minY) - 0.00001 &&
             rect.maxX <= max(0.975, original.maxX) + 0.00001 &&

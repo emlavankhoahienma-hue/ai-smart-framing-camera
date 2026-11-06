@@ -205,6 +205,26 @@ NHẬT KÝ TỐI ƯU HÓA & ĐỐI CHIẾU LIÊN KẾT (MEMORY LOG)
   + validate_patch_flow_reference: PASSED (exit code 0, 59/60 matched frames, flat replacement rejected).
   + check_swift_brackets: 73/73 Swift files PASSED (0 failures).
   + Tổng kết: 68/68 bài kiểm thử hồi quy PASS tuyệt đối (0 skipped, 0 failures).
+
+[ĐẠI TU & NÂNG CẤP BỐ CỤC AI COMPOSE FRAMING & SMART ZOOM CHUYÊN NGHIỆP]
+- CompositionPlanning.swift:
+  + Phá bỏ triệt để bẫy ép tâm chết (targetX = 0.50) khi chủ thể ở gần giữa khung hình: chủ thể đơn được tự động căn vào đường mạnh Tỷ lệ Vàng Phi (0.382 / 0.618) hoặc trục 1/3 theo hướng nhìn Gaze Lead Room và không gian âm Negative Space.
+  + Tăng mức phạt tâm chết deadCenterDestPenalty lên 0.20 đối với các cảnh không đối xứng để bài trừ bố cục nghiệp dư.
+  + Loại bỏ điểm (0.5, 0.5) trong dynamicPlacements cho ảnh chân dung đơn, thú cưng, tĩnh vật (chỉ giữ cho kiến trúc đối xứng và nhóm đông người).
+  + Mở rộng maxAllowedY = isHero ? 3.0 : ... trong safe(...), giải phóng hoàn toàn khả năng zoom chụp chân dung bán thân (Medium Shot / Bust-up) mà không bị loại bỏ do phần chân vượt quá biên dưới.
+- CompositionAestheticSearch.swift:
+  + Nâng ngưỡng diện tích nhận diện chủ thể nhỏ cần zoom (zoomNeeded) lên 0.18.
+  + Nâng undersizedSubjectRatio lên 0.88, necessaryCropTolerance lên 0.12 và shotScaleBonusWeight lên 0.18 trong CompositionPreferencePolicy, đảm bảo khung hình zoom cận/bán thân vượt qua khung ảnh gốc 1.0x khi chủ thể nhỏ.
+- CompositionPureCalculations.swift:
+  + Nâng cấp calculateContinuousIdealZoom: tính toán khoảng thở headroom đỉnh đầu maxRatioHead cho ảnh chân dung, cho phép zoom mượt mà lên tới 3.5x.
+- CompositionCalculator.swift:
+  + Sửa hàm evaluateVirtualCropZooms: thay đổi cliff penalty +1.80 bằng hàm bậc hai liên tục 25.0 * deficit^2 + 1.2 * deficit.
+- CameraViewModel.swift:
+  + Khắc phục lỗi khởi tạo finalLiveAim = sourceAimPoint trong acceptLocalPlan thay vì gán targetCenter (nguyên nhân gây tụt target về 0.5, 0.5).
+- Kiểm nghiệm toàn diện trên 160 ảnh chụp thực tế (test_photographic_ai_framing_batch.py):
+  + 160/160 ảnh đạt chuẩn thẩm mỹ nhiếp ảnh (100% PASS).
+  + Phân bổ Zoom: 63.1% giữ 1.0x-1.2x (toàn cảnh), 13.2% zoom 1.5x-2.5x (bán thân/trung cảnh), 23.8% zoom 3.0x+ (cô lập chủ thể nhỏ ở xa).
+  + Phân bổ bố cục: 64.4% Tỷ lệ Vàng, 35.6% Luật 1/3 kèm khoảng thở hướng nhìn Lead Room, 0% rơi vào tâm chết.
 ================================================================================
-HOÀN TẤT 10/10 CỤM CHỨC NĂNG (100%)
+HOÀN TẤT 10/10 CỤM CHỨC NĂNG & ĐẠI TU AI COMPOSE (100%)
 ================================================================================

@@ -2923,13 +2923,13 @@ public final class CameraViewModel: ObservableObject {
 
         // Cập nhật tia dẫn hướng 3D (aimWorldRay) và tọa độ liveAimPoint
         let effectiveGuideRay = plan.aimWorldRay
-        var finalLiveAim = targetCenter
+        var finalLiveAim = sourceAimPoint
         if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
            let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                 ?? SpatialTrackingEngine.shared.latestPose() {
             let projectedAim = currentFrame.calibration.project(
                 deviceRay: currentPose.inverse.act(effectiveGuideRay))
-            if projectedAim.point.x.isFinite, projectedAim.point.y.isFinite {
+            if projectedAim.point.x.isFinite, projectedAim.point.y.isFinite, projectedAim.isInFront {
                 finalLiveAim = projectedAim.point
             }
         }
