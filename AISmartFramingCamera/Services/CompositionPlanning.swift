@@ -716,8 +716,8 @@ enum CompositionPlanner {
                     // TUYỆT ĐỐI KHÔNG phạt khi khoảng cách lia máy (aim.point - 0.5) nhỏ!
                     let deadCenterDestPenalty = (intent != .architecture && intent != .group && !unchanged &&
                         hypot(Double(destination.x - 0.5), Double(destination.y - 0.5)) < 0.04) ? 0.20 : 0.0
-                    let zoomProminenceBonus = (area < effectiveDesiredArea && ratio > 1.08) ? 0.08 * min(1.0, log(ratio) / log(2.5)) : 0.0
-                    let ratioAdjustment = area < effectiveDesiredArea ? -0.055 * min(1.0, max(0.0, log(ratio))) : 0.02 * abs(log(ratio))
+                    let zoomProminenceBonus = (subject.kind != .scenery && intent != .landscape && area < effectiveDesiredArea && ratio > 1.08) ? 0.08 * min(1.0, log(ratio) / log(2.5)) : 0.0
+                    let ratioAdjustment = (subject.kind != .scenery && intent != .landscape && area < effectiveDesiredArea) ? -0.055 * min(1.0, max(0.0, log(ratio))) : 0.02 * abs(log(ratio))
                     let contextWeight = intent.preservesContext ? 0.11 : 0.05
                     let contextFitWeight = intent.preservesContext ? 0.09 : 0.04
                     let evBias = computeOptimalEVBias(raster: raster, heroRect: box, aimPoint: aim.point, zoom: zoom, scene: intent)
@@ -1070,30 +1070,33 @@ enum CompositionPlanner {
 
         var options: Set<CGFloat> = [currentZoom]
 
-        // Continuous optimal zoom directly regressed from subject area vs desired prominence with edge safety constraints
-        let idealZoom = CGFloat(CompositionPureCalculations.calculateContinuousIdealZoom(
-            currentZoom: Double(currentZoom),
-            currentArea: area,
-            desiredArea: desiredArea,
-            maxZoom: Double(maxZoom),
-            targetPoint: subject.anchor,
-            boxWidth: Double(subject.bounds.width),
-            boxHeight: Double(subject.bounds.height),
-            safetyMargin: CompositionTuning.edgeSafetyMargin
-        ))
-        options.insert(idealZoom)
+        // Với phong cảnh (landscape) hoặc chủ thể chỉ là mảng vân bề mặt (scenery anchor), giữ nguyên góc rộng tự nhiên
+        if subject.kind != .scenery && intent != .landscape {
+            // Continuous optimal zoom directly regressed from subject area vs desired prominence with edge safety constraints
+            let idealZoom = CGFloat(CompositionPureCalculations.calculateContinuousIdealZoom(
+                currentZoom: Double(currentZoom),
+                currentArea: area,
+                desiredArea: desiredArea,
+                maxZoom: Double(maxZoom),
+                targetPoint: subject.anchor,
+                boxWidth: Double(subject.bounds.width),
+                boxHeight: Double(subject.bounds.height),
+                safetyMargin: CompositionTuning.edgeSafetyMargin
+            ))
+            options.insert(idealZoom)
 
-        // Khám phá tiêu cự nhiếp ảnh chuẩn (Prime Lenses: 1.5x / 35mm, 2.0x / 50mm, 2.5x / 70mm, 3.0x / 85mm)
-        for prime in [1.5, 2.0, 2.5, 3.0] as [CGFloat] {
-            if prime >= currentZoom && prime <= maxZoom {
-                options.insert(prime)
+            // Khám phá tiêu cự nhiếp ảnh chuẩn (Prime Lenses: 1.5x / 35mm, 2.0x / 50mm, 2.5x / 70mm, 3.0x / 85mm)
+            for prime in [1.5, 2.0, 2.5, 3.0] as [CGFloat] {
+                if prime >= currentZoom && prime <= maxZoom {
+                    options.insert(prime)
+                }
             }
-        }
 
-        // Biến thể tối ưu quanh idealZoom
-        if idealZoom > currentZoom {
-            options.insert(max(currentZoom, min(maxZoom, idealZoom * 0.90)))
-            options.insert(max(currentZoom, min(maxZoom, idealZoom * 1.12)))
+            // Biến thể tối ưu quanh idealZoom
+            if idealZoom > currentZoom {
+                options.insert(max(currentZoom, min(maxZoom, idealZoom * 0.90)))
+                options.insert(max(currentZoom, min(maxZoom, idealZoom * 1.12)))
+            }
         }
 
         // Subtle near-original crop exploration (enables aesthetic comparison vs uncropped baseline)
