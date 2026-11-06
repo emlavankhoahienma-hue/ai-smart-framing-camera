@@ -29,6 +29,20 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
     private let minFrameInterval: CFTimeInterval = 0.5 // Limit to 2 FPS to avoid flooding
 
     public var onLiveGuidanceReceived: ((String) -> Void)?
+    public var onLiveFramingReceived: ((CGPoint, CGFloat, String) -> Void)?
+
+    public static let supportedLiveModels: [String] = [
+        "gemini-3.8-live",
+        "gemini-3.8-live-extended-thinking"
+    ]
+
+    public static func normalizeLiveModelID(_ rawModel: String) -> String {
+        let lower = rawModel.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "models/", with: "")
+        if lower == "gemini-3.8-live-extended-thinking" || lower.contains("extended-thinking") {
+            return "gemini-3.8-live-extended-thinking"
+        }
+        return "gemini-3.8-live"
+    }
 
     private init() {
         let config = URLSessionConfiguration.default
@@ -94,18 +108,19 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
     // MARK: - Initial Handshake (BidiGenerateContentSetup)
 
     private func sendInitialSetup(model: String) {
-        let cleanModel = model.hasPrefix("models/") ? model : "models/\(model)"
+        let normalized = Self.normalizeLiveModelID(model)
+        let cleanModel = normalized.hasPrefix("models/") ? normalized : "models/\(normalized)"
         let setupMessage: [String: Any] = [
             "setup": [
                 "model": cleanModel,
                 "generationConfig": [
                     "responseModalities": ["TEXT"],
-                    "temperature": 0.4
+                    "temperature": 0.35
                 ],
                 "systemInstruction": [
                     "parts": [
                         [
-                            "text": "Bạn là Giám đốc Nhiếp ảnh & Bố cục AI chuyên nghiệp (AI Cinematography Director). Hãy phân tích nhanh từng khung hình video theo thời gian thực và đưa ra lời nhắc căn góc, lia máy hoặc chỉnh bố cục ngắn gọn, súc tích bằng tiếng Việt."
+                            "text": "Bạn là Giám đốc Nhiếp ảnh & Bố cục AI chuyên nghiệp (AI Cinematography Director). Hãy phân tích nhanh từng khung hình video theo thời gian thực, tự do quyết định 100% tọa độ mục tiêu (target_x, target_y trong [0..1]) và mức zoom phù hợp (suggested_zoom từ 0.5 đến 6.0) cùng lời nhắc ngắn gọn bằng tiếng Việt."
                         ]
                     ]
                 ]
@@ -254,22 +269,41 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
 
         var incomingText = ""
 
-        // Gemini Live serverContent parsing
-        if let serverContent = json["serverContent"] as? [String: Any],
-           let modelTurn = serverContent["modelTurn"] as? [String: Any],
-           let parts = modelTurn["parts"] as? [[String: Any]] {
-            for part in parts {
-                if let t = part["text"] as? String {
-                    incomingText += t
+        // Gemini 3.8 Live serverContent parsing (modelTurn + outputTranscription)
+        if let serverContent = json["serverContent"] as? [String: Any] {
+            if let modelTurn = serverContent["modelTurn"] as? [String: Any],
+               let parts = modelTurn["parts"] as? [[String: Any]] {
+                for part in parts {
+                    if let t = part["text"] as? String {
+                        incomingText += t
+                    }
                 }
+            }
+            if incomingText.isEmpty,
+               let outputTranscription = serverContent["outputTranscription"] as? [String: Any],
+               let transText = outputTranscription["text"] as? String {
+                incomingText = transText
             }
         }
 
         if !incomingText.isEmpty {
+            let parsedObj = GeminiService.cleanAndParseJSON(from: incomingText)
+            var extractedTarget: CGPoint?
+            var extractedZoom: CGFloat?
+            var cleanGuidance = incomingText
+            if let obj = parsedObj, GeminiService.hasUsableFraming(obj) {
+                let framed = GeminiService.parseGeminiResponse(obj, modelUsed: "gemini-3.8-live", latencyMs: liveLatencyMs)
+                extractedTarget = CGPoint(x: framed.targetX, y: framed.targetY)
+                extractedZoom = framed.suggestedZoom
+                cleanGuidance = framed.explanation
+            }
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                self.latestLiveGuidance = incomingText
-                self.onLiveGuidanceReceived?(incomingText)
+                self.latestLiveGuidance = cleanGuidance
+                self.onLiveGuidanceReceived?(cleanGuidance)
+                if let pt = extractedTarget, let zm = extractedZoom {
+                    self.onLiveFramingReceived?(pt, zm, cleanGuidance)
+                }
             }
         }
     }

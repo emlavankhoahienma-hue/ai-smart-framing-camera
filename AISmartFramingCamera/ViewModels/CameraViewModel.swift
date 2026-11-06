@@ -118,7 +118,17 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
         // another concurrency boundary.
         let now = CACurrentMediaTime()
-        let visionInterval: CFTimeInterval = snapshot.isDualCameraActive ? (1.0 / 5.0) : 0
+        let needsImmediateCapture = VisionFramingEngine.shared.captureNextFrameForGemini
+        let visionInterval: CFTimeInterval
+        if needsImmediateCapture {
+            visionInterval = 0
+        } else if snapshot.isDualCameraActive {
+            visionInterval = 1.0 / 5.0
+        } else if VisionFramingEngine.shared.isTrackingActive {
+            visionInterval = 1.0 / 24.0
+        } else {
+            visionInterval = 1.0 / 12.0
+        }
         if visionInterval == 0 || (now - lastVisionProcessTime >= visionInterval) {
             lastVisionProcessTime = now
             VisionFramingEngine.shared.processVideoSampleBuffer(sampleBuffer, orientation: .up, frameContext: frame)
@@ -1032,9 +1042,6 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var windowedZoomFocalLength: Double = 24.0 {
         didSet {
-            if isWindowedZoomActive {
-                updateWindowedCameraHardwareZoom()
-            }
             if isRecordingVideo, let start = videoRecordingStartTime, isWindowedZoomActive {
                 let elapsed = Date().timeIntervalSince(start)
                 recordWindowedKeyframeIfNeeded(timestamp: elapsed)
@@ -1061,6 +1068,7 @@ public final class CameraViewModel: ObservableObject {
 
     @Published public var showAlignmentSuccessFlash: Bool = false
     @Published public var isShutterPressing: Bool = false
+    private var hasTriggeredInstantShutterForCurrentCapture: Bool = false
     @Published public var activeFlashMode2: Bool = false
     @Published public var currentAIColorParams: AIColorParameters? = nil
 
@@ -2273,28 +2281,45 @@ public final class CameraViewModel: ObservableObject {
     private func handleGeminiResponse(_ response: GeminiFramingResponse) {
         let rawX = response.targetX.isFinite ? response.targetX : 0.5
         let rawY = response.targetY.isFinite ? response.targetY : 0.5
-        let safeX = max(0.05, min(0.95, rawX))
-        let safeY = max(0.05, min(0.95, rawY))
-        let safeZoom = max(1.0, min(5.0, (response.suggestedZoom.isFinite && response.suggestedZoom > 0) ? response.suggestedZoom : 1.0))
+        let rawSubjX = response.subjectX.isFinite ? response.subjectX : rawX
+        let rawSubjY = response.subjectY.isFinite ? response.subjectY : rawY
+        let rawCompX = response.compositionAnchorX.isFinite ? response.compositionAnchorX : rawSubjX
+        let rawCompY = response.compositionAnchorY.isFinite ? response.compositionAnchorY : rawSubjY
+        let rawZoom = (response.suggestedZoom.isFinite && response.suggestedZoom >= 0.5) ? response.suggestedZoom : 1.0
+
+        // 100% do Gemini quyết định target và mức zoom phù hợp (không bị gò bó bởi cảm biến cục bộ hay isPlan2)
+        let solved = GeminiService.computeOptimalFramingGeometry(
+            rawSubjectPoint: CGPoint(x: rawSubjX, y: rawSubjY),
+            rawCompositionPoint: CGPoint(x: rawCompX, y: rawCompY),
+            rawTargetPoint: CGPoint(x: rawX, y: rawY),
+            rawZoom: rawZoom,
+            shotScale: response.shotScale,
+            compositionRule: response.compositionRule,
+            sensorSubjectRect: nil,
+            sensorFaceRects: [],
+            aiEstimatedSize: response.estimatedSubjectSize
+        )
+
+        let subjectAnchor = solved.subjectAnchor
+        let aimPoint = solved.cameraAimPoint
+        let optimalZoom = solved.optimalZoom
 
         self.geminiColorRecipe = response.colorRecipe
         self.geminiExplanation = response.explanation
         self.detectedScene = response.sceneType
-        self.postZoomFaceCount = cloudTrackingSource?.faceRects.count ?? 0
+        self.postZoomFaceCount = 0
         self.activeCompositionRule = response.compositionRule
         self.activeModelUsedName = response.modelUsed
         self.activeEngineSource = .geminiCloud(model: response.modelUsed)
         self.geminiLatencyMs = response.latencyMs
-        let isPlan2 = self.aiComposeTimes >= 2 || (response.estimatedSubjectSize != nil && (response.estimatedSubjectSize!.width * response.estimatedSubjectSize!.height) < 0.10)
-        let effectiveZoom = (isPlan2 && safeZoom < 1.7) ? 2.0 : safeZoom
-        self.aiSuggestedZoom = effectiveZoom
-        self.pendingSuggestedZoom = effectiveZoom
+        self.aiSuggestedZoom = optimalZoom
+        self.pendingSuggestedZoom = optimalZoom
         self.hasExecutedAutoZoomForSession = false
 
         self.aiRecommendedPreset = response.recommendedPreset
         self.aiPresetMatchReason = response.presetExplanation
 
-        let scan = response.toScanResp(isPlan2: isPlan2)
+        let scan = response.toScanResp(isPlan2: false)
         self.latestScanResp = scan
 
         if isAIFullColorEnabled {
@@ -2305,19 +2330,28 @@ public final class CameraViewModel: ObservableObject {
             selectedFilmPreset = response.recommendedPreset
         }
 
-        let subjectAnchor = CGPoint(x: response.subjectX, y: response.subjectY)
-        let subjectRect = normalizedSubjectRect(cloudTrackingSource?.subjectRect)
+        // Ưu tiên tuyệt đối bounding box 2D do Gemini trả về (subject_box_2d / estimatedSubjectSize)
+        let effectiveRect: CGRect
+        if let aiSize = response.estimatedSubjectSize, aiSize.width > 0.02, aiSize.height > 0.02 {
+            let w = max(0.06, min(0.92, aiSize.width))
+            let h = max(0.06, min(0.92, aiSize.height))
+            effectiveRect = CGRect(
+                x: max(0.01, min(0.99 - w, subjectAnchor.x - w * 0.5)),
+                y: max(0.01, min(0.99 - h, subjectAnchor.y - h * 0.38)),
+                width: w,
+                height: h
+            )
+        } else if let sensorRect = normalizedSubjectRect(cloudTrackingSource?.subjectRect) {
+            effectiveRect = sensorRect
+        } else {
+            effectiveRect = CGRect(
+                x: max(0.02, subjectAnchor.x - 0.12),
+                y: max(0.02, subjectAnchor.y - 0.16),
+                width: 0.24,
+                height: 0.32
+            )
+        }
 
-        // Giữ nguyên 100% tọa độ dẫn hướng bố cục do Cloud AI trả về (không kéo ép lệch về faceCenter)
-        let aimPoint = CGPoint(x: safeX, y: safeY)
-        let optimalZoom = safeZoom
-
-        let effectiveRect = subjectRect ?? CGRect(
-            x: max(0.02, subjectAnchor.x - 0.12),
-            y: max(0.02, subjectAnchor.y - 0.16),
-            width: 0.24,
-            height: 0.32
-        )
         let center = CGPoint(x: 0.5, y: 0.5)
         let dx = aimPoint.x - center.x
         let dy = aimPoint.y - center.y
@@ -2348,8 +2382,6 @@ public final class CameraViewModel: ObservableObject {
         self.plannedEVBias = cloudEV
         self.plannedLightingScene = lScene
         self.plannedLightingDescription = lRationale
-        self.aiSuggestedZoom = optimalZoom
-        self.pendingSuggestedZoom = optimalZoom
 
         var liveAim = aimPoint
         var guideWorldRay: simd_double3? = nil
@@ -2373,6 +2405,24 @@ public final class CameraViewModel: ObservableObject {
             trackedPoint: subjectAnchor,
             pinnedGuideRay: guideWorldRay
         )
+
+        // Thực thi ngay mức zoom liên tục (continuous zoom) mà Gemini quyết định
+        if isAutoZoomEnabled && abs(optimalZoom - displayZoom) > 0.05 && !isWindowedZoomActive {
+            self.hasExecutedAutoZoomForSession = true
+            self.selectedZoomPreset = resolveClosestZoomPreset(for: optimalZoom)
+            if optimalZoom < 0.99 && !cameraService.hasUltraWideLens {
+                self.isSimulatedUltraWideActive = true
+                self.simulatedUltraWideFactor = optimalZoom
+                self.displayZoom = optimalZoom
+            } else {
+                self.isSimulatedUltraWideActive = false
+                self.simulatedUltraWideFactor = 1.0
+                cameraService.applyDisplayZoomWithPhysicalLensSwitching(optimalZoom, smooth: true, rate: 3.5, allowPhysicalSwitch: true)
+            }
+            presentZoomChangeHUD(displayZoom: optimalZoom)
+        }
+        applyPlannedEVBiasIfNeeded()
+
         cloudTrackingSource = nil
         localTrackingSource = nil
     }
@@ -3386,21 +3436,12 @@ public final class CameraViewModel: ObservableObject {
         if isAutoZoomEnabled && !hasExecutedAutoZoomForSession {
             let desired = cameraService.convertDeviceZoomToDisplayZoom(
                 cameraService.convertDisplayZoomToDeviceZoom(pendingSuggestedZoom))
-            if abs(desired - displayZoom) > 0.12 {
-                let options = Array(Set(cameraService.availableDisplayZoomOptions +
-                    [desired, displayZoom * 1.5, displayZoom * 1.25]))
-                let safe = options.filter {
-                    (desired > displayZoom ? ($0 > displayZoom + 0.12 && $0 <= desired + 0.01) :
-                        ($0 < displayZoom - 0.12 && $0 >= desired - 0.01)) && canZoomCurrentSubject(to: $0)
-                }
-                if let target = desired > displayZoom ? safe.max() : safe.min() {
-                    pendingSuggestedZoom = target; aiSuggestedZoom = target
-                    applyAISuggestedZoom(target, force: true)
-                    hasExecutedAutoZoomForSession = true
-                    if zoomAwaitingVerification { return }
-                }
-                // Khong khoa hasExecutedAutoZoomForSession neu chua zoom thanh cong,
-                // de khi nguoi dung dua chu the vao tam thi he thong van tu dong zoom!
+            if abs(desired - displayZoom) > 0.10 {
+                pendingSuggestedZoom = desired
+                aiSuggestedZoom = desired
+                applyAISuggestedZoom(desired, force: true)
+                hasExecutedAutoZoomForSession = true
+                if zoomAwaitingVerification { return }
             }
         }
         guard zoomVerified, !localCompositionNeedsLevel, isAutoCaptureOnAlignEnabled, allowsAutoCaptureForCurrentTarget,
@@ -3653,22 +3694,13 @@ public final class CameraViewModel: ObservableObject {
 
     public func updateWindowedCameraHardwareZoom() {
         guard isWindowedZoomActive, isCameraReady, !isCameraHibernating else { return }
-        let focal = windowedZoomFocalLength
-        let requestedDisplayZoom = focal / 24.0
-        let targetDisplayZoom: CGFloat
-        let teleOpticalDisplay = cameraService.telephotoOpticalDisplayZoom ?? 2.0
-
-        if cameraService.hasPhysicalTelephotoLens && requestedDisplayZoom >= (teleOpticalDisplay - 0.1) {
-            // Tieu cu tuong duong telephoto quang hoc: kich hoat truc tiep cam Telephoto vat ly
-            targetDisplayZoom = teleOpticalDisplay
-        } else {
-            // Tieu cu goc rong: Dung cam Chinh Wide
-            targetDisplayZoom = 1.0
-        }
-
+        // Giữ cố định ống kính góc rộng 1.0x (24mm) khi dùng Windowed Zoom (kể cả khi kéo cửa sổ > 2x / >= 48mm),
+        // tuyệt đối không tự động chuyển sang cam Tele để cửa sổ không bao giờ bị nhảy kích thước hay giật khung hình!
+        let targetDisplayZoom: CGFloat = 1.0
         self.effectiveWindowedBaseZoom = targetDisplayZoom
-        cameraService.applyDisplayZoomWithPhysicalLensSwitching(targetDisplayZoom, smooth: true, rate: 4.5, allowPhysicalSwitch: true)
-        presentZoomChangeHUD(displayZoom: targetDisplayZoom)
+        if abs(displayZoom - targetDisplayZoom) > 0.05 {
+            cameraService.applyDisplayZoomWithPhysicalLensSwitching(targetDisplayZoom, smooth: true, rate: 4.5, allowPhysicalSwitch: true)
+        }
     }
 
     private func requestManualZoom(_ displayZoomVal: CGFloat, smooth: Bool = false) {
@@ -3935,7 +3967,7 @@ public final class CameraViewModel: ObservableObject {
         if isWindowedZoomActive && (windowedZoomFocalLength > 24.5 || windowedZoomAspectRatio != .ratio3_4) {
             lastRecordedVideoWindowedFocal = windowedZoomFocalLength
             lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
-            lastRecordedVideoWindowedBaseZoom = displayZoom
+            lastRecordedVideoWindowedBaseZoom = 1.0
             lastRecordedVideoWindowedCenter = windowedZoomNormalizedCenter
         } else {
             lastRecordedVideoWindowedFocal = nil
@@ -4386,7 +4418,7 @@ public final class CameraViewModel: ObservableObject {
             timestamp: timestamp,
             focalLength: windowedZoomFocalLength,
             normalizedCenter: windowedZoomNormalizedCenter,
-            baseOpticalZoom: displayZoom,
+            baseOpticalZoom: 1.0,
             aspectRatio: windowedZoomAspectRatio
         )
         // Tranh ghi trung keyframe qua gan nhau (< 0.04s)
@@ -4571,7 +4603,7 @@ public final class CameraViewModel: ObservableObject {
             applyFilm: apply, crop: isWindowedZoomActive && windowedZoomFocalLength > 24.5, focalLength: windowedZoomFocalLength,
             aspect: windowedZoomAspectRatio,
             score: stateBeforeCapture == .alignmentPerfect ? 1 : (framingResult?.alignmentScore ?? 0.8),
-            baseOpticalZoom: displayZoom,
+            baseOpticalZoom: isWindowedZoomActive ? 1.0 : displayZoom,
             isSimulatedUltraWide: isSimulatedUltraWideActive,
             simulatedUltraWideFactor: simulatedUltraWideFactor)
     }
@@ -4589,6 +4621,7 @@ public final class CameraViewModel: ObservableObject {
 
     private func executeNativePhotoCapture(highResolution: Bool) {
         photoCapturePhase = .preparing
+        hasTriggeredInstantShutterForCurrentCapture = false
         captureProcessingSettings = currentPhotoProcessingSettings()
         cameraService.capturePhoto(isDNG: selectedPhotoFormat == .dng,
             isHEIF: selectedPhotoFormat == .heif || selectedPhotoFormat == .heic,
@@ -4837,7 +4870,7 @@ extension CameraViewModel: CameraServiceDelegate {
                         timestamp: 0.0,
                         focalLength: windowedZoomFocalLength,
                         normalizedCenter: windowedZoomNormalizedCenter,
-                        baseOpticalZoom: displayZoom,
+                        baseOpticalZoom: 1.0,
                         aspectRatio: windowedZoomAspectRatio
                     )
                 )
@@ -4887,6 +4920,22 @@ extension CameraViewModel: CameraServiceDelegate {
         photoCapturePhase = phase
         if phase == .processing {
             deactivateScreenFlash()
+        }
+    }
+
+    public func cameraServiceDidCaptureStillFrame(_ service: CameraService, previewImage: CGImage?) {
+        deactivateScreenFlash()
+        if !hasTriggeredInstantShutterForCurrentCapture {
+            hasTriggeredInstantShutterForCurrentCapture = true
+            haptics.triggerShutterClick()
+        }
+        isShutterPressing = false
+        unlockHardTargetLock()
+        withAnimation(.easeOut(duration: 0.16)) {
+            aiSessionState = .done
+        }
+        if let previewImage {
+            latestAlbumThumbnail = UIImage(cgImage: previewImage)
         }
     }
 
@@ -5033,7 +5082,10 @@ extension CameraViewModel: CameraServiceDelegate {
             DispatchQueue.main.async {
                 CameraLogger.success("Render bộ lọc hoàn tất, hiển thị xem trước & lưu ảnh (LivePhoto: \(item.isLivePhoto))", category: .capture)
                 self.isShutterPressing = false
-                self.haptics.triggerShutterClick()
+                if !self.hasTriggeredInstantShutterForCurrentCapture {
+                    self.hasTriggeredInstantShutterForCurrentCapture = true
+                    self.haptics.triggerShutterClick()
+                }
                 self.unlockHardTargetLock()
                 withAnimation {
                     self.latestCapturedPhoto = item

@@ -208,17 +208,26 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     case pollinationsGPT54Nano = "pollinations/gpt-5.4-nano"
     case pollinationsGPT54Mini = "pollinations/gpt-5.4-mini"
     case pollinationsOpenAI = "pollinations/gpt-4o-mini"
-    // Official 2026 Google Gemini Models (Interactions API & Live API)
+    // Official 2026 Google Gemini Models (Interactions API, Live API & generateContent API)
     case gemini38FlashDirect = "gemini-3.8-flash"
     case gemini35FlashLiteDirect = "gemini-3.5-flash-lite"
     case gemini31FlashLiteDirect = "gemini-3.1-flash-lite"
     case gemini4ArgonDirect = "gemini-4-argon"
     case gemini38Live = "gemini-3.8-live"
+    case gemini38LiveExtendedThinking = "gemini-3.8-live-extended-thinking"
+    case gemini31ProDirect = "gemini-3.1-pro-preview"
+    case gemini3FlashPreviewDirect = "gemini-3-flash-preview"
+    case gemini25ProDirect = "gemini-2.5-pro"
     case gemini25FlashDirect = "gemini-2.5-flash"
+    case gemini25FlashLiteStableDirect = "gemini-2.5-flash-lite"
     case gemini25FlashLiteDirect = "gemini-2.5-flash-lite-preview-06-17"
     case gemini20FlashDirect = "gemini-2.0-flash"
     case gemini20FlashLiteDirect = "gemini-2.0-flash-lite-preview-02-05"
+    case gemini15ProDirect = "gemini-1.5-pro"
     case gemini15FlashDirect = "gemini-1.5-flash"
+    case gemma4_31BDirect = "gemma-4-31b-it"
+    case gemma4_26BDirect = "gemma-4-26b-a4b-it"
+    case gemma3_27BDirect = "gemma-3-27b-it"
     case gemini20FlashFree = "google/gemini-2.0-flash-exp:free"
     case groqLlama4Scout = "meta-llama/llama-4-scout-17b-16e-instruct"
     case groqLlama4Maverick = "meta-llama/llama-4-maverick-17b-128e-instruct"
@@ -285,11 +294,20 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .gemini31FlashLiteDirect: return "Gemini 3.1 Flash Lite (Google AI • Tiết kiệm token)"
         case .gemini4ArgonDirect:      return "Gemini 4 Argon (Google AI • Đỉnh cao suy luận 2026)"
         case .gemini38Live:            return "Gemini 3.8 Live (Google AI • Realtime WebSocket Video)"
+        case .gemini38LiveExtendedThinking: return "Gemini 3.8 Live Extended Thinking (Google AI • Suy luận sâu)"
+        case .gemini31ProDirect:       return "Gemini 3.1 Pro Preview (Google AI • Chuyên gia Bố cục 3D)"
+        case .gemini3FlashPreviewDirect: return "Gemini 3 Flash Preview (Google AI • Đa phương thức nhanh)"
+        case .gemini25ProDirect:       return "Gemini 2.5 Pro (Google AI • Phân tích thẩm mỹ sâu)"
         case .gemini25FlashDirect:    return "Gemini 2.5 Flash (Google AI • Chuyên gia Nhiếp ảnh • Free)"
-        case .gemini25FlashLiteDirect:return "Gemini 2.5 Flash Lite (Google AI • Siêu tốc <0.6s • Free)"
+        case .gemini25FlashLiteStableDirect: return "Gemini 2.5 Flash Lite (Google AI • Ổn định & Siêu tốc)"
+        case .gemini25FlashLiteDirect:return "Gemini 2.5 Flash Lite Preview (Google AI • Siêu tốc <0.6s)"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash (Trực tiếp Google AI • Miễn phí cao)"
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Flash Lite (Google AI • Siêu tốc)"
+        case .gemini15ProDirect:      return "Gemini 1.5 Pro (Google AI • Phân tích chi tiết)"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash (Google AI • 1500 lượt/ngày free)"
+        case .gemma4_31BDirect:       return "Gemma 4 31B Vision IT (Google AI • Open Weights 2026)"
+        case .gemma4_26BDirect:       return "Gemma 4 26B A4B MoE Vision (Google AI • Siêu tốc)"
+        case .gemma3_27BDirect:       return "Gemma 3 27B Vision IT (Google AI • Nhẹ & Mượt)"
         case .gemini20FlashFree:      return "Gemini 2.0 Flash (OpenRouter • Miễn phí)"
         case .groqLlama4Scout:        return "Llama 4 Scout 17B Vision (Groq LPU • Chuyên Ảnh • Free)"
         case .groqLlama4Maverick:     return "Llama 4 Maverick 17B Vision (Groq LPU • Siêu tốc • Free)"
@@ -355,11 +373,20 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .gemini31FlashLiteDirect:return "Gemini 3.1 Lite"
         case .gemini4ArgonDirect:     return "Gemini 4 Argon"
         case .gemini38Live:           return "Gemini 3.8 Live"
+        case .gemini38LiveExtendedThinking: return "Gemini 3.8 Live Thinking"
+        case .gemini31ProDirect:      return "Gemini 3.1 Pro"
+        case .gemini3FlashPreviewDirect: return "Gemini 3 Flash"
+        case .gemini25ProDirect:      return "Gemini 2.5 Pro"
         case .gemini25FlashDirect:    return "Gemini 2.5 Flash"
-        case .gemini25FlashLiteDirect:return "Gemini 2.5 Lite"
+        case .gemini25FlashLiteStableDirect: return "Gemini 2.5 Lite"
+        case .gemini25FlashLiteDirect:return "Gemini 2.5 Lite Preview"
         case .gemini20FlashDirect:    return "Gemini 2.0 Flash"
         case .gemini20FlashLiteDirect:return "Gemini 2.0 Lite"
+        case .gemini15ProDirect:      return "Gemini 1.5 Pro"
         case .gemini15FlashDirect:    return "Gemini 1.5 Flash"
+        case .gemma4_31BDirect:       return "Gemma 4 31B"
+        case .gemma4_26BDirect:       return "Gemma 4 26B MoE"
+        case .gemma3_27BDirect:       return "Gemma 3 27B"
         case .gemini20FlashFree:      return "Gemini 2.0 Free"
         case .groqLlama4Scout:        return "Llama 4 Scout"
         case .groqLlama4Maverick:     return "Llama 4 Maverick"
@@ -473,25 +500,27 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .googleGemini:
             return [
                 .autoStrongest,
+                .gemini4ArgonDirect,
                 .gemini38FlashDirect,
                 .gemini35FlashLiteDirect,
                 .gemini31FlashLiteDirect,
-                .gemini4ArgonDirect,
                 .gemini38Live,
+                .gemini38LiveExtendedThinking,
+                .gemini31ProDirect,
+                .gemini3FlashPreviewDirect,
+                .gemini25ProDirect,
                 .gemini25FlashDirect,
+                .gemini25FlashLiteStableDirect,
                 .gemini25FlashLiteDirect,
                 .gemini20FlashDirect,
-                .gemini15FlashDirect,
                 .gemini20FlashLiteDirect,
+                .gemini15ProDirect,
+                .gemini15FlashDirect,
+                .gemma4_31BDirect,
+                .gemma4_26BDirect,
+                .gemma3_27BDirect,
                 .gemini20ProExp,
                 .gemini15Flash8B,
-                .gemini25Flash,
-                .gemini25Pro,
-                .gemini20Flash,
-                .geminiFlash15,
-                .geminiPro15,
-                .gemini31FlashLite,
-                .gemini31Pro,
                 .gemini37Flash,
                 .gemini36Flash,
                 .gemini35Flash,
@@ -598,7 +627,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public static func fallbackChain(selected: AIVisionModel, customModelName: String, provider: AICloudProvider = .openRouter) -> [String] {
         let custom = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        var preferred = (selected == .freeVision || custom.isEmpty) ? selected.technicalModelID : custom
+        var preferred = custom.isEmpty ? selected.technicalModelID : custom
 
         if provider == .pollinations {
             var cleanModel = preferred.replacingOccurrences(of: ":free", with: "")
@@ -628,28 +657,38 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
         if provider == .googleGemini {
             var cleanModel = preferred
+            if cleanModel.hasPrefix("models/") {
+                cleanModel = String(cleanModel.dropFirst("models/".count))
+            }
             if cleanModel.hasPrefix("google/") {
                 cleanModel = String(cleanModel.dropFirst("google/".count))
             }
             cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
-            if cleanModel == "gemini-flash-1.5" || cleanModel == "gemini-1.5-flash" || cleanModel == "gemini-2.0-flash" || cleanModel == "gemini-2.5-flash" || cleanModel == "gemini-2.0-flash-001" {
-                cleanModel = "gemini-3.8-flash"
-            }
-            if cleanModel == "gemini-2.5-flash-lite-preview-06-17" || cleanModel == "gemini-2.0-flash-lite-preview-02-05" {
-                cleanModel = "gemini-3.5-flash-lite"
-            }
-            if cleanModel == "gemini-pro-1.5" || cleanModel == "gemini-2.5-pro" || cleanModel == "gemini-3.1-pro-preview" {
-                cleanModel = "gemini-4-argon"
+            if cleanModel == "gemini-flash-1.5" {
+                cleanModel = "gemini-1.5-flash"
+            } else if cleanModel == "gemini-pro-1.5" {
+                cleanModel = "gemini-1.5-pro"
             }
             if cleanModel == "auto" || cleanModel.isEmpty {
-                cleanModel = "gemini-3.8-flash"
+                cleanModel = "gemini-2.5-flash"
             }
 
-            // Fallback chain cho Google Gemini: ưu tiên model đã chọn, sau đó là 3.5 Flash Lite và 3.1 Flash Lite
-            if selected != .autoStrongest && !custom.isEmpty {
-                return [cleanModel, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+            // Tôn trọng 100% model người dùng đã chọn hoặc tải từ Gemini API, kèm chuỗi dự phòng đa thế hệ
+            var chain = [cleanModel]
+            let fallbacks = [
+                "gemini-2.5-flash",
+                "gemini-3.8-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-3.5-flash-lite",
+                "gemini-2.0-flash",
+                "gemini-1.5-flash"
+            ]
+            for fb in fallbacks {
+                if !chain.contains(fb) {
+                    chain.append(fb)
+                }
             }
-            return [cleanModel, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+            return chain
         } else if provider == .groq {
             var cleanModel = preferred
             if cleanModel.hasPrefix("groq/") {
@@ -818,8 +857,13 @@ public struct GeminiStructuredFramingOutput: Codable {
     public let lighting_scene: String?
     public let subject_x: Double?
     public let subject_y: Double?
+    public let subject_w: Double?
+    public let subject_h: Double?
+    public let subject_box_2d: [Double]?
     public let composition_anchor_x: Double?
     public let composition_anchor_y: Double?
+    public let composition_x: Double?
+    public let composition_y: Double?
     public let shot_scale: String?
     public let color_recipe: GeminiStructuredColorRecipe?
 
@@ -836,10 +880,26 @@ public struct GeminiStructuredFramingOutput: Codable {
         if let pExp = preset_explanation { dict["preset_explanation"] = pExp }
         if let ev = recommended_ev_bias { dict["exposure_bias"] = ev }
         if let light = lighting_scene { dict["lighting_scene"] = light }
+        if let box = subject_box_2d, box.count == 4 {
+            dict["subject_box_2d"] = box
+            let scale: Double = (box.max() ?? 0) > 1.5 ? 1000.0 : 1.0
+            let ymin = max(0.0, min(1.0, box[0] / scale))
+            let xmin = max(0.0, min(1.0, box[1] / scale))
+            let ymax = max(ymin, min(1.0, box[2] / scale))
+            let xmax = max(xmin, min(1.0, box[3] / scale))
+            let bw = max(0.04, xmax - xmin)
+            let bh = max(0.04, ymax - ymin)
+            dict["subject_w"] = bw
+            dict["subject_h"] = bh
+            if subject_x == nil { dict["subject_x"] = xmin + bw * 0.5 }
+            if subject_y == nil { dict["subject_y"] = ymin + bh * 0.38 }
+        }
         if let sx = subject_x { dict["subject_x"] = sx }
         if let sy = subject_y { dict["subject_y"] = sy }
-        if let cax = composition_anchor_x { dict["composition_x"] = cax }
-        if let cay = composition_anchor_y { dict["composition_y"] = cay }
+        if let sw = subject_w { dict["subject_w"] = sw }
+        if let sh = subject_h { dict["subject_h"] = sh }
+        if let cax = composition_x ?? composition_anchor_x { dict["composition_x"] = cax }
+        if let cay = composition_y ?? composition_anchor_y { dict["composition_y"] = cay }
         if let scale = shot_scale { dict["shot_scale"] = scale }
         if let cr = color_recipe {
             dict["color_recipe"] = cr.toDictionary()
@@ -1055,6 +1115,7 @@ public final class GeminiService: ObservableObject {
     }
 
     @Published public var discoveredModels: [String] = []
+    @Published public var discoveredModelDescriptions: [String: String] = [:]
     @Published public var isFetchingModels: Bool = false
 
     public final class VideoCinematographyRequest {
@@ -1330,13 +1391,17 @@ public final class GeminiService: ObservableObject {
             let normalized = customBase
                 .replacingOccurrences(of: "/chat/completions", with: "")
                 .replacingOccurrences(of: "/messages", with: "")
+                .replacingOccurrences(of: "/interactions", with: "")
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             modelsURLStr = normalized + "/models"
         }
-        if selectedProvider == .googleGemini && !key.isEmpty {
+        if selectedProvider == .googleGemini {
             if var components = URLComponents(string: modelsURLStr) {
                 var items = components.queryItems ?? []
-                if !items.contains(where: { $0.name == "key" }) {
+                if !items.contains(where: { $0.name == "pageSize" }) {
+                    items.append(URLQueryItem(name: "pageSize", value: "200"))
+                }
+                if !key.isEmpty && !items.contains(where: { $0.name == "key" }) {
                     items.append(URLQueryItem(name: "key", value: key))
                 }
                 components.queryItems = items
@@ -1354,7 +1419,7 @@ public final class GeminiService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 8.0
+        request.timeoutInterval = 10.0
         configureHeaders(for: &request, key: key)
 
         do {
@@ -1367,12 +1432,52 @@ public final class GeminiService: ObservableObject {
                 return (false, "Định dạng danh sách model không khớp")
             }
             var ids: [String] = []
+            var descriptions: [String: String] = [:]
             if let arr = json["data"] as? [[String: Any]] {
-                ids = arr.compactMap { $0["id"] as? String }
+                for item in arr {
+                    guard let id = item["id"] as? String else { continue }
+                    ids.append(id)
+                    if let name = item["name"] as? String, !name.isEmpty {
+                        descriptions[id] = name
+                    }
+                }
             } else if let modelsArr = json["models"] as? [[String: Any]] {
-                ids = modelsArr.compactMap { m in
-                    guard let name = m["name"] as? String else { return nil }
-                    return name.replacingOccurrences(of: "models/", with: "")
+                for m in modelsArr {
+                    guard let rawName = m["name"] as? String else { continue }
+                    let id = rawName.replacingOccurrences(of: "models/", with: "")
+                    let lower = id.lowercased()
+                    // Exclude embedding-only, AQA, TTS, and pure image/video generation models that do not accept multimodal image analysis
+                    if lower.contains("embedding") || lower.contains("aqa") || lower.contains("imagen") || lower.contains("veo") || lower.contains("tts") || lower.contains("whisper") {
+                        continue
+                    }
+                    if let methods = m["supportedGenerationMethods"] as? [String], !methods.isEmpty {
+                        let supportsGen = methods.contains("generateContent") || methods.contains("createInteraction") || methods.contains("streamGenerateContent")
+                        if !supportsGen { continue }
+                    }
+                    ids.append(id)
+                    if let displayName = m["displayName"] as? String, !displayName.isEmpty {
+                        descriptions[id] = displayName
+                    }
+                }
+            }
+            if selectedProvider == .googleGemini {
+                let builtInGemini = [
+                    "gemini-3.8-flash",
+                    "gemini-3.8-pro",
+                    "gemini-3.8-flash-lite",
+                    "gemini-4-argon",
+                    "gemini-3.1-pro-preview",
+                    "gemini-3-flash-preview",
+                    "gemini-3.1-flash-lite-preview",
+                    "gemini-2.5-pro",
+                    "gemini-2.5-flash",
+                    "gemini-2.5-flash-lite",
+                    "gemini-2.0-flash",
+                    "gemma-4-31b-it",
+                    "gemma-4-26b-a4b-it"
+                ]
+                for b in builtInGemini where !ids.contains(b) {
+                    ids.append(b)
                 }
             }
             guard !ids.isEmpty else {
@@ -1380,16 +1485,27 @@ public final class GeminiService: ObservableObject {
             }
             let prioritized = ids.sorted { a, b in
                 let al = a.lowercased(), bl = b.lowercased()
-                let aVis = al.contains("vl") || al.contains("gemini") || al.contains("gpt-4") || al.contains("gpt-5") || al.contains("claude") || al.contains("vision") || al.contains("gemma-4") || al.contains("llama-4") || al.contains("grok")
-                let bVis = bl.contains("vl") || bl.contains("gemini") || bl.contains("gpt-4") || bl.contains("gpt-5") || bl.contains("claude") || bl.contains("vision") || bl.contains("gemma-4") || bl.contains("llama-4") || bl.contains("grok")
-                if aVis != bVis { return aVis }
+                func rank(_ s: String) -> Int {
+                    if s.hasPrefix("gemini-3.8") || s.hasPrefix("gemini-4") { return 0 }
+                    if s.hasPrefix("gemini-3") { return 1 }
+                    if s.hasPrefix("gemini-2.5") { return 2 }
+                    if s.hasPrefix("gemini-2.0") { return 3 }
+                    if s.contains("gemini") || s.contains("gemma-4") { return 4 }
+                    if s.contains("vl") || s.contains("gpt-5") || s.contains("gpt-4") || s.contains("claude") || s.contains("vision") || s.contains("llama-4") || s.contains("grok") { return 5 }
+                    return 6
+                }
+                let ra = rank(al), rb = rank(bl)
+                if ra != rb { return ra < rb }
                 return a < b
             }
-            let capped = Array(prioritized.prefix(200))
+            var seen = Set<String>()
+            let uniqueCapped = prioritized.filter { seen.insert($0).inserted }.prefix(200)
+            let capped = Array(uniqueCapped)
             await MainActor.run {
                 self.discoveredModels = capped
+                self.discoveredModelDescriptions = descriptions
             }
-            return (true, "Đã tải \(capped.count) model mới nhất từ \(selectedProvider.shortBadge)")
+            return (true, "Đã tải \(capped.count) model từ \(selectedProvider.shortBadge) API")
         } catch {
             return (false, "Lỗi tải model: \(error.localizedDescription)")
         }
@@ -1496,6 +1612,7 @@ public final class GeminiService: ObservableObject {
         candidates: [String],
         index: Int,
         key: String,
+        forceGenerateContent: Bool = false,
         completion: @escaping (Bool, String) -> Void
     ) {
         guard index < candidates.count else {
@@ -1504,7 +1621,8 @@ public final class GeminiService: ObservableObject {
         }
 
         let testModel = candidates[index]
-        guard let url = buildURL(for: testModel, key: key) else {
+        let useInteractions = selectedProvider == .googleGemini && Self.usesInteractionsEndpoint(for: testModel) && !forceGenerateContent
+        guard let url = buildURL(for: testModel, key: key, forceGenerateContent: forceGenerateContent) else {
             completion(false, "URL không hợp lệ.")
             return
         }
@@ -1518,10 +1636,25 @@ public final class GeminiService: ObservableObject {
 
         let body: [String: Any]
         if selectedProvider == .googleGemini {
-            body = [
-                "model": testModel,
-                "input": "Hi"
-            ]
+            if useInteractions {
+                body = [
+                    "model": testModel,
+                    "input": "Hi"
+                ]
+            } else {
+                body = [
+                    "contents": [
+                        [
+                            "parts": [
+                                ["text": "Hi"]
+                            ]
+                        ]
+                    ],
+                    "generationConfig": [
+                        "maxOutputTokens": 10
+                    ]
+                ]
+            }
         } else {
             body = [
                 "model": testModel,
@@ -1554,6 +1687,8 @@ public final class GeminiService: ObservableObject {
                     self.lastLatencyMs = latency
                     completion(true, "✅ Kết nối thành công! [\(self.selectedProvider.displayName)] Đang dùng: \(testModel) (Độ trễ: \(latency)ms)")
                 }
+            } else if useInteractions && (http.statusCode == 404 || http.statusCode == 400) {
+                self.testModelCandidate(candidates: candidates, index: index, key: key, forceGenerateContent: true, completion: completion)
             } else if http.statusCode == 429,
                       testModel.hasSuffix(":free") || testModel == "openrouter/free" {
                 DispatchQueue.main.async {
@@ -1862,9 +1997,8 @@ public final class GeminiService: ObservableObject {
             return
         }
 
-        // Keep enough detail for scene-wide analysis without uploading a full-resolution photo.
-        // Token-saving fast compression: 768px maxDimension @ 0.58 quality saves >70% image tokens & 2.5x faster
-        guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 768, compressionQuality: 0.58) else {
+        // Send a clean, high-clarity 1024px frame without visual grid lines drawn over the pixels so Gemini's native multimodal vision & 2D spatial grounding see the image unobstructed.
+        guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1024, compressionQuality: 0.72, overlayVisualGrid: false) else {
             completion(.failure(.imageConversionFailed))
             return
         }
@@ -2042,6 +2176,7 @@ public final class GeminiService: ObservableObject {
         }
 
         let currentModelID = chain[index]
+        let useInteractions = selectedProvider == .googleGemini && Self.usesInteractionsEndpoint(for: currentModelID)
         guard let url = buildURL(for: currentModelID, key: key) else {
             let fallback = Self.generateLocalVideoGuidance(
                 sceneContext: sceneContext,
@@ -2089,25 +2224,50 @@ public final class GeminiService: ObservableObject {
                 "required": ["shot_style", "movement_direction", "suggested_pacing_seconds", "suggested_zoom", "director_tip", "waypoints"]
             ]
 
-            requestBody = [
-                "model": currentModelID,
-                "input": [
-                    [
-                        "type": "image",
-                        "mime_type": "image/jpeg",
-                        "data": base64Image
+            if useInteractions {
+                requestBody = [
+                    "model": currentModelID,
+                    "input": [
+                        [
+                            "type": "image",
+                            "mime_type": "image/jpeg",
+                            "data": base64Image
+                        ],
+                        [
+                            "type": "text",
+                            "text": prompt
+                        ]
                     ],
-                    [
+                    "response_format": [
                         "type": "text",
-                        "text": prompt
+                        "mime_type": "application/json",
+                        "schema": videoGuidanceSchema
                     ]
-                ],
-                "response_format": [
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": videoGuidanceSchema
                 ]
-            ]
+            } else {
+                requestBody = [
+                    "contents": [
+                        [
+                            "parts": [
+                                [
+                                    "inlineData": [
+                                        "mimeType": "image/jpeg",
+                                        "data": base64Image
+                                    ]
+                                ],
+                                [
+                                    "text": prompt
+                                ]
+                            ]
+                        ]
+                    ],
+                    "generationConfig": [
+                        "responseMimeType": "application/json",
+                        "responseSchema": videoGuidanceSchema,
+                        "temperature": 0.35
+                    ]
+                ]
+            }
         } else {
             requestBody = [
                 "model": currentModelID,
@@ -2343,9 +2503,11 @@ public final class GeminiService: ObservableObject {
         prompt: String,
         key: String,
         startTime: Double,
+        forceGenerateContent: Bool = false,
         completion: @escaping (Result<GeminiFramingResponse, GeminiError>) -> Void
     ) {
-        guard let url = buildURL(for: modelID, key: key) else {
+        let useInteractions = selectedProvider == .googleGemini && Self.usesInteractionsEndpoint(for: modelID) && !forceGenerateContent
+        guard let url = buildURL(for: modelID, key: key, forceGenerateContent: forceGenerateContent) else {
             completion(.failure(.invalidURL))
             return
         }
@@ -2365,18 +2527,27 @@ public final class GeminiService: ObservableObject {
                 "properties": [
                     "target_x": ["type": "number", "description": "Normalized target X focal point [0.0..1.0]"],
                     "target_y": ["type": "number", "description": "Normalized target Y focal point [0.0..1.0]"],
-                    "suggested_zoom": ["type": "number", "description": "Optimal zoom multiplier 1.0 to 5.0"],
-                    "composition_rule": ["type": "string", "description": "Rule of thirds, golden ratio, center, leading lines, etc."],
-                    "scene_type": ["type": "string", "description": "portrait, landscape, street, macro, architecture, night"],
+                    "suggested_zoom": ["type": "number", "description": "Optimal continuous zoom multiplier 0.5 to 6.0 decided 100% by Gemini"],
+                    "composition_rule": ["type": "string", "description": "golden_ratio, rule_of_thirds, center_symmetry, golden_spiral"],
+                    "scene_type": ["type": "string", "description": "portrait, landscape, street, macro, architecture, night, pet, food"],
                     "explanation": ["type": "string", "description": "Vietnamese photography composition explanation"],
                     "recommended_preset": ["type": "string", "description": "Leica Standard, Leica Vivid, Leica Monochrome, Kodak Portra 400, Fuji Classic Chrome, etc."],
                     "preset_explanation": ["type": "string", "description": "Why this film preset matches the scene"],
                     "recommended_ev_bias": ["type": "number", "description": "Recommended EV exposure bias [-2.0..2.0]"],
                     "lighting_scene": ["type": "string"],
+                    "subject_box_2d": [
+                        "type": "array",
+                        "items": ["type": "number"],
+                        "description": "2D bounding box of the primary hero subject in [ymin, xmin, ymax, xmax] normalized to 0..1000"
+                    ],
                     "subject_x": ["type": "number"],
                     "subject_y": ["type": "number"],
+                    "subject_w": ["type": "number"],
+                    "subject_h": ["type": "number"],
                     "composition_anchor_x": ["type": "number"],
                     "composition_anchor_y": ["type": "number"],
+                    "composition_x": ["type": "number"],
+                    "composition_y": ["type": "number"],
                     "shot_scale": ["type": "string"],
                     "color_recipe": [
                         "type": "object",
@@ -2401,25 +2572,51 @@ public final class GeminiService: ObservableObject {
                 ]
             ]
 
-            requestBody = [
-                "model": modelID,
-                "input": [
-                    [
-                        "type": "image",
-                        "mime_type": "image/jpeg",
-                        "data": base64Image
+            if useInteractions {
+                requestBody = [
+                    "model": modelID,
+                    "input": [
+                        [
+                            "type": "image",
+                            "mime_type": "image/jpeg",
+                            "data": base64Image
+                        ],
+                        [
+                            "type": "text",
+                            "text": prompt
+                        ]
                     ],
-                    [
+                    "response_format": [
                         "type": "text",
-                        "text": prompt
+                        "mime_type": "application/json",
+                        "schema": structuredSchema
                     ]
-                ],
-                "response_format": [
-                    "type": "text",
-                    "mime_type": "application/json",
-                    "schema": structuredSchema
                 ]
-            ]
+            } else {
+                requestBody = [
+                    "contents": [
+                        [
+                            "parts": [
+                                [
+                                    "inlineData": [
+                                        "mimeType": "image/jpeg",
+                                        "data": base64Image
+                                    ]
+                                ],
+                                [
+                                    "text": prompt
+                                ]
+                            ]
+                        ]
+                    ],
+                    "generationConfig": [
+                        "responseMimeType": "application/json",
+                        "responseSchema": structuredSchema,
+                        "temperature": 0.20,
+                        "topP": 0.90
+                    ]
+                ]
+            }
         } else {
             requestBody = [
                 "model": modelID,
@@ -2475,6 +2672,20 @@ public final class GeminiService: ObservableObject {
             }
 
             if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                // If an Interactions API call returned 404 or 400 on this endpoint/key, automatically retry the same model on standard generateContent before rotating!
+                if useInteractions && (httpResponse.statusCode == 404 || httpResponse.statusCode == 400) {
+                    self.executeModelCall(
+                        modelID: modelID,
+                        base64Image: base64Image,
+                        prompt: prompt,
+                        key: key,
+                        startTime: startTime,
+                        forceGenerateContent: true,
+                        completion: completion
+                    )
+                    return
+                }
+
                 let errorDetails = Self.extractErrorMessage(from: data) ?? "HTTP \(httpResponse.statusCode)"
 
                 if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
@@ -2599,10 +2810,24 @@ public final class GeminiService: ObservableObject {
 
     // MARK: - Helpers
 
-    private func buildURL(for modelID: String, key: String) -> URL? {
-        let endpoint = activeEndpointURLString
-        if selectedProvider == .googleGemini && !key.isEmpty {
-            if var components = URLComponents(string: endpoint) {
+    public static func usesInteractionsEndpoint(for modelID: String) -> Bool {
+        let lower = modelID.lowercased()
+        return lower.hasPrefix("gemini-3.8") || lower.hasPrefix("gemini-4")
+    }
+
+    private func buildURL(for modelID: String, key: String, forceGenerateContent: Bool = false) -> URL? {
+        var endpoint = activeEndpointURLString
+        if selectedProvider == .googleGemini {
+            let cleanModel = modelID.replacingOccurrences(of: "models/", with: "")
+            let custom = customEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if custom.isEmpty {
+                if Self.usesInteractionsEndpoint(for: cleanModel) && !forceGenerateContent {
+                    endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions"
+                } else {
+                    endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(cleanModel):generateContent"
+                }
+            }
+            if !key.isEmpty, var components = URLComponents(string: endpoint) {
                 var queryItems = components.queryItems ?? []
                 if !queryItems.contains(where: { $0.name == "key" }) {
                     queryItems.append(URLQueryItem(name: "key", value: key))
@@ -2638,7 +2863,16 @@ public final class GeminiService: ObservableObject {
         var y = parseCGFloat(json["subject_y"], defaultVal: parseCGFloat(json["target_y"], defaultVal: .nan))
 
         if !x.isFinite || !y.isFinite {
-            if let rect = json["sub_area_rect_norm"] as? [Any], rect.count == 4 {
+            if let box = json["subject_box_2d"] as? [Any], box.count == 4 {
+                let rawVals = box.map { parseCGFloat($0, defaultVal: 0) }
+                let scale: CGFloat = (rawVals.max() ?? 0) > 1.5 ? 1000.0 : 1.0
+                let ymin = rawVals[0] / scale
+                let xmin = rawVals[1] / scale
+                let ymax = rawVals[2] / scale
+                let xmax = rawVals[3] / scale
+                x = (xmin + xmax) * 0.5
+                y = ymin + (ymax - ymin) * 0.38
+            } else if let rect = json["sub_area_rect_norm"] as? [Any], rect.count == 4 {
                 let rx = parseCGFloat(rect[0], defaultVal: 0)
                 let ry = parseCGFloat(rect[1], defaultVal: 0)
                 let rw = parseCGFloat(rect[2], defaultVal: 0)
@@ -2658,11 +2892,16 @@ public final class GeminiService: ObservableObject {
             }
         }
 
+        if x > 1.5 || y > 1.5 {
+            x /= 1000.0
+            y /= 1000.0
+        }
+
         var zoom = parseCGFloat(json["suggested_zoom"], defaultVal: parseCGFloat(json["recommended_zoom"], defaultVal: parseCGFloat(json["zoom"], defaultVal: .nan)))
         if !zoom.isFinite, let focalMm = json["ExifFocalLength"] {
             let mm = parseCGFloat(focalMm, defaultVal: .nan)
             if mm.isFinite && mm > 0 {
-                zoom = mm / 26.0
+                zoom = mm / 24.0
             }
         }
         if !zoom.isFinite && x.isFinite && y.isFinite && (0...1).contains(x) && (0...1).contains(y) {
@@ -2670,7 +2909,7 @@ public final class GeminiService: ObservableObject {
         }
 
         return x.isFinite && y.isFinite && zoom.isFinite &&
-            (0...1).contains(x) && (0...1).contains(y) && (0.5...5.0).contains(zoom)
+            (0...1).contains(x) && (0...1).contains(y) && (0.5...8.0).contains(zoom)
     }
 
     // MARK: - Self-Healing JSON Cleaner & Fallback Extractor
@@ -2760,12 +2999,12 @@ public final class GeminiService: ObservableObject {
             return String(text[r])
         }
 
-        guard let rawX = extractNumber(forKey: "target_x"),
-              let rawY = extractNumber(forKey: "target_y"),
+        guard let rawX = extractNumber(forKey: "target_x") ?? extractNumber(forKey: "subject_x"),
+              let rawY = extractNumber(forKey: "target_y") ?? extractNumber(forKey: "subject_y"),
               let rawZoom = extractNumber(forKey: "suggested_zoom"),
               rawX.isFinite, rawY.isFinite, rawZoom.isFinite,
               (0...1).contains(rawX), (0...1).contains(rawY),
-              (1...5).contains(rawZoom) else { return nil }
+              (0.5...8.0).contains(rawZoom) else { return nil }
         let targetX = CGFloat(rawX)
         let targetY = CGFloat(rawY)
         let zoom = CGFloat(rawZoom)
@@ -2807,8 +3046,8 @@ public final class GeminiService: ObservableObject {
         let rawSubjY = extractNumber(forKey: "subject_y")
         let subjX = CGFloat(rawSubjX ?? Double(targetX))
         let subjY = CGFloat(rawSubjY ?? Double(targetY))
-        let compX = CGFloat(extractNumber(forKey: "composition_x") ?? 0.5)
-        let compY = CGFloat(extractNumber(forKey: "composition_y") ?? 0.5)
+        let compX = CGFloat(extractNumber(forKey: "composition_x") ?? extractNumber(forKey: "composition_anchor_x") ?? 0.5)
+        let compY = CGFloat(extractNumber(forKey: "composition_y") ?? extractNumber(forKey: "composition_anchor_y") ?? 0.5)
         let shotScale = extractString(forKey: "shot_scale") ?? "medium_portrait"
         var estSize: CGSize? = nil
         if let sw = extractNumber(forKey: "subject_w"), let sh = extractNumber(forKey: "subject_h"), sw > 0, sh > 0 {
@@ -2816,9 +3055,9 @@ public final class GeminiService: ObservableObject {
         }
 
         return GeminiFramingResponse(
-            targetX: max(0.05, min(0.95, targetX)),
-            targetY: max(0.05, min(0.95, targetY)),
-            suggestedZoom: max(1.0, min(3.0, zoom)),
+            targetX: max(0.02, min(0.98, targetX)),
+            targetY: max(0.02, min(0.98, targetY)),
+            suggestedZoom: max(0.5, min(8.0, zoom)),
             sceneType: sceneType,
             colorRecipe: colorRecipe,
             compositionRule: parseCompositionRule(compRuleStr),
@@ -2838,7 +3077,7 @@ public final class GeminiService: ObservableObject {
         )
     }
 
-    // MARK: - Prompt with Visual Grid (Set-of-Mark Grounding) & Dual-Anchor Directives
+    // MARK: - Prompt with Native 2D Spatial Grounding & 100% Autonomous DoP Decision
 
     private func buildPrompt(
         sceneContext: DetectedSceneType? = nil,
@@ -2846,46 +3085,28 @@ public final class GeminiService: ObservableObject {
         subjectRect: CGRect? = nil,
         faceRects: [CGRect] = []
     ) -> String {
-        var hints = ""
-        if let scene = sceneContext { hints += "scene_type=\(scene.rawValue); " }
-        var safeMaxZoomHint: CGFloat = 3.0
-        if let r = subjectRect, r.width > 0.02, r.height > 0.02 {
-            let maxZByW = min(3.0, max(1.0, 0.72 / r.width))
-            let maxZByH = min(3.0, max(1.0, 0.76 / r.height))
-            safeMaxZoomHint = min(maxZByW, maxZByH)
-            hints += String(format: "subject_box=[cx:%.3f,cy:%.3f,w:%.3f,h:%.3f,safe_max_zoom:%.2f]; ", r.midX, r.midY, r.width, r.height, safeMaxZoomHint)
-        }
-        if let firstFace = faceRects.first {
-            hints += String(format: "primary_face=[cx:%.3f,cy:%.3f,w:%.3f,h:%.3f,count:%d]; ", firstFace.midX, firstFace.midY, firstFace.width, firstFace.height, faceRects.count)
-        }
+        var telemetry = ""
         if let m = colorMetrics {
-            hints += String(format: "luma=%.2f,warmth=%.2f,contrast=%.2f; ", m.averageLuma, m.warmthCast, m.contrastScore)
+            telemetry = String(format: "luma=%.2f, warmth=%.2f, contrast=%.2f", m.averageLuma, m.warmthCast, m.contrastScore)
         }
 
         return """
-        You are an Academy-Award-Winning Master Director of Photography (DoP) and 3D Optical Composition Architect.
-        Sensor telemetry & hardware cues: \(hints)
+        You are an autonomous Academy-Award-Winning Director of Photography (DoP) and Spatial Vision Architect.
+        Analyze the raw camera frame directly using your own visual understanding. You have 100% authority to decide:
+        1. Which hero subject or focal element in the image is the true story center (do NOT be constrained by any external detector).
+        2. Its exact 2D bounding box `subject_box_2d: [ymin, xmin, ymax, xmax]` in standard 0..1000 coordinates, plus normalized `subject_x, subject_y` in [0.0..1.0] (top-left is 0.0,0.0; bottom-right is 1.0,1.0).
+        3. Where the subject should be placed in the final composed frame (`composition_x, composition_y` in [0.0..1.0], e.g. Golden Ratio 0.382/0.618, Rule of Thirds 0.333/0.667, or Dynamic Symmetry) considering 3D gaze direction, lead room, horizon lines, and vanishing points.
+        4. The exact optical aim point (`target_x, target_y` in [0.0..1.0]) and the exact continuous zoom multiplier (`suggested_zoom`, any float from `0.5` ultra-wide to `6.0` telephoto, e.g. `0.7`, `1.0`, `1.35`, `1.8`, `2.4`, `3.2`, `4.5`).
+           - Choose `suggested_zoom` freely based on visual storytelling: zoom in decisively (`1.4x` to `4.5x`) when the hero subject is small, distant, or surrounded by background distractions; use `1.0x` or `< 1.0x` when grand architecture, environmental context, or landscape scale is essential.
+           - Compute `target_x = subject_x - (composition_x - 0.5) / suggested_zoom` and `target_y = subject_y - (composition_y - 0.5) / suggested_zoom` so that when the camera centers on `(target_x, target_y)` at `suggested_zoom`, the hero subject lands at `(composition_x, composition_y)`.
+        5. Scene exposure & color grading (`color_recipe` + `recommended_preset`). Sensor light telemetry: \(telemetry).
 
-        1. CALIBRATED 10x10 SET-OF-MARK COORDINATE GRID:
-        - The viewfinder frame is overlaid with a 10x10 optical grid (Columns A..J from x=0.0..1.0; Rows 1..10 from y=0.0..1.0; fine sub-ticks every 0.05).
-        - Top-left is (0.0, 0.0), bottom-right is (1.0, 1.0). Read the exact grid cell of the hero subject before outputting numbers.
-
-        2. 5-LAYER 3D PHOTOGRAPHIC INTELLIGENCE RULES:
-        - LAYER A (3D Foreground/Midground Subject Separation): Lock strictly onto the TRUE primary foreground/midground hero subject (dominant eye/bridge of nose for people/pets, hero product/cup/vehicle/landmark for objects). NEVER lock onto tiny background pedestrians, edge clutter, or empty floor/sky! NEVER output (0.5, 0.5) unless the subject is truly centered.
-        - LAYER B (3D Gaze, Body Pose & Lead Room): Determine the subject's 3D gaze/facing direction (left/right/up/down). Place `composition_x, composition_y` on the OPPOSITE Golden Ratio (0.382 or 0.618) or Rule-of-Thirds (0.333 or 0.667) power point so at least 55%-65% of the frame opens up as breathing space (Lead Room) in front of the subject's eyes or motion vector!
-        - LAYER C (Leading Lines, Vanishing Point & Horizon Harmony): If architectural corridors, roads, bridges, or table edges converge to a Vanishing Point, align `composition_x, composition_y` with the vanishing point or golden symmetry axis (x=0.50, y=0.44). Keep horizons level on y=0.382 or y=0.618.
-        - LAYER D (Decisive Optical Focal Length & Zoom Selection):
-          * Evaluate subject occupancy (`subject_w`, `subject_h`). If the hero subject is small or distant (`subject_h < 0.34` or surrounded by distracting clutter), DECISIVELY ZOOM IN using prime optical steps: `1.2` (28mm), `1.5` (35mm Street/Environmental), `2.0` (50mm Standard Portrait), `2.5` (65mm), or `3.0` (77mm Telephoto Compression).
-          * Only keep `suggested_zoom = 1.0` (24mm Wide) for grand landscapes, full-architecture symmetry, or when the subject already fills `> 45%` of the frame.
-          * Never exceed `safe_max_zoom=\(String(format: "%.2f", safeMaxZoomHint))` so the head, hands, or key edges are never clipped.
-        - LAYER E (Highlight-Safe Exposure & Color Science):
-          * Protect outdoor skies from blowing out: if bright sky/harsh daylight is visible (`harsh_sun`), set negative `ev_bias` (-0.3 to -0.7) and `highlight_roll` (0.82..0.90). If backlit portrait (`backlit`), lift shadows (`shadow_lift`: 0.08..0.16, `ev_bias`: +0.2..+0.5).
-
-        Return ONLY ONE valid raw JSON object (no markdown fences, Vietnamese explanations):
-        {"subject_x":0.44,"subject_y":0.36,"subject_w":0.28,"subject_h":0.42,"composition_x":0.38,"composition_y":0.38,"target_x":0.44,"target_y":0.36,"shot_scale":"medium_portrait","suggested_zoom":1.5,"ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_film_preset":"Classic Chrome","preset_explanation":"Tôn da tự nhiên, giữ chi tiết vùng sáng bầu trời và chiều sâu 3D","explanation":"Khóa nét mắt chủ thể tiền cảnh, mở khoảng thở Lead Room theo hướng nhìn về điểm mạnh Tỷ lệ vàng 0.38 kèm tiêu cự 1.5x (35mm)","color_recipe":{"temperature_k":5500,"warmth_shift":0.0,"tint_shift":0.0,"exposure_bias":0.0,"saturation":1.04,"contrast":1.03,"shadow_lift":0.04,"highlight_roll":0.90,"grain":0.0,"vignette":0.02,"color_grade":"softwarm","diagnosis":"Cân bằng ánh sáng ma trận, bảo vệ vùng sáng bầu trời"}}
+        Return ONLY ONE valid JSON object (Vietnamese explanations):
+        {"subject_box_2d":[210,340,680,620],"subject_x":0.48,"subject_y":0.36,"subject_w":0.28,"subject_h":0.47,"composition_x":0.382,"composition_y":0.382,"target_x":0.534,"target_y":0.348,"shot_scale":"medium_portrait","suggested_zoom":1.8,"recommended_ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_preset":"Classic Chrome","preset_explanation":"Tôn da tự nhiên, giữ chi tiết vùng sáng và chiều sâu điện ảnh","explanation":"Khóa nét mắt chủ thể chính, mở khoảng thở Lead Room theo hướng nhìn về điểm mạnh Tỷ lệ vàng 0.382 với mức zoom 1.8x","color_recipe":{"exposure_ev":0.0,"contrast":1.04,"highlights":0.92,"shadows":0.04,"warmth":5500,"tint":0.0,"saturation":1.04,"vibrance":1.03,"sharpness":1.02,"vignette":0.02}}
         """
     }
-    // MARK: - Mathematical Constraint Solver for Dual-Anchor Framing & Optimal Zoom
+
+    // MARK: - 100% Gemini-Driven Framing & Zoom Geometry (No Local Clamping or Overriding)
     public static func computeOptimalFramingGeometry(
         rawSubjectPoint: CGPoint,
         rawCompositionPoint: CGPoint?,
@@ -2897,104 +3118,53 @@ public final class GeminiService: ObservableObject {
         sensorFaceRects: [CGRect],
         aiEstimatedSize: CGSize?
     ) -> (subjectAnchor: CGPoint, compositionAnchor: CGPoint, cameraAimPoint: CGPoint, optimalZoom: CGFloat) {
-        // 1. Xác định Subject Anchor chính xác (ưu tiên mắt/khuôn mặt cảm biến nếu AI trả về gần tâm (0.5, 0.5) vô lý)
-        var sPoint = rawSubjectPoint
-        let isNearCenter = abs(sPoint.x - 0.5) < 0.04 && abs(sPoint.y - 0.5) < 0.04
-        if let primaryFace = sensorFaceRects.first {
-            let eyeAnchor = CGPoint(x: primaryFace.midX, y: primaryFace.minY + primaryFace.height * 0.38)
-            if isNearCenter {
-                sPoint = eyeAnchor
-            } else if hypot(sPoint.x - eyeAnchor.x, sPoint.y - eyeAnchor.y) <= max(primaryFace.width, primaryFace.height) * 1.1 {
-                // Nội suy làm mượt giữa tọa độ AI Cloud và landmark khuôn mặt phần cứng
-                sPoint = CGPoint(x: sPoint.x * 0.65 + eyeAnchor.x * 0.35,
-                                 y: sPoint.y * 0.65 + eyeAnchor.y * 0.35)
-            }
-        } else if let sRect = sensorSubjectRect, isNearCenter {
-            let upperCenter = CGPoint(x: sRect.midX, y: sRect.minY + sRect.height * 0.38)
-            if abs(upperCenter.x - 0.5) > 0.05 || abs(upperCenter.y - 0.5) > 0.05 {
-                sPoint = upperCenter
-            }
-        }
-        sPoint.x = max(0.05, min(0.95, sPoint.x))
-        sPoint.y = max(0.05, min(0.95, sPoint.y))
+        // 1. Giữ nguyên 100% tọa độ chủ thể do Gemini quyết định
+        let sPoint = CGPoint(
+            x: max(0.02, min(0.98, rawSubjectPoint.x)),
+            y: max(0.02, min(0.98, rawSubjectPoint.y))
+        )
 
-        // 2. Xác định Điểm Mạnh Bố Cục Đích G = (g_x, g_y)
-        var gPoint: CGPoint
+        // 2. Giữ nguyên 100% điểm bố cục đích G do Gemini quyết định
+        let gPoint: CGPoint
         if let comp = rawCompositionPoint,
            comp.x.isFinite, comp.y.isFinite,
-           (0.15...0.85).contains(comp.x), (0.15...0.85).contains(comp.y) {
+           (0.05...0.95).contains(comp.x), (0.05...0.95).contains(comp.y) {
             gPoint = comp
         } else {
-            switch compositionRule {
-            case .centerSymmetry:
-                gPoint = CGPoint(x: 0.50, y: 0.44)
-            case .ruleOfThirds:
-                let gx: CGFloat = sPoint.x <= 0.5 ? 0.333 : 0.667
-                let gy: CGFloat = sPoint.y <= 0.55 ? 0.36 : 0.60
-                gPoint = CGPoint(x: gx, y: gy)
-            default: // .goldenRatio, .goldenSpiral
-                let gx: CGFloat = sPoint.x <= 0.5 ? 0.382 : 0.618
-                let gy: CGFloat = sPoint.y <= 0.55 ? 0.382 : 0.58
-                gPoint = CGPoint(x: gx, y: gy)
-            }
+            gPoint = sPoint
         }
 
-        // 3. Giải bài toán Tối Ưu Mức Zoom Z* không cắt chủ thể (Constrained Optimal Zoom Solver)
-        let effWidth = sensorSubjectRect?.width ?? aiEstimatedSize?.width ?? 0.24
-        let effHeight = sensorSubjectRect?.height ?? aiEstimatedSize?.height ?? 0.34
-        let clampedW = max(0.05, min(0.92, effWidth))
-        let clampedH = max(0.05, min(0.92, effHeight))
-
-        let targetHeightOccupancy: CGFloat
-        switch shotScale.lowercased() {
-        case "close_up": targetHeightOccupancy = 0.56
-        case "medium_portrait": targetHeightOccupancy = 0.44
-        case "full_body": targetHeightOccupancy = 0.64
-        case "environmental": targetHeightOccupancy = 0.30
-        case "wide", "wide_landscape": targetHeightOccupancy = 0.22
-        default: targetHeightOccupancy = 0.42
-        }
-
-        let occupancyZoom: CGFloat = (shotScale.lowercased() == "wide" || shotScale.lowercased() == "wide_landscape")
-            ? 1.0
-            : max(1.0, min(3.0, targetHeightOccupancy / clampedH))
-
-        // Giới hạn chống cắt mép ảnh khi đặt chủ thể ở điểm mạnh gPoint với lề an toàn 0.055
-        let pad: CGFloat = 0.055
-        let availHalfW = max(0.12, min(gPoint.x, 1.0 - gPoint.x) - pad)
-        let availHalfH = max(0.14, min(gPoint.y, 1.0 - gPoint.y) - pad)
-        let maxSafeZoomW = (2.0 * availHalfW) / clampedW
-        let maxSafeZoomH = (2.0 * availHalfH) / clampedH
-        let maxSafeZoom = max(1.0, min(3.2, min(maxSafeZoomW, maxSafeZoomH)))
-
-        // Hợp nhất Zoom từ AI Cloud (70%) và Zoom Hình học Cỡ cảnh (30%), kẹp trong ngưỡng an toàn
-        let blendedZoom: CGFloat
-        if sensorSubjectRect != nil || aiEstimatedSize != nil {
-            blendedZoom = rawZoom * 0.70 + occupancyZoom * 0.30
+        // 3. Giữ nguyên 100% mức zoom liên tục (continuous zoom) do Gemini quyết định, không ép về mức cố định và không bị giới hạn bởi khung cảm biến cục bộ
+        let finalZoom: CGFloat
+        if rawZoom.isFinite && rawZoom >= 0.5 {
+            finalZoom = max(0.5, min(8.0, (rawZoom * 100.0).rounded() / 100.0))
         } else {
-            blendedZoom = rawZoom
+            finalZoom = 1.0
         }
-        var finalZoom = max(1.0, min(maxSafeZoom, min(3.0, blendedZoom)))
 
-        // Lực hút về tiêu cự quang học chuẩn (1.0x=24mm, 1.2x=28mm, 1.5x=35mm, 2.0x=48mm, 2.5x=60mm, 3.0x=77mm)
-        let opticalSteps: [CGFloat] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0]
-        if let nearestStep = opticalSteps.min(by: { abs($0 - finalZoom) < abs($1 - finalZoom) }),
-           abs(nearestStep - finalZoom) <= 0.14,
-           nearestStep <= maxSafeZoom + 0.05 {
-            finalZoom = nearestStep
+        // 4. Ưu tiên tuyệt đối tọa độ đích ngắm quang học (target_x, target_y) do Gemini tính toán;
+        // nếu Gemini trả target trùng đúng subject mà có đặt composition_x/y lệch tâm thì chiếu theo công thức quang học C_aim = S - (G - 0.5) / Z
+        let aimPoint: CGPoint
+        let targetDiffersFromSubject = hypot(rawTargetPoint.x - sPoint.x, rawTargetPoint.y - sPoint.y) > 0.008
+        if rawTargetPoint.x.isFinite && rawTargetPoint.y.isFinite && targetDiffersFromSubject {
+            aimPoint = CGPoint(
+                x: max(0.02, min(0.98, rawTargetPoint.x)),
+                y: max(0.02, min(0.98, rawTargetPoint.y))
+            )
+        } else if hypot(gPoint.x - 0.5, gPoint.y - 0.5) > 0.01 && hypot(gPoint.x - sPoint.x, gPoint.y - sPoint.y) > 0.01 {
+            let effZ = max(0.5, finalZoom)
+            let rawAimX = sPoint.x - (gPoint.x - 0.5) / effZ
+            let rawAimY = sPoint.y - (gPoint.y - 0.5) / effZ
+            aimPoint = CGPoint(
+                x: max(0.02, min(0.98, rawAimX)),
+                y: max(0.02, min(0.98, rawAimY))
+            )
         } else {
-            finalZoom = (finalZoom * 10.0).rounded() / 10.0
+            aimPoint = CGPoint(
+                x: max(0.02, min(0.98, rawTargetPoint.x.isFinite ? rawTargetPoint.x : sPoint.x)),
+                y: max(0.02, min(0.98, rawTargetPoint.y.isFinite ? rawTargetPoint.y : sPoint.y))
+            )
         }
-
-        // 4. Tính Đích Ngắm Quang Học C_aim để khi tâm camera (0.5, 0.5) trùng vào C_aim ở mức zoom finalZoom,
-        // chủ thể tại sPoint sẽ rơi chính xác vào điểm mạnh bố cục gPoint!
-        // Công thức: C_aim = S - (G - 0.5) / Z*
-        let rawAimX = sPoint.x - (gPoint.x - 0.5) / finalZoom
-        let rawAimY = sPoint.y - (gPoint.y - 0.5) / finalZoom
-        let aimPoint = CGPoint(
-            x: max(0.06, min(0.94, rawAimX)),
-            y: max(0.06, min(0.94, rawAimY))
-        )
 
         return (
             subjectAnchor: sPoint,
@@ -3018,13 +3188,8 @@ public final class GeminiService: ObservableObject {
             rawTargetPoint: subjectPoint,
             rawZoom: suggestedZoom,
             shotScale: shotScale,
-            compositionRule: .ruleOfThirds,
-            sensorSubjectRect: CGRect(
-                x: max(0.0, subjectPoint.x - subjectSize.width / 2.0),
-                y: max(0.0, subjectPoint.y - subjectSize.height / 2.0),
-                width: min(1.0, subjectSize.width),
-                height: min(1.0, subjectSize.height)
-            ),
+            compositionRule: .goldenRatio,
+            sensorSubjectRect: nil,
             sensorFaceRects: [],
             aiEstimatedSize: subjectSize
         )
@@ -3034,11 +3199,38 @@ public final class GeminiService: ObservableObject {
     // MARK: - Response Parsing
 
     public static func parseGeminiResponse(_ json: [String: Any], modelUsed: String, latencyMs: Int) -> GeminiFramingResponse {
+        var boxCenterX: CGFloat = .nan
+        var boxCenterY: CGFloat = .nan
+        var boxWidth: CGFloat = .nan
+        var boxHeight: CGFloat = .nan
+
+        if let box = json["subject_box_2d"] as? [Any], box.count == 4 {
+            let rawVals = box.map { parseCGFloat($0, defaultVal: .nan) }
+            if rawVals.allSatisfy({ $0.isFinite }) {
+                let scale: CGFloat = (rawVals.max() ?? 0) > 1.5 ? 1000.0 : 1.0
+                let ymin = max(0.0, min(1.0, rawVals[0] / scale))
+                let xmin = max(0.0, min(1.0, rawVals[1] / scale))
+                let ymax = max(ymin, min(1.0, rawVals[2] / scale))
+                let xmax = max(xmin, min(1.0, rawVals[3] / scale))
+                boxWidth = max(0.04, xmax - xmin)
+                boxHeight = max(0.04, ymax - ymin)
+                boxCenterX = xmin + boxWidth * 0.5
+                boxCenterY = ymin + boxHeight * 0.38
+            }
+        }
+
         var rawTargetX = parseCGFloat(json["target_x"], defaultVal: .nan)
         var rawTargetY = parseCGFloat(json["target_y"], defaultVal: .nan)
+        if rawTargetX.isFinite && rawTargetY.isFinite && (rawTargetX > 1.5 || rawTargetY > 1.5) {
+            rawTargetX /= 1000.0
+            rawTargetY /= 1000.0
+        }
 
         if !rawTargetX.isFinite || !rawTargetY.isFinite {
-            if let rect = json["sub_area_rect_norm"] as? [Any], rect.count == 4 {
+            if boxCenterX.isFinite && boxCenterY.isFinite {
+                rawTargetX = boxCenterX
+                rawTargetY = boxCenterY
+            } else if let rect = json["sub_area_rect_norm"] as? [Any], rect.count == 4 {
                 let rx = parseCGFloat(rect[0], defaultVal: 0)
                 let ry = parseCGFloat(rect[1], defaultVal: 0)
                 let rw = parseCGFloat(rect[2], defaultVal: 0)
@@ -3060,24 +3252,36 @@ public final class GeminiService: ObservableObject {
                 rawTargetY = parseCGFloat(json["subject_y"], defaultVal: 0.5)
             }
         }
-        let subjectX = parseCGFloat(json["subject_x"], defaultVal: rawTargetX)
-        let subjectY = parseCGFloat(json["subject_y"], defaultVal: rawTargetY)
-        let compX = parseCGFloat(json["composition_x"], defaultVal: 0.5)
-        let compY = parseCGFloat(json["composition_y"], defaultVal: 0.5)
+        var subjectX = parseCGFloat(json["subject_x"], defaultVal: boxCenterX.isFinite ? boxCenterX : rawTargetX)
+        var subjectY = parseCGFloat(json["subject_y"], defaultVal: boxCenterY.isFinite ? boxCenterY : rawTargetY)
+        if subjectX > 1.5 || subjectY > 1.5 {
+            subjectX /= 1000.0
+            subjectY /= 1000.0
+        }
+        var compX = parseCGFloat(json["composition_x"], defaultVal: parseCGFloat(json["composition_anchor_x"], defaultVal: subjectX))
+        var compY = parseCGFloat(json["composition_y"], defaultVal: parseCGFloat(json["composition_anchor_y"], defaultVal: subjectY))
+        if compX > 1.5 || compY > 1.5 {
+            compX /= 1000.0
+            compY /= 1000.0
+        }
         let shotScale = (json["shot_scale"] as? String) ?? "medium_portrait"
 
         var estSize: CGSize? = nil
-        let sw = parseCGFloat(json["subject_w"], defaultVal: .nan)
-        let sh = parseCGFloat(json["subject_h"], defaultVal: .nan)
+        var sw = parseCGFloat(json["subject_w"], defaultVal: boxWidth)
+        var sh = parseCGFloat(json["subject_h"], defaultVal: boxHeight)
+        if sw > 1.5 || sh > 1.5 {
+            sw /= 1000.0
+            sh /= 1000.0
+        }
         if sw.isFinite, sh.isFinite, sw > 0, sh > 0 {
-            estSize = CGSize(width: sw, height: sh)
+            estSize = CGSize(width: max(0.04, min(0.98, sw)), height: max(0.04, min(0.98, sh)))
         }
 
         var suggestedZoom = parseCGFloat(json["suggested_zoom"], defaultVal: parseCGFloat(json["recommended_zoom"], defaultVal: parseCGFloat(json["zoom"], defaultVal: 1.0)))
         if let focalMm = json["ExifFocalLength"] {
             let mm = parseCGFloat(focalMm, defaultVal: .nan)
             if mm.isFinite && mm > 0 {
-                suggestedZoom = mm / 26.0
+                suggestedZoom = mm / 24.0
             }
         }
         let explanation = (json["explanation"] as? String) ?? "AI phân tích bố cục hoàn tất"
@@ -3090,16 +3294,16 @@ public final class GeminiService: ObservableObject {
             let gradeStr = (colorJson["color_grade"] as? String) ?? "softwarm"
             let grade = parseColorGrade(gradeStr)
             colorRecipe = GeminiColorRecipe(
-                temperatureK: parseFloat(colorJson["temperature_k"], defaultVal: 5500),
+                temperatureK: parseFloat(colorJson["temperature_k"] ?? colorJson["warmth"], defaultVal: 5500),
                 saturation: clampF(colorJson["saturation"], 0.70, 1.40, 1.04),
                 contrast: clampF(colorJson["contrast"], 0.85, 1.30, 1.04),
-                shadowLift: clampF(colorJson["shadow_lift"], 0.00, 0.25, 0.02),
-                highlightRoll: clampF(colorJson["highlight_roll"], 0.70, 1.00, 0.95),
+                shadowLift: clampF(colorJson["shadow_lift"] ?? colorJson["shadows"], 0.00, 0.25, 0.02),
+                highlightRoll: clampF(colorJson["highlight_roll"] ?? colorJson["highlights"], 0.70, 1.00, 0.95),
                 grain: clampF(colorJson["grain"], 0.00, 0.05, 0.00),
                 vignette: clampF(colorJson["vignette"], 0.00, 0.35, 0.00),
                 warmthShift: clampF(colorJson["warmth_shift"], -0.40, 0.40, 0.0),
-                tintShift: clampF(colorJson["tint_shift"], -0.30, 0.30, 0.0),
-                exposureBias: clampF(colorJson["exposure_bias"], -1.2, 1.2, 0.0),
+                tintShift: clampF(colorJson["tint_shift"] ?? colorJson["tint"], -0.30, 0.30, 0.0),
+                exposureBias: clampF(colorJson["exposure_bias"] ?? colorJson["exposure_ev"], -1.5, 1.5, 0.0),
                 colorGrade: grade,
                 diagnosis: (colorJson["diagnosis"] as? String) ?? "Đã cân chỉnh màu sắc thích ứng bối cảnh"
             )
@@ -3109,13 +3313,13 @@ public final class GeminiService: ObservableObject {
         let recPreset = FilmPreset.match(from: presetRaw) ?? sceneType.recommendedFilter
         let presetExpl = (json["preset_explanation"] as? String) ?? "\(recPreset.displayName) — Tối ưu cho bối cảnh \(sceneType.localizedName)"
 
-        let evRaw = (json["ev_bias"] as? NSNumber)?.floatValue ?? (json["exposure_bias"] as? NSNumber)?.floatValue
+        let evRaw = (json["recommended_ev_bias"] as? NSNumber)?.floatValue ?? (json["ev_bias"] as? NSNumber)?.floatValue ?? (json["exposure_bias"] as? NSNumber)?.floatValue
         let lightingScene = (json["lighting_scene"] as? String) ?? (json["lighting"] as? String)
 
         return GeminiFramingResponse(
-            targetX: max(0.05, min(0.95, rawTargetX)),
-            targetY: max(0.05, min(0.95, rawTargetY)),
-            suggestedZoom: max(1.0, min(5.0, suggestedZoom)),
+            targetX: max(0.02, min(0.98, rawTargetX)),
+            targetY: max(0.02, min(0.98, rawTargetY)),
+            suggestedZoom: max(0.5, min(8.0, suggestedZoom)),
             sceneType: sceneType,
             colorRecipe: colorRecipe,
             compositionRule: compositionRule,
@@ -3126,10 +3330,10 @@ public final class GeminiService: ObservableObject {
             presetExplanation: presetExpl,
             recommendedEVBias: evRaw ?? colorRecipe.exposureBias,
             lightingScene: lightingScene,
-            subjectX: subjectX,
-            subjectY: subjectY,
-            compositionAnchorX: compX,
-            compositionAnchorY: compY,
+            subjectX: max(0.02, min(0.98, subjectX)),
+            subjectY: max(0.02, min(0.98, subjectY)),
+            compositionAnchorX: max(0.02, min(0.98, compX)),
+            compositionAnchorY: max(0.02, min(0.98, compY)),
             estimatedSubjectSize: estSize,
             shotScale: shotScale
         )

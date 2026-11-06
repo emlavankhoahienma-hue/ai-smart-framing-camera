@@ -184,6 +184,11 @@ public struct SettingsSheetView: View {
                 selectedModel = viewModel.geminiService.selectedModel
                 customModelInput = viewModel.geminiService.customModelName
                 customEndpointInput = viewModel.geminiService.customEndpointURL
+                if viewModel.geminiService.hasAPIKey && viewModel.geminiService.discoveredModels.isEmpty {
+                    Task {
+                        await viewModel.geminiService.fetchAvailableModels()
+                    }
+                }
             }
             .sheet(isPresented: $viewModel.isShowingGyroCalibration) {
                 GyroCalibrationSheetView(viewModel: viewModel)
@@ -1371,6 +1376,11 @@ struct AIFramingSettingsSection: View {
                                         selectedModel = def
                                         viewModel.geminiService.selectedModel = def
                                     }
+                                    if viewModel.geminiService.hasAPIKey {
+                                        Task {
+                                            await viewModel.geminiService.fetchAvailableModels()
+                                        }
+                                    }
                                 }
                             }) {
                                 HStack(spacing: 4) {
@@ -1497,7 +1507,12 @@ struct AIFramingSettingsSection: View {
                         Button("Lưu") {
                             let trimmed = geminiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
                             viewModel.geminiService.apiKey = trimmed
-                            toastMessage = trimmed.isEmpty ? "Đã xóa API Key" : "Đã lưu an toàn vào Apple Keychain"
+                            toastMessage = trimmed.isEmpty ? "Đã xóa API Key" : "Đã lưu Key & đang tải danh sách Model từ API..."
+                            if !trimmed.isEmpty {
+                                Task {
+                                    await viewModel.geminiService.fetchAvailableModels()
+                                }
+                            }
                         }
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(.white)
@@ -1522,31 +1537,97 @@ struct AIFramingSettingsSection: View {
 
                 // 3. Chọn Model AI & Model Tùy chỉnh
                 VStack(alignment: .leading, spacing: 6) {
-                    HStack {
+                    HStack(spacing: 8) {
                         Label("Model AI", systemImage: "cpu.fill")
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundColor(.white)
                         Spacer()
+                        Button(action: {
+                            Task {
+                                await viewModel.geminiService.fetchAvailableModels()
+                                await MainActor.run {
+                                    let count = viewModel.geminiService.discoveredModels.count
+                                    if count > 0 {
+                                        toastMessage = "Đã tải \(count) model từ \(viewModel.geminiService.selectedProvider.shortBadge) API"
+                                    } else if let err = viewModel.geminiService.lastError {
+                                        toastMessage = err
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                if viewModel.geminiService.isFetchingModels {
+                                    ProgressView()
+                                        .scaleEffect(0.65)
+                                        .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.system(size: 10, weight: .bold))
+                                }
+                                Text(viewModel.geminiService.isFetchingModels
+                                     ? "Đang tải..."
+                                     : (viewModel.geminiService.discoveredModels.isEmpty ? "Tải Model từ API" : "Làm mới (\(viewModel.geminiService.discoveredModels.count))"))
+                                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                            }
+                            .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.16))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
                         Text(viewModel.geminiService.activeModelID)
                             .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                             .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .lineLimit(1)
                     }
 
-                    // Danh sách Model tiêu chuẩn của Provider
+                    // Danh sách Model tiêu chuẩn của Provider + Model tải trực tiếp từ API
                     let models = AIVisionModel.models(for: viewModel.geminiService.selectedProvider)
-                    if !models.isEmpty {
+                    let apiModels = viewModel.geminiService.discoveredModels
+                    if !models.isEmpty || !apiModels.isEmpty {
                         Menu {
-                            ForEach(models) { model in
-                                Button(action: {
-                                    selectedModel = model
-                                    viewModel.geminiService.selectedModel = model
-                                    viewModel.geminiService.customModelName = ""
-                                    customModelInput = ""
-                                }) {
-                                    HStack {
-                                        Text(model.shortName)
-                                        if selectedModel == model && viewModel.geminiService.customModelName.isEmpty {
-                                            Image(systemName: "checkmark")
+                            Section("Model đề xuất chuẩn 2026") {
+                                ForEach(models) { model in
+                                    Button(action: {
+                                        selectedModel = model
+                                        viewModel.geminiService.selectedModel = model
+                                        viewModel.geminiService.customModelName = ""
+                                        customModelInput = ""
+                                    }) {
+                                        HStack {
+                                            Text(model.displayName)
+                                            if selectedModel == model && viewModel.geminiService.customModelName.isEmpty {
+                                                Image(systemName: "checkmark")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !apiModels.isEmpty {
+                                Section("Model tải từ API (\(apiModels.count))") {
+                                    ForEach(apiModels.prefix(60), id: \.self) { modelID in
+                                        Button(action: {
+                                            customModelInput = modelID
+                                            viewModel.geminiService.customModelName = modelID
+                                            if let matched = AIVisionModel.allCases.first(where: { $0.rawValue == modelID }) {
+                                                selectedModel = matched
+                                                viewModel.geminiService.selectedModel = matched
+                                            }
+                                            toastMessage = "Đã chọn model API: \(modelID)"
+                                        }) {
+                                            HStack {
+                                                if let desc = viewModel.geminiService.discoveredModelDescriptions[modelID], !desc.isEmpty {
+                                                    Text("\(modelID) — \(desc)")
+                                                } else {
+                                                    Text(modelID)
+                                                }
+                                                if viewModel.geminiService.activeModelID == modelID {
+                                                    Image(systemName: "checkmark")
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1554,12 +1635,14 @@ struct AIFramingSettingsSection: View {
                         } label: {
                             HStack(spacing: 10) {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(viewModel.geminiService.customModelName.isEmpty ? selectedModel.shortName : "Tùy chỉnh: \(viewModel.geminiService.customModelName)")
+                                    Text(viewModel.geminiService.customModelName.isEmpty ? selectedModel.shortName : "API Model: \(viewModel.geminiService.customModelName)")
                                         .font(.system(size: 13, weight: .semibold))
                                         .foregroundColor(.white)
                                         .lineLimit(1)
 
-                                    Text(selectedModel.subtitle)
+                                    Text(viewModel.geminiService.customModelName.isEmpty
+                                         ? selectedModel.subtitle
+                                         : (viewModel.geminiService.discoveredModelDescriptions[viewModel.geminiService.customModelName] ?? "Model chọn trực tiếp từ danh sách API"))
                                         .font(.system(size: 11))
                                         .foregroundColor(Color.white.opacity(0.55))
                                         .lineLimit(1)
@@ -1610,7 +1693,7 @@ struct AIFramingSettingsSection: View {
 
                     if !viewModel.geminiService.discoveredModels.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
-                            TextField("Lọc nhanh trong \(viewModel.geminiService.discoveredModels.count) model...", text: $modelSearchFilter)
+                            TextField("Tìm nhanh trong \(viewModel.geminiService.discoveredModels.count) model từ API...", text: $modelSearchFilter)
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundColor(.white)
                                 .textInputAutocapitalization(.never)
@@ -1620,24 +1703,44 @@ struct AIFramingSettingsSection: View {
 
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 6) {
-                                    let filtered = viewModel.geminiService.discoveredModels.filter {
-                                        modelSearchFilter.isEmpty || $0.localizedCaseInsensitiveContains(modelSearchFilter)
-                                    }.prefix(40)
+                                    let filtered = viewModel.geminiService.discoveredModels.filter { modelID in
+                                        if modelSearchFilter.isEmpty { return true }
+                                        let desc = viewModel.geminiService.discoveredModelDescriptions[modelID] ?? ""
+                                        return modelID.localizedCaseInsensitiveContains(modelSearchFilter)
+                                            || desc.localizedCaseInsensitiveContains(modelSearchFilter)
+                                    }.prefix(80)
                                     ForEach(Array(filtered), id: \.self) { modelID in
                                         let isPicked = viewModel.geminiService.activeModelID == modelID
                                         Button(action: {
                                             customModelInput = modelID
                                             viewModel.geminiService.customModelName = modelID
+                                            if let matched = AIVisionModel.allCases.first(where: { $0.rawValue == modelID }) {
+                                                selectedModel = matched
+                                                viewModel.geminiService.selectedModel = matched
+                                            }
                                             toastMessage = "Đã chọn model: \(modelID)"
                                         }) {
-                                            Text(modelID)
-                                                .font(.system(size: 10.5, weight: isPicked ? .bold : .medium, design: .monospaced))
-                                                .foregroundColor(isPicked ? .white : Color.white.opacity(0.75))
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 5)
-                                                .background(
-                                                    Capsule().fill(isPicked ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.35) : Color.white.opacity(0.10))
-                                                )
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text(modelID)
+                                                    .font(.system(size: 10.5, weight: isPicked ? .bold : .medium, design: .monospaced))
+                                                    .foregroundColor(isPicked ? .white : Color.white.opacity(0.85))
+                                                if let desc = viewModel.geminiService.discoveredModelDescriptions[modelID], !desc.isEmpty {
+                                                    Text(desc)
+                                                        .font(.system(size: 9, weight: .regular))
+                                                        .foregroundColor(isPicked ? Color.white.opacity(0.85) : Color.white.opacity(0.50))
+                                                        .lineLimit(1)
+                                                }
+                                            }
+                                            .padding(.horizontal, 9)
+                                            .padding(.vertical, 5)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                    .fill(isPicked ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.35) : Color.white.opacity(0.09))
+                                            )
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                    .stroke(isPicked ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1)
+                                            )
                                         }
                                         .buttonStyle(.plain)
                                     }
