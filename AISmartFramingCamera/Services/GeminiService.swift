@@ -173,7 +173,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
     public var defaultModelID: String {
         switch self {
         case .pollinations: return "openai/gpt-5.4-nano"
-        case .googleGemini: return "gemini-3.8-flash"
+        case .googleGemini: return "gemini-3.5-flash"
         case .groq:         return "qwen/qwen3.8-27b"
         case .openRouter:   return "google/gemini-2.0-flash-exp:free"
         case .openAI:       return "gpt-4o-mini"
@@ -209,6 +209,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     case pollinationsGPT54Mini = "pollinations/gpt-5.4-mini"
     case pollinationsOpenAI = "pollinations/gpt-4o-mini"
     // Official 2026 Google Gemini Models (Interactions API, Live API & generateContent API)
+    case gemini35FlashDirect = "gemini-3.5-flash"
     case gemini38FlashDirect = "gemini-3.8-flash"
     case gemini35FlashLiteDirect = "gemini-3.5-flash-lite"
     case gemini31FlashLiteDirect = "gemini-3.1-flash-lite"
@@ -289,6 +290,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinationsGPT54Nano:  return "GPT-5.4 Nano (Pollinations • Miễn phí 100%)"
         case .pollinationsGPT54Mini:  return "GPT-5.4 Mini (Pollinations • Miễn phí 100%)"
         case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations AI • Cần Pollen)"
+        case .gemini35FlashDirect:    return "Gemini 3.5 Flash (Google AI • Chuẩn 2026 • Cực nhanh)"
         case .gemini38FlashDirect:     return "Gemini 3.8 Flash (Google AI • Chuẩn 2026 • Cực nhanh)"
         case .gemini35FlashLiteDirect: return "Gemini 3.5 Flash Lite (Google AI • Siêu tốc độ trễ thấp)"
         case .gemini31FlashLiteDirect: return "Gemini 3.1 Flash Lite (Google AI • Tiết kiệm token)"
@@ -368,6 +370,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinationsGPT54Nano:  return "GPT-5.4 Nano"
         case .pollinationsGPT54Mini:  return "GPT-5.4 Mini"
         case .pollinationsOpenAI:     return "GPT-4o Mini"
+        case .gemini35FlashDirect:    return "Gemini 3.5 Flash"
         case .gemini38FlashDirect:    return "Gemini 3.8 Flash"
         case .gemini35FlashLiteDirect:return "Gemini 3.5 Lite"
         case .gemini31FlashLiteDirect:return "Gemini 3.1 Lite"
@@ -448,7 +451,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             return "Phân tích ảnh trực tiếp từ Pollinations AI — Miễn phí 100%, không tốn Pollen"
         case .pollinationsOpenAI:
             return "Phân tích ảnh qua GPT-4o Mini trên Pollinations AI (yêu cầu tài khoản có Pollen)"
-        case .gemini38FlashDirect, .gemini35FlashLiteDirect, .gemini31FlashLiteDirect, .gemini4ArgonDirect, .gemini38Live, .gemini25FlashDirect, .gemini25FlashLiteDirect, .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
+        case .gemini35FlashDirect, .gemini38FlashDirect, .gemini35FlashLiteDirect, .gemini31FlashLiteDirect, .gemini4ArgonDirect, .gemini38Live, .gemini25FlashDirect, .gemini25FlashLiteDirect, .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
             return "Trực tiếp Google AI Studio — Chuyên gia Bố cục & Ánh sáng, miễn phí 1.500 lượt/ngày"
         case .groqLlama4Scout, .groqLlama4Maverick, .groqQwen38:
             return "Groq LPU chip chuyên dụng — Nhận diện thị giác siêu tốc < 0.6 giây hoàn toàn miễn phí"
@@ -500,31 +503,16 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .googleGemini:
             return [
                 .autoStrongest,
-                .gemini4ArgonDirect,
-                .gemini38FlashDirect,
+                .gemini35FlashDirect,
                 .gemini35FlashLiteDirect,
                 .gemini31FlashLiteDirect,
+                .gemini38FlashDirect,
+                .gemini4ArgonDirect,
                 .gemini38Live,
                 .gemini38LiveExtendedThinking,
-                .gemini31ProDirect,
-                .gemini3FlashPreviewDirect,
-                .gemini25ProDirect,
-                .gemini25FlashDirect,
-                .gemini25FlashLiteStableDirect,
-                .gemini25FlashLiteDirect,
-                .gemini20FlashDirect,
-                .gemini20FlashLiteDirect,
-                .gemini15ProDirect,
-                .gemini15FlashDirect,
                 .gemma4_31BDirect,
                 .gemma4_26BDirect,
-                .gemma3_27BDirect,
-                .gemini20ProExp,
-                .gemini15Flash8B,
-                .gemini37Flash,
-                .gemini36Flash,
-                .gemini35Flash,
-                .gemini25FlashFree
+                .gemma3_27BDirect
             ]
         case .groq:
             return [
@@ -581,7 +569,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public static func defaultModel(for provider: AICloudProvider) -> AIVisionModel {
         switch provider {
         case .pollinations: return .pollinationsGPT54Nano
-        case .googleGemini: return .gemini38FlashDirect
+        case .googleGemini: return .gemini35FlashDirect
         case .groq: return .groqQwen38
         case .openAI: return .gpt4oMini
         case .anthropic: return .claude37Sonnet
@@ -595,7 +583,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public static var autoFallbackChain: [String] {
         [
             "google/gemini-3.7-flash",
-            "google/gemini-2.5-flash"
+            "google/gemini-3.5-flash"
         ]
     }
 
@@ -664,24 +652,18 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
                 cleanModel = String(cleanModel.dropFirst("google/".count))
             }
             cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
-            if cleanModel == "gemini-flash-1.5" {
-                cleanModel = "gemini-1.5-flash"
-            } else if cleanModel == "gemini-pro-1.5" {
-                cleanModel = "gemini-1.5-pro"
-            }
-            if cleanModel == "auto" || cleanModel.isEmpty {
-                cleanModel = "gemini-2.5-flash"
+            // Tự động chuyển các model đã bị Google khai tử (1.5, 2.0, 2.5) hoặc "auto" sang Gemini 3.5 Flash
+            if cleanModel.contains("1.5") || cleanModel.contains("2.0") || cleanModel.contains("2.5") || cleanModel == "auto" || cleanModel.isEmpty {
+                cleanModel = "gemini-3.5-flash"
             }
 
-            // Tôn trọng 100% model người dùng đã chọn hoặc tải từ Gemini API, kèm chuỗi dự phòng đa thế hệ
+            // Chuỗi dự phòng các model Google AI Studio chuẩn 2026 đang hoạt động ổn định
             var chain = [cleanModel]
             let fallbacks = [
-                "gemini-2.5-flash",
-                "gemini-3.8-flash",
-                "gemini-2.5-flash-lite",
+                "gemini-3.5-flash",
                 "gemini-3.5-flash-lite",
-                "gemini-2.0-flash",
-                "gemini-1.5-flash"
+                "gemini-3.1-flash-lite",
+                "gemini-3.8-flash"
             ]
             for fb in fallbacks {
                 if !chain.contains(fb) {
@@ -1462,19 +1444,16 @@ public final class GeminiService: ObservableObject {
             }
             if selectedProvider == .googleGemini {
                 let builtInGemini = [
+                    "gemini-3.5-flash",
+                    "gemini-3.5-flash-lite",
+                    "gemini-3.1-flash-lite",
                     "gemini-3.8-flash",
-                    "gemini-3.8-pro",
-                    "gemini-3.8-flash-lite",
                     "gemini-4-argon",
-                    "gemini-3.1-pro-preview",
-                    "gemini-3-flash-preview",
-                    "gemini-3.1-flash-lite-preview",
-                    "gemini-2.5-pro",
-                    "gemini-2.5-flash",
-                    "gemini-2.5-flash-lite",
-                    "gemini-2.0-flash",
+                    "gemini-3.8-live",
+                    "gemini-3.8-live-extended-thinking",
                     "gemma-4-31b-it",
-                    "gemma-4-26b-a4b-it"
+                    "gemma-4-26b-a4b-it",
+                    "gemma-3-27b-it"
                 ]
                 for b in builtInGemini where !ids.contains(b) {
                     ids.append(b)
@@ -1486,13 +1465,13 @@ public final class GeminiService: ObservableObject {
             let prioritized = ids.sorted { a, b in
                 let al = a.lowercased(), bl = b.lowercased()
                 func rank(_ s: String) -> Int {
-                    if s.hasPrefix("gemini-3.8") || s.hasPrefix("gemini-4") { return 0 }
-                    if s.hasPrefix("gemini-3") { return 1 }
-                    if s.hasPrefix("gemini-2.5") { return 2 }
-                    if s.hasPrefix("gemini-2.0") { return 3 }
-                    if s.contains("gemini") || s.contains("gemma-4") { return 4 }
-                    if s.contains("vl") || s.contains("gpt-5") || s.contains("gpt-4") || s.contains("claude") || s.contains("vision") || s.contains("llama-4") || s.contains("grok") { return 5 }
-                    return 6
+                    if s.hasPrefix("gemini-3.5") { return 0 }
+                    if s.hasPrefix("gemini-3.1") { return 1 }
+                    if s.hasPrefix("gemini-3.8") || s.hasPrefix("gemini-4") { return 2 }
+                    if s.contains("gemma-4") || s.contains("gemma-3") { return 3 }
+                    if s.hasPrefix("gemini-2.5") || s.hasPrefix("gemini-2.0") || s.hasPrefix("gemini-1.5") { return 10 }
+                    if s.contains("vl") || s.contains("gpt-5") || s.contains("gpt-4") || s.contains("claude") || s.contains("vision") || s.contains("llama-4") || s.contains("grok") { return 4 }
+                    return 5
                 }
                 let ra = rank(al), rb = rank(bl)
                 if ra != rb { return ra < rb }
@@ -2532,7 +2511,7 @@ public final class GeminiService: ObservableObject {
                     "composition_rule": ["type": "string", "description": "golden_ratio, rule_of_thirds, center_symmetry, golden_spiral"],
                     "scene_type": ["type": "string", "description": "portrait, landscape, street, macro, architecture, night, pet, food"],
                     "explanation": ["type": "string", "description": "Vietnamese photography composition explanation"],
-                    "recommended_preset": ["type": "string", "description": "Leica Standard, Leica Vivid, Leica Monochrome, Kodak Portra 400, Fuji Classic Chrome, etc."],
+                    "recommended_preset": ["type": "string", "description": "Exact preset name selected from available presets: Classic Chrome, Fuji Pro 400H, Fuji Velvia 50, Kodak Portra 400, Kodak Gold 200, CCD1, D-CCD, G-CCD, 1998, LOMO LC-A, GR3 Positive, GR Negative, PowerShot G, Canon IXUS, MiniDV 4:3, POLA 600, Original Clean, etc."],
                     "preset_explanation": ["type": "string", "description": "Why this film preset matches the scene"],
                     "recommended_ev_bias": ["type": "number", "description": "Recommended EV exposure bias [-2.0..2.0]"],
                     "lighting_scene": ["type": "string"],
@@ -3091,6 +3070,21 @@ public final class GeminiService: ObservableObject {
             telemetry = String(format: "luma=%.2f, warmth=%.2f, contrast=%.2f", m.averageLuma, m.warmthCast, m.contrastScore)
         }
 
+        let presetsCatalog = """
+        AVAILABLE FILM & COLOR PRESETS:
+        - Fuji: Classic Chrome (muted documentary tone), Fuji Pro 400H (soft cool pastel greens, flattering skintones), Fuji Velvia 50 (ultra vivid landscape saturation), Classic Neg (nostalgic high-contrast street film), Astia 100F (soft portrait gradation), Neopan Acros (rich monochrome, fine grain)
+        - Kodak: Kodak Portra 400 (warm golden skintones, smooth highlight rolloff), Kodak Gold 200 (warm summer amber warmth), Kodak ColorPlus (everyday warm vintage tint), Kodak Ektar 100 (ultra-fine grain, saturated blues & reds), Kodak Tri-X 400 (iconic gritty black & white journalism), Kodak 500D (cinematic movie film Vision3 latitude)
+        - CCD Digicam: CCD1 (early 2000s Sony Cyber-shot punchy colors), D-CCD (warm flash party digicam), BlueSK (cool Nordic CCD daylight highlights), MangaCam (Japanese anime bright pastel tones), G-CCD (golden hour sunset glow), InstaLite (party flash direct high contrast)
+        - Vintage Cam: 1998 (disposable 90s snapshot), LOMO LC-A (strong vignette, quirky saturation), 120LG (medium format dreamy blur), FXN 35 (sharp 70s rangefinder), Toy K (plastic toy camera charm), CineStill 800T (night street cine film with tungsten halation), 1998 Street (gritty 90s street snap), Cyanotype (historic Prussian blue monochrome)
+        - Vintage Phone: Nokia Symbian (early Carl Zeiss N-series smartphone), Motorola V3 (Y2K Razr metallic warmth), iPhone 3GS (2009 soft analog-like phone aesthetic), Blackberry Q10 (cool corporate business tone), Keitai 88 (Japanese flip phone porcelain skin), Sony K800 (Cyber-shot phone natural crisp tone)
+        - Ricoh: GR3 Positive (high contrast, vivid sky blues), GR Negative (street film negative, deep shadows), GR High-B&W (dramatic high-contrast black & white street), GR F (legendary 28mm street snapshot tone), GR Street (urban candid snapshot), Caplio R (raw early digicam), Theta Doc (documentary everyday warmth)
+        - Canon: PowerShot G (prosumer CCD warm rosy skin), Canon IXUS (trendy Y2K pocket digicam), Canon EOS 5D (legendary 5D classic queen skin rendition), Canon SureShot (joyful family point-and-shoot 35mm), Canon F-1 (accurate professional mechanical SLR colors), Canon Pro1 (L-lens red-ring rich CCD tone)
+        - DV Video: MiniDV 4:3 (2000s consumer camcorder video), Hi8 (90s analog home video tape warmth), DCR-DVD (early family DVD camcorder), DVX100 (24p indie cinema broadcast tone), VHS-C (warm 80s tape texture), HDV 1080i (early HD television broadcast)
+        - Instant: POLA 600 (classic Polaroid 600 contrast), SX-70 (warm artistic buttery highlights), MINI 7 (Instax Mini bright glowing skin), WIDE 300 (natural wide format instant film), SQ10 (sharp hybrid instant contrast), Spectra (rich widescreen Polaroid depth)
+        - Clean & Modern: Original Clean (neutral true-to-life maximum dynamic range), Studio Natural (soft balanced natural studio contrast), Teal & Orange (Hollywood cinematic complementary contrast), Sunset Glow (warm golden hour magic), Tokyo Clean (airy minimalist Japanese highlight glow), HK Cinema 90s (moody emerald green shadows and warm tungsten practicals), Leica Monochrom (pure silver grayscale gradation), Noir High Contrast (dramatic artistic shadows)
+        - Trending: FUJI X (modern Fuji X-series film simulation), NOKIA (retro green matrix LCD aesthetic), 8800 (warm premium titanium metal contrast), Kambo (Japanese toy camera clarity), CPM35 (Canon 35mm everyday travel film), Bleach Bypass (desaturated silver retention high contrast film process)
+        """
+
         return """
         You are an autonomous Academy-Award-Winning Director of Photography (DoP) and Spatial Vision Architect.
         Analyze the raw camera frame directly using your own visual understanding. You have 100% authority to decide:
@@ -3100,7 +3094,10 @@ public final class GeminiService: ObservableObject {
         4. The exact optical aim point (`target_x, target_y` in [0.0..1.0]) and the exact continuous zoom multiplier (`suggested_zoom`, any float from `0.5` ultra-wide to `6.0` telephoto, e.g. `0.7`, `1.0`, `1.35`, `1.8`, `2.4`, `3.2`, `4.5`).
            - Choose `suggested_zoom` freely based on visual storytelling: zoom in decisively (`1.4x` to `4.5x`) when the hero subject is small, distant, or surrounded by background distractions; use `1.0x` or `< 1.0x` when grand architecture, environmental context, or landscape scale is essential.
            - Compute `target_x = subject_x - (composition_x - 0.5) / suggested_zoom` and `target_y = subject_y - (composition_y - 0.5) / suggested_zoom` so that when the camera centers on `(target_x, target_y)` at `suggested_zoom`, the hero subject lands at `(composition_x, composition_y)`.
-        5. Scene exposure & color grading (`color_recipe` + `recommended_preset`). Sensor light telemetry: \(telemetry).
+        5. Scene exposure & color grading: Analyze lighting, mood, color temperature, and scene context to select the best `recommended_preset` and fine-tuned `color_recipe`.
+        Sensor light telemetry: \(telemetry).
+
+        \(presetsCatalog)
 
         Return ONLY ONE valid JSON object (Vietnamese explanations):
         {"subject_box_2d":[210,340,680,620],"subject_x":0.48,"subject_y":0.36,"subject_w":0.28,"subject_h":0.47,"composition_x":0.382,"composition_y":0.382,"target_x":0.534,"target_y":0.348,"shot_scale":"medium_portrait","suggested_zoom":1.8,"recommended_ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_preset":"Classic Chrome","preset_explanation":"Tôn da tự nhiên, giữ chi tiết vùng sáng và chiều sâu điện ảnh","explanation":"Khóa nét mắt chủ thể chính, mở khoảng thở Lead Room theo hướng nhìn về điểm mạnh Tỷ lệ vàng 0.382 với mức zoom 1.8x","color_recipe":{"exposure_ev":0.0,"contrast":1.04,"highlights":0.92,"shadows":0.04,"warmth":5500,"tint":0.0,"saturation":1.04,"vibrance":1.03,"sharpness":1.02,"vignette":0.02}}

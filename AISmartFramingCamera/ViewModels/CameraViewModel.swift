@@ -2322,13 +2322,11 @@ public final class CameraViewModel: ObservableObject {
         let scan = response.toScanResp(isPlan2: false)
         self.latestScanResp = scan
 
-        if isAIFullColorEnabled {
-            currentAIColorParams = response.colorRecipe.asAIColorParameters
-        }
-
-        if selectedFilmPreset.isAIFullAuto {
-            selectedFilmPreset = response.recommendedPreset
-        }
+        // AI Cloud: Tự động phân tích bối cảnh và áp dụng Tone màu/Film Preset tối ưu cùng công thức màu AI
+        self.selectedFilmPreset = response.recommendedPreset
+        self.currentAIColorParams = response.colorRecipe.asAIColorParameters
+        self.isAIFullColorEnabled = true
+        self.isFilmSimulationActive = true
 
         // Ưu tiên tuyệt đối bounding box 2D do Gemini trả về (subject_box_2d / estimatedSubjectSize)
         let effectiveRect: CGRect
@@ -2406,21 +2404,10 @@ public final class CameraViewModel: ObservableObject {
             pinnedGuideRay: guideWorldRay
         )
 
-        // Thực thi ngay mức zoom liên tục (continuous zoom) mà Gemini quyết định
-        if isAutoZoomEnabled && abs(optimalZoom - displayZoom) > 0.05 && !isWindowedZoomActive {
-            self.hasExecutedAutoZoomForSession = true
-            self.selectedZoomPreset = resolveClosestZoomPreset(for: optimalZoom)
-            if optimalZoom < 0.99 && !cameraService.hasUltraWideLens {
-                self.isSimulatedUltraWideActive = true
-                self.simulatedUltraWideFactor = optimalZoom
-                self.displayZoom = optimalZoom
-            } else {
-                self.isSimulatedUltraWideActive = false
-                self.simulatedUltraWideFactor = 1.0
-                cameraService.applyDisplayZoomWithPhysicalLensSwitching(optimalZoom, smooth: true, rate: 3.5, allowPhysicalSwitch: true)
-            }
-            presentZoomChangeHUD(displayZoom: optimalZoom)
-        }
+        // KHÔNG zoom trước khi người dùng căn chỉnh.
+        // Mục tiêu zoom gợi ý đã lưu trong pendingSuggestedZoom và hasExecutedAutoZoomForSession = false.
+        // Khi người dùng di chuyển máy đưa tâm khớp với mục tiêu (Hard Lock), lockHardTarget() sẽ tự động
+        // kích hoạt triggerZoomRevealAnimation tạo hiệu ứng zoom mở sổ quang học đẹp mắt và chính xác như Local AI.
         applyPlannedEVBiasIfNeeded()
 
         cloudTrackingSource = nil
