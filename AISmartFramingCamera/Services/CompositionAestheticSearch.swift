@@ -276,7 +276,7 @@ enum CompositionPreferencePolicy {
     }
 
     /// Below this share of its intent's target area the unchanged frame leaves the subject too small.
-    static let undersizedSubjectRatio = 0.88
+    static let undersizedSubjectRatio = 0.80
     /// How far a necessary tighter crop may trail the wide frame before the models' objection stands.
     static let necessaryCropTolerance = 0.12
     static let shotScaleBonusWeight = 0.18
@@ -298,6 +298,6 @@ enum CompositionPreferencePolicy {
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {
-        score.isFinite && original.isFinite && score >= original - 0.015
+        score.isFinite && original.isFinite && score >= original + 0.002
     }
 }
