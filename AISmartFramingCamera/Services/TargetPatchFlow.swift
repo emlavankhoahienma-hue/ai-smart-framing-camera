@@ -12,26 +12,49 @@ final class TargetPatchFlow {
         let pixels: [UInt8]
 
         init?(buffer: CVPixelBuffer) {
-            guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA,
+            let format = CVPixelBufferGetPixelFormatType(buffer)
+            let isBGRA = (format == kCVPixelFormatType_32BGRA)
+            let isBiPlanarYCbCr = (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                                   format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+            guard (isBGRA || isBiPlanarYCbCr),
                   CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
             defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-            guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+
             let inputWidth = CVPixelBufferGetWidth(buffer)
             let inputHeight = CVPixelBufferGetHeight(buffer)
-            let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
             guard inputWidth > 0, inputHeight > 0 else { return nil }
             let factor = max(1.0, Double(inputWidth) / 320.0)
             let outputWidth = max(1, Int(Double(inputWidth) / factor))
             let outputHeight = max(1, Int(Double(inputHeight) / factor))
-            let bytes = base.assumingMemoryBound(to: UInt8.self)
             var gray = [UInt8](repeating: 0, count: outputWidth * outputHeight)
-            for y in 0..<outputHeight {
-                let sourceY = min(inputHeight - 1, Int((Double(y) + 0.5) * Double(inputHeight) / Double(outputHeight)))
-                for x in 0..<outputWidth {
-                    let sourceX = min(inputWidth - 1, Int((Double(x) + 0.5) * Double(inputWidth) / Double(outputWidth)))
-                    let offset = sourceY * rowBytes + sourceX * 4
-                    gray[y * outputWidth + x] = UInt8((29 * Int(bytes[offset]) +
-                        150 * Int(bytes[offset + 1]) + 77 * Int(bytes[offset + 2])) >> 8)
+
+            if isBGRA {
+                guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+                let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+                let bytes = base.assumingMemoryBound(to: UInt8.self)
+                for y in 0..<outputHeight {
+                    let sourceY = min(inputHeight - 1, Int((Double(y) + 0.5) * Double(inputHeight) / Double(outputHeight)))
+                    let rowOffset = sourceY * rowBytes
+                    let outRowOffset = y * outputWidth
+                    for x in 0..<outputWidth {
+                        let sourceX = min(inputWidth - 1, Int((Double(x) + 0.5) * Double(inputWidth) / Double(outputWidth)))
+                        let offset = rowOffset + sourceX * 4
+                        gray[outRowOffset + x] = UInt8((29 * Int(bytes[offset]) +
+                            150 * Int(bytes[offset + 1]) + 77 * Int(bytes[offset + 2])) >> 8)
+                    }
+                }
+            } else {
+                guard let lumaBase = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) else { return nil }
+                let lumaRowBytes = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+                let lumaBytes = lumaBase.assumingMemoryBound(to: UInt8.self)
+                for y in 0..<outputHeight {
+                    let sourceY = min(inputHeight - 1, Int((Double(y) + 0.5) * Double(inputHeight) / Double(outputHeight)))
+                    let rowOffset = sourceY * lumaRowBytes
+                    let outRowOffset = y * outputWidth
+                    for x in 0..<outputWidth {
+                        let sourceX = min(inputWidth - 1, Int((Double(x) + 0.5) * Double(inputWidth) / Double(outputWidth)))
+                        gray[outRowOffset + x] = lumaBytes[rowOffset + sourceX]
+                    }
                 }
             }
             width = outputWidth; height = outputHeight; pixels = gray
@@ -50,6 +73,7 @@ final class TargetPatchFlow {
             let bottom = min(height - 5, Int(Double(1 - box.minY - 0.12 * box.height) * Double(height)))
             guard right > left + 8, bottom > top + 8 else { return [] }
             var points: [CGPoint] = []
+            points.reserveCapacity(16)
             for gy in 0..<4 {
                 for gx in 0..<4 {
                     let x0 = left + (right - left) * gx / 4
@@ -155,6 +179,7 @@ final class TargetPatchFlow {
             coarseY = 0.0
         }
         var pairs: [(old: CGPoint, new: CGPoint)] = []
+        pairs.reserveCapacity(points.count)
         for old in points {
             let targetX = Double(old.x) + coarseX
             let targetY = Double(old.y) + coarseY
@@ -245,26 +270,58 @@ final class TargetPatchFlow {
         let minY = max(4, min(target.height - 5, cy - radius))
         let maxY = min(target.height - 5, max(4, cy + radius))
         guard minX <= maxX, minY <= maxY else { return nil }
+
+        // Precompute template patch statistics once per feature point
+        var sumA = 0.0, sumAA = 0.0
+        for offsetY in -3...3 {
+            for offsetX in -3...3 {
+                let a = template.value(sx + offsetX, sy + offsetY)
+                sumA += a
+                sumAA += a * a
+            }
+        }
+        let varA = 49.0 * sumAA - sumA * sumA
+        guard varA > 10.0 else { return nil }
+
         var scores: [(Double, Int, Int)] = []
+        if requireUnique {
+            scores.reserveCapacity((maxX - minX + 1) * (maxY - minY + 1))
+        }
+        var bestScore = -Double.infinity
+        var bestX = minX
+        var bestY = minY
+
         for y in minY...maxY {
             for x in minX...maxX where target.containsPatch(x, y) {
-                var sumA = 0.0, sumB = 0.0, sumAA = 0.0, sumBB = 0.0, sumAB = 0.0
+                var sumB = 0.0, sumBB = 0.0, sumAB = 0.0
                 for offsetY in -3...3 {
                     for offsetX in -3...3 {
                         let a = template.value(sx + offsetX, sy + offsetY)
                         let b = target.value(x + offsetX, y + offsetY)
-                        sumA += a; sumB += b; sumAA += a * a; sumBB += b * b; sumAB += a * b
+                        sumB += b
+                        sumBB += b * b
+                        sumAB += a * b
                     }
                 }
-                let numerator = 49 * sumAB - sumA * sumB
-                let variance = (49 * sumAA - sumA * sumA) * (49 * sumBB - sumB * sumB)
-                if variance > 100 { scores.append((numerator / sqrt(variance), x, y)) }
+                let varB = 49.0 * sumBB - sumB * sumB
+                let variance = varA * varB
+                if variance > 100.0 {
+                    let score = (49.0 * sumAB - sumA * sumB) / sqrt(variance)
+                    if requireUnique {
+                        scores.append((score, x, y))
+                    }
+                    if score > bestScore {
+                        bestScore = score
+                        bestX = x
+                        bestY = y
+                    }
+                }
             }
         }
-        guard let best = scores.max(by: { $0.0 < $1.0 }), best.0 >= 0.78 else { return nil }
+        guard bestScore >= 0.78 else { return nil }
         if requireUnique,
-           let rival = scores.filter({ abs($0.1 - best.1) > 2 || abs($0.2 - best.2) > 2 })
-                .max(by: { $0.0 < $1.0 }), best.0 - rival.0 < 0.035 { return nil }
-        return CGPoint(x: CGFloat(best.1), y: CGFloat(best.2))
+           let rival = scores.filter({ abs($0.1 - bestX) > 2 || abs($0.2 - bestY) > 2 })
+                .max(by: { $0.0 < $1.0 }), bestScore - rival.0 < 0.035 { return nil }
+        return CGPoint(x: CGFloat(bestX), y: CGFloat(bestY))
     }
 }

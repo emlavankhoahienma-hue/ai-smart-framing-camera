@@ -46,11 +46,19 @@ kernel void separableSuperViewKernel(
     float2 srcUV = clamp(float2(u_w * 0.5f + 0.5f, v_w * 0.5f + 0.5f), 0.0f, 1.0f);
     float4 centerColor = inTexture.sample(s, srcUV);
 
-    // 3. Nâng cấp: Tăng độ trong trẻo và chi tiết viền (Edge Clarity):
+    // 3. Nâng cấp: Tăng độ trong trẻo và vi tương phản vùng biên (Unsharp Micro-Contrast Edge Clarity):
     if (params.edge_clarity > 0.001f) {
         float edgeDist = max(abs(u), abs(v));
         float boost = params.edge_clarity * smoothstep(0.35f, 1.0f, edgeDist);
-        centerColor.rgb = mix(centerColor.rgb, centerColor.rgb * (1.0f + 0.035f * boost), boost);
+        float2 texel = float2(1.0f / w, 1.0f / h);
+        float3 neighborAvg = 0.25f * (
+            inTexture.sample(s, clamp(srcUV + float2(texel.x, 0.0f), 0.0f, 1.0f)).rgb +
+            inTexture.sample(s, clamp(srcUV - float2(texel.x, 0.0f), 0.0f, 1.0f)).rgb +
+            inTexture.sample(s, clamp(srcUV + float2(0.0f, texel.y), 0.0f, 1.0f)).rgb +
+            inTexture.sample(s, clamp(srcUV - float2(0.0f, texel.y), 0.0f, 1.0f)).rgb
+        );
+        float3 highFreqDetail = centerColor.rgb - neighborAvg;
+        centerColor.rgb = clamp(centerColor.rgb + highFreqDetail * (0.45f * boost), 0.0f, 1.0f);
     }
 
     outTexture.write(centerColor, gid);

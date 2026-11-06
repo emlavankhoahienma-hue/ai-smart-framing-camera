@@ -119,6 +119,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private let commandQueue: MTLCommandQueue
     private let ciContext: CIContext
     private let sRGBColorSpace = CGColorSpaceCreateDeviceRGB()
+    private static let infiniteBlackCI = CIImage(color: .black)
     private weak var viewModel: CameraViewModel?
     private let stateLock = NSLock()
     private var isRenderingActive: Bool = false
@@ -198,6 +199,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         let drawableSize = view.drawableSize
         guard drawableSize.width > 0, drawableSize.height > 0 else { return }
 
+        let effectivePreset = preset.isAIFullAuto ? (vm.aiRecommendedPreset ?? vm.detectedScene.recommendedFilter) : preset
         let finalImageToRender: CIImage
 
         // Optimization: reuse last filtered image if buffer, preset, intensity and size haven't changed (disable when horizon lock or peaking is active)
@@ -207,7 +209,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
            pixelBuffer === lastProcessedBuffer,
            filmActive == lastFilterActive,
            videoAspectFit == lastVideoAspectFit,
-           preset == lastPreset,
+           effectivePreset == lastPreset,
            abs(intensity - lastIntensity) < 0.005,
            drawableSize == lastDrawableSize,
            let cached = lastFilteredCI {
@@ -252,8 +254,9 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
                 transformedCI = inputCI.transformed(by: centerTransform)
             }
 
-            let bgBlack = CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: drawableSize))
-            let viewportCI = transformedCI.composited(over: bgBlack).cropped(to: CGRect(origin: .zero, size: drawableSize))
+            let viewportBounds = CGRect(origin: .zero, size: drawableSize)
+            let bgBlack = Self.infiniteBlackCI.cropped(to: viewportBounds)
+            let viewportCI = transformedCI.composited(over: bgBlack).cropped(to: viewportBounds)
             let unwarpedCI: CIImage = simUW ? UltraWideWarpEngine.shared.applySimulatedUltraWide(
                 to: viewportCI,
                 factor: simFactor
@@ -267,7 +270,6 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
                 let workingInput = workingScale < 0.999
                     ? unwarpedCI.transformed(by: CGAffineTransform(scaleX: workingScale, y: workingScale))
                     : unwarpedCI
-                let effectivePreset = preset.isAIFullAuto ? (vm.aiRecommendedPreset ?? vm.detectedScene.recommendedFilter) : preset
                 var workingOut = FilmFilterEngine.shared.applyPreset(
                     to: workingInput,
                     preset: effectivePreset,
@@ -281,7 +283,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
                     let invScale = 1.0 / workingScale
                     filteredCI = workingOut
                         .transformed(by: CGAffineTransform(scaleX: invScale, y: invScale))
-                        .cropped(to: CGRect(origin: .zero, size: drawableSize))
+                        .cropped(to: viewportBounds)
                 } else {
                     filteredCI = workingOut
                 }
@@ -300,7 +302,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
             lastFilteredCI = finalImageToRender
             lastFilterActive = filmActive
             lastVideoAspectFit = videoAspectFit
-            lastPreset = preset
+            lastPreset = effectivePreset
             lastIntensity = intensity
             lastDrawableSize = drawableSize
             lastPeakingActive = isPeaking

@@ -7,6 +7,7 @@ public final class PresetThumbnailProvider {
     
     private let cacheLock = NSLock()
     private var thumbnailCache: [FilmPreset: UIImage] = [:]
+    private lazy var baseSampleImage: UIImage = Self.renderBaseSampleImage()
     
     private init() {
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -26,11 +27,11 @@ public final class PresetThumbnailProvider {
         return generated
     }
     
-    private func generateThumbnail(for preset: FilmPreset) -> UIImage {
+    private static func renderBaseSampleImage() -> UIImage {
         let size = CGSize(width: 160, height: 160)
         let renderer = UIGraphicsImageRenderer(size: size)
         
-        let baseImage = renderer.image { ctx in
+        return renderer.image { ctx in
             let cg = ctx.cgContext
             
             // 1. Nền bầu trời / hoàng hôn gradient đa tầng
@@ -87,7 +88,10 @@ public final class PresetThumbnailProvider {
             cg.setFillColor(UIColor(red: 1.0, green: 0.94, blue: 0.78, alpha: 0.70).cgColor)
             cg.fillEllipse(in: CGRect(x: 53, y: 52, width: 14, height: 35))
         }
-        
+    }
+
+    private func generateThumbnail(for preset: FilmPreset) -> UIImage {
+        let baseImage = cacheLock.withLock { self.baseSampleImage }
         guard let cg = baseImage.cgImage else { return baseImage }
         
         if preset == .aiFullAuto {

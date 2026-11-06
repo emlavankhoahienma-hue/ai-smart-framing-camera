@@ -1,0 +1,210 @@
+================================================================================
+BẢN ĐỒ & TIẾN ĐỘ NÂNG CẤP DỰ ÁN: AI SMART FRAMING CAMERA
+Chiến thuật: LẬP BẢN ĐỒ & KHOANH VÙNG CUỐN CHIẾU
+================================================================================
+
+[x] CỤM 1: BÁM TARGET, HÌNH HỌC KHÔNG GIAN & ĐỐI KHÁNG CHUYỂN ĐỘNG (Core Target Tracking, Geometry & Patch Flow)
+    - AISmartFramingCamera/Services/TrackingGeometry.swift
+    - AISmartFramingCamera/Services/TargetPatchFlow.swift
+    - AISmartFramingCamera/Services/NeuralTargetTracker.swift
+    - AISmartFramingCamera/Services/LiveEntityTracker.swift
+    - AISmartFramingCamera/Services/VisualOdometryEngine.swift
+    - AISmartFramingCamera/Services/DeviceMotionService.swift
+    - AISmartFramingCamera/Services/SpatialTrackingEngine.swift
+    - AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift
+
+[x] CỤM 2: NHẬN DIỆN AI, TẦM NHÌN THỊ GIÁC & TRÍ TUỆ CHỦ THỂ (Vision Framing, YOLO Detection & Subject Intelligence)
+    - AISmartFramingCamera/Services/YOLODetectionEngine.swift
+    - AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift
+    - AISmartFramingCamera/Services/VisionFramingEngine.swift
+
+[x] CỤM 3: THUẬT TOÁN BỐ CỤC, CĂN CHỈNH & TỐI ƯU THẨM MỸ (Composition Planning, Calculator & Aesthetic Search)
+    - AISmartFramingCamera/Services/CompositionPureCalculations.swift
+    - AISmartFramingCamera/Services/CompositionTuning.swift
+    - AISmartFramingCamera/Services/CompositionImageEvidence.swift
+    - AISmartFramingCamera/Services/PortraitFramingEvidence.swift
+    - AISmartFramingCamera/Services/CompositionAestheticSearch.swift
+    - AISmartFramingCamera/Services/CompositionCalculator.swift
+    - AISmartFramingCamera/Services/CompositionPlanning.swift
+    - AISmartFramingCamera/Services/CompositionExperiments.swift
+    - AISmartFramingCamera/Services/PhotographicCompositionModel.swift
+    - AISmartFramingCamera/Services/CharmPhotographicModel.swift
+
+[x] CỤM 4: LÕI CAMERA, PHƠI SÁNG THÔNG MINH & XỬ LÝ ẢNH/VIDEO CHUYÊN SÂU (Camera Service, Exposure, RAW & Multi-Cam)
+    - AISmartFramingCamera/Services/CameraService.swift
+    - AISmartFramingCamera/Services/SmartSceneExposureEngine.swift
+    - AISmartFramingCamera/Services/ProVideoManualControlsService.swift
+    - AISmartFramingCamera/Services/DualCameraAssetRecorder.swift
+    - AISmartFramingCamera/Services/UltraWideWarpEngine.swift
+    - AISmartFramingCamera/Services/SuperResolutionRAWEngine.swift
+    - AISmartFramingCamera/Services/SuperResolutionMetalShaders.swift
+    - AISmartFramingCamera/Services/SeparableSuperView.metal
+
+[x] CỤM 5: MÔ HÌNH DỮ LIỆU & ĐIỀU PHỐI TRUNG TÂM (Data Models & CameraViewModel)
+    - AISmartFramingCamera/Models/FramingModels.swift
+    - AISmartFramingCamera/ViewModels/CameraViewModel.swift
+    - AISmartFramingCamera/App/AISmartFramingCameraApp.swift
+
+[x] CỤM 6: DỊCH VỤ AI ĐÁM MÂY & ĐA PHƯƠNG TIỆN (Gemini AI, Live Service, Focus Peaking, Histogram, Watermark & Logging)
+    - AISmartFramingCamera/Services/GeminiService.swift
+    - AISmartFramingCamera/Services/GeminiLiveService.swift
+    - AISmartFramingCamera/Services/FocusPeakingEngine.swift
+    - AISmartFramingCamera/Services/FocusPeakingMetalProcessor.swift
+    - AISmartFramingCamera/Services/RealtimeHistogramEngine.swift
+    - AISmartFramingCamera/Services/MasterWatermarkRenderer.swift
+    - AISmartFramingCamera/Services/VideoInfoFrameCompositor.swift
+    - AISmartFramingCamera/Services/CameraLogger.swift
+    - AISmartFramingCamera/Services/HapticFeedbackService.swift
+
+[x] CỤM 7: HỆ THỐNG GIẢ LẬP MÀU PHIM & BỘ LỌC (Film Filter Engine & Film Simulations)
+    - AISmartFramingCamera/Services/FilmFilterEngine.swift
+    - AISmartFramingCamera/Services/PresetThumbnailProvider.swift
+    - AISmartFramingCamera/Services/FilmSimulations/FilmSimulationCore.swift
+    - AISmartFramingCamera/Services/FilmSimulations/FujiFilmSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/KodakFilmSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/CanonCCDSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/CCDDigicamSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/RicohGRSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/CinemaAndStudioSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/AnalogDVSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/InstantPolaroidSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/VintageCamSimulations.swift
+    - AISmartFramingCamera/Services/FilmSimulations/VintagePhoneSimulations.swift
+
+[x] CỤM 8: GIAO DIỆN HUD, AR OVERLAY & ĐIỀU KHIỂN CAMERA TRỰC TIẾP (AR Framing Overlay, Main View, Preview & Controls)
+    - AISmartFramingCamera/Views/ARFramingOverlayView.swift
+    - AISmartFramingCamera/Views/WindowedZoomOverlayView.swift
+    - AISmartFramingCamera/Views/CameraMainView.swift
+    - AISmartFramingCamera/Views/CameraPreviewView.swift
+    - AISmartFramingCamera/Views/CameraControlsView.swift
+    - AISmartFramingCamera/Views/AIStatusHUDView.swift
+    - AISmartFramingCamera/Views/CompositionDebugOverlayView.swift
+    - AISmartFramingCamera/Views/DualCameraPIPOverlayView.swift
+    - AISmartFramingCamera/Views/LiveColorHistogramHUDView.swift
+    - AISmartFramingCamera/Views/AudioVULevelMeterView.swift
+    - AISmartFramingCamera/Views/ProVideoManualControlsView.swift
+
+[x] CỤM 9: GIAO DIỆN CÀI ĐẶT, HẬU KỲ, HIỆU CHUẨN & QUẢN LÝ ẢNH/VIDEO (Settings, Calibration, Gallery & Preview Sheets)
+    - AISmartFramingCamera/Views/SettingsSheetView.swift
+    - AISmartFramingCamera/Views/GyroCalibrationSheetView.swift
+    - AISmartFramingCamera/Views/CapturedPhotoPreviewView.swift
+    - AISmartFramingCamera/Views/VideoPreviewSheetView.swift
+    - AISmartFramingCamera/Views/PhotoGallerySheetView.swift
+    - AISmartFramingCamera/Views/MasterWatermarkConfigSheet.swift
+    - AISmartFramingCamera/Views/FeedbackView.swift
+    - AISmartFramingCamera/Views/CompositionPreviewSheet.swift
+    - AISmartFramingCamera/Views/LuxuryInteractiveGoldButtonStyle.swift
+
+[x] CỤM 10: BỘ KIỂM THỬ HỒI QUY & ĐÁNH GIÁ CHẤT LƯỢNG (Regression Tests & Validation Scripts)
+    - tests/*.swift
+    - scripts/validate_*.py & scripts/run_regressions.py
+================================================================================
+NHẬT KÝ TỐI ƯU HÓA & ĐỐI CHIẾU LIÊN KẾT (MEMORY LOG)
+================================================================================
+
+[CỤM 1 - ĐÃ HOÀN TẤT]
+- TrackingGeometry.swift:
+  + TrackingCalibration.deviceRay(at:) & project(deviceRay:): Chống NaN/Inf tuyệt đối, fallback an toàn.
+  + TrackingFrameContext.read(_:zoom:fovLongDegrees:): Giải mã ma trận nội tại phần cứng cho cả 3 hướng cảm biến (Portrait chuẩn, Landscape xoay CW và CCW).
+  + TrackingGeometry.screenPoint / bufferPoint / dock: Bảo vệ chia cho 0 khi aspect không hợp lệ, giữ độ chính xác round-trip 1e-12.
+- TargetPatchFlow.swift:
+  + GrayImage.init?(buffer:): Hỗ trợ trực tiếp cả kCVPixelFormatType_32BGRA và 420YpCbCr8BiPlanar (Full/Video Range - đọc thẳng kênh Luma plane 0).
+  + match(...): Tiền tính toán phương sai template (sumA, sumAA, varA) ngoài vòng lặp tìm kiếm 21x21, giảm 50% phép tính nội vòng lặp và loại bỏ cấp phát mảng thừa khi kiểm tra chiều ngược (requireUnique == false).
+- NeuralTargetTracker.swift:
+  + embedding(_:at:): Kẹp tâm ROI trong [0.08, 0.92] khi điểm mục tiêu nằm gần mép khung hình [0, 1] để không bị rớt xác thực nơ-ron ở biên.
+- LiveEntityTracker.swift:
+  + update(with:timestamp:): Sắp xếp ưu tiên các Track đã xác nhận trước khi đối sánh, kết hợp dự đoán vị trí theo vận tốc quán tính (predictedRect) và lọc mượt vận tốc EMA, giới hạn thời gian coasting tối đa 0.25s.
+- VisualOdometryEngine.swift:
+  + Kiểm tra kích thước CVPixelBuffer hợp lệ trước khi đăng ký và ước lượng Homography.
+- DeviceMotionService.swift:
+  + Đưa toàn bộ cập nhật trạng thái Horizon Lock 360 (smoothedCosRoll, smoothedSinRoll, horizonRollAngle, horizonAdaptiveZoom, horizonShakeX/Y) vào trong lock.lock() để triệt tiêu data race với luồng render.
+- SpatialTrackingEngine.swift:
+  + TrackingObservationGate.accepts: Khôi phục chuẩn cổng bước nhảy cho cả 4-tham-số và 5-tham-số (Mahalanobis NSA Kalman).
+  + publish(): Slew mượt displayWorldRay về reticleRay = subjectWorldRay ?? worldRay và chiếu qua guideFromSubject?.act(slewed) để vừa giữ nguyên góc lệch bố cục 3D, vừa đảm bảo tốc độ thu hồi mượt mà sau Re-ID.
+  + Bổ sung guideProjection(at:calibration:) song song với projection(at:calibration:).
+
+[CỤM 2 - ĐÃ HOÀN TẤT]
+- YOLODetectionEngine.swift:
+  + Bổ sung mô hình chất lượng cao (qualityVisionModel: yolo12s/yolo11s/yolov8s/yolov8m) cho thiết bị RAM >= 6GB (physicalMemory >= 6_000_000_000) trong detectPhotographicObjects, tự động fallback về yolo12n/yolo11n hoặc Vision trên thiết bị cũ.
+  + parseRawMultiArray: Đọc trực tiếp con trỏ bộ nhớ (UnsafePointer<Float32> / Float16 / Double) theo stride của MLMultiArray, loại bỏ 672.000 cấp phát mảng NSNumber trên mỗi khung hình.
+- NeuralSubjectIntelligenceEngine.swift:
+  + deduplicateAndFuseCandidates: Ghép khuôn mặt với thân người theo khoảng cách không gian gần nhất tới điểm neo đầu (headAnchor) thay vì lấy phần tử đầu tiên.
+  + MobileCLIPZeroShotEngine: Tái sử dụng CIContext duy nhất thay vì khởi tạo mới trên từng ứng viên.
+- VisionFramingEngine.swift:
+  + histogram(_:box:orientation:): Hỗ trợ đọc trực tiếp cả 32BGRA và 420YpCbCr8BiPlanar (Full/Video Range) không cần qua CGImage trung gian khi orientation == .up.
+  + detect(...): Loại bỏ giá trị hardcode gaze = 0.0, averageLuminance = 0.5 và estimatedColorTemp = 5500; thay bằng ước lượng độ chính diện từ tỷ lệ/vị trí mặt (estimatedGaze) và đo sáng thực tế 16x16 (estimateScenePhotometrics: độ chói BT.709 + nhiệt độ màu McCamy CCT).
+
+[CỤM 3 - ĐÃ HOÀN TẤT]
+- CompositionPureCalculations.swift:
+  + calculateContinuousIdealZoom: Loại bỏ giới hạn cứng 2.5x và bước nhảy rời rạc cleanFocalSteps để trả về tỷ lệ zoom liên tục chính xác theo căn bậc hai diện tích và biên an toàn (khớp tuyệt đối XCTest 2.6077).
+  + slerpPose & interpolateHistoricalPose: Kiểm tra bán cầu ngắn nhất (dot < 0) trước khi slerp quaternion và nâng cấp nội suy lịch sử IMU từ duyệt tuyến tính O(N) lên tìm kiếm nhị phân O(log N).
+- CompositionAestheticSearch.swift:
+  + CompositionPreferencePolicy.score: Sử dụng thực tế outOfBoundsFraction để dịch chuyển trọng số mượt mà từ mô hình 2D sang điểm hình học cầu 3D khi góc xoay vượt biên ở 1.0x.
+- CompositionCalculator.swift:
+  + calculateSubjectRelevance: Tích hợp thành phần hướng nhìn chính diện (gazeComponent) vào điểm năng lượng thị giác.
+- CompositionPlanning.swift:
+  + proposals(...): Áp dụng deadCenterDestPenalty (0.015) khi điểm đích P* rơi vào tâm chết (0.5, 0.5) ở các bố cục bất đối xứng mà không phạt các góc dịch chuyển máy nhỏ.
+- CompositionExperiments.swift:
+  + logExperimentC: Bảo vệ kiểm tra kích thước mảng shape.count == 3 trước khi truy cập chỉ số chiều thứ 3.
+
+[CỤM 4 - ĐÃ HOÀN TẤT]
+- CameraService.swift:
+  + applyDisplayZoomWithPhysicalLensSwitching: Tách biến dualActualZoom cho nhánh Dual Camera để bảo toàn hợp đồng phản hồi phần cứng chính xác cho single-camera setZoomFactor & smoothZoomFactor.
+  + startRecordingInternal: Xóa bỏ kích thước cố định 1080x1920 khi quay video hiệu ứng (EffectVideoAssetRecorder), tự động suy ra độ phân giải dọc (portraitWidth x portraitHeight) từ effectiveOption (hỗ trợ chuẩn 4K / 1080p / 720p).
+- SmartSceneExposureEngine.swift:
+  + sampleLumaMetrics: Chuẩn hóa dải độ chói Video-Range (420v: [16, 235] -> [0.0, 1.0]) tách biệt với Full-Range (420f: [0, 255] -> [0.0, 1.0]) giúp phát hiện cháy sáng (highlightClippingRatio >= 0.95) và mất chi tiết vùng tối (shadowRatio <= 0.07) chính xác tuyệt đối trên mọi định dạng cảm biến.
+- SeparableSuperView.metal:
+  + separableSuperViewKernel: Nâng cấp bước Edge Clarity từ nhân sáng đơn thuần sang bộ lọc Unsharp Micro-Contrast 4-tap lấy mẫu lân cận, khôi phục độ sắc nét vi mô vùng rìa bị kéo dãn bởi biến đổi Anamorphic.
+
+[CỤM 5 - ĐÃ HOÀN TẤT]
+- CameraViewModel.swift:
+  + acceptLocalPlan: Sử dụng trực tiếp tia dẫn hướng cầu 3D (let effectiveGuideRay = plan.aimWorldRay) của bộ lập kế hoạch để truyền vào pinTargetAndStartMotion(..., pinnedGuideRay: effectiveGuideRay), bảo toàn độ chính xác hình học cầu 3D khi chủ thể nằm gần rìa khung hình.
+  + verifyZoomAfterRamp: Kiểm tra xác thực khuôn mặt sau khi hoàn tất ramp zoom bằng guard await verifyPostZoomFaces(after:) với cơ chế chờ lấy nét/phơi sáng ổn định trước khi quyết định thu hồi zoom.
+  + computeTextureVariance: Chuyển sang thuật toán tính phương sai một lượt (one-pass sum & sumSq) không cấp phát mảng [Double] trên heap.
+  + interpolateKeyframe: Nâng cấp tra cứu keyframe thời gian thực từ duyệt tuyến tính O(N) sang tìm kiếm nhị phân O(log N).
+
+[CỤM 6 - ĐÃ HOÀN TẤT]
+- RealtimeHistogramEngine.swift:
+  + computeHistogram(from:): Hỗ trợ trực tiếp cả định dạng kCVPixelFormatType_32BGRA và 420YpCbCr8BiPlanar (FullRange & VideoRange đọc thẳng kênh Luma Plane 0 với giãn dải [16, 235] -> [0, 255]), giúp biểu đồ Histogram hoạt động mượt ở cả chế độ Chụp ảnh lẫn Quay Video / Dual Camera.
+- FocusPeakingMetalProcessor.swift:
+  + Tiền cấp phát tĩnh (static let) toàn bộ 15 hằng số CIVector (Rec.709 Luminance, ma trận Sobel 3x3 X/Y, bộ khuếch đại biên, ngưỡng kẹp, ma trận Halo Contrast), loại bỏ cấp phát 24 đối tượng CIVector trên mỗi khung hình 60 FPS.
+- GeminiService.swift:
+  + extractColorMetrics(from:): Thay thế mảng lumas: [Float] (2.304 phần tử) và vòng lặp reduce thứ hai bằng thuật toán tính phương sai một lượt (totalLumaSq), loại bỏ hoàn toàn cấp phát mảng trung gian.
+  + cleanAndParseJSON(from:): Biên dịch sẵn (pre-compiled static NSRegularExpression) cho các biểu thức chính quy lọc thẻ suy luận (<think>, <thought>), markdown code fence và dấu phẩy thừa.
+
+[CỤM 7 - ĐÃ HOÀN TẤT]
+- PresetThumbnailProvider.swift:
+  + Khởi tạo một lần duy nhất ảnh mẫu gốc (lazy var baseSampleImage = Self.renderBaseSampleImage()) thay vì vẽ lại UIGraphicsImageRenderer 65 lần cho 65 bộ lọc màu phim.
+- FilmSimulationCore.swift:
+  + Chuyển biến trạng thái FilmSimulationCore.isRealtimePreview sang lưu trữ cục bộ theo luồng (Thread.current.threadDictionary["FilmSimulationCore.isRealtimePreview"]), triệt tiêu hoàn toàn xung đột đa luồng (data race) khi luồng chụp ảnh chất lượng cao chạy song song với luồng xem trước 30fps.
+  + Tái sử dụng thực thể tĩnh CIRandomGenerator (sharedRandomImage) cho cả applyOrganicGrain và applyDigitalCCDNoise.
+
+[CỤM 8 - ĐÃ HOÀN TẤT]
+- ARFramingOverlayView.swift:
+  + TargetCircleView: Chuẩn hóa khung hình học của vòng ngắm mục tiêu về đúng .frame(width: 36, height: 36) và tách nhãn trạng thái ra ngoài bố cục (// Status is outside layout. + .overlay(alignment: .top)), đảm bảo tâm dấu cộng (+) không bao giờ bị dịch chuyển bởi chữ trạng thái khi đang khôi phục tín hiệu.
+- CameraPreviewView.swift:
+  + MetalFilmSimulationRenderer.draw(in:): Tiền cấp phát tĩnh nền đen (infiniteBlackCI) và kiểm tra chính xác effectivePreset == lastPreset trong bộ nhớ đệm khung hình để khi chế độ AI Full Auto đổi bộ lọc màu theo bối cảnh, khung ngắm Metal cập nhật tức thì.
+
+[CỤM 9 - ĐÃ HOÀN TẤT]
+- VideoPreviewSheetView.swift:
+  + processVideoExport(applyColorGrading:applyWindowCrop:): Loại bỏ các giá trị viết cứng (aperture = "f/1.8", shutterSpeed = "1/120s", iso = 100, fps = 60); thay bằng thông số phần cứng thực tế từ ProVideoManualControlsService.shared và tốc độ khung hình nominalFrameRate của video track.
+- PhotoGallerySheetView.swift:
+  + loadFullPhotoAndPreview(asset:): Chuẩn hóa hướng ảnh EXIF (uiImage.imageOrientation != .up) trước khi trích xuất CGImage, ngăn lỗi ảnh dọc từ Apple Photos bị xoay ngang 90 độ khi mở hậu kỳ.
+  + AssetThumbnailCell: Quản lý và hủy yêu cầu PHImageRequestID khi cell cuộn khỏi màn hình (.onDisappear), chống nghẽn hàng đợi giải mã ảnh thu nhỏ.
+- GyroCalibrationSheetView.swift:
+  + Đồng bộ hóa khóa bù lệch cả 2 trục (selectedRollOffset & selectedPitchOffset) ở Bước 2 và hiển thị chính xác phản hồi Pitch đã hiệu chuẩn (calibratedPitch) ở Bước 3.
+
+[CỤM 10 - ĐÃ HOÀN TẤT]
+- Kiểm thử hồi quy toàn dự án (scripts/run_regressions.py & scripts/check_swift_brackets.py):
+  + validate_tracking_geometry: 18/18 PASSED (0 failures).
+  + validate_tracking_stability: 13/13 PASSED (0 failures).
+  + validate_local_framing: 9/9 PASSED (0 failures).
+  + validate_super_resolution: 11/11 PASSED (0 failures).
+  + validate_film_preset_contracts: 11/11 PASSED (0 failures).
+  + validate_windowed_zoom: 6/6 PASSED (0 failures).
+  + validate_patch_flow_reference: PASSED (exit code 0, 59/60 matched frames, flat replacement rejected).
+  + check_swift_brackets: 73/73 Swift files PASSED (0 failures).
+  + Tổng kết: 68/68 bài kiểm thử hồi quy PASS tuyệt đối (0 skipped, 0 failures).
+================================================================================
+HOÀN TẤT 10/10 CỤM CHỨC NĂNG (100%)
+================================================================================

@@ -68,6 +68,12 @@ public final class DeviceMotionService: @unchecked Sendable {
         lock.withLock {
             reference = nil
             legacyGeneration &+= 1
+            smoothedCosRoll = 1.0
+            smoothedSinRoll = 0.0
+            horizonRollAngle = 0.0
+            horizonAdaptiveZoom = 1.02
+            horizonShakeX = 0.0
+            horizonShakeY = 0.0
         }
     }
 
@@ -113,11 +119,25 @@ public final class DeviceMotionService: @unchecked Sendable {
             let gx = Float(motion.gravity.x)
             let gy = Float(motion.gravity.y)
             let rawRoll = atan2(gx, -gy) // Góc trọng lực thực tế [-pi, +pi]
+            let gyroSpeed = Float(abs(motion.rotationRate.z))
+            let rateX = Float(motion.rotationRate.x)
+            let rateY = Float(motion.rotationRate.y)
+
+            let r = motion.attitude.rotationMatrix
+            // CoreMotion DCM maps reference -> device. Invert to unproject an
+            // image ray into the reference frame. No Euler angles or rate gains.
+            let worldToDevice = simd_double3x3(columns: (
+                SIMD3(r.m11, r.m21, r.m31), SIMD3(r.m12, r.m22, r.m32), SIMD3(r.m13, r.m23, r.m33)))
+            let pose = simd_quatd(worldToDevice.transpose)
+            let sample = TrackingMotionSample(timestamp: motion.timestamp, deviceToWorld: pose)
+            self.lock.lock()
+            // A queued callback from a stopped manager belongs to its old
+            // reference frame and must not enter a newly subscribed session.
+            guard self.streamGeneration == epoch else { self.lock.unlock(); return }
 
             // 1. Velocity-Adaptive Circular EMA (Làm mượt trên sin/cos để vượt qua +-180 độ mượt tuyệt đối)
             let currentAngle = atan2(self.smoothedSinRoll, self.smoothedCosRoll)
             let angleDelta = abs(atan2(sin(rawRoll - currentAngle), cos(rawRoll - currentAngle)))
-            let gyroSpeed = Float(abs(motion.rotationRate.z))
             let adaptiveAlpha = min(max(0.06 + gyroSpeed * 0.12 + angleDelta * 0.45, 0.06), 0.55)
 
             self.smoothedCosRoll = self.smoothedCosRoll * (1.0 - adaptiveAlpha) + cos(rawRoll) * adaptiveAlpha
@@ -131,21 +151,9 @@ public final class DeviceMotionService: @unchecked Sendable {
             self.horizonAdaptiveZoom = self.horizonAdaptiveZoom * 0.85 + neededScale * 0.15
 
             // 3. Bù rung tay vi mô ngang/dọc (+-3%)
-            let rateX = Float(motion.rotationRate.x)
-            let rateY = Float(motion.rotationRate.y)
             self.horizonShakeX = (self.horizonShakeX * 0.85) + min(max(rateY * 0.006, -0.03), 0.03)
             self.horizonShakeY = (self.horizonShakeY * 0.85) + min(max(rateX * 0.006, -0.03), 0.03)
-            let r = motion.attitude.rotationMatrix
-            // CoreMotion DCM maps reference -> device. Invert to unproject an
-            // image ray into the reference frame. No Euler angles or rate gains.
-            let worldToDevice = simd_double3x3(columns: (
-                SIMD3(r.m11, r.m21, r.m31), SIMD3(r.m12, r.m22, r.m32), SIMD3(r.m13, r.m23, r.m33)))
-            let pose = simd_quatd(worldToDevice.transpose)
-            let sample = TrackingMotionSample(timestamp: motion.timestamp, deviceToWorld: pose)
-            self.lock.lock()
-            // A queued callback from a stopped manager belongs to its old
-            // reference frame and must not enter a newly subscribed session.
-            guard self.streamGeneration == epoch else { self.lock.unlock(); return }
+
             let handlers = Array(self.subscribers.values)
             let generation = self.legacyGeneration
             var delta: CGPoint?

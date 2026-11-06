@@ -45,11 +45,21 @@ public struct TrackingCalibration: Sendable {
     }
 
     public func deviceRay(at point: CGPoint) -> SIMD3<Double> {
-        simd_normalize(SIMD3((Double(point.x) - cx) / fx,
-                             -(Double(point.y) - cy) / fy, -1))
+        let px = Double(point.x)
+        let py = Double(point.y)
+        guard px.isFinite, py.isFinite, fx.isFinite, fy.isFinite,
+              cx.isFinite, cy.isFinite, fx > 1e-6, fy > 1e-6 else {
+            return SIMD3<Double>(0, 0, -1)
+        }
+        return simd_normalize(SIMD3((px - cx) / fx,
+                                    -(py - cy) / fy, -1))
     }
 
     public func project(deviceRay ray: SIMD3<Double>) -> TrackingProjection {
+        guard ray.x.isFinite, ray.y.isFinite, ray.z.isFinite,
+              fx.isFinite, fy.isFinite, cx.isFinite, cy.isFinite else {
+            return TrackingProjection(point: CGPoint(x: 0.5, y: 0.5), isInFront: false)
+        }
         let forward = -ray.z
         if forward > 1e-6 {
             let p = CGPoint(x: cx + fx * ray.x / forward,
@@ -117,12 +127,20 @@ public struct TrackingFrameContext: Sendable {
             if measured.isValid, abs(measured.cx - 0.5) < 0.1, abs(measured.cy - 0.5) < 0.1 {
                 k = measured
             } else {
-                let rotated = TrackingCalibration(fx: Double(m.columns.1.y) / width,
+                let rotatedCW = TrackingCalibration(fx: Double(m.columns.1.y) / width,
                     fy: Double(m.columns.0.x) / height,
                     cx: (width - Double(m.columns.2.y)) / width,
                     cy: Double(m.columns.2.x) / height, aspect: width / height)
-                if rotated.isValid, abs(rotated.cx - 0.5) < 0.1, abs(rotated.cy - 0.5) < 0.1 {
-                    k = rotated
+                if rotatedCW.isValid, abs(rotatedCW.cx - 0.5) < 0.1, abs(rotatedCW.cy - 0.5) < 0.1 {
+                    k = rotatedCW
+                } else {
+                    let rotatedCCW = TrackingCalibration(fx: Double(m.columns.1.y) / width,
+                        fy: Double(m.columns.0.x) / height,
+                        cx: Double(m.columns.2.y) / width,
+                        cy: (height - Double(m.columns.2.x)) / height, aspect: width / height)
+                    if rotatedCCW.isValid, abs(rotatedCCW.cx - 0.5) < 0.1, abs(rotatedCCW.cy - 0.5) < 0.1 {
+                        k = rotatedCCW
+                    }
                 }
             }
         }
@@ -148,14 +166,16 @@ enum TrackingGeometry {
     }
 
     static func screenPoint(_ point: CGPoint, size: CGSize, aspect: CGFloat) -> CGPoint {
-        let scale = max(size.width / aspect, size.height)
-        return CGPoint(x: (point.x - 0.5) * scale * aspect + size.width / 2,
+        let safeAspect = (aspect.isFinite && aspect > 1e-4) ? aspect : CGFloat(CompositionTuning.fallbackBufferAspectRatio)
+        let scale = max(size.width / safeAspect, size.height)
+        return CGPoint(x: (point.x - 0.5) * scale * safeAspect + size.width / 2,
                        y: (point.y - 0.5) * scale + size.height / 2)
     }
 
     static func bufferPoint(_ point: CGPoint, size: CGSize, aspect: CGFloat) -> CGPoint {
-        let scale = max(size.width / aspect, size.height, 1)
-        return CGPoint(x: (point.x - size.width / 2) / (scale * aspect) + 0.5,
+        let safeAspect = (aspect.isFinite && aspect > 1e-4) ? aspect : CGFloat(CompositionTuning.fallbackBufferAspectRatio)
+        let scale = max(size.width / safeAspect, size.height, 1)
+        return CGPoint(x: (point.x - size.width / 2) / (scale * safeAspect) + 0.5,
                        y: (point.y - size.height / 2) / scale + 0.5)
     }
 

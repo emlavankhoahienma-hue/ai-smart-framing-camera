@@ -297,7 +297,19 @@ public struct PhotoGallerySheetView: View {
         options.isNetworkAccessAllowed = true
 
         manager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .aspectFit, options: options) { image, _ in
-            guard let uiImage = image, let cgImage = uiImage.cgImage else { return }
+            guard let uiImage = image else { return }
+            let cgImage: CGImage
+            if uiImage.imageOrientation == .up, let directCG = uiImage.cgImage {
+                cgImage = directCG
+            } else {
+                let format = UIGraphicsImageRendererFormat.default()
+                format.scale = 1.0
+                let normalized = UIGraphicsImageRenderer(size: uiImage.size, format: format).image { _ in
+                    uiImage.draw(in: CGRect(origin: .zero, size: uiImage.size))
+                }
+                guard let normCG = normalized.cgImage ?? uiImage.cgImage else { return }
+                cgImage = normCG
+            }
             let item = CapturedPhotoItem(
                 originalImage: cgImage,
                 processedImage: cgImage,
@@ -401,6 +413,7 @@ struct AssetThumbnailCell: View {
     let onTap: () -> Void
 
     @State private var thumbnail: UIImage? = nil
+    @State private var requestID: PHImageRequestID = PHInvalidImageRequestID
 
     var body: some View {
         Button(action: onTap) {
@@ -426,6 +439,12 @@ struct AssetThumbnailCell: View {
         .onAppear {
             loadThumbnail()
         }
+        .onDisappear {
+            if requestID != PHInvalidImageRequestID {
+                PHImageManager.default().cancelImageRequest(requestID)
+                requestID = PHInvalidImageRequestID
+            }
+        }
     }
 
     private func loadThumbnail() {
@@ -436,7 +455,13 @@ struct AssetThumbnailCell: View {
         options.isNetworkAccessAllowed = true
         let size = CGSize(width: 240, height: 240)
 
-        manager.requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: options) { image, _ in
+        requestID = manager.requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: options) { image, info in
+            let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+            if !isDegraded {
+                DispatchQueue.main.async {
+                    self.requestID = PHInvalidImageRequestID
+                }
+            }
             if let img = image {
                 DispatchQueue.main.async {
                     self.thumbnail = img

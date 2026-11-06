@@ -16,7 +16,9 @@ public final class VisualOdometryEngine: @unchecked Sendable {
     private init() {}
 
     public func setReferenceFrame(_ buffer: CVPixelBuffer, atUIPoint point: CGPoint) {
-        guard point.x.isFinite, point.y.isFinite else { return }
+        guard point.x.isFinite, point.y.isFinite,
+              CVPixelBufferGetWidth(buffer) > 0,
+              CVPixelBufferGetHeight(buffer) > 0 else { return }
         lock.withLock {
             generation &+= 1
             reference = (buffer, point, CACurrentMediaTime())
@@ -27,6 +29,9 @@ public final class VisualOdometryEngine: @unchecked Sendable {
     public func clearReference() { lock.withLock { generation &+= 1; reference = nil } }
 
     public func estimateCurrentUIPoint(currentBuffer: CVPixelBuffer) -> CGPoint? {
+        let curW = CVPixelBufferGetWidth(currentBuffer)
+        let curH = CVPixelBufferGetHeight(currentBuffer)
+        guard curW > 0, curH > 0 else { return nil }
         let snapshot = lock.withLock { (reference, generation) }
         guard let reference = snapshot.0, CACurrentMediaTime() - reference.time < 0.25 else { return nil }
         // Floating image = saved image; reference image = current handler image.
@@ -42,8 +47,8 @@ public final class VisualOdometryEngine: @unchecked Sendable {
         let p = SIMD3(Float(reference.point.x) * width, Float(1 - reference.point.y) * height, 1)
         let q = matrix * p
         guard q.x.isFinite, q.y.isFinite, q.z.isFinite, abs(q.z) > 1e-6 else { return nil }
-        let result = CGPoint(x: CGFloat(q.x / q.z) / CGFloat(CVPixelBufferGetWidth(currentBuffer)),
-                             y: 1 - CGFloat(q.y / q.z) / CGFloat(CVPixelBufferGetHeight(currentBuffer)))
+        let result = CGPoint(x: CGFloat(q.x / q.z) / CGFloat(curW),
+                             y: 1 - CGFloat(q.y / q.z) / CGFloat(curH))
         guard (-0.25...1.25).contains(result.x), (-0.25...1.25).contains(result.y),
               lock.withLock({ generation == snapshot.1 }) else { return nil }
         return result

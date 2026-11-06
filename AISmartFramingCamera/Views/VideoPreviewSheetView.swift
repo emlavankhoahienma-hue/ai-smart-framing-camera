@@ -228,6 +228,12 @@ public struct VideoPreviewSheetView: View {
             baseOpticalZoom: viewModel.lastRecordedVideoWindowedBaseZoom,
             aspectRatio: viewModel.lastRecordedVideoWindowedAspect ?? viewModel.windowedZoomAspectRatio
         )
+        let proControls = ProVideoManualControlsService.shared
+        let liveAperture = String(format: "f/%.1f", proControls.hardwareLensAperture > 0 ? proControls.hardwareLensAperture : 1.8)
+        let activeShutterReciprocal = max(1, Int(round(proControls.isAutoShutter ? proControls.measuredLiveShutterSpeed : proControls.currentShutterSpeed)))
+        let liveShutterText = "1/\(activeShutterReciprocal)s"
+        let liveISOValue = max(25, Int(round(proControls.isAutoISO ? proControls.measuredLiveISO : proControls.currentISO)))
+        let fallbackFPS = viewModel.selectedVideoFormatOption.fps
 
         // Đọc track video để xác định độ phân giải gốc
         Task {
@@ -240,6 +246,8 @@ public struct VideoPreviewSheetView: View {
 
             let naturalSize = (try? await videoTrack.load(.naturalSize)) ?? CGSize(width: 1080, height: 1920)
             let preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
+            let nominalFPS = (try? await videoTrack.load(.nominalFrameRate)) ?? 0
+            let exportFPS = nominalFPS > 0 ? max(1, Int(round(Double(nominalFPS)))) : max(1, fallbackFPS)
 
             // Kích thước hiển thị thực tế sau transform
             let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
@@ -321,11 +329,11 @@ public struct VideoPreviewSheetView: View {
 
                 // 3. Ghép Khung Thông Tin Điện Ảnh (Video Info Frame) nếu bật
                 if infoStyle != .off {
-                    let totalFrames = Int(frameTime * 60.0)
+                    let totalFrames = Int(frameTime * Double(exportFPS))
                     let tcSec = Int(frameTime) % 60
                     let tcMin = (Int(frameTime) / 60) % 60
                     let tcHour = Int(frameTime) / 3600
-                    let subFrame = totalFrames % 60
+                    let subFrame = totalFrames % exportFPS
                     let timecode = String(format: "%02d:%02d:%02d:%02d", tcHour, tcMin, tcSec, subFrame)
 
                     let currentFocal = applyWindowCrop ? Int(CameraViewModel.interpolateKeyframe(
@@ -337,10 +345,10 @@ public struct VideoPreviewSheetView: View {
                         deviceName: deviceName,
                         lensDescription: "\(currentFocal)mm OPTICAL",
                         focalLengthMM: currentFocal,
-                        aperture: "f/1.8",
-                        shutterSpeed: "1/120s",
-                        iso: 100,
-                        fps: 60,
+                        aperture: liveAperture,
+                        shutterSpeed: liveShutterText,
+                        iso: liveISOValue,
+                        fps: exportFPS,
                         resolutionTag: "\(Int(targetRenderSize.width))x\(Int(targetRenderSize.height))",
                         lutName: filterPreset.rawValue.uppercased(),
                         dateString: "",

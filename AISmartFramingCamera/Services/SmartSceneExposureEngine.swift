@@ -302,8 +302,8 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
         let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
-        let isBiPlanar = (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
-                          format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        let isVideoRangeBiPlanar = (format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        let isBiPlanar = (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || isVideoRangeBiPlanar)
         let isBGRA = (format == kCVPixelFormatType_32BGRA)
 
         guard isBiPlanar || isBGRA else {
@@ -344,7 +344,12 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
             for x in stride(from: startX, to: endX, by: stepX) {
                 let lum: Float
                 if isBiPlanar {
-                    lum = Float(data[rowOffset + x]) / 255.0
+                    let rawY = Float(data[rowOffset + x])
+                    if isVideoRangeBiPlanar {
+                        lum = min(1.0, max(0.0, (rawY - 16.0) / 219.0))
+                    } else {
+                        lum = rawY / 255.0
+                    }
                 } else {
                     let offset = rowOffset + x * 4
                     let b = Float(data[offset])

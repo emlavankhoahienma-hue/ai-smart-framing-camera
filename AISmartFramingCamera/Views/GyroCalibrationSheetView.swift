@@ -494,6 +494,7 @@ public struct GyroCalibrationSheetView: View {
                     VStack(spacing: 10) {
                         Button(action: {
                             selectedRollOffset = currentRawRoll
+                            selectedPitchOffset = currentRawPitch
                             isRollOffsetLocked = true
                             hapticNotification.notificationOccurred(.success)
                             showToastBanner("Đã khóa góc hiện tại làm chuẩn 0.0°")
@@ -517,6 +518,7 @@ public struct GyroCalibrationSheetView: View {
                             fineTuneButton(title: "-0.1°", delta: -0.1)
                             Button("0.0°") {
                                 selectedRollOffset = 0.0
+                                selectedPitchOffset = 0.0
                                 hapticFeedback.impactOccurred()
                             }
                             .font(.system(size: 12, weight: .bold, design: .monospaced))
@@ -605,6 +607,7 @@ public struct GyroCalibrationSheetView: View {
             // Real-time 3D Gyroscope Gimbal Graphic
             cardContainer {
                 let calibratedRoll = currentRawRoll - selectedRollOffset
+                let calibratedPitch = currentRawPitch - selectedPitchOffset
                 VStack(spacing: 16) {
                     ZStack {
                         // Outer Gimbal Ring (Yaw / Roll)
@@ -630,7 +633,7 @@ public struct GyroCalibrationSheetView: View {
                                     .stroke(amberGold.opacity(0.60), lineWidth: 1.5)
                             )
                             .rotationEffect(.degrees(calibratedRoll))
-                            .offset(y: CGFloat(max(-35, min(35, currentRawPitch * 0.7))))
+                            .offset(y: CGFloat(max(-35, min(35, calibratedPitch * 0.7))))
                             .shadow(color: amberGold.opacity(0.35), radius: 10)
 
                         // Center Target Reticle
@@ -654,7 +657,7 @@ public struct GyroCalibrationSheetView: View {
                     // Raw Telemetry Stream
                     HStack(spacing: 12) {
                         telemetryPill(axis: "ROLL", val: calibratedRoll)
-                        telemetryPill(axis: "PITCH", val: currentRawPitch)
+                        telemetryPill(axis: "PITCH", val: calibratedPitch)
                         telemetryPill(axis: "GRAVITY Z", val: currentGravityZ)
                     }
                     .padding(.top, 4)

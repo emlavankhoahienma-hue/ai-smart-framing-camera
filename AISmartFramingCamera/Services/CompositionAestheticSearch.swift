@@ -268,10 +268,10 @@ enum CompositionPreferencePolicy {
     static func score(composition: Double, aesthetics: Double, geometry: Double, outOfBoundsFraction: Double = 0.0) -> Double? {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
-        _ = outOfBoundsFraction
-        let compW = 0.45
-        let aesthW = 0.45
-        let geomW = 0.10
+        let clampedOOB = outOfBoundsFraction.isFinite ? min(0.18, max(0.0, outOfBoundsFraction * 0.25)) : 0.0
+        let compW = 0.45 - clampedOOB * 0.5
+        let aesthW = 0.45 - clampedOOB * 0.5
+        let geomW = 0.10 + clampedOOB
         return compW * (composition - 1) / 4 + aesthW * (aesthetics - 1) / 4 +
             geomW * min(1, max(0, geometry))
     }

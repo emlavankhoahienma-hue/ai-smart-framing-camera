@@ -46,19 +46,46 @@ public final class LiveEntityTracker: @unchecked Sendable {
 
             let remainingCandidates = rawCandidates
             var updatedTracks: [TrackedState] = []
+            updatedTracks.reserveCapacity(activeTracks.count + remainingCandidates.count)
             var matchedCandidateIndices = Set<Int>()
 
+            // Sắp xếp Track ưu tiên các Track đã được xác nhận ổn định và có trọng số chủ thể cao
+            // để tránh Track nhiễu mới sinh tranh mất Candidate của chủ thể chính.
+            let prioritizedTracks = activeTracks.sorted {
+                let aConfirmed = $0.trackedCount >= 2 && $0.missedCount == 0
+                let bConfirmed = $1.trackedCount >= 2 && $1.missedCount == 0
+                if aConfirmed != bConfirmed { return aConfirmed }
+                if $0.category.priorityWeight != $1.category.priorityWeight {
+                    return $0.category.priorityWeight > $1.category.priorityWeight
+                }
+                return $0.confidence > $1.confidence
+            }
+
             // 1. Đối sánh (Association) giữa các Track đang theo dõi và các Candidate mới
-            for var track in activeTracks {
+            for var track in prioritizedTracks {
                 var bestCandidateIndex: Int?
                 var bestScore: CGFloat = -1.0
+
+                // Dự đoán vị trí hộp theo vận tốc quán tính để bám mượt khi chủ thể di chuyển nhanh
+                let predictedRect = clampToUnitRect(CGRect(
+                    x: track.smoothedRect.origin.x + track.velocity.dx * CGFloat(dt) * 0.45,
+                    y: track.smoothedRect.origin.y + track.velocity.dy * CGFloat(dt) * 0.45,
+                    width: track.smoothedRect.size.width,
+                    height: track.smoothedRect.size.height
+                ))
 
                 for (index, candidate) in remainingCandidates.enumerated() {
                     guard !matchedCandidateIndices.contains(index) else { continue }
                     guard isCategoryCompatible(track.category, candidate.category) else { continue }
 
-                    let iou = calculateIoU(track.smoothedRect, candidate.rect)
-                    let centerDist = calculateCenterDistance(track.smoothedRect, candidate.rect)
+                    let iou = max(
+                        calculateIoU(track.smoothedRect, candidate.rect),
+                        calculateIoU(predictedRect, candidate.rect)
+                    )
+                    let centerDist = min(
+                        calculateCenterDistance(track.smoothedRect, candidate.rect),
+                        calculateCenterDistance(predictedRect, candidate.rect)
+                    )
 
                     // Tiêu chí kết đôi: IoU cao hoặc khoảng cách tâm gần
                     let score = iou * 0.70 + max(0, 1.0 - centerDist * 3.5) * 0.30
@@ -95,8 +122,10 @@ public final class LiveEntityTracker: @unchecked Sendable {
                         height: prev.size.height * (1 - alpha) + raw.size.height * alpha
                     )
 
-                    let vx = CGFloat(newSmoothed.midX - prev.midX) / CGFloat(dt)
-                    let vy = CGFloat(newSmoothed.midY - prev.midY) / CGFloat(dt)
+                    let instantVx = CGFloat(newSmoothed.midX - prev.midX) / CGFloat(dt)
+                    let instantVy = CGFloat(newSmoothed.midY - prev.midY) / CGFloat(dt)
+                    let vx = track.velocity.dx * 0.35 + instantVx * 0.65
+                    let vy = track.velocity.dy * 0.35 + instantVy * 0.65
 
                     track.category = candidate.category
                     track.label = candidate.label
@@ -110,7 +139,8 @@ public final class LiveEntityTracker: @unchecked Sendable {
                     updatedTracks.append(track)
                 } else {
                     // Track bị lỡ trong khung hình này -> Duy trì quán tính (Coasting) tối đa 3 frame (~150ms)
-                    if track.missedCount < 3 && track.trackedCount >= 2 {
+                    // và tối đa 0.25s kể từ lần cuối nhìn thấy thật sự.
+                    if track.missedCount < 3 && track.trackedCount >= 2 && (timestamp - track.lastSeenTimestamp <= 0.25) {
                         let coastedRect = CGRect(
                             x: track.smoothedRect.origin.x + track.velocity.dx * CGFloat(dt) * 0.5,
                             y: track.smoothedRect.origin.y + track.velocity.dy * CGFloat(dt) * 0.5,
@@ -146,6 +176,7 @@ public final class LiveEntityTracker: @unchecked Sendable {
 
             // 3. Khử trùng lặp lồng nhau giữa các Track (NMS trên danh sách Tracked)
             var finalTracks: [TrackedState] = []
+            finalTracks.reserveCapacity(updatedTracks.count)
             let sortedByPriority = updatedTracks.sorted {
                 if $0.category.priorityWeight != $1.category.priorityWeight {
                     return $0.category.priorityWeight > $1.category.priorityWeight

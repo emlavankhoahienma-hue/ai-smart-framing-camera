@@ -1729,11 +1729,11 @@ public final class CameraService: NSObject {
                     } else {
                         primaryCam.videoZoomFactor = targetZoom
                     }
-                    let actualZoom = primaryCam.videoZoomFactor
-                    self.currentZoom = actualZoom
+                    let dualActualZoom = primaryCam.videoZoomFactor
+                    self.currentZoom = dualActualZoom
                     DispatchQueue.main.async {
-                        self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
-                        completion?(actualZoom)
+                        self.delegate?.cameraService(self, didChangeZoomFactor: dualActualZoom)
+                        completion?(dualActualZoom)
                     }
                 } catch {
                     CameraLogger.error("CameraService: Loi zoom trong Dual Camera", error: error, category: .capture)
@@ -2309,7 +2309,9 @@ public final class CameraService: NSObject {
             publishRecordingState(.starting)
 
             let effectiveOption = appliedVideoFormatOption ?? selectedVideoFormatOption
-            let dims = CMVideoDimensions(width: 1080, height: 1920)
+            let portraitWidth = min(effectiveOption.width, effectiveOption.height)
+            let portraitHeight = max(effectiveOption.width, effectiveOption.height)
+            let dims = CMVideoDimensions(width: portraitWidth, height: portraitHeight)
             let fps = effectiveOption.fps
 
             EffectVideoAssetRecorder.shared.isHorizonLock = isHorizonLockActive

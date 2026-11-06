@@ -25,7 +25,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     public init() { loadYOLOModel() }
 
     public func loadYOLOModel() {
-        let names = ["yolo12s", "yolo12n", "yolov26_ane", "yolov26_416_fp16", "yolo26s", "yolo26n"]
+        let names = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
+            ? ["yolo12s", "yolo12n", "yolov26_ane", "yolov26_416_fp16", "yolo26s", "yolo26n"]
+            : ["yolo12n", "yolov26_416_fp16", "yolo12s", "yolov26_ane", "yolo26n", "yolo26s"]
         for name in names {
             if let modelResult = makeModel(named: name, computeUnits: .all) {
                 modelLock.withLock {
@@ -92,7 +94,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             }
             var resolvedVNModel: VNCoreMLModel? = cachedVN
             if resolvedVNModel == nil {
-                let preferredVisionModels = ["yolo12s", "yolo12n", "yolo26s", "yolo26n"]
+                let preferredVisionModels = process.physicalMemory >= 6_000_000_000
+                    ? ["yolo12s", "yolo12n", "yolo26s", "yolo26n"]
+                    : ["yolo12n", "yolo26n", "yolo12s", "yolo26s"]
                 for modelName in preferredVisionModels {
                     if let res = makeModel(named: modelName, computeUnits: .all), let vn = res.vnModel {
                         resolvedVNModel = vn

@@ -7,9 +7,19 @@ import CoreGraphics
 /// Highlight Halation Glow, CCD Sensor Bloom, Lens Diffusion, Chroma Bleed, Light Leak, va LCD Dither.
 public enum FilmSimulationCore {
 
-    /// Cờ chế độ xem trước 30fps thời gian thực: bỏ qua các bước GaussianBlur đa tầng nặng GPU,
-    /// nhưng vẫn giữ nguyên 100% chất lượng quang hóa đa tầng khi chụp và xuất ảnh tĩnh.
-    public nonisolated(unsafe) static var isRealtimePreview: Bool = false
+    private static let realtimePreviewThreadKey = "FilmSimulationCore.isRealtimePreview"
+    private static let sharedRandomImage: CIImage? = CIFilter(name: "CIRandomGenerator")?.outputImage
+
+    /// Cờ chế độ xem trước 30fps thời gian thực (lưu theo từng luồng Thread-Local để chống xung đột giữa luồng Preview và luồng Chụp ảnh):
+    /// bỏ qua các bước GaussianBlur đa tầng nặng GPU nhưng vẫn giữ nguyên 100% chất lượng quang hóa đa tầng khi chụp và xuất ảnh tĩnh.
+    public static var isRealtimePreview: Bool {
+        get {
+            (Thread.current.threadDictionary[realtimePreviewThreadKey] as? Bool) ?? false
+        }
+        set {
+            Thread.current.threadDictionary[realtimePreviewThreadKey] = newValue
+        }
+    }
 
     // MARK: - Color Matrix Transformation (Pha tron pho mau quang hoc)
     public static func applyColorMatrix(
@@ -106,7 +116,7 @@ public enum FilmSimulationCore {
     // MARK: - 1. Organic Film Grain (Hat phim bac huu co Silver Halide)
     public static func applyOrganicGrain(_ input: CIImage, intensity: Float, grainSize: Float = 1.4) -> CIImage {
         guard intensity > 0.01 else { return input }
-        guard let random = CIFilter(name: "CIRandomGenerator")?.outputImage else { return input }
+        guard let random = sharedRandomImage ?? CIFilter(name: "CIRandomGenerator")?.outputImage else { return input }
 
         let extent = input.extent
         let croppedNoise = random.cropped(to: extent)
@@ -172,7 +182,7 @@ public enum FilmSimulationCore {
         }
 
         // 2. Du phong (Fallback) tao hat ngau nhien khi chua nap duoc tep texture
-        guard let random = CIFilter(name: "CIRandomGenerator")?.outputImage else { return input }
+        guard let random = sharedRandomImage ?? CIFilter(name: "CIRandomGenerator")?.outputImage else { return input }
         let cropped = random.cropped(to: extent)
 
         guard let noiseControls = CIFilter(name: "CIColorControls") else { return input }

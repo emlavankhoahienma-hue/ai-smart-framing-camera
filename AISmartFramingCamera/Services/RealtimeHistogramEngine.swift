@@ -53,42 +53,74 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
     private init() {}
     
     public func computeHistogram(from pixelBuffer: CVPixelBuffer) -> [HistogramBarData] {
-        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA,
+        let formatType = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let isBGRA = (formatType == kCVPixelFormatType_32BGRA)
+        let isBiPlanarFull = (formatType == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+        let isBiPlanarVideo = (formatType == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        guard isBGRA || isBiPlanarFull || isBiPlanarVideo,
               CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return fallbackBars() }
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            return fallbackBars()
-        }
-        
-        guard width > 0, height > 0, bytesPerRow >= width * 4 else { return fallbackBars() }
-        let data = baseAddress.assumingMemoryBound(to: UInt8.self)
         var bins = Array(repeating: Float(0), count: 32)
         var maxBin: Float = 1.0
         var totalLum: Float = 0.0
         var sampleCount: Int = 0
         
-        // Lấy mẫu nhanh 120x90 điểm ảnh (Subsampling) -> CPU < 0.3%
-        let stepX = max(2, width / 96)
-        let stepY = max(2, height / 72)
-        
-        for y in stride(from: 0, to: height, by: stepY) {
-            let rowOffset = y * bytesPerRow
-            for x in stride(from: 0, to: width, by: stepX) {
-                let offset = rowOffset + x * 4
-                let b = Float(data[offset])
-                let g = Float(data[offset + 1])
-                let r = Float(data[offset + 2])
-                
-                // Độ sáng theo chuẩn Rec.709
-                let lum = r * 0.2126 + g * 0.7152 + b * 0.0722
-                totalLum += lum
-                sampleCount += 1
-                let binIndex = min(31, max(0, Int(lum / 8.0)))
-                bins[binIndex] += 1
+        if isBGRA {
+            let width = CVPixelBufferGetWidth(pixelBuffer)
+            let height = CVPixelBufferGetHeight(pixelBuffer)
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+            guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
+                  width > 0, height > 0, bytesPerRow >= width * 4 else {
+                return fallbackBars()
+            }
+            let data = baseAddress.assumingMemoryBound(to: UInt8.self)
+            let stepX = max(2, width / 96)
+            let stepY = max(2, height / 72)
+            
+            for y in stride(from: 0, to: height, by: stepY) {
+                let rowOffset = y * bytesPerRow
+                for x in stride(from: 0, to: width, by: stepX) {
+                    let offset = rowOffset + x * 4
+                    let b = Float(data[offset])
+                    let g = Float(data[offset + 1])
+                    let r = Float(data[offset + 2])
+                    
+                    // Độ sáng theo chuẩn Rec.709
+                    let lum = r * 0.2126 + g * 0.7152 + b * 0.0722
+                    totalLum += lum
+                    sampleCount += 1
+                    let binIndex = min(31, max(0, Int(lum * 0.125)))
+                    bins[binIndex] += 1
+                }
+            }
+        } else {
+            let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+            let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+            let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+            guard let baseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
+                  width > 0, height > 0, bytesPerRow >= width else {
+                return fallbackBars()
+            }
+            let lumaPlane = baseAddress.assumingMemoryBound(to: UInt8.self)
+            let stepX = max(2, width / 96)
+            let stepY = max(2, height / 72)
+            
+            for y in stride(from: 0, to: height, by: stepY) {
+                let rowOffset = y * bytesPerRow
+                for x in stride(from: 0, to: width, by: stepX) {
+                    let rawY = Float(lumaPlane[rowOffset + x])
+                    let lum: Float
+                    if isBiPlanarVideo {
+                        lum = min(255.0, max(0.0, (rawY - 16.0) * (255.0 / 219.0)))
+                    } else {
+                        lum = rawY
+                    }
+                    totalLum += lum
+                    sampleCount += 1
+                    let binIndex = min(31, max(0, Int(lum * 0.125)))
+                    bins[binIndex] += 1
+                }
             }
         }
         

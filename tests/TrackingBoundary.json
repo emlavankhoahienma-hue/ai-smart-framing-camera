@@ -3,11 +3,11 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "f4f40728c64b1eecb1c5678d5652edec42fa2cb31044ffca61da345e187d647d"
+      "sha256": "0f57091cd289833066b1e7437b5c2cf32743c5b450453dbcfdfe8f25479a70a1"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "24b7875a8c63cd5f55f220a223cf840b42540877bbe7836ae2d1d401edc1634d"
+      "sha256": "22d182dc933b8423b28d4deb2a8ab1b33b55c857c4fe9c97685dd3f6c03c8d6e"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -15,31 +15,31 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TargetPatchFlow.swift",
-      "sha256": "2c8e211f3912e93f27044a0f2f1ef806f08080c4b88845fab176b51cdfe8c442"
+      "sha256": "b916be3074a937098a06714c3f430604b9cfcd41a71a6eefd29093232298b2bd"
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
-      "sha256": "6a6101469fcf1a1f2535ba6bf4e75f01d48182f55fffe60019a49388a19ca60a"
+      "sha256": "a7a96b9aa5646d40857975b7cc2335b047e96523c8ad3374ee255a4ac9a8bc9c"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralTargetTracker.swift",
-      "sha256": "9fc42180b84c147e47b16574dd511e08c3579c1937e5bf31d4dd6ddd3a15dd26"
+      "sha256": "0398bca6f6e43017fa6f29cae112a5bebaf31a2a83949ea7bbb8d990a0da0112"
     },
     {
       "path": "AISmartFramingCamera/Services/LiveEntityTracker.swift",
-      "sha256": "424fb33a4a315f3275276fc98d9b7972bc293af21648598bd6385c697561e49f"
+      "sha256": "fe4c2efa9c942515016be42a2258e3c0577f4cab340cc39fb0eb1fa158e61179"
     },
     {
       "path": "AISmartFramingCamera/Services/DeviceMotionService.swift",
-      "sha256": "39cb774a255dce0adc57c7c0f1faf61e56152bfeedcc9dcb62b1da443815fbc6"
+      "sha256": "fdf7fb7c930e2d271bb458ed33d3ce63a1b1b423ceca8ce9d48abdefd80ef4aa"
     },
     {
       "path": "AISmartFramingCamera/Services/VisualOdometryEngine.swift",
-      "sha256": "15b8dcbff0d3590455a0461357a81a4a603c8e0c3a86ac48ba1b05424fbfbf81"
+      "sha256": "81afbef6906aa9ed25ff0a736ae30686c3ccd3348bda97475169032e679bd75c"
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "7fa4524ffc535c2ac7621a2f893364a1ca8fa99af0a52aa8ad9509e4dc2ff631"
+      "sha256": "288bf0310c656d162988b3b46158f6f78328c7e5ab163e418e3ba644155e4311"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "37a0a5c209c6aa2b309ac7e184a184e92407531890b2702e52ebfb609c33e0d3"
+      "sha256": "d5fd2493db48832ba8737cf55e8714c69975c8b55f7ffe70d63abe0cea69db99"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -81,7 +81,7 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "struct TargetCircleView: View {",
       "end": "// MARK: - Guidance Ray",
-      "sha256": "bddaf1410cde4aa5511026d77d984d574d0887c71bf563be4610001821bd3c14"
+      "sha256": "e18a91340584c72f0d6d6e4b4a82f04131b9512f0ad1f337b9cda512771850d5"
     }
   ]
 }

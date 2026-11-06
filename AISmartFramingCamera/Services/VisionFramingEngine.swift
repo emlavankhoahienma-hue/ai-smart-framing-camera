@@ -787,7 +787,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
     private func histogram(_ buffer: CVPixelBuffer, box: CGRect,
                            orientation: CGImagePropertyOrientation) -> [Float]? {
-        if orientation == .up, CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA {
+        let format = CVPixelBufferGetPixelFormatType(buffer)
+        if orientation == .up, format == kCVPixelFormatType_32BGRA {
             guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
             defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
             guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
@@ -806,6 +807,46 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     let offset = imageY * rowBytes + imageX * 4
                     let b = Float(bytes[offset]), g = Float(bytes[offset + 1])
                     let r = Float(bytes[offset + 2]), total = r + g + b
+                    guard total > 24 else { continue }
+                    bins[min(7, Int(8 * r / total)) * 8 + min(7, Int(8 * g / total))] += 1
+                    count += 1
+                }
+            }
+            return count > 0 ? bins.map { $0 / count } : nil
+        } else if orientation == .up,
+                  (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                   format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+                  CVPixelBufferGetPlaneCount(buffer) >= 2 {
+            guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            guard let yBase = CVPixelBufferGetBaseAddressOfPlane(buffer, 0),
+                  let uvBase = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) else { return nil }
+            let yBytes = yBase.assumingMemoryBound(to: UInt8.self)
+            let uvBytes = uvBase.assumingMemoryBound(to: UInt8.self)
+            let width = CVPixelBufferGetWidthOfPlane(buffer, 0)
+            let height = CVPixelBufferGetHeightOfPlane(buffer, 0)
+            let yStride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+            let uvWidth = CVPixelBufferGetWidthOfPlane(buffer, 1)
+            let uvHeight = CVPixelBufferGetHeightOfPlane(buffer, 1)
+            let uvStride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
+            guard width > 0, height > 0, uvWidth > 0, uvHeight > 0 else { return nil }
+            var bins = [Float](repeating: 0, count: 64)
+            var count: Float = 0
+            for y in 0..<24 {
+                let imageY = min(height - 1, max(0, Int((Double(1 - box.maxY) +
+                    (Double(y) + 0.5) * Double(box.height) / 24) * Double(height))))
+                let uvY = min(uvHeight - 1, max(0, imageY / 2))
+                for x in 0..<24 {
+                    let imageX = min(width - 1, max(0, Int((Double(box.minX) +
+                        (Double(x) + 0.5) * Double(box.width) / 24) * Double(width))))
+                    let uvX = min(uvWidth - 1, max(0, imageX / 2))
+                    let luma = Float(yBytes[imageY * yStride + imageX])
+                    let cb = Float(uvBytes[uvY * uvStride + uvX * 2]) - 128.0
+                    let cr = Float(uvBytes[uvY * uvStride + uvX * 2 + 1]) - 128.0
+                    let r = max(0, min(255, luma + 1.402 * cr))
+                    let g = max(0, min(255, luma - 0.344136 * cb - 0.714136 * cr))
+                    let b = max(0, min(255, luma + 1.772 * cb))
+                    let total = r + g + b
                     guard total > 24 else { continue }
                     bins[min(7, Int(8 * r / total)) * 8 + min(7, Int(8 * g / total))] += 1
                     count += 1
@@ -1486,13 +1527,24 @@ public final class VisionFramingEngine: @unchecked Sendable {
 
         // 3. Chấm điểm Trọng số Nhiếp ảnh Động (SubjectRelevanceScore) kèm Quán tính Chủ thể (Subject Persistence)
         let scoredCandidates: [(LiveDetectedEntity, Double)] = candidates.map { c in
-            let hasMatchingFace = c.category == .face || (c.category == .human && result.faceRectangles.contains(where: { c.rect.contains($0) }))
+            let matchingFaceRect = result.faceRectangles.first(where: { c.rect.contains($0) || c.rect.intersects($0) })
+            let hasMatchingFace = c.category == .face || (c.category == .human && matchingFaceRect != nil)
             let hasSaliency = result.saliencyPoints.contains { c.rect.contains($0) }
+            let estimatedGaze: Double = {
+                if c.category == .face {
+                    let aspect = c.rect.width / max(0.001, c.rect.height)
+                    return max(-0.2, min(0.85, 1.0 - abs(Double(aspect) - 0.82) * 1.4))
+                } else if let faceRect = matchingFaceRect, c.rect.width > 0.01 {
+                    let normOffset = abs(faceRect.midX - c.rect.midX) / (c.rect.width * 0.5)
+                    return max(-0.3, min(0.85, 0.85 - Double(normOffset) * 0.9))
+                }
+                return 0.0
+            }()
             let score = CompositionCalculator.calculateSubjectRelevance(
                 rect: c.rect,
                 category: c.category,
                 confidence: Double(c.confidence),
-                gaze: 0.0,
+                gaze: estimatedGaze,
                 hasFace: hasMatchingFace,
                 saliencyDensity: hasSaliency ? 0.85 : 0.45,
                 previousWinningRect: previousHeroRect,
@@ -1568,8 +1620,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
             timestamp: CACurrentMediaTime()
         )
 
-        result.averageLuminance = 0.5
-        result.estimatedColorTemp = 5500
+        let photometrics = estimateScenePhotometrics(from: buffer)
+        result.averageLuminance = photometrics.luminance
+        result.estimatedColorTemp = photometrics.colorTemperature
 
         // Keep only the newest undelivered detection. A blocked main queue
         // must never accumulate camera-pool buffers at the analysis frame rate.
@@ -1596,6 +1649,87 @@ public final class VisionFramingEngine: @unchecked Sendable {
             self.onDetectionCompleted?(result)
             self.onSmartFocusPointCalculated?(focus, type)
         }
+    }
+
+    private func estimateScenePhotometrics(from buffer: CVPixelBuffer) -> (luminance: Float, colorTemperature: Int) {
+        let format = CVPixelBufferGetPixelFormatType(buffer)
+        guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else {
+            return (0.5, 5500)
+        }
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+
+        if format == kCVPixelFormatType_32BGRA,
+           let base = CVPixelBufferGetBaseAddress(buffer) {
+            let width = CVPixelBufferGetWidth(buffer)
+            let height = CVPixelBufferGetHeight(buffer)
+            let stride = CVPixelBufferGetBytesPerRow(buffer)
+            guard width >= 16, height >= 16, stride >= width * 4 else {
+                return (0.5, 5500)
+            }
+            let ptr = base.assumingMemoryBound(to: UInt8.self)
+            var sumR: Float = 0
+            var sumG: Float = 0
+            var sumB: Float = 0
+            var sumY: Float = 0
+            let gridSize = 16
+            let count = Float(gridSize * gridSize)
+            for gy in 0..<gridSize {
+                let y = min(height - 1, max(0, (gy * height + height / 2) / gridSize))
+                let rowOffset = y * stride
+                for gx in 0..<gridSize {
+                    let x = min(width - 1, max(0, (gx * width + width / 2) / gridSize))
+                    let idx = rowOffset + x * 4
+                    let b = Float(ptr[idx]) / 255.0
+                    let g = Float(ptr[idx + 1]) / 255.0
+                    let r = Float(ptr[idx + 2]) / 255.0
+                    sumR += r
+                    sumG += g
+                    sumB += b
+                    sumY += 0.2126 * r + 0.7152 * g + 0.0722 * b
+                }
+            }
+            let avgLum = max(0.02, min(0.98, sumY / count))
+            let rMean = sumR / count
+            let gMean = sumG / count
+            let bMean = sumB / count
+            let X = 0.4124 * rMean + 0.3576 * gMean + 0.1805 * bMean
+            let Y = 0.2126 * rMean + 0.7152 * gMean + 0.0722 * bMean
+            let Z = 0.0193 * rMean + 0.1192 * gMean + 0.9505 * bMean
+            let denom = X + Y + Z
+            guard denom > 0.01 else { return (avgLum, 5500) }
+            let cx = Double(X / denom)
+            let cy = Double(Y / denom)
+            guard abs(0.1858 - cy) > 0.001 else { return (avgLum, 5500) }
+            let n = (cx - 0.3320) / (0.1858 - cy)
+            let cct = 449.0 * pow(n, 3) + 3525.0 * pow(n, 2) + 6823.3 * n + 5520.33
+            let clampedCCT = Int(max(2500.0, min(9500.0, cct.isFinite ? cct : 5500.0)))
+            return (avgLum, clampedCCT)
+        } else if (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                   format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+                  CVPixelBufferGetPlaneCount(buffer) >= 1,
+                  let lumaBase = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) {
+            let width = CVPixelBufferGetWidthOfPlane(buffer, 0)
+            let height = CVPixelBufferGetHeightOfPlane(buffer, 0)
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+            guard width >= 16, height >= 16, stride >= width else {
+                return (0.5, 5500)
+            }
+            let ptr = lumaBase.assumingMemoryBound(to: UInt8.self)
+            var sumY: Float = 0
+            let gridSize = 16
+            let count = Float(gridSize * gridSize)
+            for gy in 0..<gridSize {
+                let y = min(height - 1, max(0, (gy * height + height / 2) / gridSize))
+                let rowOffset = y * stride
+                for gx in 0..<gridSize {
+                    let x = min(width - 1, max(0, (gx * width + width / 2) / gridSize))
+                    sumY += Float(ptr[rowOffset + x]) / 255.0
+                }
+            }
+            return (max(0.02, min(0.98, sumY / count)), 5500)
+        }
+
+        return (0.5, 5500)
     }
 
     private func deduplicateCandidates(_ list: [LiveDetectedEntity]) -> [LiveDetectedEntity] {

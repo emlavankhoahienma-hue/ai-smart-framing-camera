@@ -514,12 +514,13 @@ struct TargetCircleView: View {
             } else if isSnapped {
                 Circle()
                     .stroke(AlignTheme.electricCyan.opacity(0.4), lineWidth: 2.0)
-                    .frame(width: 38, height: 38)
+                    .frame(width: 36, height: 36)
                     .transition(.scale.combined(with: .opacity))
             }
         }
-        .frame(width: 44, height: 44)
+        .frame(width: 36, height: 36)
         .allowsHitTesting(false)
+        // Status is outside layout.
         .overlay(alignment: .top) {
             if trackingQuality == .reacquiring || trackingQuality == .lost {
                 Text("Đang khôi phục tín hiệu…")
@@ -528,7 +529,7 @@ struct TargetCircleView: View {
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.black.opacity(0.75)))
                     .fixedSize()
-                    .offset(y: 46)
+                    .offset(y: 42)
             }
         }
     }

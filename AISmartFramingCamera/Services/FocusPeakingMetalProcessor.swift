@@ -19,6 +19,28 @@ public final class FocusPeakingMetalProcessor: @unchecked Sendable {
     private let commandQueue: MTLCommandQueue?
     private let ciContext: CIContext
 
+    private static let rec709RVector = CIVector(x: 0.2126, y: 0.2126, z: 0.2126, w: 0)
+    private static let rec709GVector = CIVector(x: 0.7152, y: 0.7152, z: 0.7152, w: 0)
+    private static let rec709BVector = CIVector(x: 0.0722, y: 0.0722, z: 0.0722, w: 0)
+    private static let identityAVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+    private static let zeroBiasVector = CIVector(x: 0, y: 0, z: 0, w: 0)
+    private static let sobelXVector: CIVector = {
+        let weights: [CGFloat] = [-1, 0, 1, -2, 0, 2, -1, 0, 1]
+        return CIVector(values: weights, count: 9)
+    }()
+    private static let sobelYVector: CIVector = {
+        let weights: [CGFloat] = [-1, -2, -1, 0, 0, 0, 1, 2, 1]
+        return CIVector(values: weights, count: 9)
+    }()
+    private static let gain2RVector = CIVector(x: 2.0, y: 0, z: 0, w: 0)
+    private static let gain2GVector = CIVector(x: 0, y: 2.0, z: 0, w: 0)
+    private static let gain2BVector = CIVector(x: 0, y: 0, z: 2.0, w: 0)
+    private static let clampMinVector = CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0)
+    private static let clampMaxVector = CIVector(x: 1.0, y: 1.0, z: 1.0, w: 1.0)
+    private static let darkenRVector = CIVector(x: 0.65, y: 0, z: 0, w: 0)
+    private static let darkenGVector = CIVector(x: 0, y: 0.65, z: 0, w: 0)
+    private static let darkenBVector = CIVector(x: 0, y: 0, z: 0.65, w: 0)
+
     public init() {
         let device = MTLCreateSystemDefaultDevice()
         self.metalDevice = device
@@ -46,12 +68,12 @@ public final class FocusPeakingMetalProcessor: @unchecked Sendable {
         // BƯỚC 1: Chuyển sang Luminance chuẩn Rec.709 (Y = 0.2126*R + 0.7152*G + 0.0722*B)
         guard let luminanceFilter = CIFilter(name: "CIColorMatrix") else { return inputImage }
         luminanceFilter.setValue(inputImage, forKey: kCIInputImageKey)
-        luminanceFilter.setValue(CIVector(x: 0.2126, y: 0.2126, z: 0.2126, w: 0), forKey: "inputRVector")
-        luminanceFilter.setValue(CIVector(x: 0.7152, y: 0.7152, z: 0.7152, w: 0), forKey: "inputGVector")
-        luminanceFilter.setValue(CIVector(x: 0.0722, y: 0.0722, z: 0.0722, w: 0), forKey: "inputBVector")
-        luminanceFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
-        luminanceFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputBiasVector")
-        guard let luminanceImage = luminanceFilter.outputImage?.cropped(to: extent) else { return inputImage }
+        luminanceFilter.setValue(Self.rec709RVector, forKey: "inputRVector")
+        luminanceFilter.setValue(Self.rec709GVector, forKey: "inputGVector")
+        luminanceFilter.setValue(Self.rec709BVector, forKey: "inputBVector")
+        luminanceFilter.setValue(Self.identityAVector, forKey: "inputAVector")
+        luminanceFilter.setValue(Self.zeroBiasVector, forKey: "inputBiasVector")
+        guard let luminanceImage = luminanceFilter.outputImage else { return inputImage }
 
         // Khử nhẹ nhiễu hạt cảm biến ISO (bán kính 0.5px) trước khi tính đạo hàm cạnh
         guard let blurFilter = CIFilter(name: "CIGaussianBlur") else { return inputImage }
@@ -63,16 +85,14 @@ public final class FocusPeakingMetalProcessor: @unchecked Sendable {
         // Gx = [-1, 0, 1, -2, 0, 2, -1, 0, 1]
         guard let sobelXFilter = CIFilter(name: "CIConvolution3X3") else { return inputImage }
         sobelXFilter.setValue(smoothedLuma, forKey: kCIInputImageKey)
-        let sobelXWeights: [CGFloat] = [-1, 0, 1, -2, 0, 2, -1, 0, 1]
-        sobelXFilter.setValue(CIVector(values: sobelXWeights, count: 9), forKey: "inputWeights")
+        sobelXFilter.setValue(Self.sobelXVector, forKey: "inputWeights")
         sobelXFilter.setValue(0.0, forKey: "inputBias")
         let edgeX = sobelXFilter.outputImage?.cropped(to: extent)
 
         // Gy = [-1, -2, -1, 0, 0, 0, 1, 2, 1]
         guard let sobelYFilter = CIFilter(name: "CIConvolution3X3") else { return inputImage }
         sobelYFilter.setValue(smoothedLuma, forKey: kCIInputImageKey)
-        let sobelYWeights: [CGFloat] = [-1, -2, -1, 0, 0, 0, 1, 2, 1]
-        sobelYFilter.setValue(CIVector(values: sobelYWeights, count: 9), forKey: "inputWeights")
+        sobelYFilter.setValue(Self.sobelYVector, forKey: "inputWeights")
         sobelYFilter.setValue(0.0, forKey: "inputBias")
         let edgeY = sobelYFilter.outputImage?.cropped(to: extent)
 
@@ -81,18 +101,18 @@ public final class FocusPeakingMetalProcessor: @unchecked Sendable {
         if let edgeX = edgeX, let edgeY = edgeY {
             guard let absFilterX = CIFilter(name: "CIColorMatrix") else { return inputImage }
             absFilterX.setValue(edgeX, forKey: kCIInputImageKey)
-            absFilterX.setValue(CIVector(x: 2.0, y: 0, z: 0, w: 0), forKey: "inputRVector")
-            absFilterX.setValue(CIVector(x: 0, y: 2.0, z: 0, w: 0), forKey: "inputGVector")
-            absFilterX.setValue(CIVector(x: 0, y: 0, z: 2.0, w: 0), forKey: "inputBVector")
-            absFilterX.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
+            absFilterX.setValue(Self.gain2RVector, forKey: "inputRVector")
+            absFilterX.setValue(Self.gain2GVector, forKey: "inputGVector")
+            absFilterX.setValue(Self.gain2BVector, forKey: "inputBVector")
+            absFilterX.setValue(Self.identityAVector, forKey: "inputAVector")
             let absX = absFilterX.outputImage ?? edgeX
 
             guard let absFilterY = CIFilter(name: "CIColorMatrix") else { return inputImage }
             absFilterY.setValue(edgeY, forKey: kCIInputImageKey)
-            absFilterY.setValue(CIVector(x: 2.0, y: 0, z: 0, w: 0), forKey: "inputRVector")
-            absFilterY.setValue(CIVector(x: 0, y: 2.0, z: 0, w: 0), forKey: "inputGVector")
-            absFilterY.setValue(CIVector(x: 0, y: 0, z: 2.0, w: 0), forKey: "inputBVector")
-            absFilterY.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
+            absFilterY.setValue(Self.gain2RVector, forKey: "inputRVector")
+            absFilterY.setValue(Self.gain2GVector, forKey: "inputGVector")
+            absFilterY.setValue(Self.gain2BVector, forKey: "inputBVector")
+            absFilterY.setValue(Self.identityAVector, forKey: "inputAVector")
             let absY = absFilterY.outputImage ?? edgeY
 
             guard let addEdges = CIFilter(name: "CIAdditionCompositing") else { return inputImage }
@@ -132,18 +152,18 @@ public final class FocusPeakingMetalProcessor: @unchecked Sendable {
         // Kẹp dải giá trị về [0.0, 1.0]
         guard let clampFilter = CIFilter(name: "CIColorClamp") else { return inputImage }
         clampFilter.setValue(gatedOutput, forKey: kCIInputImageKey)
-        clampFilter.setValue(CIVector(x: 0.0, y: 0.0, z: 0.0, w: 0.0), forKey: "inputMinComponents")
-        clampFilter.setValue(CIVector(x: 1.0, y: 1.0, z: 1.0, w: 1.0), forKey: "inputMaxComponents")
+        clampFilter.setValue(Self.clampMinVector, forKey: "inputMinComponents")
+        clampFilter.setValue(Self.clampMaxVector, forKey: "inputMaxComponents")
         guard let cleanEdgeMask = clampFilter.outputImage?.cropped(to: extent) else { return inputImage }
 
         // BƯỚC 5: Kỹ thuật Halo Contrast - Làm tối nền ảnh gốc 35% tại vùng có cạnh nét để tôn màu Neon
         guard let darkenFilter = CIFilter(name: "CIColorMatrix") else { return inputImage }
         darkenFilter.setValue(inputImage, forKey: kCIInputImageKey)
-        darkenFilter.setValue(CIVector(x: 0.65, y: 0, z: 0, w: 0), forKey: "inputRVector")
-        darkenFilter.setValue(CIVector(x: 0, y: 0.65, z: 0, w: 0), forKey: "inputGVector")
-        darkenFilter.setValue(CIVector(x: 0, y: 0, z: 0.65, w: 0), forKey: "inputBVector")
-        darkenFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
-        let darkenedBg = darkenFilter.outputImage?.cropped(to: extent) ?? inputImage
+        darkenFilter.setValue(Self.darkenRVector, forKey: "inputRVector")
+        darkenFilter.setValue(Self.darkenGVector, forKey: "inputGVector")
+        darkenFilter.setValue(Self.darkenBVector, forKey: "inputBVector")
+        darkenFilter.setValue(Self.identityAVector, forKey: "inputAVector")
+        let darkenedBg = darkenFilter.outputImage ?? inputImage
 
         // Trộn nền làm tối với nền gốc dựa trên mặt nạ cạnh (Halo Mask)
         guard let haloBlend = CIFilter(name: "CIBlendWithMask") else { return inputImage }

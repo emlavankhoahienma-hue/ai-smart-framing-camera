@@ -84,7 +84,7 @@ enum TrackingObservationGate {
         if evidence == .reidentified { return residual.isFinite }
         if evidence == .confirmedContinuation { return residual.isFinite }
         guard isInFront, residual.isFinite else { return false }
-        let limit = max(0.30, maximumJump * 2)
+        let limit = min(max(0.008, maximumJump), evidence == .geometryContinuation ? 0.012 : 0.020)
         return residual <= limit
     }
 
@@ -480,9 +480,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 kalmanFilter = nil
                 pendingPin = (screenPoint, timestamp, pinCalibration ?? calibration)
             }
-            // The yellow reticle represents the composition guide bearing (worldRay)
-            // while EKF/optical tracking tracks the physical subject (subjectWorldRay).
-            displayWorldRay = worldRay ?? subjectWorldRay
+            // displayWorldRay tracks the physical bearing for bounded recovery slewing;
+            // guideFromSubject maps it to the composition guide bearing at projection time.
+            displayWorldRay = subjectWorldRay ?? worldRay
             lastDisplayTime = -.infinity
             presentationIsRecovering = false
             lastAccepted = -Double.infinity; lastVerified = -.infinity
@@ -516,6 +516,14 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     public func projection(at timestamp: TimeInterval, calibration k: TrackingCalibration) -> TrackingProjection? {
         lock.withLock {
             guard active, let ray = subjectWorldRay ?? worldRay,
+                  let pose = TrackingGeometry.pose(at: timestamp, in: history) else { return nil }
+            return k.project(deviceRay: pose.inverse.act(ray))
+        }
+    }
+
+    public func guideProjection(at timestamp: TimeInterval, calibration k: TrackingCalibration) -> TrackingProjection? {
+        lock.withLock {
+            guard active, let ray = worldRay ?? subjectWorldRay,
                   let pose = TrackingGeometry.pose(at: timestamp, in: history) else { return nil }
             return k.project(deviceRay: pose.inverse.act(ray))
         }
@@ -683,7 +691,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                     // Accepted live optical motion is already rate limited.
                     // Do not filter it a second time or the reticle trails a
                     // moving subject while the image continues to move.
-                    displayWorldRay = worldRay ?? subjectWorldRay
+                    displayWorldRay = subjectWorldRay ?? worldRay
                 }
             } else {
                 // The first timestamped visual fix can initialize if pinning
@@ -703,19 +711,20 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         let now = CACurrentMediaTime()
         var quality: TrackingQuality = .reacquiring
         var outputConfidence = 0.0
-        if let reticleRay = worldRay ?? subjectWorldRay, let sample = history.last,
+        if let reticleRay = subjectWorldRay ?? worldRay, let sample = history.last,
            (-0.05...0.45).contains(now - sample.timestamp) {
             let dt = lastDisplayTime.isFinite ? min(0.05, max(0, now - lastDisplayTime)) : 0
-            let rendered = presentationIsRecovering ? (displayWorldRay.map {
+            let slewed = presentationIsRecovering ? (displayWorldRay.map {
                 TrackingBearingSlew.advance(from: $0, to: reticleRay,
                     maxAngle: 0.90 * dt / max(calibration.fx, calibration.fy))
             } ?? reticleRay) : reticleRay
-            displayWorldRay = rendered
+            displayWorldRay = slewed
             lastDisplayTime = now
-            let settlingAngle = atan2(simd_length(simd_cross(rendered, reticleRay)),
-                                      simd_dot(rendered, reticleRay))
+            let settlingAngle = atan2(simd_length(simd_cross(slewed, reticleRay)),
+                                      simd_dot(slewed, reticleRay))
             let settled = settlingAngle * max(calibration.fx, calibration.fy) < 0.008
             if settled { presentationIsRecovering = false }
+            let rendered = guideFromSubject?.act(slewed) ?? (worldRay ?? slewed)
             // Paint onto the latest camera image, using its pose and intrinsics
             // together. Projecting an older image with the newest IMU pose makes
             // the ring lead the subject and oscillate during a handheld pan.

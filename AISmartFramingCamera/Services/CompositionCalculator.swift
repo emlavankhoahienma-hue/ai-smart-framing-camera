@@ -480,8 +480,9 @@ public final class CompositionCalculator: @unchecked Sendable {
         let optimalArea = category == .face ? 0.08 : (category == .human ? 0.25 : 0.15)
         let scaleFitness = exp(-pow(log(max(0.005, area) / optimalArea), 2) / 2.2)
         
-        // 4. Mức độ tập trung năng lượng thị giác (Saliency Energy)
-        let saliencyComponent = 0.40 * saliencyDensity + (isForegroundMasked ? 0.20 : 0.0)
+        // 4. Mức độ tập trung năng lượng thị giác (Saliency Energy) & Hướng nhìn chính diện (Gaze Attention)
+        let gazeComponent = max(-0.06, min(0.10, Double(gaze) * 0.08))
+        let saliencyComponent = 0.40 * saliencyDensity + (isForegroundMasked ? 0.20 : 0.0) + gazeComponent
         
         // 5. Quán tính Chủ thể (Subject Persistence Hysteresis)
         var persistenceBonus = 0.0

@@ -82,8 +82,32 @@ private final class SemanticCropRanker: @unchecked Sendable {
         guard (try? cancellation.perform(request, with: handler)) != nil,
               let observation = request.results?.first as? VNCoreMLFeatureValueObservation,
               let array = observation.featureValue.multiArrayValue else { return [:] }
-        let image = (0..<array.count).map { Double(truncating: array[$0]) }
-        let norm = sqrt(image.reduce(0) { $0 + $1 * $1 })
+        let count = array.count
+        guard count > 0 else { return [:] }
+        var image = [Double](repeating: 0.0, count: count)
+        var sumSq: Double = 0.0
+        if array.dataType == .float32 {
+            let ptr = array.dataPointer.bindMemory(to: Float32.self, capacity: count)
+            for i in 0..<count {
+                let v = Double(ptr[i])
+                image[i] = v
+                sumSq += v * v
+            }
+        } else if array.dataType == .float16 {
+            let ptr = array.dataPointer.bindMemory(to: Float16.self, capacity: count)
+            for i in 0..<count {
+                let v = Double(ptr[i])
+                image[i] = v
+                sumSq += v * v
+            }
+        } else {
+            for i in 0..<count {
+                let v = Double(truncating: array[i])
+                image[i] = v
+                sumSq += v * v
+            }
+        }
+        let norm = sqrt(sumSq)
         guard norm.isFinite, norm > 0.001 else { return [:] }
         var scores: [String: Double] = [:]
         for (key, text) in prompts where text.count == image.count {

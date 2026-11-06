@@ -1589,21 +1589,21 @@ public final class GeminiService: ObservableObject {
         var totalG: Float = 0
         var totalB: Float = 0
         var totalLuma: Float = 0
-        var lumas: [Float] = []
-        lumas.reserveCapacity(width * height)
+        var totalLumaSq: Float = 0
 
         let totalPixels = Float(width * height)
+        let inv255: Float = 1.0 / 255.0
         for i in 0..<(width * height) {
             let offset = i * 4
-            let r = Float(rawBytes[offset]) / 255.0
-            let g = Float(rawBytes[offset + 1]) / 255.0
-            let b = Float(rawBytes[offset + 2]) / 255.0
+            let r = Float(rawBytes[offset]) * inv255
+            let g = Float(rawBytes[offset + 1]) * inv255
+            let b = Float(rawBytes[offset + 2]) * inv255
             let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
             totalR += r
             totalG += g
             totalB += b
             totalLuma += luma
-            lumas.append(luma)
+            totalLumaSq += luma * luma
         }
 
         let avgR = totalR / totalPixels
@@ -1614,7 +1614,7 @@ public final class GeminiService: ObservableObject {
         let warmthCast = (avgR - avgB) / max(0.01, (avgR + avgB))
         let tintCast = (avgG - (avgR + avgB) * 0.5) / max(0.01, avgG)
 
-        let variance = lumas.reduce(0) { $0 + pow($1 - avgLuma, 2) } / totalPixels
+        let variance = max(0, (totalLumaSq / totalPixels) - (avgLuma * avgLuma))
         let contrastScore = sqrt(variance)
 
         let summary: String
@@ -2675,22 +2675,27 @@ public final class GeminiService: ObservableObject {
 
     // MARK: - Self-Healing JSON Cleaner & Fallback Extractor
 
+    private static let thinkTagRegex = try? NSRegularExpression(pattern: "(?s)<think>.*?</think>", options: [])
+    private static let thoughtTagRegex = try? NSRegularExpression(pattern: "(?s)<thought>.*?</thought>", options: [])
+    private static let jsonFenceRegex = try? NSRegularExpression(pattern: "(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```", options: [])
+    private static let trailingCommaRegex = try? NSRegularExpression(pattern: ",\\s*([}\\]])", options: [])
+
     public static func cleanAndParseJSON(from rawText: String) -> [String: Any]? {
         var text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // 1. Strip reasoning/thinking tags (DeepSeek R1 / Qwen thinking / Kimi / Ollama)
-        if let thinkRegex = try? NSRegularExpression(pattern: "(?s)<think>.*?</think>", options: []) {
+        if let thinkRegex = thinkTagRegex {
             let range = NSRange(location: 0, length: text.utf16.count)
             text = thinkRegex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
         }
-        if let thoughtRegex = try? NSRegularExpression(pattern: "(?s)<thought>.*?</thought>", options: []) {
+        if let thoughtRegex = thoughtTagRegex {
             let range = NSRange(location: 0, length: text.utf16.count)
             text = thoughtRegex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // 2. Search for ```json ... ``` or ``` ... ``` markdown code block first
-        if let fenceRegex = try? NSRegularExpression(pattern: "(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```", options: []) {
+        if let fenceRegex = jsonFenceRegex {
             let range = NSRange(location: 0, length: text.utf16.count)
             if let match = fenceRegex.firstMatch(in: text, options: [], range: range),
                let r = Range(match.range(at: 1), in: text) {
@@ -2726,7 +2731,7 @@ public final class GeminiService: ObservableObject {
         }
 
         // 6. Trailing comma sanitation: e.g. `, }` or `, ]`
-        if let regex = try? NSRegularExpression(pattern: ",\\s*([}\\]])", options: []) {
+        if let regex = trailingCommaRegex {
             let range = NSRange(location: 0, length: text.utf16.count)
             let sanitized = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "$1")
             if let data = sanitized.data(using: .utf8),

@@ -88,8 +88,11 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     }
 
     private func embedding(_ buffer: CVPixelBuffer, at point: CGPoint) -> [Double]? {
-        guard let model, point.x.isFinite, point.y.isFinite else { return nil }
-        let roi = CGRect(x: point.x - 0.08, y: 1 - point.y - 0.08, width: 0.16, height: 0.16)
+        guard let model, point.x.isFinite, point.y.isFinite,
+              (0...1).contains(point.x), (0...1).contains(point.y) else { return nil }
+        let clampedX = min(0.92, max(0.08, point.x))
+        let clampedY = min(0.92, max(0.08, point.y))
+        let roi = CGRect(x: clampedX - 0.08, y: 1 - clampedY - 0.08, width: 0.16, height: 0.16)
         guard roi.minX >= 0, roi.minY >= 0, roi.maxX <= 1, roi.maxY <= 1 else { return nil }
         let req = VNCoreMLRequest(model: model)
         req.regionOfInterest = roi

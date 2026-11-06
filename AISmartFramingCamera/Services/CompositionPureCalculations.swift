@@ -172,26 +172,19 @@ public enum CompositionPureCalculations {
     ) -> Double {
         guard currentArea > 0.0001, desiredArea > 0, currentZoom > 0 else { return currentZoom }
         
-        let idealRatio = sqrt(desiredArea / currentArea)
-        let cappedRatio = min(2.5, max(1.0, idealRatio))
-        var zoomCandidate = currentZoom * cappedRatio
+        let idealRatio = max(1.0, sqrt(desiredArea / currentArea))
+        var zoomCandidate = currentZoom * idealRatio
 
         let destX = min(0.64, max(0.36, Double(targetPoint.x)))
         let destY = min(0.62, max(0.36, Double(targetPoint.y)))
 
         if boxWidth > 0 && boxHeight > 0 {
             let availableX = 2.0 * min(destX - safetyMargin, 1.0 - safetyMargin - destX)
-            let maxRatioX = max(1.0, availableX / max(0.04, boxWidth * 0.75))
-            let topOffset = max(0.04, Double(targetPoint.y) - (destY - boxHeight * 0.35))
-            let maxRatioYTop = (destY - safetyMargin) / max(0.04, topOffset)
-            let maxAllowedRatio = max(1.0, min(maxRatioX, maxRatioYTop))
+            let availableY = 2.0 * min(destY - safetyMargin, 1.0 - safetyMargin - destY)
+            let maxRatioX = max(1.0, availableX / max(0.04, boxWidth))
+            let maxRatioY = max(1.0, availableY / max(0.04, boxHeight))
+            let maxAllowedRatio = max(1.0, min(maxRatioX, maxRatioY))
             zoomCandidate = min(zoomCandidate, currentZoom * maxAllowedRatio)
-        }
-
-        let cleanFocalSteps: [Double] = [1.0, 1.2, 1.5, 2.0, 2.5, 3.0]
-        if let nearestStep = cleanFocalSteps.min(by: { abs($0 - zoomCandidate) < abs($1 - zoomCandidate) }),
-           abs(nearestStep - zoomCandidate) <= 0.12 {
-            zoomCandidate = nearestStep
         }
 
         return max(currentZoom, min(maxZoom, zoomCandidate))
@@ -238,15 +231,18 @@ public enum CompositionPureCalculations {
     }
 
     // MARK: - 6. Quaternion Slerp & Pose Interpolation
-    /// Noi suy phep quay giua 2 pose theo thuat toan slerp voi kiem tra an toan mau so
+    /// Noi suy phep quay giua 2 pose theo thuat toan slerp voi kiem tra an toan mau so va cung ngan nhat
     public static func slerpPose(q0: simd_quatd, q1: simd_quatd, t: Double) -> simd_quatd {
         let clampedT = max(0.0, min(1.0, t))
         let norm0 = simd_normalize(q0)
-        let norm1 = simd_normalize(q1)
-        return simd_slerp(norm0, norm1, clampedT)
+        var norm1 = simd_normalize(q1)
+        if simd_dot(norm0.vector, norm1.vector) < 0 {
+            norm1 = simd_quatd(vector: -norm1.vector)
+        }
+        return simd_normalize(simd_slerp(norm0, norm1, clampedT))
     }
 
-    /// Noi suy pose tai thoi diem time tu lich su cac mau TrackingMotionSample
+    /// Noi suy pose tai thoi diem time tu lich su cac mau TrackingMotionSample (tim kiem nhi phan O(log N))
     public static func interpolateHistoricalPose(
         at time: TimeInterval,
         samples: [TrackingMotionSample],
@@ -258,17 +254,25 @@ public enum CompositionPureCalculations {
               time >= first.timestamp - margin, time <= last.timestamp + margin else { return nil }
         if time <= first.timestamp { return first.deviceToWorld }
         if time >= last.timestamp { return last.deviceToWorld }
-        for i in 1..<samples.count where samples[i].timestamp >= time {
-            let a = samples[i - 1], b = samples[i]
-            let dt = b.timestamp - a.timestamp
-            guard dt > minDt, dt < maxDt else {
-                if abs(time - a.timestamp) <= minDt { return a.deviceToWorld }
-                return nil
+        var low = 0
+        var high = samples.count - 1
+        while low + 1 < high {
+            let mid = (low + high) >> 1
+            if samples[mid].timestamp <= time {
+                low = mid
+            } else {
+                high = mid
             }
-            let t = (time - a.timestamp) / dt
-            return slerpPose(q0: a.deviceToWorld, q1: b.deviceToWorld, t: t)
         }
-        return nil
+        let a = samples[low], b = samples[high]
+        let dt = b.timestamp - a.timestamp
+        guard dt > minDt, dt < maxDt else {
+            if abs(time - a.timestamp) <= minDt { return a.deviceToWorld }
+            if abs(time - b.timestamp) <= minDt { return b.deviceToWorld }
+            return nil
+        }
+        let t = (time - a.timestamp) / dt
+        return slerpPose(q0: a.deviceToWorld, q1: b.deviceToWorld, t: t)
     }
 }
 

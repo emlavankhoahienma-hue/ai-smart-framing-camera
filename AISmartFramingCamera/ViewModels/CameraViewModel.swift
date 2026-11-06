@@ -2438,30 +2438,42 @@ public final class CameraViewModel: ObservableObject {
         let regionW = max(20, Int(normalizedRect.width * CGFloat(width)))
         let regionH = max(20, Int(normalizedRect.height * CGFloat(height)))
 
-        var values: [Double] = []
+        var count = 0
+        var sum = 0.0
+        var sumSq = 0.0
         var y = regionY
-        while y < min(regionY + regionH, height) {
+        let maxY = min(regionY + regionH, height)
+        let maxX = min(regionX + regionW, width)
+        while y < maxY {
             var x = regionX
-            while x < min(regionX + regionW, width) {
-                let offset = y * bytesPerRow + x * (planar ? 1 : 4)
+            let rowOffset = y * bytesPerRow
+            while x < maxX {
+                let offset = rowOffset + x * (planar ? 1 : 4)
                 if planar {
-                    let value = Double(buffer[offset])
-                    values.append(format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ?
-                                  max(0, min(255, (value - 16) * 255 / 219)) : value)
+                    let rawValue = Double(buffer[offset])
+                    let luma = format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ?
+                        max(0, min(255, (rawValue - 16) * 255 / 219)) : rawValue
+                    sum += luma
+                    sumSq += luma * luma
+                    count += 1
                 } else if offset + 2 < bytesPerRow * height {
                     let b = Double(buffer[offset])
                     let g = Double(buffer[offset + 1])
                     let r = Double(buffer[offset + 2])
-                    values.append(0.299 * r + 0.587 * g + 0.114 * b)
+                    let luma = 0.299 * r + 0.587 * g + 0.114 * b
+                    sum += luma
+                    sumSq += luma * luma
+                    count += 1
                 }
                 x += 4
             }
             y += 4
         }
 
-        guard values.count > 8 else { return 1000 }
-        let mean = values.reduce(0, +) / Double(values.count)
-        return values.reduce(0) { $0 + pow($1 - mean, 2) } / Double(values.count)
+        guard count > 8 else { return 1000 }
+        let n = Double(count)
+        let mean = sum / n
+        return max(0.0, (sumSq / n) - mean * mean)
     }
 
     // MARK: - Pin Target & Start Tracking (Hybrid Optical Flow + 60Hz Gyroscope Spatial Fusion)
@@ -2859,14 +2871,14 @@ public final class CameraViewModel: ObservableObject {
         )
         self.latestScanResp = ScanResp(code: 200, msg: "success", data: scanData)
 
-        // Cập nhật tia dẫn hướng và tọa độ liveAimPoint theo đúng tâm SubAreaRectNorm
-        let finalGuideRay = source.pose.act(source.frame.calibration.deviceRay(at: targetCenter))
+        // Cập nhật tia dẫn hướng 3D (aimWorldRay) và tọa độ liveAimPoint
+        let effectiveGuideRay = plan.aimWorldRay
         var finalLiveAim = targetCenter
         if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
            let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)
                 ?? SpatialTrackingEngine.shared.latestPose() {
             let projectedAim = currentFrame.calibration.project(
-                deviceRay: currentPose.inverse.act(finalGuideRay))
+                deviceRay: currentPose.inverse.act(effectiveGuideRay))
             if projectedAim.point.x.isFinite, projectedAim.point.y.isFinite {
                 finalLiveAim = projectedAim.point
             }
@@ -2893,11 +2905,11 @@ public final class CameraViewModel: ObservableObject {
         localSuggestionRects = []
         detectedSubjectRects = []
         localSelectionMessage = nil
-        // Khóa target chuẩn xác vào tâm thực của khung SubAreaRectNorm
+        // Khóa target chuẩn xác vào tia dẫn hướng 3D của bộ lập kế hoạch
         let trackedSubjectPoint = hero?.trackingPoint ?? anchor
         pinTargetAndStartMotion(at: finalLiveAim,
             subjectRect: plan.subjectRect, source: source,
-            trackedPoint: trackedSubjectPoint, pinnedGuideRay: finalGuideRay)
+            trackedPoint: trackedSubjectPoint, pinnedGuideRay: effectiveGuideRay)
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
@@ -3465,8 +3477,7 @@ public final class CameraViewModel: ObservableObject {
             if reached {
                 if reachedAt == nil { reachedAt = CACurrentMediaTime() }
                 if latestOpticalFrameTimestamp > (reachedAt ?? .infinity) + 0.05 || CACurrentMediaTime() - (reachedAt ?? 0) >= 0.12 {
-                    let facesOK = await verifyPostZoomFaces(after: (reachedAt ?? CACurrentMediaTime()))
-                    if !facesOK {
+                    guard await verifyPostZoomFaces(after: (reachedAt ?? CACurrentMediaTime())) else {
                         if CACurrentMediaTime() - (reachedAt ?? 0) < 1.20 {
                             continue
                         }
@@ -4400,10 +4411,17 @@ public final class CameraViewModel: ObservableObject {
             return keyframes.last!
         }
 
-        var idx = 0
-        while idx < keyframes.count - 1 && keyframes[idx + 1].timestamp < time {
-            idx += 1
+        var lo = 0
+        var hi = keyframes.count - 1
+        while lo + 1 < hi {
+            let mid = (lo + hi) >> 1
+            if keyframes[mid].timestamp <= time {
+                lo = mid
+            } else {
+                hi = mid
+            }
         }
+        let idx = lo
 
         let k0 = keyframes[idx]
         let k1 = keyframes[min(idx + 1, keyframes.count - 1)]

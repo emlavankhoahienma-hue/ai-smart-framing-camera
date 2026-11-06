@@ -109,18 +109,21 @@ public enum CompositionExperiments {
         let confStrides = (0..<conf.strides.count).map { conf.strides[$0].intValue }
         let confShape = (0..<conf.shape.count).map { conf.shape[$0].intValue }
 
+        let coordsContiguous = coordsShape.count == 3 && coordsStrides == [coordsShape[1] * coordsShape[2], coordsShape[2], 1]
+        let confContiguous = confShape.count == 3 && confStrides == [confShape[1] * confShape[2], confShape[2], 1]
+
         let log = """
         [THUC NGHIEM C] MLMultiArray ANE Output Tensor Specs
         Coordinates Tensor:
           Shape:   \(coordsShape)
           Strides: \(coordsStrides)
           Type:    \(coords.dataType == .float16 ? "Float16" : (coords.dataType == .float32 ? "Float32" : "Khac"))
-          Is Contiguous: \(coordsStrides == [coordsShape[1] * coordsShape[2], coordsShape[2], 1])
+          Is Contiguous: \(coordsContiguous)
         Confidence Tensor:
           Shape:   \(confShape)
           Strides: \(confStrides)
           Type:    \(conf.dataType == .float16 ? "Float16" : (conf.dataType == .float32 ? "Float32" : "Khac"))
-          Is Contiguous: \(confStrides == [confShape[1] * confShape[2], confShape[2], 1])
+          Is Contiguous: \(confContiguous)
         ------------------------------------------------------------
         """
         CameraLogger.info(log, category: .ai)
