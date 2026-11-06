@@ -2721,7 +2721,7 @@ public final class CameraViewModel: ObservableObject {
             self.activeCompositionRule = evaluatedFraming.optimalRule
             self.framingResult = evaluatedFraming
             let isDistant = first.boundingBox.width * first.boundingBox.height < 0.10
-            let zoomTarget = ((self.aiComposeTimes >= 2 || isDistant) && evaluatedFraming.recommendedZoomFactor < 1.7) ? 2.0 : evaluatedFraming.recommendedZoomFactor
+            let zoomTarget: CGFloat = isDistant && evaluatedFraming.recommendedZoomFactor < 1.7 ? 2.0 : evaluatedFraming.recommendedZoomFactor
             self.pendingSuggestedZoom = zoomTarget
             self.aiSuggestedZoom = zoomTarget
             self.plannedEVBias = evaluatedFraming.recommendedEVBias
@@ -2738,6 +2738,23 @@ public final class CameraViewModel: ObservableObject {
                 }
             }
             pinTargetAndStartMotion(at: liveAim, subjectRect: first.boundingBox, source: source, pinnedGuideRay: worldRay)
+
+            // Thực thi ngay mức zoom thông minh mà AI cục bộ quyết định
+            if isAutoZoomEnabled && abs(zoomTarget - displayZoom) > 0.05 && !isWindowedZoomActive {
+                self.hasExecutedAutoZoomForSession = true
+                self.selectedZoomPreset = resolveClosestZoomPreset(for: zoomTarget)
+                if zoomTarget < 0.99 && !cameraService.hasUltraWideLens {
+                    self.isSimulatedUltraWideActive = true
+                    self.simulatedUltraWideFactor = zoomTarget
+                    self.displayZoom = zoomTarget
+                } else {
+                    self.isSimulatedUltraWideActive = false
+                    self.simulatedUltraWideFactor = 1.0
+                    cameraService.applyDisplayZoomWithPhysicalLensSwitching(zoomTarget, smooth: true, rate: 3.5, allowPhysicalSwitch: true)
+                }
+                presentZoomChangeHUD(displayZoom: zoomTarget)
+            }
+            applyPlannedEVBiasIfNeeded()
             localTrackingSource = nil
             localSelectionMessage = nil
         } else {
@@ -2878,7 +2895,7 @@ public final class CameraViewModel: ObservableObject {
         localCompositionExplanation = plan.explanation + zoomText
 
         // Doka Unified ScanResp for Local AI: Tin tưởng 100% mức Zoom được SAMP-Net và Charm-PARA chấm điểm
-        let isPlan2 = self.aiComposeTimes >= 2
+        let isPlan2 = self.aiComposeTimes >= 2 || effectiveZoom >= 1.8
 
         let focalLengthStr: String
         if effectiveZoom <= 1.15 {
@@ -2962,6 +2979,22 @@ public final class CameraViewModel: ObservableObject {
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
+        // Thực thi ngay mức zoom liên tục (continuous zoom) mà AI cục bộ quyết định
+        if isAutoZoomEnabled && abs(effectiveZoom - displayZoom) > 0.05 && !isWindowedZoomActive {
+            self.hasExecutedAutoZoomForSession = true
+            self.selectedZoomPreset = resolveClosestZoomPreset(for: effectiveZoom)
+            if effectiveZoom < 0.99 && !cameraService.hasUltraWideLens {
+                self.isSimulatedUltraWideActive = true
+                self.simulatedUltraWideFactor = effectiveZoom
+                self.displayZoom = effectiveZoom
+            } else {
+                self.isSimulatedUltraWideActive = false
+                self.simulatedUltraWideFactor = 1.0
+                cameraService.applyDisplayZoomWithPhysicalLensSwitching(effectiveZoom, smooth: true, rate: 3.5, allowPhysicalSwitch: true)
+            }
+            presentZoomChangeHUD(displayZoom: effectiveZoom)
+        }
+        applyPlannedEVBiasIfNeeded()
         localCompositionAim = nil
         localCompositionAimPoint = nil
         localTrackingSource = nil

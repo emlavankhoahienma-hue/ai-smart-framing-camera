@@ -772,7 +772,7 @@ enum CompositionPlanner {
                 }
                 var seeds: [CompositionProposal] = []
                 let placements = dynamicPlacements(subject: subject, intent: intent, desired: desired, raster: raster)
-                let subjectZooms = dynamicZooms(subject: subject, intent: intent, currentZoom: currentZoom, maxZoom: maxZoom, allowedZooms: allowedZooms)
+                let subjectZooms = dynamicZooms(subject: subject, intent: intent, desired: desired, currentZoom: currentZoom, maxZoom: maxZoom, allowedZooms: allowedZooms)
                 for zoom in subjectZooms {
                     for destination in placements {
                         if isCancelled() { return [] }
@@ -1055,6 +1055,7 @@ enum CompositionPlanner {
     }
 
     private static func dynamicZooms(subject: CompositionSubject, intent: LocalCompositionIntent,
+                                     desired: CGPoint,
                                      currentZoom: CGFloat, maxZoom: CGFloat, allowedZooms: [CGFloat]) -> [CGFloat] {
         let area = Double(subject.bounds.width * subject.bounds.height)
         let desiredArea: Double
@@ -1078,7 +1079,7 @@ enum CompositionPlanner {
                 currentArea: area,
                 desiredArea: desiredArea,
                 maxZoom: Double(maxZoom),
-                targetPoint: subject.anchor,
+                targetPoint: desired,
                 boxWidth: Double(subject.bounds.width),
                 boxHeight: Double(subject.bounds.height),
                 safetyMargin: CompositionTuning.edgeSafetyMargin
@@ -1326,10 +1327,12 @@ enum CompositionPlanner {
     }
 
     private static func safe(_ rect: CGRect, original: CGRect, isHero: Bool = false) -> Bool {
+        let minAllowedX = isHero ? -0.15 : (min(0.025, original.minX) - 0.00001)
+        let maxAllowedX = isHero ? 1.15 : (max(0.975, original.maxX) + 0.00001)
         let maxAllowedY = isHero ? 3.0 : (max(0.975, original.maxY) + 0.00001)
-        return rect.minX >= min(0.025, original.minX) - 0.00001 &&
+        return rect.minX >= minAllowedX &&
             rect.minY >= min(0.025, original.minY) - 0.00001 &&
-            rect.maxX <= max(0.975, original.maxX) + 0.00001 &&
+            rect.maxX <= maxAllowedX &&
             rect.maxY <= maxAllowedY
     }
 }
