@@ -2896,7 +2896,6 @@ public final class CameraViewModel: ObservableObject {
         let cropH = min(1.0, 1.0 / effectiveZoom)
         let cropX = max(0.0, min(1.0 - cropW, sourceAimPoint.x - cropW / 2.0))
         let cropY = max(0.0, min(1.0 - cropH, sourceAimPoint.y - cropH / 2.0))
-        let targetCenter = CGPoint(x: cropX + cropW / 2.0, y: cropY + cropH / 2.0)
         let subArea = SubAreaRectNormModel(
             x: cropX,
             y: cropY,
