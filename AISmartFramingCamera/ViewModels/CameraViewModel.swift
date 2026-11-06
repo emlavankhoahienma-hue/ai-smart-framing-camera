@@ -3964,7 +3964,7 @@ public final class CameraViewModel: ObservableObject {
               (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
               !isCameraHibernating, !isShutterPressing else { return }
         wantsVideoRecording = true
-        if isWindowedZoomActive && (windowedZoomFocalLength > 24.5 || windowedZoomAspectRatio != .ratio3_4) {
+        if isWindowedZoomActive && (windowedZoomFocalLength > 24.5 || windowedZoomAspectRatio != .ratio16_9) {
             lastRecordedVideoWindowedFocal = windowedZoomFocalLength
             lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
             lastRecordedVideoWindowedBaseZoom = 1.0

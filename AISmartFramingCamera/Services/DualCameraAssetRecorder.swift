@@ -20,7 +20,8 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
     private let recordQueue = DispatchQueue(label: "com.alignai.camera.dualRecordQueue", qos: .userInitiated)
     private let ciContext = CIContext(options: [
         .useSoftwareRenderer: false,
-        .priorityRequestLow: false
+        .priorityRequestLow: false,
+        .cacheIntermediates: false
     ])
 
     private var assetWriter: AVAssetWriter?
@@ -33,6 +34,7 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
     private var sessionStartTime: CMTime?
     private var lastVideoPTS: CMTime?
     private var pixelBufferPool: CVPixelBufferPool?
+    private var isEncodingFrame = false
 
     private let stateLock = NSLock()
     public var pipCorner: DualCameraPIPCorner = .topTrailing
@@ -163,8 +165,23 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
     public func appendBackPixelBuffer(_ backBuffer: CVPixelBuffer, frontBuffer: CVPixelBuffer?, pts: CMTime) {
         guard isRecording else { return }
 
+        // Backpressure: neu frame truoc chua render xong thi bo frame nay, tranh nghen pool buffer cua camera
+        stateLock.lock()
+        if isEncodingFrame {
+            stateLock.unlock()
+            return
+        }
+        isEncodingFrame = true
+        stateLock.unlock()
+
         recordQueue.async { [weak self] in
-            guard let self, let writer = self.assetWriter, let vInput = self.videoInput, let adaptor = self.videoAdaptor else { return }
+            guard let self else { return }
+            defer {
+                self.stateLock.lock()
+                self.isEncodingFrame = false
+                self.stateLock.unlock()
+            }
+            guard let writer = self.assetWriter, let vInput = self.videoInput, let adaptor = self.videoAdaptor else { return }
             guard writer.status == .writing, vInput.isReadyForMoreMediaData else { return }
 
             self.stateLock.lock()
@@ -413,7 +430,8 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
     private let recordQueue = DispatchQueue(label: "com.alignai.camera.effectRecordQueue", qos: .userInitiated)
     private let ciContext = CIContext(options: [
         .useSoftwareRenderer: false,
-        .priorityRequestLow: false
+        .priorityRequestLow: false,
+        .cacheIntermediates: false
     ])
 
     private var assetWriter: AVAssetWriter?
@@ -426,6 +444,7 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
     private var sessionStartTime: CMTime?
     private var lastVideoPTS: CMTime?
     private var pixelBufferPool: CVPixelBufferPool?
+    private var isEncodingFrame = false
 
     private let stateLock = NSLock()
     public var isHorizonLock: Bool = false
@@ -555,8 +574,23 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
     public func appendVideoPixelBuffer(_ videoBuffer: CVPixelBuffer, pts: CMTime) {
         guard isRecording else { return }
 
+        // Backpressure: neu frame truoc chua render xong thi bo frame nay, tranh nghen pool buffer cua camera
+        stateLock.lock()
+        if isEncodingFrame {
+            stateLock.unlock()
+            return
+        }
+        isEncodingFrame = true
+        stateLock.unlock()
+
         recordQueue.async { [weak self] in
-            guard let self, let writer = self.assetWriter, let vInput = self.videoInput, let adaptor = self.videoAdaptor else { return }
+            guard let self else { return }
+            defer {
+                self.stateLock.lock()
+                self.isEncodingFrame = false
+                self.stateLock.unlock()
+            }
+            guard let writer = self.assetWriter, let vInput = self.videoInput, let adaptor = self.videoAdaptor else { return }
             guard writer.status == .writing, vInput.isReadyForMoreMediaData else { return }
 
             self.stateLock.lock()
@@ -639,7 +673,7 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
             }
 
             if let p = preset, p != .standard {
-                var filtered = FilmFilterEngine.shared.applyPreset(to: frameCI, preset: p, intensity: intensity, isRealtimePreview: false) ?? frameCI
+                var filtered = FilmFilterEngine.shared.applyPreset(to: frameCI, preset: p, intensity: intensity, isRealtimePreview: true) ?? frameCI
                 if let ai = aiParams {
                     filtered = FilmFilterEngine.shared.applyAIColorParameters(to: filtered, params: ai) ?? filtered
                 }

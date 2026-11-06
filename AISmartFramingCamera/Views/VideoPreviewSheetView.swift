@@ -20,7 +20,7 @@ public struct VideoPreviewSheetView: View {
 
     private var hasWindowedParams: Bool {
         if let focal = viewModel.lastRecordedVideoWindowedFocal {
-            return focal > 24.5 || (viewModel.lastRecordedVideoWindowedAspect != nil && viewModel.lastRecordedVideoWindowedAspect != .ratio3_4)
+            return focal > 24.5 || (viewModel.lastRecordedVideoWindowedAspect != nil && viewModel.lastRecordedVideoWindowedAspect != .ratio16_9)
         }
         return false
     }
@@ -204,7 +204,7 @@ public struct VideoPreviewSheetView: View {
         guard !isWindowedZoomAlreadyCropped,
               let windowFocal = viewModel.lastRecordedVideoWindowedFocal,
               let windowAspect = viewModel.lastRecordedVideoWindowedAspect,
-              (windowFocal > 24.5 || windowAspect != .ratio3_4) else { return }
+              (windowFocal > 24.5 || windowAspect != .ratio16_9) else { return }
         let shouldApplyWindowedCrop = !self.isWindowedZoomAlreadyCropped
         processVideoExport(applyColorGrading: false, applyWindowCrop: shouldApplyWindowedCrop)
     }

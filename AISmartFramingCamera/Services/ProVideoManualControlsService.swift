@@ -71,7 +71,7 @@ public final class ProVideoManualControlsService: ObservableObject {
                 ? min(8000, max(1, (1 / minDuration).rounded()))
                 : 8000
             let minShutter = maxDuration.isFinite && maxDuration > 0
-                ? max(1, min(maxShutter, (1 / maxDuration).rounded()))
+                ? max(24, min(maxShutter, (1 / maxDuration).rounded()))
                 : 24
 
             let deviceMinEV = Self.finite(camera.minExposureTargetBias, fallback: -2)

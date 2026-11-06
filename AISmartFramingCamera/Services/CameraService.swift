@@ -637,6 +637,12 @@ public final class CameraService: NSObject {
                 if camera.isLowLightBoostSupported {
                     camera.automaticallyEnablesLowLightBoostWhenAvailable = false
                 }
+                // Viewfinder khong bao gio duoc xuong duoi 30fps trong nha
+                let previewFloor = CMTime(value: 1, timescale: 30)
+                if camera.activeFormat.videoSupportedFrameRateRanges.contains(where: { $0.maxFrameRate >= 30 }),
+                   CMTimeCompare(camera.activeVideoMaxFrameDuration, previewFloor) > 0 {
+                    camera.activeVideoMaxFrameDuration = previewFloor
+                }
                 camera.unlockForConfiguration()
             } catch {
                 CameraLogger.error("Khong the bat HDR/LowLightBoost/P3/Zoom/Constituent", error: error, category: .capture)
@@ -660,12 +666,12 @@ public final class CameraService: NSObject {
                 if self.captureSession.canAddOutput(self.videoDataOutput) {
                     self.captureSession.addOutput(self.videoDataOutput)
                     self.videoDataOutput.alwaysDiscardsLateVideoFrames = true
-                    // Tracking needs preview pixels, not 48 MP BGRA buffers.
-                    self.videoDataOutput.automaticallyConfiguresOutputBufferDimensions = false
-                    self.videoDataOutput.deliversPreviewSizedOutputBuffers = true
                     self.videoDataOutput.videoSettings = [
                         kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)
                     ]
+                    // Dat SAU videoSettings de khong bi reset ve buffer 4K
+                    self.videoDataOutput.automaticallyConfiguresOutputBufferDimensions = false
+                    self.videoDataOutput.deliversPreviewSizedOutputBuffers = true
                     if let connection = self.videoDataOutput.connection(with: .video) {
                         self.configureTrackingConnection(connection)
                         if connection.isVideoRotationAngleSupported(90) {
@@ -2306,6 +2312,11 @@ public final class CameraService: NSObject {
             return
         }
 
+        // Luon cau hinh + khoa fps format truoc (ca nhanh Effect) de sensor khong tut xuong 5-15fps
+        if appliedVideoFormatOption == nil || appliedVideoFormatOption != selectedVideoFormatOption {
+            configureVideoFormatInternal(option: selectedVideoFormatOption)
+        }
+
         let isEffectRecording = isHorizonLockActive || isSimulatedUltraWideActive || (activeFilmPreset != nil && activeFilmPreset != .standard)
         if isEffectRecording {
             let outputURL = FileManager.default.temporaryDirectory
@@ -2316,9 +2327,13 @@ public final class CameraService: NSObject {
             publishRecordingState(.starting)
 
             let effectiveOption = appliedVideoFormatOption ?? selectedVideoFormatOption
-            let portraitWidth = min(effectiveOption.width, effectiveOption.height)
-            let portraitHeight = max(effectiveOption.width, effectiveOption.height)
-            let dims = CMVideoDimensions(width: portraitWidth, height: portraitHeight)
+            // videoDataOutput chi giao buffer cỡ preview => gioi han 1080x1920 de khop va giam tai CoreImage
+            let rawPortraitWidth = min(effectiveOption.width, effectiveOption.height)
+            let rawPortraitHeight = max(effectiveOption.width, effectiveOption.height)
+            let capScale = min(1.0, 1080.0 / Double(max(1, rawPortraitWidth)), 1920.0 / Double(max(1, rawPortraitHeight)))
+            let portraitWidth = max(2, (Int(Double(rawPortraitWidth) * capScale)) & ~1)
+            let portraitHeight = max(2, (Int(Double(rawPortraitHeight) * capScale)) & ~1)
+            let dims = CMVideoDimensions(width: Int32(portraitWidth), height: Int32(portraitHeight))
             let fps = effectiveOption.fps
 
             EffectVideoAssetRecorder.shared.isHorizonLock = isHorizonLockActive
@@ -2332,7 +2347,7 @@ public final class CameraService: NSObject {
                 do {
                     try camera.lockForConfiguration()
                     if camera.isLowLightBoostSupported {
-                        camera.automaticallyEnablesLowLightBoostWhenAvailable = true
+                        camera.automaticallyEnablesLowLightBoostWhenAvailable = false
                     }
                     if camera.activeFormat.isVideoHDRSupported {
                         camera.automaticallyAdjustsVideoHDREnabled = false
@@ -2410,15 +2425,8 @@ public final class CameraService: NSObject {
         do {
             try camera.lockForConfiguration()
             if let range = validRange {
-                let minDuration = range.minFrameDuration
-                let maxDuration = range.maxFrameDuration
-                if CMTimeCompare(minDuration, camera.activeVideoMaxFrameDuration) > 0 {
-                    camera.activeVideoMaxFrameDuration = maxDuration
-                    camera.activeVideoMinFrameDuration = minDuration
-                } else {
-                    camera.activeVideoMinFrameDuration = minDuration
-                    camera.activeVideoMaxFrameDuration = maxDuration
-                }
+                _ = range
+                self.lockCameraFrameRate(for: camera, targetFPS: targetFPS)
             }
             if camera.isFocusModeSupported(.continuousAutoFocus) {
                 camera.focusMode = .continuousAutoFocus
@@ -2431,7 +2439,7 @@ public final class CameraService: NSObject {
             }
             camera.isSubjectAreaChangeMonitoringEnabled = true
             if camera.isLowLightBoostSupported {
-                camera.automaticallyEnablesLowLightBoostWhenAvailable = true
+                camera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
             if camera.activeFormat.isVideoHDRSupported {
                 camera.automaticallyAdjustsVideoHDREnabled = false
@@ -2797,21 +2805,7 @@ public final class CameraService: NSObject {
                 self.delegate?.cameraService(self, didChangeZoomFactor: reportedZoom)
             }
 
-            let matchingRange = targetFormat.videoSupportedFrameRateRanges.first(where: {
-                $0.minFrameRate <= (targetFPS + 1.5) && $0.maxFrameRate >= (targetFPS - 1.5)
-            })
-            let range = matchingRange ?? targetFormat.videoSupportedFrameRateRanges.first
-            if let validRange = range {
-                let minDuration = validRange.minFrameDuration
-                let maxDuration = validRange.maxFrameDuration
-                if CMTimeCompare(minDuration, targetCamera.activeVideoMaxFrameDuration) > 0 {
-                    targetCamera.activeVideoMaxFrameDuration = maxDuration
-                    targetCamera.activeVideoMinFrameDuration = minDuration
-                } else {
-                    targetCamera.activeVideoMinFrameDuration = minDuration
-                    targetCamera.activeVideoMaxFrameDuration = maxDuration
-                }
-            }
+            self.lockCameraFrameRate(for: targetCamera, targetFPS: targetFPS)
 
             if targetCamera.isFocusModeSupported(.continuousAutoFocus) {
                 targetCamera.focusMode = .continuousAutoFocus
@@ -2825,7 +2819,7 @@ public final class CameraService: NSObject {
             targetCamera.isSubjectAreaChangeMonitoringEnabled = true
 
             if targetCamera.isLowLightBoostSupported {
-                targetCamera.automaticallyEnablesLowLightBoostWhenAvailable = true
+                targetCamera.automaticallyEnablesLowLightBoostWhenAvailable = false
             }
             if targetCamera.activeFormat.isVideoHDRSupported {
                 targetCamera.automaticallyAdjustsVideoHDREnabled = false
@@ -2836,6 +2830,8 @@ public final class CameraService: NSObject {
                 sessionCommitted = true
                 self.captureSession.commitConfiguration()
             }
+            // Khoa lai fps SAU commit de session khong reset frame duration ve range rong (5-15fps)
+            self.lockCameraFrameRate(for: targetCamera, targetFPS: targetFPS)
 
             // Ở chế độ Video, chọn độ phân giải ảnh tĩnh nhẹ nhất của format để ISP không cấp phát bộ đệm 48MP gây lag luồng video 4K60
             let lightVideoPhotoDim = targetFormat.supportedMaxPhotoDimensions.min(by: {
@@ -2857,6 +2853,28 @@ public final class CameraService: NSObject {
             CameraLogger.info("CameraService: Khoa cung phan cung video thanh cong \(effectiveOption.rawValue) @ \(targetFPS) FPS", category: .capture)
         } catch {
             CameraLogger.error("CameraService: Loi cau hinh video format \(effectiveOption.rawValue)", error: error, category: .capture)
+        }
+    }
+
+    /// Khoa CA HAI min/max frame duration = 1/fps. Neu de max duration = 1/2..1/5s thi ISP keo dai
+    /// exposure o trong nha va sensor chi xuat 5-15fps. Dong thoi tat low-light-boost tu dong.
+    private func lockCameraFrameRate(for camera: AVCaptureDevice, targetFPS: Double) {
+        let wanted = max(1.0, targetFPS.isFinite ? targetFPS : 30.0)
+        let ranges = camera.activeFormat.videoSupportedFrameRateRanges
+        guard let range = ranges.first(where: {
+            $0.minFrameRate <= (wanted + 0.5) && $0.maxFrameRate >= (wanted - 0.5)
+        }) ?? ranges.first else { return }
+        let clamped = min(max(wanted, range.minFrameRate), range.maxFrameRate)
+        let duration = CMTime(value: 1, timescale: CMTimeScale(max(1, Int(round(clamped)))))
+        if CMTimeCompare(duration, camera.activeVideoMaxFrameDuration) > 0 {
+            camera.activeVideoMaxFrameDuration = duration
+            camera.activeVideoMinFrameDuration = duration
+        } else {
+            camera.activeVideoMinFrameDuration = duration
+            camera.activeVideoMaxFrameDuration = duration
+        }
+        if camera.isLowLightBoostSupported {
+            camera.automaticallyEnablesLowLightBoostWhenAvailable = false
         }
     }
 
@@ -2946,7 +2964,7 @@ public final class CameraService: NSObject {
                 do {
                     try camera.lockForConfiguration()
                     if camera.isLowLightBoostSupported {
-                        camera.automaticallyEnablesLowLightBoostWhenAvailable = true
+                        camera.automaticallyEnablesLowLightBoostWhenAvailable = false
                     }
                     camera.setExposureTargetBias(0.0, completionHandler: nil)
                     camera.unlockForConfiguration()

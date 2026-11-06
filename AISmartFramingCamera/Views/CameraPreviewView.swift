@@ -136,6 +136,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
     // Frame cache to avoid redundant filter graphs on idle or identical frames
     private var lastProcessedBuffer: CVPixelBuffer? = nil
+    private var lastPresentedOnce: Bool = false
     private var lastFilteredCI: CIImage? = nil
     private var lastPreset: FilmPreset = .standard
     private var lastIntensity: Float = 1.0
@@ -193,13 +194,27 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         guard let vm = self.viewModel,
               let pixelBuffer = vm.cameraService.currentMultiCamPixelBuffer() ?? vm.latestCameraPixelBuffer() else { return }
 
+        let effectivePreset = preset.isAIFullAuto ? (vm.aiRecommendedPreset ?? vm.detectedScene.recommendedFilter) : preset
+
+        // Khong co frame camera moi + moi tham so giong het => khong render lai (tranh 60 lan/giay chay lai graph CoreImage)
+        if !isHL && !isPeaking && !simUW,
+           pixelBuffer === lastProcessedBuffer,
+           filmActive == lastFilterActive,
+           videoAspectFit == lastVideoAspectFit,
+           effectivePreset == lastPreset,
+           abs(intensity - lastIntensity) < 0.005,
+           view.drawableSize == lastDrawableSize,
+           lastFilteredCI != nil,
+           lastPresentedOnce {
+            return
+        }
+
         guard let currentDrawable = view.currentDrawable,
               let commandBuffer = commandQueue.makeCommandBuffer() else { return }
 
         let drawableSize = view.drawableSize
         guard drawableSize.width > 0, drawableSize.height > 0 else { return }
 
-        let effectivePreset = preset.isAIFullAuto ? (vm.aiRecommendedPreset ?? vm.detectedScene.recommendedFilter) : preset
         let finalImageToRender: CIImage
 
         // Optimization: reuse last filtered image if buffer, preset, intensity and size haven't changed (disable when horizon lock or peaking is active)
@@ -319,6 +334,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
             colorSpace: sRGBColorSpace
         )
 
+        lastPresentedOnce = true
         commandBuffer.present(currentDrawable)
         commandBuffer.commit()
     }
@@ -407,6 +423,7 @@ public class PreviewContainerView: UIView {
         mtk.framebufferOnly = false
         mtk.colorPixelFormat = .bgra8Unorm
         mtk.preferredFramesPerSecond = 60
+        mtk.contentScaleFactor = min(currentDisplayScale, 2.0)
         mtk.isPaused = true
         mtk.enableSetNeedsDisplay = false
         mtk.isUserInteractionEnabled = false
@@ -460,6 +477,7 @@ public class PreviewContainerView: UIView {
         multiCamOverlayLayer?.contentsScale = currentDisplayScale
         multiCamOverlayLayer?.rasterizationScale = currentDisplayScale
         metalView?.frame = bounds
+        metalView?.contentScaleFactor = min(currentDisplayScale, 2.0)
         updateOrientation()
     }
 
