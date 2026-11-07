@@ -3079,7 +3079,7 @@ public final class GeminiService: ObservableObject {
     ) -> String {
         var telemetryParts: [String] = []
         if let m = colorMetrics {
-            telemetryParts.append(String(format: "luma=%.2f, warmth=%.2f, contrast=%.2f, sat=%.2f, dynRange=%.2f", m.averageLuma, m.warmthCast, m.contrastScore, m.saturationLevel, m.dynamicRange))
+            telemetryParts.append(String(format: "luma=%.2f, warmth=%.2f, tint=%.2f, contrast=%.2f (%@)", m.averageLuma, m.warmthCast, m.tintCast, m.contrastScore, m.lightingSummary))
         }
         if let scene = sceneContext {
             telemetryParts.append("sensor_scene_hint=\(scene.rawValue)")

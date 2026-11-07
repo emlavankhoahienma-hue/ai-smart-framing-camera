@@ -4691,7 +4691,7 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    private static let windowedSharpnessCIContext = CIContext(options: [
+    private nonisolated static let windowedSharpnessCIContext = CIContext(options: [
         .useSoftwareRenderer: false,
         .highQualityDownsample: true
     ])
