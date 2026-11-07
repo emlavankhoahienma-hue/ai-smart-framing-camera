@@ -103,11 +103,13 @@ static void testOrbAndZnccSubpixel() {
     renderTexturedScene(img0.data(), w, h, 0.0, 0.0);
     renderTexturedScene(img1.data(), w, h, trueDx, trueDy);
 
+    const float cornerX = 82.0f;
+    const float cornerY = 78.0f;
     uint8_t desc0[32];
     uint8_t desc1[32];
     uint8_t descUnrelated[32];
-    ntc_compute_orb_descriptor(img0.data(), w, h, 80.0f, 60.0f, desc0);
-    ntc_compute_orb_descriptor(img1.data(), w, h, static_cast<float>(80.0 + trueDx), static_cast<float>(60.0 + trueDy), desc1);
+    ntc_compute_orb_descriptor(img0.data(), w, h, cornerX, cornerY, desc0);
+    ntc_compute_orb_descriptor(img1.data(), w, h, static_cast<float>(cornerX + trueDx), static_cast<float>(cornerY + trueDy), desc1);
     ntc_compute_orb_descriptor(img1.data(), w, h, 25.0f, 25.0f, descUnrelated);
 
     EXPECT_TRUE(ntc_orb_hamming_distance(desc0, desc0) == 0);
@@ -120,14 +122,14 @@ static void testOrbAndZnccSubpixel() {
     float bestY = 0.0f;
     double bestScore = 0.0;
     const bool matched = ntc_match_patch_zncc(
-        img0.data(), w, h, 80.0f, 60.0f,
-        img1.data(), w, h, 80.0f, 60.0f,
+        img0.data(), w, h, cornerX, cornerY,
+        img1.data(), w, h, cornerX, cornerY,
         10, true, &bestX, &bestY, &bestScore
     );
     EXPECT_TRUE(matched);
     EXPECT_TRUE(bestScore > 0.92);
-    EXPECT_NEAR(bestX, 80.0 + trueDx, 0.22);
-    EXPECT_NEAR(bestY, 60.0 + trueDy, 0.22);
+    EXPECT_NEAR(bestX, static_cast<double>(cornerX) + trueDx, 0.22);
+    EXPECT_NEAR(bestY, static_cast<double>(cornerY) + trueDy, 0.22);
 }
 
 static void testConstellationFlowAndPyramidalICLK() {
