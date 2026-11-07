@@ -18,9 +18,13 @@ public struct WindowedZoomOverlayView: View {
     @State private var resizeInitialFocalLength: Double = 35.0
     @State private var resizeInitialHalfDiag: CGFloat = 100.0
     @State private var resizeInitialHalfSize: CGSize = CGSize(width: 100, height: 100)
+    @State private var liveNormalizedCenter: CGPoint? = nil
+    @State private var liveFocalLength: Double? = nil
+    @State private var lastVideoKeyframeSyncTime: CFTimeInterval = 0
     @Namespace private var focalPillNamespace
 
     private let presets = WindowedFocalLengthPreset.standardPresets
+    private let windowCornerRadius: CGFloat = 20.0
 
     private enum CornerPosition {
         case topLeft, topRight, bottomLeft, bottomRight
@@ -31,10 +35,18 @@ public struct WindowedZoomOverlayView: View {
         self.containerSize = containerSize
     }
 
+    private var effectiveFocalLength: Double {
+        liveFocalLength ?? viewModel.windowedZoomFocalLength
+    }
+
+    private var effectiveNormalizedCenter: CGPoint {
+        liveNormalizedCenter ?? viewModel.windowedZoomNormalizedCenter
+    }
+
     /// Chỉ ẩn hoàn toàn Mask khi tiêu cự <= 24.5mm VÀ tỷ lệ khớp khung gốc 3:4.
     /// Nếu ở 24mm mà chọn 1:1 hoặc 16:9, vẫn hiển thị Mask và viền khung để cắt đúng tỷ lệ.
     private var isUnmodifiedFullView: Bool {
-        viewModel.windowedZoomFocalLength <= 24.5 && viewModel.windowedZoomAspectRatio == .ratio3_4
+        effectiveFocalLength <= 24.5 && viewModel.windowedZoomAspectRatio == .ratio3_4
     }
 
     @State private var dragStartNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
@@ -44,7 +56,7 @@ public struct WindowedZoomOverlayView: View {
     private var windowRect: CGRect {
         guard containerSize.width > 0, containerSize.height > 0 else { return .zero }
         let fractions = viewModel.windowedZoomAspectRatio.windowFractions(
-            focalLength: viewModel.windowedZoomFocalLength,
+            focalLength: effectiveFocalLength,
             baseOpticalZoom: 1.0,
             containerAspect: containerSize.width / containerSize.height
         )
@@ -56,28 +68,48 @@ public struct WindowedZoomOverlayView: View {
         let maxCenterX = max(halfW, containerSize.width - halfW)
         let minCenterY = halfH
         let maxCenterY = max(halfH, containerSize.height - halfH)
-        let centerX = max(minCenterX, min(containerSize.width * viewModel.windowedZoomNormalizedCenter.x, maxCenterX))
-        let centerY = max(minCenterY, min(containerSize.height * viewModel.windowedZoomNormalizedCenter.y, maxCenterY))
+        let activeCenter = effectiveNormalizedCenter
+        let centerX = max(minCenterX, min(containerSize.width * activeCenter.x, maxCenterX))
+        let centerY = max(minCenterY, min(containerSize.height * activeCenter.y, maxCenterY))
         let x = centerX - halfW
         let y = centerY - halfH
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
-    private func clampNormalizedCenter() {
+    private func clampNormalizedCenter(for focal: Double? = nil) {
         guard containerSize.width > 0, containerSize.height > 0 else { return }
+        let targetFocal = focal ?? effectiveFocalLength
         let fractions = viewModel.windowedZoomAspectRatio.windowFractions(
-            focalLength: viewModel.windowedZoomFocalLength,
+            focalLength: targetFocal,
             baseOpticalZoom: 1.0,
             containerAspect: containerSize.width / containerSize.height
         )
         let halfWFrac = fractions.widthFraction / 2.0
         let halfHFrac = fractions.heightFraction / 2.0
-        let current = viewModel.windowedZoomNormalizedCenter
+        let current = effectiveNormalizedCenter
         let clampedX = max(halfWFrac, min(current.x, 1.0 - halfWFrac))
         let clampedY = max(halfHFrac, min(current.y, 1.0 - halfHFrac))
-        if clampedX != current.x || clampedY != current.y {
-            viewModel.windowedZoomNormalizedCenter = CGPoint(x: clampedX, y: clampedY)
+        let clampedPoint = CGPoint(x: clampedX, y: clampedY)
+        if liveNormalizedCenter != nil {
+            liveNormalizedCenter = clampedPoint
         }
+        if clampedX != viewModel.windowedZoomNormalizedCenter.x || clampedY != viewModel.windowedZoomNormalizedCenter.y {
+            viewModel.windowedZoomNormalizedCenter = clampedPoint
+        }
+    }
+
+    private func syncLiveGestureToViewModelIfRecording(center: CGPoint?, focal: Double?) {
+        guard viewModel.isRecordingVideo else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastVideoKeyframeSyncTime >= 0.032 else { return }
+        lastVideoKeyframeSyncTime = now
+        if let center {
+            viewModel.windowedZoomNormalizedCenter = center
+        }
+        if let focal {
+            viewModel.windowedZoomFocalLength = focal
+        }
+        viewModel.recordWindowedKeyframeFromLiveGesture()
     }
 
     private var isInteracting: Bool {
@@ -86,29 +118,35 @@ public struct WindowedZoomOverlayView: View {
 
     public var body: some View {
         ZStack {
-            // 1. Lớp làm tối ngoài viền (Cutout Dimming Mask 44%)
+            // 1. Lớp làm tối ngoài viền (Cutout Dimming Mask 44% bo tròn mềm mại)
             if !isUnmodifiedFullView {
-                WindowedMaskCutout(windowRect: windowRect)
+                WindowedMaskCutout(windowRect: windowRect, cornerRadius: windowCornerRadius)
                     .fill(Color.black.opacity(0.44), style: FillStyle(eoFill: true))
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
                     .transition(.opacity)
             }
 
-            // 2. Khung ngắm Rangefinder tối giản (đã bỏ nhãn thông số zoom trên đỉnh cửa sổ theo yêu cầu)
+            // 2. Khung ngắm Rangefinder bo tròn hiện đại, di chuyển siêu mượt 120Hz
             if !isUnmodifiedFullView {
                 ZStack(alignment: .center) {
-                    // Viền mảnh sắc nét chuẩn khung ngắm Leica Brightline
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    // Viền ngoài bo tròn continuous 20pt mượt mà chuẩn Leica Brightline
+                    RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous)
                         .stroke(
-                            isInteracting ? AlignTheme.electricCyan.opacity(0.95) : Color.white.opacity(0.78),
-                            lineWidth: isInteracting ? 1.8 : 1.2
+                            isInteracting ? AlignTheme.electricCyan.opacity(0.96) : Color.white.opacity(0.82),
+                            lineWidth: isInteracting ? 1.9 : 1.35
+                        )
+                        .background(
+                            RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous)
+                                .stroke(Color.black.opacity(0.28), lineWidth: 0.8)
+                                .padding(1.2)
                         )
                         .background(Color.white.opacity(0.001))
                         .frame(width: windowRect.width, height: windowRect.height)
 
-                    // Lưới bố cục 3x3 & 4 góc chữ L Rangefinder luôn hiển thị rõ ràng
+                    // Lưới bố cục 3x3 & 4 góc bo tròn đồng tâm với cửa sổ
                     opticalGridView
+                        .clipShape(RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous))
 
                     // Tâm ngắm siêu mảnh tại chính giữa cửa sổ
                     ZStack {
@@ -122,17 +160,19 @@ public struct WindowedZoomOverlayView: View {
                 }
                 .frame(width: windowRect.width, height: windowRect.height)
                 .position(x: windowRect.midX, y: windowRect.midY)
-                .contentShape(Rectangle())
+                .transaction { $0.animation = isInteracting ? nil : $0.animation }
+                .contentShape(RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous))
                 .gesture(
-                    DragGesture(minimumDistance: 2, coordinateSpace: .named("windowed_container"))
+                    DragGesture(minimumDistance: 1, coordinateSpace: .named("windowed_container"))
                         .onChanged { value in
                             guard resizingCorner == nil, containerSize.width > 0, containerSize.height > 0 else { return }
                             if !isDraggingWindow {
                                 isDraggingWindow = true
-                                dragStartNormalizedCenter = viewModel.windowedZoomNormalizedCenter
+                                dragStartNormalizedCenter = effectiveNormalizedCenter
+                                liveNormalizedCenter = dragStartNormalizedCenter
                             }
                             let fractions = viewModel.windowedZoomAspectRatio.windowFractions(
-                                focalLength: viewModel.windowedZoomFocalLength,
+                                focalLength: effectiveFocalLength,
                                 baseOpticalZoom: 1.0,
                                 containerAspect: containerSize.width / containerSize.height
                             )
@@ -144,20 +184,33 @@ public struct WindowedZoomOverlayView: View {
                             let rawY = dragStartNormalizedCenter.y + deltaY
                             let clampedX = max(halfWFrac, min(rawX, 1.0 - halfWFrac))
                             let clampedY = max(halfHFrac, min(rawY, 1.0 - halfHFrac))
+                            let nextCenter = CGPoint(x: clampedX, y: clampedY)
                             var transaction = Transaction()
                             transaction.disablesAnimations = true
                             withTransaction(transaction) {
-                                viewModel.windowedZoomNormalizedCenter = CGPoint(x: clampedX, y: clampedY)
+                                liveNormalizedCenter = nextCenter
                             }
+                            syncLiveGestureToViewModelIfRecording(center: nextCenter, focal: nil)
                         }
                         .onEnded { _ in
-                            isDraggingWindow = false
+                            var transaction = Transaction()
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) {
+                                if let finalCenter = liveNormalizedCenter {
+                                    viewModel.windowedZoomNormalizedCenter = finalCenter
+                                }
+                                liveNormalizedCenter = nil
+                                isDraggingWindow = false
+                            }
+                            viewModel.recordWindowedKeyframeFromLiveGesture()
                         }
                 )
                 .onTapGesture(count: 2) {
                     withAnimation(.spring(response: 0.30, dampingFraction: 0.82)) {
+                        liveNormalizedCenter = nil
                         viewModel.windowedZoomNormalizedCenter = CGPoint(x: 0.5, y: 0.5)
                     }
+                    viewModel.recordWindowedKeyframeFromLiveGesture()
                     viewModel.haptics.triggerSelectionChange()
                 }
 
@@ -183,21 +236,51 @@ public struct WindowedZoomOverlayView: View {
                 .onChanged { value in
                     if !isPinching {
                         isPinching = true
-                        gestureInitialFocalLength = viewModel.windowedZoomFocalLength
+                        gestureInitialFocalLength = effectiveFocalLength
+                        liveFocalLength = gestureInitialFocalLength
+                        liveNormalizedCenter = effectiveNormalizedCenter
                     }
                     let safeScale = max(0.12, Double(value))
                     let rawFocal = gestureInitialFocalLength / safeScale
                     let targetFocal = max(24.0, min(135.0, rawFocal))
+                    let resolvedFocal = targetFocal <= 24.3 ? 24.0 : targetFocal
+
+                    let fractions = viewModel.windowedZoomAspectRatio.windowFractions(
+                        focalLength: resolvedFocal,
+                        baseOpticalZoom: 1.0,
+                        containerAspect: max(0.1, containerSize.width / max(1.0, containerSize.height))
+                    )
+                    let halfWFrac = fractions.widthFraction / 2.0
+                    let halfHFrac = fractions.heightFraction / 2.0
+                    let current = effectiveNormalizedCenter
+                    let clampedCenter = CGPoint(
+                        x: max(halfWFrac, min(current.x, 1.0 - halfWFrac)),
+                        y: max(halfHFrac, min(current.y, 1.0 - halfHFrac))
+                    )
 
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
-                        viewModel.windowedZoomFocalLength = targetFocal <= 24.3 ? 24.0 : targetFocal
-                        clampNormalizedCenter()
+                        liveFocalLength = resolvedFocal
+                        liveNormalizedCenter = clampedCenter
                     }
+                    syncLiveGestureToViewModelIfRecording(center: clampedCenter, focal: resolvedFocal)
                 }
                 .onEnded { _ in
-                    isPinching = false
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        if let finalFocal = liveFocalLength {
+                            viewModel.windowedZoomFocalLength = finalFocal
+                        }
+                        if let finalCenter = liveNormalizedCenter {
+                            viewModel.windowedZoomNormalizedCenter = finalCenter
+                        }
+                        liveFocalLength = nil
+                        liveNormalizedCenter = nil
+                        isPinching = false
+                    }
+                    viewModel.recordWindowedKeyframeFromLiveGesture()
                 }
         )
     }
@@ -207,12 +290,13 @@ public struct WindowedZoomOverlayView: View {
     private func cornerResizeHandle(position: CornerPosition) -> some View {
         let isCurrent = resizingCorner == position
         let handleTouchArea: CGFloat = 44
+        let cornerInset: CGFloat = 3.0
         let cornerPoint: CGPoint = {
             switch position {
-            case .topLeft:     return CGPoint(x: windowRect.minX, y: windowRect.minY)
-            case .topRight:    return CGPoint(x: windowRect.maxX, y: windowRect.minY)
-            case .bottomLeft:  return CGPoint(x: windowRect.minX, y: windowRect.maxY)
-            case .bottomRight: return CGPoint(x: windowRect.maxX, y: windowRect.maxY)
+            case .topLeft:     return CGPoint(x: windowRect.minX + cornerInset, y: windowRect.minY + cornerInset)
+            case .topRight:    return CGPoint(x: windowRect.maxX - cornerInset, y: windowRect.minY + cornerInset)
+            case .bottomLeft:  return CGPoint(x: windowRect.minX + cornerInset, y: windowRect.maxY - cornerInset)
+            case .bottomRight: return CGPoint(x: windowRect.maxX - cornerInset, y: windowRect.maxY - cornerInset)
             }
         }()
 
@@ -228,12 +312,15 @@ public struct WindowedZoomOverlayView: View {
                 .shadow(color: Color.black.opacity(0.6), radius: 2)
         }
         .position(x: cornerPoint.x, y: cornerPoint.y)
+        .transaction { $0.animation = isInteracting ? nil : $0.animation }
         .highPriorityGesture(
             DragGesture(minimumDistance: 1, coordinateSpace: .named("windowed_container"))
                 .onChanged { value in
                     if resizingCorner != position {
                         resizingCorner = position
-                        resizeInitialFocalLength = viewModel.windowedZoomFocalLength
+                        resizeInitialFocalLength = effectiveFocalLength
+                        liveFocalLength = resizeInitialFocalLength
+                        liveNormalizedCenter = effectiveNormalizedCenter
                         let initHalfW = max(20.0, windowRect.width / 2.0)
                         let initHalfH = max(20.0, windowRect.height / 2.0)
                         resizeInitialHalfSize = CGSize(width: initHalfW, height: initHalfH)
@@ -260,21 +347,49 @@ public struct WindowedZoomOverlayView: View {
                     let ratio = currentHalfDiag / max(16.0, resizeInitialHalfDiag)
                     let rawFocal = resizeInitialFocalLength / max(0.12, Double(ratio))
                     let targetFocal = max(24.0, min(135.0, rawFocal))
+                    let resolvedFocal = targetFocal <= 24.3 ? 24.0 : targetFocal
+
+                    let fractions = viewModel.windowedZoomAspectRatio.windowFractions(
+                        focalLength: resolvedFocal,
+                        baseOpticalZoom: 1.0,
+                        containerAspect: max(0.1, containerSize.width / max(1.0, containerSize.height))
+                    )
+                    let halfWFrac = fractions.widthFraction / 2.0
+                    let halfHFrac = fractions.heightFraction / 2.0
+                    let current = effectiveNormalizedCenter
+                    let clampedCenter = CGPoint(
+                        x: max(halfWFrac, min(current.x, 1.0 - halfWFrac)),
+                        y: max(halfHFrac, min(current.y, 1.0 - halfHFrac))
+                    )
 
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
-                        viewModel.windowedZoomFocalLength = targetFocal <= 24.3 ? 24.0 : targetFocal
-                        clampNormalizedCenter()
+                        liveFocalLength = resolvedFocal
+                        liveNormalizedCenter = clampedCenter
                     }
+                    syncLiveGestureToViewModelIfRecording(center: clampedCenter, focal: resolvedFocal)
                 }
                 .onEnded { _ in
-                    resizingCorner = nil
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        if let finalFocal = liveFocalLength {
+                            viewModel.windowedZoomFocalLength = finalFocal
+                        }
+                        if let finalCenter = liveNormalizedCenter {
+                            viewModel.windowedZoomNormalizedCenter = finalCenter
+                        }
+                        liveFocalLength = nil
+                        liveNormalizedCenter = nil
+                        resizingCorner = nil
+                    }
+                    viewModel.recordWindowedKeyframeFromLiveGesture()
                 }
         )
     }
 
-    // MARK: - Optical Grid & Leica L-Brackets
+    // MARK: - Optical Grid & Rounded Leica Corner Brackets
     @ViewBuilder
     private var opticalGridView: some View {
         ZStack {
@@ -293,9 +408,12 @@ public struct WindowedZoomOverlayView: View {
             }
             .stroke(Color.white.opacity(isInteracting ? 0.32 : 0.16), lineWidth: 0.5)
 
-            // 4 góc L-Bracket chuẩn Rangefinder Leica
-            LeicaCornerBrackets(bracketLength: 14)
-                .stroke(isInteracting ? AlignTheme.electricCyan : Color.white.opacity(0.92), lineWidth: 2.2)
+            // 4 góc bo tròn ôm sát viền cửa sổ
+            LeicaCornerBrackets(bracketLength: 18, cornerRadius: windowCornerRadius)
+                .stroke(
+                    isInteracting ? AlignTheme.electricCyan : Color.white.opacity(0.95),
+                    style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round)
+                )
         }
         .frame(width: windowRect.width, height: windowRect.height)
         .allowsHitTesting(false)
@@ -303,9 +421,9 @@ public struct WindowedZoomOverlayView: View {
 
     private func isPresetSelected(_ preset: WindowedFocalLengthPreset) -> Bool {
         if preset.focalLength <= 24.0 {
-            return viewModel.windowedZoomFocalLength <= 24.5
+            return effectiveFocalLength <= 24.5
         }
-        return abs(viewModel.windowedZoomFocalLength - preset.focalLength) < 2.0
+        return abs(effectiveFocalLength - preset.focalLength) < 2.0
     }
 
     private func selectPreset(_ preset: WindowedFocalLengthPreset) {
@@ -313,9 +431,12 @@ public struct WindowedZoomOverlayView: View {
         generator.prepare()
         generator.selectionChanged()
         withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+            liveFocalLength = nil
+            liveNormalizedCenter = nil
             viewModel.windowedZoomFocalLength = preset.focalLength
-            clampNormalizedCenter()
+            clampNormalizedCenter(for: preset.focalLength)
         }
+        viewModel.recordWindowedKeyframeFromLiveGesture()
     }
 
     private var focalPresetBar: some View {
@@ -335,12 +456,15 @@ public struct WindowedZoomOverlayView: View {
 
             Button(action: {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                    liveFocalLength = nil
+                    liveNormalizedCenter = nil
                     viewModel.cycleAspectRatio()
                     if viewModel.windowedZoomFocalLength <= 24.5 && viewModel.windowedZoomAspectRatio != .ratio3_4 {
                         viewModel.windowedZoomFocalLength = 28.0
                     }
                     clampNormalizedCenter()
                 }
+                viewModel.recordWindowedKeyframeFromLiveGesture()
                 viewModel.haptics.triggerSelectionChange()
             }) {
                 Text(viewModel.windowedZoomAspectRatio.rawValue)
@@ -361,35 +485,41 @@ public struct WindowedZoomOverlayView: View {
     }
 }
 
-// MARK: - 4 Góc L-Bracket Chuẩn Rangefinder Leica
+// MARK: - 4 Góc Bo Tròn Chuẩn Rangefinder Leica
 private struct LeicaCornerBrackets: Shape {
     let bracketLength: CGFloat
+    var cornerRadius: CGFloat = 20.0
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
         let w = rect.width
         let h = rect.height
-        let len = min(bracketLength, min(w, h) / 3.0)
+        let r = min(cornerRadius, min(w, h) / 3.0)
+        let arm = max(r + 4.0, min(bracketLength + r * 0.45, min(w, h) / 2.6))
 
-        // Top-Left
-        path.move(to: CGPoint(x: 0, y: len))
-        path.addLine(to: CGPoint(x: 0, y: 0))
-        path.addLine(to: CGPoint(x: len, y: 0))
+        // Top-Left Rounded Corner
+        path.move(to: CGPoint(x: 0, y: arm))
+        path.addLine(to: CGPoint(x: 0, y: r))
+        path.addArc(center: CGPoint(x: r, y: r), radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        path.addLine(to: CGPoint(x: arm, y: 0))
 
-        // Top-Right
-        path.move(to: CGPoint(x: w - len, y: 0))
-        path.addLine(to: CGPoint(x: w, y: 0))
-        path.addLine(to: CGPoint(x: w, y: len))
+        // Top-Right Rounded Corner
+        path.move(to: CGPoint(x: w - arm, y: 0))
+        path.addLine(to: CGPoint(x: w - r, y: 0))
+        path.addArc(center: CGPoint(x: w - r, y: r), radius: r, startAngle: .degrees(270), endAngle: .degrees(360), clockwise: false)
+        path.addLine(to: CGPoint(x: w, y: arm))
 
-        // Bottom-Left
-        path.move(to: CGPoint(x: 0, y: h - len))
-        path.addLine(to: CGPoint(x: 0, y: h))
-        path.addLine(to: CGPoint(x: len, y: h))
+        // Bottom-Left Rounded Corner
+        path.move(to: CGPoint(x: 0, y: h - arm))
+        path.addLine(to: CGPoint(x: 0, y: h - r))
+        path.addArc(center: CGPoint(x: r, y: h - r), radius: r, startAngle: .degrees(180), endAngle: .degrees(90), clockwise: true)
+        path.addLine(to: CGPoint(x: arm, y: h))
 
-        // Bottom-Right
-        path.move(to: CGPoint(x: w - len, y: h))
-        path.addLine(to: CGPoint(x: w, y: h))
-        path.addLine(to: CGPoint(x: w, y: h - len))
+        // Bottom-Right Rounded Corner
+        path.move(to: CGPoint(x: w - arm, y: h))
+        path.addLine(to: CGPoint(x: w - r, y: h))
+        path.addArc(center: CGPoint(x: w - r, y: h - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(0), clockwise: true)
+        path.addLine(to: CGPoint(x: w, y: h - arm))
 
         return path
     }
@@ -430,11 +560,12 @@ private struct FocalPresetButton: View {
 // MARK: - Windowed Mask Cutout Shape (Even-Odd Fill)
 private struct WindowedMaskCutout: Shape {
     let windowRect: CGRect
+    var cornerRadius: CGFloat = 20.0
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
         path.addRect(rect)
-        path.addRoundedRect(in: windowRect, cornerSize: CGSize(width: 10, height: 10))
+        path.addPath(Path(roundedRect: windowRect, cornerRadius: cornerRadius, style: .continuous))
         return path
     }
 }

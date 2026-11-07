@@ -721,7 +721,7 @@ public final class CameraViewModel: ObservableObject {
         guard targetZoom.isFinite, targetZoom > 0, currentZoom.isFinite,
               !isPinchingZoom, !zoomAwaitingVerification else { return }
         let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetZoom)
-        guard abs(targetDeviceZoom - currentZoom) > 0.05 else { return }
+        guard abs(targetDeviceZoom - currentZoom) > 0.05 || abs(targetZoom - displayZoom) > 0.05 else { return }
         hasExecutedAutoZoomForSession = true
         postZoomRecovery.reset()
         autoCaptureTask?.cancel()
@@ -731,7 +731,11 @@ public final class CameraViewModel: ObservableObject {
         zoomFallbackAfter = .infinity
         zoomStartFrameTimestamp = frameProcessor.latestTrackingFrameSnapshot()?.1.timestamp ?? CACurrentMediaTime()
         postZoomFaceMinimumTimestamp = -Double.infinity
-        pendingTargetZoomForReveal = cameraService.convertDeviceZoomToDisplayZoom(targetDeviceZoom)
+        pendingTargetZoomForReveal = (targetZoom < 0.99 && !cameraService.hasUltraWideLens)
+            ? targetZoom
+            : cameraService.convertDeviceZoomToDisplayZoom(targetDeviceZoom)
+        selectedZoomPreset = resolveClosestZoomPreset(for: targetZoom)
+        presentZoomChangeHUD(displayZoom: targetZoom)
         alignmentGate.reset()
         zoomRevealStartDisplayZoom = max(0.1, displayZoom)
         zoomRevealStartsIn = targetZoom > displayZoom
@@ -752,10 +756,16 @@ public final class CameraViewModel: ObservableObject {
             guard let self = self, self.targetPinGeneration == pinGeneration,
                   self.zoomAwaitingVerification, !self.isPinchingZoom else { return }
             self.isZoomRampPhase = true
-            let delta = Double(abs(targetDeviceZoom - self.currentZoom))
-            let rampDuration: Double = 0.36
-            let smoothRate = Float(max(1.8, min(18.0, delta / rampDuration)))
-            self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: smoothRate)
+            if targetZoom < 0.99 && !self.cameraService.hasUltraWideLens {
+                self.activateSimulatedUltraWideFromAI(targetZoom)
+            } else {
+                self.isSimulatedUltraWideActive = false
+                self.simulatedUltraWideFactor = 1.0
+                let delta = Double(abs(targetDeviceZoom - self.currentZoom))
+                let rampDuration: Double = 0.36
+                let smoothRate = Float(max(1.8, min(18.0, delta / rampDuration)))
+                self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: smoothRate)
+            }
 
             withAnimation(.timingCurve(0.2, 0.8, 0.2, 1.0, duration: 0.36)) {
                 self.zoomExpansionProgress = 1.0
@@ -882,7 +892,7 @@ public final class CameraViewModel: ObservableObject {
 
         // Phase 4: Đồng bộ chu trình Khóa tâm Hard Lock với chuyển Zoom quang học Z* mượt mà 60fps
         let targetZoom = pendingSuggestedZoom
-        if isAutoZoomEnabled, abs(displayZoom - targetZoom) > 0.12, !hasExecutedAutoZoomForSession, !zoomAwaitingVerification, canZoomCurrentSubject(to: targetZoom) {
+        if isAutoZoomEnabled, abs(displayZoom - targetZoom) > 0.05, !hasExecutedAutoZoomForSession, !zoomAwaitingVerification, canZoomCurrentSubject(to: targetZoom) {
             hasExecutedAutoZoomForSession = true
             triggerZoomRevealAnimation(targetZoom: targetZoom)
         } else {
@@ -1686,6 +1696,18 @@ public final class CameraViewModel: ObservableObject {
         postZoomRecovery.reset()
         postZoomFaceMinimumTimestamp = -Double.infinity
         hasExecutedAutoZoomForSession = true
+    }
+
+    private func activateSimulatedUltraWideFromAI(_ zoom: CGFloat) {
+        isSimulatedUltraWideActive = true
+        simulatedUltraWideFactor = zoom
+        liveZoomFactorForReveal = zoom
+        displayZoom = zoom
+        zoomVerified = true
+        zoomAwaitingVerification = false
+        isZoomRampPhase = false
+        isRevealingZoomTarget = false
+        applyPlannedEVBiasIfNeeded()
     }
 
     private func finishManualZoomIfSettled(_ deviceZoom: CGFloat) {
@@ -2726,22 +2748,8 @@ public final class CameraViewModel: ObservableObject {
             }
             pinTargetAndStartMotion(at: liveAim, subjectRect: first.boundingBox, source: source, pinnedGuideRay: worldRay)
 
-            // Thực thi ngay mức zoom thông minh mà AI cục bộ quyết định
-            if isAutoZoomEnabled && abs(zoomTarget - displayZoom) > 0.05 && !isWindowedZoomActive {
-                self.hasExecutedAutoZoomForSession = true
-                self.selectedZoomPreset = resolveClosestZoomPreset(for: zoomTarget)
-                if zoomTarget < 0.99 && !cameraService.hasUltraWideLens {
-                    self.isSimulatedUltraWideActive = true
-                    self.simulatedUltraWideFactor = zoomTarget
-                    self.displayZoom = zoomTarget
-                } else {
-                    self.isSimulatedUltraWideActive = false
-                    self.simulatedUltraWideFactor = 1.0
-                    cameraService.applyDisplayZoomWithPhysicalLensSwitching(zoomTarget, smooth: true, rate: 3.5, allowPhysicalSwitch: true)
-                }
-                presentZoomChangeHUD(displayZoom: zoomTarget)
-            }
-            applyPlannedEVBiasIfNeeded()
+            // Không tự động zoom trước khi người dùng đưa tâm trắng vào khớp tâm mục tiêu.
+            // Khi tâm khớp, lockHardTarget() sẽ kích hoạt hiệu ứng triggerZoomRevealAnimation mượt mà.
             localTrackingSource = nil
             localSelectionMessage = nil
         } else {
@@ -2865,8 +2873,10 @@ public final class CameraViewModel: ObservableObject {
         let planDistFromCenter = hypot(sourceAimPoint.x - 0.5, sourceAimPoint.y - 0.5)
 
         var effectiveZoom = plan.zoom
-        effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(
-            cameraService.convertDisplayZoomToDeviceZoom(effectiveZoom))
+        if !(effectiveZoom < 0.99 && !cameraService.hasUltraWideLens) {
+            effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(
+                cameraService.convertDisplayZoomToDeviceZoom(effectiveZoom))
+        }
 
         if planDistFromCenter < 0.09 && detectedScene != .architecture {
             activeCompositionRule = evaluatedFraming.optimalRule
@@ -2966,22 +2976,8 @@ public final class CameraViewModel: ObservableObject {
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
-        // Thực thi ngay mức zoom liên tục (continuous zoom) mà AI cục bộ quyết định
-        if isAutoZoomEnabled && abs(effectiveZoom - displayZoom) > 0.05 && !isWindowedZoomActive {
-            self.hasExecutedAutoZoomForSession = true
-            self.selectedZoomPreset = resolveClosestZoomPreset(for: effectiveZoom)
-            if effectiveZoom < 0.99 && !cameraService.hasUltraWideLens {
-                self.isSimulatedUltraWideActive = true
-                self.simulatedUltraWideFactor = effectiveZoom
-                self.displayZoom = effectiveZoom
-            } else {
-                self.isSimulatedUltraWideActive = false
-                self.simulatedUltraWideFactor = 1.0
-                cameraService.applyDisplayZoomWithPhysicalLensSwitching(effectiveZoom, smooth: true, rate: 3.5, allowPhysicalSwitch: true)
-            }
-            presentZoomChangeHUD(displayZoom: effectiveZoom)
-        }
-        applyPlannedEVBiasIfNeeded()
+        // Không zoom trước khi người dùng đưa tâm trắng vào khớp tâm mục tiêu.
+        // Khi người dùng di chuyển máy khớp tâm, lockHardTarget() sẽ kích hoạt triggerZoomRevealAnimation() + applyPlannedEVBiasIfNeeded().
         localCompositionAim = nil
         localCompositionAimPoint = nil
         localTrackingSource = nil
@@ -3983,7 +3979,7 @@ public final class CameraViewModel: ObservableObject {
               (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
               !isCameraHibernating, !isShutterPressing else { return }
         wantsVideoRecording = true
-        if isWindowedZoomActive && (windowedZoomFocalLength > 24.5 || windowedZoomAspectRatio != .ratio16_9) {
+        if isWindowedZoomActive {
             lastRecordedVideoWindowedFocal = windowedZoomFocalLength
             lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
             lastRecordedVideoWindowedBaseZoom = 1.0
@@ -4433,6 +4429,10 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Video Windowed Zoom Keyframe Tracking & Smooth Hermite Interpolation
     public func recordWindowedKeyframeIfNeeded(timestamp: TimeInterval) {
         guard isRecordingVideo, isWindowedZoomActive else { return }
+        lastRecordedVideoWindowedFocal = windowedZoomFocalLength
+        lastRecordedVideoWindowedAspect = windowedZoomAspectRatio
+        lastRecordedVideoWindowedBaseZoom = 1.0
+        lastRecordedVideoWindowedCenter = windowedZoomNormalizedCenter
         let kf = WindowedZoomKeyframe(
             timestamp: timestamp,
             focalLength: windowedZoomFocalLength,
@@ -4440,12 +4440,18 @@ public final class CameraViewModel: ObservableObject {
             baseOpticalZoom: 1.0,
             aspectRatio: windowedZoomAspectRatio
         )
-        // Tranh ghi trung keyframe qua gan nhau (< 0.04s)
-        if let last = recordedVideoWindowedKeyframes.last, (timestamp - last.timestamp) < 0.04 {
+        // Tranh ghi trung keyframe qua gan nhau (< 0.03s -> ~30Hz mượt mà khi lia cửa sổ)
+        if let last = recordedVideoWindowedKeyframes.last, (timestamp - last.timestamp) < 0.03 {
             recordedVideoWindowedKeyframes[recordedVideoWindowedKeyframes.count - 1] = kf
         } else {
             recordedVideoWindowedKeyframes.append(kf)
         }
+    }
+
+    public func recordWindowedKeyframeFromLiveGesture() {
+        guard isRecordingVideo, isWindowedZoomActive else { return }
+        let elapsed = videoRecordingStartTime.map { Date().timeIntervalSince($0) } ?? videoRecordedDurationSeconds
+        recordWindowedKeyframeIfNeeded(timestamp: max(0.0, elapsed))
     }
 
     nonisolated public static func interpolateKeyframe(
@@ -4587,7 +4593,7 @@ public final class CameraViewModel: ObservableObject {
             isShutterPressing = true
         }
 
-        captureNativePhoto(highResolution: isSuperResolutionRAWEnabled)
+        captureNativePhoto(highResolution: isSuperResolutionRAWEnabled || isWindowedZoomActive)
     }
 
     private struct PhotoProcessingSettings {
@@ -4619,7 +4625,7 @@ public final class CameraViewModel: ObservableObject {
         return PhotoProcessingSettings(preset: preset, scene: detectedScene, rule: activeCompositionRule,
             params: isAIFullColorEnabled ?
                 (geminiColorRecipe?.asAIColorParameters ?? currentAIColorParams ?? detectedScene.aiFullColorParameters) : nil,
-            applyFilm: apply, crop: isWindowedZoomActive && windowedZoomFocalLength > 24.5, focalLength: windowedZoomFocalLength,
+            applyFilm: apply, crop: isWindowedZoomActive, focalLength: windowedZoomFocalLength,
             aspect: windowedZoomAspectRatio,
             score: stateBeforeCapture == .alignmentPerfect ? 1 : (framingResult?.alignmentScore ?? 0.8),
             baseOpticalZoom: isWindowedZoomActive ? 1.0 : displayZoom,
@@ -4683,6 +4689,48 @@ public final class CameraViewModel: ObservableObject {
             UIScreen.main.brightness = previous
             previousScreenBrightness = nil
         }
+    }
+
+    private static let windowedSharpnessCIContext = CIContext(options: [
+        .useSoftwareRenderer: false,
+        .highQualityDownsample: true
+    ])
+
+    /// Tăng cường độ nét quang học (Lanczos + UnsharpMask + SharpenLuminance) cho ảnh cắt từ Cửa sổ thu phóng (Windowed Zoom)
+    private nonisolated static func enhanceWindowedZoomCropSharpness(_ image: CGImage, focalLength: Double) -> CGImage {
+        guard focalLength > 24.5 else { return image }
+        var ciImage = CIImage(cgImage: image)
+        let minTargetDimension: CGFloat = 2160.0
+        let maxSide = CGFloat(max(image.width, image.height))
+        if maxSide > 0 && maxSide < minTargetDimension {
+            let scale = min(2.0, minTargetDimension / maxSide)
+            if scale > 1.04, let lanczos = CIFilter(name: "CILanczosScaleTransform") {
+                lanczos.setValue(ciImage, forKey: kCIInputImageKey)
+                lanczos.setValue(Float(scale), forKey: kCIInputScaleKey)
+                lanczos.setValue(1.0, forKey: kCIInputAspectRatioKey)
+                if let scaled = lanczos.outputImage {
+                    ciImage = scaled
+                }
+            }
+        }
+        let zoomRatio = Float(min(4.0, max(1.0, focalLength / 24.0)))
+        if let unsharp = CIFilter(name: "CIUnsharpMask") {
+            unsharp.setValue(ciImage, forKey: kCIInputImageKey)
+            unsharp.setValue(1.25, forKey: kCIInputRadiusKey)
+            unsharp.setValue(min(0.55, 0.24 + (zoomRatio - 1.0) * 0.12), forKey: kCIInputIntensityKey)
+            if let out = unsharp.outputImage {
+                ciImage = out
+            }
+        }
+        if let sharpen = CIFilter(name: "CISharpenLuminance") {
+            sharpen.setValue(ciImage, forKey: kCIInputImageKey)
+            sharpen.setValue(min(0.45, 0.22 + (zoomRatio - 1.0) * 0.08), forKey: kCIInputSharpnessKey)
+            if let out = sharpen.outputImage {
+                ciImage = out
+            }
+        }
+        let extent = ciImage.extent.integral
+        return windowedSharpnessCIContext.createCGImage(ciImage, from: extent) ?? image
     }
 
     /// Encodes only edited, already-upright pixels. Unedited captures and DNG
@@ -4993,50 +5041,56 @@ extension CameraViewModel: CameraServiceDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
 
-            // Nếu đang bật Windowed Zoom -> Cắt ảnh gốc 48MP chính xác theo tỉ lệ và kích thước khung ngắm
-            let effectiveSourcePhoto: CGImage
-            if isWindowed {
-                let photoAspect = CGFloat(photo.width) / CGFloat(max(1, photo.height))
-                let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: windowBaseZoom, containerAspect: photoAspect)
-                if fractions.widthFraction < 0.999 || fractions.heightFraction < 0.999 {
-                    let normCenter = windowCenter
-                    let origW = CGFloat(photo.width)
-                    let origH = CGFloat(photo.height)
-                    let cropW = round(origW * fractions.widthFraction)
-                    let cropH = round(origH * fractions.heightFraction)
-                    let centerX = origW * normCenter.x
-                    let centerY = origH * normCenter.y
-                    let minCenterX = cropW / 2.0
-                    let maxCenterX = origW - cropW / 2.0
-                    let minCenterY = cropH / 2.0
-                    let maxCenterY = origH - cropH / 2.0
-                    let clampedCenterX = max(minCenterX, min(centerX, maxCenterX))
-                    let clampedCenterY = max(minCenterY, min(centerY, maxCenterY))
-                    let cropX = round(clampedCenterX - cropW / 2.0)
-                    let cropY = round(clampedCenterY - cropH / 2.0)
-                    let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
-                    effectiveSourcePhoto = photo.cropping(to: cropRect) ?? photo
-                    CameraLogger.info("Windowed Zoom Crop: \(photo.width)x\(photo.height) -> \(effectiveSourcePhoto.width)x\(effectiveSourcePhoto.height) (\(Int(windowFocal))mm, \(windowAspect.rawValue))", category: .capture)
-                } else {
-                    effectiveSourcePhoto = photo
-                }
-            } else {
-                effectiveSourcePhoto = photo
-            }
-
-            let photoAfterCropOrSim: CGImage
+            // 1. Áp dụng cân bằng đường chân trời (Horizon Lock) hoặc giả lập góc siêu rộng 0.5x TRƯỚC khi cắt khung cửa sổ
+            // để tọa độ khung cửa sổ trên màn hình khớp 100% với ảnh chụp thực tế.
+            let sensorWarpedPhoto: CGImage
             if isSimulatedUW || isHorizonLock {
-                photoAfterCropOrSim = UltraWideWarpEngine.shared.applySimulatedUltraWide(
-                    to: effectiveSourcePhoto,
+                sensorWarpedPhoto = UltraWideWarpEngine.shared.applySimulatedUltraWide(
+                    to: photo,
                     factor: isSimulatedUW ? simUWFactor : 1.0,
                     horizonRollAngle: isHorizonLock ? horizonMotion.roll : 0.0,
                     horizonZoomScale: isHorizonLock ? horizonMotion.zoom : 1.0,
                     horizonShakeX: isHorizonLock ? horizonMotion.shakeX : 0.0,
                     horizonShakeY: isHorizonLock ? horizonMotion.shakeY : 0.0
-                ) ?? effectiveSourcePhoto
+                ) ?? photo
             } else {
-                photoAfterCropOrSim = effectiveSourcePhoto
+                sensorWarpedPhoto = photo
             }
+
+            // 2. Nếu đang bật Windowed Zoom -> Cắt ảnh cảm biến độ phân giải cao theo tỉ lệ & tiêu cự khung ngắm,
+            // kết hợp Lanczos Scale + UnsharpMask + SharpenLuminance để giữ độ sắc nét quang học cao nhất.
+            let effectiveSourcePhoto: CGImage
+            if isWindowed {
+                let photoAspect = CGFloat(sensorWarpedPhoto.width) / CGFloat(max(1, sensorWarpedPhoto.height))
+                let fractions = windowAspect.windowFractions(focalLength: windowFocal, baseOpticalZoom: windowBaseZoom, containerAspect: photoAspect)
+                if fractions.widthFraction < 0.999 || fractions.heightFraction < 0.999 {
+                    let normCenter = windowCenter
+                    let origW = CGFloat(sensorWarpedPhoto.width)
+                    let origH = CGFloat(sensorWarpedPhoto.height)
+                    let cropW = max(64.0, round(origW * fractions.widthFraction))
+                    let cropH = max(64.0, round(origH * fractions.heightFraction))
+                    let centerX = origW * normCenter.x
+                    let centerY = origH * normCenter.y
+                    let minCenterX = cropW / 2.0
+                    let maxCenterX = max(minCenterX, origW - cropW / 2.0)
+                    let minCenterY = cropH / 2.0
+                    let maxCenterY = max(minCenterY, origH - cropH / 2.0)
+                    let clampedCenterX = max(minCenterX, min(centerX, maxCenterX))
+                    let clampedCenterY = max(minCenterY, min(centerY, maxCenterY))
+                    let cropX = round(clampedCenterX - cropW / 2.0)
+                    let cropY = round(clampedCenterY - cropH / 2.0)
+                    let cropRect = CGRect(x: cropX, y: cropY, width: cropW, height: cropH)
+                    let rawCropped = sensorWarpedPhoto.cropping(to: cropRect) ?? sensorWarpedPhoto
+                    effectiveSourcePhoto = Self.enhanceWindowedZoomCropSharpness(rawCropped, focalLength: windowFocal)
+                    CameraLogger.info("Windowed Zoom Crop: \(sensorWarpedPhoto.width)x\(sensorWarpedPhoto.height) -> \(effectiveSourcePhoto.width)x\(effectiveSourcePhoto.height) (\(Int(windowFocal))mm, \(windowAspect.rawValue))", category: .capture)
+                } else {
+                    effectiveSourcePhoto = sensorWarpedPhoto
+                }
+            } else {
+                effectiveSourcePhoto = sensorWarpedPhoto
+            }
+
+            let photoAfterCropOrSim: CGImage = effectiveSourcePhoto
 
             var processedImageResult: CGImage = photoAfterCropOrSim
             autoreleasepool {

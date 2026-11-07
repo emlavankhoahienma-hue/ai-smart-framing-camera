@@ -583,14 +583,6 @@ struct CompositionRuleSheet: View {
                             .padding(.horizontal, 4)
 
                         ruleListView
-
-                        Divider().background(Color.white.opacity(0.08)).padding(.vertical, 4)
-
-                        VStack(spacing: 10) {
-                            Toggle("Live Photo", isOn: $viewModel.isLivePhotoEnabled)
-                                .tint(AlignTheme.irisViolet)
-                        }
-                        .padding(.horizontal, 4)
                     }
                     .padding(16)
                 }

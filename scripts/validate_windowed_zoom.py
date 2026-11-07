@@ -101,5 +101,47 @@ class WindowedZoomContracts(unittest.TestCase):
         neural = source('Services/NeuralSubjectIntelligenceEngine.swift')
         self.assertIn('renderer.clearCaches()', neural)
 
+    def test_windowed_zoom_rounded_corners_120hz_and_sharp_capture(self):
+        """Verify Windowed Zoom uses 20pt rounded corners, 120Hz local gesture state, and sharp capture pipeline."""
+        overlay = source('Views/WindowedZoomOverlayView.swift')
+        self.assertIn('windowCornerRadius: CGFloat = 20.0', overlay)
+        self.assertIn('@State private var liveNormalizedCenter: CGPoint? = nil', overlay)
+        self.assertIn('@State private var liveFocalLength: Double? = nil', overlay)
+        self.assertIn('path.addArc(center:', overlay)
+        vm = source('ViewModels/CameraViewModel.swift')
+        self.assertIn('enhanceWindowedZoomCropSharpness', vm)
+        self.assertIn('captureNativePhoto(highResolution: isSuperResolutionRAWEnabled || isWindowedZoomActive)', vm)
+        self.assertIn('recordWindowedKeyframeFromLiveGesture()', vm)
+
+    def test_ai_cloud_unconstrained_geometry_and_background_encoding(self):
+        """Verify GeminiService encodes on background queue, orders schema causally, and solves exact optical projection."""
+        gemini = source('Services/GeminiService.swift')
+        self.assertIn('DispatchQueue.global(qos: .userInitiated).async {', gemini)
+        self.assertIn('"propertyOrdering": [', gemini)
+        self.assertIn('let opticalAimX = sPoint.x - (gPoint.x - 0.5) / effZ', gemini)
+        self.assertIn('let opticalAimY = sPoint.y - (gPoint.y - 0.5) / effZ', gemini)
+        self.assertIn('if subjectX < boxMinX - marginX || subjectX > boxMaxX + marginX', gemini)
+
+    def test_settings_sheet_removed_controls_while_preserving_features(self):
+        """Verify the 5 requested controls are removed from SettingsSheetView while underlying ViewModel properties remain intact."""
+        settings = source('Views/SettingsSheetView.swift')
+        for removed_title in [
+            'title: "Live Photo"',
+            'title: "Độ phân giải 48MP"',
+            'title: "Thông số quang học"',
+            'title: "Cân bằng đường chân trời"',
+            'title: "Hiệu chuẩn con quay & Thước cân"',
+            'title: "Hiệu chuẩn con quay hồi chuyển 60Hz"',
+        ]:
+            self.assertNotIn(removed_title, settings)
+        vm = source('ViewModels/CameraViewModel.swift')
+        for preserved_prop in [
+            'isLivePhotoEnabled',
+            'isSuperResolutionRAWEnabled',
+            'isHorizonLevelerEnabled',
+            'isHorizonLockEnabled',
+        ]:
+            self.assertIn(preserved_prop, vm)
+
 if __name__ == '__main__':
     unittest.main()

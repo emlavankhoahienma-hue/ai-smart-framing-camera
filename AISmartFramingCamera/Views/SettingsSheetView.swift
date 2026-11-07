@@ -190,9 +190,6 @@ public struct SettingsSheetView: View {
                     }
                 }
             }
-            .sheet(isPresented: $viewModel.isShowingGyroCalibration) {
-                GyroCalibrationSheetView(viewModel: viewModel)
-            }
         }
     }
 
@@ -659,7 +656,6 @@ struct PhotoCaptureSettingsSection: View {
         VStack(spacing: 16) {
             photoStillCard
             videoCaptureCard
-            cameraHardwareSpecsCard
             filmColorCard
             viewfinderHUDCard
             masterWatermarkCard
@@ -696,24 +692,6 @@ struct PhotoCaptureSettingsSection: View {
                 }
                 .padding(.vertical, 8)
                 .frame(minHeight: 48)
-
-                dividerLine
-
-                SettingsToggleRow(
-                    title: "Độ phân giải 48MP",
-                    subtitle: "Khai thác tối đa điểm ảnh cảm biến nếu camera hỗ trợ",
-                    icon: "sparkles.rectangle.stack.fill",
-                    isOn: $viewModel.isSuperResolutionRAWEnabled
-                )
-
-                dividerLine
-
-                SettingsToggleRow(
-                    title: "Live Photo",
-                    subtitle: "Ghi lại chuyển động ngắn trước và sau khi chụp",
-                    icon: "livephoto",
-                    isOn: $viewModel.isLivePhotoEnabled
-                )
 
                 dividerLine
 
@@ -763,19 +741,6 @@ struct PhotoCaptureSettingsSection: View {
                     .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
                 }
             }
-        }
-    }
-
-    // Card 3: Thông số quang học (Hardware Optical Telemetry)
-    private var cameraHardwareSpecsCard: some View {
-        SettingsSectionCard(title: "Thông số quang học", icon: "slider.horizontal.3") {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                telemetryBadge(title: "Khẩu độ", value: "f/\(String(format: "%.1f", viewModel.proVideoService.hardwareLensAperture))")
-                telemetryBadge(title: "Độ nhạy ISO", value: viewModel.proVideoService.isAutoISO ? "AUTO (\(Int(viewModel.proVideoService.measuredLiveISO)))" : "\(Int(viewModel.proVideoService.currentISO))")
-                telemetryBadge(title: "Màn trập", value: viewModel.proVideoService.isAutoShutter ? "AUTO" : "1/\(Int(viewModel.proVideoService.currentShutterSpeed))s")
-                telemetryBadge(title: "Bù sáng EV", value: String(format: "%+.1f", viewModel.proVideoService.currentEVBias))
-            }
-            .padding(.vertical, 4)
         }
     }
 
@@ -840,30 +805,6 @@ struct PhotoCaptureSettingsSection: View {
     private var viewfinderHUDCard: some View {
         SettingsSectionCard(title: "Khung ngắm & Báo nét", icon: "viewfinder") {
             VStack(spacing: 0) {
-                SettingsToggleRow(
-                    title: "Cân bằng đường chân trời",
-                    subtitle: "Hiển thị thước đo góc nghiêng gyro hỗ trợ giữ thẳng khung hình",
-                    icon: "gyroscope",
-                    isOn: $viewModel.isHorizonLevelerEnabled
-                )
-
-                if viewModel.isHorizonLevelerEnabled {
-                    dividerLine
-
-                    SettingsActionRow(
-                        title: "Hiệu chuẩn con quay & Thước cân",
-                        subtitle: viewModel.lastGyroCalibrationDate != nil
-                            ? "Đã cân bằng (Bù lệch Roll: \(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°)"
-                            : "Khử sai số ốp lưng, camera lồi và triệt tiêu trôi tĩnh",
-                        icon: "slider.horizontal.2.square.on.square",
-                        badgeText: viewModel.lastGyroCalibrationDate != nil ? "\(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°" : "Cần cân"
-                    ) {
-                        viewModel.isShowingGyroCalibration = true
-                    }
-                }
-
-                dividerLine
-
                 SettingsToggleRow(
                     title: "Focus peaking (Báo nét)",
                     subtitle: "Tô sáng viền tương phản của các điểm đang nằm trong vùng nét",
@@ -1878,19 +1819,6 @@ struct AdvancedSettingsSection: View {
                     icon: "sun.max.fill",
                     isOn: $viewModel.isKeepScreenAwakeEnabled
                 )
-
-                dividerLine
-
-                SettingsActionRow(
-                    title: "Hiệu chuẩn con quay hồi chuyển 60Hz",
-                    subtitle: viewModel.lastGyroCalibrationDate != nil
-                        ? "Đã tối ưu hóa IMU (Bù lệch Roll: \(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°)"
-                        : "Khử trôi (Zero-bias) và cân chỉnh 3 trục xoay cho tracking 6DoF",
-                    icon: "gyroscope",
-                    badgeText: viewModel.lastGyroCalibrationDate != nil ? "\(String(format: "%+.1f", viewModel.gyroRollOffsetDegrees))°" : "Chưa cân"
-                ) {
-                    viewModel.isShowingGyroCalibration = true
-                }
 
                 dividerLine
 

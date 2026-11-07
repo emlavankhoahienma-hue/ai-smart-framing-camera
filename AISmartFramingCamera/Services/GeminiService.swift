@@ -1977,29 +1977,33 @@ public final class GeminiService: ObservableObject {
             return
         }
 
-        // Send a clean, high-clarity 1024px frame without visual grid lines drawn over the pixels so Gemini's native multimodal vision & 2D spatial grounding see the image unobstructed.
-        guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1024, compressionQuality: 0.72, overlayVisualGrid: false) else {
-            completion(.failure(.imageConversionFailed))
-            return
-        }
-        let base64Image = jpegData.base64EncodedString()
-        let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
-        let prompt = buildPrompt(sceneContext: sceneContext, colorMetrics: metrics, subjectRect: subjectRect, faceRects: faceRects)
-
         let chain = AIVisionModel.fallbackChain(selected: selectedModel, customModelName: customModelName, provider: selectedProvider)
-
         let startTime = CACurrentMediaTime()
 
-        tryModelChain(
-            chain: chain,
-            index: 0,
-            base64Image: base64Image,
-            prompt: prompt,
-            key: key,
-            lastErrorMsg: "",
-            startTime: startTime,
-            completion: completion
-        )
+        // Thực hiện nén ảnh JPEG 1280px sắc nét và trích xuất quang phổ màu trên luồng nền để không bao giờ gây khựng Main UI
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            guard let jpegData = Self.prepareImageForAnalysis(image, maxDimension: 1280, compressionQuality: 0.78, overlayVisualGrid: false) else {
+                DispatchQueue.main.async {
+                    completion(.failure(.imageConversionFailed))
+                }
+                return
+            }
+            let base64Image = jpegData.base64EncodedString()
+            let metrics = colorMetrics ?? Self.extractColorMetrics(from: image)
+            let prompt = self.buildPrompt(sceneContext: sceneContext, colorMetrics: metrics, subjectRect: subjectRect, faceRects: faceRects)
+
+            self.tryModelChain(
+                chain: chain,
+                index: 0,
+                base64Image: base64Image,
+                prompt: prompt,
+                key: key,
+                lastErrorMsg: "",
+                startTime: startTime,
+                completion: completion
+            )
+        }
     }
 
     public func analyzeSceneColorAndGrade(
@@ -2505,30 +2509,28 @@ public final class GeminiService: ObservableObject {
             let structuredSchema: [String: Any] = [
                 "type": "object",
                 "properties": [
-                    "target_x": ["type": "number", "description": "Normalized target X focal point [0.0..1.0]"],
-                    "target_y": ["type": "number", "description": "Normalized target Y focal point [0.0..1.0]"],
-                    "suggested_zoom": ["type": "number", "description": "Optimal continuous zoom multiplier 0.5 to 6.0 decided 100% by Gemini"],
-                    "composition_rule": ["type": "string", "description": "golden_ratio, rule_of_thirds, center_symmetry, golden_spiral"],
-                    "scene_type": ["type": "string", "description": "portrait, landscape, street, macro, architecture, night, pet, food"],
-                    "explanation": ["type": "string", "description": "Vietnamese photography composition explanation"],
-                    "recommended_preset": ["type": "string", "description": "Exact preset name selected from available presets: Classic Chrome, Fuji Pro 400H, Fuji Velvia 50, Kodak Portra 400, Kodak Gold 200, CCD1, D-CCD, G-CCD, 1998, LOMO LC-A, GR3 Positive, GR Negative, PowerShot G, Canon IXUS, MiniDV 4:3, POLA 600, Original Clean, etc."],
-                    "preset_explanation": ["type": "string", "description": "Why this film preset matches the scene"],
-                    "recommended_ev_bias": ["type": "number", "description": "Recommended EV exposure bias [-2.0..2.0]"],
-                    "lighting_scene": ["type": "string"],
                     "subject_box_2d": [
                         "type": "array",
                         "items": ["type": "number"],
-                        "description": "2D bounding box of the primary hero subject in [ymin, xmin, ymax, xmax] normalized to 0..1000"
+                        "description": "Exact 2D bounding box of the primary hero subject in [ymin, xmin, ymax, xmax] normalized to 0..1000"
                     ],
-                    "subject_x": ["type": "number"],
-                    "subject_y": ["type": "number"],
-                    "subject_w": ["type": "number"],
-                    "subject_h": ["type": "number"],
-                    "composition_anchor_x": ["type": "number"],
-                    "composition_anchor_y": ["type": "number"],
-                    "composition_x": ["type": "number"],
-                    "composition_y": ["type": "number"],
-                    "shot_scale": ["type": "string"],
+                    "subject_x": ["type": "number", "description": "Normalized hero subject anchor X [0.0..1.0] (eye/face for person/animal, focal center for object/scene)"],
+                    "subject_y": ["type": "number", "description": "Normalized hero subject anchor Y [0.0..1.0] (eye/face for person/animal, focal center for object/scene)"],
+                    "subject_w": ["type": "number", "description": "Normalized hero subject width [0.0..1.0]"],
+                    "subject_h": ["type": "number", "description": "Normalized hero subject height [0.0..1.0]"],
+                    "composition_x": ["type": "number", "description": "Desired artistic placement X of the hero subject in the final composed frame [0.0..1.0] (e.g. 0.382, 0.618, 0.333, 0.667, 0.500)"],
+                    "composition_y": ["type": "number", "description": "Desired artistic placement Y of the hero subject in the final composed frame [0.0..1.0] (e.g. 0.382, 0.618, 0.333, 0.667, 0.500)"],
+                    "shot_scale": ["type": "string", "description": "extreme_wide, wide, full_body, medium_portrait, close_up, macro"],
+                    "suggested_zoom": ["type": "number", "description": "Optimal unconstrained continuous zoom multiplier from 0.5 to 6.0 decided 100% by AI"],
+                    "target_x": ["type": "number", "description": "Optical aim point X [0.0..1.0]: subject_x - (composition_x - 0.5) / suggested_zoom"],
+                    "target_y": ["type": "number", "description": "Optical aim point Y [0.0..1.0]: subject_y - (composition_y - 0.5) / suggested_zoom"],
+                    "composition_rule": ["type": "string", "description": "golden_ratio, rule_of_thirds, center_symmetry, golden_spiral, leading_lines, negative_space, framing, diagonal"],
+                    "scene_type": ["type": "string", "description": "portrait, landscape, street, macro, architecture, night, pet, food"],
+                    "lighting_scene": ["type": "string", "description": "normal, backlit, golden_hour, night, high_contrast, overcast, indoor_warm"],
+                    "recommended_ev_bias": ["type": "number", "description": "Recommended EV exposure bias [-2.0..2.0]"],
+                    "recommended_preset": ["type": "string", "description": "Exact preset name selected from the 65+ available film presets catalog"],
+                    "preset_explanation": ["type": "string", "description": "Vietnamese explanation of why this film preset matches the lighting and mood"],
+                    "explanation": ["type": "string", "description": "Vietnamese Director of Photography explanation of subject, composition placement, and zoom choice"],
                     "color_recipe": [
                         "type": "object",
                         "properties": [
@@ -2546,9 +2548,19 @@ public final class GeminiService: ObservableObject {
                         "required": ["exposure_ev", "contrast", "highlights", "shadows", "warmth", "tint", "saturation"]
                     ]
                 ],
+                "propertyOrdering": [
+                    "subject_box_2d", "subject_x", "subject_y", "subject_w", "subject_h",
+                    "scene_type", "shot_scale", "composition_rule", "composition_x", "composition_y",
+                    "suggested_zoom", "target_x", "target_y",
+                    "lighting_scene", "recommended_ev_bias", "recommended_preset", "preset_explanation",
+                    "color_recipe", "explanation"
+                ],
                 "required": [
-                    "target_x", "target_y", "suggested_zoom", "composition_rule",
-                    "scene_type", "explanation", "recommended_preset", "color_recipe"
+                    "subject_box_2d", "subject_x", "subject_y", "subject_w", "subject_h",
+                    "composition_x", "composition_y", "shot_scale", "suggested_zoom",
+                    "target_x", "target_y", "composition_rule", "scene_type",
+                    "lighting_scene", "recommended_ev_bias", "recommended_preset",
+                    "preset_explanation", "explanation", "color_recipe"
                 ]
             ]
 
@@ -3065,13 +3077,23 @@ public final class GeminiService: ObservableObject {
         subjectRect: CGRect? = nil,
         faceRects: [CGRect] = []
     ) -> String {
-        var telemetry = ""
+        var telemetryParts: [String] = []
         if let m = colorMetrics {
-            telemetry = String(format: "luma=%.2f, warmth=%.2f, contrast=%.2f", m.averageLuma, m.warmthCast, m.contrastScore)
+            telemetryParts.append(String(format: "luma=%.2f, warmth=%.2f, contrast=%.2f, sat=%.2f, dynRange=%.2f", m.averageLuma, m.warmthCast, m.contrastScore, m.saturationLevel, m.dynamicRange))
         }
+        if let scene = sceneContext {
+            telemetryParts.append("sensor_scene_hint=\(scene.rawValue)")
+        }
+        if let rect = subjectRect, rect.width > 0.01, rect.height > 0.01 {
+            telemetryParts.append(String(format: "sensor_subject_hint=[x:%.2f, y:%.2f, w:%.2f, h:%.2f]", rect.minX, rect.minY, rect.width, rect.height))
+        }
+        if let firstFace = faceRects.first, firstFace.width > 0.01, firstFace.height > 0.01 {
+            telemetryParts.append(String(format: "sensor_face_hint=[x:%.2f, y:%.2f, w:%.2f, h:%.2f]", firstFace.minX, firstFace.minY, firstFace.width, firstFace.height))
+        }
+        let telemetry = telemetryParts.isEmpty ? "standard daylight" : telemetryParts.joined(separator: " | ")
 
         let presetsCatalog = """
-        AVAILABLE FILM & COLOR PRESETS:
+        AVAILABLE FILM & COLOR PRESETS (Choose the single best match for the scene lighting, skin tone, and mood):
         - Fuji: Classic Chrome (muted documentary tone), Fuji Pro 400H (soft cool pastel greens, flattering skintones), Fuji Velvia 50 (ultra vivid landscape saturation), Classic Neg (nostalgic high-contrast street film), Astia 100F (soft portrait gradation), Neopan Acros (rich monochrome, fine grain)
         - Kodak: Kodak Portra 400 (warm golden skintones, smooth highlight rolloff), Kodak Gold 200 (warm summer amber warmth), Kodak ColorPlus (everyday warm vintage tint), Kodak Ektar 100 (ultra-fine grain, saturated blues & reds), Kodak Tri-X 400 (iconic gritty black & white journalism), Kodak 500D (cinematic movie film Vision3 latitude)
         - CCD Digicam: CCD1 (early 2000s Sony Cyber-shot punchy colors), D-CCD (warm flash party digicam), BlueSK (cool Nordic CCD daylight highlights), MangaCam (Japanese anime bright pastel tones), G-CCD (golden hour sunset glow), InstaLite (party flash direct high contrast)
@@ -3087,15 +3109,26 @@ public final class GeminiService: ObservableObject {
 
         return """
         You are an autonomous Academy-Award-Winning Director of Photography (DoP) and Spatial Vision Architect.
-        Analyze the raw camera frame directly using your own visual understanding. You have 100% authority to decide:
-        1. Which hero subject or focal element in the image is the true story center (do NOT be constrained by any external detector).
-        2. Its exact 2D bounding box `subject_box_2d: [ymin, xmin, ymax, xmax]` in standard 0..1000 coordinates, plus normalized `subject_x, subject_y` in [0.0..1.0] (top-left is 0.0,0.0; bottom-right is 1.0,1.0).
-        3. Where the subject should be placed in the final composed frame (`composition_x, composition_y` in [0.0..1.0], e.g. Golden Ratio 0.382/0.618, Rule of Thirds 0.333/0.667, or Dynamic Symmetry) considering 3D gaze direction, lead room, horizon lines, and vanishing points.
-        4. The exact optical aim point (`target_x, target_y` in [0.0..1.0]) and the exact continuous zoom multiplier (`suggested_zoom`, any float from `0.5` ultra-wide to `6.0` telephoto, e.g. `0.7`, `1.0`, `1.35`, `1.8`, `2.4`, `3.2`, `4.5`).
-           - Choose `suggested_zoom` freely based on visual storytelling: zoom in decisively (`1.4x` to `4.5x`) when the hero subject is small, distant, or surrounded by background distractions; use `1.0x` or `< 1.0x` when grand architecture, environmental context, or landscape scale is essential.
-           - Compute `target_x = subject_x - (composition_x - 0.5) / suggested_zoom` and `target_y = subject_y - (composition_y - 0.5) / suggested_zoom` so that when the camera centers on `(target_x, target_y)` at `suggested_zoom`, the hero subject lands at `(composition_x, composition_y)`.
-        5. Scene exposure & color grading: Analyze lighting, mood, color temperature, and scene context to select the best `recommended_preset` and fine-tuned `color_recipe`.
-        Sensor light telemetry: \(telemetry).
+        Analyze the raw camera frame directly using your own visual intelligence. Sensor hints (\(telemetry)) are non-binding references only—you have 100% authority to override them and decide:
+        1. HERO SUBJECT & 2D SPATIAL GROUNDING:
+           - Identify the true hero subject or visual focal center of the story.
+           - Output its exact 2D bounding box `subject_box_2d: [ymin, xmin, ymax, xmax]` in 0..1000 coordinates, normalized `subject_w, subject_h` in [0.04..0.98], and `subject_x, subject_y` in [0.0..1.0] (top-left is 0.0,0.0; bottom-right is 1.0,1.0).
+           - For portraits/people/animals: anchor `(subject_x, subject_y)` on the dominant eye or upper-face focal point (inside `subject_box_2d`). For objects/food/architecture/landscapes: anchor on the primary structural focal point.
+        2. 3D GAZE, LEAD ROOM & COMPOSITION ANCHOR (`composition_x, composition_y`):
+           - Read the subject's 3D gaze/facing direction, body posture, horizon lines, and leading lines.
+           - Place `composition_x, composition_y` in [0.0..1.0] so the subject has open Lead Room in front of their gaze/movement (e.g., if looking right -> place subject on left Golden Ratio `composition_x = 0.382` or Rule of Thirds `0.333`; if looking left -> `0.618` or `0.667`; if symmetrical architecture/centered reflection -> `0.50`).
+           - Set `composition_y` with proper headroom (`0.36..0.42` for portraits, `0.382..0.618` for general scenes) so the head is never clipped.
+        3. UNCONSTRAINED CONTINUOUS ZOOM (`suggested_zoom`):
+           - Choose any continuous float from `0.5` (ultra-wide) to `6.0` (telephoto), e.g. `0.6`, `0.8`, `1.0`, `1.25`, `1.5`, `1.8`, `2.2`, `2.8`, `3.5`, `4.5`.
+           - Zoom in decisively (`1.35x` to `4.5x`) when the hero subject is small, distant, or surrounded by edge clutter; use `1.0x` or `< 1.0x` when grand architecture, interior depth, or vast landscape context is essential.
+        4. EXACT OPTICAL CAMERA AIM POINT (`target_x, target_y`):
+           - The user will pan the camera until the viewfinder center `(0.5, 0.5)` locks onto `(target_x, target_y)`, and then the camera will zoom to `suggested_zoom`.
+           - Compute the exact optical projection:
+             `target_x = subject_x - (composition_x - 0.5) / suggested_zoom`
+             `target_y = subject_y - (composition_y - 0.5) / suggested_zoom`
+           - Verify that at `suggested_zoom`, the subject's top edge (`ymin/1000`) stays inside the cropped frame with natural headroom.
+        5. SCENE COLOR & EXPOSURE:
+           - Select the single best `recommended_preset` from the catalog below and craft a harmonious `color_recipe` + `recommended_ev_bias`.
 
         \(presetsCatalog)
 
@@ -3118,8 +3151,8 @@ public final class GeminiService: ObservableObject {
     ) -> (subjectAnchor: CGPoint, compositionAnchor: CGPoint, cameraAimPoint: CGPoint, optimalZoom: CGFloat) {
         // 1. Giữ nguyên 100% tọa độ chủ thể do Gemini quyết định
         let sPoint = CGPoint(
-            x: max(0.02, min(0.98, rawSubjectPoint.x)),
-            y: max(0.02, min(0.98, rawSubjectPoint.y))
+            x: max(0.02, min(0.98, rawSubjectPoint.x.isFinite ? rawSubjectPoint.x : 0.5)),
+            y: max(0.02, min(0.98, rawSubjectPoint.y.isFinite ? rawSubjectPoint.y : 0.5))
         )
 
         // 2. Giữ nguyên 100% điểm bố cục đích G do Gemini quyết định
@@ -3132,7 +3165,7 @@ public final class GeminiService: ObservableObject {
             gPoint = sPoint
         }
 
-        // 3. Giữ nguyên 100% mức zoom liên tục (continuous zoom) do Gemini quyết định, không ép về mức cố định và không bị giới hạn bởi khung cảm biến cục bộ
+        // 3. Giữ nguyên 100% mức zoom liên tục (continuous zoom) do Gemini quyết định
         let finalZoom: CGFloat
         if rawZoom.isFinite && rawZoom >= 0.5 {
             finalZoom = max(0.5, min(8.0, (rawZoom * 100.0).rounded() / 100.0))
@@ -3140,29 +3173,49 @@ public final class GeminiService: ObservableObject {
             finalZoom = 1.0
         }
 
-        // 4. Ưu tiên tuyệt đối tọa độ đích ngắm quang học (target_x, target_y) do Gemini tính toán;
-        // nếu Gemini trả target trùng đúng subject mà có đặt composition_x/y lệch tâm thì chiếu theo công thức quang học C_aim = S - (G - 0.5) / Z
-        let aimPoint: CGPoint
-        let targetDiffersFromSubject = hypot(rawTargetPoint.x - sPoint.x, rawTargetPoint.y - sPoint.y) > 0.008
-        if rawTargetPoint.x.isFinite && rawTargetPoint.y.isFinite && targetDiffersFromSubject {
-            aimPoint = CGPoint(
-                x: max(0.02, min(0.98, rawTargetPoint.x)),
-                y: max(0.02, min(0.98, rawTargetPoint.y))
-            )
-        } else if hypot(gPoint.x - 0.5, gPoint.y - 0.5) > 0.01 && hypot(gPoint.x - sPoint.x, gPoint.y - sPoint.y) > 0.01 {
-            let effZ = max(0.5, finalZoom)
-            let rawAimX = sPoint.x - (gPoint.x - 0.5) / effZ
-            let rawAimY = sPoint.y - (gPoint.y - 0.5) / effZ
-            aimPoint = CGPoint(
-                x: max(0.02, min(0.98, rawAimX)),
-                y: max(0.02, min(0.98, rawAimY))
-            )
+        // 4. Giải bài toán chiếu quang học chính xác C_aim = S - (G - 0.5) / Z:
+        // Khi Gemini chỉ định điểm bố cục G khác S, dùng công thức chiếu quang học chuẩn xác để khi khóa tâm + zoom Z,
+        // chủ thể S luôn rơi đúng vào điểm mạnh G mà không bao giờ bị ngược dấu hay gán nhầm target = composition.
+        let effZ = max(0.5, finalZoom)
+        let compDiffersFromSubject = hypot(gPoint.x - sPoint.x, gPoint.y - sPoint.y) > 0.008
+        let targetDiffersFromSubject = rawTargetPoint.x.isFinite && rawTargetPoint.y.isFinite &&
+            hypot(rawTargetPoint.x - sPoint.x, rawTargetPoint.y - sPoint.y) > 0.008
+
+        var rawAimX: CGFloat
+        var rawAimY: CGFloat
+        if compDiffersFromSubject {
+            let opticalAimX = sPoint.x - (gPoint.x - 0.5) / effZ
+            let opticalAimY = sPoint.y - (gPoint.y - 0.5) / effZ
+            if targetDiffersFromSubject && hypot(rawTargetPoint.x - opticalAimX, rawTargetPoint.y - opticalAimY) <= 0.025 {
+                rawAimX = rawTargetPoint.x
+                rawAimY = rawTargetPoint.y
+            } else {
+                rawAimX = opticalAimX
+                rawAimY = opticalAimY
+            }
+        } else if targetDiffersFromSubject {
+            rawAimX = rawTargetPoint.x
+            rawAimY = rawTargetPoint.y
         } else {
-            aimPoint = CGPoint(
-                x: max(0.02, min(0.98, rawTargetPoint.x.isFinite ? rawTargetPoint.x : sPoint.x)),
-                y: max(0.02, min(0.98, rawTargetPoint.y.isFinite ? rawTargetPoint.y : sPoint.y))
-            )
+            rawAimX = sPoint.x - (gPoint.x - 0.5) / effZ
+            rawAimY = sPoint.y - (gPoint.y - 0.5) / effZ
         }
+
+        // 5. Bảo vệ Headroom khi zoom lớn (không để cắt đỉnh đầu chủ thể trừ khi chụp macro/extreme close-up)
+        let scaleLower = shotScale.lowercased()
+        let isTightMacroOrCloseUp = scaleLower.contains("macro") || scaleLower.contains("close")
+        if !isTightMacroOrCloseUp, let size = aiEstimatedSize, size.height > 0.04, effZ > 1.05 {
+            let estimatedTopY = max(0.01, sPoint.y - size.height * 0.38)
+            let projectedTopInCrop = 0.5 + (estimatedTopY - rawAimY) * effZ
+            if projectedTopInCrop < 0.04 {
+                rawAimY = estimatedTopY - (0.04 - 0.5) / effZ
+            }
+        }
+
+        let aimPoint = CGPoint(
+            x: max(0.02, min(0.98, rawAimX)),
+            y: max(0.02, min(0.98, rawAimY))
+        )
 
         return (
             subjectAnchor: sPoint,
@@ -3201,6 +3254,10 @@ public final class GeminiService: ObservableObject {
         var boxCenterY: CGFloat = .nan
         var boxWidth: CGFloat = .nan
         var boxHeight: CGFloat = .nan
+        var boxMinX: CGFloat = .nan
+        var boxMaxX: CGFloat = .nan
+        var boxMinY: CGFloat = .nan
+        var boxMaxY: CGFloat = .nan
 
         if let box = json["subject_box_2d"] as? [Any], box.count == 4 {
             let rawVals = box.map { parseCGFloat($0, defaultVal: .nan) }
@@ -3210,6 +3267,10 @@ public final class GeminiService: ObservableObject {
                 let xmin = max(0.0, min(1.0, rawVals[1] / scale))
                 let ymax = max(ymin, min(1.0, rawVals[2] / scale))
                 let xmax = max(xmin, min(1.0, rawVals[3] / scale))
+                boxMinX = xmin
+                boxMaxX = xmax
+                boxMinY = ymin
+                boxMaxY = ymax
                 boxWidth = max(0.04, xmax - xmin)
                 boxHeight = max(0.04, ymax - ymin)
                 boxCenterX = xmin + boxWidth * 0.5
@@ -3255,6 +3316,17 @@ public final class GeminiService: ObservableObject {
         if subjectX > 1.5 || subjectY > 1.5 {
             subjectX /= 1000.0
             subjectY /= 1000.0
+        }
+        // Nếu có subject_box_2d hợp lệ mà subject_x/y bị lệch ra ngoài khung bao chủ thể, neo lại vào trong subject_box_2d
+        if boxCenterX.isFinite && boxCenterY.isFinite && boxMinX.isFinite && boxMaxX.isFinite && boxMinY.isFinite && boxMaxY.isFinite {
+            let marginX = max(0.01, boxWidth * 0.08)
+            let marginY = max(0.01, boxHeight * 0.08)
+            if subjectX < boxMinX - marginX || subjectX > boxMaxX + marginX {
+                subjectX = boxCenterX
+            }
+            if subjectY < boxMinY - marginY || subjectY > boxMaxY + marginY {
+                subjectY = boxCenterY
+            }
         }
         var compX = parseCGFloat(json["composition_x"], defaultVal: parseCGFloat(json["composition_anchor_x"], defaultVal: subjectX))
         var compY = parseCGFloat(json["composition_y"], defaultVal: parseCGFloat(json["composition_anchor_y"], defaultVal: subjectY))

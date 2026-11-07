@@ -20,7 +20,9 @@ public struct VideoPreviewSheetView: View {
 
     private var hasWindowedParams: Bool {
         if let focal = viewModel.lastRecordedVideoWindowedFocal {
-            return focal > 24.5 || (viewModel.lastRecordedVideoWindowedAspect != nil && viewModel.lastRecordedVideoWindowedAspect != .ratio16_9)
+            return focal > 24.1 ||
+                (viewModel.lastRecordedVideoWindowedAspect != nil && viewModel.lastRecordedVideoWindowedAspect != .ratio16_9) ||
+                viewModel.recordedVideoWindowedKeyframes.contains(where: { $0.focalLength > 24.1 || $0.aspectRatio != .ratio16_9 })
         }
         return false
     }
@@ -204,7 +206,7 @@ public struct VideoPreviewSheetView: View {
         guard !isWindowedZoomAlreadyCropped,
               let windowFocal = viewModel.lastRecordedVideoWindowedFocal,
               let windowAspect = viewModel.lastRecordedVideoWindowedAspect,
-              (windowFocal > 24.5 || windowAspect != .ratio16_9) else { return }
+              (windowFocal > 24.1 || windowAspect != .ratio16_9 || viewModel.recordedVideoWindowedKeyframes.contains(where: { $0.focalLength > 24.1 || $0.aspectRatio != .ratio16_9 })) else { return }
         let shouldApplyWindowedCrop = !self.isWindowedZoomAlreadyCropped
         processVideoExport(applyColorGrading: false, applyWindowCrop: shouldApplyWindowedCrop)
     }
@@ -312,6 +314,14 @@ public struct VideoPreviewSheetView: View {
                     outputImage = scaled
                         .transformed(by: CGAffineTransform(translationX: offsetX, y: offsetY))
                         .cropped(to: CGRect(origin: .zero, size: targetRenderSize))
+
+                    if uniformScale > 1.02, let sharpen = CIFilter(name: "CISharpenLuminance") {
+                        sharpen.setValue(outputImage, forKey: kCIInputImageKey)
+                        sharpen.setValue(min(0.42, 0.20 + Float(uniformScale - 1.0) * 0.10), forKey: kCIInputSharpnessKey)
+                        if let sharpened = sharpen.outputImage {
+                            outputImage = sharpened.cropped(to: CGRect(origin: .zero, size: targetRenderSize))
+                        }
+                    }
                 } else {
                     outputImage = source.cropped(to: origExtent)
                 }
