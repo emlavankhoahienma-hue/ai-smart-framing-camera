@@ -1030,32 +1030,6 @@ struct PhotoCaptureSettingsSection: View {
         .padding(.horizontal, 4)
     }
 
-    // Helper: Telemetry badge
-    private func telemetryBadge(title: String, value: String) -> some View {
-        VStack(spacing: 4) {
-            Text(title)
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.48))
-                .lineLimit(1)
-
-            Text(value)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color(red: 36/255, green: 36/255, blue: 41/255))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(Color(red: 39/255, green: 39/255, blue: 42/255), lineWidth: 1)
-                )
-        )
-    }
-
     // Helper: Divider line
     private var dividerLine: some View {
         Divider()
