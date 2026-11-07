@@ -251,7 +251,9 @@ class GeometryTests(unittest.TestCase):
             self.skipTest('Xcode project was not supplied; camera source configuration assertions passed')
         project = project_path.read_text(encoding='utf-8')
         self.assertIn('IPHONEOS_DEPLOYMENT_TARGET', project)
-        for name in ['TrackingGeometry.swift', 'NeuralTargetTracker.swift', 'TargetPatchFlow.swift', 'WindowedZoomOverlayView.swift']:
+        self.assertIn('SWIFT_OBJC_BRIDGING_HEADER = AISmartFramingCamera/Services/NativeTrackingCore.h;', project)
+        self.assertIn('path = NativeTrackingCore.h;', project)
+        for name in ['TrackingGeometry.swift', 'NeuralTargetTracker.swift', 'TargetPatchFlow.swift', 'WindowedZoomOverlayView.swift', 'NativeTrackingCore.cpp']:
             self.assertIn(f'/* {name} in Sources */ =', project)
             self.assertIn(f'path = {name};', project)
             # Ensure fileRef in Sources matches the exact fileRef in PBXFileReference and PBXGroup

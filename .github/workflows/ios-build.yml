@@ -67,6 +67,14 @@ jobs:
       - name: Verify target tracking boundary
         run: python scripts/verify_tracking_boundary.py
 
+      - name: Run native C++ NEON tracking core regressions
+        run: |
+          xcrun clang++ -std=gnu++20 -O3 -Wall -Wextra -Wshorten-64-to-32 -Werror \
+            AISmartFramingCamera/Services/NativeTrackingCore.cpp \
+            tests/NativeTrackingCoreRegression.cpp \
+            -o "$RUNNER_TEMP/native-tracking-core-regressions"
+          "$RUNNER_TEMP/native-tracking-core-regressions"
+
       - name: Run native capture transition regressions
         run: |
           xcrun swiftc -O -warnings-as-errors \

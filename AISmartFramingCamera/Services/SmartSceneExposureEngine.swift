@@ -79,7 +79,7 @@ public struct SceneLumaMetrics: Sendable {
 
 /// Hệ thống trí tuệ nhân tạo đo sáng & điều chỉnh EV thông minh theo môi trường (Smart Scene-Aware Exposure Engine)
 public final class SmartSceneExposureEngine: @unchecked Sendable {
-    /// Ước lượng độ sáng trung bình toàn cảnh siêu nhanh (<0.05ms) trực tiếp từ Y-Plane của CVPixelBuffer
+    /// Ước lượng độ sáng trung bình toàn cảnh siêu nhanh (<0.05ms) trực tiếp từ Y-Plane của CVPixelBuffer qua lõi C++ NEON
     public static func estimateSceneLuminance(from pixelBuffer: CVPixelBuffer) -> Float {
         guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return 0.5 }
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
@@ -91,40 +91,39 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
             let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
             let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
             let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
-            var sum: Float = 0
-            let stepX = max(1, width / 16)
-            let stepY = max(1, height / 16)
-            var count: Float = 0
-            for y in stride(from: stepY / 2, to: height, by: stepY) {
-                let row = ptr.advanced(by: y * bytesPerRow)
-                for x in stride(from: stepX / 2, to: width, by: stepX) {
-                    sum += Float(row[x]) / 255.0
-                    count += 1
-                }
-            }
-            return count > 0 ? sum / count : 0.5
+            return ntc_estimate_scene_luminance(ptr, Int32(width), Int32(height), Int32(bytesPerRow), true)
         } else if let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) {
             let width = CVPixelBufferGetWidth(pixelBuffer)
             let height = CVPixelBufferGetHeight(pixelBuffer)
             let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
             let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
-            var sum: Float = 0
-            let stepX = max(1, width / 16)
-            let stepY = max(1, height / 16)
-            var count: Float = 0
-            for y in stride(from: stepY / 2, to: height, by: stepY) {
-                let row = ptr.advanced(by: y * bytesPerRow)
-                for x in stride(from: stepX / 2, to: width, by: stepX) {
-                    let b = Float(row[x * 4]) / 255.0
-                    let g = Float(row[x * 4 + 1]) / 255.0
-                    let r = Float(row[x * 4 + 2]) / 255.0
-                    sum += 0.299 * r + 0.587 * g + 0.114 * b
-                    count += 1
-                }
-            }
-            return count > 0 ? sum / count : 0.5
+            return ntc_estimate_scene_luminance(ptr, Int32(width), Int32(height), Int32(bytesPerRow), false)
         }
         return 0.5
+    }
+
+    /// Đo độ sắc nét quang học (Tenengrad + Laplacian Variance) tại vùng ROI [0, 1] trực tiếp trên Y-Plane bằng C++ NEON
+    public static func measureROISharpness(from pixelBuffer: CVPixelBuffer, roi: CGRect = CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)) -> Float {
+        guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return 0.5 }
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let isBiPlanar = (format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                          format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        guard isBiPlanar, let baseAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return 0.5 }
+        let width = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+        let height = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+        let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+        return ntc_measure_roi_sharpness(
+            ptr,
+            Int32(width),
+            Int32(height),
+            Int32(bytesPerRow),
+            Float(roi.minX),
+            Float(roi.minY),
+            Float(roi.maxX),
+            Float(roi.maxY)
+        )
     }
 
     public static let shared = SmartSceneExposureEngine()
@@ -319,6 +318,48 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
         }
 
         let data = baseAddress.assumingMemoryBound(to: UInt8.self)
+
+        var cMetrics = NTCSceneLumaMetrics(
+            subjectLuma: 0.48,
+            backgroundLuma: 0.50,
+            overallLuma: 0.49,
+            highlightClippingRatio: 0.0,
+            shadowRatio: 0.0,
+            maxLuma: 0.88,
+            subjectSharpness: 0.5
+        )
+        let hasSubj = (subjectRect != nil)
+        let sMinX = Float(subjectRect?.minX ?? 0.0)
+        let sMinY = Float(subjectRect?.minY ?? 0.0)
+        let sMaxX = Float(subjectRect?.maxX ?? 0.0)
+        let sMaxY = Float(subjectRect?.maxY ?? 0.0)
+        if ntc_analyze_scene_luma(
+            data,
+            Int32(width),
+            Int32(height),
+            Int32(bytesPerRow),
+            isBiPlanar,
+            isVideoRangeBiPlanar,
+            Float(crop.minX),
+            Float(crop.minY),
+            Float(crop.maxX),
+            Float(crop.maxY),
+            hasSubj,
+            sMinX,
+            sMinY,
+            sMaxX,
+            sMaxY,
+            &cMetrics
+        ) {
+            return SceneLumaMetrics(
+                subjectLuma: cMetrics.subjectLuma,
+                backgroundLuma: cMetrics.backgroundLuma,
+                overallLuma: cMetrics.overallLuma,
+                highlightClippingRatio: cMetrics.highlightClippingRatio,
+                shadowRatio: cMetrics.shadowRatio,
+                maxLuma: cMetrics.maxLuma
+            )
+        }
 
         let startX = max(0, min(width - 1, Int(crop.minX * CGFloat(width))))
         let endX = max(startX + 1, min(width, Int(crop.maxX * CGFloat(width))))

@@ -560,7 +560,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     /// Snapshot the pose while the capture frame is still in the short motion
     /// history. Cloud analysis can return long after that history has expired.
     func pose(at timestamp: TimeInterval) -> simd_quatd? {
-        lock.withLock { TrackingGeometry.pose(at: timestamp, in: history) }
+        var qx: Double = 0.0, qy: Double = 0.0, qz: Double = 0.0, qw: Double = 1.0
+        if ntc_imu_interpolate_pose(timestamp, &qx, &qy, &qz, &qw) {
+            return simd_quatd(ix: qx, iy: qy, iz: qz, r: qw)
+        }
+        return lock.withLock { TrackingGeometry.pose(at: timestamp, in: history) }
     }
 
     /// Use a fresh motion sample when the exact camera timestamp falls just
@@ -576,7 +580,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
 
     /// Vận tốc góc tức thời của thiết bị từ cảm biến Gyroscope (rad/s)
     public func currentDeviceAngularSpeed() -> Double {
-        lock.withLock {
+        let fastSpeed = ntc_imu_current_angular_speed()
+        if fastSpeed > 0 {
+            return fastSpeed
+        }
+        return lock.withLock {
             guard history.count >= 2 else { return 0 }
             let s1 = history[history.count - 1]
             let s2 = history[history.count - 2]
@@ -590,7 +598,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
 
     /// Tính lượng dịch chuyển góc (radians) của Gyro giữa timestamp quá khứ và hiện tại (Bù trễ Vision)
     public func angularDisplacementSince(timestamp: TimeInterval) -> Double {
-        lock.withLock {
+        let fastDisp = ntc_imu_angular_displacement_since(timestamp)
+        if fastDisp > 0 {
+            return fastDisp
+        }
+        return lock.withLock {
             guard let pastPose = TrackingGeometry.pose(at: timestamp, in: history),
                   let currentPose = latestPose() ?? history.last?.deviceToWorld else { return 0 }
             let dot = max(-1.0, min(1.0, abs(simd_dot(pastPose.vector, currentPose.vector))))
@@ -624,6 +636,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                   q.z.isFinite, q.w.isFinite, qLength.isFinite,
                   qLength > 1e-9 else { return }
             guard sample.timestamp > (history.last?.timestamp ?? -Double.infinity) else { return }
+            ntc_imu_push_sample(sample.timestamp, q.x, q.y, q.z, q.w)
             history.append(sample)
             if history.count > 640, let oldestAllowed = history.last.map({ $0.timestamp - 3.0 }) {
                 var dropCount = 0
@@ -757,15 +770,29 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 } ?? reticleRay
             } else if let prevDisplay = displayWorldRay, dt > 1e-5 {
                 // Velocity-adaptive 1-Euro spherical S^2 interpolation across 200Hz IMU ticks:
-                // Converts 30Hz optical updates into a continuous 200Hz trajectory on S^2 while
-                // keeping 0.0ms lag on pure handheld camera rotation (applied below via imagePose).
-                let gapAngle = atan2(simd_length(simd_cross(prevDisplay, reticleRay)),
-                                     simd_dot(prevDisplay, reticleRay))
-                let normalizedGap = gapAngle * focalScale
-                let cutoffHz = 14.0 + min(85.0, normalizedGap * 120.0)
-                let alpha = 1.0 - exp(-2.0 * .pi * cutoffHz * dt)
-                let smoothStep = max(1e-7, gapAngle * max(0.32, min(1.0, alpha)))
-                slewed = TrackingBearingSlew.advance(from: prevDisplay, to: reticleRay, maxAngle: smoothStep)
+                // Executed via C++ native geodesic SLERP (ntc_s2_1euro_slerp) to convert 30Hz
+                // optical updates into a continuous 200Hz trajectory on S^2 with 0.0ms rotational lag.
+                var cOutX: Double = reticleRay.x
+                var cOutY: Double = reticleRay.y
+                var cOutZ: Double = reticleRay.z
+                ntc_s2_1euro_slerp(
+                    prevDisplay.x, prevDisplay.y, prevDisplay.z,
+                    reticleRay.x, reticleRay.y, reticleRay.z,
+                    focalScale, dt,
+                    &cOutX, &cOutY, &cOutZ
+                )
+                let candidate = SIMD3<Double>(cOutX, cOutY, cOutZ)
+                if candidate.x.isFinite && candidate.y.isFinite && candidate.z.isFinite {
+                    slewed = candidate
+                } else {
+                    let gapAngle = atan2(simd_length(simd_cross(prevDisplay, reticleRay)),
+                                         simd_dot(prevDisplay, reticleRay))
+                    let normalizedGap = gapAngle * focalScale
+                    let cutoffHz = 14.0 + min(85.0, normalizedGap * 120.0)
+                    let alpha = 1.0 - exp(-2.0 * .pi * cutoffHz * dt)
+                    let smoothStep = max(1e-7, gapAngle * max(0.32, min(1.0, alpha)))
+                    slewed = TrackingBearingSlew.advance(from: prevDisplay, to: reticleRay, maxAngle: smoothStep)
+                }
             } else {
                 slewed = reticleRay
             }
@@ -780,7 +807,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // instead of freezing at the discrete 30Hz lastFrameTime timestamp.
             let livePreviewTime = sample.timestamp - 0.008
             let imagePose = (now - lastFrameTime <= CompositionTuning.maxFrameToMotionLatency ?
-                TrackingGeometry.pose(at: livePreviewTime, in: history) : nil) ?? sample.deviceToWorld
+                self.poseAt(livePreviewTime) : nil) ?? sample.deviceToWorld
             if CompositionTuning.isExperimentLoggingEnabled, lastFrameTime.isFinite {
                 let delta = sample.timestamp - lastFrameTime
                 if abs(delta) > CompositionTuning.maxFrameToMotionLatency, now - lastSyncWarningTime > 2.0 {
@@ -838,6 +865,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
 
     public func suspend() {
         stopTracking()
+        ntc_imu_reset()
         let id = lock.withLock { () -> UUID? in
             motionEpoch &+= 1
             watchdog?.cancel(); watchdog = nil

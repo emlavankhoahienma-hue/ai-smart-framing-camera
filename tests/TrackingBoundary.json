@@ -7,7 +7,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "6205a9119799ab869bda5946a023f611f326df8030d7766d374cadcf812aad53"
+      "sha256": "6fecfa70d77ae117ada889c8993a72f9a32e87b90b5f35f2382f69d1a70927fa"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -15,7 +15,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TargetPatchFlow.swift",
-      "sha256": "57a1223d2d98cccf7d33ef9443ce4457e962e417bede6a4dbf257771e789d18a"
+      "sha256": "06320555455074cc4d7f4fbb292ee14d14a6502bcbe3f3d454bd9a4b4e4d5d3a"
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
@@ -82,6 +82,14 @@
       "start": "struct TargetCircleView: View {",
       "end": "// MARK: - Guidance Ray",
       "sha256": "e18a91340584c72f0d6d6e4b4a82f04131b9512f0ad1f337b9cda512771850d5"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/NativeTrackingCore.h",
+      "sha256": "f67986b6df3f7cd78bfedc124c1982d4adcde5ade3cf1431c10ffcb26b9aaa0b"
+    },
+    {
+      "path": "AISmartFramingCamera/Services/NativeTrackingCore.cpp",
+      "sha256": "77d72264c16ba95ceab909b3c4592bc8044a9b051e9b47cc52894ee376027003"
     }
   ]
 }

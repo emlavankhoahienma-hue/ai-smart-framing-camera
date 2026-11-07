@@ -205,18 +205,29 @@ final class TargetPatchFlow {
                 }
                 gray.withUnsafeMutableBufferPointer { outPtr in
                     guard let outBase = outPtr.baseAddress else { return }
-                    xLookup.withUnsafeBufferPointer { xPtr in
-                        guard let xBase = xPtr.baseAddress else { return }
-                        for y in 0..<outputHeight {
-                            let sourceY = min(inputHeight - 1, Int((Double(y) + 0.5) * scaleY))
-                            let rowPtr = bytes.advanced(by: sourceY * rowBytes)
-                            let outRowPtr = outBase.advanced(by: y * outputWidth)
-                            for x in 0..<outputWidth {
-                                let offset = xBase[x]
-                                let b = Int(rowPtr[offset])
-                                let g = Int(rowPtr[offset + 1])
-                                let r = Int(rowPtr[offset + 2])
-                                outRowPtr[x] = UInt8(truncatingIfNeeded: (29 * b + 150 * g + 77 * r) >> 8)
+                    ntc_downsample_bgra_to_gray(
+                        bytes,
+                        Int32(inputWidth),
+                        Int32(inputHeight),
+                        Int32(rowBytes),
+                        outBase,
+                        Int32(outputWidth),
+                        Int32(outputHeight)
+                    )
+                    if outBase[0] == 0 && outBase[outputWidth * outputHeight - 1] == 0 && xLookup.isEmpty {
+                        xLookup.withUnsafeBufferPointer { xPtr in
+                            guard let xBase = xPtr.baseAddress else { return }
+                            for y in 0..<outputHeight {
+                                let sourceY = min(inputHeight - 1, Int((Double(y) + 0.5) * scaleY))
+                                let rowPtr = bytes.advanced(by: sourceY * rowBytes)
+                                let outRowPtr = outBase.advanced(by: y * outputWidth)
+                                for x in 0..<outputWidth {
+                                    let offset = xBase[x]
+                                    let b = Int(rowPtr[offset])
+                                    let g = Int(rowPtr[offset + 1])
+                                    let r = Int(rowPtr[offset + 2])
+                                    outRowPtr[x] = UInt8(truncatingIfNeeded: (29 * b + 150 * g + 77 * r) >> 8)
+                                }
                             }
                         }
                     }
@@ -230,14 +241,25 @@ final class TargetPatchFlow {
                 }
                 gray.withUnsafeMutableBufferPointer { outPtr in
                     guard let outBase = outPtr.baseAddress else { return }
-                    xLookup.withUnsafeBufferPointer { xPtr in
-                        guard let xBase = xPtr.baseAddress else { return }
-                        for y in 0..<outputHeight {
-                            let sourceY = min(inputHeight - 1, Int((Double(y) + 0.5) * scaleY))
-                            let rowPtr = lumaBytes.advanced(by: sourceY * lumaRowBytes)
-                            let outRowPtr = outBase.advanced(by: y * outputWidth)
-                            for x in 0..<outputWidth {
-                                outRowPtr[x] = rowPtr[xBase[x]]
+                    ntc_downsample_luma_to_gray(
+                        lumaBytes,
+                        Int32(inputWidth),
+                        Int32(inputHeight),
+                        Int32(lumaRowBytes),
+                        outBase,
+                        Int32(outputWidth),
+                        Int32(outputHeight)
+                    )
+                    if outBase[0] == 0 && outBase[outputWidth * outputHeight - 1] == 0 && xLookup.isEmpty {
+                        xLookup.withUnsafeBufferPointer { xPtr in
+                            guard let xBase = xPtr.baseAddress else { return }
+                            for y in 0..<outputHeight {
+                                let sourceY = min(inputHeight - 1, Int((Double(y) + 0.5) * scaleY))
+                                let rowPtr = lumaBytes.advanced(by: sourceY * lumaRowBytes)
+                                let outRowPtr = outBase.advanced(by: y * outputWidth)
+                                for x in 0..<outputWidth {
+                                    outRowPtr[x] = rowPtr[xBase[x]]
+                                }
                             }
                         }
                     }
@@ -269,6 +291,31 @@ final class TargetPatchFlow {
                    left: left, right: right, top: top, bottom: bottom
                ), !gpuPoints.isEmpty {
                 return gpuPoints
+            }
+            var cppCoords = [Float](repeating: 0, count: 32)
+            let cppCount: Int32 = pixels.withUnsafeBufferPointer { pixBuf in
+                cppCoords.withUnsafeMutableBufferPointer { outBuf in
+                    guard let pixBase = pixBuf.baseAddress, let outBase = outBuf.baseAddress else { return 0 }
+                    return ntc_extract_roi_corners(
+                        pixBase,
+                        Int32(width),
+                        Int32(height),
+                        Int32(left),
+                        Int32(right),
+                        Int32(top),
+                        Int32(bottom),
+                        outBase,
+                        16
+                    )
+                }
+            }
+            if cppCount > 0 {
+                var extracted: [CGPoint] = []
+                extracted.reserveCapacity(Int(cppCount))
+                for idx in 0..<Int(cppCount) {
+                    extracted.append(CGPoint(x: CGFloat(cppCoords[idx * 2]), y: CGFloat(cppCoords[idx * 2 + 1])))
+                }
+                return extracted
             }
             var points: [CGPoint] = []
             points.reserveCapacity(16)
@@ -400,6 +447,69 @@ final class TargetPatchFlow {
             coarseX = 0.0
             coarseY = 0.0
         }
+
+        // Fast-path C++17 / ARM NEON 3-Level Pyramidal IC-LK + 256-bit ORB + Huber IRLS Constellation Solver
+        var flatPrevPoints = [Float](repeating: 0, count: points.count * 2)
+        for (idx, pt) in points.enumerated() {
+            flatPrevPoints[idx * 2] = Float(pt.x)
+            flatPrevPoints[idx * 2 + 1] = Float(pt.y)
+        }
+        var flatSurvivors = [Float](repeating: 0, count: points.count * 2)
+        let ntcEval: NTCPatchFlowResult = previous.pixels.withUnsafeBufferPointer { prevBuf in
+            image.pixels.withUnsafeBufferPointer { currBuf in
+                flatPrevPoints.withUnsafeBufferPointer { ptsBuf in
+                    flatSurvivors.withUnsafeMutableBufferPointer { survBuf in
+                        guard let prevBase = prevBuf.baseAddress,
+                              let currBase = currBuf.baseAddress,
+                              let ptsBase = ptsBuf.baseAddress,
+                              let survBase = survBuf.baseAddress else {
+                            return NTCPatchFlowResult(anchorNormX: Double(fallback.x),
+                                                      anchorNormY: Double(fallback.y),
+                                                      inliers: 0,
+                                                      survivingCount: 0,
+                                                      isReliable: false)
+                        }
+                        return ntc_evaluate_constellation_flow(
+                            prevBase,
+                            currBase,
+                            Int32(image.width),
+                            Int32(image.height),
+                            ptsBase,
+                            Int32(points.count),
+                            coarseX,
+                            coarseY,
+                            Double(previousBox.width),
+                            Double(box.width),
+                            Double(box.minX),
+                            Double(box.minY),
+                            Double(box.maxX),
+                            Double(box.maxY),
+                            Double(anchor.x),
+                            Double(anchor.y),
+                            survBase,
+                            Int32(points.count)
+                        )
+                    }
+                }
+            }
+        }
+        if ntcEval.isReliable {
+            var survivors: [CGPoint] = []
+            let survCount = Int(max(0, ntcEval.survivingCount))
+            survivors.reserveCapacity(survCount)
+            for idx in 0..<survCount {
+                survivors.append(CGPoint(x: CGFloat(flatSurvivors[idx * 2]),
+                                         y: CGFloat(flatSurvivors[idx * 2 + 1])))
+            }
+            return Evaluation(
+                image: image,
+                point: CGPoint(x: ntcEval.anchorNormX, y: ntcEval.anchorNormY),
+                isReliable: true,
+                inliers: Int(ntcEval.inliers),
+                survivingPoints: survivors
+            )
+        }
+
         var pairs: [MatchedPair] = []
         pairs.reserveCapacity(points.count)
         for old in points {
@@ -564,6 +674,28 @@ final class TargetPatchFlow {
         return template.pixels.withUnsafeBufferPointer { tplBuf -> (CGPoint, Double)? in
             target.pixels.withUnsafeBufferPointer { tgtBuf -> (CGPoint, Double)? in
                 guard let tplBase = tplBuf.baseAddress, let tgtBase = tgtBuf.baseAddress else { return nil }
+                var cppBestX: Float = 0.0
+                var cppBestY: Float = 0.0
+                var cppBestScore: Double = -2.0
+                if ntc_match_patch_zncc(
+                    tplBase,
+                    Int32(template.width),
+                    Int32(template.height),
+                    Float(source.x),
+                    Float(source.y),
+                    tgtBase,
+                    Int32(target.width),
+                    Int32(target.height),
+                    Float(center.x),
+                    Float(center.y),
+                    Int32(radius),
+                    requireUnique,
+                    &cppBestX,
+                    &cppBestY,
+                    &cppBestScore
+                ) {
+                    return (CGPoint(x: CGFloat(cppBestX), y: CGFloat(cppBestY)), cppBestScore)
+                }
                 let tplW = template.width
                 let tgtW = target.width
 
