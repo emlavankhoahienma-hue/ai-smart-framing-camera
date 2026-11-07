@@ -159,9 +159,11 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
             return
         }
 
-        // Damping on angular velocity prevents persistent angular momentum
-        // when camera stops translating or panning
-        let damping = exp(-1.5 * dt)
+        // Handheld iPhone damping: decay residual world-space angular velocity quickly
+        // when the subject slows down or when the user finishes a camera pan, preventing
+        // reticle overshoot while preserving responsive velocity tracking in dynamic scenes.
+        let dampingRate = isDynamicScene ? 1.65 : 2.85
+        let damping = exp(-dampingRate * dt)
         angularVelocity *= damping
 
         let deltaTheta = angularVelocity * dt
@@ -172,10 +174,10 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
             updateTangentFrame(newBearing: newBearing)
         }
 
-        let qa = isDynamicScene ? 3.0 : 1.2
+        let qa = isDynamicScene ? 2.4 : 0.85
         let dt2 = dt * dt
         let dt3 = dt2 * dt
-        let qTrans = 0.004 * dt
+        let qTrans = (isDynamicScene ? 0.0035 : 0.0018) * dt
         let qThetaTheta = Mat2.diagonal(dt3 / 3.0 * qa + qTrans)
         let qThetaOmega = Mat2.diagonal(dt2 / 2.0 * qa)
         let qOmegaOmega = Mat2.diagonal(dt * qa)
@@ -187,6 +189,26 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
         pThetaTheta = pTT.symmetrized
         pThetaOmega = pTO
         pOmegaOmega = pOO.symmetrized
+    }
+
+    /// Read-only short-horizon bearing lead compensation from `lastTimestamp` to `targetTimestamp`.
+    /// Never mutates `lastTimestamp` or filter state, keeping the EKF strictly on the monotonic camera frame timeline.
+    func predictedBearing(at targetTimestamp: TimeInterval, isDynamicScene: Bool) -> SIMD3<Double> {
+        guard targetTimestamp.isFinite, lastTimestamp.isFinite else { return bearing }
+        let rawDt = targetTimestamp - lastTimestamp
+        guard rawDt > 1e-4, rawDt <= 0.12 else { return bearing }
+        let speed = hypot(angularVelocity.x, angularVelocity.y)
+        // Suppress lead extrapolation for tiny micro-jitter velocities (< 0.035 rad/s)
+        guard speed > 0.035 else { return bearing }
+        let leadGain = min(1.0, (speed - 0.035) / 0.12)
+        let dampingRate = isDynamicScene ? 1.65 : 2.85
+        let effectiveDt = rawDt * exp(-dampingRate * rawDt) * leadGain
+        let deltaTheta = angularVelocity * effectiveDt
+        let angle = hypot(deltaTheta.x, deltaTheta.y)
+        guard angle > 1e-9 else { return bearing }
+        let clampedAngle = min(angle, 0.018)
+        let uTangent = (tangentE1 * deltaTheta.x + tangentE2 * deltaTheta.y) / angle
+        return simd_normalize(bearing * cos(clampedAngle) + uTangent * sin(clampedAngle))
     }
 
     private func updateTangentFrame(newBearing: SIMD3<Double>) {
@@ -260,10 +282,16 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
             updateTangentFrame(newBearing: newBearing)
         }
 
-        angularVelocity += deltaOmegaCorr
+        // Handheld iPhone velocity deadband & Huber weighting:
+        // Sub-pixel / 1-pixel bounding-box breathing (< 0.0038 rad) refines bearing position
+        // without injecting false angular velocity into the tangent state.
+        let innovationNorm = hypot(y.x, y.y)
+        let velocityHuberWeight = min(1.0, (innovationNorm / 0.0038) * (innovationNorm / 0.0038))
+        angularVelocity += deltaOmegaCorr * velocityHuberWeight
         let speed = hypot(angularVelocity.x, angularVelocity.y)
-        if speed > 6.0 {
-            angularVelocity *= (6.0 / speed)
+        let maxHandheldAngularSpeed = 2.2
+        if speed > maxHandheldAngularSpeed {
+            angularVelocity *= (maxHandheldAngularSpeed / speed)
         }
 
         let i2 = Mat2.identity
@@ -597,7 +625,19 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                   qLength > 1e-9 else { return }
             guard sample.timestamp > (history.last?.timestamp ?? -Double.infinity) else { return }
             history.append(sample)
-            history.removeAll { $0.timestamp < sample.timestamp - 3 }
+            if history.count > 640, let oldestAllowed = history.last.map({ $0.timestamp - 3.0 }) {
+                var dropCount = 0
+                for item in history {
+                    if item.timestamp < oldestAllowed {
+                        dropCount += 1
+                    } else {
+                        break
+                    }
+                }
+                if dropCount > 0 {
+                    history.removeFirst(dropCount)
+                }
+            }
             guard active else { return }
             resolvePin()
             publish()
@@ -667,12 +707,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                     filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
                 } else {
                     filter.update(innovation: innovation, sInv: sInv)
-                    // Bù độ trễ Vision: Dự báo trạng thái bộ lọc EKF từ thời điểm frame tới hiện tại
+                    // Bù độ trễ Vision mà không ghi đè lastTimestamp của EKF (giữ EKF trên trục thời gian camera monotonic)
                     let now = CACurrentMediaTime()
-                    if now > frame.timestamp, now - frame.timestamp <= 0.25 {
-                        filter.predict(to: now, isDynamicScene: street || scene.isDeformableNature)
-                    }
-                    let blended = filter.bearing
+                    let blended = filter.predictedBearing(at: now, isDynamicScene: street || scene.isDeformableNature)
                     let length = simd_length(blended)
                     guard length.isFinite, length > 1e-9 else { publish(); return }
                     corrected = blended / length
@@ -687,10 +724,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 }
                 if evidence == .reidentified || (evidence == .confirmedContinuation && residual > 0.20) {
                     presentationIsRecovering = true
-                } else if !presentationIsRecovering {
-                    // Accepted live optical motion is already rate limited.
-                    // Do not filter it a second time or the reticle trails a
-                    // moving subject while the image continues to move.
+                } else if displayWorldRay == nil {
                     displayWorldRay = subjectWorldRay ?? worldRay
                 }
             } else {
@@ -714,22 +748,39 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         if let reticleRay = subjectWorldRay ?? worldRay, let sample = history.last,
            (-0.05...0.45).contains(now - sample.timestamp) {
             let dt = lastDisplayTime.isFinite ? min(0.05, max(0, now - lastDisplayTime)) : 0
-            let slewed = presentationIsRecovering ? (displayWorldRay.map {
-                TrackingBearingSlew.advance(from: $0, to: reticleRay,
-                    maxAngle: 0.90 * dt / max(calibration.fx, calibration.fy))
-            } ?? reticleRay) : reticleRay
+            let focalScale = max(calibration.fx, calibration.fy)
+            let slewed: SIMD3<Double>
+            if presentationIsRecovering {
+                slewed = displayWorldRay.map {
+                    TrackingBearingSlew.advance(from: $0, to: reticleRay,
+                        maxAngle: 0.90 * dt / focalScale)
+                } ?? reticleRay
+            } else if let prevDisplay = displayWorldRay, dt > 1e-5 {
+                // Velocity-adaptive 1-Euro spherical S^2 interpolation across 200Hz IMU ticks:
+                // Converts 30Hz optical updates into a continuous 200Hz trajectory on S^2 while
+                // keeping 0.0ms lag on pure handheld camera rotation (applied below via imagePose).
+                let gapAngle = atan2(simd_length(simd_cross(prevDisplay, reticleRay)),
+                                     simd_dot(prevDisplay, reticleRay))
+                let normalizedGap = gapAngle * focalScale
+                let cutoffHz = 14.0 + min(85.0, normalizedGap * 120.0)
+                let alpha = 1.0 - exp(-2.0 * .pi * cutoffHz * dt)
+                let smoothStep = max(1e-7, gapAngle * max(0.32, min(1.0, alpha)))
+                slewed = TrackingBearingSlew.advance(from: prevDisplay, to: reticleRay, maxAngle: smoothStep)
+            } else {
+                slewed = reticleRay
+            }
             displayWorldRay = slewed
             lastDisplayTime = now
             let settlingAngle = atan2(simd_length(simd_cross(slewed, reticleRay)),
                                       simd_dot(slewed, reticleRay))
-            let settled = settlingAngle * max(calibration.fx, calibration.fy) < 0.008
+            let settled = settlingAngle * focalScale < 0.008
             if settled { presentationIsRecovering = false }
             let rendered = guideFromSubject?.act(slewed) ?? (worldRay ?? slewed)
-            // Paint onto the latest camera image, using its pose and intrinsics
-            // together. Projecting an older image with the newest IMU pose makes
-            // the ring lead the subject and oscillate during a handheld pan.
+            // Synchronize to the live 200Hz IMU stream with ~8ms ISP viewfinder scanout lead
+            // instead of freezing at the discrete 30Hz lastFrameTime timestamp.
+            let livePreviewTime = sample.timestamp - 0.008
             let imagePose = (now - lastFrameTime <= CompositionTuning.maxFrameToMotionLatency ?
-                TrackingGeometry.pose(at: lastFrameTime, in: history) : nil) ?? sample.deviceToWorld
+                TrackingGeometry.pose(at: livePreviewTime, in: history) : nil) ?? sample.deviceToWorld
             if CompositionTuning.isExperimentLoggingEnabled, lastFrameTime.isFinite {
                 let delta = sample.timestamp - lastFrameTime
                 if abs(delta) > CompositionTuning.maxFrameToMotionLatency, now - lastSyncWarningTime > 2.0 {

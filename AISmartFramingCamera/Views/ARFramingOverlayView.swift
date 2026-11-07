@@ -86,22 +86,38 @@ public struct ARFramingOverlayView: View {
                     let isDocked = hypot(projectedScreen.x - targetScreen.x,
                                          projectedScreen.y - targetScreen.y) > 0.5
 
-                    // Lực hút nam châm mượt mà kiểu SenseTime / Kapi Cam (Magnetic Snap)
+                    // Lực hút nam châm mượt mà C1-continuous (Zero-Teleport Magnetic Potential Well)
                     let rawDistToCenter = hypot(targetScreen.x - screenCenter.x, targetScreen.y - screenCenter.y)
                     let snapThresholdScreen: CGFloat = 26.0
+                    let outerWellRadius: CGFloat = 34.0
+                    let innerCoreRadius: CGFloat = 14.0
                     let isSnapped = (viewModel.isMagneticSnapped || rawDistToCenter <= snapThresholdScreen) && !isDocked
 
-                    // Khi vào vùng hút, tọa độ tự động hít dính về tâm theo đường cong lò xo
+                    // Đường cong thế năng nam châm liên tục C1: hút chặt ở vùng lõi (<= 14pt) và nối trơn hoàn toàn
+                    // tại biên ngoài (34pt) để triệt tiêu hoàn toàn hiện tượng nhảy cóc vị trí khi ra/vào vùng hút.
                     let effectiveTargetScreen: CGPoint = {
-                        if isSnapped {
-                            let pull = pow(min(1.0, rawDistToCenter / snapThresholdScreen), 2.2)
-                            return CGPoint(
-                                x: screenCenter.x + (targetScreen.x - screenCenter.x) * pull * 0.10,
-                                y: screenCenter.y + (targetScreen.y - screenCenter.y) * pull * 0.10
-                            )
-                        } else {
+                        guard !isDocked, rawDistToCenter < outerWellRadius else {
                             return targetScreen
                         }
+                        if viewModel.isPerfectAlignment && rawDistToCenter <= innerCoreRadius {
+                            return CGPoint(
+                                x: screenCenter.x + (targetScreen.x - screenCenter.x) * 0.05,
+                                y: screenCenter.y + (targetScreen.y - screenCenter.y) * 0.05
+                            )
+                        }
+                        let radialScale: CGFloat
+                        if rawDistToCenter <= innerCoreRadius {
+                            let coreT = rawDistToCenter / innerCoreRadius
+                            radialScale = 0.08 * coreT
+                        } else {
+                            let u = min(1.0, max(0.0, (rawDistToCenter - innerCoreRadius) / (outerWellRadius - innerCoreRadius)))
+                            let smoothstep = u * u * (3.0 - 2.0 * u)
+                            radialScale = 0.08 + 0.92 * smoothstep
+                        }
+                        return CGPoint(
+                            x: screenCenter.x + (targetScreen.x - screenCenter.x) * radialScale,
+                            y: screenCenter.y + (targetScreen.y - screenCenter.y) * radialScale
+                        )
                     }()
 
                     // Sợi dây đứt nét & Mũi tên dẫn đường (Dash Arrow Guidance)

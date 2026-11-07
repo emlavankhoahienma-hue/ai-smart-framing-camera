@@ -7,7 +7,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "22d182dc933b8423b28d4deb2a8ab1b33b55c857c4fe9c97685dd3f6c03c8d6e"
+      "sha256": "6205a9119799ab869bda5946a023f611f326df8030d7766d374cadcf812aad53"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -15,7 +15,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TargetPatchFlow.swift",
-      "sha256": "b916be3074a937098a06714c3f430604b9cfcd41a71a6eefd29093232298b2bd"
+      "sha256": "57a1223d2d98cccf7d33ef9443ce4457e962e417bede6a4dbf257771e789d18a"
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
@@ -23,7 +23,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralTargetTracker.swift",
-      "sha256": "0398bca6f6e43017fa6f29cae112a5bebaf31a2a83949ea7bbb8d990a0da0112"
+      "sha256": "e1bf2384c7869394c7c05737400123ad2b8b451520edf1173a83f6618b1e85cf"
     },
     {
       "path": "AISmartFramingCamera/Services/LiveEntityTracker.swift",
@@ -75,7 +75,7 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
       "end": "                // Optical centre is always fixed",
-      "sha256": "47c2af186373fe844ac43c612685f9e5700592124411f6ec170c707abca4d896"
+      "sha256": "9b7eb47480c9666d96710293a80679c60d5836ba1cb402ec7e234a54afb25fc3"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",

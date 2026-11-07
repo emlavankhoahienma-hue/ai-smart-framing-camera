@@ -3,6 +3,7 @@ import CoreML
 import Vision
 import CoreVideo
 import CoreGraphics
+import QuartzCore
 
 /// Optional CNN verifier. Requires the CoreML export with preprocessing embedded
 /// in its graph. Raw .bin MLP weights and random weights are never accepted.
@@ -12,6 +13,7 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     private var model: VNCoreMLModel?
     private var anchor: [Double]?
     private var adaptive: [Double]?
+    private var lastAdaptiveUpdateTime: TimeInterval = -Double.infinity
 
     public var hasActiveTrainedModel: Bool { lock.withLock { model != nil } }
     public init() { loadModelWeights() }
@@ -19,6 +21,7 @@ public final class NeuralTargetTracker: @unchecked Sendable {
     public func loadModelWeights() {
         lock.withLock {
             model = nil; anchor = nil; adaptive = nil
+            lastAdaptiveUpdateTime = -Double.infinity
             guard let url = Bundle.main.url(forResource: "RobustTargetEmbedder", withExtension: "mlmodelc"),
                   let core = try? MLModel(contentsOf: url),
                   let metadata = core.modelDescription.metadata[.creatorDefinedKey] as? [String: String],
@@ -34,14 +37,24 @@ public final class NeuralTargetTracker: @unchecked Sendable {
             let vec = embedding(pixelBuffer, at: targetPoint)
             anchor = vec
             adaptive = vec
+            lastAdaptiveUpdateTime = CACurrentMediaTime()
         }
     }
 
-    public func clearAnchor() { lock.withLock { anchor = nil; adaptive = nil } }
+    public func clearAnchor() {
+        lock.withLock {
+            anchor = nil
+            adaptive = nil
+            lastAdaptiveUpdateTime = -Double.infinity
+        }
+    }
 
     public func updateAdaptiveTemplate(from pixelBuffer: CVPixelBuffer, at targetPoint: CGPoint, alpha: Double = 0.15) {
         lock.withLock {
+            let now = CACurrentMediaTime()
+            guard now - lastAdaptiveUpdateTime >= 0.40 else { return }
             guard let anchor, let current = embedding(pixelBuffer, at: targetPoint) else { return }
+            lastAdaptiveUpdateTime = now
             let anchorSimilarity = zip(anchor, current).reduce(0.0) { $0 + $1.0 * $1.1 }
             // Anti-drift check: observation must remain sufficiently similar to original anchor T0
             guard anchorSimilarity >= 0.60 else { return }
