@@ -541,10 +541,18 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         }
     }
 
+    private func poseUnlocked(at timestamp: TimeInterval) -> simd_quatd? {
+        var qx: Double = 0.0, qy: Double = 0.0, qz: Double = 0.0, qw: Double = 1.0
+        if ntc_imu_interpolate_pose(timestamp, &qx, &qy, &qz, &qw) {
+            return simd_quatd(ix: qx, iy: qy, iz: qz, r: qw)
+        }
+        return TrackingGeometry.pose(at: timestamp, in: history)
+    }
+
     public func projection(at timestamp: TimeInterval, calibration k: TrackingCalibration) -> TrackingProjection? {
         lock.withLock {
             guard active, let ray = subjectWorldRay ?? worldRay,
-                  let pose = TrackingGeometry.pose(at: timestamp, in: history) else { return nil }
+                  let pose = poseUnlocked(at: timestamp) else { return nil }
             return k.project(deviceRay: pose.inverse.act(ray))
         }
     }
@@ -552,7 +560,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
     public func guideProjection(at timestamp: TimeInterval, calibration k: TrackingCalibration) -> TrackingProjection? {
         lock.withLock {
             guard active, let ray = worldRay ?? subjectWorldRay,
-                  let pose = TrackingGeometry.pose(at: timestamp, in: history) else { return nil }
+                  let pose = poseUnlocked(at: timestamp) else { return nil }
             return k.project(deviceRay: pose.inverse.act(ray))
         }
     }
@@ -807,7 +815,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             // instead of freezing at the discrete 30Hz lastFrameTime timestamp.
             let livePreviewTime = sample.timestamp - 0.008
             let imagePose = (now - lastFrameTime <= CompositionTuning.maxFrameToMotionLatency ?
-                self.poseAt(livePreviewTime) : nil) ?? sample.deviceToWorld
+                self.poseUnlocked(at: livePreviewTime) : nil) ?? sample.deviceToWorld
             if CompositionTuning.isExperimentLoggingEnabled, lastFrameTime.isFinite {
                 let delta = sample.timestamp - lastFrameTime
                 if abs(delta) > CompositionTuning.maxFrameToMotionLatency, now - lastSyncWarningTime > 2.0 {
