@@ -87,9 +87,9 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         // Khi đang quay video: Bỏ qua toàn bộ AI tracking và Vision nặng nề để đảm bảo hiệu năng
         guard !snapshot.isRecordingVideo else { return }
 
-        // Zero-Cost Gate 2: Trong chế độ Video chuẩn (không bật AI Video Director),
+        // Zero-Cost Gate 2: Trong chế độ Video chuẩn (không bật AI Video Director và không ghim bám đối tượng),
         // TUYỆT ĐỐI KHÔNG nạp VisionFramingEngine, YOLOv12 hay tracking để đạt 60 FPS cứng, hoàn toàn không giật lag!
-        if snapshot.isVideo && !snapshot.isAIVideoDirectorActive {
+        if snapshot.isVideo && !snapshot.isAIVideoDirectorActive && !SpatialTrackingEngine.shared.isTrackingActive {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
             stateLock.lock()
             latestPixelBuffer = pixelBuffer
@@ -2746,7 +2746,7 @@ public final class CameraViewModel: ObservableObject {
                     liveAim = proj.point
                 }
             }
-            pinTargetAndStartMotion(at: liveAim, subjectRect: first.boundingBox, source: source, pinnedGuideRay: worldRay)
+            pinTargetAndStartMotion(at: liveAim, subjectRect: first.boundingBox, source: source, trackedPoint: anchor, pinnedGuideRay: worldRay)
 
             // Không tự động zoom trước khi người dùng đưa tâm trắng vào khớp tâm mục tiêu.
             // Khi tâm khớp, lockHardTarget() sẽ kích hoạt hiệu ứng triggerZoomRevealAnimation mượt mà.
@@ -2757,7 +2757,7 @@ public final class CameraViewModel: ObservableObject {
             let centerRect = CGRect(x: 0.25, y: 0.25, width: 0.50, height: 0.50)
             let centerAim = localEvidenceCandidates.first?.center ?? CGPoint(x: 0.5, y: 0.45)
             let worldRay = source.pose.act(source.frame.calibration.deviceRay(at: centerAim))
-            pinTargetAndStartMotion(at: centerAim, subjectRect: centerRect, source: source, pinnedGuideRay: worldRay)
+            pinTargetAndStartMotion(at: centerAim, subjectRect: centerRect, source: source, trackedPoint: centerAim, pinnedGuideRay: worldRay)
             localTrackingSource = nil
             localSelectionMessage = nil
         }
@@ -3032,7 +3032,7 @@ public final class CameraViewModel: ObservableObject {
         unlockHandoffStartTime = 0
         guard target.x.isFinite, target.y.isFinite,
               (0...1).contains(target.x), (0...1).contains(target.y) else { return }
-        guard !captureMode.isVideo, aiSessionState != .capturing, !isCameraHibernating else { return }
+        guard aiSessionState != .capturing, !isCameraHibernating else { return }
         localAnalysisCancellation?.cancel()
         localAnalysisCancellation = nil
         localAnalysisTask?.cancel()
@@ -3297,7 +3297,7 @@ public final class CameraViewModel: ObservableObject {
         case .targetPlaced, .alignmentPerfect:
             break
         default:
-            return
+            guard SpatialTrackingEngine.shared.isTrackingActive else { return }
         }
         guard measurement.frame.timestamp > latestOpticalFrameTimestamp else { return }
         // Only an observation accepted by fusion can unlock zoom or the shutter.
@@ -4898,7 +4898,7 @@ public final class CameraViewModel: ObservableObject {
     public var showTargetCircle: Bool {
         switch aiSessionState {
         case .targetPlaced, .alignmentPerfect: return currentTargetPoint != nil
-        default: return false
+        default: return currentTargetPoint != nil && SpatialTrackingEngine.shared.isTrackingActive
         }
     }
 

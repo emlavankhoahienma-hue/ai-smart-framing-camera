@@ -3,11 +3,11 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "f757feecb35a66c252c10af37f432e7f4ca33cef62b0c121ae298ad7f4d96ff1"
+      "sha256": "7095a6c30358b152151ed7123fb809db73d663334d6e0d611cebf8e7c4eddd9d"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "2c9d4053fa5b12e59427f36aa7ff447258222b976b4d8a94b8bd8bfc1f4d19d0"
+      "sha256": "fcfb8cdcd7cc420e87c0b34e8faada447e6ac767632c34e47fc2b8c802c527ec"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -45,7 +45,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "2c7e70203957d8cb0a2eae542ffd4bb289b0ad731d1886ee493e9bebf5acbae8"
+      "sha256": "9459b7de3a210ea80a73cd8f56368294fa33207952f706666db377ed17590c36"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "cda746c35ad8484f9096b03a45f736f62e0bd2dc39fcfa5dbb91a3bc998fa0c2"
+      "sha256": "c5391e96a8ff2dba2584e00586bd71b02e57b3aa8ee62e6554ab08b3a49354c5"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",

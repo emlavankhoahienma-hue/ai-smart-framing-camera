@@ -93,10 +93,11 @@ enum TrackingObservationGate {
                         evidence: TrackingOpticalEvidence) -> Bool {
         if evidence == .reidentified { return residual.isFinite }
         guard isInFront, residual.isFinite else { return false }
+        if residual > 0.30 { return false }
         if evidence == .confirmedContinuation {
-            return mahalanobisSq <= max(gateThreshold, 100.0)
+            return mahalanobisSq <= max(gateThreshold, 144.0)
         }
-        let effectiveGate = evidence == .verifiedContinuation ? max(gateThreshold, 25.0) : gateThreshold
+        let effectiveGate = evidence == .verifiedContinuation ? max(gateThreshold, 64.0) : gateThreshold
         return mahalanobisSq <= effectiveGate
     }
 }
@@ -443,9 +444,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         guard fovDegrees.isFinite, fovDegrees > 0 else { return }
         lock.withLock {
             cameraFOV = fovDegrees
-            if !lastFrameTime.isFinite {
-                calibration = .fallback(fovLongDegrees: cameraFOV, zoom: zoom, aspect: calibration.aspect)
-            }
+            calibration = .fallback(fovLongDegrees: cameraFOV, zoom: zoom, aspect: calibration.aspect)
         }
     }
 
@@ -723,7 +722,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 if evidence == .reidentified {
                     corrected = observed
                     filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
-                } else if evidence == .confirmedContinuation && residual > 0.20 {
+                } else if (evidence == .confirmedContinuation && residual > 0.20) ||
+                          ((evidence == .confirmedContinuation || evidence == .verifiedContinuation) && residual > 0.08 && value >= 0.65) {
                     corrected = observed
                     filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
                 } else {
@@ -743,7 +743,8 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 } else {
                     worldRay = corrected
                 }
-                if evidence == .reidentified || (evidence == .confirmedContinuation && residual > 0.20) {
+                if evidence == .reidentified || (evidence == .confirmedContinuation && residual > 0.20) ||
+                   ((evidence == .confirmedContinuation || evidence == .verifiedContinuation) && residual > 0.08 && value >= 0.65) {
                     presentationIsRecovering = true
                 } else if displayWorldRay == nil {
                     displayWorldRay = subjectWorldRay ?? worldRay

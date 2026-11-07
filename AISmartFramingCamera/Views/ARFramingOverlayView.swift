@@ -26,8 +26,8 @@ public struct ARFramingOverlayView: View {
                         .animation(.easeInOut(duration: 0.4), value: viewModel.isAISessionActive || viewModel.isManualGridVisible)
                 }
 
-                // 2. Detected Faces & Multi-Object Preview (Chỉ hiện khi bật trong Cài đặt > Khung ngắm và ở chế độ Ảnh)
-                if viewModel.showDetectionBoxes && !viewModel.captureMode.isVideo && viewModel.currentTargetPoint == nil {
+                // 2. Detected Faces & Multi-Object Preview (Hiện khi bật trong Cài đặt > Khung ngắm và chưa có mục tiêu ghim)
+                if viewModel.showDetectionBoxes && viewModel.currentTargetPoint == nil {
                     ForEach(viewModel.heroDetectedEntities) { entity in
                         let layerRect = viewModel.convertMetadataRectToLayerRect(entity.rect, in: size)
                         if layerRect.width >= 12, layerRect.height >= 12 {

@@ -722,7 +722,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     let distanceToBearing = hypot(recovered.0.x - center.x, recovered.0.y - center.y)
                     let lastCenter = lastBox.map { point(in: $0) }
                     let distanceToLastBox = lastCenter.map { hypot(recovered.0.x - $0.x, recovered.0.y - $0.y) } ?? 1.0
-                    let matchesBearing = (prediction?.isInsideImage == true && distanceToBearing <= 0.10) || distanceToLastBox <= 0.12
+                    let matchesBearing = (prediction?.isInsideImage == true && distanceToBearing <= 0.28) || distanceToLastBox <= 0.25 || (recovered.1 >= 0.75 && observation.confidence >= 0.60)
                     let previousAgrees: Bool
                     if let previous = pendingRecovery, frame.timestamp > previous.frame.timestamp,
                        frame.timestamp - previous.frame.timestamp < 0.5 {
