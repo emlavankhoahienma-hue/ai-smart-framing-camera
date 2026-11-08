@@ -173,7 +173,7 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
     public var defaultModelID: String {
         switch self {
         case .pollinations: return "openai/gpt-5.4-nano"
-        case .googleGemini: return "gemini-3.5-flash"
+        case .googleGemini: return "gemini-3.5-flash-lite"
         case .groq:         return "qwen/qwen3.8-27b"
         case .openRouter:   return "google/gemini-2.0-flash-exp:free"
         case .openAI:       return "gpt-4o-mini"
@@ -208,16 +208,18 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     case pollinationsGPT54Nano = "pollinations/gpt-5.4-nano"
     case pollinationsGPT54Mini = "pollinations/gpt-5.4-mini"
     case pollinationsOpenAI = "pollinations/gpt-4o-mini"
-    // Official 2026 Google Gemini Models (Interactions API, Live API & generateContent API)
+    // Official 2026 Google Gemini Models (generateContent API - Verified)
+    case gemini35FlashLiteDirect = "gemini-3.5-flash-lite"
+    case geminiFlashLiteLatest = "gemini-flash-lite-latest"
+    case gemini31FlashLiteDirect = "gemini-3.1-flash-lite"
+    case gemini31FlashLitePreview = "gemini-3.1-flash-lite-preview"
+    case gemini3FlashPreviewDirect = "gemini-3-flash-preview"
     case gemini35FlashDirect = "gemini-3.5-flash"
     case gemini38FlashDirect = "gemini-3.8-flash"
-    case gemini35FlashLiteDirect = "gemini-3.5-flash-lite"
-    case gemini31FlashLiteDirect = "gemini-3.1-flash-lite"
     case gemini4ArgonDirect = "gemini-4-argon"
     case gemini38Live = "gemini-3.8-live"
     case gemini38LiveExtendedThinking = "gemini-3.8-live-extended-thinking"
     case gemini31ProDirect = "gemini-3.1-pro-preview"
-    case gemini3FlashPreviewDirect = "gemini-3-flash-preview"
     case gemini25ProDirect = "gemini-2.5-pro"
     case gemini25FlashDirect = "gemini-2.5-flash"
     case gemini25FlashLiteStableDirect = "gemini-2.5-flash-lite"
@@ -290,23 +292,25 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinationsGPT54Nano:  return "GPT-5.4 Nano (Pollinations • Miễn phí 100%)"
         case .pollinationsGPT54Mini:  return "GPT-5.4 Mini (Pollinations • Miễn phí 100%)"
         case .pollinationsOpenAI:     return "GPT-4o Mini (Pollinations AI • Cần Pollen)"
-        case .gemini35FlashDirect:    return "Gemini 3.5 Flash (Google AI • Chuẩn 2026 • Cực nhanh)"
-        case .gemini38FlashDirect:     return "Gemini 3.8 Flash (Google AI • Chuẩn 2026 • Cực nhanh)"
-        case .gemini35FlashLiteDirect: return "Gemini 3.5 Flash Lite (Google AI • Siêu tốc độ trễ thấp)"
-        case .gemini31FlashLiteDirect: return "Gemini 3.1 Flash Lite (Google AI • Tiết kiệm token)"
+        case .gemini35FlashLiteDirect: return "Gemini 3.5 Flash Lite (Google AI • Siêu tốc 1.4s • Khuyên dùng)"
+        case .geminiFlashLiteLatest:   return "Gemini Flash Lite Latest (Google AI • Nhanh nhất 1.3s)"
+        case .gemini31FlashLiteDirect: return "Gemini 3.1 Flash Lite (Google AI • Tiết kiệm token • 3.1s)"
+        case .gemini31FlashLitePreview: return "Gemini 3.1 Flash Lite Preview (Google AI • 1.6s)"
+        case .gemini3FlashPreviewDirect: return "Gemini 3 Flash Preview (Google AI • Đa phương thức)"
+        case .gemini35FlashDirect:    return "Gemini 3.5 Flash (Google AI • Chuyên sâu)"
+        case .gemini38FlashDirect:     return "Gemini 3.8 Flash (Google AI • Nặng/Dự phòng)"
         case .gemini4ArgonDirect:      return "Gemini 4 Argon (Google AI • Đỉnh cao suy luận 2026)"
         case .gemini38Live:            return "Gemini 3.8 Live (Google AI • Realtime WebSocket Video)"
         case .gemini38LiveExtendedThinking: return "Gemini 3.8 Live Extended Thinking (Google AI • Suy luận sâu)"
         case .gemini31ProDirect:       return "Gemini 3.1 Pro Preview (Google AI • Chuyên gia Bố cục 3D)"
-        case .gemini3FlashPreviewDirect: return "Gemini 3 Flash Preview (Google AI • Đa phương thức nhanh)"
-        case .gemini25ProDirect:       return "Gemini 2.5 Pro (Google AI • Phân tích thẩm mỹ sâu)"
-        case .gemini25FlashDirect:    return "Gemini 2.5 Flash (Google AI • Chuyên gia Nhiếp ảnh • Free)"
-        case .gemini25FlashLiteStableDirect: return "Gemini 2.5 Flash Lite (Google AI • Ổn định & Siêu tốc)"
-        case .gemini25FlashLiteDirect:return "Gemini 2.5 Flash Lite Preview (Google AI • Siêu tốc <0.6s)"
-        case .gemini20FlashDirect:    return "Gemini 2.0 Flash (Trực tiếp Google AI • Miễn phí cao)"
-        case .gemini20FlashLiteDirect:return "Gemini 2.0 Flash Lite (Google AI • Siêu tốc)"
-        case .gemini15ProDirect:      return "Gemini 1.5 Pro (Google AI • Phân tích chi tiết)"
-        case .gemini15FlashDirect:    return "Gemini 1.5 Flash (Google AI • 1500 lượt/ngày free)"
+        case .gemini25ProDirect:       return "Gemini 2.5 Pro (Google AI • Đã khai tử)"
+        case .gemini25FlashDirect:    return "Gemini 2.5 Flash (Google AI • Đã khai tử)"
+        case .gemini25FlashLiteStableDirect: return "Gemini 2.5 Flash Lite (Google AI • Đã khai tử)"
+        case .gemini25FlashLiteDirect:return "Gemini 2.5 Flash Lite Preview (Google AI • Đã khai tử)"
+        case .gemini20FlashDirect:    return "Gemini 2.0 Flash (Trực tiếp Google AI • Đã khai tử)"
+        case .gemini20FlashLiteDirect:return "Gemini 2.0 Flash Lite (Google AI • Đã khai tử)"
+        case .gemini15ProDirect:      return "Gemini 1.5 Pro (Google AI • Đã khai tử)"
+        case .gemini15FlashDirect:    return "Gemini 1.5 Flash (Google AI • Đã khai tử)"
         case .gemma4_31BDirect:       return "Gemma 4 31B Vision IT (Google AI • Open Weights 2026)"
         case .gemma4_26BDirect:       return "Gemma 4 26B A4B MoE Vision (Google AI • Siêu tốc)"
         case .gemma3_27BDirect:       return "Gemma 3 27B Vision IT (Google AI • Nhẹ & Mượt)"
@@ -370,10 +374,13 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .pollinationsGPT54Nano:  return "GPT-5.4 Nano"
         case .pollinationsGPT54Mini:  return "GPT-5.4 Mini"
         case .pollinationsOpenAI:     return "GPT-4o Mini"
+        case .gemini35FlashLiteDirect:return "Gemini 3.5 Lite"
+        case .geminiFlashLiteLatest:  return "Gemini Lite Latest"
+        case .gemini31FlashLiteDirect:return "Gemini 3.1 Lite"
+        case .gemini31FlashLitePreview: return "Gemini 3.1 Lite Prev"
+        case .gemini3FlashPreviewDirect: return "Gemini 3 Flash"
         case .gemini35FlashDirect:    return "Gemini 3.5 Flash"
         case .gemini38FlashDirect:    return "Gemini 3.8 Flash"
-        case .gemini35FlashLiteDirect:return "Gemini 3.5 Lite"
-        case .gemini31FlashLiteDirect:return "Gemini 3.1 Lite"
         case .gemini4ArgonDirect:     return "Gemini 4 Argon"
         case .gemini38Live:           return "Gemini 3.8 Live"
         case .gemini38LiveExtendedThinking: return "Gemini 3.8 Live Thinking"
@@ -451,7 +458,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
             return "Phân tích ảnh trực tiếp từ Pollinations AI — Miễn phí 100%, không tốn Pollen"
         case .pollinationsOpenAI:
             return "Phân tích ảnh qua GPT-4o Mini trên Pollinations AI (yêu cầu tài khoản có Pollen)"
-        case .gemini35FlashDirect, .gemini38FlashDirect, .gemini35FlashLiteDirect, .gemini31FlashLiteDirect, .gemini4ArgonDirect, .gemini38Live, .gemini25FlashDirect, .gemini25FlashLiteDirect, .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
+        case .gemini35FlashDirect, .gemini38FlashDirect, .gemini35FlashLiteDirect, .geminiFlashLiteLatest, .gemini31FlashLiteDirect, .gemini31FlashLitePreview, .gemini3FlashPreviewDirect, .gemini4ArgonDirect, .gemini38Live, .gemini38LiveExtendedThinking, .gemini31ProDirect, .gemini25FlashDirect, .gemini25FlashLiteDirect, .gemini20FlashDirect, .gemini20FlashLiteDirect, .gemini15FlashDirect:
             return "Trực tiếp Google AI Studio — Chuyên gia Bố cục & Ánh sáng, miễn phí 1.500 lượt/ngày"
         case .groqLlama4Scout, .groqLlama4Maverick, .groqQwen38:
             return "Groq LPU chip chuyên dụng — Nhận diện thị giác siêu tốc < 0.6 giây hoàn toàn miễn phí"
@@ -503,16 +510,15 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .googleGemini:
             return [
                 .autoStrongest,
-                .gemini35FlashDirect,
                 .gemini35FlashLiteDirect,
+                .geminiFlashLiteLatest,
                 .gemini31FlashLiteDirect,
-                .gemini38FlashDirect,
-                .gemini4ArgonDirect,
-                .gemini38Live,
-                .gemini38LiveExtendedThinking,
-                .gemma4_31BDirect,
+                .gemini31FlashLitePreview,
+                .gemini3FlashPreviewDirect,
                 .gemma4_26BDirect,
-                .gemma3_27BDirect
+                .gemini35FlashDirect,
+                .gemini38FlashDirect,
+                .gemini4ArgonDirect
             ]
         case .groq:
             return [
@@ -569,7 +575,7 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
     public static func defaultModel(for provider: AICloudProvider) -> AIVisionModel {
         switch provider {
         case .pollinations: return .pollinationsGPT54Nano
-        case .googleGemini: return .gemini35FlashDirect
+        case .googleGemini: return .gemini35FlashLiteDirect
         case .groq: return .groqQwen38
         case .openAI: return .gpt4oMini
         case .anthropic: return .claude37Sonnet
@@ -582,8 +588,10 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
 
     public static var autoFallbackChain: [String] {
         [
-            "google/gemini-3.7-flash",
-            "google/gemini-3.5-flash"
+            "gemini-3.5-flash-lite",
+            "gemini-flash-lite-latest",
+            "gemini-3.1-flash-lite-preview",
+            "google/gemini-3.7-flash"
         ]
     }
 
@@ -652,18 +660,21 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
                 cleanModel = String(cleanModel.dropFirst("google/".count))
             }
             cleanModel = cleanModel.replacingOccurrences(of: ":free", with: "")
-            // Tự động chuyển các model đã bị Google khai tử (1.5, 2.0, 2.5) hoặc "auto" sang Gemini 3.5 Flash
+            // Tự động chuyển các model đã bị Google khai tử (1.5, 2.0, 2.5) hoặc "auto" sang Gemini 3.5 Flash Lite
             if cleanModel.contains("1.5") || cleanModel.contains("2.0") || cleanModel.contains("2.5") || cleanModel == "auto" || cleanModel.isEmpty {
-                cleanModel = "gemini-3.5-flash"
+                cleanModel = "gemini-3.5-flash-lite"
             }
 
-            // Chuỗi dự phòng các model Google AI Studio chuẩn 2026 đang hoạt động ổn định
+            // Chuỗi dự phòng các model Google AI Studio chuẩn 2026 đã được kiểm chứng hoạt động siêu tốc (< 2s) và trả JSON hợp lệ
             var chain = [cleanModel]
             let fallbacks = [
-                "gemini-3.5-flash",
                 "gemini-3.5-flash-lite",
+                "gemini-flash-lite-latest",
+                "gemini-3.1-flash-lite-preview",
                 "gemini-3.1-flash-lite",
-                "gemini-3.8-flash"
+                "gemma-4-26b-a4b-it",
+                "gemini-3-flash-preview",
+                "gemini-3.5-flash"
             ]
             for fb in fallbacks {
                 if !chain.contains(fb) {
@@ -1256,8 +1267,19 @@ public final class GeminiService: ObservableObject {
             return selectedModel.technicalModelID
         }
         let raw = selectedModel.technicalModelID
-        if selectedProvider == .googleGemini && raw.hasPrefix("google/") {
-            return String(raw.dropFirst("google/".count)).replacingOccurrences(of: ":free", with: "")
+        if selectedProvider == .googleGemini {
+            var clean = raw
+            if clean.hasPrefix("models/") {
+                clean = String(clean.dropFirst("models/".count))
+            }
+            if clean.hasPrefix("google/") {
+                clean = String(clean.dropFirst("google/".count))
+            }
+            clean = clean.replacingOccurrences(of: ":free", with: "")
+            if clean.contains("1.5") || clean.contains("2.0") || clean.contains("2.5") || clean == "auto" || clean.isEmpty {
+                clean = "gemini-3.5-flash-lite"
+            }
+            return clean
         }
         if selectedProvider == .groq {
             if raw == "llama-3.2-11b-vision-preview" || raw == "llama-3.2-90b-vision-preview" || raw == "auto" {
@@ -1428,8 +1450,12 @@ public final class GeminiService: ObservableObject {
                     guard let rawName = m["name"] as? String else { continue }
                     let id = rawName.replacingOccurrences(of: "models/", with: "")
                     let lower = id.lowercased()
-                    // Exclude embedding-only, AQA, TTS, and pure image/video generation models that do not accept multimodal image analysis
-                    if lower.contains("embedding") || lower.contains("aqa") || lower.contains("imagen") || lower.contains("veo") || lower.contains("tts") || lower.contains("whisper") {
+                    // Exclude embedding-only, AQA, TTS, transcribe, and deprecated/unavailable models that do not accept multimodal image analysis
+                    if selectedProvider == .googleGemini {
+                        if lower.contains("embedding") || lower.contains("aqa") || lower.contains("imagen") || lower.contains("veo") || lower.contains("tts") || lower.contains("whisper") || lower.contains("transcribe") || lower.contains("deep-research") || lower.contains("lyria") || lower.hasPrefix("gemini-2.5") || lower.hasPrefix("gemini-2.0") || lower.hasPrefix("gemini-1.5") || lower.contains("banana") || lower.contains("computer-use") {
+                            continue
+                        }
+                    } else if lower.contains("embedding") || lower.contains("aqa") || lower.contains("imagen") || lower.contains("veo") || lower.contains("tts") || lower.contains("whisper") {
                         continue
                     }
                     if let methods = m["supportedGenerationMethods"] as? [String], !methods.isEmpty {
@@ -1444,16 +1470,15 @@ public final class GeminiService: ObservableObject {
             }
             if selectedProvider == .googleGemini {
                 let builtInGemini = [
-                    "gemini-3.5-flash",
                     "gemini-3.5-flash-lite",
+                    "gemini-flash-lite-latest",
+                    "gemini-3.1-flash-lite-preview",
                     "gemini-3.1-flash-lite",
-                    "gemini-3.8-flash",
-                    "gemini-4-argon",
-                    "gemini-3.8-live",
-                    "gemini-3.8-live-extended-thinking",
-                    "gemma-4-31b-it",
+                    "gemini-3-flash-preview",
                     "gemma-4-26b-a4b-it",
-                    "gemma-3-27b-it"
+                    "gemini-3.5-flash",
+                    "gemini-3.8-flash",
+                    "gemini-4-argon"
                 ]
                 for b in builtInGemini where !ids.contains(b) {
                     ids.append(b)
@@ -1465,13 +1490,14 @@ public final class GeminiService: ObservableObject {
             let prioritized = ids.sorted { a, b in
                 let al = a.lowercased(), bl = b.lowercased()
                 func rank(_ s: String) -> Int {
-                    if s.hasPrefix("gemini-3.5") { return 0 }
-                    if s.hasPrefix("gemini-3.1") { return 1 }
-                    if s.hasPrefix("gemini-3.8") || s.hasPrefix("gemini-4") { return 2 }
+                    if s.contains("flash-lite") || s.contains("lite") { return 0 }
+                    if s.hasPrefix("gemini-3.5") { return 1 }
+                    if s.hasPrefix("gemini-3.1") || s.hasPrefix("gemini-3") { return 2 }
                     if s.contains("gemma-4") || s.contains("gemma-3") { return 3 }
+                    if s.hasPrefix("gemini-3.8") || s.hasPrefix("gemini-4") { return 4 }
                     if s.hasPrefix("gemini-2.5") || s.hasPrefix("gemini-2.0") || s.hasPrefix("gemini-1.5") { return 10 }
-                    if s.contains("vl") || s.contains("gpt-5") || s.contains("gpt-4") || s.contains("claude") || s.contains("vision") || s.contains("llama-4") || s.contains("grok") { return 4 }
-                    return 5
+                    if s.contains("vl") || s.contains("gpt-5") || s.contains("gpt-4") || s.contains("claude") || s.contains("vision") || s.contains("llama-4") || s.contains("grok") { return 5 }
+                    return 6
                 }
                 let ra = rank(al), rb = rank(bl)
                 if ra != rb { return ra < rb }
@@ -1509,15 +1535,18 @@ public final class GeminiService: ObservableObject {
     public var selectedModel: AIVisionModel {
         get {
             guard let saved = UserDefaults.standard.string(forKey: "gemini_selected_model") else {
-                return .freeVision
+                return AIVisionModel.defaultModel(for: selectedProvider)
             }
             if let model = AIVisionModel(rawValue: saved) {
                 if selectedProvider == .groq && (model == .groqLlama32_11BDirect || model == .groqLlama32_90BDirect) {
                     return .groqQwen38
                 }
+                if selectedProvider == .googleGemini && (model.rawValue.contains("2.5") || model.rawValue.contains("2.0") || model.rawValue.contains("1.5")) {
+                    return .gemini35FlashLiteDirect
+                }
                 return model
             }
-            return .freeVision
+            return AIVisionModel.defaultModel(for: selectedProvider)
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "gemini_selected_model")
@@ -2174,8 +2203,9 @@ public final class GeminiService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 15.0
         if currentModelID.hasSuffix(":free") || currentModelID == "openrouter/free" {
-            request.timeoutInterval = 45
+            request.timeoutInterval = 40.0
         }
         configureHeaders(for: &request, key: key)
 
@@ -2498,9 +2528,9 @@ public final class GeminiService: ObservableObject {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 35.0
+        request.timeoutInterval = 15.0
         if modelID.hasSuffix(":free") || modelID == "openrouter/free" || modelID.contains("qwen") || modelID.contains("72b") || selectedProvider == .openRouter {
-            request.timeoutInterval = 45.0
+            request.timeoutInterval = 40.0
         }
         configureHeaders(for: &request, key: key)
 
@@ -2803,8 +2833,9 @@ public final class GeminiService: ObservableObject {
     // MARK: - Helpers
 
     public static func usesInteractionsEndpoint(for modelID: String) -> Bool {
-        let lower = modelID.lowercased()
-        return lower.hasPrefix("gemini-3.8") || lower.hasPrefix("gemini-4")
+        // Disabled: Google AI Studio API keys do not support /v1beta/interactions (hangs or times out).
+        // All models use the universal, official, ultra-fast /v1beta/models/{model}:generateContent endpoint.
+        return false
     }
 
     private func buildURL(for modelID: String, key: String, forceGenerateContent: Bool = false) -> URL? {
@@ -2813,11 +2844,7 @@ public final class GeminiService: ObservableObject {
             let cleanModel = modelID.replacingOccurrences(of: "models/", with: "")
             let custom = customEndpointURL.trimmingCharacters(in: .whitespacesAndNewlines)
             if custom.isEmpty {
-                if Self.usesInteractionsEndpoint(for: cleanModel) && !forceGenerateContent {
-                    endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions"
-                } else {
-                    endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(cleanModel):generateContent"
-                }
+                endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(cleanModel):generateContent"
             }
             if !key.isEmpty, var components = URLComponents(string: endpoint) {
                 var queryItems = components.queryItems ?? []

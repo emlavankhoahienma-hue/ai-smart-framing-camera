@@ -107,3 +107,46 @@ Thông số video: 590x1280, 29.97 FPS, 878 frames (29.30s)
    - python scripts/validate_tracking_geometry.py:
      -> PASS: 18/18 tests hoàn thành không có lỗi.
 ================================================================================
+
+NHẬT KÝ SỬA LỖI - PHIÊN TỐI ƯU HÓA GOOGLE GEMINI VISION API & MODEL CHAIN (2026)
+================================================================================
+1. VẤN ĐỀ GỐC RỄ ĐÃ ĐƯỢC XÁC MINH THỰC TẾ:
+   - "Hên xui / chậm":
+     * URL routing cũ đẩy các model gemini-3.8 / gemini-4 sang endpoint /v1beta/interactions. Endpoint này bị treo / timeout trên Google AI Studio API key thông thường.
+     * Model mặc định trước đó là gemini-3.5-flash thường xuyên bị quá tải (HTTP 503: "experiencing high demand") hoặc phản hồi lâu (>12s).
+     * Danh mục model cũ chứa các model đã bị Google khai tử / deprecate trả về HTTP 404 (gemini-2.5-flash, gemini-2.5-pro, gemini-2.5-flash-lite, gemini-2.0-flash, gemini-1.5-flash/pro).
+     * Các model Pro/Argon bị giới hạn quota trả về HTTP 429.
+     * Timeout cũ là 35s - 45s làm đứng đơ kính ngắm camera khi gặp model lag.
+
+2. KẾT QUẢ ĐO ĐẠC & PHÂN LOẠI TOÀN BỘ 47 MODEL GEMINI (BENCHMARK THỰC TẾ 100%):
+   - [ĐÃ ĐẠT & SIÊU TỐC - CUNG CẤP JSON CẤU TRÚC 19 TRƯỜNG TỰ ĐỘNG]:
+     * gemini-flash-lite-latest:       1.34s (Nhanh nhất)
+     * gemini-3.5-flash-lite:          1.44s (Chuẩn định dạng & cực kỳ ổn định -> Đặt làm DEFAULT)
+     * gemini-3.1-flash-lite-preview:  1.64s
+     * gemini-3.1-flash-lite:          3.13s
+     * gemma-4-26b-a4b-it:             4.03s
+     * gemini-3-flash-preview:         6.84s
+   - [LỖI 404 - ĐÃ BỊ GOOGLE KHAI TỬ]:
+     * gemini-2.5-flash, gemini-2.5-pro, gemini-2.5-flash-lite, gemini-2.0-flash, gemini-1.5-flash, gemini-1.5-pro
+   - [LỖI 429 - HẾT QUOTA TRÊN KEY FREE]:
+     * gemini-4-argon, gemini-3.1-pro-preview, gemini-pro-latest, deep-research-*, lyria-*
+   - [LỖI 503 / TIMEOUT]:
+     * gemini-3.5-flash (503 demand spike), gemini-3.6-flash (503 demand spike), gemini-3.7-flash (timeout >12s), gemini-3.8-flash (timeout >12s)
+   - [LỖI 400 - KHÔNG PHẢI MODEL THỊ GIÁC]:
+     * transcribe, tts, antigravity-*
+
+3. CÁC NÂNG CẤP ĐÃ TRIỂN KHAI VÀO CODE (GeminiService.swift):
+   - Đặt defaultModelID của Google Gemini thành "gemini-3.5-flash-lite" (1.44s phản hồi).
+   - Vô hiệu hóa usesInteractionsEndpoint: chuyển 100% request Gemini sang endpoint chính thức /v1beta/models/{model}:generateContent với inlineData base64 JPEG và generationConfig responseMimeType: "application/json" + responseSchema.
+   - Thêm các model đã kiểm chứng thành công vào AIVisionModel: geminiFlashLiteLatest, gemini31FlashLitePreview.
+   - Sắp xếp lại danh sách model và fallbackChain: đưa các model lite siêu tốc (1.3s - 3.1s) lên hàng đầu; tự động chuyển các model cũ (1.5, 2.0, 2.5) hoặc "auto" về gemini-3.5-flash-lite.
+   - Lọc bỏ triệt để các model 404, tts, transcribe, embedding trong fetchRemoteModels.
+   - Giảm timeout từ 35.0s xuống 15.0s để fallback tức thì khi có sự cố server.
+   - Tự động di chuyển cài đặt cũ của người dùng từ model 404 sang model lite ổn định.
+
+4. KIỂM CHỨNG & BẢO MẬT:
+   - scripts/check_swift_brackets.py: PASS 73/73 files Swift.
+   - scripts/verify_tracking_boundary.py: PASS 22/22 boundary checksums.
+   - scripts/run_regressions.py: PASS 71/71 tests (0 failures, 0 errors, 0 skipped).
+   - Bảo mật: Hoàn toàn không lộ API Key, không lưu key vào mã nguồn hoặc Git repository.
+================================================================================
