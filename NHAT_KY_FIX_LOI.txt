@@ -189,6 +189,7 @@ Quy chuẩn: Zero Hallucinated Symbols, ABI & Signature Preservation, Không dù
        - buildPrompt: Tái thiết kế prompt trao 100% quyền tự quyết DoP cho AI, giải phóng AI khỏi gánh nặng tính nhẩm số học target.
        - computeOptimalFramingGeometry & parseGeminiResponse: Phép chiếu quang học C_aim = S - (G - 0.5) / Z chuẩn xác, bảo toàn khoảng thở Headroom cho chân dung.
        - cleanAndParseJSON: Bộ giải mã tự cân bằng ngoặc, đóng chuỗi quote bị ngắt quãng, sanitization dấu phẩy và regex token fallback.
+       - Fix compile error: Loại bỏ case trùng lặp .gemini3FlashPreviewDirect trong thuộc tính shortName của enum AIVisionModel.
 
 3. KẾT QUẢ KIỂM THỬ HỆ THỐNG:
    - scripts/check_swift_brackets.py: PASS 73/73 files Swift.

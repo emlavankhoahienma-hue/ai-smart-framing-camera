@@ -385,7 +385,6 @@ public enum AIVisionModel: String, CaseIterable, Identifiable {
         case .gemini38Live:           return "Gemini 3.8 Live"
         case .gemini38LiveExtendedThinking: return "Gemini 3.8 Live Thinking"
         case .gemini31ProDirect:      return "Gemini 3.1 Pro"
-        case .gemini3FlashPreviewDirect: return "Gemini 3 Flash"
         case .gemini25ProDirect:      return "Gemini 2.5 Pro"
         case .gemini25FlashDirect:    return "Gemini 2.5 Flash"
         case .gemini25FlashLiteStableDirect: return "Gemini 2.5 Lite"
