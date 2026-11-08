@@ -418,6 +418,20 @@ struct CompositionGridLines: View {
                 path.addLine(to: CGPoint(x: size.width * 0.5, y: size.height))
                 path.move(to: CGPoint(x: 0, y: size.height * 0.5))
                 path.addLine(to: CGPoint(x: size.width, y: size.height * 0.5))
+            case .leadingLines, .diagonal:
+                path.move(to: CGPoint(x: 0, y: size.height))
+                path.addLine(to: CGPoint(x: size.width, y: 0))
+                path.move(to: CGPoint(x: 0, y: 0))
+                path.addLine(to: CGPoint(x: size.width, y: size.height))
+            case .frameInFrame:
+                let insetX = size.width * 0.15
+                let insetY = size.height * 0.15
+                path.addRect(CGRect(x: insetX, y: insetY, width: size.width - insetX * 2, height: size.height - insetY * 2))
+            case .negativeSpace, .lookingRoom:
+                for frac in [CGFloat(0.381966), CGFloat(0.618034)] {
+                    path.move(to: CGPoint(x: size.width * frac, y: 0))
+                    path.addLine(to: CGPoint(x: size.width * frac, y: size.height))
+                }
             }
         }
         .stroke(Color.white, style: StrokeStyle(lineWidth: 0.7, dash: [5, 4]))

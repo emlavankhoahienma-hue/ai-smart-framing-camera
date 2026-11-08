@@ -14,6 +14,7 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
         case disconnected
         case connecting
         case connected
+        case reconnecting(attempt: Int)
         case error(String)
     }
 
@@ -26,7 +27,19 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.alignai.geminiLiveQueue", qos: .userInitiated)
     private var isRunningReceiveLoop = false
     private var lastFrameSentTime: CFTimeInterval = 0
-    private let minFrameInterval: CFTimeInterval = 0.5 // Limit to 2 FPS to avoid flooding
+    private var lastFrameLumaHash: [UInt8] = []
+
+    // Motion-adaptive dynamic frame interval
+    private var currentAdaptiveInterval: CFTimeInterval = 0.35
+    private let fastMotionInterval: CFTimeInterval = 0.25  // 4 FPS for panning / moving scenes
+    private let staticMotionInterval: CFTimeInterval = 1.80 // 0.55 FPS for static scene to conserve bandwidth
+
+    // Session auto-recovery state
+    private var activeApiKey: String?
+    private var activeModel: String?
+    private var isExplicitDisconnect = false
+    private var reconnectAttempts = 0
+    private let maxReconnectAttempts = 5
 
     public var onLiveGuidanceReceived: ((String) -> Void)?
     public var onLiveFramingReceived: ((CGPoint, CGFloat, String) -> Void)?
@@ -56,52 +69,100 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
     public func connect(apiKey: String, model: String = "gemini-3.8-live") {
         queue.async { [weak self] in
             guard let self = self else { return }
-            self.disconnectInternal()
-
+            self.isExplicitDisconnect = false
+            self.reconnectAttempts = 0
             let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedKey.isEmpty else {
-                DispatchQueue.main.async {
-                    self.connectionState = .error("API Key trống")
-                }
-                return
-            }
-
-            DispatchQueue.main.async {
-                self.connectionState = .connecting
-            }
-
-            let urlString = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=\(trimmedKey)"
-            guard let url = URL(string: urlString) else {
-                DispatchQueue.main.async {
-                    self.connectionState = .error("URL WebSocket không hợp lệ")
-                }
-                return
-            }
-
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 30.0
-
-            let task = self.urlSession.webSocketTask(with: request)
-            self.webSocketTask = task
-            task.resume()
-
-            self.sendInitialSetup(model: model)
-            self.startReceiveLoop()
+            self.activeApiKey = trimmedKey
+            self.activeModel = model
+            self.connectInternal(apiKey: trimmedKey, model: model)
         }
+    }
+
+    private func connectInternal(apiKey: String, model: String) {
+        disconnectInternal(keepRecoveryState: true)
+
+        guard !apiKey.isEmpty else {
+            DispatchQueue.main.async {
+                self.connectionState = .error("API Key trống")
+            }
+            return
+        }
+
+        DispatchQueue.main.async {
+            self.connectionState = (self.reconnectAttempts > 0) ? .reconnecting(attempt: self.reconnectAttempts) : .connecting
+        }
+
+        let urlString = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=\(apiKey)"
+        guard let url = URL(string: urlString) else {
+            DispatchQueue.main.async {
+                self.connectionState = .error("URL WebSocket không hợp lệ")
+            }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30.0
+
+        let task = self.urlSession.webSocketTask(with: request)
+        self.webSocketTask = task
+        task.resume()
+
+        self.sendInitialSetup(model: model)
+        self.startReceiveLoop()
     }
 
     public func disconnect() {
         queue.async { [weak self] in
-            self?.disconnectInternal()
+            guard let self = self else { return }
+            self.isExplicitDisconnect = true
+            self.reconnectAttempts = 0
+            self.activeApiKey = nil
+            self.activeModel = nil
+            self.disconnectInternal(keepRecoveryState: false)
         }
     }
 
-    private func disconnectInternal() {
+    private func disconnectInternal(keepRecoveryState: Bool = false) {
         isRunningReceiveLoop = false
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
+        if !keepRecoveryState {
+            DispatchQueue.main.async {
+                self.connectionState = .disconnected
+            }
+        }
+    }
+
+    // MARK: - Automatic Session Recovery
+
+    private func scheduleAutoReconnect() {
+        guard !isExplicitDisconnect, let key = activeApiKey, !key.isEmpty else { return }
+        guard reconnectAttempts < maxReconnectAttempts else {
+            CameraLogger.error("GeminiLive: Đã thử kết nối lại \(maxReconnectAttempts) lần không thành công.", category: .ai)
+            DispatchQueue.main.async {
+                self.connectionState = .error("Mất kết nối Live sau \(self.maxReconnectAttempts) lần thử")
+            }
+            return
+        }
+
+        reconnectAttempts += 1
+        let delay = min(8.0, 1.0 * pow(1.5, Double(reconnectAttempts)))
+        CameraLogger.warning("GeminiLive: Kết nối gián đoạn. Tự động phục hồi lần \(reconnectAttempts)/\(maxReconnectAttempts) sau \(String(format: "%.1f", delay))s...", category: .ai)
+
         DispatchQueue.main.async {
-            self.connectionState = .disconnected
+            self.connectionState = .reconnecting(attempt: self.reconnectAttempts)
+        }
+
+        let model = activeModel ?? "gemini-3.8-live"
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self, !self.isExplicitDisconnect else { return }
+            let net = NetworkMonitor.shared.checkConnection()
+            guard net.isConnected else {
+                CameraLogger.warning("GeminiLive: Mạng chưa sẵn sàng, chờ kiểm tra lại...", category: .ai)
+                self.scheduleAutoReconnect()
+                return
+            }
+            self.connectInternal(apiKey: key, model: model)
         }
     }
 
@@ -120,7 +181,7 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
                 "systemInstruction": [
                     "parts": [
                         [
-                            "text": "Bạn là Giám đốc Nhiếp ảnh & Bố cục AI chuyên nghiệp (AI Cinematography Director). Hãy phân tích nhanh từng khung hình video theo thời gian thực, tự do quyết định 100% tọa độ mục tiêu (target_x, target_y trong [0..1]) và mức zoom phù hợp (suggested_zoom từ 0.5 đến 6.0) cùng lời nhắc ngắn gọn bằng tiếng Việt."
+                            "text": "Bạn là Giám đốc Nhiếp ảnh & Bố cục AI chuyên nghiệp (AI Cinematography Director & DoP). Hãy phân tích nhanh từng khung hình video theo thời gian thực, tự do quyết định 100% tọa độ mục tiêu (target_x, target_y trong [0..1]), điểm bố cục đích (composition_x, composition_y) và mức zoom phù hợp (suggested_zoom từ 0.5 đến 6.0) cùng lời chỉ đạo ngắn gọn, súc tích bằng tiếng Việt."
                         ]
                     ]
                 ]
@@ -138,7 +199,9 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     self.connectionState = .error("Lỗi gửi Setup WebSocket: \(error.localizedDescription)")
                 }
+                self.scheduleAutoReconnect()
             } else {
+                self.reconnectAttempts = 0
                 DispatchQueue.main.async {
                     self.connectionState = .connected
                 }
@@ -146,15 +209,24 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
         }
     }
 
-    // MARK: - Video Frame Streaming (realtimeInput.video)
+    // MARK: - Video Frame Streaming with Adaptive Motion Throttling
 
     public func sendVideoFrame(_ cgImage: CGImage) {
         let now = CACurrentMediaTime()
-        guard now - lastFrameSentTime >= minFrameInterval else { return }
-        lastFrameSentTime = now
+        guard now - lastFrameSentTime >= currentAdaptiveInterval else { return }
 
         queue.async { [weak self] in
             guard let self = self, self.connectionState == .connected else { return }
+
+            // Đánh giá mức độ biến đổi của khung cảnh để tự động điều tiết tốc độ gửi frame
+            let motionScore = self.computeMotionScore(image: cgImage)
+            if motionScore > 0.035 {
+                // Khung cảnh đang lia máy hoặc chủ thể chuyển động -> Gửi nhanh hơn (4 FPS)
+                self.currentAdaptiveInterval = self.fastMotionInterval
+            } else {
+                // Khung cảnh tĩnh -> Giãn tần số gửi để tiết kiệm băng thông (0.55 FPS)
+                self.currentAdaptiveInterval = self.staticMotionInterval
+            }
 
             guard let jpegData = self.compressFrameForLiveStreaming(cgImage) else { return }
             let base64String = jpegData.base64EncodedString()
@@ -173,7 +245,8 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
                 return
             }
 
-            let sendTime = CACurrentMediaTime()
+            self.lastFrameSentTime = CACurrentMediaTime()
+            let sendTime = self.lastFrameSentTime
             self.webSocketTask?.send(.string(jsonString)) { [weak self] error in
                 if let error = error {
                     CameraLogger.warning("GeminiLive: Lỗi gửi frame: \(error.localizedDescription)", category: .ai)
@@ -185,6 +258,39 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// Tính toán nhanh độ biến đổi luma giữa 2 khung hình liên tiếp để phát hiện chuyển động máy/chủ thể
+    private func computeMotionScore(image: CGImage) -> Double {
+        let sampleSize = 16
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        var currentBytes = [UInt8](repeating: 0, count: sampleSize * sampleSize)
+        guard let ctx = CGContext(
+            data: &currentBytes,
+            width: sampleSize,
+            height: sampleSize,
+            bitsPerComponent: 8,
+            bytesPerRow: sampleSize,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return 1.0 }
+
+        ctx.interpolationQuality = .low
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: sampleSize, height: sampleSize))
+
+        if lastFrameLumaHash.isEmpty {
+            lastFrameLumaHash = currentBytes
+            return 1.0
+        }
+
+        var totalDiff: Double = 0
+        let count = Double(currentBytes.count)
+        for i in 0..<currentBytes.count {
+            totalDiff += abs(Double(currentBytes[i]) - Double(lastFrameLumaHash[i]))
+        }
+        lastFrameLumaHash = currentBytes
+        let avgDiff = (totalDiff / count) / 255.0
+        return avgDiff
     }
 
     private func compressFrameForLiveStreaming(_ image: CGImage) -> Data? {
@@ -253,10 +359,9 @@ public final class GeminiLiveService: ObservableObject, @unchecked Sendable {
                 self.receiveNextMessage()
 
             case .failure(let error):
-                DispatchQueue.main.async {
-                    self.connectionState = .error("Mất kết nối Live: \(error.localizedDescription)")
-                }
+                CameraLogger.warning("GeminiLive: Lỗi socket nhận thông điệp: \(error.localizedDescription)", category: .ai)
                 self.isRunningReceiveLoop = false
+                self.scheduleAutoReconnect()
             }
         }
     }

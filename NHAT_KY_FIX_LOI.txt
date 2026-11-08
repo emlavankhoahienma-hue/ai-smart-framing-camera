@@ -150,3 +150,48 @@ NHẬT KÝ SỬA LỖI - PHIÊN TỐI ƯU HÓA GOOGLE GEMINI VISION API & MODEL 
    - scripts/run_regressions.py: PASS 71/71 tests (0 failures, 0 errors, 0 skipped).
    - Bảo mật: Hoàn toàn không lộ API Key, không lưu key vào mã nguồn hoặc Git repository.
 ================================================================================
+
+
+================================================================================
+ĐỢT NÂNG CẤP: PRINCIPAL AI VISION ARCHITECT & DOP - TỐI ƯU HÓA TRÍ TUỆ ĐẠO DIỄN (DOP AUTONOMY), TÂM VÒNG VÀNG QUANG HỌC & GEMINI LIVE REALTIME
+Thời gian: 08/11/2026
+Quy chuẩn: Zero Hallucinated Symbols, ABI & Signature Preservation, Không dùng code giả, Exhaustive Switch.
+================================================================================
+
+1. YÊU CẦU & MỤC TIÊU TỪ NGƯỜI DÙNG:
+   - Tối ưu hóa Trí tuệ Đạo diễn (DoP Autonomy) & Độ chính xác Vòng Vàng:
+     + Thiết kế lại Prompt và luồng giải mã trong GeminiService.swift để AI toàn quyền quyết định bố cục, chiều sâu, hướng nhìn, khoảng thở, ánh sáng, màu film.
+     + Giải phóng AI khỏi việc tính nhẩm số học (target_x, target_y). AI chỉ cần quyết định vị trí chủ thể (subject), điểm bố cục nghệ thuật (composition) và zoom.
+     + Phép chiếu quang học ra tâm Vòng vàng (cameraAimPoint = subject - (composition - 0.5) / suggested_zoom) được tính toán chuẩn xác tuyệt đối trong Swift.
+     + Đồng bộ các quy tắc bố cục nghệ thuật mới (Đường dẫn, Đường chéo, Khung trong khung, Không gian âm, Khoảng thở hướng nhìn) sang CompositionRule trong FramingModels.swift và ARFramingOverlayView.swift.
+   - Tốc độ phản hồi & Phục hồi lỗi:
+     + Tiền xử lý ảnh thích ứng điều kiện mạng (NetworkMonitor): Tự động giảm kích thước/chất lượng nén khi dùng mạng di động/sóng yếu để tối ưu hóa thời gian tải lên.
+     + Dynamic Model Health Tracker & Circuit Breaker: Theo dõi điểm sức khỏe của từng model, tự động backoff và nhảy ngay sang model dự phòng kế tiếp khi model bị 404, 429, 503 hoặc quá tải.
+     + Self-Healing JSON Parser: Tự cân bằng dấu ngoặc ({, }, [, ]), đóng chuỗi nháy kép bị cắt cụt do chạm ngưỡng token, loại bỏ dấu phẩy thừa và regex fallback extraction khi JSON bị hỏng cú pháp.
+   - Nâng cấp luồng thời gian thực trong GeminiLiveService.swift:
+     + Tự động điều tiết tốc độ gửi frame thông minh (Motion-adaptive frame throttling): lia máy nhanh -> 4 FPS (0.25s), cảnh tĩnh -> 0.55 FPS (1.80s) để tiết kiệm băng thông và tài nguyên.
+     + Tự động khôi phục phiên kết nối WebSocket khi rớt mạng (Exponential Backoff, tối đa 5 lần thử lại, kiểm tra trạng thái NetworkMonitor).
+
+2. CHI TIẾT CÁC FILE ĐÃ CHỈNH SỬA & NÂNG CẤP:
+   [1] AISmartFramingCamera/Models/FramingModels.swift:
+       - Mở rộng enum CompositionRule thêm 5 trường phái bố cục DoP mới:
+         .leadingLines ("Đường dẫn thị giác"), .diagonal ("Đường chéo / Tam giác động"), .frameInFrame ("Khung trong khung"), .negativeSpace ("Không gian âm"), .lookingRoom ("Khoảng thở hướng nhìn").
+       - Cập nhật exhaustive switch cho iconName, displayNameVietnamese, descriptionVietnamese.
+       - Thêm hàm phân tích chuỗi linh hoạt CompositionRule.match(from:) nhận diện chính xác các từ khóa bố cục AI trả về.
+   [2] AISmartFramingCamera/Views/ARFramingOverlayView.swift:
+       - Bổ sung nét vẽ lưới hướng dẫn bố cục trong struct CompositionGridLines cho các case mới (.leadingLines, .diagonal, .frameInFrame, .negativeSpace, .lookingRoom), đảm bảo switch rule exhaustive 100%.
+   [3] AISmartFramingCamera/Services/GeminiLiveService.swift:
+       - Tích hợp phát hiện biến đổi cảnh quan qua mảng 16x16 luma hash (computeMotionScore): tự động tăng tốc lên 4 FPS khi lia máy và hạ xuống 0.55 FPS khi cảnh đứng yên.
+       - Tích hợp Auto-Recovery WebSocket: tự động lên lịch kết nối lại (scheduleAutoReconnect) với số mũ lùi dần (exponential backoff 1s, 2s, 4s, 8s, 16s), quản lý trạng thái .reconnecting(attempt:).
+   [4] AISmartFramingCamera/Services/GeminiService.swift:
+       - prepareImageForAnalysis: Tích hợp NetworkMonitor.shared.checkConnection() để tự động điều chỉnh 960px / 0.50 quality trên mạng di động và 1280px / 0.60 quality trên Wi-Fi tốc độ cao.
+       - Dynamic Circuit Breaker: Thêm modelHealthScores, modelBackoffs, isModelHealthy, recordModelSuccess, recordModelFailure.
+       - buildPrompt: Tái thiết kế prompt trao 100% quyền tự quyết DoP cho AI, giải phóng AI khỏi gánh nặng tính nhẩm số học target.
+       - computeOptimalFramingGeometry & parseGeminiResponse: Phép chiếu quang học C_aim = S - (G - 0.5) / Z chuẩn xác, bảo toàn khoảng thở Headroom cho chân dung.
+       - cleanAndParseJSON: Bộ giải mã tự cân bằng ngoặc, đóng chuỗi quote bị ngắt quãng, sanitization dấu phẩy và regex token fallback.
+
+3. KẾT QUẢ KIỂM THỬ HỆ THỐNG:
+   - scripts/check_swift_brackets.py: PASS 73/73 files Swift.
+   - scripts/verify_tracking_boundary.py: PASS 22/22 boundary checksums.
+   - scripts/run_regressions.py: PASS 71/71 tests (0 failures, 0 errors, 0 skipped).
+================================================================================

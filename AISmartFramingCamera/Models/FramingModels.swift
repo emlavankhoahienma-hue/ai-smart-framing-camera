@@ -10,6 +10,11 @@ public enum CompositionRule: String, CaseIterable, Identifiable, Sendable {
     case goldenRatio = "Golden Ratio"
     case goldenSpiral = "Golden Spiral"
     case centerSymmetry = "Center Pro"
+    case leadingLines = "Leading Lines"
+    case diagonal = "Diagonal Dynamic"
+    case frameInFrame = "Frame in Frame"
+    case negativeSpace = "Negative Space"
+    case lookingRoom = "Looking Room"
     case dynamicAI = "AI Auto-Select"
 
     public var id: String { rawValue }
@@ -20,6 +25,11 @@ public enum CompositionRule: String, CaseIterable, Identifiable, Sendable {
         case .goldenRatio: return "circle.grid.3x3"
         case .goldenSpiral: return "camera.macro"
         case .centerSymmetry: return "scope"
+        case .leadingLines: return "arrow.up.and.down.and.arrow.left.and.right"
+        case .diagonal: return "line.diagonal"
+        case .frameInFrame: return "viewfinder.rectangular"
+        case .negativeSpace: return "square.dashed"
+        case .lookingRoom: return "eye.circle"
         case .dynamicAI: return "wand.and.stars"
         }
     }
@@ -32,6 +42,11 @@ public enum CompositionRule: String, CaseIterable, Identifiable, Sendable {
         case .goldenRatio: return "Tỷ lệ vàng (1.618)"
         case .goldenSpiral: return "Xoắn ốc Fibonacci"
         case .centerSymmetry: return "Tâm đối xứng"
+        case .leadingLines: return "Đường dẫn thị giác"
+        case .diagonal: return "Đường chéo / Tam giác động"
+        case .frameInFrame: return "Khung trong khung"
+        case .negativeSpace: return "Không gian âm"
+        case .lookingRoom: return "Khoảng thở hướng nhìn"
         case .dynamicAI: return "AI Tự động tối ưu"
         }
     }
@@ -42,8 +57,45 @@ public enum CompositionRule: String, CaseIterable, Identifiable, Sendable {
         case .goldenRatio: return "Bố cục tỷ lệ vàng 1:1.618 chuẩn thị giác"
         case .goldenSpiral: return "Đường xoắn ốc dẫn dắt ánh nhìn vào tâm điểm"
         case .centerSymmetry: return "Căn chủ thể chính xác tại tâm đối xứng"
-        case .dynamicAI: return "Tự động đề xuất bố cục theo ngữ cảnh"
+        case .leadingLines: return "Dùng đường nét hội tụ dẫn mắt người xem vào chủ thể"
+        case .diagonal: return "Tạo năng lượng thị giác qua đường chéo và tam giác động"
+        case .frameInFrame: return "Tạo chiều sâu và tập trung bằng khung cảnh tự nhiên bao quanh"
+        case .negativeSpace: return "Tối giản khoảng trống xung quanh để tôn vinh chủ thể"
+        case .lookingRoom: return "Mở rộng không gian phía trước hướng mắt nhìn của người mẫu"
+        case .dynamicAI: return "Tự động đề xuất bố cục nghệ thuật theo ngữ cảnh"
         }
+    }
+
+    public static func match(from rawString: String) -> CompositionRule {
+        let lower = rawString.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower.contains("spiral") || lower.contains("fibonacci") {
+            return .goldenSpiral
+        }
+        if lower.contains("golden") || lower.contains("phi") || lower.contains("1.618") {
+            return .goldenRatio
+        }
+        if lower.contains("third") || lower.contains("1/3") {
+            return .ruleOfThirds
+        }
+        if lower.contains("symmetr") || lower.contains("center") || lower.contains("đối xứng") {
+            return .centerSymmetry
+        }
+        if lower.contains("leading") || lower.contains("line") || lower.contains("đường dẫn") {
+            return .leadingLines
+        }
+        if lower.contains("diagonal") || lower.contains("triangle") || lower.contains("chéo") {
+            return .diagonal
+        }
+        if lower.contains("frame") || lower.contains("khung") {
+            return .frameInFrame
+        }
+        if lower.contains("negative") || lower.contains("space") || lower.contains("không gian âm") {
+            return .negativeSpace
+        }
+        if lower.contains("lead") || lower.contains("look") || lower.contains("hướng nhìn") || lower.contains("khoảng thở") {
+            return .lookingRoom
+        }
+        return .dynamicAI
     }
 }
 

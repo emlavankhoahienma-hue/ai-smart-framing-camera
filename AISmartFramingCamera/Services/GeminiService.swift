@@ -1795,14 +1795,25 @@ public final class GeminiService: ObservableObject {
         compressionQuality: CGFloat = 0.60,
         overlayVisualGrid: Bool = true
     ) -> Data? {
+        let net = NetworkMonitor.shared.checkConnection()
+        let effectiveMaxDimension: CGFloat
+        let effectiveQuality: CGFloat
+        if !net.isConnected || net.isCellular {
+            effectiveMaxDimension = min(maxDimension, 960)
+            effectiveQuality = min(compressionQuality, 0.50)
+        } else {
+            effectiveMaxDimension = maxDimension
+            effectiveQuality = compressionQuality
+        }
+
         let originalWidth = CGFloat(image.width)
         let originalHeight = CGFloat(image.height)
         let maxOrig = max(originalWidth, originalHeight)
 
         let targetWidth: Int
         let targetHeight: Int
-        if maxOrig > maxDimension {
-            let scale = maxDimension / maxOrig
+        if maxOrig > effectiveMaxDimension {
+            let scale = effectiveMaxDimension / maxOrig
             targetWidth = max(1, Int(originalWidth * scale))
             targetHeight = max(1, Int(originalHeight * scale))
         } else {
@@ -1832,7 +1843,7 @@ public final class GeminiService: ObservableObject {
                 let data = NSMutableData()
                 if let destination = CGImageDestinationCreateWithData(data as CFMutableData, "public.jpeg" as CFString, 1, nil) {
                     let options: [CFString: Any] = [
-                        kCGImageDestinationLossyCompressionQuality: compressionQuality
+                        kCGImageDestinationLossyCompressionQuality: effectiveQuality
                     ]
                     CGImageDestinationAddImage(destination, scaledCG, options as CFDictionary)
                     if CGImageDestinationFinalize(destination) {
@@ -1840,12 +1851,12 @@ public final class GeminiService: ObservableObject {
                     }
                 }
                 let uiImage = UIImage(cgImage: scaledCG)
-                return uiImage.jpegData(compressionQuality: compressionQuality)
+                return uiImage.jpegData(compressionQuality: effectiveQuality)
             }
         }
 
         let uiImage = UIImage(cgImage: image)
-        return uiImage.jpegData(compressionQuality: compressionQuality)
+        return uiImage.jpegData(compressionQuality: effectiveQuality)
     }
 
     /// Vẽ lưới ô thị giác Set-of-Mark (Visual Grid Prompting) siêu mảnh, tinh tế, không làm mờ chi tiết chủ thể
@@ -2451,6 +2462,47 @@ public final class GeminiService: ObservableObject {
         requestHandle.start(task)
     }
 
+    // MARK: - Dynamic Model Health & Circuit Breaker
+    private static var modelHealthScores: [String: Double] = [:]
+    private static var modelBackoffs: [String: Double] = [:]
+    private static let healthLock = NSLock()
+
+    public static func isModelHealthy(_ modelID: String) -> Bool {
+        healthLock.lock()
+        defer { healthLock.unlock() }
+        let now = CACurrentMediaTime()
+        if let backoffUntil = modelBackoffs[modelID], now < backoffUntil {
+            return false
+        }
+        let score = modelHealthScores[modelID] ?? 1.0
+        return score >= 0.3
+    }
+
+    public static func recordModelSuccess(_ modelID: String, latencyMs: Int) {
+        healthLock.lock()
+        defer { healthLock.unlock() }
+        let current = modelHealthScores[modelID] ?? 1.0
+        let latencyBonus = latencyMs < 2500 ? 0.2 : (latencyMs > 5000 ? -0.1 : 0.05)
+        modelHealthScores[modelID] = min(1.0, current + latencyBonus)
+        modelBackoffs.removeValue(forKey: modelID)
+    }
+
+    public static func recordModelFailure(_ modelID: String, statusCode: Int, errorMsg: String) {
+        healthLock.lock()
+        defer { healthLock.unlock() }
+        let current = modelHealthScores[modelID] ?? 1.0
+        modelHealthScores[modelID] = max(0.0, current - 0.4)
+        let duration: Double
+        if statusCode == 429 || statusCode == 503 {
+            duration = 30.0
+        } else if statusCode == 404 {
+            duration = 300.0
+        } else {
+            duration = 15.0
+        }
+        modelBackoffs[modelID] = CACurrentMediaTime() + duration
+    }
+
     private func tryModelChain(
         chain: [String],
         index: Int,
@@ -2468,6 +2520,23 @@ public final class GeminiService: ObservableObject {
         }
 
         let currentModelID = chain[index]
+
+        // Fast circuit breaker: Nếu model hiện tại đang trong thời gian backoff và vẫn còn model khác dự phòng, ưu tiên nhảy tiếp ngay
+        if !Self.isModelHealthy(currentModelID) && index + 1 < chain.count {
+            CameraLogger.warning("GeminiService: Model \(currentModelID) đang trong thời gian backoff/suy giảm sức khỏe, tự động nhảy sang model kế tiếp", category: .ai)
+            self.tryModelChain(
+                chain: chain,
+                index: index + 1,
+                base64Image: base64Image,
+                prompt: prompt,
+                key: key,
+                lastErrorMsg: lastErrorMsg,
+                startTime: startTime,
+                completion: completion
+            )
+            return
+        }
+
         executeModelCall(
             modelID: currentModelID,
             base64Image: base64Image,
@@ -2478,9 +2547,26 @@ public final class GeminiService: ObservableObject {
             guard let self = self else { return }
             switch result {
             case .success(let response):
+                let latencyMs = Int((CACurrentMediaTime() - startTime) * 1000)
+                Self.recordModelSuccess(currentModelID, latencyMs: latencyMs)
                 completion(.success(response))
             case .failure(let error):
-                CameraLogger.warning("GeminiService: Model \(currentModelID) thất bại: \(error.localizedDescription)", category: .ai)
+                let statusCode: Int
+                switch error {
+                case .rateLimited: statusCode = 429
+                case .invalidAPIKey: statusCode = 401
+                case .insufficientCredits: statusCode = 402
+                case .freeQuotaReached: statusCode = 429
+                case .parseError: statusCode = 422
+                case .invalidResponse: statusCode = 502
+                case .invalidURL: statusCode = 404
+                case .networkError: statusCode = 503
+                case .noAPIKey: statusCode = 400
+                case .imageConversionFailed: statusCode = 400
+                case .allModelsFailed: statusCode = 503
+                }
+                Self.recordModelFailure(currentModelID, statusCode: statusCode, errorMsg: error.localizedDescription)
+                CameraLogger.warning("GeminiService: Model \(currentModelID) thất bại (status: \(statusCode)): \(error.localizedDescription)", category: .ai)
 
                 // Nếu là lỗi sai API Key hoàn toàn (401/403) và không còn model dự phòng khác
                 if case .invalidAPIKey = error, index >= chain.count - 1 {
@@ -2977,9 +3063,12 @@ public final class GeminiService: ObservableObject {
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // 4. Locate outermost braces
-        if let firstBrace = text.firstIndex(of: "{"),
-           let lastBrace = text.lastIndex(of: "}") {
-            text = String(text[firstBrace...lastBrace])
+        if let firstBrace = text.firstIndex(of: "{") {
+            if let lastBrace = text.lastIndex(of: "}"), lastBrace >= firstBrace {
+                text = String(text[firstBrace...lastBrace])
+            } else {
+                text = String(text[firstBrace...])
+            }
         }
 
         // 5. Direct parse
@@ -2989,13 +3078,80 @@ public final class GeminiService: ObservableObject {
         }
 
         // 6. Trailing comma sanitation: e.g. `, }` or `, ]`
+        var sanitized = text
         if let regex = trailingCommaRegex {
-            let range = NSRange(location: 0, length: text.utf16.count)
-            let sanitized = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "$1")
+            let range = NSRange(location: 0, length: sanitized.utf16.count)
+            sanitized = regex.stringByReplacingMatches(in: sanitized, options: [], range: range, withTemplate: "$1")
             if let data = sanitized.data(using: .utf8),
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 return obj
             }
+        }
+
+        // 7. Self-repair unclosed quotes and brackets if truncated by token limits
+        var openBraces = 0
+        var openBrackets = 0
+        var inQuotes = false
+        var isEscaped = false
+
+        for char in sanitized {
+            if isEscaped {
+                isEscaped = false
+                continue
+            }
+            if char == "\\" {
+                isEscaped = true
+                continue
+            }
+            if char == "\"" {
+                inQuotes.toggle()
+                continue
+            }
+            if !inQuotes {
+                if char == "{" { openBraces += 1 }
+                else if char == "}" { openBraces = max(0, openBraces - 1) }
+                else if char == "[" { openBrackets += 1 }
+                else if char == "]" { openBrackets = max(0, openBrackets - 1) }
+            }
+        }
+
+        if inQuotes {
+            sanitized.append("\"")
+        }
+        while openBrackets > 0 {
+            sanitized.append("]")
+            openBrackets -= 1
+        }
+        while openBraces > 0 {
+            sanitized.append("}")
+            openBraces -= 1
+        }
+
+        if let data = sanitized.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return obj
+        }
+
+        // 8. Fallback to regex token extraction if JSON syntax is damaged
+        if let fallback = regexExtractFallbackFraming(from: text, modelUsed: "self-repair", latencyMs: 0) {
+            var dict: [String: Any] = [
+                "subject_x": fallback.subjectX,
+                "subject_y": fallback.subjectY,
+                "composition_x": fallback.compositionAnchorX,
+                "composition_y": fallback.compositionAnchorY,
+                "target_x": fallback.targetX,
+                "target_y": fallback.targetY,
+                "suggested_zoom": fallback.suggestedZoom,
+                "composition_rule": fallback.compositionRule.rawValue,
+                "scene_type": fallback.sceneType.rawValue,
+                "explanation": fallback.explanation,
+                "recommended_preset": fallback.recommendedPreset.displayName,
+                "preset_explanation": fallback.presetExplanation
+            ]
+            if let ev = fallback.recommendedEVBias {
+                dict["recommended_ev_bias"] = ev
+            }
+            return dict
         }
 
         return nil
@@ -3136,30 +3292,35 @@ public final class GeminiService: ObservableObject {
 
         return """
         You are an autonomous Academy-Award-Winning Director of Photography (DoP) and Spatial Vision Architect.
-        Analyze the raw camera frame directly using your own visual intelligence. Sensor hints (\(telemetry)) are non-binding references only—you have 100% authority to override them and decide:
+        Analyze the raw camera frame directly using your own visual intelligence. Sensor hints (\(telemetry)) are non-binding references only—you have 100% aesthetic authority to decide:
         1. HERO SUBJECT & 2D SPATIAL GROUNDING:
            - Identify the true hero subject or visual focal center of the story.
            - Output its exact 2D bounding box `subject_box_2d: [ymin, xmin, ymax, xmax]` in 0..1000 coordinates, normalized `subject_w, subject_h` in [0.04..0.98], and `subject_x, subject_y` in [0.0..1.0] (top-left is 0.0,0.0; bottom-right is 1.0,1.0).
            - For portraits/people/animals: anchor `(subject_x, subject_y)` on the dominant eye or upper-face focal point (inside `subject_box_2d`). For objects/food/architecture/landscapes: anchor on the primary structural focal point.
-        2. 3D GAZE, LEAD ROOM & COMPOSITION ANCHOR (`composition_x, composition_y`):
-           - Read the subject's 3D gaze/facing direction, body posture, horizon lines, and leading lines.
-           - Place `composition_x, composition_y` in [0.0..1.0] so the subject has open Lead Room in front of their gaze/movement (e.g., if looking right -> place subject on left Golden Ratio `composition_x = 0.382` or Rule of Thirds `0.333`; if looking left -> `0.618` or `0.667`; if symmetrical architecture/centered reflection -> `0.50`).
-           - Set `composition_y` with proper headroom (`0.36..0.42` for portraits, `0.382..0.618` for general scenes) so the head is never clipped.
-        3. UNCONSTRAINED CONTINUOUS ZOOM (`suggested_zoom`):
+        2. 3D GAZE, LEAD ROOM & ARTISTIC COMPOSITION DESTINATION (`composition_x, composition_y`):
+           - Evaluate the subject's 3D gaze/facing direction, movement vectors, body posture, horizon lines, leading lines, negative space, and framing elements.
+           - Choose the optimal aesthetic composition rule:
+             * golden_ratio (0.382 or 0.618)
+             * rule_of_thirds (0.333 or 0.667)
+             * center_symmetry (0.500)
+             * golden_spiral
+             * leading_lines
+             * diagonal
+             * frame_in_frame
+             * negative_space
+             * looking_room
+           - Place `composition_x, composition_y` in [0.05..0.95] so the hero subject lands at this artistic anchor after framing. Ensure generous Lead Room in front of their gaze and ample headroom.
+        3. UNCONSTRAINED CONTINUOUS OPTICAL ZOOM (`suggested_zoom`):
            - Choose any continuous float from `0.5` (ultra-wide) to `6.0` (telephoto), e.g. `0.6`, `0.8`, `1.0`, `1.25`, `1.5`, `1.8`, `2.2`, `2.8`, `3.5`, `4.5`.
-           - Zoom in decisively (`1.35x` to `4.5x`) when the hero subject is small, distant, or surrounded by edge clutter; use `1.0x` or `< 1.0x` when grand architecture, interior depth, or vast landscape context is essential.
-        4. EXACT OPTICAL CAMERA AIM POINT (`target_x, target_y`):
-           - The user will pan the camera until the viewfinder center `(0.5, 0.5)` locks onto `(target_x, target_y)`, and then the camera will zoom to `suggested_zoom`.
-           - Compute the exact optical projection:
-             `target_x = subject_x - (composition_x - 0.5) / suggested_zoom`
-             `target_y = subject_y - (composition_y - 0.5) / suggested_zoom`
-           - Verify that at `suggested_zoom`, the subject's top edge (`ymin/1000`) stays inside the cropped frame with natural headroom.
-        5. SCENE COLOR & EXPOSURE:
-           - Select the single best `recommended_preset` from the catalog below and craft a harmonious `color_recipe` + `recommended_ev_bias`.
+           - Zoom in decisively when the hero subject is distant, small, or surrounded by edge clutter; use 1.0x or wide (< 1.0x) when grand architecture, interior depth, or vast landscape context is essential.
+        4. COLOR HARMONY & EXPOSURE:
+           - Select the single best `recommended_preset` from the catalog below matching scene mood and skin tones.
+           - Provide `recommended_ev_bias` (-1.5 to +1.5) and a tailored `color_recipe`.
+           (Note: Target aim point projection is calculated automatically by the camera's high-precision optical engine; you do not need to perform floating-point arithmetic).
 
         \(presetsCatalog)
 
-        Return ONLY ONE valid JSON object (Vietnamese explanations):
+        Return ONLY ONE valid JSON object (Vietnamese explanations, NO complex calculations needed):
         {"subject_box_2d":[210,340,680,620],"subject_x":0.48,"subject_y":0.36,"subject_w":0.28,"subject_h":0.47,"composition_x":0.382,"composition_y":0.382,"target_x":0.534,"target_y":0.348,"shot_scale":"medium_portrait","suggested_zoom":1.8,"recommended_ev_bias":0.0,"lighting_scene":"normal","scene_type":"portrait","composition_rule":"golden_ratio","recommended_preset":"Classic Chrome","preset_explanation":"Tôn da tự nhiên, giữ chi tiết vùng sáng và chiều sâu điện ảnh","explanation":"Khóa nét mắt chủ thể chính, mở khoảng thở Lead Room theo hướng nhìn về điểm mạnh Tỷ lệ vàng 0.382 với mức zoom 1.8x","color_recipe":{"exposure_ev":0.0,"contrast":1.04,"highlights":0.92,"shadows":0.04,"warmth":5500,"tint":0.0,"saturation":1.04,"vibrance":1.03,"sharpness":1.02,"vignette":0.02}}
         """
     }
@@ -3201,31 +3362,20 @@ public final class GeminiService: ObservableObject {
         }
 
         // 4. Giải bài toán chiếu quang học chính xác C_aim = S - (G - 0.5) / Z:
-        // Khi Gemini chỉ định điểm bố cục G khác S, dùng công thức chiếu quang học chuẩn xác để khi khóa tâm + zoom Z,
-        // chủ thể S luôn rơi đúng vào điểm mạnh G mà không bao giờ bị ngược dấu hay gán nhầm target = composition.
+        // Khi Gemini chỉ định điểm bố cục G, dùng công thức chiếu quang học chuẩn xác để khi người dùng đưa tâm màn hình (0.5, 0.5)
+        // trùng vào Vòng vàng C_aim và zoom Z, chủ thể S luôn rơi đúng vào điểm nghệ thuật đích G:
         let effZ = max(0.5, finalZoom)
-        let compDiffersFromSubject = hypot(gPoint.x - sPoint.x, gPoint.y - sPoint.y) > 0.008
-        let targetDiffersFromSubject = rawTargetPoint.x.isFinite && rawTargetPoint.y.isFinite &&
-            hypot(rawTargetPoint.x - sPoint.x, rawTargetPoint.y - sPoint.y) > 0.008
+        let opticalAimX = sPoint.x - (gPoint.x - 0.5) / effZ
+        let opticalAimY = sPoint.y - (gPoint.y - 0.5) / effZ
 
-        var rawAimX: CGFloat
-        var rawAimY: CGFloat
-        if compDiffersFromSubject {
-            let opticalAimX = sPoint.x - (gPoint.x - 0.5) / effZ
-            let opticalAimY = sPoint.y - (gPoint.y - 0.5) / effZ
-            if targetDiffersFromSubject && hypot(rawTargetPoint.x - opticalAimX, rawTargetPoint.y - opticalAimY) <= 0.025 {
+        var rawAimX: CGFloat = opticalAimX
+        var rawAimY: CGFloat = opticalAimY
+        if rawTargetPoint.x.isFinite && rawTargetPoint.y.isFinite {
+            // Tôn trọng target AI tính toán nếu nằm trong khoảng dung sai quang học hợp lý (<= 0.05)
+            if hypot(rawTargetPoint.x - opticalAimX, rawTargetPoint.y - opticalAimY) <= 0.05 {
                 rawAimX = rawTargetPoint.x
                 rawAimY = rawTargetPoint.y
-            } else {
-                rawAimX = opticalAimX
-                rawAimY = opticalAimY
             }
-        } else if targetDiffersFromSubject {
-            rawAimX = rawTargetPoint.x
-            rawAimY = rawTargetPoint.y
-        } else {
-            rawAimX = sPoint.x - (gPoint.x - 0.5) / effZ
-            rawAimY = sPoint.y - (gPoint.y - 0.5) / effZ
         }
 
         // 5. Bảo vệ Headroom khi zoom lớn (không để cắt đỉnh đầu chủ thể trừ khi chụp macro/extreme close-up)
@@ -3240,8 +3390,8 @@ public final class GeminiService: ObservableObject {
         }
 
         let aimPoint = CGPoint(
-            x: max(0.02, min(0.98, rawAimX)),
-            y: max(0.02, min(0.98, rawAimY))
+            x: max(0.05, min(0.95, rawAimX)),
+            y: max(0.05, min(0.95, rawAimY))
         )
 
         return (
@@ -3413,10 +3563,16 @@ public final class GeminiService: ObservableObject {
         let evRaw = (json["recommended_ev_bias"] as? NSNumber)?.floatValue ?? (json["ev_bias"] as? NSNumber)?.floatValue ?? (json["exposure_bias"] as? NSNumber)?.floatValue
         let lightingScene = (json["lighting_scene"] as? String) ?? (json["lighting"] as? String)
 
+        let effZ = max(0.5, min(8.0, suggestedZoom))
+        let derivedAimX = subjectX - (compX - 0.5) / effZ
+        let derivedAimY = subjectY - (compY - 0.5) / effZ
+        let finalTargetX = (rawTargetX.isFinite && abs(rawTargetX - derivedAimX) <= 0.05) ? rawTargetX : derivedAimX
+        let finalTargetY = (rawTargetY.isFinite && abs(rawTargetY - derivedAimY) <= 0.05) ? rawTargetY : derivedAimY
+
         return GeminiFramingResponse(
-            targetX: max(0.02, min(0.98, rawTargetX)),
-            targetY: max(0.02, min(0.98, rawTargetY)),
-            suggestedZoom: max(0.5, min(8.0, suggestedZoom)),
+            targetX: max(0.05, min(0.95, finalTargetX)),
+            targetY: max(0.05, min(0.95, finalTargetY)),
+            suggestedZoom: effZ,
             sceneType: sceneType,
             colorRecipe: colorRecipe,
             compositionRule: compositionRule,
@@ -3504,13 +3660,7 @@ public final class GeminiService: ObservableObject {
     }
 
     private static func parseCompositionRule(_ s: String) -> CompositionRule {
-        switch s.lowercased() {
-        case "rule_of_thirds", "ruleofthirds": return .ruleOfThirds
-        case "golden_ratio", "goldenratio": return .goldenRatio
-        case "golden_spiral", "goldenspiral": return .goldenSpiral
-        case "center_symmetry", "center": return .centerSymmetry
-        default: return .goldenRatio
-        }
+        return CompositionRule.match(from: s)
     }
 
     private static func parseColorGrade(_ s: String) -> AIColorGrade {
