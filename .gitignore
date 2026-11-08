@@ -62,3 +62,7 @@ __pycache__/
 fake_results.json
 eval_images.zip
 eval_set.json
+
+# Local extract bundle and master prompts
+ai_cloud_vision_full_bundle.txt
+PROMPT_NANG_CAP_AI_CLOUD_VISION.txt
