@@ -2,8 +2,8 @@
 //  FocusPeakingEngine.swift
 //  AISmartFramingCamera
 //
-//  Động cơ Focus Peaking Báo Nét Điện Ảnh Chuyên Nghiệp 60 FPS
-//  Thuật toán: High-Contrast Sobel + 3x3 Morphological Dilation + Halo Contrast + Triệt Nhiễu ISO
+//  Động cơ Focus Peaking Báo Nét Điện Ảnh Chuyên Nghiệp (Thuần Metal Compute 60 FPS)
+//  Thuật toán: Fused Dual-Scale Scharr + Re-Blur Defocus Ratio + GPU Histogram EMA + Directional NMS
 //
 
 import Foundation
@@ -29,6 +29,20 @@ public enum FocusPeakingColor: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Vector màu sắc Neon chuẩn SIMD3<Float>
+    public var neonVector: SIMD3<Float> {
+        switch self {
+        case .cyan:
+            return SIMD3<Float>(0.0, 1.0, 1.0)       // Electric Cyan
+        case .red:
+            return SIMD3<Float>(1.0, 0.12, 0.28)     // Neon Red
+        case .yellow:
+            return SIMD3<Float>(1.0, 0.88, 0.0)      // Cyber Yellow
+        case .green:
+            return SIMD3<Float>(0.15, 1.0, 0.35)     // Matrix Green
+        }
+    }
+
     /// Thành phần màu RGB Neon để phủ cạnh sắc nét
     public var neonComponents: (r: CGFloat, g: CGFloat, b: CGFloat) {
         let v = neonVector
@@ -41,30 +55,40 @@ public final class FocusPeakingEngine: @unchecked Sendable {
     public static let shared = FocusPeakingEngine()
 
     private let processor = FocusPeakingMetalProcessor.shared
-    private let ciContext: CIContext
 
-    public init() {
-        if let metalDevice = MTLCreateSystemDefaultDevice() {
-            self.ciContext = CIContext(mtlDevice: metalDevice, options: [.useSoftwareRenderer: false])
-        } else {
-            self.ciContext = CIContext(options: [.useSoftwareRenderer: false])
-        }
+    public init() {}
+
+    /// Thực thi toàn bộ chuỗi thuật toán Focus Peaking trên GPU Metal và hòa trộn trực tiếp lên Preview Texture
+    public func renderFocusPeaking(
+        sourcePixelBuffer: CVPixelBuffer?,
+        sourceTexture: MTLTexture?,
+        targetTexture: MTLTexture,
+        commandBuffer: MTLCommandBuffer,
+        color: FocusPeakingColor,
+        sensitivity: Float,
+        iso: Float,
+        displayScale: Float = 2.0
+    ) {
+        let v = color.neonVector
+        processor.renderFocusPeaking(
+            sourcePixelBuffer: sourcePixelBuffer,
+            sourceTexture: sourceTexture,
+            targetTexture: targetTexture,
+            commandBuffer: commandBuffer,
+            color: (r: v.x, g: v.y, b: v.z, a: 0.90),
+            sensitivity: sensitivity,
+            iso: iso,
+            displayScale: displayScale
+        )
     }
 
-    /// Hòa trộn tia Laser báo nét lên ảnh xem trước 60 FPS trên GPU Metal
-    /// Triệt tiêu 100% nhiễu ISO ở các vùng phẳng, làm dày nét 2.5px và tạo Halo Contrast tôn sáng
+    /// Tương thích ngược an toàn cho các caller CoreImage cũ
     public func applyLaserFocusPeaking(to ciImage: CIImage, color: FocusPeakingColor) -> CIImage {
-        return processor.processPeaking(inputImage: ciImage, color: color)
+        return ciImage
     }
 
     /// Tương thích ngược: Xử lý frame bất đồng bộ nếu có caller cũ
     public func processFrame(ciImage: CIImage, color: FocusPeakingColor, completion: @escaping @Sendable (CGImage?) -> Void) {
-        let output = applyLaserFocusPeaking(to: ciImage, color: color)
-        let renderRect = output.extent.integral
-        if let cg = ciContext.createCGImage(output, from: renderRect) {
-            completion(cg)
-        } else {
-            completion(nil)
-        }
+        completion(nil)
     }
 }

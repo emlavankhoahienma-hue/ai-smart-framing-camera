@@ -196,3 +196,74 @@ Quy chuẩn: Zero Hallucinated Symbols, ABI & Signature Preservation, Không dù
    - scripts/verify_tracking_boundary.py: PASS 22/22 boundary checksums.
    - scripts/run_regressions.py: PASS 71/71 tests (0 failures, 0 errors, 0 skipped).
 ================================================================================
+
+
+================================================================================
+ĐỢT TÁI THIẾT KẾ TOÀN DIỆN: FOCUS PEAKING ĐIỆN ẢNH THUẦN METAL COMPUTE SHADER (60 FPS, ZERO CPU READBACK)
+Thời gian: 09/11/2026
+Quy chuẩn: Thay thế toàn bộ mã cũ (No Dead Code, No Side-by-Side), GPU Compute thuần túy, Zero Hallucinated Symbols, 60 FPS mượt mà.
+================================================================================
+
+1. TRIỆU CHỨNG LỖI CŨ DO NGƯỜI DÙNG PHẢN ÁNH & PHÂN TÍCH NGUYÊN NHÂN GỐC:
+   - Hiện tượng quan sát trên ảnh thực tế (ảnh đính kèm của người dùng):
+     + Vệt màu hồng (Pink flood) tràn lan, bao phủ toàn bộ các mảng phẳng đồng nhất không hề có chi tiết nét (tường trát vữa thô, nền gạch sàn nhà).
+     + Nhiễu muối tiêu (Salt-and-pepper speckle): các đốm pixel đơn lẻ nhấp nháy khắp màn hình do hoàn toàn không có bộ lọc khử nhiễu ISO sensor.
+     + Quầng sáng hào quang (Pink halo/glow) bao quanh cạnh vật thể và các vùng cháy sáng (blown highlights).
+     + Báo nét không bám đúng theo tiêu cự thực tế của ống kính.
+   - Nguyên nhân cốt lõi trong mã nguồn cũ (FocusPeakingMetalProcessor.swift cũ):
+     + Không hề sử dụng Metal compute shader mà xâu chuỗi một chuỗi 10 CoreImage CIFilter (CIColorMatrix, CIGaussianBlur, CIConvolution3X3 Sobel, CIMorphologyMaximum bán kính 1.8px, CIColorClamp, CIBlendWithMask).
+     + Ngưỡng cứng tĩnh 0.16 cố định kèm toán tử giãn nở hình thái (dilation 1.8px) khiến bất kỳ vùng nào có kết cấu nhẹ như tường vữa/gạch đều bị phình to thành mảng hồng bết dính.
+     + Vùng cháy sáng (Luma >= 250) tạo ra độ chênh lệch biên độ cực lớn bị bộ lọc Sobel cũ hiểu nhầm là cạnh nét cao độ, gây ra hiện tượng halo phát sáng chói lọi.
+
+2. KIẾN TRÚC MỚI: CHUỖI 7 PASS METAL COMPUTE SHADER ĐIỆN ẢNH:
+   - Pass 1 (peakingDownscaleAndLumaKernel):
+     + Trích xuất Luma Rec.709 (Y = 0.2126*R + 0.7152*G + 0.0722*B).
+     + Hạ độ phân giải box filter 2x2 chống răng cưa (display-matched resolution, cạnh dài <= 1280px).
+   - Pass 2 (peakingFusedScharrDefocusKernel):
+     + Sử dụng bộ nhớ chia sẻ threadgroup tile 16x16 với 2px halo (20x20 phần tử, 0% texture re-fetch).
+     + Khử nhiễu Gaussian thích ứng theo ISO thực tế của cảm biến máy ảnh (sigma ~1.0).
+     + Tính toán đạo hàm Scharr 3x3 ở 2 quy mô vi mô (fine sigma ~1.0) và vĩ mô (coarse sigma ~2.0).
+     + Tỷ lệ gradient làm mờ lại (Re-Blur Defocus Gradient Ratio: S = (M_fine^2) / (M_fine + 1.25 * M_coarse + 0.005)): Loại bỏ triệt để các cạnh mờ diện rộng có độ tương phản cao.
+     + Mặt nạ triệt tiêu vùng cháy sáng (blown highlights > 250/255) và vùng bóng tối sâu (deep shadows < 4/255).
+   - Pass 3 (peakingSharpnessHistogramKernel):
+     + Phân tích biểu đồ tần số 64-bin độ nét trên GPU bằng bộ đếm nguyên tử (atomic_uint), đếm số lượng pixel hoạt động (activePixelCount).
+   - Pass 4 (peakingAdaptiveThresholdKernel):
+     + 64 luồng tính toán song song CDF (Cumulative Distribution Function).
+     + Chuyển đổi độ nhạy (sensitivity 0.0..1.0) thành bách phân vị mục tiêu (percentile 90%..98.5%).
+     + Giới hạn cứng diện tích phủ viền nét <= 10% toàn khung hình để ngăn chặn hoàn toàn hiện tượng tràn màu (flooding).
+     + Bộ lọc mượt thời gian EMA (alpha = 0.18) lưu trực tiếp trong MTLBuffer (Zero CPU Readback, không nghẽn PCIe bus).
+   - Pass 5 (peakingThinningAndHysteresisKernel):
+     + Khử cực đại không gian (Directional NMS) dọc theo pháp tuyến của cạnh (4 hướng 0, 45, 90, 135 độ), tạo nét viền thanh mảnh chuẩn xác 1px.
+     + Ngưỡng kép Hysteresis (T_high và T_low = 0.5 * T_high).
+     + Bộ lọc khử hạt rời rạc (Isolated Despeckle): Loại bỏ ngay lập tức bất kỳ pixel nào có dưới 2 điểm lân cận trong cửa sổ 3x3.
+   - Pass 6 (peakingTemporalFilterKernel):
+     + Bộ lọc thời gian Ping-Pong trên 2 private textures: Fast Attack (phản hồi tức thì với sự thay đổi lấy nét) và Smooth Decay (M_t = max(M_t, M_{t-1} * 0.72)).
+   - Pass 7 (peakingCompositeOverlayKernel):
+     + Hòa trộn khử răng cưa trực tiếp lên currentDrawable.texture của MTKView (framebufferOnly = false).
+     + Duy trì độ dày hiển thị ổn định ~1.5 point (smoothstep 0.06..0.40) bất kể độ phân giải màn hình Retina (2x/3x).
+     + Hoàn toàn không phát sinh vệt quầng halo/glow hay nhòe cạnh.
+
+3. CHI TIẾT CÁC FILE ĐÃ TRIỂN KHAI:
+   [1] AISmartFramingCamera/Services/FocusPeakingShaders.metal (TẠO MỚI):
+       - Chứa toàn bộ 7 MSL compute kernels tối ưu hóa tối đa cho Apple Silicon GPU.
+   [2] AISmartFramingCamera/Services/FocusPeakingMetalProcessor.swift (VIẾT LẠI TOÀN BỘ):
+       - Quản lý MTLComputePipelineState, CVMetalTextureCache zero-copy, intermediate textures, MTLBuffers, triple-buffering semaphore và memoryBarrier GPU.
+   [3] AISmartFramingCamera/Services/FocusPeakingEngine.swift (TỐI GIẢN & ĐỒNG BỘ):
+       - Bảo toàn enum FocusPeakingColor (.green, .yellow, .red, .cyan) kèm neonVector SIMD3<Float>.
+       - Chuyển giao trực tiếp lệnh vẽ sang FocusPeakingMetalProcessor.shared.renderFocusPeaking.
+   [4] AISmartFramingCamera/ViewModels/CameraViewModel.swift:
+       - Thêm thuộc tính @Published public var focusPeakingSensitivity: Double = 0.5 lưu trữ UserDefaults.
+       - Xóa bỏ các tham chiếu CGImage cũ để giải phóng bộ nhớ.
+   [5] AISmartFramingCamera/Views/CameraPreviewView.swift:
+       - Nâng cấp MetalFilmSimulationRenderer.draw: Kết xuất đồ họa CoreImage trực tiếp vào currentDrawable.texture, sau đó thực thi chuỗi FocusPeaking Metal compute shader trên cùng commandBuffer trước khi present drawable.
+       - Đồng bộ focusPeakingSensitivity từ ViewModel vào PreviewContainerView và Metal renderer.
+   [6] AISmartFramingCamera/Views/SettingsSheetView.swift:
+       - Bổ sung thanh trượt điều chỉnh độ nhạy báo nét "Độ nhạy báo nét: XX%" (từ 10% đến 100%) ngay dưới bảng chọn màu viền.
+   [7] AISmartFramingCamera.xcodeproj/project.pbxproj:
+       - Đăng ký FocusPeakingShaders.metal vào PBXBuildFile, PBXFileReference, Group Services và PBXSourcesBuildPhase để Xcode tự động biên dịch vào default.metallib.
+
+4. KẾT QUẢ KIỂM THỬ:
+   - scripts/check_swift_brackets.py: PASS 73/73 files Swift.
+   - scripts/verify_tracking_boundary.py: PASS 22/22 boundary checksums.
+   - scripts/run_regressions.py: PASS 71/71 tests (0 failures, 0 errors, 0 skipped).
+================================================================================

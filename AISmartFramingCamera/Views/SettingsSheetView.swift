@@ -1001,7 +1001,7 @@ struct PhotoCaptureSettingsSection: View {
     // Helper: Peaking color picker row
     @ViewBuilder
     private var peakingColorPickerRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Màu viền báo nét:")
                     .font(.system(size: 12, weight: .medium))
@@ -1025,6 +1025,22 @@ struct PhotoCaptureSettingsSection: View {
                 }
             }
             .padding(.vertical, 4)
+
+            // Độ nhạy báo nét (Thuần Metal Compute Adaptive Threshold)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Độ nhạy báo nét:")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.75))
+                    Spacer()
+                    Text("\(Int(viewModel.focusPeakingSensitivity * 100))%")
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundColor(viewModel.focusPeakingColor.swiftUIColor)
+                }
+                Slider(value: $viewModel.focusPeakingSensitivity, in: 0.1...1.0, step: 0.05)
+                    .tint(viewModel.focusPeakingColor.swiftUIColor)
+            }
+            .padding(.top, 2)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 4)

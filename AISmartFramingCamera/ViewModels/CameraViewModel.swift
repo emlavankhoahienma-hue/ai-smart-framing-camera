@@ -504,7 +504,6 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isFocusPeakingEnabled: Bool = false {
         didSet {
             UserDefaults.standard.set(isFocusPeakingEnabled, forKey: "isFocusPeakingEnabled")
-            if !isFocusPeakingEnabled { focusPeakingCGImage = nil }
             updateFrameProcessingConfiguration()
         }
     }
@@ -514,7 +513,12 @@ public final class CameraViewModel: ObservableObject {
             updateFrameProcessingConfiguration()
         }
     }
-    @Published public var focusPeakingCGImage: CGImage? = nil
+    @Published public var focusPeakingSensitivity: Double = 0.5 {
+        didSet {
+            UserDefaults.standard.set(focusPeakingSensitivity, forKey: "focusPeakingSensitivity")
+            updateFrameProcessingConfiguration()
+        }
+    }
 
     public var zoomRevealRect: CGRect {
         guard isRevealingZoomTarget, pendingTargetZoomForReveal > 0 else {
@@ -1031,7 +1035,6 @@ public final class CameraViewModel: ObservableObject {
     @Published public var latestAlbumThumbnail: UIImage? = nil
     @Published public var isShowingSettings: Bool = false {
         didSet {
-            if isShowingSettings { focusPeakingCGImage = nil }
             updateCameraHibernationState()
         }
     }
@@ -1108,7 +1111,6 @@ public final class CameraViewModel: ObservableObject {
                 cancelAISession()
             }
             // 2. Giải phóng bộ nhớ đồ họa tạm
-            focusPeakingCGImage = nil
             frameProcessor.clearBuffers()
             updateFrameProcessingConfiguration()
             CameraLogger.info("Camera chuyển sang chế độ ngủ đông (Standby: 0% CPU/AI)", category: .general)
@@ -1383,6 +1385,9 @@ public final class CameraViewModel: ObservableObject {
         }
         if let colorRaw = defaults.string(forKey: "focusPeakingColor"), let color = FocusPeakingColor(rawValue: colorRaw) {
             self.focusPeakingColor = color
+        }
+        if defaults.object(forKey: "focusPeakingSensitivity") != nil {
+            self.focusPeakingSensitivity = defaults.double(forKey: "focusPeakingSensitivity")
         }
         if let sensitivityRaw = defaults.string(forKey: "trackingSensitivity"), let sensitivity = TrackingSensitivityPreset(rawValue: sensitivityRaw) {
             self.trackingSensitivity = sensitivity
