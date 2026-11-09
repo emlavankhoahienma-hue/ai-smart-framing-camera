@@ -520,6 +520,20 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Ultra Sharp (Bậc 1: Computational Photography Multi-Frame Fusion)
+    @Published public var isUltraSharpEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isUltraSharpEnabled, forKey: "isUltraSharpEnabled")
+        }
+    }
+    @Published public var ultraSharpBurstCount: Int = 8 {
+        didSet {
+            UserDefaults.standard.set(ultraSharpBurstCount, forKey: "ultraSharpBurstCount")
+        }
+    }
+    @Published public var ultraSharpProgressString: String? = nil
+    @Published public var ultraSharpProgressPercentage: Float = 0.0
+
     public var zoomRevealRect: CGRect {
         guard isRevealingZoomTarget, pendingTargetZoomForReveal > 0 else {
             return CGRect(x: 0, y: 0, width: 1.0, height: 1.0)
@@ -1110,6 +1124,9 @@ public final class CameraViewModel: ObservableObject {
             if aiSessionState != .capturing && (isAISessionActive || currentTargetPoint != nil) {
                 cancelAISession()
             }
+            if ultraSharpProgressString != nil {
+                cancelUltraSharpCapture()
+            }
             // 2. Giải phóng bộ nhớ đồ họa tạm
             frameProcessor.clearBuffers()
             updateFrameProcessingConfiguration()
@@ -1389,6 +1406,12 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "focusPeakingSensitivity") != nil {
             self.focusPeakingSensitivity = defaults.double(forKey: "focusPeakingSensitivity")
         }
+        if defaults.object(forKey: "isUltraSharpEnabled") != nil {
+            self.isUltraSharpEnabled = defaults.bool(forKey: "isUltraSharpEnabled")
+        }
+        if defaults.object(forKey: "ultraSharpBurstCount") != nil {
+            self.ultraSharpBurstCount = defaults.integer(forKey: "ultraSharpBurstCount")
+        }
         if let sensitivityRaw = defaults.string(forKey: "trackingSensitivity"), let sensitivity = TrackingSensitivityPreset(rawValue: sensitivityRaw) {
             self.trackingSensitivity = sensitivity
         }
@@ -1473,6 +1496,75 @@ public final class CameraViewModel: ObservableObject {
                 isDualCameraActive: isDualCameraActive
             )
         )
+    }
+
+    // MARK: - Ultra Sharp Execution & Cancellation
+    public func performUltraSharpPhotoCapture() {
+        guard (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
+              !isCameraHibernating, pendingCaptureMode == nil,
+              recordingState == .idle,
+              !isShutterPressing, aiSessionState != .capturing else { return }
+
+        isShutterPressing = true
+        photoCapturePhase = .preparing
+        ultraSharpProgressPercentage = 0.05
+        ultraSharpProgressString = "Đang chuẩn bị Ultra Sharp..."
+
+        UltraSharpService.shared.processUltraSharpCapture(
+            cameraService: cameraService,
+            requestedBurstCount: ultraSharpBurstCount,
+            sharpnessStrength: 0.35,
+            progressHandler: { [weak self] info in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.ultraSharpProgressPercentage = info.percentage
+                    self.ultraSharpProgressString = info.message
+                }
+            },
+            completion: { [weak self] result in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.ultraSharpProgressString = nil
+                    self.ultraSharpProgressPercentage = 0.0
+                    self.isShutterPressing = false
+                    self.aiSessionState = .idle
+
+                    switch result {
+                    case .success(let fusionResult):
+                        self.cameraService(
+                            self.cameraService,
+                            didCapturePhoto: fusionResult.outputImage,
+                            rawData: nil,
+                            processedCompanionData: nil,
+                            livePhotoMovieURL: nil,
+                            iso: self.currentLiveISO,
+                            shutterSpeed: 0.01,
+                            format: self.selectedPhotoFormat,
+                            requestedHighResolution: true
+                        )
+                        if fusionResult.wasFallback {
+                            self.showHUDNotice("Đã lưu frame nét nhất (Fallback)")
+                        } else {
+                            self.showHUDNotice("Đã gộp Ultra Sharp (\(fusionResult.usedFrameCount) frames)")
+                        }
+
+                    case .failure(let error):
+                        self.photoCapturePhase = .idle
+                        self.showHUDNotice("Lỗi Ultra Sharp: \(error.localizedDescription)")
+                    }
+                }
+            }
+        )
+    }
+
+    public func cancelUltraSharpCapture() {
+        UltraSharpService.shared.cancelCurrentOperation()
+        ultraSharpProgressString = nil
+        ultraSharpProgressPercentage = 0.0
+        isShutterPressing = false
+        aiSessionState = .idle
+        photoCapturePhase = .idle
+        showHUDNotice("Đã hủy Ultra Sharp")
     }
 
     // MARK: - Initialization & Permissions

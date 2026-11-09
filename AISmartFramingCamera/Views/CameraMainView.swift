@@ -167,6 +167,44 @@ public struct CameraMainView: View {
                                 .transition(.scale(scale: 0.88).combined(with: .opacity))
                             }
 
+                            // Ultra Sharp Progress HUD & Nút Hủy
+                            if let progressText = viewModel.ultraSharpProgressString {
+                                VStack {
+                                    HStack(spacing: 8) {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
+                                            .scaleEffect(0.8)
+
+                                        Text(progressText)
+                                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                                            .foregroundColor(.white)
+
+                                        Button(action: {
+                                            viewModel.cancelUltraSharpCapture()
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.system(size: 14, weight: .bold))
+                                                .foregroundColor(.white.opacity(0.8))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.black.opacity(0.85))
+                                            .overlay(
+                                                Capsule()
+                                                    .stroke(Color.yellow.opacity(0.6), lineWidth: 1.0)
+                                            )
+                                    )
+                                    .shadow(color: Color.yellow.opacity(0.25), radius: 8)
+                                    .padding(.top, 16)
+                                    Spacer()
+                                }
+                                .transition(.scale(scale: 0.90).combined(with: .opacity))
+                            }
+
                             // Keep the viewfinder responsive when AVFoundation is
                             // configuring or temporarily unavailable.
                             if viewModel.isCameraHibernating || !viewModel.isCameraReady {

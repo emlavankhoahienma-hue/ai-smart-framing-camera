@@ -701,6 +701,40 @@ struct PhotoCaptureSettingsSection: View {
                     icon: "photo.on.rectangle.angled",
                     isOn: $viewModel.isSaveOriginalPhotoEnabled
                 )
+
+                dividerLine
+
+                SettingsToggleRow(
+                    title: "Chụp Ultra Sharp (Độ nét cao)",
+                    subtitle: "Chụp chùm N frame đồng phơi sáng, căn chỉnh sub-pixel và gộp đa khung hình giảm nhiễu",
+                    icon: "sparkles.rectangle.stack",
+                    isOn: $viewModel.isUltraSharpEnabled
+                )
+
+                if viewModel.isUltraSharpEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Số frame gộp:")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.75))
+                            Spacer()
+                            Text("\(viewModel.ultraSharpBurstCount) frames")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color(red: 255/255, green: 215/255, blue: 0/255))
+                        }
+                        HStack(spacing: 6) {
+                            ForEach([5, 6, 8, 10, 12], id: \.self) { count in
+                                pillSelectButton("\(count)", isSelected: viewModel.ultraSharpBurstCount == count) {
+                                    UISelectionFeedbackGenerator().selectionChanged()
+                                    viewModel.ultraSharpBurstCount = count
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 4)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         }
     }

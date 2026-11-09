@@ -368,7 +368,11 @@ struct MainCaptureButton: View {
                         viewModel.toggleVideoRecording()
                     } else {
                         if viewModel.aiSessionState != .capturing {
-                            viewModel.takePhotoManual()
+                            if viewModel.isUltraSharpEnabled && viewModel.captureMode == .photo {
+                                viewModel.performUltraSharpPhotoCapture()
+                            } else {
+                                viewModel.takePhotoManual()
+                            }
                         }
                     }
                 }

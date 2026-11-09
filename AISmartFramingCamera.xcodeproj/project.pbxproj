@@ -56,6 +56,12 @@
 		B20000000000000000000045 /* UltraWideWarpEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000045 /* UltraWideWarpEngine.swift */; };
 		B20000000000000000000046 /* SeparableSuperView.metal in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000046 /* SeparableSuperView.metal */; };
 		B20000000000000000000099 /* FocusPeakingShaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000099 /* FocusPeakingShaders.metal */; };
+		B200000000000000000000A1 /* UltraSharpProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A1 /* UltraSharpProtocols.swift */; };
+		B200000000000000000000A2 /* UltraSharpMetalShaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A2 /* UltraSharpMetalShaders.metal */; };
+		B200000000000000000000A3 /* UltraSharpMetalEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A3 /* UltraSharpMetalEngine.swift */; };
+		B200000000000000000000A4 /* UltraSharpFrameSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A4 /* UltraSharpFrameSelector.swift */; };
+		B200000000000000000000A5 /* UltraSharpCaptureController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A5 /* UltraSharpCaptureController.swift */; };
+		B200000000000000000000A6 /* UltraSharpService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A6 /* UltraSharpService.swift */; };
 		B20000000000000000000030 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000011 /* Assets.xcassets */; };
 		B20000000000000000000031 /* RobustTargetEmbedder.bin in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000031 /* RobustTargetEmbedder.bin */; };
 		B20000000000000000000032 /* iconbuttonAI.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000032 /* iconbuttonAI.png */; };
@@ -145,6 +151,12 @@
 		B100000000000000000000045 /* UltraWideWarpEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UltraWideWarpEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000046 /* SeparableSuperView.metal */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.metal; path = SeparableSuperView.metal; sourceTree = "<group>"; };
 		B100000000000000000000099 /* FocusPeakingShaders.metal */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.metal; path = FocusPeakingShaders.metal; sourceTree = "<group>"; };
+		B1000000000000000000000A1 /* UltraSharpProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UltraSharpProtocols.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A2 /* UltraSharpMetalShaders.metal */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.metal; path = UltraSharpMetalShaders.metal; sourceTree = "<group>"; };
+		B1000000000000000000000A3 /* UltraSharpMetalEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UltraSharpMetalEngine.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A4 /* UltraSharpFrameSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UltraSharpFrameSelector.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A5 /* UltraSharpCaptureController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UltraSharpCaptureController.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A6 /* UltraSharpService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UltraSharpService.swift; sourceTree = "<group>"; };
 		B100000000000000000000031 /* RobustTargetEmbedder.bin */ = {isa = PBXFileReference; lastKnownFileType = file; path = RobustTargetEmbedder.bin; sourceTree = "<group>"; };
 		B100000000000000000000032 /* iconbuttonAI.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = iconbuttonAI.png; sourceTree = "<group>"; };
 		B100000000000000000000033 /* iconchonmau.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = iconchonmau.png; sourceTree = "<group>"; };
@@ -269,6 +281,12 @@
 				B100000000000000000000045 /* UltraWideWarpEngine.swift */,
 				B100000000000000000000046 /* SeparableSuperView.metal */,
 				B100000000000000000000099 /* FocusPeakingShaders.metal */,
+				B1000000000000000000000A1 /* UltraSharpProtocols.swift */,
+				B1000000000000000000000A2 /* UltraSharpMetalShaders.metal */,
+				B1000000000000000000000A3 /* UltraSharpMetalEngine.swift */,
+				B1000000000000000000000A4 /* UltraSharpFrameSelector.swift */,
+				B1000000000000000000000A5 /* UltraSharpCaptureController.swift */,
+				B1000000000000000000000A6 /* UltraSharpService.swift */,
 				B100000000000000000000031 /* RobustTargetEmbedder.bin */,
 				C1000000000000000000005D /* LiveEntityTracker.swift */,
 				C10000000000000000000061 /* CompositionAestheticSearch.swift */,
@@ -483,6 +501,12 @@
 				B20000000000000000000045 /* UltraWideWarpEngine.swift in Sources */,
 				B20000000000000000000046 /* SeparableSuperView.metal in Sources */,
 				B20000000000000000000099 /* FocusPeakingShaders.metal in Sources */,
+				B200000000000000000000A1 /* UltraSharpProtocols.swift in Sources */,
+				B200000000000000000000A2 /* UltraSharpMetalShaders.metal in Sources */,
+				B200000000000000000000A3 /* UltraSharpMetalEngine.swift in Sources */,
+				B200000000000000000000A4 /* UltraSharpFrameSelector.swift in Sources */,
+				B200000000000000000000A5 /* UltraSharpCaptureController.swift in Sources */,
+				B200000000000000000000A6 /* UltraSharpService.swift in Sources */,
 				B20000000000000000000027 /* PhotoGallerySheetView.swift in Sources */,
 				B20000000000000000000028 /* LuxuryInteractiveGoldButtonStyle.swift in Sources */,
 				C20000000000000000000042 /* GyroCalibrationSheetView.swift in Sources */,
