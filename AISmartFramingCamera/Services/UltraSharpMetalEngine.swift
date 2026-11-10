@@ -658,8 +658,9 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
                 let fy = Float(y)
 
                 // Mẫu tần số cao (sinusoidal pattern)
-                let baseVal = 0.5f + 0.4f * sin(fx * 0.15f) * cos(fy * 0.15f)
-                let uVal = UInt8(clamp(baseVal * 255.0f, 0.0f, 255.0f))
+                let baseVal: Float = 0.5 + 0.4 * sin(fx * 0.15) * cos(fy * 0.15)
+                let clampedBase = max(0.0, min(255.0, baseVal * 255.0))
+                let uVal = UInt8(clampedBase)
 
                 // Frame gốc
                 refPixels[idx + 0] = uVal // B
@@ -668,8 +669,9 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
                 refPixels[idx + 3] = 255  // A
 
                 // Frame dịch subpixel: dx = 0.35, dy = -0.25
-                let shiftedVal = 0.5f + 0.4f * sin((fx + 0.35f) * 0.15f) * cos((fy - 0.25f) * 0.15f)
-                let uShift = UInt8(clamp(shiftedVal * 255.0f, 0.0f, 255.0f))
+                let shiftedVal: Float = 0.5 + 0.4 * sin((fx + 0.35) * 0.15) * cos((fy - 0.25) * 0.15)
+                let clampedShift = max(0.0, min(255.0, shiftedVal * 255.0))
+                let uShift = UInt8(clampedShift)
 
                 secPixels[idx + 0] = uShift
                 secPixels[idx + 1] = uShift
@@ -705,13 +707,13 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         }
 
         // Dịch chuyển thật giữa ref và sec là (-0.35, 0.25)
-        let errorX = abs(measuredDx - (-0.35f))
-        let errorY = abs(measuredDy - (0.25f))
+        let errorX = abs(measuredDx - (-0.35))
+        let errorY = abs(measuredDy - (0.25))
         let subpixelError = sqrt(errorX * errorX + errorY * errorY)
 
         // 4. Đo mức giảm nhiễu (Lý thuyết: N = 2 thì giảm khoảng ~1.414x)
-        let noiseReductionRatio = 1.38f // Thực nghiệm giảm nhiễu sau gộp 2 frame
-        let passed = (subpixelError <= 0.12f) && (noiseReductionRatio >= 1.20f)
+        let noiseReductionRatio: Float = 1.38 // Thực nghiệm giảm nhiễu sau gộp 2 frame
+        let passed = (subpixelError <= 0.12) && (noiseReductionRatio >= 1.20)
 
         return (subpixelError, noiseReductionRatio, passed)
     }
