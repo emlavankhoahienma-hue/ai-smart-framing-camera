@@ -1549,7 +1549,7 @@ public final class CameraViewModel: ObservableObject {
                         }
 
                     case .failure(let error):
-                        self.photoCapturePhase = nil
+                        self.photoCapturePhase = .preparing
                         self.showHUDNotice("Lỗi Ultra Sharp: \(error.localizedDescription)")
                     }
                 }
@@ -1563,7 +1563,7 @@ public final class CameraViewModel: ObservableObject {
         ultraSharpProgressPercentage = 0.0
         isShutterPressing = false
         aiSessionState = .idle
-        photoCapturePhase = nil
+        photoCapturePhase = .preparing
         showHUDNotice("Đã hủy Ultra Sharp")
     }
 
