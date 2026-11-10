@@ -27,6 +27,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
     }
     private var savedLockState: HardwareLockState?
     private weak var activeCameraDevice: AVCaptureDevice?
+    private weak var currentCameraService: CameraService?
 
     // Bộ nhớ đệm quản lý burst đang thực thi
     private var targetBurstCount: Int = 8
@@ -173,6 +174,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         isBurstInFlight = true
         isCancelled = false
         capturedFrames.removeAll()
+        self.currentCameraService = cameraService
         self.onFrameReceived = onFrameReceived
         self.onBurstFinished = completion
 
@@ -182,7 +184,8 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
 
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
-            guard let camera = cameraService.activeCamera else {
+            let camera = (cameraService.captureSession.inputs.compactMap { ($0 as? AVCaptureDeviceInput)?.device }).first
+            guard let camera = camera else {
                 self.finishBurst(with: .failure(CameraServiceError.cameraNotReady))
                 return
             }
@@ -217,7 +220,10 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
             return
         }
 
-        let photoOutput = cameraService.photoOutput
+        guard let photoOutput = cameraService.captureSession.outputs.compactMap({ $0 as? AVCapturePhotoOutput }).first else {
+            finishBurst(with: .failure(CameraServiceError.cameraNotReady))
+            return
+        }
         guard let connection = photoOutput.connection(with: .video), connection.isActive else {
             finishBurst(with: .failure(CameraServiceError.cameraNotReady))
             return
@@ -227,10 +233,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         let codec: AVVideoCodecType = photoOutput.availablePhotoCodecTypes.contains(.hevc) ? .hevc : .jpeg
         let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
         settings.photoQualityPrioritization = .speed
-
-        if photoOutput.isHighResolutionCaptureEnabled {
-            settings.isHighResolutionPhotoEnabled = true
-        }
+        settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
 
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
@@ -295,7 +298,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         callback?(ultraFrame, newCount, total)
 
         // Bắn phát chụp tiếp theo nếu chưa đủ số lượng
-        guard let cameraService = CameraService.sharedInstance else { return }
+        guard let cameraService = self.currentCameraService else { return }
         self.triggerNextPhotoShot(cameraService: cameraService, shotIndex: newCount)
     }
 

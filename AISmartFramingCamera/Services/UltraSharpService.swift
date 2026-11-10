@@ -57,8 +57,7 @@ public final class UltraSharpService: @unchecked Sendable {
         captureController.startBurstCapture(
             cameraService: cameraService,
             requestedCount: requestedBurstCount,
-            onFrameReceived: { [weak self] frame, current, total in
-                guard let self = self else { return }
+            onFrameReceived: { frame, current, total in
                 let pct = 0.05 + 0.40 * (Float(current) / Float(total))
                 progressHandler(UltraSharpProgressInfo(
                     phase: .capturing(current: current, total: total),

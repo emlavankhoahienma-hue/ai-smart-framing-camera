@@ -13,7 +13,7 @@ import Metal
 import AVFoundation
 
 /// Dữ liệu một frame trong chùm chụp Ultra Sharp
-public struct UltraSharpFrame: Sendable {
+public struct UltraSharpFrame: @unchecked Sendable {
     public let index: Int
     public let pixelBuffer: CVPixelBuffer
     public let timestamp: CMTime

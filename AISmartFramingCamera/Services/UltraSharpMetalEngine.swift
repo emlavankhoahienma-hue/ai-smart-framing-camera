@@ -688,7 +688,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         guard let cb = queue.makeCommandBuffer() else { return (999.0, 0.0, false) }
         initializeAccumulator(referenceTexture: refTex, commandBuffer: cb)
         _ = accumulateFrame(secondaryTexture: secTex, referenceTexture: refTex, frameIndex: 1, totalFrames: 2, commandBuffer: cb)
-        guard let finalTex = finalizeAndSharpen(totalFrames: 2, sharpnessStrength: 0.20, commandBuffer: cb) else {
+        guard finalizeAndSharpen(totalFrames: 2, sharpnessStrength: 0.20, commandBuffer: cb) != nil else {
             return (999.0, 0.0, false)
         }
         cb.commit()

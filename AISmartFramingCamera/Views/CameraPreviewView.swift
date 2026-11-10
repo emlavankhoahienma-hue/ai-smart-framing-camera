@@ -337,7 +337,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
         // Phủ lớp báo nét Focus Peaking trực tiếp bằng Metal Compute Shader trên cùng command buffer
         if isPeaking {
-            let currentISO = Float(vm.currentISO)
+            let currentISO = vm.currentLiveISO
             let scale = Float(view.contentScaleFactor)
             FocusPeakingEngine.shared.renderFocusPeaking(
                 sourcePixelBuffer: pixelBuffer,
