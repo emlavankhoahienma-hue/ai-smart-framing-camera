@@ -491,6 +491,9 @@ struct TopCameraBar: View {
                         generator.impactOccurred()
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
                             viewModel.isWindowedZoomActive.toggle()
+                            if viewModel.isWindowedZoomActive && viewModel.windowedZoomFocalLength <= 24.5 {
+                                viewModel.windowedZoomFocalLength = 50.0
+                            }
                         }
                     }) {
                         Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
