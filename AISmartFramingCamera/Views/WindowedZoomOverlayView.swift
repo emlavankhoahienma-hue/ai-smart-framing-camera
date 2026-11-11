@@ -148,11 +148,9 @@ public struct WindowedZoomOverlayView: View {
                         .background(Color.white.opacity(0.001))
                         .frame(width: windowRect.width, height: windowRect.height)
 
-                    // Lưới bố cục 3x3 chỉ hiện khi bật grid, giữ khung ngắm trong suốt sạch sẽ
-                    if viewModel.isManualGridVisible {
-                        opticalGridView
-                            .clipShape(RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous))
-                    }
+                    // Lưới bố cục 3x3 Rule of Thirds luôn hiển thị bên trong cửa sổ để căn chỉnh bố cục
+                    opticalGridView
+                        .clipShape(RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous))
 
                     // Tâm ngắm siêu mảnh tại chính giữa cửa sổ
                     ZStack {

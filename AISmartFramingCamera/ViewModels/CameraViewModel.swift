@@ -4731,13 +4731,14 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func captureNativePhoto(highResolution: Bool) {
+        let effectiveHighRes = highResolution && !isLivePhotoEnabled
         if shouldActivateScreenFlash {
             activateScreenFlash { [weak self] in
                 guard let self else { return }
-                self.executeNativePhotoCapture(highResolution: highResolution)
+                self.executeNativePhotoCapture(highResolution: effectiveHighRes)
             }
         } else {
-            executeNativePhotoCapture(highResolution: highResolution)
+            executeNativePhotoCapture(highResolution: effectiveHighRes)
         }
     }
 
@@ -4790,44 +4791,76 @@ public final class CameraViewModel: ObservableObject {
 
     private nonisolated static let windowedSharpnessCIContext = CIContext(options: [
         .useSoftwareRenderer: false,
-        .highQualityDownsample: true
+        .highQualityDownsample: true,
+        .cacheIntermediates: false
     ])
 
-    /// Tăng cường độ nét quang học (Lanczos + UnsharpMask + SharpenLuminance) cho ảnh cắt từ Cửa sổ thu phóng (Windowed Zoom)
+    /// Tăng cường độ nét quang học đa tầng (Edge-Preserving Denoise + Super-Sampling + Dual-Band Unsharp + Micro-Contrast)
+    /// cho ảnh cắt từ Cửa sổ thu phóng (Windowed Zoom), đạt độ sắc nét căng đét và an toàn bộ nhớ tuyệt đối.
     private nonisolated static func enhanceWindowedZoomCropSharpness(_ image: CGImage, focalLength: Double) -> CGImage {
-        guard focalLength > 24.5 else { return image }
-        var ciImage = CIImage(cgImage: image)
-        let minTargetDimension: CGFloat = 2160.0
-        let maxSide = CGFloat(max(image.width, image.height))
-        if maxSide > 0 && maxSide < minTargetDimension {
-            let scale = min(2.0, minTargetDimension / maxSide)
-            if scale > 1.04, let lanczos = CIFilter(name: "CILanczosScaleTransform") {
-                lanczos.setValue(ciImage, forKey: kCIInputImageKey)
-                lanczos.setValue(Float(scale), forKey: kCIInputScaleKey)
-                lanczos.setValue(1.0, forKey: kCIInputAspectRatioKey)
-                if let scaled = lanczos.outputImage {
-                    ciImage = scaled
+        guard focalLength > 24.5, image.width >= 32, image.height >= 32 else { return image }
+        return autoreleasepool {
+            var ciImage = CIImage(cgImage: image)
+
+            // Giai đoạn 1: Khử nhiễu nhẹ thích ứng bảo toàn viền cạnh (tránh khuyếch đại hạt nhiễu cảm biến)
+            if let denoise = CIFilter(name: "CINoiseReduction") {
+                denoise.setValue(ciImage, forKey: kCIInputImageKey)
+                denoise.setValue(0.016, forKey: "inputNoiseLevel")
+                denoise.setValue(0.42, forKey: "inputSharpness")
+                if let cleaned = denoise.outputImage {
+                    ciImage = cleaned
                 }
             }
-        }
-        let zoomRatio = Float(min(4.0, max(1.0, focalLength / 24.0)))
-        if let unsharp = CIFilter(name: "CIUnsharpMask") {
-            unsharp.setValue(ciImage, forKey: kCIInputImageKey)
-            unsharp.setValue(1.25, forKey: kCIInputRadiusKey)
-            unsharp.setValue(min(0.55, 0.24 + (zoomRatio - 1.0) * 0.12), forKey: kCIInputIntensityKey)
-            if let out = unsharp.outputImage {
-                ciImage = out
+
+            // Giai đoạn 2: Siêu lấy mẫu sub-pixel chất lượng cao bằng bộ lọc Lanczos sinc
+            let targetMaxDimension: CGFloat = 2880.0
+            let maxSide = CGFloat(max(image.width, image.height))
+            if maxSide > 0 && maxSide < targetMaxDimension {
+                let scale = min(2.4, targetMaxDimension / maxSide)
+                if scale > 1.03, let lanczos = CIFilter(name: "CILanczosScaleTransform") {
+                    lanczos.setValue(ciImage, forKey: kCIInputImageKey)
+                    lanczos.setValue(Float(scale), forKey: kCIInputScaleKey)
+                    lanczos.setValue(1.0, forKey: kCIInputAspectRatioKey)
+                    if let scaled = lanczos.outputImage {
+                        ciImage = scaled
+                    }
+                }
             }
-        }
-        if let sharpen = CIFilter(name: "CISharpenLuminance") {
-            sharpen.setValue(ciImage, forKey: kCIInputImageKey)
-            sharpen.setValue(min(0.45, 0.22 + (zoomRatio - 1.0) * 0.08), forKey: kCIInputSharpnessKey)
-            if let out = sharpen.outputImage {
-                ciImage = out
+
+            // Giai đoạn 3: Tái tạo chi tiết vi mô đa tần số (Dual-Band Detail Reconstruction)
+            let zoomRatio = Float(min(3.6, max(1.0, focalLength / 24.0)))
+
+            // Lớp 1 - Chi tiết vi mô (Fine detail: mắt, lông mi, sợi vải, vân gỗ)
+            if let unsharp = CIFilter(name: "CIUnsharpMask") {
+                unsharp.setValue(ciImage, forKey: kCIInputImageKey)
+                unsharp.setValue(1.15, forKey: kCIInputRadiusKey)
+                unsharp.setValue(min(0.68, 0.30 + (zoomRatio - 1.0) * 0.16), forKey: kCIInputIntensityKey)
+                if let out = unsharp.outputImage {
+                    ciImage = out
+                }
             }
+
+            // Lớp 2 - Nổi khối viền chủ thể (Structural Edge Contrast)
+            if let sharpen = CIFilter(name: "CISharpenLuminance") {
+                sharpen.setValue(ciImage, forKey: kCIInputImageKey)
+                sharpen.setValue(min(0.52, 0.26 + (zoomRatio - 1.0) * 0.11), forKey: kCIInputSharpnessKey)
+                if let out = sharpen.outputImage {
+                    ciImage = out
+                }
+            }
+
+            // Giai đoạn 4: Độ trong trẻo & tương phản vi mô (Micro-Contrast Clarity)
+            if let colorControls = CIFilter(name: "CIColorControls") {
+                colorControls.setValue(ciImage, forKey: kCIInputImageKey)
+                colorControls.setValue(1.03, forKey: kCIInputContrastKey)
+                if let out = colorControls.outputImage {
+                    ciImage = out
+                }
+            }
+
+            let extent = ciImage.extent.integral
+            return windowedSharpnessCIContext.createCGImage(ciImage, from: extent) ?? image
         }
-        let extent = ciImage.extent.integral
-        return windowedSharpnessCIContext.createCGImage(ciImage, from: extent) ?? image
     }
 
     /// Encodes only edited, already-upright pixels. Unedited captures and DNG
