@@ -176,7 +176,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         self.targetBurstCount = finalCount
         captureLock.unlock()
 
-        cameraService.sessionQueue.async { [weak self] in
+        sessionQueue.async { [weak self] in
             guard let self = self else { return }
             let camera = (cameraService.captureSession.inputs.compactMap { ($0 as? AVCaptureDeviceInput)?.device }).first
             guard let camera = camera else {
@@ -191,7 +191,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
                 return
             }
 
-            // Kích hoạt phát chụp đầu tiên trong chuỗi burst trên sessionQueue của CameraService
+            // Kích hoạt phát chụp đầu tiên trong chuỗi burst trên sessionQueue tuần tự
             self.triggerNextPhotoShot(cameraService: cameraService, shotIndex: 0)
         }
     }
@@ -327,9 +327,9 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         // Phát tín hiệu streaming frame ra ngoài ngay lập tức
         callback?(ultraFrame, newCount, total)
 
-        // Bắn phát chụp tiếp theo trên sessionQueue của CameraService
+        // Bắn phát chụp tiếp theo trên sessionQueue tuần tự
         guard let cameraService = service else { return }
-        cameraService.sessionQueue.async { [weak self] in
+        sessionQueue.async { [weak self] in
             self?.triggerNextPhotoShot(cameraService: cameraService, shotIndex: newCount)
         }
     }
@@ -412,7 +412,6 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
     private func finishBurst(with result: Result<[UltraSharpFrame], Error>) {
         captureLock.lock()
         let completion = self.onBurstFinished
-        let service = self.currentCameraService
         self.isBurstInFlight = false
         self.capturedFrames.removeAll(keepingCapacity: false)
         self.onFrameReceived = nil
@@ -420,9 +419,8 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         self.currentCameraService = nil
         captureLock.unlock()
 
-        // Hoàn nguyên trạng thái camera trên luồng session của CameraService
-        let targetQueue = service?.sessionQueue ?? sessionQueue
-        targetQueue.async { [weak self] in
+        // Hoàn nguyên trạng thái camera trên luồng session tuần tự
+        sessionQueue.async { [weak self] in
             self?.restoreCameraConfiguration()
         }
 
