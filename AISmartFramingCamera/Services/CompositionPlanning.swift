@@ -912,16 +912,14 @@ enum CompositionPlanner {
         // Unlock dense multi-scale zoom ceiling up to 5.0x / currentZoom * 3.5 within hardware capability.
         let maxZoom = max(currentZoom, min(5.0, hardwareMax, max(currentZoom * 3.5, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.5 }.max() ?? currentZoom)))
 
-        // Precompute compact downsampled raster cells (~256 samples) so 256-1024 geometric evaluations run in a few ms.
-        let cellSide = min(raster.side, 16)
+        // Precompute compact raster cells (~1024 on 64x64, exact on <=32x32) so 512-1024 geometric evals stay fast.
+        let cellStride = raster.side > 32 ? 2 : 1
         var sampleCells: [SampleCell] = []
-        sampleCells.reserveCapacity(cellSide * cellSide)
-        for cy in 0..<cellSide {
-            let py = (Double(cy) + 0.5) / Double(cellSide)
-            let sy = min(raster.side - 1, max(0, Int(py * Double(raster.side))))
-            for cx in 0..<cellSide {
-                let px = (Double(cx) + 0.5) / Double(cellSide)
-                let sx = min(raster.side - 1, max(0, Int(px * Double(raster.side))))
+        sampleCells.reserveCapacity((raster.side / cellStride + 1) * (raster.side / cellStride + 1))
+        for sy in stride(from: 0, to: raster.side, by: cellStride) {
+            let py = (Double(sy) + 0.5) / Double(raster.side)
+            for sx in stride(from: 0, to: raster.side, by: cellStride) {
+                let px = (Double(sx) + 0.5) / Double(raster.side)
                 let i = sy * raster.side + sx
                 sampleCells.append(SampleCell(
                     point: CGPoint(x: px, y: py),
@@ -1142,16 +1140,41 @@ enum CompositionPlanner {
             return diverse(result, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
         }
         guard proposalLimit > 6 else { return diverse(result, limit: proposalLimit, raySeparation: 0.04, zoomSeparation: 0.08) }
-        // Preserve a no-change baseline, prioritize top GAIC+Field winners, and stratify multi-scale focal exploration.
+        // Preserve a no-change baseline, guarantee coverage of every feasible zoom rung,
+        // retain top GAIC+Field winners, and stratify multi-scale focal exploration.
         var selected = result.filter(\.isUnchangedView).prefix(1).map { $0 }
-        let directTopCount = max(4, (proposalLimit * 2) / 3)
-        selected += diverse(result, limit: directTopCount, raySeparation: 0.028, zoomSeparation: 0.055)
-        var buckets: [String: CompositionProposal] = [:]
+        var perZoomBest: [Int: CompositionProposal] = [:]
+        for proposal in result {
+            let zBin = Int((log(Double(proposal.zoom / currentZoom)) * 12).rounded())
+            if proposal.score > (perZoomBest[zBin]?.score ?? -.infinity) {
+                perZoomBest[zBin] = proposal
+            }
+        }
+        let zoomChampions = perZoomBest.keys.sorted().compactMap { perZoomBest[$0] }
+        let zoomBudget = max(3, proposalLimit / 3)
+        if !zoomChampions.isEmpty {
+            let count = min(zoomBudget, zoomChampions.count)
+            for idx in 0..<count {
+                selected.append(zoomChampions[min(zoomChampions.count - 1, idx * zoomChampions.count / count)])
+            }
+        }
+        let directTopCount = max(4, proposalLimit / 3)
+        selected += diverse(result, limit: directTopCount, raySeparation: 0.032, zoomSeparation: 0.065)
+        struct BucketKey: Hashable, Comparable {
+            let z: Int
+            let x: Int
+            let y: Int
+            let intent: String
+            static func < (lhs: Self, rhs: Self) -> Bool {
+                (lhs.z, lhs.x, lhs.y, lhs.intent) < (rhs.z, rhs.x, rhs.y, rhs.intent)
+            }
+        }
+        var buckets: [BucketKey: CompositionProposal] = [:]
         for proposal in result {
             let z = Int((log(Double(proposal.zoom / currentZoom)) * 12).rounded())
             let x = Int((proposal.aimPoint.x * 6).rounded())
             let y = Int((proposal.aimPoint.y * 6).rounded())
-            let key = "\(z)|\(x)|\(y)|\(proposal.intent.rawValue)"
+            let key = BucketKey(z: z, x: x, y: y, intent: proposal.intent.rawValue)
             if proposal.score > (buckets[key]?.score ?? -.infinity) { buckets[key] = proposal }
         }
         let explored = buckets.keys.sorted().compactMap { buckets[$0] }
