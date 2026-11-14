@@ -108,25 +108,19 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
             isSmoothAutoFocusEnabled: device.isSmoothAutoFocusSupported && device.isSmoothAutoFocusEnabled
         )
 
-        // 1. Khóa Phơi Sáng (AE) ở thông số thực tế hiện tại
-        let currentISO = device.iso
-        let currentDuration = device.exposureDuration
-        if device.isExposureModeSupported(.custom) {
-            device.setExposureModeCustom(duration: currentDuration, iso: currentISO, completionHandler: nil)
-        } else if device.isExposureModeSupported(.locked) {
+        // 1. Khóa Phơi Sáng (AE) an toàn tuyệt đối (không gọi setExposureModeCustom dễ văng NSInvalidArgumentException khi ISO/Duration sát biên)
+        if device.isExposureModeSupported(.locked) {
             device.exposureMode = .locked
         }
 
         // 2. Khóa Lấy Nét (AF) ở cự ly ống kính thực tế hiện tại
-        let currentLensPos = device.lensPosition
         if device.isFocusModeSupported(.locked) {
-            device.setFocusModeLocked(lensPosition: currentLensPos, completionHandler: nil)
+            device.focusMode = .locked
         }
 
-        // 3. Khóa Cân Bằng Trắng (AWB) ở nhiệt độ màu thực tế hiện tại
-        let currentWB = device.deviceWhiteBalanceGains
+        // 3. Khóa Cân Bằng Trắng (AWB) an toàn tuyệt đối (không truyền raw gains dễ vượt [1.0, maxWhiteBalanceGain] gây văng NSInvalidArgumentException)
         if device.isWhiteBalanceModeSupported(.locked) {
-            device.setWhiteBalanceModeLocked(with: currentWB, completionHandler: nil)
+            device.whiteBalanceMode = .locked
         }
 
         device.unlockForConfiguration()
@@ -182,7 +176,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         self.targetBurstCount = finalCount
         captureLock.unlock()
 
-        sessionQueue.async { [weak self] in
+        cameraService.sessionQueue.async { [weak self] in
             guard let self = self else { return }
             let camera = (cameraService.captureSession.inputs.compactMap { ($0 as? AVCaptureDeviceInput)?.device }).first
             guard let camera = camera else {
@@ -197,7 +191,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
                 return
             }
 
-            // Kích hoạt phát chụp đầu tiên trong chuỗi burst
+            // Kích hoạt phát chụp đầu tiên trong chuỗi burst trên sessionQueue của CameraService
             self.triggerNextPhotoShot(cameraService: cameraService, shotIndex: 0)
         }
     }
@@ -220,20 +214,44 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
             return
         }
 
-        guard let photoOutput = cameraService.captureSession.outputs.compactMap({ $0 as? AVCapturePhotoOutput }).first else {
+        guard let photoOutput = cameraService.captureSession.outputs.compactMap({ $0 as? AVCapturePhotoOutput }).first,
+              let camera = (cameraService.captureSession.inputs.compactMap { ($0 as? AVCaptureDeviceInput)?.device }).first else {
             finishBurst(with: .failure(CameraServiceError.cameraNotReady))
             return
         }
-        guard let connection = photoOutput.connection(with: .video), connection.isActive else {
+        guard let connection = photoOutput.connection(with: .video), connection.isActive, connection.isEnabled else {
             finishBurst(with: .failure(CameraServiceError.cameraNotReady))
             return
         }
 
-        // Cấu hình chụp với ưu tiên tốc độ cao (.speed) để thu thập frame nhanh nhất và không bị ISP tone map đa khung
+        // Cấu hình chụp 12MP tiêu chuẩn và kiểm tra chặt maxPhotoDimensions + maxPhotoQualityPrioritization
+        // để tuyệt đối không bao giờ ném NSInvalidArgumentException trên máy 48MP (iPhone 14/15/16/17 Pro)
         let codec: AVVideoCodecType = photoOutput.availablePhotoCodecTypes.contains(.hevc) ? .hevc : .jpeg
         let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
-        settings.photoQualityPrioritization = .speed
-        settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
+
+        let supportedDims = camera.activeFormat.supportedMaxPhotoDimensions.sorted {
+            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+        }
+        let maxOutDim = photoOutput.maxPhotoDimensions
+        if let standard12MP = supportedDims.first,
+           standard12MP.width > 0, standard12MP.height > 0 {
+            if maxOutDim.width > 0, maxOutDim.height > 0,
+               (standard12MP.width > maxOutDim.width || standard12MP.height > maxOutDim.height) {
+                settings.maxPhotoDimensions = maxOutDim
+            } else {
+                settings.maxPhotoDimensions = standard12MP
+            }
+        } else if maxOutDim.width > 0, maxOutDim.height > 0 {
+            settings.maxPhotoDimensions = maxOutDim
+        }
+
+        let selectedPixels = Int64(settings.maxPhotoDimensions.width) * Int64(settings.maxPhotoDimensions.height)
+        if selectedPixels > 15_000_000 {
+            // Với độ phân giải > 12MP (48MP), AVFoundation bắt buộc prioritization >= .balanced
+            settings.photoQualityPrioritization = (photoOutput.maxPhotoQualityPrioritization == .speed) ? .speed : .balanced
+        } else {
+            settings.photoQualityPrioritization = .speed
+        }
 
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
@@ -270,8 +288,19 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
             return
         }
 
-        guard let pixelBuffer = photo.pixelBuffer ?? self.decodePixelBuffer(from: photo) else {
+        guard let pixelBuffer: CVPixelBuffer = autoreleasepool(invoking: {
+            self.decodePixelBuffer(from: photo)
+        }) else {
             CameraLogger.warning("UltraSharpCaptureController: Không trích xuất được pixelBuffer cho frame \(currentIndex)", category: .capture)
+            captureLock.lock()
+            let count = self.capturedFrames.count
+            let current = self.capturedFrames
+            captureLock.unlock()
+            if count >= 3 {
+                finishBurst(with: .success(current))
+            } else {
+                finishBurst(with: .failure(CameraServiceError.photoProcessingFailed))
+            }
             return
         }
 
@@ -292,20 +321,33 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         self.capturedFrames.append(ultraFrame)
         let newCount = self.capturedFrames.count
         let callback = self.onFrameReceived
+        let service = self.currentCameraService
         captureLock.unlock()
 
         // Phát tín hiệu streaming frame ra ngoài ngay lập tức
         callback?(ultraFrame, newCount, total)
 
-        // Bắn phát chụp tiếp theo nếu chưa đủ số lượng
-        guard let cameraService = self.currentCameraService else { return }
-        self.triggerNextPhotoShot(cameraService: cameraService, shotIndex: newCount)
+        // Bắn phát chụp tiếp theo trên sessionQueue của CameraService
+        guard let cameraService = service else { return }
+        cameraService.sessionQueue.async { [weak self] in
+            self?.triggerNextPhotoShot(cameraService: cameraService, shotIndex: newCount)
+        }
     }
 
     private func decodePixelBuffer(from photo: AVCapturePhoto) -> CVPixelBuffer? {
         guard let data = photo.fileDataRepresentation(),
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+
+        let thumbOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: 4032
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary) ??
+                            CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             return nil
         }
 
@@ -316,7 +358,8 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         let attrs: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
             kCVPixelBufferCGBitmapContextCompatibilityKey: true,
-            kCVPixelBufferMetalCompatibilityKey: true
+            kCVPixelBufferMetalCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
         ]
 
         let status = CVPixelBufferCreate(
@@ -369,13 +412,17 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
     private func finishBurst(with result: Result<[UltraSharpFrame], Error>) {
         captureLock.lock()
         let completion = self.onBurstFinished
+        let service = self.currentCameraService
         self.isBurstInFlight = false
+        self.capturedFrames.removeAll(keepingCapacity: false)
         self.onFrameReceived = nil
         self.onBurstFinished = nil
+        self.currentCameraService = nil
         captureLock.unlock()
 
-        // Hoàn nguyên trạng thái camera trên luồng session
-        sessionQueue.async { [weak self] in
+        // Hoàn nguyên trạng thái camera trên luồng session của CameraService
+        let targetQueue = service?.sessionQueue ?? sessionQueue
+        targetQueue.async { [weak self] in
             self?.restoreCameraConfiguration()
         }
 

@@ -277,7 +277,18 @@ kernel void ultrasharpSubpixelRefineKernel(
     tileVectors[linearTileIdx] = mv;
 }
 
-// MARK: - 5. Biến dạng Warp & Tính toán Sai số Thặng dư (Residual)
+// MARK: - 5. Biến dạng Warp Bicubic Catmull-Rom & Tính toán Sai số Thặng dư (Residual)
+
+inline float4 catmullRomWeights(float t) {
+    float t2 = t * t;
+    float t3 = t2 * t;
+    return float4(
+        -0.5f * t3 + t2 - 0.5f * t,
+         1.5f * t3 - 2.5f * t2 + 1.0f,
+        -1.5f * t3 + 2.0f * t2 + 0.5f * t,
+         0.5f * t3 - 0.5f * t2
+    );
+}
 
 kernel void ultrasharpDenseFlowWarpKernel(
     texture2d<float, access::sample> secTexture [[texture(0)]],
@@ -320,16 +331,42 @@ kernel void ultrasharpDenseFlowWarpKernel(
                      (1.0f - fx) *        fy   * mv01.dy +
                              fx  *        fy   * mv11.dy;
 
-    constexpr sampler bilinearSampler(coord::pixel, address::clamp_to_edge, filter::linear);
-    float2 warpedCoord = float2(gid) + float2(interpDx, interpDy);
+    constexpr sampler nearestSampler(coord::pixel, address::clamp_to_edge, filter::nearest);
+    float2 warpedPos = float2(gid) + float2(interpDx, interpDy);
+    float2 basePos = floor(warpedPos);
+    float2 frac = warpedPos - basePos;
 
-    float4 warpedColor = secTexture.sample(bilinearSampler, warpedCoord);
+    float4 wx = catmullRomWeights(frac.x);
+    float4 wy = catmullRomWeights(frac.y);
+
+    float4 bicubicSum = float4(0.0f);
+    float4 minCenter = float4(1.0f);
+    float4 maxCenter = float4(0.0f);
+
+    for (int j = -1; j <= 2; ++j) {
+        float4 rowSum = float4(0.0f);
+        for (int i = -1; i <= 2; ++i) {
+            float2 sampleCoord = basePos + float2(float(i) + 0.5f, float(j) + 0.5f);
+            float4 s = secTexture.sample(nearestSampler, sampleCoord);
+            rowSum += s * wx[i + 1];
+            if (i >= 0 && i <= 1 && j >= 0 && j <= 1) {
+                minCenter = min(minCenter, s);
+                maxCenter = max(maxCenter, s);
+            }
+        }
+        bicubicSum += rowSum * wy[j + 1];
+    }
+
+    // Kẹp chống rung viền (anti-ringing) theo vùng 2x2 trung tâm để giữ độ nét sub-pixel tối đa mà không tạo nhiễu giả
+    float4 warpedColor = clamp(bicubicSum, minCenter, maxCenter);
     float4 refColor = refTexture.read(gid);
 
-    // Tính sai số thặng dư luma d
+    // Tính sai số thặng dư kết hợp cả Luma + Chroma để chống bóng ma màu (color ghosting)
     float warpedLuma = 0.2126f * warpedColor.r + 0.7152f * warpedColor.g + 0.0722f * warpedColor.b;
     float refLuma = 0.2126f * refColor.r + 0.7152f * refColor.g + 0.0722f * refColor.b;
-    float residual = abs(warpedLuma - refLuma);
+    float lumaDiff = abs(warpedLuma - refLuma);
+    float chromaDiff = max(abs(warpedColor.r - refColor.r), max(abs(warpedColor.g - refColor.g), abs(warpedColor.b - refColor.b)));
+    float residual = 0.70f * lumaDiff + 0.30f * chromaDiff;
 
     warpedTexture.write(warpedColor, gid);
     residualTexture.write(float4(residual, warpedLuma, refLuma, 1.0f), gid);
@@ -364,49 +401,72 @@ kernel void ultrasharpEstimateNoiseMADKernel(
     }
 }
 
-// MARK: - 7. Gộp Robust Đa Khung Hình (Wiener-style Shrinkage Accumulation)
+// MARK: - 7. Gộp Robust Đa Khung Hình (Wiener-style Shrinkage Ping-Pong Accumulation)
 
 kernel void ultrasharpRobustAccumulateKernel(
     texture2d<float, access::read> warpedTexture [[texture(0)]],
     texture2d<float, access::read> residualTexture [[texture(1)]],
-    texture2d<float, access::read_write> accumSumColor [[texture(2)]],
-    texture2d<float, access::read_write> accumSumWeight [[texture(3)]],
+    texture2d<float, access::read> accumSumColorIn [[texture(2)]],
+    texture2d<float, access::read> accumSumWeightIn [[texture(3)]],
+    texture2d<float, access::write> accumSumColorOut [[texture(4)]],
+    texture2d<float, access::write> accumSumWeightOut [[texture(5)]],
     constant UltraSharpFusionUniforms &uniforms [[buffer(0)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
-    if (gid.x >= uniforms.width || gid.y >= uniforms.height) {
+    int w = int(uniforms.width);
+    int h = int(uniforms.height);
+    int gx = int(gid.x);
+    int gy = int(gid.y);
+    if (gx >= w || gy >= h) {
         return;
     }
 
     float4 warpedColor = warpedTexture.read(gid);
-    float4 resData = residualTexture.read(gid);
-    float residual = resData.r;
-    float refLuma = resData.b;
+    float4 centerRes = residualTexture.read(gid);
+    float refLuma = centerRes.b;
+
+    // Tổng hợp sai số cấu trúc trong lân cận 3x3 (HDR+ / Wronski Neighborhood Robustness)
+    // giúp phân biệt chính xác nhiễu hạt đơn điểm với chuyển động thật của vật thể (chống ghosting)
+    float neighborhoodResidual = 0.0f;
+    const float w3x3[3][3] = {
+        { 0.0625f, 0.125f, 0.0625f },
+        { 0.125f,  0.25f,  0.125f  },
+        { 0.0625f, 0.125f, 0.0625f }
+    };
+    for (int dy = -1; dy <= 1; ++dy) {
+        int ny = clamp(gy + dy, 0, h - 1);
+        for (int dx = -1; dx <= 1; ++dx) {
+            int nx = clamp(gx + dx, 0, w - 1);
+            float r = residualTexture.read(uint2(nx, ny)).r;
+            neighborhoodResidual += r * w3x3[dy + 1][dx + 1];
+        }
+    }
+    float effectiveResidual = max(centerRes.r * 0.65f + neighborhoodResidual * 0.35f, neighborhoodResidual);
 
     // Mô hình nhiễu theo mức sáng: sensor noise tăng căn bậc hai ở vùng sáng (shot noise)
-    float localSigma = uniforms.baseNoiseSigma * (1.0f + 0.8f * sqrt(refLuma));
+    float localSigma = uniforms.baseNoiseSigma * (1.0f + 0.8f * sqrt(max(0.0f, refLuma)));
     localSigma = max(localSigma, 0.004f);
 
     float kSigma = uniforms.noiseScaleK * localSigma;
 
     // Trọng số Wiener-style Shrinkage:
-    // w = exp(- (d / kSigma)^2)
+    // w = exp(-0.5 * (d / kSigma)^2)
     // Khi d vượt 3*sigma (vật thể chuyển động hoặc sai lệch khớp), w -> 0 lập tức!
-    float ratio = residual / kSigma;
+    float ratio = effectiveResidual / kSigma;
     float weight = 0.0f;
-    if (ratio < 3.2f) {
+    if (ratio < 3.0f) {
         weight = exp(-0.5f * ratio * ratio);
     }
 
-    // Đọc bộ tích lũy hiện tại
-    float4 currSumColor = accumSumColor.read(gid);
-    float currSumWeight = accumSumWeight.read(gid).r;
+    // Đọc bộ tích lũy hiện tại và ghi sang bộ đệm đích (Tương thích 100% mọi GPU Metal từ iPhone XS)
+    float4 currSumColor = accumSumColorIn.read(gid);
+    float currSumWeight = accumSumWeightIn.read(gid).r;
 
     currSumColor += warpedColor * weight;
     currSumWeight += weight;
 
-    accumSumColor.write(currSumColor, gid);
-    accumSumWeight.write(float4(currSumWeight, 0.0f, 0.0f, 1.0f), gid);
+    accumSumColorOut.write(currSumColor, gid);
+    accumSumWeightOut.write(float4(currSumWeight, 0.0f, 0.0f, 1.0f), gid);
 }
 
 // Khởi tạo bộ tích lũy với Frame gốc (Frame tham chiếu luôn có trọng số w0 = 1.0)

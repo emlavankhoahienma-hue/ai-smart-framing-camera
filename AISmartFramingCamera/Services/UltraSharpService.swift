@@ -103,6 +103,9 @@ public final class UltraSharpService: @unchecked Sendable {
         progressHandler: @escaping @Sendable (UltraSharpProgressInfo) -> Void,
         completion: @escaping @Sendable (Result<UltraSharpFusionResult, Error>) -> Void
     ) {
+        defer {
+            metalEngine.releaseTransientResources()
+        }
         stateLock.lock()
         let cancelled = self.isCancelled
         stateLock.unlock()
@@ -185,25 +188,27 @@ public final class UltraSharpService: @unchecked Sendable {
                 message: "Đang căn chỉnh & gộp frame \(currentStep)/\(totalSecondary)..."
             ))
 
-            guard let secTexture = metalEngine.makeTexture(from: secFrame.pixelBuffer),
-                  let frameCB = queue.makeCommandBuffer() else {
-                continue
-            }
+            autoreleasepool {
+                guard let secTexture = metalEngine.makeTexture(from: secFrame.pixelBuffer),
+                      let frameCB = queue.makeCommandBuffer() else {
+                    return
+                }
 
-            let alignResult = metalEngine.accumulateFrame(
-                secondaryTexture: secTexture,
-                referenceTexture: refTexture,
-                frameIndex: fusedCount,
-                totalFrames: validCandidates.count,
-                commandBuffer: frameCB
-            )
+                let alignResult = metalEngine.accumulateFrame(
+                    secondaryTexture: secTexture,
+                    referenceTexture: refTexture,
+                    frameIndex: fusedCount,
+                    totalFrames: validCandidates.count,
+                    commandBuffer: frameCB
+                )
 
-            frameCB.commit()
-            frameCB.waitUntilCompleted()
+                frameCB.commit()
+                frameCB.waitUntilCompleted()
 
-            if alignResult.success {
-                fusedCount += 1
-                accumulatedError += alignResult.qualityError
+                if alignResult.success {
+                    fusedCount += 1
+                    accumulatedError += alignResult.qualityError
+                }
             }
         }
 

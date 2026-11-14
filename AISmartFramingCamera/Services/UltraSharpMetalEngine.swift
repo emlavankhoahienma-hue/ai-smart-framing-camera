@@ -130,8 +130,11 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
     private var secPyramidLuma: [MTLTexture] = []
     private var warpedTexture: MTLTexture?
     private var residualTexture: MTLTexture?
-    private var accumSumColor: MTLTexture?
-    private var accumSumWeight: MTLTexture?
+    private var accumSumColorA: MTLTexture?
+    private var accumSumColorB: MTLTexture?
+    private var accumSumWeightA: MTLTexture?
+    private var accumSumWeightB: MTLTexture?
+    private var activeAccumIndex: Int = 0
     private var outputTexture: MTLTexture?
 
     // Preallocated Buffers
@@ -203,11 +206,54 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         }
     }
 
-    // MARK: - Cấp phát Texture Pool Cố định cho Chuỗi Burst Streaming
+    // MARK: - Dispatch 2D An Toàn Theo Giới Hạn Phần Cứng Pipeline
+
+    private func dispatch2D(
+        encoder: MTLComputeCommandEncoder,
+        pipeline: MTLComputePipelineState,
+        width: Int,
+        height: Int
+    ) {
+        guard width > 0, height > 0 else { return }
+        let maxThreads = max(1, pipeline.maxTotalThreadsPerThreadgroup)
+        let w = min(16, max(1, min(width, pipeline.threadExecutionWidth)))
+        let h = min(16, max(1, min(height, maxThreads / w)))
+        let threadsPerGroup = MTLSize(width: w, height: h, depth: 1)
+        let threadgroups = MTLSize(
+            width: (width + w - 1) / w,
+            height: (height + h - 1) / h,
+            depth: 1
+        )
+        encoder.dispatchThreadgroups(threadgroups, threadsPerThreadgroup: threadsPerGroup)
+    }
+
+    // MARK: - Cấp phát & Giải phóng Texture Pool cho Chuỗi Burst Streaming
+
+    public func releaseTransientResources() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        refPyramidLuma.removeAll()
+        secPyramidLuma.removeAll()
+        tileVectorBuffers.removeAll()
+        warpedTexture = nil
+        residualTexture = nil
+        accumSumColorA = nil
+        accumSumColorB = nil
+        accumSumWeightA = nil
+        accumSumWeightB = nil
+        outputTexture = nil
+        currentWidth = 0
+        currentHeight = 0
+        if let cache = textureCache {
+            CVMetalTextureCacheFlush(cache, 0)
+        }
+    }
 
     private func ensureStreamingPool(width: Int, height: Int) {
         guard let device = self.device else { return }
-        if currentWidth == width && currentHeight == height && accumSumColor != nil {
+        if currentWidth == width && currentHeight == height &&
+           accumSumColorA != nil && accumSumColorB != nil &&
+           accumSumWeightA != nil && accumSumWeightB != nil {
             return
         }
 
@@ -235,8 +281,8 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
 
             let numTilesX = (pw + 15) / 16
             let numTilesY = (ph + 15) / 16
-            let bufferLen = numTilesX * numTilesY * MemoryLayout<TileMotionVector>.stride
-            if let vecBuf = device.makeBuffer(length: bufferLen, options: .storageModePrivate) {
+            let bufferLen = max(16, numTilesX * numTilesY * MemoryLayout<TileMotionVector>.stride)
+            if let vecBuf = device.makeBuffer(length: bufferLen, options: .storageModeShared) {
                 tileVectorBuffers.append(vecBuf)
             }
 
@@ -244,16 +290,19 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             ph = max(1, ph / 2)
         }
 
-        // 2. Texture Accumulators (Color dạng RGBA16Float, Weight dạng R16Float)
+        // 2. Texture Accumulators Ping-Pong (Color dạng RGBA16Float, Weight dạng R16Float)
         let colorDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
         colorDesc.usage = [.shaderRead, .shaderWrite]
         colorDesc.storageMode = .private
-        accumSumColor = device.makeTexture(descriptor: colorDesc)
+        accumSumColorA = device.makeTexture(descriptor: colorDesc)
+        accumSumColorB = device.makeTexture(descriptor: colorDesc)
 
         let weightDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r16Float, width: width, height: height, mipmapped: false)
         weightDesc.usage = [.shaderRead, .shaderWrite]
         weightDesc.storageMode = .private
-        accumSumWeight = device.makeTexture(descriptor: weightDesc)
+        accumSumWeightA = device.makeTexture(descriptor: weightDesc)
+        accumSumWeightB = device.makeTexture(descriptor: weightDesc)
+        activeAccumIndex = 0
 
         // 3. Intermediate Warped & Residual Texture
         let warpDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
@@ -317,9 +366,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         encoder.setComputePipelineState(lumaPipe)
         encoder.setTexture(sourceTexture, index: 0)
         encoder.setTexture(pyramid[0], index: 1)
-        let threads16 = MTLSize(width: 16, height: 16, depth: 1)
-        let gridL0 = MTLSize(width: (width + 15) / 16 * 16, height: (height + 15) / 16 * 16, depth: 1)
-        encoder.dispatchThreads(gridL0, threadsPerThreadgroup: threads16)
+        dispatch2D(encoder: encoder, pipeline: lumaPipe, width: width, height: height)
 
         encoder.memoryBarrier(scope: .textures)
 
@@ -340,8 +387,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             encoder.setTexture(dstTex, index: 1)
             encoder.setBytes(&uniforms, length: MemoryLayout<UltraSharpPyramidUniforms>.size, index: 0)
 
-            let gridL = MTLSize(width: (dstTex.width + 15) / 16 * 16, height: (dstTex.height + 15) / 16 * 16, depth: 1)
-            encoder.dispatchThreads(gridL, threadsPerThreadgroup: threads16)
+            dispatch2D(encoder: encoder, pipeline: downPipe, width: dstTex.width, height: dstTex.height)
 
             encoder.memoryBarrier(scope: .textures)
         }
@@ -400,7 +446,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             encoder.setBuffer(fineBuf, offset: 0, index: 1)
             encoder.setBytes(&tileUniforms, length: MemoryLayout<UltraSharpTileUniforms>.size, index: 2)
 
-            encoder.dispatchThreads(MTLSize(width: Int(numTilesX), height: Int(numTilesY), depth: 1), threadsPerThreadgroup: MTLSize(width: min(16, Int(numTilesX)), height: min(16, Int(numTilesY)), depth: 1))
+            dispatch2D(encoder: encoder, pipeline: bmPipe, width: Int(numTilesX), height: Int(numTilesY))
 
             encoder.memoryBarrier(scope: .buffers)
 
@@ -412,7 +458,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
                 encoder.setBuffer(fineBuf, offset: 0, index: 0)
                 encoder.setBytes(&tileUniforms, length: MemoryLayout<UltraSharpTileUniforms>.size, index: 1)
 
-                encoder.dispatchThreads(MTLSize(width: Int(numTilesX), height: Int(numTilesY), depth: 1), threadsPerThreadgroup: MTLSize(width: min(16, Int(numTilesX)), height: min(16, Int(numTilesY)), depth: 1))
+                dispatch2D(encoder: encoder, pipeline: lkPipe, width: Int(numTilesX), height: Int(numTilesY))
 
                 encoder.memoryBarrier(scope: .buffers)
             }
@@ -434,12 +480,13 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         let w = referenceTexture.width
         let h = referenceTexture.height
         ensureStreamingPool(width: w, height: h)
+        activeAccumIndex = 0
 
         buildGaussianPyramid(sourceTexture: referenceTexture, pyramid: refPyramidLuma, commandBuffer: commandBuffer)
 
         guard let initPipe = initAccumulatorPipeline,
-              let sumColor = accumSumColor,
-              let sumWeight = accumSumWeight,
+              let sumColor = accumSumColorA,
+              let sumWeight = accumSumWeightA,
               let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
 
         encoder.label = "InitUltraSharpAccumulator"
@@ -448,9 +495,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         encoder.setTexture(sumColor, index: 1)
         encoder.setTexture(sumWeight, index: 2)
 
-        let threads16 = MTLSize(width: 16, height: 16, depth: 1)
-        let grid = MTLSize(width: (w + 15) / 16 * 16, height: (h + 15) / 16 * 16, depth: 1)
-        encoder.dispatchThreads(grid, threadsPerThreadgroup: threads16)
+        dispatch2D(encoder: encoder, pipeline: initPipe, width: w, height: h)
         encoder.endEncoding()
     }
 
@@ -478,12 +523,19 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         }
 
         // 3. Biến dạng Warp & Tính thặng dư (Residual)
+        let colorIn = (activeAccumIndex == 0) ? accumSumColorA : accumSumColorB
+        let weightIn = (activeAccumIndex == 0) ? accumSumWeightA : accumSumWeightB
+        let colorOut = (activeAccumIndex == 0) ? accumSumColorB : accumSumColorA
+        let weightOut = (activeAccumIndex == 0) ? accumSumWeightB : accumSumWeightA
+
         guard let warpPipe = warpPipeline,
               let robustPipe = robustAccumulatePipeline,
               let warpedTex = self.warpedTexture,
               let resTex = self.residualTexture,
-              let sumColor = self.accumSumColor,
-              let sumWeight = self.accumSumWeight,
+              let sumColorIn = colorIn,
+              let sumWeightIn = weightIn,
+              let sumColorOut = colorOut,
+              let sumWeightOut = weightOut,
               let l0Vectors = tileVectorBuffers.first else {
             return (false, 1.0)
         }
@@ -510,9 +562,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         encoder.setTexture(resTex, index: 3)
         encoder.setBytes(&tileUniforms, length: MemoryLayout<UltraSharpTileUniforms>.size, index: 1)
 
-        let threads16 = MTLSize(width: 16, height: 16, depth: 1)
-        let grid = MTLSize(width: (w + 15) / 16 * 16, height: (h + 15) / 16 * 16, depth: 1)
-        encoder.dispatchThreads(grid, threadsPerThreadgroup: threads16)
+        dispatch2D(encoder: encoder, pipeline: warpPipe, width: w, height: h)
 
         encoder.memoryBarrier(scope: .textures)
 
@@ -526,15 +576,15 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             encoder.setBuffer(countBuf, offset: 0, index: 1)
             var fusUni = UltraSharpFusionUniforms(width: UInt32(w), height: UInt32(h))
             encoder.setBytes(&fusUni, length: MemoryLayout<UltraSharpFusionUniforms>.size, index: 2)
-            encoder.dispatchThreads(grid, threadsPerThreadgroup: threads16)
+            dispatch2D(encoder: encoder, pipeline: madPipe, width: w, height: h)
             encoder.memoryBarrier(scope: [.buffers, .textures])
         }
 
-        // 5. Gộp Robust Wiener-style Shrinkage vào Bộ tích lũy
+        // 5. Gộp Robust Wiener-style Shrinkage Ping-Pong vào Bộ tích lũy
         var fusionUniforms = UltraSharpFusionUniforms(
             width: UInt32(w),
             height: UInt32(h),
-            baseNoiseSigma: 0.014, // Giá trị cơ sở thích ứng
+            baseNoiseSigma: 0.014,
             noiseScaleK: 1.85,
             frameIndex: UInt32(frameIndex),
             totalFrames: UInt32(totalFrames)
@@ -543,12 +593,15 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         encoder.setComputePipelineState(robustPipe)
         encoder.setTexture(warpedTex, index: 0)
         encoder.setTexture(resTex, index: 1)
-        encoder.setTexture(sumColor, index: 2)
-        encoder.setTexture(sumWeight, index: 3)
+        encoder.setTexture(sumColorIn, index: 2)
+        encoder.setTexture(sumWeightIn, index: 3)
+        encoder.setTexture(sumColorOut, index: 4)
+        encoder.setTexture(sumWeightOut, index: 5)
         encoder.setBytes(&fusionUniforms, length: MemoryLayout<UltraSharpFusionUniforms>.size, index: 0)
-        encoder.dispatchThreads(grid, threadsPerThreadgroup: threads16)
+        dispatch2D(encoder: encoder, pipeline: robustPipe, width: w, height: h)
 
         encoder.endEncoding()
+        activeAccumIndex ^= 1
 
         return (true, 0.05)
     }
@@ -563,9 +616,12 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         stateLock.lock()
         defer { stateLock.unlock() }
 
+        let currentSumColor = (activeAccumIndex == 0) ? accumSumColorA : accumSumColorB
+        let currentSumWeight = (activeAccumIndex == 0) ? accumSumWeightA : accumSumWeightB
+
         guard let normPipe = normalizeSharpenPipeline,
-              let sumColor = accumSumColor,
-              let sumWeight = accumSumWeight,
+              let sumColor = currentSumColor,
+              let sumWeight = currentSumWeight,
               let outTex = outputTexture else { return nil }
 
         guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return nil }
@@ -588,9 +644,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         encoder.setTexture(outTex, index: 2)
         encoder.setBytes(&uniforms, length: MemoryLayout<UltraSharpFusionUniforms>.size, index: 0)
 
-        let threads16 = MTLSize(width: 16, height: 16, depth: 1)
-        let grid = MTLSize(width: (w + 15) / 16 * 16, height: (h + 15) / 16 * 16, depth: 1)
-        encoder.dispatchThreads(grid, threadsPerThreadgroup: threads16)
+        dispatch2D(encoder: encoder, pipeline: normPipe, width: w, height: h)
         encoder.endEncoding()
 
         return outTex

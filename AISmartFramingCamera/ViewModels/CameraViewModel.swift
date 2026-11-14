@@ -1510,13 +1510,15 @@ public final class CameraViewModel: ObservableObject {
 
         isShutterPressing = true
         photoCapturePhase = .preparing
+        captureProcessingSettings = currentPhotoProcessingSettings()
+        hasTriggeredInstantShutterForCurrentCapture = false
         ultraSharpProgressPercentage = 0.05
         ultraSharpProgressString = "Đang chuẩn bị Ultra Sharp..."
 
         UltraSharpService.shared.processUltraSharpCapture(
             cameraService: cameraService,
-            requestedBurstCount: ultraSharpBurstCount,
-            sharpnessStrength: 0.35,
+            requestedBurstCount: max(4, min(12, ultraSharpBurstCount > 0 ? ultraSharpBurstCount : 8)),
+            sharpnessStrength: 0.42,
             progressHandler: { [weak self] info in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -1534,6 +1536,7 @@ public final class CameraViewModel: ObservableObject {
 
                     switch result {
                     case .success(let fusionResult):
+                        let outputFormat: PhotoSaveFormat = (self.selectedPhotoFormat == .dng) ? .heif : self.selectedPhotoFormat
                         self.cameraService(
                             self.cameraService,
                             didCapturePhoto: fusionResult.outputImage,
@@ -1542,7 +1545,7 @@ public final class CameraViewModel: ObservableObject {
                             livePhotoMovieURL: nil,
                             iso: self.currentLiveISO,
                             shutterSpeed: 0.01,
-                            format: self.selectedPhotoFormat,
+                            format: outputFormat,
                             requestedHighResolution: true
                         )
                         if fusionResult.wasFallback {
@@ -1552,6 +1555,7 @@ public final class CameraViewModel: ObservableObject {
                         }
 
                     case .failure(let error):
+                        self.captureProcessingSettings = nil
                         self.photoCapturePhase = .preparing
                         self.showHUDNotice("Lỗi Ultra Sharp: \(error.localizedDescription)")
                     }
