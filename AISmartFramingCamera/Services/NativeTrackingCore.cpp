@@ -835,38 +835,67 @@ bool ntc_match_patch_zncc(
         for (int32_t y = minY; y <= maxY; ++y) {
             const int32_t gridRow = (y - minY) * spanX;
             for (int32_t x = minX; x <= maxX; ++x) {
-                if (std::abs(x - bestX) <= 1 && std::abs(y - bestY) <= 1) continue;
+                if (std::abs(x - bestX) <= 2 && std::abs(y - bestY) <= 2) continue;
                 const double s = scores[gridRow + (x - minX)];
                 if (s > secondBest) {
                     secondBest = s;
                 }
             }
         }
-        if (bestScore - secondBest < 0.03) {
+        if (secondBest > -1.5 && bestScore - secondBest < 0.03) {
             return false;
         }
     }
 
-    // 2D Sub-Pixel Parabolic Refinement around (bestX, bestY)
+    // Autocorrelation-debiased 2D sub-pixel parabolic refinement around (bestX, bestY).
+    // Subtracting the template's own +-1 px self-correlation asymmetry (autoLeft - autoRight)
+    // eliminates the asymmetric 7x7 window bias at integer shifts while preserving sub-pixel accuracy.
+    auto evalTplSelfZNCC = [&](int32_t cx, int32_t cy) -> double {
+        double sB = 0.0;
+        double sBB = 0.0;
+        double sAB = 0.0;
+        int32_t m = 0;
+        for (int32_t oy = -3; oy <= 3; ++oy) {
+            const uint8_t* r = tplGray + (cy + oy) * tplWidth + cx;
+            for (int32_t ox = -3; ox <= 3; ++ox) {
+                const double bv = static_cast<double>(r[ox]);
+                sB += bv;
+                sBB += bv * bv;
+                sAB += static_cast<double>(aFlat[m++]) * bv;
+            }
+        }
+        const double vB = 49.0 * sBB - sB * sB;
+        if (vB <= 10.0) {
+            return -2.0;
+        }
+        return (49.0 * sAB - sumA * sB) / std::sqrt(varA * vB);
+    };
+
     double subDeltaX = 0.0;
     double subDeltaY = 0.0;
     if (bestX > minX && bestX < maxX) {
         const double sLeft = scores[(bestY - minY) * spanX + (bestX - 1 - minX)];
         const double sRight = scores[(bestY - minY) * spanX + (bestX + 1 - minX)];
-        if (sLeft > -1.0 && sRight > -1.0) {
+        const double autoLeft = evalTplSelfZNCC(sx - 1, sy);
+        const double autoRight = evalTplSelfZNCC(sx + 1, sy);
+        if (sLeft > -1.0 && sRight > -1.0 && autoLeft > -1.0 && autoRight > -1.0) {
             const double denom = 2.0 * (sLeft - 2.0 * bestScore + sRight);
             if (denom < -1e-6) {
-                subDeltaX = std::max(-0.45, std::min(0.45, (sLeft - sRight) / denom));
+                const double debiasedNum = (sLeft - sRight) - (autoLeft - autoRight);
+                subDeltaX = std::max(-0.45, std::min(0.45, debiasedNum / denom));
             }
         }
     }
     if (bestY > minY && bestY < maxY) {
         const double sUp = scores[(bestY - 1 - minY) * spanX + (bestX - minX)];
         const double sDown = scores[(bestY + 1 - minY) * spanX + (bestX - minX)];
-        if (sUp > -1.0 && sDown > -1.0) {
+        const double autoUp = evalTplSelfZNCC(sx, sy - 1);
+        const double autoDown = evalTplSelfZNCC(sx, sy + 1);
+        if (sUp > -1.0 && sDown > -1.0 && autoUp > -1.0 && autoDown > -1.0) {
             const double denom = 2.0 * (sUp - 2.0 * bestScore + sDown);
             if (denom < -1e-6) {
-                subDeltaY = std::max(-0.45, std::min(0.45, (sUp - sDown) / denom));
+                const double debiasedNum = (sUp - sDown) - (autoUp - autoDown);
+                subDeltaY = std::max(-0.45, std::min(0.45, debiasedNum / denom));
             }
         }
     }
@@ -962,7 +991,10 @@ NTCPatchFlowResult ntc_evaluate_constellation_flow(
             10, true, &candX, &candY, &fwdScore
         );
 
-        if (lkOk) {
+        // Only consult Pyramidal IC-LK when it predicts significant motion (> 2.5 px)
+        // and use the debiased ZNCC peak lkCand directly without blending raw lkX.
+        const float lkShift = std::hypot(lkX - clampedCenterX, lkY - clampedCenterY);
+        if (lkOk && lkShift > 2.5f) {
             float lkCandX = 0.0f;
             float lkCandY = 0.0f;
             double lkScore = -2.0;
@@ -970,9 +1002,9 @@ NTCPatchFlowResult ntc_evaluate_constellation_flow(
                     prevGray, width, height, oldX, oldY,
                     currGray, width, height, lkX, lkY,
                     4, true, &lkCandX, &lkCandY, &lkScore)) {
-                if (!matched || lkScore > fwdScore + 0.015) {
-                    candX = 0.35f * lkX + 0.65f * lkCandX;
-                    candY = 0.35f * lkY + 0.65f * lkCandY;
+                if ((!matched && lkScore >= 0.82) || lkScore > fwdScore + 0.015) {
+                    candX = lkCandX;
+                    candY = lkCandY;
                     fwdScore = lkScore;
                     matched = true;
                 }
@@ -1121,7 +1153,7 @@ NTCPatchFlowResult ntc_evaluate_constellation_flow(
             numeratorB += w * (x * v - y * u);
         }
 
-        const double priorWeight = 8.0;
+        const double priorWeight = 48.0;
         a = (denominator > 1.0) ? ((numeratorA + priorWeight) / (denominator + priorWeight)) : 1.0;
         b = (denominator > 1.0) ? (numeratorB / (denominator + priorWeight)) : 0.0;
 
@@ -1246,8 +1278,8 @@ bool ntc_imu_interpolate_pose(
         return false;
     }
 
-    // Small boundary tolerance (50ms) matching CompositionPureCalculations.interpolateHistoricalPose
-    if (targetTimestamp < oldest.timestamp - 0.05 || targetTimestamp > newest.timestamp + 0.05) {
+    // Small boundary tolerance (20ms) matching CompositionPureCalculations.interpolateHistoricalPose
+    if (targetTimestamp < oldest.timestamp - 0.02 || targetTimestamp > newest.timestamp + 0.02) {
         return false;
     }
     if (targetTimestamp <= oldest.timestamp) {
@@ -1287,12 +1319,22 @@ bool ntc_imu_interpolate_pose(
         return false;
     }
     const double dt = s1.timestamp - s0.timestamp;
-    if (dt <= 1e-7) {
-        *outQx = s1.qx;
-        *outQy = s1.qy;
-        *outQz = s1.qz;
-        *outQw = s1.qw;
-        return true;
+    if (dt <= 1e-6 || dt >= 0.10) {
+        if (std::abs(targetTimestamp - s0.timestamp) <= 1e-6) {
+            *outQx = s0.qx;
+            *outQy = s0.qy;
+            *outQz = s0.qz;
+            *outQw = s0.qw;
+            return true;
+        }
+        if (std::abs(targetTimestamp - s1.timestamp) <= 1e-6) {
+            *outQx = s1.qx;
+            *outQy = s1.qy;
+            *outQz = s1.qz;
+            *outQw = s1.qw;
+            return true;
+        }
+        return false;
     }
     const double frac = (targetTimestamp - s0.timestamp) / dt;
     slerpQuat(s0, s1, frac, outQx, outQy, outQz, outQw);

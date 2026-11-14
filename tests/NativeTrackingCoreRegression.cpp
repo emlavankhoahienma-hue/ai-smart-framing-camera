@@ -243,6 +243,153 @@ static void testPhotometricsAndSharpness() {
     EXPECT_TRUE(metrics.subjectSharpness > 0.35f);
 }
 
+static void renderLocalizedSubjectScene(
+    uint8_t* img,
+    int32_t w,
+    int32_t h,
+    double subjShiftX,
+    double subjShiftY,
+    double bgShiftX,
+    double bgShiftY
+) {
+    for (int32_t y = 0; y < h; ++y) {
+        for (int32_t x = 0; x < w; ++x) {
+            const double sx = static_cast<double>(x) - subjShiftX;
+            const double sy = static_cast<double>(y) - subjShiftY;
+            const bool inSubj = (sx >= 58.0 && sx <= 98.0 && sy >= 38.0 && sy <= 82.0);
+            double val = 0.0;
+            if (inSubj) {
+                const double edge = 45.0 * std::exp(-0.15 * (sx - 60.0));
+                const double t1 = std::sin(sx * 0.41 + sy * 0.23) * std::cos(sx * 0.29 - sy * 0.37);
+                const double t2 = std::sin(sx * 0.83 - sy * 0.51);
+                val = 140.0 + edge + 42.0 * t1 + 25.0 * t2;
+            } else {
+                const double bx = static_cast<double>(x) - bgShiftX;
+                const double by = static_cast<double>(y) - bgShiftY;
+                val = 70.0 + 18.0 * std::sin(bx * 0.15) * std::cos(by * 0.15);
+            }
+            const int32_t v = std::max(0, std::min(255, static_cast<int32_t>(std::lround(val))));
+            img[y * w + x] = static_cast<uint8_t>(v);
+        }
+    }
+}
+
+static void testMultiFrameZeroDriftAndT0Anchoring() {
+    const int32_t w = 160;
+    const int32_t h = 120;
+    std::vector<uint8_t> seedImg(static_cast<size_t>(w * h), 0);
+    std::vector<uint8_t> prevImg(static_cast<size_t>(w * h), 0);
+    std::vector<uint8_t> currImg(static_cast<size_t>(w * h), 0);
+
+    // 1. 90-frame static stability test on asymmetric subject edges with sensor noise
+    renderLocalizedSubjectScene(seedImg.data(), w, h, 0.0, 0.0, 0.0, 0.0);
+    prevImg = seedImg;
+    double anchorX = 0.50;
+    double anchorY = 0.50;
+    float seedPts[32] = {0.0f};
+    const int32_t seedNumPts = ntc_extract_roi_corners(seedImg.data(), w, h, 50, 110, 30, 90, seedPts, 16);
+    EXPECT_TRUE(seedNumPts >= 8);
+
+    float pts[32] = {0.0f};
+    std::memcpy(pts, seedPts, sizeof(pts));
+    int32_t numPts = seedNumPts;
+    uint32_t rng = 123456789U;
+
+    for (int32_t f = 1; f <= 90; ++f) {
+        renderLocalizedSubjectScene(currImg.data(), w, h, 0.0, 0.0, 0.0, 0.0);
+        for (int32_t i = 0; i < w * h; ++i) {
+            rng = rng * 1664525U + 1013904223U;
+            const int32_t noise = static_cast<int32_t>((rng >> 28U) & 3U) - 1;
+            currImg[static_cast<size_t>(i)] = static_cast<uint8_t>(
+                std::max(0, std::min(255, static_cast<int32_t>(currImg[static_cast<size_t>(i)]) + noise))
+            );
+        }
+        float surv[32] = {0.0f};
+        const NTCPatchFlowResult res = ntc_evaluate_constellation_flow(
+            prevImg.data(), currImg.data(), w, h,
+            pts, numPts,
+            0.0, 0.0,
+            0.375, 0.375,
+            0.31, 0.25, 0.69, 0.75,
+            anchorX, anchorY,
+            surv, 16
+        );
+        EXPECT_TRUE(res.isReliable);
+        anchorX = res.anchorNormX;
+        anchorY = res.anchorNormY;
+        prevImg = currImg;
+        numPts = ntc_extract_roi_corners(prevImg.data(), w, h, 50, 110, 30, 90, pts, 16);
+    }
+    const double staticDriftPxX = (anchorX - 0.50) * static_cast<double>(w);
+    const double staticDriftPxY = (anchorY - 0.50) * static_cast<double>(h);
+    EXPECT_TRUE(std::hypot(staticDriftPxX, staticDriftPxY) < 0.15);
+
+    // 2. 120-frame continuous sub-pixel pan-and-return with T0 seed constellation anchoring
+    prevImg = seedImg;
+    anchorX = 0.50;
+    anchorY = 0.50;
+    std::memcpy(pts, seedPts, sizeof(pts));
+    numPts = seedNumPts;
+    double prevShiftX = 0.0;
+    double prevShiftY = 0.0;
+
+    for (int32_t f = 1; f <= 120; ++f) {
+        const double sx = 12.0 * std::sin(2.0 * 3.14159265358979323846 * static_cast<double>(f) / 60.0);
+        const double sy = 6.0 * std::sin(2.0 * 3.14159265358979323846 * static_cast<double>(f) / 60.0);
+        renderLocalizedSubjectScene(currImg.data(), w, h, sx, sy, sx * 1.25, sy * 1.25);
+        const double dShiftX = sx - prevShiftX;
+        const double dShiftY = sy - prevShiftY;
+        const double boxMinX = (50.0 + sx) / static_cast<double>(w);
+        const double boxMaxX = (110.0 + sx) / static_cast<double>(w);
+        const double boxMinY = 1.0 - (90.0 + sy) / static_cast<double>(h);
+        const double boxMaxY = 1.0 - (30.0 + sy) / static_cast<double>(h);
+        float surv[32] = {0.0f};
+        const NTCPatchFlowResult res = ntc_evaluate_constellation_flow(
+            prevImg.data(), currImg.data(), w, h,
+            pts, numPts,
+            dShiftX * 0.85, dShiftY * 0.85,
+            0.375, 0.375,
+            boxMinX, boxMinY, boxMaxX, boxMaxY,
+            anchorX, anchorY,
+            surv, 16
+        );
+        EXPECT_TRUE(res.isReliable);
+        double newAnchorX = res.anchorNormX;
+        double newAnchorY = res.anchorNormY;
+
+        const double totalCoarseX = (newAnchorX - 0.50) * static_cast<double>(w);
+        const double totalCoarseY = (newAnchorY - 0.50) * static_cast<double>(h);
+        float seedSurv[32] = {0.0f};
+        const NTCPatchFlowResult seedRes = ntc_evaluate_constellation_flow(
+            seedImg.data(), currImg.data(), w, h,
+            seedPts, seedNumPts,
+            totalCoarseX, totalCoarseY,
+            0.375, 0.375,
+            boxMinX, boxMinY, boxMaxX, boxMaxY,
+            0.50, 0.50,
+            seedSurv, 16
+        );
+        if (seedRes.isReliable && seedRes.inliers >= 6) {
+            const double alpha = (seedRes.inliers >= 8) ? 0.80 : 0.50;
+            newAnchorX = (1.0 - alpha) * newAnchorX + alpha * seedRes.anchorNormX;
+            newAnchorY = (1.0 - alpha) * newAnchorY + alpha * seedRes.anchorNormY;
+        }
+        anchorX = newAnchorX;
+        anchorY = newAnchorY;
+        prevImg = currImg;
+        prevShiftX = sx;
+        prevShiftY = sy;
+        const int32_t left = std::max(4, static_cast<int32_t>((boxMinX + 0.12 * (boxMaxX - boxMinX)) * w));
+        const int32_t right = std::min(w - 5, static_cast<int32_t>((boxMaxX - 0.12 * (boxMaxX - boxMinX)) * w));
+        const int32_t top = std::max(4, static_cast<int32_t>((1.0 - boxMaxY + 0.12 * (boxMaxY - boxMinY)) * h));
+        const int32_t bottom = std::min(h - 5, static_cast<int32_t>((1.0 - boxMinY - 0.12 * (boxMaxY - boxMinY)) * h));
+        numPts = ntc_extract_roi_corners(prevImg.data(), w, h, left, right, top, bottom, pts, 16);
+    }
+    const double panReturnDriftPxX = (anchorX - 0.50) * static_cast<double>(w);
+    const double panReturnDriftPxY = (anchorY - 0.50) * static_cast<double>(h);
+    EXPECT_TRUE(std::hypot(panReturnDriftPxX, panReturnDriftPxY) < 0.45);
+}
+
 } // namespace
 
 int main() {
@@ -251,6 +398,7 @@ int main() {
     testConstellationFlowAndPyramidalICLK();
     testWaitFreeImuRingAndS2Geodesic();
     testPhotometricsAndSharpness();
+    testMultiFrameZeroDriftAndT0Anchoring();
 
     if (gFailures == 0) {
         std::printf("NativeTrackingCoreRegression: ALL TESTS PASSED\n");

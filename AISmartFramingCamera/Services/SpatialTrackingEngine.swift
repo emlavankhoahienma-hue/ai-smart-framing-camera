@@ -315,35 +315,15 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
 
     func reidentify(observedRay: SIMD3<Double>, timestamp: TimeInterval) {
         let obsNorm = simd_normalize(observedRay)
-        let dtMiss = lastVerifiedTimestamp.isFinite ? timestamp - lastVerifiedTimestamp : 0
-
-        var interpolatedVelocity = SIMD2<Double>.zero
-        if dtMiss > 0.04 && dtMiss <= 1.5, let lastRef = lastVerifiedRay {
-            let dotVal = simd_dot(lastRef, obsNorm)
-            let crossLen = simd_length(simd_cross(lastRef, obsNorm))
-            let gapAngle = atan2(crossLen, dotVal)
-            let tangentDisp = obsNorm - dotVal * lastRef
-            let tangentLen = simd_length(tangentDisp)
-            if tangentLen > 1e-6 {
-                let basis = Self.constructTangentBasis(for: obsNorm)
-                let avgSpeed = min(3.5, gapAngle / dtMiss)
-                let dir3D = tangentDisp / tangentLen
-                interpolatedVelocity = SIMD2<Double>(
-                    simd_dot(dir3D, basis.0) * avgSpeed,
-                    simd_dot(dir3D, basis.1) * avgSpeed
-                )
-            }
-        }
-
         bearing = obsNorm
         let basis = Self.constructTangentBasis(for: obsNorm)
         tangentE1 = basis.0
         tangentE2 = basis.1
-        angularVelocity = interpolatedVelocity
+        angularVelocity = .zero
 
         pThetaTheta = Mat2.diagonal(0.0004)
         pThetaOmega = Mat2.zero
-        pOmegaOmega = Mat2.diagonal(0.25)
+        pOmegaOmega = Mat2.diagonal(0.04)
 
         lastTimestamp = timestamp
         lastVerifiedRay = obsNorm
@@ -444,7 +424,9 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         guard fovDegrees.isFinite, fovDegrees > 0 else { return }
         lock.withLock {
             cameraFOV = fovDegrees
-            calibration = .fallback(fovLongDegrees: cameraFOV, zoom: zoom, aspect: calibration.aspect)
+            if !lastFrameTime.isFinite {
+                calibration = .fallback(fovLongDegrees: cameraFOV, zoom: zoom, aspect: calibration.aspect)
+            }
         }
     }
 
@@ -722,15 +704,12 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 if evidence == .reidentified {
                     corrected = observed
                     filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
-                } else if (evidence == .confirmedContinuation && residual > 0.20) ||
-                          ((evidence == .confirmedContinuation || evidence == .verifiedContinuation) && residual > 0.08 && value >= 0.65) {
+                } else if evidence == .confirmedContinuation && residual > 0.20 {
                     corrected = observed
                     filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
                 } else {
                     filter.update(innovation: innovation, sInv: sInv)
-                    // Bù độ trễ Vision mà không ghi đè lastTimestamp của EKF (giữ EKF trên trục thời gian camera monotonic)
-                    let now = CACurrentMediaTime()
-                    let blended = filter.predictedBearing(at: now, isDynamicScene: street || scene.isDeformableNature)
+                    let blended = filter.bearing
                     let length = simd_length(blended)
                     guard length.isFinite, length > 1e-9 else { publish(); return }
                     corrected = blended / length
@@ -743,10 +722,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 } else {
                     worldRay = corrected
                 }
-                if evidence == .reidentified || (evidence == .confirmedContinuation && residual > 0.20) ||
-                   ((evidence == .confirmedContinuation || evidence == .verifiedContinuation) && residual > 0.08 && value >= 0.65) {
+                if evidence == .reidentified || (evidence == .confirmedContinuation && residual > 0.20) {
                     presentationIsRecovering = true
-                } else if displayWorldRay == nil {
+                } else if !presentationIsRecovering {
+                    // Follow accepted optical motion directly. Filtering
+                    // displayWorldRay a second time makes the yellow dot lag.
                     displayWorldRay = subjectWorldRay ?? worldRay
                 }
             } else {
@@ -812,11 +792,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let settled = settlingAngle * focalScale < 0.008
             if settled { presentationIsRecovering = false }
             let rendered = guideFromSubject?.act(slewed) ?? (worldRay ?? slewed)
-            // Synchronize to the live 200Hz IMU stream with ~8ms ISP viewfinder scanout lead
-            // instead of freezing at the discrete 30Hz lastFrameTime timestamp.
-            let livePreviewTime = sample.timestamp - 0.008
+            // Project with the pose of the latest camera image while frames are
+            // current. Using a newer motion sample than the video frame makes
+            // the overlay lead the viewfinder image during pans.
             let imagePose = (now - lastFrameTime <= CompositionTuning.maxFrameToMotionLatency ?
-                self.poseUnlocked(at: livePreviewTime) : nil) ?? sample.deviceToWorld
+                self.poseUnlocked(at: lastFrameTime) : nil) ?? sample.deviceToWorld
             if CompositionTuning.isExperimentLoggingEnabled, lastFrameTime.isFinite {
                 let delta = sample.timestamp - lastFrameTime
                 if abs(delta) > CompositionTuning.maxFrameToMotionLatency, now - lastSyncWarningTime > 2.0 {

@@ -186,6 +186,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var lastBoxPose: simd_quatd?
     private var lastBoxTimestamp = -Double.infinity
     private var anchorUV = CGPoint(x: 0.5, y: 0.5)
+    private var seedAnchorUV = CGPoint(x: 0.5, y: 0.5)
     private var boxSize = CGSize(width: 0.14, height: 0.14)
     private var lastBox: CGRect?
     private var misses = 0
@@ -317,6 +318,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
         // Keep the selected physical point's relative location, not the new box center.
         anchorUV = CGPoint(x: (seedPoint.x - box.minX) / box.width,
                            y: ((1 - seedPoint.y) - box.minY) / box.height)
+        seedAnchorUV = anchorUV
         boxSize = box.size; lastBox = box
         lastBoxTimestamp = timestamp
         lastBoxPose = SpatialTrackingEngine.shared.pose(at: timestamp) ?? SpatialTrackingEngine.shared.latestPose()
@@ -611,10 +613,13 @@ public final class VisionFramingEngine: @unchecked Sendable {
                         lastBoxPose = currentPose
                         // Rebase the box fallback to the point actually followed by
                         // texture. Otherwise a flow dropout jumps to the old box UV.
-                        let selectedUV = CGPoint(x: (measuredPoint.x - rawBox.minX) / rawBox.width,
+                        let rawUV = CGPoint(x: (measuredPoint.x - rawBox.minX) / rawBox.width,
                             y: (1 - measuredPoint.y - rawBox.minY) / rawBox.height)
                         if flow?.isReliable == true,
-                           (0...1).contains(selectedUV.x), (0...1).contains(selectedUV.y) {
+                           (0...1).contains(rawUV.x), (0...1).contains(rawUV.y) {
+                            let clampedU = min(max(rawUV.x, max(0.08, seedAnchorUV.x - 0.22)), min(0.92, seedAnchorUV.x + 0.22))
+                            let clampedV = min(max(rawUV.y, max(0.08, seedAnchorUV.y - 0.22)), min(0.92, seedAnchorUV.y + 0.22))
+                            let selectedUV = CGPoint(x: clampedU, y: clampedV)
                             anchorUV = selectedUV
                         }
                         if let flow { patchFlow.accept(flow, box: rawBox, point: measuredPoint) }
@@ -722,7 +727,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                     let distanceToBearing = hypot(recovered.0.x - center.x, recovered.0.y - center.y)
                     let lastCenter = lastBox.map { point(in: $0) }
                     let distanceToLastBox = lastCenter.map { hypot(recovered.0.x - $0.x, recovered.0.y - $0.y) } ?? 1.0
-                    let matchesBearing = (prediction?.isInsideImage == true && distanceToBearing <= 0.28) || distanceToLastBox <= 0.25 || (recovered.1 >= 0.75 && observation.confidence >= 0.60)
+                    let matchesBearing = (prediction?.isInsideImage == true && distanceToBearing <= 0.10) || distanceToLastBox <= 0.12
                     let previousAgrees: Bool
                     if let previous = pendingRecovery, frame.timestamp > previous.frame.timestamp,
                        frame.timestamp - previous.frame.timestamp < 0.5 {

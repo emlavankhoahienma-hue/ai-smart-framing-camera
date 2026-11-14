@@ -390,19 +390,29 @@ final class TargetPatchFlow {
     private var points: [CGPoint] = []
     private var anchor: CGPoint?
     private var previousBox: CGRect?
+    private var seedImage: GrayImage?
+    private var seedPoints: [CGPoint] = []
+    private var seedAnchor: CGPoint?
+    private var seedBox: CGRect?
     private var scratchScores: [Double] = [Double](repeating: -2.0, count: 32 * 32)
 
     func reset() {
         previous = nil; points = []; anchor = nil; previousBox = nil
+        seedImage = nil; seedPoints = []; seedAnchor = nil; seedBox = nil
     }
 
     func seed(buffer: CVPixelBuffer, box: CGRect, point: CGPoint) {
         reset()
         guard let image = GrayImage(buffer: buffer) else { return }
+        let extracted = image.texturePoints(in: box)
         previous = image
-        points = image.texturePoints(in: box)
+        points = extracted
         anchor = point
         previousBox = box
+        seedImage = image
+        seedPoints = extracted
+        seedAnchor = point
+        seedBox = box
     }
 
     func evaluate(buffer: CVPixelBuffer, box: CGRect, fallback: CGPoint, gyroNormalizedShift: CGPoint = .zero) -> Evaluation? {
@@ -494,6 +504,81 @@ final class TargetPatchFlow {
             }
         }
         if ntcEval.isReliable {
+            var refinedPoint = CGPoint(x: ntcEval.anchorNormX, y: ntcEval.anchorNormY)
+            // T0 Reference Constellation & Direct Anchor Patch Correction:
+            // Eliminates cumulative dead-reckoning drift across long handheld pans/tremors
+            // by anchoring back to the frozen T0 seed constellation whenever visible.
+            if let seedImg = seedImage, let sAnchor = seedAnchor, let sBox = seedBox,
+               seedImg.width == image.width, seedImg.height == image.height,
+               seedPoints.count >= 5, sBox.width > 0.001,
+               (0.75...1.35).contains(box.width / sBox.width) {
+                let totalCoarseX = (Double(refinedPoint.x) - Double(sAnchor.x)) * Double(image.width)
+                let totalCoarseY = (Double(refinedPoint.y) - Double(sAnchor.y)) * Double(image.height)
+                var flatSeedPts = [Float](repeating: 0, count: seedPoints.count * 2)
+                for (idx, pt) in seedPoints.enumerated() {
+                    flatSeedPts[idx * 2] = Float(pt.x)
+                    flatSeedPts[idx * 2 + 1] = Float(pt.y)
+                }
+                var flatSeedSurv = [Float](repeating: 0, count: seedPoints.count * 2)
+                let seedEval: NTCPatchFlowResult = seedImg.pixels.withUnsafeBufferPointer { sBuf in
+                    image.pixels.withUnsafeBufferPointer { cBuf in
+                        flatSeedPts.withUnsafeBufferPointer { pBuf in
+                            flatSeedSurv.withUnsafeMutableBufferPointer { svBuf in
+                                guard let sBase = sBuf.baseAddress,
+                                      let cBase = cBuf.baseAddress,
+                                      let pBase = pBuf.baseAddress,
+                                      let svBase = svBuf.baseAddress else {
+                                    return NTCPatchFlowResult(anchorNormX: Double(refinedPoint.x),
+                                                              anchorNormY: Double(refinedPoint.y),
+                                                              inliers: 0,
+                                                              survivingCount: 0,
+                                                              isReliable: false)
+                                }
+                                return ntc_evaluate_constellation_flow(
+                                    sBase,
+                                    cBase,
+                                    Int32(image.width),
+                                    Int32(image.height),
+                                    pBase,
+                                    Int32(seedPoints.count),
+                                    totalCoarseX,
+                                    totalCoarseY,
+                                    Double(sBox.width),
+                                    Double(box.width),
+                                    Double(box.minX),
+                                    Double(box.minY),
+                                    Double(box.maxX),
+                                    Double(box.maxY),
+                                    Double(sAnchor.x),
+                                    Double(sAnchor.y),
+                                    svBase,
+                                    Int32(seedPoints.count)
+                                )
+                            }
+                        }
+                    }
+                }
+                if seedEval.isReliable && seedEval.inliers >= 6 {
+                    let alpha: CGFloat = seedEval.inliers >= 8 ? 0.80 : 0.55
+                    refinedPoint = CGPoint(
+                        x: (1.0 - alpha) * refinedPoint.x + alpha * CGFloat(seedEval.anchorNormX),
+                        y: (1.0 - alpha) * refinedPoint.y + alpha * CGFloat(seedEval.anchorNormY)
+                    )
+                }
+                // Direct 7x7 T0 anchor patch verification around refinedPoint
+                let seedAnchorPx = CGPoint(x: sAnchor.x * CGFloat(image.width), y: sAnchor.y * CGFloat(image.height))
+                let estAnchorPx = CGPoint(x: refinedPoint.x * CGFloat(image.width), y: refinedPoint.y * CGFloat(image.height))
+                if let (directPx, directScore) = matchWithScore(template: seedImg, at: seedAnchorPx, in: image,
+                                                                around: estAnchorPx, radius: 3, requireUnique: true),
+                   directScore >= 0.86,
+                   hypot(directPx.x - estAnchorPx.x, directPx.y - estAnchorPx.y) <= 2.0 {
+                    let directNorm = CGPoint(x: directPx.x / CGFloat(image.width), y: directPx.y / CGFloat(image.height))
+                    refinedPoint = CGPoint(
+                        x: 0.50 * refinedPoint.x + 0.50 * directNorm.x,
+                        y: 0.50 * refinedPoint.y + 0.50 * directNorm.y
+                    )
+                }
+            }
             var survivors: [CGPoint] = []
             let survCount = Int(max(0, ntcEval.survivingCount))
             survivors.reserveCapacity(survCount)
@@ -503,7 +588,7 @@ final class TargetPatchFlow {
             }
             return Evaluation(
                 image: image,
-                point: CGPoint(x: ntcEval.anchorNormX, y: ntcEval.anchorNormY),
+                point: refinedPoint,
                 isReliable: true,
                 inliers: Int(ntcEval.inliers),
                 survivingPoints: survivors
@@ -612,31 +697,7 @@ final class TargetPatchFlow {
 
     func accept(_ evaluation: Evaluation, box: CGRect, point: CGPoint) {
         previous = evaluation.image
-        let freshPoints = evaluation.image.texturePoints(in: box)
-        if freshPoints.count >= 10 {
-            points = freshPoints
-        } else {
-            // Merge high-confidence surviving landmarks with fresh Shi-Tomasi corners
-            // so motion-blurred frames during handheld pans do not starve the constellation.
-            var merged = freshPoints
-            let w = Double(evaluation.image.width)
-            let h = Double(evaluation.image.height)
-            let left = Double(box.minX + 0.08 * box.width) * w
-            let right = Double(box.maxX - 0.08 * box.width) * w
-            let top = Double(1 - box.maxY + 0.08 * box.height) * h
-            let bottom = Double(1 - box.minY - 0.08 * box.height) * h
-            for survivor in evaluation.survivingPoints {
-                guard merged.count < 16 else { break }
-                let sx = Double(survivor.x), sy = Double(survivor.y)
-                guard sx >= left, sx <= right, sy >= top, sy <= bottom,
-                      evaluation.image.containsPatch(Int(sx.rounded()), Int(sy.rounded())) else { continue }
-                let tooClose = merged.contains { hypot($0.x - survivor.x, $0.y - survivor.y) < 4.5 }
-                if !tooClose {
-                    merged.append(survivor)
-                }
-            }
-            points = merged
-        }
+        points = evaluation.image.texturePoints(in: box)
         anchor = point
         previousBox = box
     }
@@ -815,17 +876,37 @@ final class TargetPatchFlow {
                     }
                 }
 
-                // 2D Sub-Pixel Parabolic Refinement around (bestX, bestY)
+                // 2D Sub-Pixel Parabolic Refinement around (bestX, bestY) with template autocorrelation debiasing
+                func evalTplSelfZNCC(_ cx: Int, _ cy: Int) -> Double {
+                    var sB = 0.0, sBB = 0.0, sAB = 0.0
+                    var m = 0
+                    for oy in -3...3 {
+                        let rOff = (cy + oy) * tplW + cx
+                        for ox in -3...3 {
+                            let bv = Double(tplBase[rOff + ox])
+                            sB += bv
+                            sBB += bv * bv
+                            sAB += Double(aFlat[m]) * bv
+                            m += 1
+                        }
+                    }
+                    let vB = 49.0 * sBB - sB * sB
+                    guard vB > 10.0 else { return -2.0 }
+                    return (49.0 * sAB - sumA * sB) / sqrt(varA * vB)
+                }
+
                 var subX = Double(bestX)
                 var subY = Double(bestY)
                 if bestX > minX && bestX < maxX {
                     let rowOff = (bestY - minY) * spanX
                     let sLeft = scratchScores[rowOff + (bestX - 1 - minX)]
                     let sRight = scratchScores[rowOff + (bestX + 1 - minX)]
-                    if sLeft > -1.0 && sRight > -1.0 {
+                    let autoLeft = evalTplSelfZNCC(sx - 1, sy)
+                    let autoRight = evalTplSelfZNCC(sx + 1, sy)
+                    if sLeft > -1.0 && sRight > -1.0 && autoLeft > -1.0 && autoRight > -1.0 {
                         let denom = 2.0 * (sLeft - 2.0 * bestScore + sRight)
                         if abs(denom) > 1e-6 && denom < 0 {
-                            let deltaX = (sLeft - sRight) / denom
+                            let deltaX = ((sLeft - sRight) - (autoLeft - autoRight)) / denom
                             subX += max(-0.45, min(0.45, deltaX))
                         }
                     }
@@ -834,10 +915,12 @@ final class TargetPatchFlow {
                     let colOff = bestX - minX
                     let sUp = scratchScores[(bestY - 1 - minY) * spanX + colOff]
                     let sDown = scratchScores[(bestY + 1 - minY) * spanX + colOff]
-                    if sUp > -1.0 && sDown > -1.0 {
+                    let autoUp = evalTplSelfZNCC(sx, sy - 1)
+                    let autoDown = evalTplSelfZNCC(sx, sy + 1)
+                    if sUp > -1.0 && sDown > -1.0 && autoUp > -1.0 && autoDown > -1.0 {
                         let denom = 2.0 * (sUp - 2.0 * bestScore + sDown)
                         if abs(denom) > 1e-6 && denom < 0 {
-                            let deltaY = (sUp - sDown) / denom
+                            let deltaY = ((sUp - sDown) - (autoUp - autoDown)) / denom
                             subY += max(-0.45, min(0.45, deltaY))
                         }
                     }
