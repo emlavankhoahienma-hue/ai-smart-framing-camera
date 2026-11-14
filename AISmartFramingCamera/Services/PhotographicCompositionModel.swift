@@ -28,13 +28,25 @@ final class PhotographicCompositionModel {
     }
 
     func assess(_ image: CGImage, cancellation: CompositionAnalysisCancellation) -> Assessment? {
+        assess(image, synchronizedSaliencyCrop: nil, cancellation: cancellation)
+    }
+
+    func assess(_ image: CGImage, synchronizedSaliencyCrop: [Double]?,
+                cancellation: CompositionAnalysisCancellation) -> Assessment? {
         guard !cancellation.isCancelled, image.width >= 6, image.height >= 6,
               max(image.width, image.height) <= 1024,
               ProcessInfo.processInfo.thermalState != .critical,
               let map = saliency.map(image: image),
               let rgb = CompositionPhotoPixels.resizedRGB(image: image, side: 224) else { return nil }
         let values = input.dataPointer.assumingMemoryBound(to: Float.self)
-        for index in map.indices { values[index] = Float(map[index]) }
+        if let sync = synchronizedSaliencyCrop, sync.count == map.count {
+            for index in map.indices {
+                let fused = 0.72 * map[index] + 0.28 * min(1.0, max(0.0, sync[index]))
+                values[index] = Float(min(1.0, max(0.0, fused)))
+            }
+        } else {
+            for index in map.indices { values[index] = Float(map[index]) }
+        }
         let pixels = imageInput.dataPointer.assumingMemoryBound(to: Float.self)
         for index in 0..<(224 * 224) { for channel in 0..<3 {
             pixels[channel * 224 * 224 + index] = Float(rgb[index * 3 + channel]) / 255

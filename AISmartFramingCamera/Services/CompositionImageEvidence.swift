@@ -3,6 +3,7 @@ import CoreGraphics
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreVideo
+import CoreML
 import Vision
 
 /// Cancellation reaches the active Vision request as well as the bounded search.
@@ -60,8 +61,352 @@ final class CompositionImageRenderer {
         return nil
     }
 
+    /// Sequential memory-safe DepthAnythingV2 CoreML loader & inference inside autoreleasepool.
+    /// Gracefully returns nil when DepthAnythingV2*.mlmodelc is not bundled so multi-cue monocular depth runs instead.
+    func estimateMonocularDepth(image: CIImage, side: Int = 64,
+                                cancellation: CompositionAnalysisCancellation) -> [Double]? {
+        guard !cancellation.isCancelled,
+              side > 4, side <= 128,
+              ProcessInfo.processInfo.physicalMemory >= 3_500_000_000,
+              ProcessInfo.processInfo.thermalState != .critical,
+              !ProcessInfo.processInfo.isLowPowerModeEnabled else { return nil }
+        let candidateNames = ["DepthAnythingV2SmallF16", "DepthAnythingV2Small", "DepthAnythingV2", "DepthAnything"]
+        guard let url = candidateNames.compactMap({ Bundle.main.url(forResource: $0, withExtension: "mlmodelc") }).first else {
+            return nil
+        }
+        return autoreleasepool {
+            guard !cancellation.isCancelled else { return nil }
+            let config = MLModelConfiguration()
+            config.computeUnits = .cpuAndNeuralEngine
+            guard let model = try? MLModel(contentsOf: url, configuration: config) else { return nil }
+            defer { _ = model }
+
+            let inputEntries = model.modelDescription.inputDescriptionsByName
+            guard let (inputName, inputDesc) = inputEntries.first else { return nil }
+            let inputFeature: MLFeatureValue
+            if let imageConstraint = inputDesc.imageConstraint,
+               imageConstraint.pixelsWide > 0, imageConstraint.pixelsHigh > 0 {
+                let w = imageConstraint.pixelsWide
+                let h = imageConstraint.pixelsHigh
+                var pb: CVPixelBuffer?
+                let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+                guard CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA, attrs, &pb) == kCVReturnSuccess,
+                      let buffer = pb else { return nil }
+                let extent = image.extent
+                guard !extent.isEmpty, extent.width > 0, extent.height > 0 else { return nil }
+                let translated = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+                let scaled = translated.transformed(by: CGAffineTransform(scaleX: CGFloat(w) / extent.width, y: CGFloat(h) / extent.height))
+                context.render(scaled, to: buffer, bounds: CGRect(x: 0, y: 0, width: w, height: h),
+                               colorSpace: CGColorSpaceCreateDeviceRGB())
+                inputFeature = MLFeatureValue(pixelBuffer: buffer)
+            } else if let arrayConstraint = inputDesc.multiArrayConstraint,
+                      arrayConstraint.shape.count == 4 {
+                let h = arrayConstraint.shape[2].intValue
+                let w = arrayConstraint.shape[3].intValue
+                guard h > 0, w > 0, let small = render(image, size: CGSize(width: w, height: h)) else { return nil }
+                var rgba = [UInt8](repeating: 0, count: w * h * 4)
+                let ok = rgba.withUnsafeMutableBytes { ptr -> Bool in
+                    guard let cg = CGContext(data: ptr.baseAddress, width: w, height: h,
+                                             bitsPerComponent: 8, bytesPerRow: w * 4,
+                                             space: CGColorSpaceCreateDeviceRGB(),
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                    cg.draw(small, in: CGRect(x: 0, y: 0, width: w, height: h))
+                    return true
+                }
+                guard ok, let mlArray = try? MLMultiArray(shape: [1, 3, NSNumber(value: h), NSNumber(value: w)], dataType: .float32) else {
+                    return nil
+                }
+                let mean: [Float] = [0.485, 0.456, 0.406]
+                let std: [Float] = [0.229, 0.224, 0.225]
+                let dst = mlArray.dataPointer.assumingMemoryBound(to: Float.self)
+                let plane = w * h
+                for i in 0..<plane {
+                    for c in 0..<3 {
+                        let v = Float(rgba[i * 4 + c]) / 255.0
+                        dst[c * plane + i] = (v - mean[c]) / std[c]
+                    }
+                }
+                inputFeature = MLFeatureValue(multiArray: mlArray)
+            } else {
+                return nil
+            }
+
+            guard !cancellation.isCancelled,
+                  let provider = try? MLDictionaryFeatureProvider(dictionary: [inputName: inputFeature]),
+                  let output = try? model.prediction(from: provider),
+                  !cancellation.isCancelled else { return nil }
+
+            let preferredOutputs = ["depth", "predicted_depth", "inverse_depth"] + Array(output.featureNames)
+            for outName in preferredOutputs {
+                guard let val = output.featureValue(for: outName) else { continue }
+                if let pb = val.imageBufferValue {
+                    return maskMap(pb, side: side)
+                }
+                if let arr = val.multiArrayValue, arr.shape.count >= 2 {
+                    let h = arr.shape[arr.shape.count - 2].intValue
+                    let w = arr.shape[arr.shape.count - 1].intValue
+                    guard w > 0, h > 0, arr.count >= w * h else { continue }
+                    let raw = readDepthArray(arr, width: w, height: h, targetSide: side)
+                    return percentileNormalize(raw)
+                }
+            }
+            return nil
+        }
+    }
+
+    private func readDepthArray(_ array: MLMultiArray, width: Int, height: Int, targetSide: Int) -> [Double] {
+        var result = [Double](repeating: 0, count: targetSide * targetSide)
+        let rowStride = array.strides.count >= 2 ? array.strides[array.strides.count - 2].intValue : width
+        let colStride = array.strides.count >= 1 ? array.strides[array.strides.count - 1].intValue : 1
+        let isFloat16 = array.dataType == .float16
+        let ptrF32 = isFloat16 ? nil : array.dataPointer.bindMemory(to: Float.self, capacity: array.count)
+        let ptrU16 = isFloat16 ? array.dataPointer.bindMemory(to: UInt16.self, capacity: array.count) : nil
+
+        func float16ToDouble(_ bits: UInt16) -> Double {
+            let sign = (bits & 0x8000) != 0 ? -1.0 : 1.0
+            let exp = Int((bits >> 10) & 0x1F)
+            let mant = Int(bits & 0x03FF)
+            if exp == 0 {
+                return mant == 0 ? 0.0 : sign * pow(2.0, -14.0) * (Double(mant) / 1024.0)
+            } else if exp == 31 {
+                return 0.0
+            }
+            return sign * pow(2.0, Double(exp - 15)) * (1.0 + Double(mant) / 1024.0)
+        }
+
+        for y in 0..<targetSide {
+            let sy = min(height - 1, y * height / targetSide)
+            for x in 0..<targetSide {
+                let sx = min(width - 1, x * width / targetSide)
+                let offset = sy * rowStride + sx * colStride
+                let value: Double
+                if let p32 = ptrF32 {
+                    value = Double(p32[offset])
+                } else if let p16 = ptrU16 {
+                    value = float16ToDouble(p16[offset])
+                } else {
+                    value = 0.0
+                }
+                result[y * targetSide + x] = value.isFinite ? value : 0.0
+            }
+        }
+        return result
+    }
+
+    private func percentileNormalize(_ values: [Double]) -> [Double]? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let low = sorted[Int(Double(sorted.count - 1) * 0.02)]
+        let high = sorted[Int(Double(sorted.count - 1) * 0.98)]
+        let span = high - low
+        guard span.isFinite, span > 1e-5 else { return nil }
+        return values.map { min(1.0, max(0.0, ($0 - low) / span)) }
+    }
+
+    /// 14x14 multi-scale patch self-similarity & contrast attention map upsampled bilinearly to `side x side`.
+    private func extractPatchSelfAttention(rgba: [UInt8], luma: [Double], edges: [Double], side: Int) -> [Double] {
+        let grid = 14
+        let count = side * side
+        guard rgba.count == count * 4, luma.count == count, edges.count == count else {
+            return [Double](repeating: 0, count: count)
+        }
+        var pLuma = [Double](repeating: 0, count: grid * grid)
+        var pRG = [Double](repeating: 0, count: grid * grid)
+        var pBY = [Double](repeating: 0, count: grid * grid)
+        var pEdge = [Double](repeating: 0, count: grid * grid)
+
+        for py in 0..<grid {
+            let y0 = py * side / grid
+            let y1 = max(y0 + 1, (py + 1) * side / grid)
+            for px in 0..<grid {
+                let x0 = px * side / grid
+                let x1 = max(x0 + 1, (px + 1) * side / grid)
+                var sumL = 0.0, sumRG = 0.0, sumBY = 0.0, sumE = 0.0, n = 0.0
+                for y in y0..<min(side, y1) {
+                    for x in x0..<min(side, x1) {
+                        let idx = y * side + x
+                        let r = Double(rgba[idx * 4]) / 255.0
+                        let g = Double(rgba[idx * 4 + 1]) / 255.0
+                        let b = Double(rgba[idx * 4 + 2]) / 255.0
+                        sumL += luma[idx]
+                        sumRG += (r - g)
+                        sumBY += (b - 0.5 * (r + g))
+                        sumE += edges[idx]
+                        n += 1.0
+                    }
+                }
+                let pIdx = py * grid + px
+                let invN = n > 0 ? 1.0 / n : 1.0
+                pLuma[pIdx] = sumL * invN
+                pRG[pIdx] = sumRG * invN
+                pBY[pIdx] = sumBY * invN
+                pEdge[pIdx] = sumE * invN
+            }
+        }
+
+        var patchAttn = [Double](repeating: 0, count: grid * grid)
+        var maxPatch = 0.0
+        for y in 0..<grid {
+            let ny = (Double(y) + 0.5) / Double(grid)
+            for x in 0..<grid {
+                let nx = (Double(x) + 0.5) / Double(grid)
+                let i = y * grid + x
+                var distinctiveness = 0.0
+                for v in 0..<grid {
+                    let dy = (Double(v) + 0.5) / Double(grid) - ny
+                    for u in 0..<grid {
+                        let dx = (Double(u) + 0.5) / Double(grid) - nx
+                        let j = v * grid + u
+                        let featDist = abs(pLuma[i] - pLuma[j]) * 1.1 +
+                                       abs(pRG[i] - pRG[j]) * 0.9 +
+                                       abs(pBY[i] - pBY[j]) * 0.8 +
+                                       abs(pEdge[i] - pEdge[j]) * 0.6
+                        let spatialWeight = exp(-(dx * dx + dy * dy) / (2.0 * 0.42 * 0.42))
+                        distinctiveness += featDist * spatialWeight
+                    }
+                }
+                let val = (distinctiveness / Double(grid * grid)) * (0.65 + 0.35 * min(1.0, pEdge[i] * 1.5))
+                patchAttn[i] = val
+                if val > maxPatch { maxPatch = val }
+            }
+        }
+        guard maxPatch > 0.015 else { return [Double](repeating: 0, count: count) }
+        for i in patchAttn.indices { patchAttn[i] = min(1.0, patchAttn[i] / maxPatch) }
+
+        var upsampled = [Double](repeating: 0, count: count)
+        for y in 0..<side {
+            let fy = max(0.0, min(Double(grid - 1), (Double(y) + 0.5) * Double(grid) / Double(side) - 0.5))
+            let y0 = Int(floor(fy)), y1 = min(grid - 1, y0 + 1)
+            let wy = fy - Double(y0)
+            for x in 0..<side {
+                let fx = max(0.0, min(Double(grid - 1), (Double(x) + 0.5) * Double(grid) / Double(side) - 0.5))
+                let x0 = Int(floor(fx)), x1 = min(grid - 1, x0 + 1)
+                let wx = fx - Double(x0)
+                let top = patchAttn[y0 * grid + x0] * (1.0 - wx) + patchAttn[y0 * grid + x1] * wx
+                let bot = patchAttn[y1 * grid + x0] * (1.0 - wx) + patchAttn[y1 * grid + x1] * wx
+                upsampled[y * side + x] = min(1.0, max(0.0, top * (1.0 - wy) + bot * wy))
+            }
+        }
+        return upsampled
+    }
+
+    /// Multi-cue monocular inverse depth estimation combining focus sharpness, border-background geodesic
+    /// separation, Vision objectness/segmentation masks, and upper-sky perspective suppression.
+    private func buildMonocularDepthGrid(rgba: [UInt8], luma: [Double], edges: [Double],
+                                         attention: [Double], segMask: [Double]?,
+                                         foreground: [Double]?, side: Int) -> [Double] {
+        let count = side * side
+        var borderBarrier = [Double](repeating: 1.0, count: count)
+        for y in 0..<side {
+            for x in 0..<side {
+                if x == 0 || x == side - 1 || y == 0 {
+                    borderBarrier[y * side + x] = 0.0
+                }
+            }
+        }
+        // 4-sweep forward/backward geodesic contrast distance from frame borders
+        let offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        for pass in 0..<4 {
+            let ys = (pass % 2 == 0) ? Array(0..<side) : Array((0..<side).reversed())
+            let xs = (pass % 2 == 0) ? Array(0..<side) : Array((0..<side).reversed())
+            for y in ys {
+                for x in xs {
+                    let i = y * side + x
+                    var best = borderBarrier[i]
+                    let r1 = Double(rgba[i * 4]) / 255.0
+                    let g1 = Double(rgba[i * 4 + 1]) / 255.0
+                    let b1 = Double(rgba[i * 4 + 2]) / 255.0
+                    for (dx, dy) in offsets {
+                        let nx = x + dx, ny = y + dy
+                        guard nx >= 0, nx < side, ny >= 0, ny < side else { continue }
+                        let ni = ny * side + nx
+                        let r2 = Double(rgba[ni * 4]) / 255.0
+                        let g2 = Double(rgba[ni * 4 + 1]) / 255.0
+                        let b2 = Double(rgba[ni * 4 + 2]) / 255.0
+                        let stepCost = (abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2)) * 0.45 + edges[i] * 0.25
+                        let cand = min(1.0, borderBarrier[ni] + stepCost)
+                        if cand < best { best = cand }
+                    }
+                    borderBarrier[i] = best
+                }
+            }
+        }
+
+        var rawDepth = [Double](repeating: 0.5, count: count)
+        for y in 0..<side {
+            let py = (Double(y) + 0.5) / Double(side)
+            let perspectiveGround = min(1.0, max(0.0, py))
+            let isTopHalf = py < 0.42
+            for x in 0..<side {
+                let i = y * side + x
+                let skySuppression = (isTopHalf && luma[i] > 0.68 && edges[i] < 0.08) ? 0.30 : 1.0
+                let maskCue = segMask?[i] ?? (foreground?[i] ?? attention[i])
+                let focusSharpness = edges[i]
+                let combined = (0.36 * maskCue + 0.26 * borderBarrier[i] + 0.22 * focusSharpness + 0.16 * perspectiveGround) * skySuppression
+                rawDepth[i] = min(1.0, max(0.0, combined))
+            }
+        }
+
+        // Edge-preserving 3x3 cross-bilateral smoothing
+        var smoothed = rawDepth
+        for y in 0..<side {
+            for x in 0..<side {
+                let i = y * side + x
+                let cL = luma[i]
+                var acc = 0.0, wSum = 0.0
+                for dy in -1...1 {
+                    let ny = min(side - 1, max(0, y + dy))
+                    for dx in -1...1 {
+                        let nx = min(side - 1, max(0, x + dx))
+                        let ni = ny * side + nx
+                        let lDiff = cL - luma[ni]
+                        let w = exp(-(lDiff * lDiff) / (2.0 * 0.12 * 0.12))
+                        acc += rawDepth[ni] * w
+                        wSum += w
+                    }
+                }
+                smoothed[i] = wSum > 0 ? min(1.0, max(0.0, acc / wSum)) : rawDepth[i]
+            }
+        }
+        return smoothed
+    }
+
+    /// Warp the 64x64 synchronized saliency S_sync field inside crop corners into a 224x224 saliency hint for SAMP-Net.
+    func synchronizedSaliencyCrop(from raster: CompositionRaster, corners: [CGPoint], side: Int = 224) -> [Double]? {
+        guard raster.isValid, raster.hasAttention, corners.count == 4 else { return nil }
+        let minX = max(0.0, min(1.0, corners.map(\.x).min() ?? 0.0))
+        let maxX = max(0.0, min(1.0, corners.map(\.x).max() ?? 1.0))
+        let minY = max(0.0, min(1.0, corners.map(\.y).min() ?? 0.0))
+        let maxY = max(0.0, min(1.0, corners.map(\.y).max() ?? 1.0))
+        let spanW = max(0.01, maxX - minX)
+        let spanH = max(0.01, maxY - minY)
+        var out = [Double](repeating: 0, count: side * side)
+        let srcSide = raster.side
+        for y in 0..<side {
+            let v = minY + ((Double(y) + 0.5) / Double(side)) * spanH
+            let sy = v * Double(srcSide) - 0.5
+            let y0 = min(srcSide - 1, max(0, Int(floor(sy))))
+            let y1 = min(srcSide - 1, y0 + 1)
+            let wy = max(0.0, min(1.0, sy - Double(y0)))
+            for x in 0..<side {
+                let u = minX + ((Double(x) + 0.5) / Double(side)) * spanW
+                let sx = u * Double(srcSide) - 0.5
+                let x0 = min(srcSide - 1, max(0, Int(floor(sx))))
+                let x1 = min(srcSide - 1, x0 + 1)
+                let wx = max(0.0, min(1.0, sx - Double(x0)))
+                let top = raster.synchronizedSaliency[y0 * srcSide + x0] * (1.0 - wx) +
+                          raster.synchronizedSaliency[y0 * srcSide + x1] * wx
+                let bot = raster.synchronizedSaliency[y1 * srcSide + x0] * (1.0 - wx) +
+                          raster.synchronizedSaliency[y1 * srcSide + x1] * wx
+                out[y * side + x] = min(1.0, max(0.0, top * (1.0 - wy) + bot * wy))
+            }
+        }
+        return out
+    }
+
     func raster(image: CIImage, saliency: CVPixelBuffer?, objectness: CVPixelBuffer? = nil,
                 foregroundMask: CVPixelBuffer? = nil,
+                measuredDepth: [Double]? = nil,
                 measuredHorizon: (y: CGFloat, confidence: Double)? = nil,
                 measuredVanishingPoint: (point: CGPoint, confidence: Double, rayAngles: [Double])? = nil) -> CompositionRaster? {
         let side = 64
@@ -99,27 +444,40 @@ final class CompositionImageRenderer {
         let measured = saliency.flatMap { attentionMap($0, side: side) }
         let foreground = objectness.flatMap { attentionMap($0, side: side) }
         let segMask = foregroundMask.flatMap { maskMap($0, side: side) }
+        let patchAttention = extractPatchSelfAttention(rgba: bytes, luma: luma, edges: edges, side: side)
         let mean = luma.reduce(0, +) / Double(luma.count)
         let attention = luma.enumerated().map { index, value in
-            if let measured, let foreground { return measured[index] * 0.7 + foreground[index] * 0.3 }
-            if let measured { return measured[index] }
-            if let foreground { return foreground[index] }
-            return min(1, 0.7 * edges[index] + 0.3 * abs(value - mean))
-        }
-        var fgDepth = [Double](repeating: 0.5, count: side * side)
-        for y in 0..<side {
-            let perspectiveGround = min(1.0, max(0.0, (Double(y) + 0.5) / Double(side)))
-            for x in 0..<side {
-                let i = y * side + x
-                let maskVal = segMask?[i] ?? (foreground?[i] ?? attention[i])
-                let localSharpness = edges[i]
-                fgDepth[i] = min(1.0, max(0.0, 0.52 * maskVal + 0.28 * localSharpness + 0.20 * perspectiveGround))
+            if let measured, let foreground {
+                return min(1.0, measured[index] * 0.56 + foreground[index] * 0.26 + patchAttention[index] * 0.18)
             }
+            if let measured {
+                return min(1.0, measured[index] * 0.80 + patchAttention[index] * 0.20)
+            }
+            if let foreground {
+                return min(1.0, foreground[index] * 0.80 + patchAttention[index] * 0.20)
+            }
+            return min(1.0, 0.55 * edges[index] + 0.25 * abs(value - mean) + 0.20 * patchAttention[index])
+        }
+        let hasCoreMLDepth = (measuredDepth?.count == side * side)
+        let fgDepth: [Double]
+        if let measuredDepth, measuredDepth.count == side * side {
+            fgDepth = measuredDepth.enumerated().map { idx, d in
+                let dVal = d.isFinite ? min(1.0, max(0.0, d)) : 0.5
+                if let mask = segMask?[idx] {
+                    return min(1.0, max(0.0, 0.78 * dVal + 0.22 * mask))
+                }
+                return dVal
+            }
+        } else {
+            fgDepth = buildMonocularDepthGrid(rgba: bytes, luma: luma, edges: edges,
+                                              attention: attention, segMask: segMask,
+                                              foreground: foreground, side: side)
         }
         var resultRaster = CompositionRaster(side: side, luminance: luma, attention: attention,
                                              edges: edges, edgeAngles: edgeAngles,
                                              hasAttention: measured != nil || foreground != nil,
-                                             foregroundDepth: fgDepth)
+                                             foregroundDepth: fgDepth,
+                                             hasCoreMLDepth: hasCoreMLDepth)
         resultRaster.measuredHorizon = measuredHorizon
         resultRaster.measuredVanishingPoint = measuredVanishingPoint
         return resultRaster

@@ -14,6 +14,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     private let modelLock = NSLock()
     private var yoloCoreMLModel: VNCoreMLModel?
     private var yoloNativeMLModel: MLModel?
+    private var secondaryDedicatedModel: MLModel?
+    private var secondaryDedicatedModelName: String?
     private var isDedicatedYOLO26ANE: Bool = false
     private var loadedModelName: String?
     private var hasLoggedExperimentC: Bool = false
@@ -58,16 +60,32 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         }
     }
 
-    public var hasYOLOModel: Bool { modelLock.withLock { yoloCoreMLModel != nil || yoloNativeMLModel != nil } }
+    public var hasYOLOModel: Bool { modelLock.withLock { yoloCoreMLModel != nil || yoloNativeMLModel != nil || loadedModelName != nil } }
     public var activeModelName: String { modelLock.withLock { loadedModelName ?? "Apple Vision" } }
 
     func detectObjects(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation = .up,
                        cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled, CVPixelBufferGetWidth(pixelBuffer) > 32,
               CVPixelBufferGetHeight(pixelBuffer) > 32 else { return [] }
-        let (vnModel, nativeModel, isDedicated) = modelLock.withLock { (yoloCoreMLModel, yoloNativeMLModel, isDedicatedYOLO26ANE) }
+        var (vnModel, nativeModel, isDedicated, savedName) = modelLock.withLock {
+            (yoloCoreMLModel, yoloNativeMLModel, isDedicatedYOLO26ANE, loadedModelName)
+        }
+        if vnModel == nil && nativeModel == nil, let reloadName = savedName,
+           let res = makeModel(named: reloadName, computeUnits: .all) {
+            modelLock.withLock {
+                if yoloCoreMLModel == nil && yoloNativeMLModel == nil {
+                    yoloCoreMLModel = res.vnModel
+                    yoloNativeMLModel = res.mlModel
+                    isDedicatedYOLO26ANE = res.isDedicated
+                }
+                vnModel = yoloCoreMLModel
+                nativeModel = yoloNativeMLModel
+                isDedicated = isDedicatedYOLO26ANE
+            }
+        }
         if isDedicated, let nativeModel {
-            return detectWithDedicatedANE(model: nativeModel, pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+            return detectWithDedicatedANE(model: nativeModel, modelName: savedName, pixelBuffer: pixelBuffer,
+                                          orientation: orientation, cancellation: cancellation)
         } else if let vnModel {
             return detectWithVisionCoreML(vnModel: vnModel, pixelBuffer: pixelBuffer,
                                           orientation: orientation, cancellation: cancellation)
@@ -75,58 +93,214 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         return []
     }
 
-    /// A separate short-lived quality model cannot replace the model used by
-    /// target reacquisition. Slower still-image inference is intentional on XS.
+    /// Dual-model fusion for photographic framing: primary 80-class COCO (`yolo12s`/`yolo12n` via `.scaleFit` + `unpadLetterbox`)
+    /// paired with optional dedicated `yolov26_ane` / `yolov26_416_fp16` ANE detector and fused with Depth-Weighted IoU NMS.
+    /// On RAM < 6GB devices, Model 1 is released before Model 2 executes inside `autoreleasepool` to prevent Jetsam spikes.
     func detectPhotographicObjects(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
+                                   depthGrid: [Double]? = nil, depthSide: Int = 0,
                                    cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled else { return [] }
         let process = ProcessInfo.processInfo
         if process.thermalState == .serious || process.thermalState == .critical || process.isLowPowerModeEnabled {
             return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         }
-        return autoreleasepool {
+
+        let isHighMemory = process.physicalMemory >= 6_000_000_000
+        let primaryCandidates: [NeuralSubjectCandidate] = autoreleasepool {
             guard !cancellation.isCancelled else { return [] }
-            let cachedVN: VNCoreMLModel? = modelLock.withLock {
-                if let loaded = loadedModelName, (loaded == "yolo12s" || loaded == "yolo12n"), let vn = yoloCoreMLModel {
-                    return vn
+            var (resolvedVN, resolvedNative, resolvedDedicated, resolvedName) = modelLock.withLock {
+                if let loaded = loadedModelName, (loaded == "yolo12s" || loaded == "yolo12n") {
+                    return (yoloCoreMLModel, yoloNativeMLModel, isDedicatedYOLO26ANE, Optional(loaded))
                 }
-                return nil
+                return (nil as VNCoreMLModel?, nil as MLModel?, false, nil as String?)
             }
-            var resolvedVNModel: VNCoreMLModel? = cachedVN
-            if resolvedVNModel == nil {
-                let preferredVisionModels = process.physicalMemory >= 6_000_000_000
-                    ? ["yolo12s", "yolo12n", "yolo26s", "yolo26n"]
-                    : ["yolo12n", "yolo26n", "yolo12s", "yolo26s"]
-                for modelName in preferredVisionModels {
-                    if let res = makeModel(named: modelName, computeUnits: .all), let vn = res.vnModel {
-                        resolvedVNModel = vn
-                        modelLock.withLock {
-                            if yoloCoreMLModel == nil {
-                                yoloCoreMLModel = vn
-                                yoloNativeMLModel = res.mlModel
-                                isDedicatedYOLO26ANE = false
-                                loadedModelName = modelName
+            if resolvedVN == nil && resolvedNative == nil {
+                if let saved = modelLock.withLock({ loadedModelName }), (saved == "yolo12s" || saved == "yolo12n"),
+                   let reloaded = makeModel(named: saved, computeUnits: .all) {
+                    modelLock.withLock {
+                        yoloCoreMLModel = reloaded.vnModel
+                        yoloNativeMLModel = reloaded.mlModel
+                        isDedicatedYOLO26ANE = reloaded.isDedicated
+                    }
+                    resolvedVN = reloaded.vnModel
+                    resolvedNative = reloaded.mlModel
+                    resolvedDedicated = reloaded.isDedicated
+                    resolvedName = saved
+                } else {
+                    let preferredVisionModels = isHighMemory
+                        ? ["yolo12s", "yolo12n", "yolo26s", "yolo26n"]
+                        : ["yolo12n", "yolo26n", "yolo12s", "yolo26s"]
+                    for modelName in preferredVisionModels {
+                        if let res = makeModel(named: modelName, computeUnits: .all) {
+                            resolvedVN = res.vnModel
+                            resolvedNative = res.mlModel
+                            resolvedDedicated = res.isDedicated
+                            resolvedName = modelName
+                            modelLock.withLock {
+                                if yoloCoreMLModel == nil && yoloNativeMLModel == nil {
+                                    yoloCoreMLModel = res.vnModel
+                                    yoloNativeMLModel = res.mlModel
+                                    isDedicatedYOLO26ANE = res.isDedicated
+                                    loadedModelName = modelName
+                                }
                             }
+                            break
                         }
-                        break
                     }
                 }
             }
-            guard let vnModel = resolvedVNModel else {
-                return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+            if let vnModel = resolvedVN {
+                return detectWithVisionCoreML(vnModel: vnModel, pixelBuffer: pixelBuffer, orientation: orientation,
+                                              cancellation: cancellation, photographic: true)
+            } else if resolvedDedicated, let nativeModel = resolvedNative {
+                return detectWithDedicatedANE(model: nativeModel, modelName: resolvedName, pixelBuffer: pixelBuffer,
+                                              orientation: orientation, cancellation: cancellation)
             }
-            return detectWithVisionCoreML(vnModel: vnModel, pixelBuffer: pixelBuffer, orientation: orientation,
-                                          cancellation: cancellation, photographic: true)
+            return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         }
+
+        guard !cancellation.isCancelled, process.physicalMemory >= 3_500_000_000 else {
+            return Self.fuseDetectionsWithDepthNMS(primaryCandidates, depthGrid: depthGrid, depthSide: depthSide)
+        }
+
+        // Secondary dedicated YOLOv26 ANE pass (if bundled and distinct from active primary model).
+        let primaryName = modelLock.withLock { loadedModelName }
+        let secondaryOrder = isHighMemory ? ["yolov26_ane", "yolov26_416_fp16"] : ["yolov26_416_fp16", "yolov26_ane"]
+        guard let secondaryName = secondaryOrder.first(where: {
+            $0 != primaryName && Bundle.main.url(forResource: $0, withExtension: "mlmodelc") != nil
+        }) else {
+            return Self.fuseDetectionsWithDepthNMS(primaryCandidates, depthGrid: depthGrid, depthSide: depthSide)
+        }
+
+        if !isHighMemory {
+            // RAM < 6GB: release Model 1 weights before loading Model 2 inside autoreleasepool,
+            // preserving `loadedModelName` so target recovery lazily restores Model 1 only if needed.
+            autoreleasepool {
+                modelLock.withLock {
+                    yoloCoreMLModel = nil
+                    yoloNativeMLModel = nil
+                    secondaryDedicatedModel = nil
+                    secondaryDedicatedModelName = nil
+                }
+            }
+        }
+
+        let secondaryCandidates: [NeuralSubjectCandidate] = autoreleasepool {
+            guard !cancellation.isCancelled else { return [] }
+            if isHighMemory {
+                var cachedSecondary = modelLock.withLock {
+                    secondaryDedicatedModelName == secondaryName ? secondaryDedicatedModel : nil
+                }
+                if cachedSecondary == nil, let loaded = makeModel(named: secondaryName, computeUnits: .all)?.mlModel {
+                    modelLock.withLock {
+                        secondaryDedicatedModel = loaded
+                        secondaryDedicatedModelName = secondaryName
+                    }
+                    cachedSecondary = loaded
+                }
+                guard let model = cachedSecondary else { return [] }
+                return detectWithDedicatedANE(model: model, modelName: secondaryName, pixelBuffer: pixelBuffer,
+                                              orientation: orientation, cancellation: cancellation)
+            } else {
+                guard let loaded = makeModel(named: secondaryName, computeUnits: .all)?.mlModel else { return [] }
+                let results = detectWithDedicatedANE(model: loaded, modelName: secondaryName, pixelBuffer: pixelBuffer,
+                                                     orientation: orientation, cancellation: cancellation)
+                return results
+            }
+        }
+
+        let merged = primaryCandidates + secondaryCandidates
+        return Self.fuseDetectionsWithDepthNMS(merged, depthGrid: depthGrid, depthSide: depthSide)
     }
 
-    private func inputSize(for model: MLModel) -> (width: Int, height: Int) {
+    /// Depth-Weighted IoU NMS: keeps foreground & background overlapping subjects separated when their depth
+    /// planes diverge (`deltaDepth >= 0.18`), while merging same-depth duplicate detections with consensus boost.
+    static func fuseDetectionsWithDepthNMS(_ candidates: [NeuralSubjectCandidate],
+                                           depthGrid: [Double]? = nil,
+                                           depthSide: Int = 0) -> [NeuralSubjectCandidate] {
+        guard candidates.count > 1 else { return candidates }
+        let hasValidDepth = (depthGrid?.count ?? 0) == depthSide * depthSide && depthSide > 1
+        let sorted = candidates.sorted {
+            let lhs = $0.prominenceScore * (0.65 + 0.35 * Double($0.confidence))
+            let rhs = $1.prominenceScore * (0.65 + 0.35 * Double($1.confidence))
+            if abs(lhs - rhs) > 1e-6 { return lhs > rhs }
+            return $0.confidence > $1.confidence
+        }
+
+        var accepted: [NeuralSubjectCandidate] = []
+        var acceptedDepths: [Double] = []
+        for candidate in sorted {
+            let candDepth = (hasValidDepth ? meanDepth(of: candidate.boundingBox, grid: depthGrid!, side: depthSide) : nil) ?? 0.5
+            var duplicateIdx: Int?
+            for (idx, existing) in accepted.enumerated() {
+                let iou = boxIoU(existing.boundingBox, candidate.boundingBox)
+                guard iou > 0.48 else { continue }
+                if hasValidDepth {
+                    let depthDelta = abs(acceptedDepths[idx] - candDepth)
+                    if depthDelta >= 0.18 {
+                        // Foreground/background separation: keep both boxes distinct.
+                        continue
+                    }
+                }
+                let compatibleCategory = (existing.category == candidate.category) ||
+                    (existing.category == .foregroundObject && candidate.category == .foregroundObject) ||
+                    ((existing.category == .human && candidate.category == .foregroundObject ||
+                      existing.category == .foregroundObject && candidate.category == .human) && iou > 0.72)
+                if compatibleCategory || iou > 0.76 {
+                    duplicateIdx = idx
+                    break
+                }
+            }
+            if let idx = duplicateIdx {
+                // Multi-detector consensus: keep higher-prominence/confidence detection and boost prominence.
+                let mergedProminence = max(accepted[idx].prominenceScore, candidate.prominenceScore) * 1.04
+                if candidate.confidence > accepted[idx].confidence {
+                    var winner = candidate
+                    winner.prominenceScore = mergedProminence
+                    accepted[idx] = winner
+                } else {
+                    accepted[idx].prominenceScore = mergedProminence
+                }
+            } else {
+                accepted.append(candidate)
+                acceptedDepths.append(candDepth)
+            }
+        }
+        return accepted.sorted { $0.prominenceScore > $1.prominenceScore }
+    }
+
+    private static func meanDepth(of rect: CGRect, grid: [Double], side: Int) -> Double {
+        let x0 = min(side - 1, max(0, Int(floor(Double(rect.minX) * Double(side)))))
+        let x1 = min(side - 1, max(x0, Int(ceil(Double(rect.maxX) * Double(side))) - 1))
+        let y0 = min(side - 1, max(0, Int(floor(Double(rect.minY) * Double(side)))))
+        let y1 = min(side - 1, max(y0, Int(ceil(Double(rect.maxY) * Double(side))) - 1))
+        var sum = 0.0
+        var count = 0.0
+        for y in y0...y1 {
+            for x in x0...x1 {
+                sum += grid[y * side + x]
+                count += 1.0
+            }
+        }
+        return count > 0 ? sum / count : 0.5
+    }
+
+    private static func boxIoU(_ a: CGRect, _ b: CGRect) -> Double {
+        let inter = a.intersection(b)
+        guard !inter.isNull, !inter.isEmpty else { return 0.0 }
+        let interArea = Double(inter.width * inter.height)
+        let unionArea = Double(a.width * a.height + b.width * b.height) - interArea
+        guard unionArea > 1e-6 else { return 0.0 }
+        return interArea / unionArea
+    }
+
+    private func inputSize(for model: MLModel, modelName: String? = nil) -> (width: Int, height: Int) {
         if let imageDesc = model.modelDescription.inputDescriptionsByName["image"],
            let constraint = imageDesc.imageConstraint,
            constraint.pixelsWide > 0, constraint.pixelsHigh > 0 {
             return (constraint.pixelsWide, constraint.pixelsHigh)
         }
-        let currentName = modelLock.withLock { loadedModelName } ?? ""
+        let currentName = modelName ?? modelLock.withLock { loadedModelName } ?? ""
         if currentName.contains("416") {
             return (416, 416)
         }
@@ -204,12 +378,13 @@ public final class YOLODetectionEngine: @unchecked Sendable {
 
     private func detectWithDedicatedANE(
         model: MLModel,
+        modelName: String? = nil,
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation = .up,
         cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled else { return [] }
-        let targetSize = inputSize(for: model)
+        let targetSize = inputSize(for: model, modelName: modelName)
         guard targetSize.width > 0, targetSize.height > 0 else { return [] }
         guard let bufferToFeed = getResizedPixelBuffer(
             from: pixelBuffer,

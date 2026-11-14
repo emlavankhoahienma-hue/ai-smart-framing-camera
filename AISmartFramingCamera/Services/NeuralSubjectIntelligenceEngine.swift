@@ -189,6 +189,7 @@ public struct NeuralSubjectCandidate: Identifiable, Sendable {
     var faceBounds: [CGRect] = []
     var trackingPoint: CGPoint? = nil
     var isGroup = false
+    var attentionDominance: Double = 0.0
 
     // The preserved candidate format identifies Vision saliency regions by this
     // fixed internal label. YOLO class labels never use it. A region is a field
@@ -217,6 +218,7 @@ public struct NeuralAnalysisOutput: Sendable {
     var compositionRaster: CompositionRaster?
     var semanticAffinities: [String: Double] = [:]
     var semanticGuidance: SemanticSceneGuidance = .neutral
+    var subjectAttentionDominance: Double = 0.0
     var primaryFaceCount: Int { allCandidates.first?.faceBounds.count ?? 0 }
 
     public init(
@@ -335,14 +337,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             SemanticCropRanker.shared.endAnalysis()
         }
         let constrained = ProcessInfo.processInfo.thermalState == .critical
+        let isHighMemory = ProcessInfo.processInfo.physicalMemory >= 5_200_000_000
+        let seedLimit = constrained ? 16 : (isHighMemory ? 64 : 40)
+        let refineLimit = constrained ? 8 : (isHighMemory ? 28 : 20)
+        let arbitratedIncidentals = arbitratedIncidentalBounds(hero: hero, output: output, raster: raster)
         func proposals(refining seeds: [CompositionProposal] = []) -> [CompositionProposal] {
             CompositionPlanner.photographicProposals(subject: subject, intents: intents,
                 portraitBounds: portraitBounds, raster: raster, calibration: frame.calibration,
                 currentZoom: CGFloat(frame.displayZoom), allowedZooms: allowedZooms,
                 protectedBounds: hero.companionBounds,
-                incidentalBounds: output.allFaceRects.filter { !hero.faceBounds.contains($0) } +
-                    output.allCandidates.filter { $0.category == .animal && $0.id != hero.id }.map(\.boundingBox),
-                proposalLimit: seeds.isEmpty ? (constrained ? 8 : 10) : (constrained ? 4 : 6), refining: seeds,
+                incidentalBounds: arbitratedIncidentals,
+                proposalLimit: seeds.isEmpty ? seedLimit : refineLimit, refining: seeds,
                 poseProfile: poseProfile,
                 isCancelled: { cancellation.isCancelled })
         }
@@ -351,6 +356,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let searchResult = search.run(proposals: proposals(),
             image: CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation),
             aspect: frame.calibration.aspect, preferences: preferences,
+            raster: raster,
             modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
             aestheticModelURL: constrained ? nil : Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
             positionURL: constrained ? nil : Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
@@ -379,6 +385,36 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             assessedCompositionCount: result.assessedCount, usedCompositionModel: result.usedSpecialist,
             canAutoselectComposition: result.canAutoselect,
             receipt: receipt(count: result.assessedCount, specialist: result.usedSpecialist, modern: result.modernAssessmentCount))
+    }
+
+    private func arbitratedIncidentalBounds(hero: NeuralSubjectCandidate, output: NeuralAnalysisOutput,
+                                            raster: CompositionRaster) -> [CGRect] {
+        let focalDepth = raster.focalDepthPlane
+        var protected = hero.companionBounds + hero.faceBounds
+        protected.append(hero.boundingBox)
+
+        var incidentals: [CGRect] = output.allFaceRects.filter { !hero.faceBounds.contains($0) }
+        for candidate in output.allCandidates where candidate.id != hero.id {
+            let box = candidate.boundingBox
+            let overlapsProtected = protected.contains { $0.intersects(box) }
+            if candidate.category == .animal {
+                if !overlapsProtected { incidentals.append(box) }
+                continue
+            }
+            guard !overlapsProtected else { continue }
+            let edgeMargin = min(box.minX, min(1.0 - box.maxX, min(box.minY, 1.0 - box.maxY)))
+            let radialDist = hypot(Double(box.midX - 0.5), Double(box.midY - 0.5))
+            let nearEdge = edgeMargin < 0.14 || radialDist > 0.34
+            let stats = raster.depthStats(in: box)
+            let depthDivergence = abs(stats.meanDepth - focalDepth)
+            let weakSync = stats.meanSync < 0.22
+            if (nearEdge && depthDivergence >= 0.16 && weakSync) ||
+               (nearEdge && candidate.category == .human && candidate.prominenceScore < hero.prominenceScore * 0.45) ||
+               (depthDivergence >= 0.28 && weakSync && candidate.areaRatio < 0.12) {
+                incidentals.append(box)
+            }
+        }
+        return incidentals
     }
 
     private func compositionIntents(_ output: NeuralAnalysisOutput, hero: NeuralSubjectCandidate) -> [LocalCompositionIntent] {
@@ -443,16 +479,22 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             measuredVP = renderer.extractRANSACVanishingPoint(from: cObs, foregroundMask: fgMaskBuffer)
         }
         let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+        let measuredDepth: [Double]? = autoreleasepool {
+            renderer.estimateMonocularDepth(image: image, side: 64, cancellation: cancellation)
+        }
         let raster = renderer.raster(image: image,
             saliency: completed.contains(ObjectIdentifier(attention)) ? attention.results?.first?.pixelBuffer : nil,
             objectness: completed.contains(ObjectIdentifier(objectness)) ? objectness.results?.first?.pixelBuffer : nil,
             foregroundMask: fgMaskBuffer,
+            measuredDepth: measuredDepth,
             measuredHorizon: measuredHorizon,
             measuredVanishingPoint: measuredVP)
         let sceneLuma = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer)
         let isLowLight = sceneLuma < 0.42
         var candidates = YOLODetectionEngine.shared.detectPhotographicObjects(
-            pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+            pixelBuffer: pixelBuffer, orientation: orientation,
+            depthGrid: raster?.foregroundDepth, depthSide: raster?.side ?? 0,
+            cancellation: cancellation)
         var faceCandidates: [NeuralSubjectCandidate] = []
         if completed.contains(ObjectIdentifier(faces)) {
             let faceMinConf: Float = isLowLight ? 0.20 : 0.30
@@ -558,42 +600,68 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             } else {
                 candidates.append(contentsOf: broadSaliencyCandidates)
             }
+            if let r = raster {
+                let syncClusters = r.extractSynchronizedClusters(minPeak: hasExplicitDetectorCandidate ? 0.34 : 0.24, maxClusters: 3)
+                for cluster in syncClusters {
+                    let alreadyCovered = candidates.contains { existing in
+                        let inter = existing.boundingBox.intersection(cluster.bounds)
+                        guard !inter.isNull, !inter.isEmpty else { return false }
+                        let interArea = Double(inter.width * inter.height)
+                        let small = min(existing.areaRatio, cluster.area)
+                        return interArea / max(0.0001, small) > 0.55
+                    }
+                    guard !alreadyCovered else { continue }
+                    let label = cluster.area <= 0.42 ? "Chủ thể tiền cảnh" : "Vùng trọng tâm"
+                    let rawConf = 0.40 * cluster.peakValue + 0.36 * cluster.dominance + 0.24 * cluster.meanDepth
+                    let adjusted = Float(min(0.90, max(0.38, rawConf * (hasExplicitDetectorCandidate ? 0.78 : 1.0))))
+                    var c = NeuralSubjectCandidate(
+                        boundingBox: cluster.bounds,
+                        category: .foregroundObject,
+                        confidence: adjusted,
+                        label: label,
+                        prominenceScore: HeroSubjectPolicy.score(bounds: cluster.bounds, kind: .object,
+                            confidence: Double(adjusted), evidence: r.evidence(in: cluster.bounds))
+                    )
+                    c.trackingPoint = cluster.anchor
+                    c.attentionDominance = cluster.dominance
+                    candidates.append(c)
+                }
+            }
         }
         if candidates.isEmpty, let r = raster, r.hasAttention {
-            if let com = r.visualCenterOfMass {
-                let comVal = r.value(r.attention, at: com)
-                if comVal >= 0.18 {
-                    let bw: CGFloat = 0.36
-                    let bh: CGFloat = 0.36
+            let clusters = r.extractSynchronizedClusters(minPeak: 0.20, maxClusters: 4)
+            if !clusters.isEmpty {
+                for (idx, cluster) in clusters.enumerated() {
+                    let label = cluster.area <= 0.42 ? "Chủ thể tiền cảnh" : (idx == 0 ? "Vùng trọng tâm" : "Vùng chi tiết")
+                    let conf = Float(min(0.92, max(0.38, 0.42 * cluster.peakValue + 0.35 * cluster.dominance + 0.23 * cluster.meanDepth)))
+                    var c = NeuralSubjectCandidate(
+                        boundingBox: cluster.bounds,
+                        category: .foregroundObject,
+                        confidence: conf,
+                        label: label,
+                        prominenceScore: max(0.18, cluster.dominance * 0.48)
+                    )
+                    c.trackingPoint = cluster.anchor
+                    c.attentionDominance = cluster.dominance
+                    candidates.append(c)
+                }
+            } else if !r.isDiffuseAttention, let com = r.visualCenterOfMass {
+                let comVal = r.value(r.synchronizedSaliency, at: com)
+                if comVal >= 0.22 {
+                    let bw: CGFloat = 0.32
+                    let bh: CGFloat = 0.32
                     let bx = min(max(0.04, com.x - bw / 2), 1 - bw - 0.04)
                     let by = min(max(0.04, com.y - bh / 2), 1 - bh - 0.04)
                     let box = CGRect(x: bx, y: by, width: bw, height: bh)
-                    let c = NeuralSubjectCandidate(
+                    var c = NeuralSubjectCandidate(
                         boundingBox: box,
                         category: .foregroundObject,
                         confidence: Float(max(0.40, comVal)),
                         label: "Vùng trọng tâm",
                         prominenceScore: 0.22
                     )
-                    candidates.append(c)
-                }
-            }
-            if let anchor = r.sceneryAnchor {
-                let anchorVal = r.value(r.attention, at: anchor)
-                let bw: CGFloat = 0.32
-                let bh: CGFloat = 0.32
-                let bx = min(max(0.04, anchor.x - bw / 2), 1 - bw - 0.04)
-                let by = min(max(0.04, anchor.y - bh / 2), 1 - bh - 0.04)
-                let box = CGRect(x: bx, y: by, width: bw, height: bh)
-                let isFarFromFirst = candidates.first.map { hypot($0.center.x - anchor.x, $0.center.y - anchor.y) > 0.25 } ?? true
-                if isFarFromFirst {
-                    let c = NeuralSubjectCandidate(
-                        boundingBox: box,
-                        category: .foregroundObject,
-                        confidence: Float(max(0.38, anchorVal)),
-                        label: "Vùng chi tiết",
-                        prominenceScore: 0.18
-                    )
+                    c.trackingPoint = com
+                    c.attentionDominance = r.subjectAttentionDominance
                     candidates.append(c)
                 }
             }
@@ -637,6 +705,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
         }
         guard !cancellation.isCancelled else { return nil }
+        let heroDominance = candidates.first?.attentionDominance ?? 0.0
+        let rasterDominance = raster?.subjectAttentionDominance ?? 0.0
+        let combinedDominance = candidates.isEmpty ? rasterDominance : min(1.0, max(0.0, 0.62 * heroDominance + 0.38 * rasterDominance))
         var output = NeuralAnalysisOutput(allCandidates: candidates, detectedScene: scene,
             allFaceRects: faceCandidates.map(\.boundingBox), primaryEyePosition: candidates.first?.eyePosition,
             lookingDirection: CGVector(dx: candidates.first?.gaze ?? 0, dy: 0),
@@ -644,14 +715,20 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         output.compositionRaster = raster
         output.semanticAffinities = semantics
         output.semanticGuidance = guidance
+        output.subjectAttentionDominance = combinedDominance
         return output
     }
 
     private func rankedDistinct(_ raw: [NeuralSubjectCandidate], raster: CompositionRaster?) -> [NeuralSubjectCandidate] {
         let ranked = raw.map { c -> NeuralSubjectCandidate in
             var copy = c
+            let ev = raster?.evidence(in: c.boundingBox)
             copy.prominenceScore = HeroSubjectPolicy.score(bounds: c.boundingBox, kind: kind(c.category),
-                confidence: Double(c.confidence), evidence: raster?.evidence(in: c.boundingBox), hasFace: c.eyePosition != nil)
+                confidence: Double(c.confidence), evidence: ev, hasFace: c.eyePosition != nil)
+            if let ev {
+                let syncTerm = ev.syncAttention ?? ev.attentionDensity
+                copy.attentionDominance = min(1.0, max(copy.attentionDominance, 0.55 * syncTerm + 0.45 * min(1.0, ev.attentionShare * 2.2)))
+            }
             return copy
         }.sorted { $0.prominenceScore > $1.prominenceScore }
         var result: [NeuralSubjectCandidate] = []
@@ -710,6 +787,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                                         y: eyes.reduce(0) { $0 + $1.y } / CGFloat(eyes.count))
         }
         group.isGroup = true
+        group.attentionDominance = raster?.evidence(in: union)?.syncAttention ?? (members.map(\.attentionDominance).max() ?? hero.attentionDominance)
         // Group layout uses the group's eye line. Optical tracking must seed
         // a real member, never the empty space between two people's faces.
         group.trackingPoint = hero.eyePosition ?? hero.center

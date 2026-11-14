@@ -540,6 +540,68 @@ enum CompositionPlanningRegression {
             try require(CompositionPreferencePolicy.shotScaleBonus(sizeRatio: 0.26, original: 0.25) == 0, "negligible crop earned a bonus")
             try require(CompositionPreferencePolicy.shotScaleBonus(sizeRatio: 2.4, original: 0.25) == 0, "overshoot earned a bonus")
         }
+        try run("synchronized saliency S_sync isolates foreground focal depth cluster") {
+            let side = 32
+            var luma = [Double](repeating: 0.25, count: side * side)
+            var attention = [Double](repeating: 0.04, count: side * side)
+            var edges = [Double](repeating: 0.05, count: side * side)
+            var depth = [Double](repeating: 0.16, count: side * side)
+            for y in 0..<side {
+                let py = (Double(y) + 0.5) / Double(side)
+                for x in 0..<side {
+                    let px = (Double(x) + 0.5) / Double(side)
+                    let idx = y * side + x
+                    // Main hero cluster (asymmetrical 0.18x0.28) on foreground depth plane
+                    if (0.34...0.52).contains(px) && (0.36...0.64).contains(py) {
+                        luma[idx] = 0.72
+                        attention[idx] = 0.90
+                        edges[idx] = 0.78
+                        depth[idx] = 0.88
+                    } else if (0.82...0.94).contains(px) && (0.12...0.26).contains(py) {
+                        // Peripheral distant distractor on background plane
+                        luma[idx] = 0.85
+                        attention[idx] = 0.85
+                        edges[idx] = 0.72
+                        depth[idx] = 0.14
+                    }
+                }
+            }
+            let syncRaster = CompositionRaster(side: side, luminance: luma, attention: attention,
+                                               edges: edges, hasAttention: true, foregroundDepth: depth)
+            try require(syncRaster.isValid, "synchronized raster became invalid")
+            try require(syncRaster.focalDepthPlane > 0.60, "focal depth plane failed to lock onto foreground hero: \(syncRaster.focalDepthPlane)")
+            try require(syncRaster.subjectAttentionDominance > 0.20, "low dominance on isolated hero: \(syncRaster.subjectAttentionDominance)")
+            let heroSync = syncRaster.value(syncRaster.synchronizedSaliency, at: CGPoint(x: 0.43, y: 0.50))
+            let bgSync = syncRaster.value(syncRaster.synchronizedSaliency, at: CGPoint(x: 0.88, y: 0.19))
+            try require(heroSync > bgSync * 2.0, "background plane peak was not attenuated in S_sync (\(heroSync) vs \(bgSync))")
+            let clusters = syncRaster.extractSynchronizedClusters(minPeak: 0.24, maxClusters: 4)
+            try require(!clusters.isEmpty, "connected-components clustering missed clear foreground cluster")
+            let primary = clusters[0]
+            try require(abs(primary.anchor.x - 0.43) < 0.08 && abs(primary.anchor.y - 0.50) < 0.08,
+                        "mean-shift anchor drifted off foreground cluster: \(primary.anchor)")
+            try require(abs(primary.bounds.width - 0.36) > 0.04, "cluster fell back to rigid 0.36 square width")
+            let renderer = CompositionImageRenderer()
+            let warped = renderer.synchronizedSaliencyCrop(from: syncRaster, corners: [
+                CGPoint(x: 0.25, y: 0.25), CGPoint(x: 0.75, y: 0.25),
+                CGPoint(x: 0.75, y: 0.75), CGPoint(x: 0.25, y: 0.75)
+            ], side: 224)
+            try require(warped?.count == 224 * 224 && (warped?.allSatisfy { $0.isFinite && (0...1).contains($0) } ?? false),
+                        "224x224 warped S_sync crop invalid")
+        }
+        try run("unlocked shortlist and GAIC RoI score support multi-zoom arbitration") {
+            let hero = subject(index: 0, rect: CGRect(x: 0.42, y: 0.38, width: 0.16, height: 0.24), kind: .object)
+            let edgeTrash = CGRect(x: 0.84, y: 0.14, width: 0.12, height: 0.16)
+            let plans = CompositionPlanner.photographicProposals(subject: hero, intents: [.object],
+                portraitBounds: nil, raster: raster(distractorX: 0.90), calibration: .fallback(),
+                currentZoom: 1.0, allowedZooms: [1.0, 2.0, 3.0],
+                incidentalBounds: [edgeTrash], proposalLimit: 40)
+            try require(plans.count > 12 && plans.count <= 40, "shortlist count out of unlocked range: \(plans.count)")
+            try require(plans.allSatisfy { $0.gaicScore.isFinite && (0...1).contains($0.gaicScore) }, "invalid GAIC score")
+            try require((plans.map(\.zoom).max() ?? 1.0) >= 1.8, "multi-zoom sweep failed to reach telephoto candidates")
+            let hiGaic = CompositionPreferencePolicy.score(composition: 3.6, aesthetics: 3.6, geometry: 0.75, gaic: 0.92)!
+            let loGaic = CompositionPreferencePolicy.score(composition: 3.6, aesthetics: 3.6, geometry: 0.75, gaic: 0.18)!
+            try require(hiGaic > loGaic, "GAIC score failed to differentiate aesthetic preference")
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

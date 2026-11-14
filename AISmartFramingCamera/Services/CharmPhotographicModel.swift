@@ -45,6 +45,41 @@ final class CharmPhotographicModel {
         return Assessment(distribution: values.map { $0 / sum })
     }
 
+    /// Trích xuất bản đồ Self-Attention cấp patch (nếu checkpoint có output `patchAttention`),
+    /// chuẩn hóa về lưới 14x14 để hợp nhất vào S_sync; trả về nil nếu checkpoint chỉ xuất `aestheticDistribution`.
+    func extractPatchAttention(_ image: CGImage, cancellation: CompositionAnalysisCancellation) -> [Double]? {
+        guard !cancellation.isCancelled, ProcessInfo.processInfo.thermalState != .critical,
+              model.modelDescription.outputDescriptionsByName["patchAttention"] != nil,
+              let inputs = inputs(image),
+              let provider = try? MLDictionaryFeatureProvider(dictionary: [
+                  "patches": MLFeatureValue(multiArray: inputs.patches),
+                  "positions": MLFeatureValue(multiArray: inputs.positions)]),
+              !cancellation.isCancelled,
+              let result = try? model.prediction(from: provider),
+              !cancellation.isCancelled,
+              let attention = result.featureValue(for: "patchAttention")?.multiArrayValue,
+              attention.count > 0 else { return nil }
+        let count = attention.count
+        let raw = (0..<count).map { Double(truncating: attention[$0]) }
+        guard raw.allSatisfy(\.isFinite) else { return nil }
+        let side = Int(sqrt(Double(count)).rounded())
+        guard side > 0, side * side == count else { return nil }
+        let low = raw.min() ?? 0.0
+        let high = raw.max() ?? 1.0
+        let span = high - low
+        let normalized = span > 1e-6 ? raw.map { min(1.0, max(0.0, ($0 - low) / span)) } : [Double](repeating: 0.5, count: count)
+        if side == 14 { return normalized }
+        var grid14 = [Double](repeating: 0.0, count: 14 * 14)
+        for y in 0..<14 {
+            let sy = min(side - 1, y * side / 14)
+            for x in 0..<14 {
+                let sx = min(side - 1, x * side / 14)
+                grid14[y * 14 + x] = normalized[sy * side + sx]
+            }
+        }
+        return grid14
+    }
+
     func inputs(_ image: CGImage) -> (patches: MLMultiArray, positions: MLMultiArray)? {
         guard image.width > 0, image.height > 0 else { return nil }
         let scale = min(1, 336 / Double(max(image.width, image.height)))

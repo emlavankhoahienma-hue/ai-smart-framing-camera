@@ -26,7 +26,7 @@ final class CompositionAestheticSearch {
     init(renderer: CompositionImageRenderer) { self.renderer = renderer }
 
     func run(proposals: [CompositionProposal], image: CIImage, aspect: Double,
-             preferences: [String: Double], modelURL: URL?,
+             preferences: [String: Double], raster: CompositionRaster? = nil, modelURL: URL?,
              aestheticModelURL: URL? = nil, positionURL: URL? = nil, requiresModernModel: Bool = false,
              cancellation: CompositionAnalysisCancellation,
              progress: @Sendable (String) -> Void,
@@ -40,16 +40,20 @@ final class CompositionAestheticSearch {
                 if cancellation.isCancelled { return [] }
                 let item: View? = autoreleasepool {
                     guard let preview = renderer.preview(image: image, corners: candidate.sourceCorners, aspect: aspect) else { return nil }
-                    let assessment = specialist?.assess(preview, cancellation: cancellation)
+                    let syncCrop = raster.flatMap { renderer.synchronizedSaliencyCrop(from: $0, corners: candidate.sourceCorners, side: 224) }
+                    let assessment = specialist?.assess(preview, synchronizedSaliencyCrop: syncCrop, cancellation: cancellation)
                     var proposal = candidate
                     if let assessment {
                         assessedCount += 1
                         // Phản biện 2: Khi xoay camera 3D ở 1.0x (outOfBoundsFraction > 0), cửa sổ preview bị giới hạn trong [0, 1]
                         // nên ưu tiên trọng số Trường Thế Năng Thị Giác 3D (candidate.continuousFieldScore) để không bị thiên vị cho khung đứng yên
                         let oobWeight = min(0.32, candidate.outOfBoundsFraction * 0.45)
-                        let specialistWeight = 0.46 - oobWeight
-                        let fieldWeight = 0.54 + oobWeight
-                        proposal.score = specialistWeight * (assessment.mean - 1) / 4 + fieldWeight * candidate.score
+                        let specialistWeight = 0.42 - oobWeight
+                        let fieldWeight = 0.46 + oobWeight
+                        let gaicWeight = 0.12
+                        proposal.score = specialistWeight * (assessment.mean - 1) / 4 +
+                            fieldWeight * candidate.score +
+                            gaicWeight * min(1.0, max(0.0, candidate.gaicScore))
                     } else if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
                         proposal.score += aesthetic * 0.075
                     }
@@ -92,7 +96,7 @@ final class CompositionAestheticSearch {
             var indices: [Int] = []
             func include(_ index: Int) { if !indices.contains(index) { indices.append(index) } }
             if let original = evaluated.firstIndex(where: { $0.proposal.isUnchangedView }) { include(original) }
-            let leaders = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: 3)
+            let leaders = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: 5)
             for leader in leaders {
                 if let index = evaluated.firstIndex(where: { $0.proposal.sourceCorners == leader.sourceCorners }) { include(index) }
                 let nearby = evaluated.indices.filter {
@@ -111,11 +115,15 @@ final class CompositionAestheticSearch {
             let maxAllowedZoom: CGFloat = baseArea < 0.08 ? 3.5 : (baseArea < 0.22 ? 3.0 : 2.2)
             let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.20 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
-            for index in zoomed.prefix(4) { include(index) }
-            let constrained = ProcessInfo.processInfo.isLowPowerModeEnabled ||
-                ProcessInfo.processInfo.physicalMemory < 6_000_000_000 || ProcessInfo.processInfo.thermalState == .serious
-            let budget = constrained ? 4 : 6
-            for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
+            for index in zoomed.prefix(8) { include(index) }
+            let thermalOrLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled ||
+                ProcessInfo.processInfo.thermalState == .serious
+            let isLowMemory = ProcessInfo.processInfo.physicalMemory < 5_200_000_000
+            let budget = thermalOrLowPower ? 12 : (isLowMemory ? 24 : 40)
+            for index in evaluated.indices.sorted(by: {
+                (evaluated[$0].proposal.score * 0.85 + evaluated[$0].proposal.gaicScore * 0.15) >
+                (evaluated[$1].proposal.score * 0.85 + evaluated[$1].proposal.gaicScore * 0.15)
+            }) {
                 if indices.count >= budget { break }
                 include(index)
             }
@@ -140,6 +148,7 @@ final class CompositionAestheticSearch {
                            composition: composition.mean,
                            aesthetics: aesthetics.mean,
                            geometry: pool[index].geometryScore,
+                           gaic: pool[index].proposal.gaicScore,
                            outOfBoundsFraction: pool[index].proposal.outOfBoundsFraction
                        ) {
                         pool[index].proposal.score = score
@@ -264,14 +273,19 @@ enum CompositionPreferencePolicy {
             composition >= originalComposition - 0.45 && aesthetics >= originalAesthetics - 0.65
     }
 
-    static func score(composition: Double, aesthetics: Double, geometry: Double, outOfBoundsFraction: Double = 0.0) -> Double? {
+    static func score(composition: Double, aesthetics: Double, geometry: Double,
+                      gaic: Double = 0.5, outOfBoundsFraction: Double = 0.0) -> Double? {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
         let clampedOOB = outOfBoundsFraction.isFinite ? min(0.18, max(0.0, outOfBoundsFraction * 0.25)) : 0.0
-        let compW = 0.40 - clampedOOB * 0.4
-        let aesthW = 0.40 - clampedOOB * 0.4
-        let geomW = 0.20 + clampedOOB
-        return compW * (composition - 1) / 4 + aesthW * (aesthetics - 1) / 4 +
+        let clampedGaic = gaic.isFinite ? min(1.0, max(0.0, gaic)) : 0.5
+        let compW = 0.36 - clampedOOB * 0.35
+        let aesthW = 0.36 - clampedOOB * 0.35
+        let gaicW = 0.14 - clampedOOB * 0.10
+        let geomW = 0.14 + clampedOOB * 0.80
+        return compW * (composition - 1) / 4 +
+            aesthW * (aesthetics - 1) / 4 +
+            gaicW * clampedGaic +
             geomW * min(1, max(0, geometry))
     }
 

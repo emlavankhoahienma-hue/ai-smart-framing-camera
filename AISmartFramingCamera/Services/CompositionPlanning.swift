@@ -145,6 +145,8 @@ struct SubjectVisualEvidence: Sendable {
     let detail: Double
     let exposure: Double
     var foregroundDepth: Double = 0.5
+    var syncAttention: Double? = nil
+    var depthContrast: Double? = nil
 }
 
 enum HeroSubjectPolicy {
@@ -184,16 +186,22 @@ enum HeroSubjectPolicy {
         }
         let visual: Double
         if let e = evidence {
+            let syncBoost = e.syncAttention.map { 0.08 * $0 } ?? 0.0
+            let depthIsolation = e.depthContrast.map { 0.05 * $0 } ?? 0.0
             visual = 0.18 * e.attentionDensity + 0.15 * sqrt(max(0, e.attentionShare)) +
-                0.10 * e.separation + 0.06 * e.detail * e.exposure + 0.07 * max(0, e.foregroundDepth - 0.35)
+                0.10 * e.separation + 0.06 * e.detail * e.exposure + 0.07 * max(0, e.foregroundDepth - 0.35) +
+                syncBoost + depthIsolation
         } else { visual = 0.20 * scale }
         let tierMultiplier: Double
         switch kind {
         case .person, .group:
-            let distantBystander = !hasFace && (area < 0.045 || (evidence?.foregroundDepth ?? 0.5) < 0.28) && bounds.maxY < 0.60
+            let syncLow = evidence?.syncAttention.map { $0 < 0.16 && (evidence?.foregroundDepth ?? 0.5) < 0.42 } ?? false
+            let distantBystander = !hasFace && (area < 0.045 || (evidence?.foregroundDepth ?? 0.5) < 0.28 || syncLow) && bounds.maxY < 0.60
             tierMultiplier = hasFace ? 1.30 : (distantBystander ? 0.52 : 1.12)
         case .face: tierMultiplier = 1.20
-        case .animal: tierMultiplier = 1.10
+        case .animal:
+            let backgroundPet = area < 0.025 && (evidence?.foregroundDepth ?? 0.5) < 0.30 && bounds.maxY < 0.56
+            tierMultiplier = backgroundPet ? 0.68 : 1.10
         case .object:
             let bloatedRegion = area > 0.46
             let crispForegroundObject = (0.02...0.38).contains(area) && hypot(Double(bounds.midX - 0.5), Double(bounds.midY - 0.52)) < 0.34
@@ -245,6 +253,16 @@ struct HeroIdentitySelector {
     }
 }
 
+struct SynchronizedSaliencyCluster: Sendable {
+    let bounds: CGRect
+    let anchor: CGPoint
+    let peakValue: Double
+    let meanSync: Double
+    let meanDepth: Double
+    let dominance: Double
+    let area: Double
+}
+
 /// Small, upright, top-left-origin image evidence. No camera buffers or UI objects.
 struct CompositionRaster: Sendable {
     let side: Int
@@ -254,27 +272,130 @@ struct CompositionRaster: Sendable {
     let edgeAngles: [Double]
     let hasAttention: Bool
     let foregroundDepth: [Double]
+    let synchronizedSaliency: [Double]
+    let depthGradient: [Double]
+    let focalDepthPlane: Double
+    let hasCoreMLDepth: Bool
+    let subjectAttentionDominance: Double
     var measuredHorizon: (y: CGFloat, confidence: Double)? = nil
     var measuredVanishingPoint: (point: CGPoint, confidence: Double, rayAngles: [Double])? = nil
 
     init(side: Int, luminance: [Double], attention: [Double], edges: [Double], edgeAngles: [Double] = [],
-         hasAttention: Bool, foregroundDepth: [Double] = []) {
+         hasAttention: Bool, foregroundDepth: [Double] = [], synchronizedSaliency: [Double] = [],
+         focalDepthPlane: Double? = nil, hasCoreMLDepth: Bool = false) {
         self.side = side
         self.luminance = luminance
         self.attention = attention
         self.edges = edges
         self.edgeAngles = edgeAngles.count == side * side ? edgeAngles : []
         self.hasAttention = hasAttention
-        self.foregroundDepth = foregroundDepth.count == side * side ? foregroundDepth : [Double](repeating: 0.5, count: side * side)
+        let count = max(0, side * side)
+        let depth = foregroundDepth.count == count ? foregroundDepth : [Double](repeating: 0.5, count: count)
+        self.foregroundDepth = depth
+        self.hasCoreMLDepth = hasCoreMLDepth
+
+        var grad = [Double](repeating: 0, count: count)
+        if side > 1, depth.count == count {
+            for y in 0..<side {
+                for x in 0..<side {
+                    let dl = depth[y * side + min(side - 1, x + 1)] - depth[y * side + max(0, x - 1)]
+                    let dv = depth[min(side - 1, y + 1) * side + x] - depth[max(0, y - 1) * side + x]
+                    grad[y * side + x] = min(1.0, hypot(dl, dv) * 2.0)
+                }
+            }
+        }
+        self.depthGradient = grad
+
+        let resolvedFocalDepth: Double
+        if let focalDepthPlane, focalDepthPlane.isFinite {
+            resolvedFocalDepth = min(0.95, max(0.05, focalDepthPlane))
+        } else if side > 0, attention.count == count, depth.count == count, hasAttention {
+            var bins = [Double](repeating: 0, count: 16)
+            var dSum = 0.0
+            var wSum = 0.0
+            for y in 0..<side {
+                let ny = (Double(y) + 0.5) / Double(side) - 0.5
+                for x in 0..<side {
+                    let nx = (Double(x) + 0.5) / Double(side) - 0.5
+                    let i = y * side + x
+                    let centerWeight = exp(-1.8 * (nx * nx + ny * ny))
+                    let w = max(0.0, attention[i]) * (0.45 + 0.55 * centerWeight) * (0.55 + 0.45 * depth[i])
+                    let d = min(1.0, max(0.0, depth[i]))
+                    let bin = min(15, max(0, Int(d * 16.0)))
+                    bins[bin] += w
+                    dSum += d * w
+                    wSum += w
+                }
+            }
+            if wSum > 0.01, let peakBin = bins.indices.max(by: { bins[$0] < bins[$1] }) {
+                let modeDepth = (Double(peakBin) + 0.5) / 16.0
+                let meanDepth = dSum / wSum
+                resolvedFocalDepth = min(0.94, max(0.08, 0.58 * modeDepth + 0.42 * meanDepth))
+            } else {
+                resolvedFocalDepth = 0.5
+            }
+        } else {
+            resolvedFocalDepth = 0.5
+        }
+        self.focalDepthPlane = resolvedFocalDepth
+
+        let resolvedSync: [Double]
+        if synchronizedSaliency.count == count, synchronizedSaliency.allSatisfy(\.isFinite) {
+            resolvedSync = synchronizedSaliency.map { min(1.0, max(0.0, $0)) }
+        } else if side > 0, attention.count == count, depth.count == count {
+            let sigmaD = 0.28
+            let twoSigmaSq = 2.0 * sigmaD * sigmaD
+            let gamma = 0.65
+            var raw = [Double](repeating: 0, count: count)
+            var maxSync = 0.0
+            for i in 0..<count {
+                let diff = depth[i] - resolvedFocalDepth
+                let depthGate = exp(-(diff * diff) / twoSigmaSq)
+                let v = max(0.0, attention[i]) * depthGate * (1.0 + gamma * grad[i])
+                raw[i] = v
+                if v > maxSync { maxSync = v }
+            }
+            if maxSync > 0.01 {
+                resolvedSync = raw.map { min(1.0, max(0.0, $0 / maxSync)) }
+            } else {
+                resolvedSync = [Double](repeating: 0, count: count)
+            }
+        } else {
+            resolvedSync = [Double](repeating: 0, count: count)
+        }
+        self.synchronizedSaliency = resolvedSync
+
+        if hasAttention, !resolvedSync.isEmpty {
+            let total = resolvedSync.reduce(0, +)
+            let mean = total / Double(resolvedSync.count)
+            let peak = resolvedSync.max() ?? 0.0
+            let sorted = resolvedSync.sorted(by: >)
+            let topShareCount = max(1, resolvedSync.count / 6)
+            let topMass = sorted.prefix(topShareCount).reduce(0, +)
+            let concentration = total > 0.01 ? topMass / total : 0.0
+            let snr = mean > 0.005 ? min(1.0, max(0.0, (peak / mean - 1.15) / 2.6)) : 0.0
+            self.subjectAttentionDominance = min(1.0, max(0.0, concentration * (0.45 + 0.55 * snr)))
+        } else {
+            self.subjectAttentionDominance = 0.0
+        }
     }
 
     var isValid: Bool {
         (8...64).contains(side) && luminance.count == side * side &&
         attention.count == luminance.count && edges.count == luminance.count &&
+        synchronizedSaliency.count == luminance.count &&
         (edgeAngles.isEmpty || edgeAngles.count == luminance.count) &&
         luminance.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
         attention.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
-        edges.allSatisfy { $0.isFinite && (0...1).contains($0) }
+        edges.allSatisfy { $0.isFinite && (0...1).contains($0) } &&
+        synchronizedSaliency.allSatisfy { $0.isFinite && (0...1).contains($0) }
+    }
+
+    var isDiffuseAttention: Bool {
+        guard isValid, hasAttention, !synchronizedSaliency.isEmpty else { return true }
+        let peak = synchronizedSaliency.max() ?? 0.0
+        let mean = synchronizedSaliency.reduce(0, +) / Double(synchronizedSaliency.count)
+        return peak < 0.20 || (mean > 0.01 && peak / mean < 1.28 && subjectAttentionDominance < 0.16)
     }
 
     func value(_ values: [Double], at point: CGPoint) -> Double {
@@ -284,10 +405,166 @@ struct CompositionRaster: Sendable {
         return values[y * side + x]
     }
 
+    func depthStats(in rect: CGRect) -> (meanDepth: Double, meanSync: Double, depthContrast: Double) {
+        guard isValid, rect.width > 0, rect.height > 0 else { return (0.5, 0.0, 0.0) }
+        var inDepth = 0.0, inSync = 0.0, inCount = 0.0
+        var outDepth = 0.0, outCount = 0.0
+        let surround = rect.insetBy(dx: -0.10, dy: -0.10)
+        for y in 0..<side {
+            let py = (Double(y) + 0.5) / Double(side)
+            for x in 0..<side {
+                let px = (Double(x) + 0.5) / Double(side)
+                let p = CGPoint(x: px, y: py)
+                let i = y * side + x
+                if rect.contains(p) {
+                    inDepth += foregroundDepth[i]
+                    inSync += synchronizedSaliency[i]
+                    inCount += 1
+                } else if surround.contains(p) {
+                    outDepth += foregroundDepth[i]
+                    outCount += 1
+                }
+            }
+        }
+        guard inCount > 0 else { return (0.5, 0.0, 0.0) }
+        let mDepth = inDepth / inCount
+        let mSync = inSync / inCount
+        let contrast = outCount > 0 ? min(1.0, abs(mDepth - outDepth / outCount) * 2.5) : 0.0
+        return (mDepth, mSync, contrast)
+    }
+
+    /// Connected-Components + Gaussian Mean-Shift on synchronized S_sync map.
+    /// Extracts coherent visual clusters without fixed 0.36x0.36 arbitrary boxes.
+    func extractSynchronizedClusters(minPeak: Double = 0.24, maxClusters: Int = 4) -> [SynchronizedSaliencyCluster] {
+        guard isValid, hasAttention, !isDiffuseAttention else { return [] }
+        let count = side * side
+        let totalSync = synchronizedSaliency.reduce(0, +)
+        guard totalSync > 0.05 else { return [] }
+        let meanSync = totalSync / Double(count)
+        let variance = synchronizedSaliency.reduce(0.0) { $0 + ($1 - meanSync) * ($1 - meanSync) } / Double(count)
+        let stdSync = sqrt(max(0.0, variance))
+        let globalPeak = synchronizedSaliency.max() ?? 0.0
+        guard globalPeak >= minPeak, stdSync >= 0.035 else { return [] }
+
+        let highThresh = min(globalPeak * 0.72, max(minPeak, meanSync + 0.45 * stdSync))
+        let lowThresh = max(0.08, highThresh * 0.46)
+        let minPixels = max(3, count / 160)
+
+        var visited = [Bool](repeating: false, count: count)
+        var components: [[Int]] = []
+        let neighbors = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+
+        for startIdx in 0..<count {
+            guard !visited[startIdx], synchronizedSaliency[startIdx] >= highThresh else { continue }
+            var queue = [startIdx]
+            var head = 0
+            visited[startIdx] = true
+            let seedDepth = foregroundDepth[startIdx]
+            var comp: [Int] = []
+            while head < queue.count {
+                let curr = queue[head]
+                head += 1
+                comp.append(curr)
+                let cx = curr % side
+                let cy = curr / side
+                for (dx, dy) in neighbors {
+                    let nx = cx + dx
+                    let ny = cy + dy
+                    guard nx >= 0, nx < side, ny >= 0, ny < side else { continue }
+                    let nIdx = ny * side + nx
+                    guard !visited[nIdx], synchronizedSaliency[nIdx] >= lowThresh else { continue }
+                    if abs(foregroundDepth[nIdx] - seedDepth) <= 0.30 || synchronizedSaliency[nIdx] >= highThresh {
+                        visited[nIdx] = true
+                        queue.append(nIdx)
+                    }
+                }
+            }
+            if comp.count >= minPixels {
+                components.append(comp)
+            }
+        }
+
+        var clusters: [SynchronizedSaliencyCluster] = []
+        for comp in components {
+            var minX = 1.0, minY = 1.0, maxX = 0.0, maxY = 0.0
+            var peakVal = 0.0, peakX = 0.5, peakY = 0.5
+            var sumSync = 0.0, sumDepth = 0.0
+            for idx in comp {
+                let x = idx % side
+                let y = idx / side
+                let px0 = Double(x) / Double(side)
+                let px1 = Double(x + 1) / Double(side)
+                let py0 = Double(y) / Double(side)
+                let py1 = Double(y + 1) / Double(side)
+                if px0 < minX { minX = px0 }
+                if px1 > maxX { maxX = px1 }
+                if py0 < minY { minY = py0 }
+                if py1 > maxY { maxY = py1 }
+                let s = synchronizedSaliency[idx]
+                sumSync += s
+                sumDepth += foregroundDepth[idx]
+                if s > peakVal {
+                    peakVal = s
+                    peakX = (px0 + px1) * 0.5
+                    peakY = (py0 + py1) * 0.5
+                }
+            }
+            let compMeanDepth = sumDepth / Double(comp.count)
+            let compMeanSync = sumSync / Double(comp.count)
+            let rect = CGRect(x: max(0.01, minX), y: max(0.01, minY),
+                              width: min(0.98, maxX - minX), height: min(0.98, maxY - minY))
+            let area = Double(rect.width * rect.height)
+            guard area >= 0.015 && area <= 0.80 else { continue }
+            let isSideStrip = (rect.minX <= 0.03 || rect.maxX >= 0.97) && (rect.height >= 0.60 || rect.width >= 0.60)
+            let isBottomStrip = rect.maxY >= 0.96 && rect.height <= 0.30 && rect.width >= 0.55
+            guard !isSideStrip && !isBottomStrip else { continue }
+
+            // 5 iterations of Gaussian Mean-Shift around the component peak
+            var shiftX = peakX
+            var shiftY = peakY
+            let bw = 0.10
+            let twoBwSq = 2.0 * bw * bw
+            for _ in 0..<5 {
+                var numX = 0.0, numY = 0.0, denom = 0.0
+                for idx in comp {
+                    let px = (Double(idx % side) + 0.5) / Double(side)
+                    let py = (Double(idx / side) + 0.5) / Double(side)
+                    let dSq = (px - shiftX) * (px - shiftX) + (py - shiftY) * (py - shiftY)
+                    let depthDiff = foregroundDepth[idx] - compMeanDepth
+                    let w = synchronizedSaliency[idx] * exp(-dSq / twoBwSq) * exp(-(depthDiff * depthDiff) / 0.10)
+                    numX += px * w
+                    numY += py * w
+                    denom += w
+                }
+                if denom > 0.0001 {
+                    let nextX = numX / denom
+                    let nextY = numY / denom
+                    let moved = hypot(nextX - shiftX, nextY - shiftY)
+                    shiftX = nextX
+                    shiftY = nextY
+                    if moved < 0.002 { break }
+                } else { break }
+            }
+            let anchor = CGPoint(x: min(rect.maxX, max(rect.minX, shiftX)),
+                                 y: min(rect.maxY, max(rect.minY, shiftY)))
+            let dominance = min(1.0, (sumSync / max(0.01, totalSync)) * (0.55 + 0.45 * peakVal))
+            clusters.append(SynchronizedSaliencyCluster(
+                bounds: rect, anchor: anchor, peakValue: peakVal,
+                meanSync: compMeanSync, meanDepth: compMeanDepth,
+                dominance: dominance, area: area
+            ))
+        }
+        return clusters.sorted {
+            let lhs = $0.dominance * (0.65 + 0.35 * $0.meanDepth) * (0.5 + 0.5 * $0.peakValue)
+            let rhs = $1.dominance * (0.65 + 0.35 * $1.meanDepth) * (0.5 + 0.5 * $1.peakValue)
+            return lhs > rhs
+        }.prefix(maxClusters).map { $0 }
+    }
+
     func evidence(in rect: CGRect) -> SubjectVisualEvidence? {
         guard isValid, rect.width > 0, rect.height > 0 else { return nil }
-        var count = 0.0, light = 0.0, square = 0.0, detail = 0.0, mass = 0.0, fgSum = 0.0
-        var outside = 0.0, outsideCount = 0.0
+        var count = 0.0, light = 0.0, square = 0.0, detail = 0.0, mass = 0.0, fgSum = 0.0, syncSum = 0.0
+        var outside = 0.0, outsideDepth = 0.0, outsideCount = 0.0
         let surround = rect.insetBy(dx: -0.08, dy: -0.08)
         for y in 0..<side {
             for x in 0..<side {
@@ -296,18 +573,25 @@ struct CompositionRaster: Sendable {
                 if rect.contains(p) {
                     count += 1; light += luminance[i]; square += luminance[i] * luminance[i]
                     mass += attention[i]; detail += edges[i]; fgSum += foregroundDepth[i]
-                } else if surround.contains(p) { outside += luminance[i]; outsideCount += 1 }
+                    syncSum += synchronizedSaliency[i]
+                } else if surround.contains(p) {
+                    outside += luminance[i]; outsideDepth += foregroundDepth[i]; outsideCount += 1
+                }
             }
         }
         guard count > 0 else { return nil }
         let mean = light / count
+        let meanDepth = fgSum / count
         let contrast = sqrt(max(0, square / count - mean * mean))
         let exposure = min(1, max(0, min(mean, 1 - mean) / 0.16))
+        let dContrast = outsideCount > 0 ? min(1.0, abs(meanDepth - outsideDepth / outsideCount) * 2.5) : 0.0
         return SubjectVisualEvidence(attentionDensity: mass / count,
             attentionShare: mass / max(0.001, attention.reduce(0, +)),
             separation: min(1, abs(mean - outside / max(1, outsideCount)) * 3),
             detail: min(1, (max(0, detail / count - 0.015) + max(0, contrast - 0.01)) * 2),
-            exposure: exposure, foregroundDepth: fgSum / count)
+            exposure: exposure, foregroundDepth: meanDepth,
+            syncAttention: hasAttention ? (syncSum / count) : nil,
+            depthContrast: dContrast)
     }
 
     var visualCenterOfMass: CGPoint? {
@@ -543,6 +827,7 @@ struct CompositionProposal: Sendable {
     var recommendedEVBias: CGFloat = 0.0
     var outOfBoundsFraction: Double = 0.0
     var continuousFieldScore: Double = 0.0
+    var gaicScore: Double = 0.5
     /// Subject area divided by the intent's target area. Below 1 the subject is smaller than the shot wants.
     var sizeRatio: Double = 1
 
@@ -574,7 +859,7 @@ enum CompositionPlanner {
         incidentalBounds: [CGRect] = [], proposalLimit: Int = 36, refining: [CompositionProposal] = [],
         poseProfile: AnatomicalPoseProfile? = nil,
         isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
-        let perIntent = max(6, proposalLimit / max(1, intents.count))
+        let perIntent = max(8, proposalLimit / max(1, intents.count))
         let batches = intents.map { intent -> [CompositionProposal] in
             if !refining.isEmpty && !refining.contains(where: { $0.intent == intent }) { return [] }
             let bounds: CGRect
@@ -600,6 +885,13 @@ enum CompositionPlanner {
         return result
     }
 
+    private struct SampleCell {
+        let point: CGPoint
+        let attention: Double
+        let sync: Double
+        let depth: Double
+    }
+
     static func proposals(subjects: [CompositionSubject], intents: [LocalCompositionIntent],
                           raster: CompositionRaster, calibration: TrackingCalibration,
                           currentZoom: CGFloat, allowedZooms: [CGFloat], protectedBounds: [CGRect] = [],
@@ -609,6 +901,7 @@ enum CompositionPlanner {
                           isCancelled: () -> Bool = { false }) -> [CompositionProposal] {
         guard raster.isValid, calibration.isValid, currentZoom.isFinite, currentZoom > 0 else { return [] }
         let horizonHint = raster.horizon
+        let isHighMemory = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
         let validSubjects = subjects.filter {
             valid($0.bounds) && inside($0.anchor, margin: 0) && $0.bounds.contains($0.anchor) &&
                 $0.confidence.isFinite && $0.importance.isFinite && $0.gaze.isFinite
@@ -616,14 +909,35 @@ enum CompositionPlanner {
         let protectedPeople = validSubjects.filter { $0.kind == .person || $0.kind == .face || $0.kind == .group }
         let incidentalRects = incidentalBounds.filter { valid($0) }
         let hardwareMax = allowedZooms.filter { $0.isFinite && $0 > 0 }.max() ?? currentZoom
-        // Avoid throwing away excessive source resolution. Lens availability is
-        // supplied by CameraService; existing long telephoto framing remains valid.
-        let maxZoom = max(currentZoom, min(5, hardwareMax, max(currentZoom * 2.4, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.2 }.max() ?? currentZoom)))
+        // Unlock dense multi-scale zoom ceiling up to 5.0x / currentZoom * 3.5 within hardware capability.
+        let maxZoom = max(currentZoom, min(5.0, hardwareMax, max(currentZoom * 3.5, allowedZooms.filter { $0.isFinite && $0 <= currentZoom * 3.5 }.max() ?? currentZoom)))
+
+        // Precompute compact downsampled raster cells (~256 samples) so 256-1024 geometric evaluations run in a few ms.
+        let cellSide = min(raster.side, 16)
+        var sampleCells: [SampleCell] = []
+        sampleCells.reserveCapacity(cellSide * cellSide)
+        for cy in 0..<cellSide {
+            let py = (Double(cy) + 0.5) / Double(cellSide)
+            let sy = min(raster.side - 1, max(0, Int(py * Double(raster.side))))
+            for cx in 0..<cellSide {
+                let px = (Double(cx) + 0.5) / Double(cellSide)
+                let sx = min(raster.side - 1, max(0, Int(px * Double(raster.side))))
+                let i = sy * raster.side + sx
+                sampleCells.append(SampleCell(
+                    point: CGPoint(x: px, y: py),
+                    attention: raster.attention[i],
+                    sync: raster.synchronizedSaliency[i],
+                    depth: raster.foregroundDepth[i]
+                ))
+            }
+        }
+
         var result: [CompositionProposal] = []
         for subject in validSubjects.prefix(4) {
             let cropAttention = subject.allowsAttentionCrop && subject.kind == .object && raster.hasAttention
             let protectedAnchor = CompositionCropProtection.bounds(body: subject.bounds, portrait: nil,
                 intent: .object, anchor: subject.anchor, attentionRegion: cropAttention)
+            let subjectDepthStats = raster.depthStats(in: subject.bounds)
             for intent in applicableIntents(subject: subject, preferred: intents, people: protectedPeople) {
                 if isCancelled() { return [] }
                 let protectedRects: [CGRect] = intent == .group
@@ -659,7 +973,8 @@ enum CompositionPlanner {
                           }) else { return nil }
                     let aim = calibration.project(deviceRay: rotation.act(SIMD3(0, 0, -1)))
                     guard aim.isInFront, inside(aim.point, margin: -0.28) else { return nil }
-                    let metrics = measure(raster: raster, subject: subject, box: box,
+                    let metrics = measure(raster: raster, cells: sampleCells, subject: subject,
+                        subjectDepth: subjectDepthStats.meanDepth, box: box,
                         calibration: calibration, future: future, rotation: rotation, protectedPeople: protectedPeople)
                     guard !cropAttention || unchanged || metrics.retention >= 0.82 else { return nil }
                     let desiredArea: Double
@@ -712,8 +1027,6 @@ enum CompositionPlanner {
                     let thirdY = min(abs(Double(destination.y) - CompositionTuning.portraitEyeLineY),
                                      abs(Double(destination.y) - Double(CompositionTuning.goldenSectionRight)))
                     let ruleOfThirdsBonus = CompositionTuning.ruleOfThirdsBonusWeight * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
-                    // Phản biện 3: Phạt khi điểm đặt chủ thể đích P* (destination) rơi vào tâm chết (0.5, 0.5) ở cảnh không đối xứng.
-                    // TUYỆT ĐỐI KHÔNG phạt khi khoảng cách lia máy (aim.point - 0.5) nhỏ!
                     let deadCenterDestPenalty = (intent != .architecture && intent != .group && !unchanged &&
                         hypot(Double(destination.x - 0.5), Double(destination.y - 0.5)) < 0.04) ? 0.20 : 0.0
                     let zoomProminenceBonus = (subject.kind != .scenery && intent != .landscape && area < effectiveDesiredArea && ratio > 1.08) ? 0.08 * min(1.0, log(ratio) / log(2.5)) : 0.0
@@ -735,19 +1048,30 @@ enum CompositionPlanner {
                         }
                         anatomicalPenaltyValue = min(0.18, check.penalty * 0.08)
                     }
-                    let score = 0.29 * sizeFit + 0.35 * placement + 0.10 * headroom +
+                    let fieldScore = 0.29 * sizeFit + 0.35 * placement + 0.10 * headroom +
                         0.09 * space + 0.06 * edgeSafety + contextWeight * context +
                         contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
                         0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue +
                         intentPrior + ruleOfThirdsBonus + zoomProminenceBonus - deadCenterDestPenalty - ratioAdjustment
+                    let fieldNorm = min(1.0, max(0.0, fieldScore))
+                    // Grid-Anchor RoI Pre-Screen score (RoI inner S_sync focus + depth separation + clean edges + continuous field + anatomy)
+                    let gaicScore = min(1.0, max(0.0,
+                        0.44 * fieldNorm +
+                        0.22 * metrics.roiSyncFocus +
+                        0.14 * metrics.depthSeparation +
+                        0.12 * metrics.cleanEdges +
+                        0.08 * torqueBalance - anatomicalPenaltyValue * 0.5
+                    ))
+                    let combinedScore = fieldScore + 0.06 * (gaicScore - 0.5)
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
                         sourceCorners: observedCornerPoints, rotation: rotation, zoom: zoom,
-                        evidenceConfidence: min(1, max(0, subject.confidence)), score: score,
+                        evidenceConfidence: min(1, max(0, subject.confidence)), score: combinedScore,
                         explanation: explanation(intent: intent, gaze: subject.gaze,
                             cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0),
                         usesCenter: abs(destination.x - 0.5) < 0.055, retainedAttention: metrics.retention,
-                        recommendedEVBias: evBias, outOfBoundsFraction: oobFraction, continuousFieldScore: score,
+                        recommendedEVBias: evBias, outOfBoundsFraction: oobFraction,
+                        continuousFieldScore: fieldScore, gaicScore: gaicScore,
                         sizeRatio: subject.kind == .scenery ? 1 : area / max(0.001, effectiveDesiredArea))
                 }
                 if !refining.isEmpty {
@@ -757,31 +1081,39 @@ enum CompositionPlanner {
                             cx: calibration.cx, cy: calibration.cy, aspect: calibration.aspect)
                         let p = future.project(deviceRay: seed.rotation.inverse.act(calibration.deviceRay(at: subject.anchor)))
                         guard p.isInFront else { continue }
-                        // Score neighbours with the learned model on the next pass.
-                        // A slightly wider crop is a real alternative, not an
-                        // assumption that more zoom always improves a photograph.
-                        for axis in 0..<3 { for sign in [-1.0, 1.0] {
-                            if isCancelled() { return [] }
-                            let destination = CGPoint(x: p.point.x + (axis == 0 ? sign * 0.018 : 0),
-                                                      y: p.point.y + (axis == 1 ? sign * 0.018 : 0))
-                            let zoom = axis == 2 ? seed.zoom * CGFloat(exp(sign * 0.045)) : seed.zoom
-                            if let neighbour = evaluate(destination, zoom: zoom) { result.append(neighbour) }
-                        } }
+                        for stepScale in [1.0, 0.5] {
+                            for axis in 0..<3 { for sign in [-1.0, 1.0] {
+                                if isCancelled() { return [] }
+                                let panStep = 0.018 * stepScale
+                                let zoomStep = 0.045 * stepScale
+                                let destination = CGPoint(x: p.point.x + (axis == 0 ? sign * panStep : 0),
+                                                          y: p.point.y + (axis == 1 ? sign * panStep : 0))
+                                let zoom = axis == 2 ? seed.zoom * CGFloat(exp(sign * zoomStep)) : seed.zoom
+                                if let neighbour = evaluate(destination, zoom: zoom) { result.append(neighbour) }
+                            } }
+                        }
                     }
                     continue
                 }
                 var seeds: [CompositionProposal] = []
-                let placements = dynamicPlacements(subject: subject, intent: intent, desired: desired, raster: raster)
-                let subjectZooms = dynamicZooms(subject: subject, intent: intent, desired: desired, currentZoom: currentZoom, maxZoom: maxZoom, allowedZooms: allowedZooms)
-                for zoom in subjectZooms {
-                    for destination in placements {
+                let placements = dynamicPlacements(subject: subject, intent: intent, desired: desired,
+                                                   raster: raster, highMemory: isHighMemory)
+                let subjectZooms = dynamicZooms(subject: subject, intent: intent, desired: desired,
+                                                currentZoom: currentZoom, maxZoom: maxZoom,
+                                                allowedZooms: allowedZooms, highMemory: isHighMemory)
+                let rawEvaluationCap = isHighMemory ? 1024 : 512
+                // Iterate placements outer and zooms inner so priority anchors explore the FULL zoom ladder evenly.
+                outer: for destination in placements {
+                    for zoom in subjectZooms {
                         if isCancelled() { return [] }
-                        if let plan = evaluate(destination, zoom: zoom) { seeds.append(plan) }
+                        if let plan = evaluate(destination, zoom: zoom) {
+                            seeds.append(plan)
+                            if seeds.count >= rawEvaluationCap { break outer }
+                        }
                     }
                 }
-                // Refine in continuous pan/tilt/log-focal-length space. Coarse
-                // grids seed the solver; they never restrict the final target.
-                for seed in diverse(seeds, limit: 4) {
+                // Refine top diverse candidates in continuous pan/tilt/log-focal-length space.
+                for seed in diverse(seeds, limit: isHighMemory ? 8 : 5) {
                     var best = seed
                     for step in [0.035, 0.0175, 0.00875] {
                         let ratio = Double(best.zoom / currentZoom)
@@ -810,10 +1142,10 @@ enum CompositionPlanner {
             return diverse(result, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
         }
         guard proposalLimit > 6 else { return diverse(result, limit: proposalLimit, raySeparation: 0.04, zoomSeparation: 0.08) }
-        // Preserve a no-change baseline and explore several focal lengths and
-        // directions, including crops that do not match the heuristic's favourite.
+        // Preserve a no-change baseline, prioritize top GAIC+Field winners, and stratify multi-scale focal exploration.
         var selected = result.filter(\.isUnchangedView).prefix(1).map { $0 }
-        selected += diverse(result, limit: proposalLimit / 3, raySeparation: 0.035, zoomSeparation: 0.07)
+        let directTopCount = max(4, (proposalLimit * 2) / 3)
+        selected += diverse(result, limit: directTopCount, raySeparation: 0.028, zoomSeparation: 0.055)
         var buckets: [String: CompositionProposal] = [:]
         for proposal in result {
             let z = Int((log(Double(proposal.zoom / currentZoom)) * 12).rounded())
@@ -828,11 +1160,10 @@ enum CompositionPlanner {
                 selected.append(explored[min(explored.count - 1, index * explored.count / proposalLimit)])
             }
         }
-        // Keep exploration in the shortlist even when its heuristic score is low.
         var unique: [CompositionProposal] = []
         for proposal in selected + result.sorted(by: { $0.score > $1.score }) {
-            if !unique.contains(where: { hypot($0.aimPoint.x - proposal.aimPoint.x, $0.aimPoint.y - proposal.aimPoint.y) < 0.025 &&
-                abs(log(Double($0.zoom / proposal.zoom))) < 0.055 }) { unique.append(proposal) }
+            if !unique.contains(where: { hypot($0.aimPoint.x - proposal.aimPoint.x, $0.aimPoint.y - proposal.aimPoint.y) < 0.020 &&
+                abs(log(Double($0.zoom / proposal.zoom))) < 0.045 }) { unique.append(proposal) }
             if unique.count == proposalLimit { break }
         }
         return unique
@@ -949,7 +1280,8 @@ enum CompositionPlanner {
     }
 
     private static func dynamicPlacements(subject: CompositionSubject, intent: LocalCompositionIntent,
-                                          desired: CGPoint, raster: CompositionRaster) -> [CGPoint] {
+                                          desired: CGPoint, raster: CompositionRaster,
+                                          highMemory: Bool = false) -> [CGPoint] {
         var points: [CGPoint] = [desired, subject.anchor]
         if intent == .architecture || intent == .group || intent == .closeUp {
             points.append(CGPoint(x: 0.5, y: 0.5))
@@ -1030,15 +1362,6 @@ enum CompositionPlanner {
         points.append(CGPoint(x: 0.618, y: 0.5))
         points.append(CGPoint(x: 0.5, y: 0.382))
 
-        // Subtle continuous micro-variations around desired point
-        for dx in [-0.045, 0.045] {
-            for dy in [-0.04, 0.04] {
-                let p = CGPoint(x: min(0.80, max(0.20, desired.x + CGFloat(dx))),
-                                y: min(0.80, max(0.20, desired.y + CGFloat(dy))))
-                points.append(p)
-            }
-        }
-
         // Intent-specific compositional framing points
         switch intent {
         case .landscape, .architecture:
@@ -1051,12 +1374,42 @@ enum CompositionPlanner {
             break
         }
 
-        return points
+        // Subtle continuous micro-variations + dense multi-scale composition anchor lattice
+        let offsets = highMemory ? [-0.08, -0.04, 0.04, 0.08] : [-0.06, -0.03, 0.03, 0.06]
+        for dx in offsets {
+            for dy in offsets {
+                let p = CGPoint(x: min(0.82, max(0.18, desired.x + CGFloat(dx))),
+                                y: min(0.82, max(0.18, desired.y + CGFloat(dy))))
+                points.append(p)
+            }
+        }
+
+        let gridX: [Double] = highMemory
+            ? [0.28, 0.34, 0.382, 0.44, 0.50, 0.56, 0.618, 0.66, 0.72]
+            : [0.30, 0.382, 0.46, 0.54, 0.618, 0.70]
+        let gridY: [Double] = highMemory
+            ? [0.28, 0.34, 0.382, 0.44, 0.50, 0.58, 0.65]
+            : [0.30, 0.382, 0.48, 0.58, 0.65]
+        for gy in gridY {
+            for gx in gridX {
+                points.append(CGPoint(x: gx, y: gy))
+            }
+        }
+
+        var deduplicated: [CGPoint] = []
+        deduplicated.reserveCapacity(points.count)
+        for p in points {
+            if !deduplicated.contains(where: { hypot($0.x - p.x, $0.y - p.y) < 0.014 }) {
+                deduplicated.append(p)
+            }
+        }
+        return deduplicated
     }
 
     private static func dynamicZooms(subject: CompositionSubject, intent: LocalCompositionIntent,
                                      desired: CGPoint,
-                                     currentZoom: CGFloat, maxZoom: CGFloat, allowedZooms: [CGFloat]) -> [CGFloat] {
+                                     currentZoom: CGFloat, maxZoom: CGFloat, allowedZooms: [CGFloat],
+                                     highMemory: Bool = false) -> [CGFloat] {
         let area = Double(subject.bounds.width * subject.bounds.height)
         let desiredArea: Double
         switch intent {
@@ -1073,7 +1426,6 @@ enum CompositionPlanner {
 
         // Với phong cảnh (landscape) hoặc chủ thể chỉ là mảng vân bề mặt (scenery anchor), giữ nguyên góc rộng tự nhiên
         if subject.kind != .scenery && intent != .landscape {
-            // Continuous optimal zoom directly regressed from subject area vs desired prominence with edge safety constraints
             let idealZoom = CGFloat(CompositionPureCalculations.calculateContinuousIdealZoom(
                 currentZoom: Double(currentZoom),
                 currentArea: area,
@@ -1086,39 +1438,40 @@ enum CompositionPlanner {
             ))
             options.insert(idealZoom)
 
-            // Khám phá tiêu cự nhiếp ảnh chuẩn (Prime Lenses: 1.5x / 35mm, 2.0x / 50mm, 2.5x / 70mm, 3.0x / 85mm)
-            for prime in [1.5, 2.0, 2.5, 3.0] as [CGFloat] {
+            for prime in [1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0] as [CGFloat] {
                 if prime >= currentZoom && prime <= maxZoom {
                     options.insert(prime)
                 }
             }
 
-            // Biến thể tối ưu quanh idealZoom
             if idealZoom > currentZoom {
-                options.insert(max(currentZoom, min(maxZoom, idealZoom * 0.90)))
-                options.insert(max(currentZoom, min(maxZoom, idealZoom * 1.12)))
+                for factor in [0.85, 0.92, 1.08, 1.15] as [CGFloat] {
+                    options.insert(max(currentZoom, min(maxZoom, idealZoom * factor)))
+                }
             }
         }
 
-        // Subtle near-original crop exploration (enables aesthetic comparison vs uncropped baseline)
         if maxZoom > currentZoom {
-            let subtle = min(maxZoom, currentZoom * 1.08)
-            options.insert(subtle)
+            options.insert(min(maxZoom, currentZoom * 1.05))
+            options.insert(min(maxZoom, currentZoom * 1.08))
             if maxZoom > currentZoom * 1.25 {
-                let mid = sqrt(currentZoom * maxZoom)
-                options.insert(mid)
+                options.insert(sqrt(currentZoom * maxZoom))
             }
         }
 
-        // Hardware optical zooms within range
         for h in allowedZooms where h.isFinite && h >= currentZoom && h <= maxZoom {
             options.insert(h)
         }
 
-        // Continuous intermediate logarithmic steps
-        for step in [0.10, 0.25, 0.50, 0.75, 1.0] {
-            let z = currentZoom * CGFloat(exp(log(Double(maxZoom / currentZoom)) * step))
-            if z >= currentZoom && z <= maxZoom { options.insert(z) }
+        // Dense logarithmic zoom sweep from currentZoom to maxZoom
+        let logSteps = highMemory ? 14 : 10
+        if maxZoom > currentZoom * 1.01 {
+            let logSpan = log(Double(maxZoom / currentZoom))
+            for k in 1...logSteps {
+                let fraction = Double(k) / Double(logSteps)
+                let z = currentZoom * CGFloat(exp(logSpan * fraction))
+                if z >= currentZoom && z <= maxZoom { options.insert(z) }
+            }
         }
 
         return Array(options).sorted()
@@ -1179,32 +1532,35 @@ enum CompositionPlanner {
         let lookRoom: Double
         let separation: Double
         let symmetry: Double
+        let roiSyncFocus: Double
+        let depthSeparation: Double
     }
 
-    private static func measure(raster: CompositionRaster, subject: CompositionSubject, box: CGRect,
+    private static func measure(raster: CompositionRaster, cells: [SampleCell],
+                                subject: CompositionSubject, subjectDepth: Double, box: CGRect,
                                 calibration: TrackingCalibration,
                                 future: TrackingCalibration, rotation: simd_quatd,
                                 protectedPeople: [CompositionSubject]) -> Metrics {
         var total = 0.0, retained = 0.0
-        for y in 0..<raster.side {
-            for x in 0..<raster.side {
-                let p = CGPoint(x: (Double(x) + 0.5) / Double(raster.side),
-                                y: (Double(y) + 0.5) / Double(raster.side))
-                let weight = raster.attention[y * raster.side + x]
-                total += weight
-                let mapped = future.project(deviceRay: rotation.inverse.act(calibration.deviceRay(at: p)))
-                if mapped.isInFront && inside(mapped.point, margin: 0) { retained += weight }
-            }
+        for cell in cells {
+            let weight = cell.attention
+            total += weight
+            let mapped = future.project(deviceRay: rotation.inverse.act(calibration.deviceRay(at: cell.point)))
+            if mapped.isInFront && inside(mapped.point, margin: 0) { retained += weight }
         }
         var weightSum = 0.0, weightedX = 0.0, weightedY = 0.0
         var border = 0.0, borderCount = 0.0, subjectLight = 0.0, subjectCount = 0.0
         var surroundLight = 0.0, surroundCount = 0.0, symmetryError = 0.0
+        var innerSyncSum = 0.0, innerSyncCount = 0.0, outerSyncSum = 0.0, outerSyncCount = 0.0
+        var roiBorderDepthSum = 0.0, roiBorderDepthCount = 0.0
         let side = 12
         for y in 0..<side {
             for x in 0..<side {
                 let p = CGPoint(x: (Double(x) + 0.5) / Double(side), y: (Double(y) + 0.5) / Double(side))
                 let original = calibration.project(deviceRay: rotation.act(future.deviceRay(at: p))).point
                 let attention = raster.value(raster.attention, at: original)
+                let syncVal = raster.value(raster.synchronizedSaliency, at: original)
+                let depthVal = raster.value(raster.foregroundDepth, at: original)
                 let edge = raster.value(raster.edges, at: original)
                 let luma = raster.value(raster.luminance, at: original)
                 let weight = 0.1 + attention
@@ -1213,9 +1569,18 @@ enum CompositionPlanner {
                 else if box.insetBy(dx: -0.12, dy: -0.12).contains(p) {
                     surroundLight += luma; surroundCount += 1
                 }
+                if (0.16...0.84).contains(p.x) && (0.16...0.84).contains(p.y) {
+                    innerSyncSum += syncVal
+                    innerSyncCount += 1
+                } else {
+                    outerSyncSum += syncVal
+                    outerSyncCount += 1
+                }
                 if x == 0 || y == 0 || x == side - 1 || y == side - 1 {
                     if !subject.bounds.contains(original) && !protectedPeople.contains(where: { $0.bounds.contains(original) }) {
-                        border += 0.6 * attention + 0.4 * edge
+                        border += 0.5 * attention + 0.3 * edge + 0.2 * syncVal
+                        roiBorderDepthSum += depthVal
+                        roiBorderDepthCount += 1
                     }
                     borderCount += 1
                 }
@@ -1230,12 +1595,19 @@ enum CompositionPlanner {
         let opposite = subject.gaze >= 0 ? Double(box.minX) : Double(1 - box.maxX)
         let separation = subjectCount > 0 && surroundCount > 0 ?
             abs(subjectLight / subjectCount - surroundLight / surroundCount) : 0
+        let innerMean = innerSyncCount > 0 ? innerSyncSum / innerSyncCount : 0
+        let outerMean = outerSyncCount > 0 ? outerSyncSum / outerSyncCount : 0
+        let roiSyncFocus = min(1.0, max(0.0, 0.5 + (innerMean - outerMean) * 1.6))
+        let borderDepth = roiBorderDepthCount > 0 ? roiBorderDepthSum / roiBorderDepthCount : subjectDepth
+        let depthSep = min(1.0, max(0.0, 0.5 + (subjectDepth - borderDepth) * 1.4))
         return Metrics(retention: total > 0.001 ? retained / total : 1,
             cleanEdges: 1 - min(1, border / max(1, borderCount)),
             balance: 1 - min(1, centerDistance * 2),
             lookRoom: min(1, max(0, 0.5 + (room - opposite) * 1.5)),
             separation: min(1, separation * 3),
-            symmetry: 1 - min(1, symmetryError / Double(side * side) * 3))
+            symmetry: 1 - min(1, symmetryError / Double(side * side) * 3),
+            roiSyncFocus: roiSyncFocus,
+            depthSeparation: depthSep)
     }
 
     private static func explanation(intent: LocalCompositionIntent, gaze: CGFloat,
