@@ -1,0 +1,5 @@
+# Build errors - run 43621776032 - 5158778241b3b56f1d876d8b0996c5731405cac5
+
+=== Swift/clang error lines ===
+
+=== Last 60 lines of xcodebuild output ===
