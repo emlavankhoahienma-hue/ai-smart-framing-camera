@@ -3,11 +3,11 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "cdfde2f60bf1cab3f6ecbf1519a114ca2b91435813de0fc7a0d59986e4c450fe"
+      "sha256": "d895c7cb4a448e6336ccd6a5c3b5442efa300cfff012c48c882bf0803b632fbb"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
-      "sha256": "7dee18a10018594f8ece126c8ec6a083d54bd02373089d947c4c225b20c6465e"
+      "sha256": "89e404ef8c62f0516d3c8a0566a25d01d223781ceb5b1a03e0dd939abe34c8ac"
     },
     {
       "path": "AISmartFramingCamera/Services/StreetSpatialTrackingEngine.swift",
@@ -15,7 +15,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/TargetPatchFlow.swift",
-      "sha256": "91f272a6041abb8a6acea018b0aa866e2f7ce01b3447abe5ce311b0c00aa034c"
+      "sha256": "4d8e5568f9a7fcdcb9c28438a292d173b301f07a2bf834169cd088df50c5a392"
     },
     {
       "path": "AISmartFramingCamera/Services/TrackingGeometry.swift",
@@ -75,7 +75,7 @@
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
       "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
       "end": "                // Optical centre is always fixed",
-      "sha256": "9b7eb47480c9666d96710293a80679c60d5836ba1cb402ec7e234a54afb25fc3"
+      "sha256": "7dba181105007b787919f1d8ead6535dc7d5e10f94ab1bac5e2e1f9ae5c202e2"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",

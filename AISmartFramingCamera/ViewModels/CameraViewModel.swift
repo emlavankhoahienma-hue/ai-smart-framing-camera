@@ -113,6 +113,9 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         let frame = TrackingFrameContext.read(sampleBuffer,
             zoom: SpatialTrackingEngine.shared.currentDisplayZoom,
             fovLongDegrees: SpatialTrackingEngine.shared.currentCameraFOV)
+        if let frame, frame.orientation == .up {
+            SpatialTrackingEngine.shared.registerFrame(frame)
+        }
 
         // CameraService invokes this method on its serial videoDataQueue. Processing
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
@@ -125,7 +128,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         } else if snapshot.isDualCameraActive {
             visionInterval = 1.0 / 5.0
         } else if SpatialTrackingEngine.shared.isTrackingActive {
-            visionInterval = 1.0 / 24.0
+            visionInterval = 0
         } else {
             visionInterval = 1.0 / 12.0
         }

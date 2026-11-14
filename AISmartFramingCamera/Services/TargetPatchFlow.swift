@@ -285,13 +285,6 @@ final class TargetPatchFlow {
             let top = max(4, Int(Double(1 - box.maxY + 0.12 * box.height) * Double(height)))
             let bottom = min(height - 5, Int(Double(1 - box.minY - 0.12 * box.height) * Double(height)))
             guard right > left + 8, bottom > top + 8 else { return [] }
-            if (right - left) * (bottom - top) >= 4800,
-               let gpuPoints = TargetPatchFlowMetalEngine.shared.extractCorners(
-                   pixels: pixels, width: width, height: height,
-                   left: left, right: right, top: top, bottom: bottom
-               ), !gpuPoints.isEmpty {
-                return gpuPoints
-            }
             var cppCoords = [Float](repeating: 0, count: 32)
             let cppCount: Int32 = pixels.withUnsafeBufferPointer { pixBuf in
                 cppCoords.withUnsafeMutableBufferPointer { outBuf in
@@ -316,6 +309,13 @@ final class TargetPatchFlow {
                     extracted.append(CGPoint(x: CGFloat(cppCoords[idx * 2]), y: CGFloat(cppCoords[idx * 2 + 1])))
                 }
                 return extracted
+            }
+            if (right - left) * (bottom - top) >= 4800,
+               let gpuPoints = TargetPatchFlowMetalEngine.shared.extractCorners(
+                   pixels: pixels, width: width, height: height,
+                   left: left, right: right, top: top, bottom: bottom
+               ), !gpuPoints.isEmpty {
+                return gpuPoints
             }
             var points: [CGPoint] = []
             points.reserveCapacity(16)
@@ -391,14 +391,11 @@ final class TargetPatchFlow {
     private var anchor: CGPoint?
     private var previousBox: CGRect?
     private var seedImage: GrayImage?
-    private var seedPoints: [CGPoint] = []
-    private var seedAnchor: CGPoint?
-    private var seedBox: CGRect?
     private var scratchScores: [Double] = [Double](repeating: -2.0, count: 32 * 32)
 
     func reset() {
         previous = nil; points = []; anchor = nil; previousBox = nil
-        seedImage = nil; seedPoints = []; seedAnchor = nil; seedBox = nil
+        seedImage = nil
     }
 
     func seed(buffer: CVPixelBuffer, box: CGRect, point: CGPoint) {
@@ -410,9 +407,6 @@ final class TargetPatchFlow {
         anchor = point
         previousBox = box
         seedImage = image
-        seedPoints = extracted
-        seedAnchor = point
-        seedBox = box
     }
 
     func evaluate(buffer: CVPixelBuffer, box: CGRect, fallback: CGPoint, gyroNormalizedShift: CGPoint = .zero) -> Evaluation? {
@@ -504,81 +498,8 @@ final class TargetPatchFlow {
             }
         }
         if ntcEval.isReliable {
-            var refinedPoint = CGPoint(x: ntcEval.anchorNormX, y: ntcEval.anchorNormY)
-            // T0 Reference Constellation & Direct Anchor Patch Correction:
-            // Eliminates cumulative dead-reckoning drift across long handheld pans/tremors
-            // by anchoring back to the frozen T0 seed constellation whenever visible.
-            if let seedImg = seedImage, let sAnchor = seedAnchor, let sBox = seedBox,
-               seedImg.width == image.width, seedImg.height == image.height,
-               seedPoints.count >= 5, sBox.width > 0.001,
-               (0.75...1.35).contains(box.width / sBox.width) {
-                let totalCoarseX = (Double(refinedPoint.x) - Double(sAnchor.x)) * Double(image.width)
-                let totalCoarseY = (Double(refinedPoint.y) - Double(sAnchor.y)) * Double(image.height)
-                var flatSeedPts = [Float](repeating: 0, count: seedPoints.count * 2)
-                for (idx, pt) in seedPoints.enumerated() {
-                    flatSeedPts[idx * 2] = Float(pt.x)
-                    flatSeedPts[idx * 2 + 1] = Float(pt.y)
-                }
-                var flatSeedSurv = [Float](repeating: 0, count: seedPoints.count * 2)
-                let seedEval: NTCPatchFlowResult = seedImg.pixels.withUnsafeBufferPointer { sBuf in
-                    image.pixels.withUnsafeBufferPointer { cBuf in
-                        flatSeedPts.withUnsafeBufferPointer { pBuf in
-                            flatSeedSurv.withUnsafeMutableBufferPointer { svBuf in
-                                guard let sBase = sBuf.baseAddress,
-                                      let cBase = cBuf.baseAddress,
-                                      let pBase = pBuf.baseAddress,
-                                      let svBase = svBuf.baseAddress else {
-                                    return NTCPatchFlowResult(anchorNormX: Double(refinedPoint.x),
-                                                              anchorNormY: Double(refinedPoint.y),
-                                                              inliers: 0,
-                                                              survivingCount: 0,
-                                                              isReliable: false)
-                                }
-                                return ntc_evaluate_constellation_flow(
-                                    sBase,
-                                    cBase,
-                                    Int32(image.width),
-                                    Int32(image.height),
-                                    pBase,
-                                    Int32(seedPoints.count),
-                                    totalCoarseX,
-                                    totalCoarseY,
-                                    Double(sBox.width),
-                                    Double(box.width),
-                                    Double(box.minX),
-                                    Double(box.minY),
-                                    Double(box.maxX),
-                                    Double(box.maxY),
-                                    Double(sAnchor.x),
-                                    Double(sAnchor.y),
-                                    svBase,
-                                    Int32(seedPoints.count)
-                                )
-                            }
-                        }
-                    }
-                }
-                if seedEval.isReliable && seedEval.inliers >= 6 {
-                    let alpha: CGFloat = seedEval.inliers >= 8 ? 0.80 : 0.55
-                    refinedPoint = CGPoint(
-                        x: (1.0 - alpha) * refinedPoint.x + alpha * CGFloat(seedEval.anchorNormX),
-                        y: (1.0 - alpha) * refinedPoint.y + alpha * CGFloat(seedEval.anchorNormY)
-                    )
-                }
-                // Direct 7x7 T0 anchor patch verification around refinedPoint
-                let seedAnchorPx = CGPoint(x: sAnchor.x * CGFloat(image.width), y: sAnchor.y * CGFloat(image.height))
-                let estAnchorPx = CGPoint(x: refinedPoint.x * CGFloat(image.width), y: refinedPoint.y * CGFloat(image.height))
-                if let (directPx, directScore) = matchWithScore(template: seedImg, at: seedAnchorPx, in: image,
-                                                                around: estAnchorPx, radius: 3, requireUnique: true),
-                   directScore >= 0.86,
-                   hypot(directPx.x - estAnchorPx.x, directPx.y - estAnchorPx.y) <= 2.0 {
-                    let directNorm = CGPoint(x: directPx.x / CGFloat(image.width), y: directPx.y / CGFloat(image.height))
-                    refinedPoint = CGPoint(
-                        x: 0.50 * refinedPoint.x + 0.50 * directNorm.x,
-                        y: 0.50 * refinedPoint.y + 0.50 * directNorm.y
-                    )
-                }
-            }
+            if seedImage == nil { seedImage = previous }
+            let refinedPoint = CGPoint(x: ntcEval.anchorNormX, y: ntcEval.anchorNormY)
             var survivors: [CGPoint] = []
             let survCount = Int(max(0, ntcEval.survivingCount))
             survivors.reserveCapacity(survCount)

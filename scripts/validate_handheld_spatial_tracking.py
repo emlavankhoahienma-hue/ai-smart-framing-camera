@@ -177,7 +177,7 @@ class HandheldSpatialTrackingUpgradeTests(unittest.TestCase):
         exposure_src = (ROOT / "AISmartFramingCamera/Services/SmartSceneExposureEngine.swift").read_text(encoding="utf-8")
         self.assertIn("func predictedBearing(at targetTimestamp: TimeInterval", SPATIAL_SRC)
         self.assertIn("let velocityHuberWeight = min(1.0", SPATIAL_SRC)
-        self.assertIn("self.poseUnlocked(at: lastFrameTime)", SPATIAL_SRC)
+        self.assertIn("let livePreviewTime = sample.timestamp - 0.008", SPATIAL_SRC)
         self.assertIn("ntc_imu_push_sample(", SPATIAL_SRC)
         self.assertIn("ntc_imu_interpolate_pose(", SPATIAL_SRC)
         self.assertIn("ntc_s2_1euro_slerp(", SPATIAL_SRC)

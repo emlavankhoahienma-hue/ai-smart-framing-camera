@@ -99,12 +99,6 @@ public struct ARFramingOverlayView: View {
                         guard !isDocked, rawDistToCenter < outerWellRadius else {
                             return targetScreen
                         }
-                        if viewModel.isPerfectAlignment && rawDistToCenter <= innerCoreRadius {
-                            return CGPoint(
-                                x: screenCenter.x + (targetScreen.x - screenCenter.x) * 0.05,
-                                y: screenCenter.y + (targetScreen.y - screenCenter.y) * 0.05
-                            )
-                        }
                         let radialScale: CGFloat
                         if rawDistToCenter <= innerCoreRadius {
                             let coreT = rawDistToCenter / innerCoreRadius
@@ -140,8 +134,8 @@ public struct ARFramingOverlayView: View {
                         trackingQuality: viewModel.trackingQuality,
                         isSnapped: isSnapped
                     )
-                    .position(effectiveTargetScreen)
                     .animation(.spring(response: 0.22, dampingFraction: 0.68), value: isSnapped)
+                    .position(effectiveTargetScreen)
                     .transaction { $0.animation = nil }
 
                     if isDocked {

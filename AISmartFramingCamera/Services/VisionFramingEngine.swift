@@ -369,8 +369,9 @@ public final class VisionFramingEngine: @unchecked Sendable {
         let admission = ingressLock.withLock { () -> (UInt64, Bool, Bool)? in
             // Full scene analysis runs once on the detached AI capture. Preview
             // uses ~7 Hz detection; liveEntitySmoother ensures fluid 60 FPS UI.
-            // Tracking retains its full ~32 FPS admission budget.
-            guard !busy, now - lastAdmission >= (active ? 1 / 30.0 : 1 / 3.0) else { return nil }
+            // Tracking admits every non-overlapping camera frame up to 60 FPS
+            // without 30Hz/24Hz beat-frequency drops.
+            guard !busy, now - lastAdmission >= (active ? 1 / 60.0 : 1 / 3.0) else { return nil }
             busy = true; lastAdmission = now
             let capture = captureNext; captureNext = false
             return (generation, active, capture)
@@ -617,9 +618,10 @@ public final class VisionFramingEngine: @unchecked Sendable {
                             y: (1 - measuredPoint.y - rawBox.minY) / rawBox.height)
                         if flow?.isReliable == true,
                            (0...1).contains(rawUV.x), (0...1).contains(rawUV.y) {
-                            let clampedU = min(max(rawUV.x, max(0.08, seedAnchorUV.x - 0.22)), min(0.92, seedAnchorUV.x + 0.22))
-                            let clampedV = min(max(rawUV.y, max(0.08, seedAnchorUV.y - 0.22)), min(0.92, seedAnchorUV.y + 0.22))
-                            let selectedUV = CGPoint(x: clampedU, y: clampedV)
+                            let selectedUV = CGPoint(
+                                x: min(0.95, max(0.05, rawUV.x)),
+                                y: min(0.95, max(0.05, rawUV.y))
+                            )
                             anchorUV = selectedUV
                         }
                         if let flow { patchFlow.accept(flow, box: rawBox, point: measuredPoint) }

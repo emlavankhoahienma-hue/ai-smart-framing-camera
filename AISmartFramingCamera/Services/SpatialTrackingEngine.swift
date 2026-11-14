@@ -247,11 +247,11 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
         let y = SIMD2<Double>(simd_dot(innovation3D, tangentE1), simd_dot(innovation3D, tangentE2))
 
         let safeConf = min(1.0, max(0.20, confidence))
-        let baseSigma = 0.008 / max(0.5, focalScale)
+        let baseSigma = 0.0042 / max(0.5, focalScale)
         // Trọng số làm mượt động theo Độ tin cậy AI & Bước nhảy góc: Khi độ tin cậy thấp hoặc có bước nhảy góc lớn,
         // tự động tăng phương sai nhiễu đo lường R để bộ lọc EKF hấp thụ chuyển động êm ái qua nhiều frame
-        let jumpFactor = min(3.0, max(1.0, angle / 0.035))
-        let nsaSigma = baseSigma * (1.0 + 1.5 * (1.0 - safeConf)) * jumpFactor
+        let jumpFactor = min(2.0, max(1.0, angle / 0.045))
+        let nsaSigma = baseSigma * (1.0 + 1.2 * (1.0 - safeConf)) * jumpFactor
         let rMat = Mat2.diagonal(nsaSigma * nsaSigma)
 
         let sMat = (pThetaTheta + rMat).symmetrized
@@ -284,10 +284,10 @@ final class SpatialTangentKalmanFilter: @unchecked Sendable {
         }
 
         // Handheld iPhone velocity deadband & Huber weighting:
-        // Sub-pixel / 1-pixel bounding-box breathing (< 0.0038 rad) refines bearing position
+        // Sub-pixel / 1-pixel bounding-box breathing (< 0.0022 rad) refines bearing position
         // without injecting false angular velocity into the tangent state.
         let innovationNorm = hypot(y.x, y.y)
-        let velocityHuberWeight = min(1.0, (innovationNorm / 0.0038) * (innovationNorm / 0.0038))
+        let velocityHuberWeight = min(1.0, (innovationNorm / 0.0022) * (innovationNorm / 0.0022))
         angularVelocity += deltaOmegaCorr * velocityHuberWeight
         let speed = hypot(angularVelocity.x, angularVelocity.y)
         let maxHandheldAngularSpeed = 2.2
@@ -605,7 +605,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
         // arrives, its pose is a bounded startup approximation; otherwise the
         // pending pin would remain unresolved and the ring would stay glued to
         // its original screen coordinate until Vision happened to succeed.
-        let pose = TrackingGeometry.pose(at: time, in: history) ?? history.first.flatMap {
+        let pose = poseUnlocked(at: time) ?? history.first.flatMap {
             $0.timestamp >= time && $0.timestamp - time <= 0.25 ? $0.deviceToWorld : nil
         }
         guard let pose else { return }
@@ -671,7 +671,7 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                   (0...1).contains(point.x), (0...1).contains(point.y), value.isFinite,
                   value >= max(threshold,
                                lowTexture && evidence == .geometryContinuation ? 0.50 : 0.35),
-                  let pose = TrackingGeometry.pose(at: frame.timestamp, in: history) else {
+                  let pose = poseUnlocked(at: frame.timestamp) else {
                 publish(); return
             }
             let observed = pose.act(frame.calibration.deviceRay(at: point))
@@ -709,7 +709,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                     filter.reidentify(observedRay: observed, timestamp: frame.timestamp)
                 } else {
                     filter.update(innovation: innovation, sInv: sInv)
-                    let blended = filter.bearing
+                    let now = CACurrentMediaTime()
+                    let blended = filter.predictedBearing(
+                        at: now,
+                        isDynamicScene: street || scene.isDeformableNature
+                    )
                     let length = simd_length(blended)
                     guard length.isFinite, length > 1e-9 else { publish(); return }
                     corrected = blended / length
@@ -722,12 +726,15 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
                 } else {
                     worldRay = corrected
                 }
-                if evidence == .reidentified || (evidence == .confirmedContinuation && residual > 0.20) {
+                if evidence == .reidentified {
                     presentationIsRecovering = true
-                } else if !presentationIsRecovering {
-                    // Follow accepted optical motion directly. Filtering
-                    // displayWorldRay a second time makes the yellow dot lag.
-                    displayWorldRay = subjectWorldRay ?? worldRay
+                } else {
+                    if presentationIsRecovering && residual <= 0.12 {
+                        presentationIsRecovering = false
+                    }
+                    if displayWorldRay == nil {
+                        displayWorldRay = subjectWorldRay ?? worldRay
+                    }
                 }
             } else {
                 // The first timestamped visual fix can initialize if pinning
@@ -792,11 +799,11 @@ public final class SpatialTrackingEngine: @unchecked Sendable {
             let settled = settlingAngle * focalScale < 0.008
             if settled { presentationIsRecovering = false }
             let rendered = guideFromSubject?.act(slewed) ?? (worldRay ?? slewed)
-            // Project with the pose of the latest camera image while frames are
-            // current. Using a newer motion sample than the video frame makes
-            // the overlay lead the viewfinder image during pans.
-            let imagePose = (now - lastFrameTime <= CompositionTuning.maxFrameToMotionLatency ?
-                self.poseUnlocked(at: lastFrameTime) : nil) ?? sample.deviceToWorld
+            // Project at 200Hz using the live IMU pose synchronized to display preview
+            // (-8ms display latency) rather than freezing at the 30Hz lastFrameTime,
+            // eliminating the 30Hz camera-frame staircase during handheld pans.
+            let livePreviewTime = sample.timestamp - 0.008
+            let imagePose = self.poseUnlocked(at: livePreviewTime) ?? sample.deviceToWorld
             if CompositionTuning.isExperimentLoggingEnabled, lastFrameTime.isFinite {
                 let delta = sample.timestamp - lastFrameTime
                 if abs(delta) > CompositionTuning.maxFrameToMotionLatency, now - lastSyncWarningTime > 2.0 {
