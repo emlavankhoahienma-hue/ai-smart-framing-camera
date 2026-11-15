@@ -637,7 +637,6 @@ struct CompositionRaster: Sendable {
                 }
             }
 
-            let minX = stats.minX, minY = stats.minY, maxX = stats.maxX, maxY = stats.maxY
             let peakVal = stats.peakVal, peakX = stats.peakX, peakY = stats.peakY
             let sumSync = stats.sumSync, sumDepth = stats.sumDepth
             let compMeanDepth = sumDepth / Double(comp.count)
