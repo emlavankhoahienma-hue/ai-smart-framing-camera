@@ -1620,7 +1620,8 @@ enum CompositionPlanner {
         let placement = exp(-8.0 * pow(Double(effectiveDest.x - desired.x), 2) -
                             7.0 * pow(Double(effectiveDest.y - desired.y), 2))
         let preservesContext = intent.preservesContext
-        let wasteEase = metrics.wasteRatio
+        let isLegacyScenery = subject.kind == .scenery && !sceneHints.hasRichGuidance
+        let wasteEase = isLegacyScenery ? 0.0 : metrics.wasteRatio
         let isDiffuse = raster?.isDiffuseAttention ?? true
         if !sceneHints.hasRichGuidance && cropAttention && !unchanged && (!subject.isAttentionOnly || isDiffuse) {
             guard metrics.retention >= 0.82 else { return nil }
@@ -1629,7 +1630,9 @@ enum CompositionPlanner {
         let retSoft = hasAttention ? min(1.0, metrics.retention / retDenom) : 1.0
         let context = (preservesContext && hasAttention) ? metrics.retention : retSoft
         let rawContextFit = min(1.0, 1.0 / (ratio * ratio * (preservesContext ? 0.72 : 0.65)))
-        let contextFit = rawContextFit + (1.0 - rawContextFit) * (preservesContext ? 0.85 : 0.90) * wasteEase
+        let contextFit = isLegacyScenery
+            ? rawContextFit
+            : rawContextFit + (1.0 - rawContextFit) * (preservesContext ? 0.85 : 0.90) * wasteEase
 
         let cutFloor = subject.isAttentionOnly ? (wasteEase < 0.24 ? 0.76 : 0.62) : 0.48
         let attnCutPenalty = (hasAttention && !isDiffuse && metrics.retention < cutFloor && wasteEase < 0.55)
@@ -1661,12 +1664,14 @@ enum CompositionPlanner {
         let thirdY = min(abs(Double(effectiveDest.y) - CompositionTuning.portraitEyeLineY),
                          abs(Double(effectiveDest.y) - Double(CompositionTuning.goldenSectionRight)))
         let ruleOfThirdsBonus = CompositionTuning.ruleOfThirdsBonusWeight * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
-        let ratioAdjustment = 0.008 * abs(log(max(0.25, ratio))) * (1.0 - 0.80 * wasteEase)
+        let ratioAdjustment = isLegacyScenery
+            ? 0.015 * abs(log(max(0.25, ratio)))
+            : 0.008 * abs(log(max(0.25, ratio))) * (1.0 - 0.80 * wasteEase)
         let contextWeight = preservesContext ? 0.12 : (subject.isAttentionOnly ? 0.12 : 0.07)
         let contextFitWeight = preservesContext ? 0.09 : 0.04
         let baseFill = baselineProfile?.activeFill ?? 0.50
         let fillGain = max(0.0, metrics.activeFill - baseFill)
-        let fillBonus = (ratio > 1.03 && metrics.wasteRatio >= 0.24 && !isDiffuse) ? 0.12 * fillGain : 0.0
+        let fillBonus = (!isLegacyScenery && ratio > 1.03 && metrics.wasteRatio >= 0.24 && !isDiffuse) ? 0.12 * fillGain : 0.0
         var anatomicalPenaltyValue = 0.0
         if let poseProfile {
             let cMinX = max(0.0, rawCornerPoints.map(\.x).min() ?? 0.0)
@@ -1704,11 +1709,12 @@ enum CompositionPlanner {
             )
         }
 
+        let trimGain = isLegacyScenery ? 0.0 : metrics.excessTrimGain
         let fieldScore = 0.29 * sizeFit + 0.31 * placement + 0.10 * headroom +
             0.08 * space + 0.06 * edgeSafety + contextWeight * context +
             contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
             0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue - oobPenalty +
-            intentPrior + ruleOfThirdsBonus + metrics.excessTrimGain + fillBonus - attnCutPenalty - ratioAdjustment
+            intentPrior + ruleOfThirdsBonus + trimGain + fillBonus - attnCutPenalty - ratioAdjustment
         let fieldNorm = min(1.0, max(0.0, fieldScore))
         let gaicScore = min(1.0, max(0.0,
             0.44 * fieldNorm +
@@ -2670,12 +2676,13 @@ enum CompositionPlanner {
 
         // Với phong cảnh (landscape) hoặc chủ thể chỉ là mảng vân bề mặt (scenery anchor), giữ góc rộng trừ khi V5 phát hiện rìa thừa cần cắt gọn
         let wideHasClutter = sceneHints.hasRichGuidance && (sceneHints.avoid.maxAvoid >= 0.25 || sceneHints.role == .foliageGarden || sceneHints.role == .apertureView)
+        let sceneryZoomCap = (subject.kind == .scenery && !wideHasClutter) ? min(maxZoom, currentZoom * 1.12) : maxZoom
         if (subject.kind != .scenery && intent != .landscape) || wideHasClutter {
             let idealZoom = CGFloat(CompositionPureCalculations.calculateContinuousIdealZoom(
                 currentZoom: Double(currentZoom),
                 currentArea: area,
                 desiredArea: desiredArea,
-                maxZoom: Double(maxZoom),
+                maxZoom: Double(sceneryZoomCap),
                 targetPoint: desired,
                 boxWidth: Double(subject.bounds.width),
                 boxHeight: Double(subject.bounds.height),
@@ -2688,38 +2695,38 @@ enum CompositionPlanner {
                 : [1.06, 1.13, 1.21, 1.30, 1.40, 1.52, 1.66, 1.82, 2.02, 2.28, 2.65, 3.10]
             for mult in mults {
                 let candidate = currentZoom * mult
-                if candidate >= currentZoom && candidate <= maxZoom {
+                if candidate >= currentZoom && candidate <= sceneryZoomCap {
                     options.insert(candidate)
                 }
             }
 
             if idealZoom > currentZoom {
                 for factor in [0.85, 0.92, 1.08, 1.15] as [CGFloat] {
-                    options.insert(max(currentZoom, min(maxZoom, idealZoom * factor)))
+                    options.insert(max(currentZoom, min(sceneryZoomCap, idealZoom * factor)))
                 }
             }
         }
 
-        if maxZoom > currentZoom {
-            options.insert(min(maxZoom, currentZoom * 1.05))
-            options.insert(min(maxZoom, currentZoom * 1.08))
-            if maxZoom > currentZoom * 1.25 {
-                options.insert(sqrt(currentZoom * maxZoom))
+        if sceneryZoomCap > currentZoom {
+            options.insert(min(sceneryZoomCap, currentZoom * 1.05))
+            options.insert(min(sceneryZoomCap, currentZoom * 1.08))
+            if sceneryZoomCap > currentZoom * 1.25 {
+                options.insert(sqrt(currentZoom * sceneryZoomCap))
             }
         }
 
-        for h in allowedZooms where h.isFinite && h >= currentZoom && h <= maxZoom {
+        for h in allowedZooms where h.isFinite && h >= currentZoom && h <= sceneryZoomCap {
             options.insert(h)
         }
 
-        // Dense logarithmic zoom sweep from currentZoom to maxZoom
+        // Dense logarithmic zoom sweep from currentZoom to sceneryZoomCap
         let logSteps = highMemory ? 14 : 10
-        if maxZoom > currentZoom * 1.01 {
-            let logSpan = log(Double(maxZoom / currentZoom))
+        if sceneryZoomCap > currentZoom * 1.01 {
+            let logSpan = log(Double(sceneryZoomCap / currentZoom))
             for k in 1...logSteps {
                 let fraction = Double(k) / Double(logSteps)
                 let z = currentZoom * CGFloat(exp(logSpan * fraction))
-                if z >= currentZoom && z <= maxZoom { options.insert(z) }
+                if z >= currentZoom && z <= sceneryZoomCap { options.insert(z) }
             }
         }
 
