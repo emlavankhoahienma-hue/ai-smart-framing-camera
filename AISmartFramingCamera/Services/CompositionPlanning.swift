@@ -1129,18 +1129,43 @@ enum CompositionPlanner {
                     }
                     result.append(best)
                 }
-                if proposalLimit > 6 {
-                    result.append(contentsOf: seeds)
-                } else {
-                    result.append(contentsOf: diverse(seeds, limit: 6, raySeparation: 0.03, zoomSeparation: 0.06))
-                }
+                result.append(contentsOf: seeds)
             }
         }
         guard !isCancelled() else { return [] }
         if !refining.isEmpty {
             return diverse(result, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
         }
-        guard proposalLimit > 6 else { return diverse(result, limit: proposalLimit, raySeparation: 0.04, zoomSeparation: 0.08) }
+        var perZoomBest: [Int: CompositionProposal] = [:]
+        for proposal in result {
+            let zBin = Int((log(Double(proposal.zoom / currentZoom)) * 12).rounded())
+            if proposal.score > (perZoomBest[zBin]?.score ?? -.infinity) {
+                perZoomBest[zBin] = proposal
+            }
+        }
+        if proposalLimit <= 6 {
+            let topDiverse = diverse(result, limit: proposalLimit, raySeparation: 0.04, zoomSeparation: 0.08)
+            guard proposalLimit > 1, perZoomBest.count > 1, let leader = topDiverse.first else {
+                return topDiverse
+            }
+            var compact: [CompositionProposal] = [leader]
+            let zoomSlots = min(proposalLimit, max(2, proposalLimit / 2 + 1))
+            for candidate in perZoomBest.values.sorted(by: { $0.score > $1.score }) {
+                guard compact.count < zoomSlots else { break }
+                if !compact.contains(where: { abs(log(Double($0.zoom / candidate.zoom))) < 0.045 &&
+                    hypot($0.aimPoint.x - candidate.aimPoint.x, $0.aimPoint.y - candidate.aimPoint.y) < 0.020 }) {
+                    compact.append(candidate)
+                }
+            }
+            for candidate in topDiverse {
+                guard compact.count < proposalLimit else { break }
+                if !compact.contains(where: { abs(log(Double($0.zoom / candidate.zoom))) < 0.045 &&
+                    hypot($0.aimPoint.x - candidate.aimPoint.x, $0.aimPoint.y - candidate.aimPoint.y) < 0.040 }) {
+                    compact.append(candidate)
+                }
+            }
+            return compact.sorted { $0.score > $1.score }
+        }
         // Preserve a no-change baseline and a nearby gentle alternative, guarantee coverage of
         // every feasible zoom rung, retain top GAIC+Field winners, and stratify multi-scale buckets.
         var selected = result.filter(\.isUnchangedView).prefix(1).map { $0 }
@@ -1149,13 +1174,6 @@ enum CompositionPlanner {
                 hypot($0.aimPoint.x - 0.5, $0.aimPoint.y - 0.5) < 0.06 })
             .max(by: { $0.score < $1.score }) {
             selected.append(nearOriginal)
-        }
-        var perZoomBest: [Int: CompositionProposal] = [:]
-        for proposal in result {
-            let zBin = Int((log(Double(proposal.zoom / currentZoom)) * 12).rounded())
-            if proposal.score > (perZoomBest[zBin]?.score ?? -.infinity) {
-                perZoomBest[zBin] = proposal
-            }
         }
         let zoomChampions = perZoomBest.keys.sorted().compactMap { perZoomBest[$0] }
         let zoomBudget = max(3, proposalLimit / 4)
