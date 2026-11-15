@@ -300,24 +300,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         guard let raster = output.compositionRaster else {
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [hero], receipt: receipt())
         }
-        let subject = CompositionSubject(index: 0, bounds: hero.boundingBox,
-            anchor: hero.eyePosition ?? hero.center, kind: hero.isGroup ? .group : kind(hero.category),
-            confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze,
-            allowsAttentionCrop: hero.isAttentionRegion && raster.hasAttention &&
-                hero.boundingBox.width * hero.boundingBox.height > 0.12,
-            verticalGaze: hero.verticalGaze,
-            shotScaleBias: output.semanticGuidance.shotScaleBias,
-            contextPreservationWeight: output.semanticGuidance.contextPreservationWeight)
-        let intents = compositionIntents(output, hero: hero)
         var portraitBounds: CGRect?
         var poseProfile: AnatomicalPoseProfile?
-        if hero.category == .human, !hero.isGroup, !hero.faceBounds.isEmpty {
+        if hero.category == .human, !hero.isGroup {
             let poseRequest = VNDetectHumanBodyPoseRequest()
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: frame.orientation, options: [:])
             if (try? cancellation.perform(poseRequest, with: handler)) != nil {
                 let observations = poseRequest.results ?? []
-                portraitBounds = PortraitFramingEvidence.bounds(body: hero.boundingBox,
-                    faces: hero.faceBounds, observations: observations)
+                if !hero.faceBounds.isEmpty {
+                    portraitBounds = PortraitFramingEvidence.bounds(body: hero.boundingBox,
+                        faces: hero.faceBounds, observations: observations)
+                }
                 poseProfile = PortraitFramingEvidence.extractProfile(body: hero.boundingBox,
                     faces: hero.faceBounds, observations: observations)
             }
@@ -327,6 +320,39 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             let torsoHeight = min(box.height, max(0.22, box.height * 0.60))
             portraitBounds = CGRect(x: box.minX, y: box.minY, width: box.width, height: torsoHeight)
         }
+        let resolvedAnchor: CGPoint = {
+            if let eye = hero.eyePosition { return eye }
+            if hero.category == .human || hero.category == .face {
+                if let p = poseProfile {
+                    if let l = p.leftEye, let r = p.rightEye {
+                        return CGPoint(x: (l.x + r.x) * 0.5, y: (l.y + r.y) * 0.5)
+                    }
+                    if let pt = p.nose ?? p.leftEye ?? p.rightEye {
+                        return pt
+                    }
+                    if let neck = p.neck {
+                        let headOffset = min(hero.boundingBox.height * 0.07, 0.05)
+                        return CGPoint(x: neck.x, y: max(hero.boundingBox.minY + hero.boundingBox.height * 0.08, neck.y - headOffset))
+                    }
+                }
+                let box = hero.boundingBox
+                return CGPoint(x: box.midX, y: min(box.minY + box.height * 0.45, box.minY + min(box.height * 0.20, 0.14)))
+            }
+            if hero.isAttentionRegion, let tp = hero.trackingPoint {
+                return CGPoint(x: min(hero.boundingBox.maxX, max(hero.boundingBox.minX, tp.x)),
+                               y: min(hero.boundingBox.maxY, max(hero.boundingBox.minY, tp.y)))
+            }
+            return hero.center
+        }()
+        let subject = CompositionSubject(index: 0, bounds: hero.boundingBox,
+            anchor: resolvedAnchor, kind: hero.isGroup ? .group : kind(hero.category),
+            confidence: Double(hero.confidence), importance: hero.prominenceScore, gaze: hero.gaze,
+            allowsAttentionCrop: hero.isAttentionRegion && raster.hasAttention &&
+                hero.boundingBox.width * hero.boundingBox.height > 0.12,
+            verticalGaze: hero.verticalGaze,
+            shotScaleBias: output.semanticGuidance.shotScaleBias,
+            contextPreservationWeight: output.semanticGuidance.contextPreservationWeight)
+        let intents = compositionIntents(output, hero: hero)
         if poseProfile == nil && (hero.category == .human || hero.category == .face) {
             poseProfile = PortraitFramingEvidence.extractProfile(body: hero.boundingBox,
                 faces: hero.faceBounds, observations: [])
@@ -576,10 +602,10 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             for region in observation.salientObjects ?? [] where region.confidence >= salMinConf {
                     let area = region.boundingBox.width * region.boundingBox.height
                     guard area >= 0.012 && area <= 0.78 else { continue }
-                    // Loại bỏ chướng ngại vật sát biên khung hình (khung cửa sổ, vách tường, lan can ban công)
+                    // Loại bỏ chướng ngại vật sát biên khung hình (Vision boundingBox gốc dùng hệ bottom-left: y=0 ở đáy, y=1 ở đỉnh)
                     let b = region.boundingBox
-                    let isSideOccluder = (b.minX <= 0.03 || b.maxX >= 0.97) && (b.height >= 0.55 || b.width >= 0.55)
-                    let isBottomOccluder = b.maxY >= 0.96 && b.height <= 0.35 && b.width >= 0.50
+                    let isSideOccluder = (b.minX <= 0.03 || b.maxX >= 0.97) && b.height >= 0.55 && b.width <= 0.18
+                    let isBottomOccluder = b.minY <= 0.04 && b.height <= 0.35 && b.width >= 0.50
                     guard !isSideOccluder && !isBottomOccluder else { continue }
                     let isObjectness = (index == 0)
                     let label = (isObjectness && area <= 0.42) ? "Chủ thể tiền cảnh" : "Vùng nổi bật"
@@ -601,19 +627,34 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 candidates.append(contentsOf: broadSaliencyCandidates)
             }
             if let r = raster {
-                let syncClusters = r.extractSynchronizedClusters(minPeak: hasExplicitDetectorCandidate ? 0.34 : 0.24, maxClusters: 3)
+                let syncClusters = r.extractSynchronizedClusters(minPeak: hasExplicitDetectorCandidate ? 0.34 : 0.24, maxClusters: 4)
                 for cluster in syncClusters {
+                    // Only suppress if existing detections cover most of THIS cluster (not a tiny sub-object inside it)
                     let alreadyCovered = candidates.contains { existing in
                         let inter = existing.boundingBox.intersection(cluster.bounds)
                         guard !inter.isNull, !inter.isEmpty else { return false }
                         let interArea = Double(inter.width * inter.height)
-                        let small = min(existing.areaRatio, cluster.area)
-                        return interArea / max(0.0001, small) > 0.55
+                        let unionArea = existing.areaRatio + cluster.area - interArea
+                        return interArea / max(0.0001, cluster.area) > 0.58 ||
+                            interArea / max(0.0001, unionArea) > 0.48
                     }
                     guard !alreadyCovered else { continue }
                     let label = cluster.area <= 0.42 ? "Chủ thể tiền cảnh" : "Vùng trọng tâm"
-                    let rawConf = 0.40 * cluster.peakValue + 0.36 * cluster.dominance + 0.24 * cluster.meanDepth
-                    let adjusted = Float(min(0.90, max(0.38, rawConf * (hasExplicitDetectorCandidate ? 0.78 : 1.0))))
+                    let rawConf = 0.30 * cluster.peakValue + 0.44 * cluster.dominance + 0.26 * cluster.meanDepth
+                    let b = cluster.bounds
+                    let touchesBorder = b.minX <= 0.025 || b.maxX >= 0.975 || b.minY <= 0.025 || b.maxY >= 0.975
+                    let offCenter = Double(hypot(cluster.anchor.x - 0.5, cluster.anchor.y - 0.5))
+                    var explicitScale = 1.0
+                    if hasExplicitDetectorCandidate {
+                        if touchesBorder && (cluster.dominance < 0.12 || offCenter > 0.34) {
+                            explicitScale = 0.62
+                        } else if offCenter > 0.38 && cluster.dominance < 0.14 {
+                            explicitScale = 0.72
+                        } else if !candidates.contains(where: { $0.areaRatio < 0.015 }) {
+                            explicitScale = 0.88
+                        }
+                    }
+                    let adjusted = Float(min(0.90, max(0.38, rawConf * explicitScale)))
                     var c = NeuralSubjectCandidate(
                         boundingBox: cluster.bounds,
                         category: .foregroundObject,

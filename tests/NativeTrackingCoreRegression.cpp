@@ -388,6 +388,47 @@ static void testMultiFrameZeroDriftAndT0Anchoring() {
     const double panReturnDriftPxX = (anchorX - 0.50) * static_cast<double>(w);
     const double panReturnDriftPxY = (anchorY - 0.50) * static_cast<double>(h);
     EXPECT_TRUE(std::hypot(panReturnDriftPxX, panReturnDriftPxY) < 0.45);
+
+    // 3. 30-frame continuous sub-pixel slow pan (+0.37, -0.23 px/frame) WITHOUT T0 rescue or IMU hint
+    // Catches integer-lattice ZNCC peak-locking when optical flow falls below coarse pyramidal step size.
+    prevImg = seedImg;
+    anchorX = 0.50;
+    anchorY = 0.50;
+    std::memcpy(pts, seedPts, sizeof(pts));
+    numPts = seedNumPts;
+    for (int32_t f = 1; f <= 30; ++f) {
+        const double sx = static_cast<double>(f) * 0.37;
+        const double sy = static_cast<double>(f) * (-0.23);
+        renderLocalizedSubjectScene(currImg.data(), w, h, sx, sy, sx, sy);
+        const double boxMinX = (50.0 + sx) / static_cast<double>(w);
+        const double boxMaxX = (110.0 + sx) / static_cast<double>(w);
+        const double boxMinY = 1.0 - (90.0 + sy) / static_cast<double>(h);
+        const double boxMaxY = 1.0 - (30.0 + sy) / static_cast<double>(h);
+        float surv[32] = {0.0f};
+        const NTCPatchFlowResult res = ntc_evaluate_constellation_flow(
+            prevImg.data(), currImg.data(), w, h,
+            pts, numPts,
+            0.0, 0.0,
+            0.375, 0.375,
+            boxMinX, boxMinY, boxMaxX, boxMaxY,
+            anchorX, anchorY,
+            surv, 16
+        );
+        EXPECT_TRUE(res.isReliable);
+        anchorX = res.anchorNormX;
+        anchorY = res.anchorNormY;
+        prevImg = currImg;
+        const int32_t left = std::max(4, static_cast<int32_t>((boxMinX + 0.12 * (boxMaxX - boxMinX)) * w));
+        const int32_t right = std::min(w - 5, static_cast<int32_t>((boxMaxX - 0.12 * (boxMaxX - boxMinX)) * w));
+        const int32_t top = std::max(4, static_cast<int32_t>((1.0 - boxMaxY + 0.12 * (boxMaxY - boxMinY)) * h));
+        const int32_t bottom = std::min(h - 5, static_cast<int32_t>((1.0 - boxMinY - 0.12 * (boxMaxY - boxMinY)) * h));
+        numPts = ntc_extract_roi_corners(prevImg.data(), w, h, left, right, top, bottom, pts, 16);
+    }
+    const double expectedSlowX = 0.50 + (30.0 * 0.37) / static_cast<double>(w);
+    const double expectedSlowY = 0.50 + (30.0 * (-0.23)) / static_cast<double>(h);
+    const double slowPanErrPxX = (anchorX - expectedSlowX) * static_cast<double>(w);
+    const double slowPanErrPxY = (anchorY - expectedSlowY) * static_cast<double>(h);
+    EXPECT_TRUE(std::hypot(slowPanErrPxX, slowPanErrPxY) < 1.5);
 }
 
 } // namespace

@@ -192,20 +192,56 @@ enum HeroSubjectPolicy {
                 0.10 * e.separation + 0.06 * e.detail * e.exposure + 0.07 * max(0, e.foregroundDepth - 0.35) +
                 syncBoost + depthIsolation
         } else { visual = 0.20 * scale }
+        let touchesBorder = bounds.minX <= 0.025 || bounds.maxX >= 0.975 || bounds.minY <= 0.025 || bounds.maxY >= 0.975
+        let distCenter = hypot(Double(bounds.midX - 0.5), Double(bounds.midY - 0.52))
+        let share = evidence?.attentionShare ?? 0.5
+        let fgDepth = evidence?.foregroundDepth ?? 0.5
+        let syncAtt = evidence?.syncAttention ?? 0.5
+
         let tierMultiplier: Double
         switch kind {
         case .person, .group:
-            let syncLow = evidence?.syncAttention.map { $0 < 0.16 && (evidence?.foregroundDepth ?? 0.5) < 0.42 } ?? false
-            let distantBystander = !hasFace && (area < 0.045 || (evidence?.foregroundDepth ?? 0.5) < 0.28 || syncLow) && bounds.maxY < 0.60
-            tierMultiplier = hasFace ? 1.30 : (distantBystander ? 0.52 : 1.12)
+            let syncLow = evidence != nil && syncAtt < 0.16 && fgDepth < 0.42
+            let distantBystander = !hasFace && (area < 0.045 || fgDepth < 0.28 || syncLow) && bounds.maxY < 0.60
+            let bottomClippedPasserby = !hasFace && bounds.maxY >= 0.96 && bounds.height < 0.28 && area < 0.08
+            let tinyEdgePedestrian = !hasFace && area < 0.024 && distCenter > 0.34
+            if hasFace {
+                tierMultiplier = 1.30
+            } else if bottomClippedPasserby {
+                tierMultiplier = 0.26
+            } else if tinyEdgePedestrian {
+                tierMultiplier = 0.44
+            } else if distantBystander {
+                tierMultiplier = 0.52
+            } else {
+                tierMultiplier = 1.12
+            }
         case .face: tierMultiplier = 1.20
         case .animal:
-            let backgroundPet = area < 0.025 && (evidence?.foregroundDepth ?? 0.5) < 0.30 && bounds.maxY < 0.56
+            let backgroundPet = area < 0.025 && fgDepth < 0.30 && bounds.maxY < 0.56
             tierMultiplier = backgroundPet ? 0.68 : 1.10
         case .object:
-            let bloatedRegion = area > 0.46
-            let crispForegroundObject = (0.02...0.38).contains(area) && hypot(Double(bounds.midX - 0.5), Double(bounds.midY - 0.52)) < 0.34
-            tierMultiplier = bloatedRegion ? 0.52 : (crispForegroundObject ? 1.04 : 0.88)
+            let bloatedRegion = area > 0.46 && (share < 0.32 || fgDepth < 0.50)
+            let focusedLargeSubject = area > 0.46 && share >= 0.32 && fgDepth >= 0.50
+            let edgeSliver = touchesBorder && (bounds.width < 0.16 || bounds.height < 0.16) && distCenter > 0.32
+            let borderWeakBlob = touchesBorder && (share < 0.09 || syncAtt < 0.26 || distCenter > 0.38)
+            let peripheralCorner = distCenter > 0.38 && share < 0.12
+            let crispForegroundObject = (0.02...0.38).contains(area) && distCenter < 0.34
+            if bloatedRegion {
+                tierMultiplier = 0.52
+            } else if edgeSliver {
+                tierMultiplier = 0.54
+            } else if borderWeakBlob {
+                tierMultiplier = 0.58
+            } else if peripheralCorner {
+                tierMultiplier = 0.72
+            } else if crispForegroundObject {
+                tierMultiplier = 1.04
+            } else if focusedLargeSubject {
+                tierMultiplier = 0.96
+            } else {
+                tierMultiplier = 0.88
+            }
         case .scenery: tierMultiplier = 0.45
         }
         let tinyPenalty = min(1, area / (kind == .face ? 0.002 : 0.008))
@@ -446,15 +482,17 @@ struct CompositionRaster: Sendable {
         let globalPeak = synchronizedSaliency.max() ?? 0.0
         guard globalPeak >= minPeak, stdSync >= 0.035 else { return [] }
 
-        let highThresh = min(globalPeak * 0.72, max(minPeak, meanSync + 0.45 * stdSync))
-        let lowThresh = max(0.08, highThresh * 0.46)
+        let highThresh = min(globalPeak * 0.74, max(minPeak, meanSync + 0.52 * stdSync))
+        let lowThresh = max(0.14, max(highThresh * 0.60, meanSync + 0.16 * stdSync))
         let minPixels = max(3, count / 160)
 
+        let seedIndices = (0..<count).filter { synchronizedSaliency[$0] >= highThresh }
+            .sorted { synchronizedSaliency[$0] > synchronizedSaliency[$1] }
         var visited = [Bool](repeating: false, count: count)
         var components: [[Int]] = []
         let neighbors = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
 
-        for startIdx in 0..<count {
+        for startIdx in seedIndices {
             guard !visited[startIdx], synchronizedSaliency[startIdx] >= highThresh else { continue }
             var queue = [startIdx]
             var head = 0
@@ -473,7 +511,8 @@ struct CompositionRaster: Sendable {
                     guard nx >= 0, nx < side, ny >= 0, ny < side else { continue }
                     let nIdx = ny * side + nx
                     guard !visited[nIdx], synchronizedSaliency[nIdx] >= lowThresh else { continue }
-                    if abs(foregroundDepth[nIdx] - seedDepth) <= 0.30 || synchronizedSaliency[nIdx] >= highThresh {
+                    // Strict depth gate prevents centered subjects from flooding into background regions
+                    if abs(foregroundDepth[nIdx] - seedDepth) <= 0.22 {
                         visited[nIdx] = true
                         queue.append(nIdx)
                     }
@@ -484,12 +523,13 @@ struct CompositionRaster: Sendable {
             }
         }
 
-        var clusters: [SynchronizedSaliencyCluster] = []
-        for comp in components {
+        func componentStats(_ indices: [Int]) -> (minX: Double, minY: Double, maxX: Double, maxY: Double,
+                                                 peakVal: Double, peakX: Double, peakY: Double, peakIdx: Int,
+                                                 sumSync: Double, sumDepth: Double) {
             var minX = 1.0, minY = 1.0, maxX = 0.0, maxY = 0.0
-            var peakVal = 0.0, peakX = 0.5, peakY = 0.5
+            var peakVal = 0.0, peakX = 0.5, peakY = 0.5, peakIdx = indices[0]
             var sumSync = 0.0, sumDepth = 0.0
-            for idx in comp {
+            for idx in indices {
                 let x = idx % side
                 let y = idx / side
                 let px0 = Double(x) / Double(side)
@@ -507,16 +547,105 @@ struct CompositionRaster: Sendable {
                     peakVal = s
                     peakX = (px0 + px1) * 0.5
                     peakY = (py0 + py1) * 0.5
+                    peakIdx = idx
                 }
             }
+            return (minX, minY, maxX, maxY, peakVal, peakX, peakY, peakIdx, sumSync, sumDepth)
+        }
+
+        var clusters: [SynchronizedSaliencyCluster] = []
+        for rawComp in components {
+            var comp = rawComp
+            var stats = componentStats(comp)
+            var rect = CGRect(x: max(0.01, stats.minX), y: max(0.01, stats.minY),
+                              width: min(0.98, stats.maxX - stats.minX), height: min(0.98, stats.maxY - stats.minY))
+            var area = Double(rect.width * rect.height)
+
+            // Refine oversized mega-components via 5x5 local mass peak instead of discarding them to vcom fallback
+            if area > 0.48 || Double(comp.count) / Double(count) > 0.36 {
+                let compSet = Set(comp)
+                var bestScore = -1.0
+                var bestSeed = stats.peakIdx
+                for idx in comp {
+                    let cx = idx % side, cy = idx / side
+                    var locSum = 0.0, locN = 0.0
+                    for yy in max(0, cy - 2)...min(side - 1, cy + 2) {
+                        for xx in max(0, cx - 2)...min(side - 1, cx + 2) {
+                            locSum += synchronizedSaliency[yy * side + xx]
+                            locN += 1.0
+                        }
+                    }
+                    let locMean = locSum / max(1.0, locN)
+                    let nx = (Double(cx) + 0.5) / Double(side)
+                    let ny = (Double(cy) + 0.5) / Double(side)
+                    let cBias = max(0.45, 1.0 - 0.55 * hypot(nx - 0.5, ny - 0.5))
+                    let sc = locMean * (0.45 + 0.55 * synchronizedSaliency[idx]) * cBias
+                    if sc > bestScore {
+                        bestScore = sc
+                        bestSeed = idx
+                    }
+                }
+                let seedVal = max(synchronizedSaliency[bestSeed], stats.peakVal * 0.72)
+                let seedDepth = foregroundDepth[bestSeed]
+                let sx0 = (Double(bestSeed % side) + 0.5) / Double(side)
+                let sy0 = (Double(bestSeed / side) + 0.5) / Double(side)
+
+                let passes: [(Double, Double, Double?)] = [(0.54, 0.20, nil), (0.62, 0.18, 0.36), (0.70, 0.16, 0.28)]
+                for (mul, dGate, rLim) in passes {
+                    let minS = max(highThresh, seedVal * mul)
+                    var subVisited: Set<Int> = [bestSeed]
+                    var subQ: [Int] = [bestSeed]
+                    var subHead = 0
+                    while subHead < subQ.count {
+                        let c = subQ[subHead]
+                        subHead += 1
+                        let cx = c % side, cy = c / side
+                        for dy in -1...1 {
+                            let ny = cy + dy
+                            guard ny >= 0, ny < side else { continue }
+                            for dx in -1...1 {
+                                if dx == 0 && dy == 0 { continue }
+                                let nx = cx + dx
+                                guard nx >= 0, nx < side else { continue }
+                                let ni = ny * side + nx
+                                guard compSet.contains(ni), !subVisited.contains(ni),
+                                      synchronizedSaliency[ni] >= minS,
+                                      abs(foregroundDepth[ni] - seedDepth) <= dGate else { continue }
+                                if let limit = rLim {
+                                    let px = (Double(nx) + 0.5) / Double(side)
+                                    let py = (Double(ny) + 0.5) / Double(side)
+                                    guard hypot(px - sx0, py - sy0) <= limit else { continue }
+                                }
+                                subVisited.insert(ni)
+                                subQ.append(ni)
+                            }
+                        }
+                    }
+                    if subQ.count >= minPixels {
+                        let m2 = componentStats(subQ)
+                        let r2 = CGRect(x: max(0.01, m2.minX), y: max(0.01, m2.minY),
+                                        width: min(0.98, m2.maxX - m2.minX), height: min(0.98, m2.maxY - m2.minY))
+                        let a2 = Double(r2.width * r2.height)
+                        if a2 >= 0.015 && a2 <= 0.56 {
+                            comp = subQ
+                            stats = m2
+                            rect = r2
+                            area = a2
+                            break
+                        }
+                    }
+                }
+            }
+
+            let minX = stats.minX, minY = stats.minY, maxX = stats.maxX, maxY = stats.maxY
+            let peakVal = stats.peakVal, peakX = stats.peakX, peakY = stats.peakY
+            let sumSync = stats.sumSync, sumDepth = stats.sumDepth
             let compMeanDepth = sumDepth / Double(comp.count)
             let compMeanSync = sumSync / Double(comp.count)
-            let rect = CGRect(x: max(0.01, minX), y: max(0.01, minY),
-                              width: min(0.98, maxX - minX), height: min(0.98, maxY - minY))
-            let area = Double(rect.width * rect.height)
-            guard area >= 0.015 && area <= 0.80 else { continue }
-            let isSideStrip = (rect.minX <= 0.03 || rect.maxX >= 0.97) && (rect.height >= 0.60 || rect.width >= 0.60)
-            let isBottomStrip = rect.maxY >= 0.96 && rect.height <= 0.30 && rect.width >= 0.55
+            guard area >= 0.015 && area <= 0.65 else { continue }
+            // Only drop genuine thin border strips, never wide foreground subjects touching an edge
+            let isSideStrip = (rect.minX <= 0.03 || rect.maxX >= 0.97) && rect.height >= 0.55 && rect.width <= 0.16
+            let isBottomStrip = (rect.minY <= 0.03 || rect.maxY >= 0.97) && rect.width >= 0.55 && rect.height <= 0.18
             guard !isSideStrip && !isBottomStrip else { continue }
 
             // 5 iterations of Gaussian Mean-Shift around the component peak
@@ -548,6 +677,12 @@ struct CompositionRaster: Sendable {
             let anchor = CGPoint(x: min(rect.maxX, max(rect.minX, shiftX)),
                                  y: min(rect.maxY, max(rect.minY, shiftY)))
             let dominance = min(1.0, (sumSync / max(0.01, totalSync)) * (0.55 + 0.45 * peakVal))
+            let touchesBorder = rect.minX <= 0.025 || rect.maxX >= 0.975 || rect.minY <= 0.025 || rect.maxY >= 0.975
+            let isCornerSliver = touchesBorder && (dominance < 0.085 ||
+                (peakVal < 0.74 && (anchor.x < 0.10 || anchor.x > 0.90 || anchor.y < 0.10 || anchor.y > 0.90)))
+            if isCornerSliver && components.count > 1 && dominance < 0.065 {
+                continue
+            }
             clusters.append(SynchronizedSaliencyCluster(
                 bounds: rect, anchor: anchor, peakValue: peakVal,
                 meanSync: compMeanSync, meanDepth: compMeanDepth,
@@ -555,8 +690,10 @@ struct CompositionRaster: Sendable {
             ))
         }
         return clusters.sorted {
-            let lhs = $0.dominance * (0.65 + 0.35 * $0.meanDepth) * (0.5 + 0.5 * $0.peakValue)
-            let rhs = $1.dominance * (0.65 + 0.35 * $1.meanDepth) * (0.5 + 0.5 * $1.peakValue)
+            let lhsCenter = max(0.45, 1.0 - 0.65 * Double(hypot($0.anchor.x - 0.5, $0.anchor.y - 0.5)))
+            let rhsCenter = max(0.45, 1.0 - 0.65 * Double(hypot($1.anchor.x - 0.5, $1.anchor.y - 0.5)))
+            let lhs = $0.dominance * (0.65 + 0.35 * $0.meanDepth) * (0.5 + 0.5 * $0.peakValue) * lhsCenter
+            let rhs = $1.dominance * (0.65 + 0.35 * $1.meanDepth) * (0.5 + 0.5 * $1.peakValue) * rhsCenter
             return lhs > rhs
         }.prefix(maxClusters).map { $0 }
     }
@@ -956,8 +1093,11 @@ enum CompositionPlanner {
                     let sourceCorners = corners.map {
                         calibration.project(deviceRay: rotation.act(future.deviceRay(at: $0)))
                     }
-                    // Cho phép xoay camera 3D ở 1.0x vượt biên khung ảnh gốc tới 0.36 để đưa chủ thể vào điểm mạnh bố cục
-                    guard sourceCorners.allSatisfy({ $0.isInFront && inside($0.point, margin: -0.36) }),
+                    // Thu hẹp dần biên vượt khung khi zoom tăng (-0.14 ở 1.0x -> -0.04 từ >=1.35x) để không lộ khoảng đen vô ích
+                    let zoomProgress = min(1.0, max(0.0, (ratio - 1.0) / 0.35))
+                    let cornerOOBMargin = CGFloat(unchanged ? -0.001 : (-0.14 + 0.10 * zoomProgress))
+                    let aimMargin = CGFloat(unchanged ? 0.0 : (-0.02 + 0.06 * zoomProgress))
+                    guard sourceCorners.allSatisfy({ $0.isInFront && inside($0.point, margin: cornerOOBMargin) }),
                           let box = project(subject.bounds, from: calibration, to: future, rotation: rotation),
                           let anchorBox = project(protectedAnchor, from: calibration, to: future, rotation: rotation),
                           safe(anchorBox, original: protectedAnchor, allowCrop: allowHeroCrop),
@@ -971,7 +1111,7 @@ enum CompositionPlanner {
                               return fraction <= 0.02 || fraction >= 0.98
                           }) else { return nil }
                     let aim = calibration.project(deviceRay: rotation.act(SIMD3(0, 0, -1)))
-                    guard aim.isInFront, inside(aim.point, margin: -0.28) else { return nil }
+                    guard aim.isInFront, inside(aim.point, margin: aimMargin) else { return nil }
                     let metrics = measure(raster: raster, cells: sampleCells, subject: subject,
                         subjectDepth: subjectDepthStats.meanDepth, box: box,
                         calibration: calibration, future: future, rotation: rotation, protectedPeople: protectedPeople)
@@ -1047,10 +1187,11 @@ enum CompositionPlanner {
                         }
                         anatomicalPenaltyValue = min(0.18, check.penalty * 0.08)
                     }
+                    let oobPenalty = 0.22 * oobFraction
                     let fieldScore = 0.29 * sizeFit + 0.35 * placement + 0.10 * headroom +
                         0.09 * space + 0.06 * edgeSafety + contextWeight * context +
                         contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
-                        0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue +
+                        0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue - oobPenalty +
                         intentPrior + ruleOfThirdsBonus + zoomProminenceBonus - deadCenterDestPenalty - ratioAdjustment
                     let fieldNorm = min(1.0, max(0.0, fieldScore))
                     // Grid-Anchor RoI Pre-Screen score (RoI inner S_sync focus + depth separation + clean edges + continuous field + anatomy)

@@ -1015,15 +1015,28 @@ NTCPatchFlowResult ntc_evaluate_constellation_flow(
             continue;
         }
 
-        // Step 3: Forward-Backward consistency verification
-        float revX = 0.0f;
-        float revY = 0.0f;
+        // Refine integer-lattice ZNCC peak with continuous sub-pixel bilinear IC-LK
+        // to eliminate sub-pixel parabolic peak-locking drift during smooth pans.
+        float polishedX = candX;
+        float polishedY = candY;
+        if (runSingleLevelICLK(prevGray, currGray, width, height, oldX, oldY, &polishedX, &polishedY) &&
+            std::hypot(polishedX - candX, polishedY - candY) < 1.25f) {
+            candX = polishedX;
+            candY = polishedY;
+        }
+
+        // Step 3: Continuous Forward-Backward consistency verification
+        float revX = oldX;
+        float revY = oldY;
         double revScore = 0.0;
-        if (!ntc_match_patch_zncc(
-                currGray, width, height, candX, candY,
-                prevGray, width, height, oldX, oldY,
-                4, false, &revX, &revY, &revScore)) {
-            continue;
+        const bool fbLkOk = runSingleLevelICLK(currGray, prevGray, width, height, candX, candY, &revX, &revY);
+        if (!fbLkOk) {
+            if (!ntc_match_patch_zncc(
+                    currGray, width, height, candX, candY,
+                    prevGray, width, height, oldX, oldY,
+                    4, false, &revX, &revY, &revScore)) {
+                continue;
+            }
         }
 
         const double fbError = std::hypot(static_cast<double>(revX - oldX), static_cast<double>(revY - oldY));

@@ -8,13 +8,13 @@
     {
       "path": "AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift",
       "start": "    private func analyzeCapturedFrame(",
-      "sha256": "58475e6b9ed23bb51b7493ce6d1a27a30b4dc9bb6c97cb0c5be570ffce7e7fe4"
+      "sha256": "de789e9a98f8720f3253bbcc07dc69cac6914ef267e198f4696f2c695ffea8b6"
     },
     {
       "path": "AISmartFramingCamera/Services/CompositionPlanning.swift",
       "start": "enum HeroSubjectPolicy {",
       "end": "/// Presentation-only identity hysteresis.",
-      "sha256": "6cb6e3d4bc91dda70bdf4447c9405c56502db923ee068a9812ec75f43d030fe8"
+      "sha256": "5b0eb30d416686523614c0837e401153abe0251692a70e2d07529b7476242a5f"
     }
   ]
 }

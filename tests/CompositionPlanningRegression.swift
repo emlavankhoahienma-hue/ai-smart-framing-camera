@@ -602,6 +602,140 @@ enum CompositionPlanningRegression {
             let loGaic = CompositionPreferencePolicy.score(composition: 3.6, aesthetics: 3.6, geometry: 0.75, gaic: 0.18)!
             try require(hiGaic > loGaic, "GAIC score failed to differentiate aesthetic preference")
         }
+        try run("macOS Vision saliency pixelBuffer matches top-left UI orientation") {
+            let size = 256
+            var rgba = [UInt8](repeating: 14, count: size * size * 4)
+            for y in 0..<size {
+                for x in 0..<size {
+                    let i = (y * size + x) * 4
+                    rgba[i + 3] = 255
+                    // Paint a bright high-contrast target in top-right (y: 28..100 in top-down buffer = Vision top)
+                    if (156..<228).contains(x) && (28..<100).contains(y) {
+                        let stripe = ((x / 6 + y / 6) % 2 == 0)
+                        rgba[i] = stripe ? 255 : 40
+                        rgba[i + 1] = stripe ? 210 : 90
+                        rgba[i + 2] = stripe ? 30 : 220
+                    }
+                }
+            }
+            let provider = CGDataProvider(data: Data(rgba) as CFData)!
+            let cg = CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32,
+                             bytesPerRow: size * 4, space: CGColorSpaceCreateDeviceRGB(),
+                             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                             provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+            let ci = CIImage(cgImage: cg)
+            let req = VNGenerateAttentionBasedSaliencyImageRequest()
+            let handler = VNImageRequestHandler(ciImage: ci, options: [:])
+            try handler.perform([req])
+            guard let obs = req.results?.first, let obj = obs.salientObjects?.first else {
+                throw Failure(description: "VNGenerateAttentionBasedSaliencyImageRequest returned no salient objects")
+            }
+            let visionCenterX = obj.boundingBox.midX
+            let visionCenterTopDownY = 1.0 - obj.boundingBox.midY
+            try require(visionCenterX > 0.55 && visionCenterTopDownY < 0.45,
+                        "Vision salient object deviated from top-right target: \(obj.boundingBox)")
+            let renderer = CompositionImageRenderer()
+            guard let measured = renderer.raster(image: ci, saliency: obs.pixelBuffer) else {
+                throw Failure(description: "renderer.raster returned nil for Vision saliency buffer")
+            }
+            var peakIdx = 0
+            var peakVal = -1.0
+            for (idx, val) in measured.attention.enumerated() where val > peakVal {
+                peakVal = val
+                peakIdx = idx
+            }
+            let mapX = (Double(peakIdx % measured.side) + 0.5) / Double(measured.side)
+            let mapY = (Double(peakIdx / measured.side) + 0.5) / Double(measured.side)
+            try require(abs(mapX - Double(visionCenterX)) < 0.22 && abs(mapY - Double(visionCenterTopDownY)) < 0.22,
+                        "attentionMap orientation disagreed with Vision salientObjects: map=(\(mapX),\(mapY)) vision=(\(visionCenterX),\(visionCenterTopDownY))")
+        }
+        try run("cluster extraction preserves wide edge-touching heroes and dense mega-component cores") {
+            let side = 64
+            let zeroCount = side * side
+            var luma = [Double](repeating: 0.25, count: zeroCount)
+            var edges = [Double](repeating: 0.08, count: zeroCount)
+            var depthA = [Double](repeating: 0.22, count: zeroCount)
+            var attA = [Double](repeating: 0.04, count: zeroCount)
+            // Case A: wide foreground subject touching right edge (e.g. close-up snail) + top-left corner speck
+            for y in 0..<side {
+                for x in 0..<side {
+                    let px = (Double(x) + 0.5) / Double(side)
+                    let py = (Double(y) + 0.5) / Double(side)
+                    let i = y * side + x
+                    if px >= 0.56 && px <= 0.99 && py >= 0.10 && py <= 0.88 {
+                        attA[i] = 0.86
+                        depthA[i] = 0.72
+                        luma[i] = 0.75
+                        edges[i] = 0.45
+                    } else if px <= 0.10 && py <= 0.10 {
+                        attA[i] = 0.92
+                        depthA[i] = 0.28
+                        luma[i] = 0.85
+                    }
+                }
+            }
+            let wideRaster = CompositionRaster(side: side, luminance: luma, attention: attA,
+                                               edges: edges, hasAttention: true, foregroundDepth: depthA)
+            let wideClusters = wideRaster.extractSynchronizedClusters(minPeak: 0.24, maxClusters: 4)
+            try require(!wideClusters.isEmpty, "wide edge-touching subject was dropped")
+            try require(wideClusters[0].anchor.x > 0.55 && wideClusters[0].bounds.width > 0.24,
+                        "wide subject misclassified as side strip or lost to corner speck: \(wideClusters[0])")
+
+            // Case B: oversized mega-component with 5x5 dense center core and single corner spike
+            var attB = [Double](repeating: 0.04, count: zeroCount)
+            var depthB = [Double](repeating: 0.60, count: zeroCount)
+            for y in 0..<side {
+                for x in 0..<side {
+                    let px = (Double(x) + 0.5) / Double(side)
+                    let py = (Double(y) + 0.5) / Double(side)
+                    let i = y * side + x
+                    let dCenter = hypot(px - 0.50, py - 0.50)
+                    if dCenter <= 0.46 {
+                        attB[i] = max(0.32, 0.92 - dCenter * 1.1)
+                        depthB[i] = 0.74
+                    }
+                }
+            }
+            // Single hot pixel spike in bottom-right corner
+            attB[(side - 1) * side + (side - 1)] = 1.0
+            let megaRaster = CompositionRaster(side: side, luminance: luma, attention: attB,
+                                               edges: edges, hasAttention: true, foregroundDepth: depthB)
+            let megaClusters = megaRaster.extractSynchronizedClusters(minPeak: 0.24, maxClusters: 4)
+            try require(!megaClusters.isEmpty, "mega-component collapsed instead of extracting central core")
+            try require(hypot(megaClusters[0].anchor.x - 0.50, megaClusters[0].anchor.y - 0.50) < 0.14 &&
+                        megaClusters[0].area <= 0.56,
+                        "core extraction failed to isolate central mass peak: \(megaClusters[0])")
+        }
+        try run("HeroSubjectPolicy suppresses bottom-clipped passersby and edge slivers") {
+            let centered = SubjectVisualEvidence(attentionDensity: 0.65, attentionShare: 0.45,
+                separation: 0.55, detail: 0.80, exposure: 0.85, foregroundDepth: 0.72, syncAttention: 0.68, depthContrast: 0.24)
+            let passerbyEv = SubjectVisualEvidence(attentionDensity: 0.45, attentionShare: 0.05,
+                separation: 0.30, detail: 0.70, exposure: 0.85, foregroundDepth: 0.65, syncAttention: 0.45, depthContrast: 0.10)
+            let heroPerson = HeroSubjectPolicy.score(bounds: CGRect(x: 0.38, y: 0.22, width: 0.24, height: 0.52),
+                kind: .person, confidence: 0.85, evidence: centered, hasFace: true)
+            let bottomPasserby = HeroSubjectPolicy.score(bounds: CGRect(x: 0.35, y: 0.86, width: 0.30, height: 0.13),
+                kind: .person, confidence: 0.85, evidence: passerbyEv, hasFace: false)
+            let centeredObj = HeroSubjectPolicy.score(bounds: CGRect(x: 0.22, y: 0.18, width: 0.54, height: 0.56),
+                kind: .object, confidence: 0.72, evidence: centered, hasFace: false)
+            let edgeSliver = HeroSubjectPolicy.score(bounds: CGRect(x: 0.88, y: 0.14, width: 0.11, height: 0.72),
+                kind: .object, confidence: 0.75, evidence: passerbyEv, hasFace: false)
+            try require(bottomPasserby < heroPerson * 0.45 && bottomPasserby < centeredObj * 0.85,
+                        "bottom-clipped passerby scored too high: \(bottomPasserby) vs obj=\(centeredObj)")
+            try require(edgeSliver < centeredObj * 0.65,
+                        "edge sliver scored too high against centered subject: \(edgeSliver) vs \(centeredObj)")
+        }
+        try run("zoomed proposals >= 1.35x keep aimPoint and sourceCorners safely in bounds") {
+            let nearEdge = subject(index: 0, rect: CGRect(x: 0.10, y: 0.40, width: 0.16, height: 0.24), kind: .object)
+            let plans = CompositionPlanner.photographicProposals(subject: nearEdge, intents: [.object],
+                portraitBounds: nil, raster: raster(), calibration: .fallback(),
+                currentZoom: 1.0, allowedZooms: [1.0, 2.0, 3.0], proposalLimit: 36)
+            for plan in plans where plan.zoom >= 1.35 {
+                try require((0.03...0.97).contains(plan.aimPoint.x) && (0.03...0.97).contains(plan.aimPoint.y),
+                            "zoomed proposal had near-OOB aimPoint: \(plan.aimPoint) at zoom \(plan.zoom)")
+                try require(plan.sourceCorners.allSatisfy { (-0.045...1.045).contains($0.x) && (-0.045...1.045).contains($0.y) },
+                            "zoomed proposal allowed excessive black OOB corner: \(plan.sourceCorners)")
+            }
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

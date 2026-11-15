@@ -45,15 +45,14 @@ final class CompositionAestheticSearch {
                     var proposal = candidate
                     if let assessment {
                         assessedCount += 1
-                        // Phản biện 2: Khi xoay camera 3D ở 1.0x (outOfBoundsFraction > 0), cửa sổ preview bị giới hạn trong [0, 1]
-                        // nên ưu tiên trọng số Trường Thế Năng Thị Giác 3D (candidate.continuousFieldScore) để không bị thiên vị cho khung đứng yên
-                        let oobWeight = min(0.32, candidate.outOfBoundsFraction * 0.45)
-                        let specialistWeight = 0.42 - oobWeight
-                        let fieldWeight = 0.46 + oobWeight
+                        let specialistWeight = 0.42
+                        let fieldWeight = 0.46
                         let gaicWeight = 0.12
+                        let oobPenalty = min(0.18, candidate.outOfBoundsFraction * 0.22)
                         proposal.score = specialistWeight * (assessment.mean - 1) / 4 +
                             fieldWeight * candidate.score +
-                            gaicWeight * min(1.0, max(0.0, candidate.gaicScore))
+                            gaicWeight * min(1.0, max(0.0, candidate.gaicScore)) -
+                            oobPenalty
                     } else if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
                         proposal.score += aesthetic * 0.075
                     }

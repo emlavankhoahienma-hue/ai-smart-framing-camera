@@ -2850,7 +2850,8 @@ public final class CameraViewModel: ObservableObject {
                     liveAim = proj.point
                 }
             }
-            pinTargetAndStartMotion(at: liveAim, subjectRect: first.boundingBox, source: source, trackedPoint: anchor, pinnedGuideRay: worldRay)
+            let clampedLiveAim = CGPoint(x: min(0.995, max(0.005, liveAim.x)), y: min(0.995, max(0.005, liveAim.y)))
+            pinTargetAndStartMotion(at: clampedLiveAim, subjectRect: first.boundingBox, source: source, trackedPoint: anchor, pinnedGuideRay: worldRay)
 
             // Không tự động zoom trước khi người dùng đưa tâm trắng vào khớp tâm mục tiêu.
             // Khi tâm khớp, lockHardTarget() sẽ kích hoạt hiệu ứng triggerZoomRevealAnimation mượt mà.
@@ -3074,7 +3075,8 @@ public final class CameraViewModel: ObservableObject {
         localSelectionMessage = nil
         // Khóa target chuẩn xác vào tia dẫn hướng 3D của bộ lập kế hoạch
         let trackedSubjectPoint = hero?.trackingPoint ?? anchor
-        pinTargetAndStartMotion(at: finalLiveAim,
+        let clampedFinalLiveAim = CGPoint(x: min(0.995, max(0.005, finalLiveAim.x)), y: min(0.995, max(0.005, finalLiveAim.y)))
+        pinTargetAndStartMotion(at: clampedFinalLiveAim,
             subjectRect: plan.subjectRect, source: source,
             trackedPoint: trackedSubjectPoint, pinnedGuideRay: effectiveGuideRay)
         if let seed = pinTrackingBox {
