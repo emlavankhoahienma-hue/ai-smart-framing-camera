@@ -775,8 +775,30 @@ enum CompositionPlanningRegression {
                 gaic: 0.30, hasLearnedGAIC: true, zoomRatio: 1.25)!
             let overZoom = CompositionPreferencePolicy.score(composition: 3.0, aesthetics: 3.0, geometry: 0.5,
                 gaic: 0.90, hasLearnedGAIC: true, zoomRatio: 2.80)!
-            try require(hi - lo > 0.30, "learned GAIC did not dominate ranking")
+            try require(hi - lo > 0.10, "learned GAIC still breaks ties cleanly")
             try require(hi > overZoom + 0.05, "excessive digital zoom was not regularized")
+            let strongPhotoWeakGaic = CompositionPreferencePolicy.score(composition: 3.0, aesthetics: 3.0, geometry: 0.85,
+                gaic: 0.55, hasLearnedGAIC: true, zoomRatio: 1.25)!
+            let badCornerHighGaic = CompositionPreferencePolicy.score(composition: 3.0, aesthetics: 3.0, geometry: 0.20,
+                gaic: 0.95, hasLearnedGAIC: true, zoomRatio: 1.25)!
+            try require(strongPhotoWeakGaic > badCornerHighGaic + 0.10,
+                        "GAIC overrode photographic composition rules (\(badCornerHighGaic) vs \(strongPhotoWeakGaic))")
+            let sceneryDense = CompositionPlanner.denseCompositionalWindows(
+                existing: [],
+                calibration: k,
+                currentZoom: 1.0,
+                allowedZooms: [1.0, 2.0, 3.0],
+                subjectAnchor: CGPoint(x: 0.5, y: 0.5),
+                subjectBounds: CGRect(x: 0.20, y: 0.20, width: 0.60, height: 0.55),
+                protectedBounds: [CGRect(x: 0.28, y: 0.28, width: 0.44, height: 0.44)],
+                intent: .landscape,
+                confidence: 0.70,
+                raster: raster(),
+                maxCount: 72,
+                sceneryFallback: true
+            )
+            try require(sceneryDense.allSatisfy { Double($0.zoom) <= 1.35 && hypot($0.aimPoint.x - 0.5, $0.aimPoint.y - 0.5) <= 0.19 },
+                        "scenery fallback produced aggressive off-center corner targets")
         }
         print("Composition regressions: \(passed) passed")
     }

@@ -57,23 +57,24 @@ public enum CompositionTuning {
     public static let centerDistanceDecay: Double = 0.7
 
     // MARK: - 3. Target Desired Area Fraction (Dien tich mong muon theo y do)
-    public static let desiredAreaPortrait: Double = 0.20
-    public static let desiredAreaFace: Double = 0.075
-    public static let desiredAreaFood: Double = 0.26
-    public static let desiredAreaCloseUp: Double = 0.26
-    public static let desiredAreaAnimal: Double = 0.19
-    public static let desiredAreaGroup: Double = 0.28
-    public static let desiredAreaEnvironment: Double = 0.14
-    public static let desiredAreaStreet: Double = 0.14
-    public static let desiredAreaLandscape: Double = 0.12
+    public static let desiredAreaPortrait: Double = 0.28
+    public static let desiredAreaFace: Double = 0.085
+    public static let desiredAreaFood: Double = 0.28
+    public static let desiredAreaCloseUp: Double = 0.28
+    public static let desiredAreaAnimal: Double = 0.25
+    public static let desiredAreaGroup: Double = 0.30
+    public static let desiredAreaEnvironment: Double = 0.18
+    public static let desiredAreaStreet: Double = 0.18
+    public static let desiredAreaLandscape: Double = 0.14
     public static let desiredAreaArchitecture: Double = 0.28
+    public static let desiredAreaObject: Double = 0.25
 
     /// Mau so chuan hoa dien tich de tinh diem kich thuoc chu the
     public static let heroFaceAreaDivisor: Double = 0.06
     public static let heroBodyAreaDivisor: Double = 0.24
 
     /// Mau so ham log-normal tinh sizeFit
-    public static let sizeFitVarianceDivisor: Double = 0.85
+    public static let sizeFitVarianceDivisor: Double = 0.90
 
     // MARK: - 4. Camera Intrinsics & 3D Spatial Tracking
     /// Goc nhin videoFieldOfView mac dinh cho camera chinh (wide 1x) tren iPhone (~69 do)

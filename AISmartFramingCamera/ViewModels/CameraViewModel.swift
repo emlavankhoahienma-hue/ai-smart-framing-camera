@@ -2796,11 +2796,17 @@ public final class CameraViewModel: ObservableObject {
         let activeChoice = localCompositionChoices.first
         if let first = activeChoice,
            CACurrentMediaTime() - source.frame.timestamp <= 30,
-           first.plan.confidence >= first.plan.minimumAutoselectConfidence {
+           first.plan.confidence >= first.plan.minimumAutoselectConfidence,
+           analysis.canAutoselectComposition || !output.allCandidates.isEmpty {
             acceptLocalPlan(first.plan, source: source)
         } else if let first = activeChoice,
                   CACurrentMediaTime() - source.frame.timestamp <= 30 {
-            acceptLocalPlan(first.plan, source: source)
+            let safeChoice = localCompositionChoices.first(where: \.preservesOriginalFrame) ?? first
+            acceptLocalPlan(safeChoice.plan, source: source)
+            allowsAutoCaptureForCurrentTarget = false
+            localSelectionMessage = output.allCandidates.isEmpty
+                ? "Chưa thấy chủ thể rõ nét — giữ khung tự nhiên để chụp."
+                : "Độ tin cậy chưa cao — kiểm tra lại khung trước khi chụp."
         } else if let first = localEvidenceCandidates.first {
             allowsAutoCaptureForCurrentTarget = true
             let anchor = first.eyePosition ?? (first.category == .human ? CGPoint(x: first.center.x, y: first.boundingBox.minY + first.boundingBox.height * 0.28) : first.center)

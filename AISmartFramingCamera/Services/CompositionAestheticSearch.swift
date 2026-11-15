@@ -29,6 +29,7 @@ final class CompositionAestheticSearch {
              preferences: [String: Double], raster: CompositionRaster? = nil, modelURL: URL?,
              gaicModelURL: URL? = nil,
              aestheticModelURL: URL? = nil, positionURL: URL? = nil, requiresModernModel: Bool = false,
+             sceneHints: CompositionSceneHints = .neutral,
              cancellation: CompositionAnalysisCancellation,
              progress: @Sendable (String) -> Void,
              refine: ([CompositionProposal]) -> [CompositionProposal]) -> Result? {
@@ -63,15 +64,31 @@ final class CompositionAestheticSearch {
             let rankedForSamp = workingProposals.map { candidate -> CompositionProposal in
                 var copy = candidate
                 let zoomRatio = Double(candidate.zoom) / sourceBaseZoom
-                let zoomReg = 0.08 * max(0.0, zoomRatio - 1.65)
-                copy.score = candidate.gaicScore - zoomReg + 0.08 * min(1.0, max(0.0, candidate.continuousFieldScore))
+                let justified = CompositionPreferencePolicy.isJustifiedZoom(candidate)
+                let zoomReg = (justified ? 0.025 : 0.08) * max(0.0, zoomRatio - (justified ? 1.95 : 1.65))
+                let field = min(1.35, max(0.0, candidate.continuousFieldScore))
+                let gaic = min(1.0, max(0.0, candidate.gaicScore))
+                let semBonus = min(0.35, max(-0.20, candidate.semanticCropBonus))
+                if sceneHints.hasRichGuidance {
+                    copy.score = 0.66 * field + 0.34 * gaic + 0.24 * semBonus - zoomReg
+                } else {
+                    copy.score = 0.55 * field + 0.45 * gaic + 0.20 * semBonus - zoomReg
+                }
                 return copy
             }
             let baselineCandidate = workingProposals.first(where: \.isUnchangedView)
             var shortlist: [CompositionProposal] = []
             shortlist.reserveCapacity(sampBudget)
             if let baselineCandidate { shortlist.append(baselineCandidate) }
-            let diversePicks = CompositionPlanner.diverse(rankedForSamp, limit: max(1, sampBudget - 6),
+            // Preserve the strongest pure-geometry photography champions before balanced GAIC+geometry selection
+            let geometryChampions = CompositionPlanner.diverse(workingProposals, limit: min(10, max(4, sampBudget / 3)),
+                                                               raySeparation: 0.05, zoomSeparation: 0.10)
+            for pick in geometryChampions where shortlist.count < sampBudget {
+                if !shortlist.contains(where: { $0.sourceCorners == pick.sourceCorners && $0.zoom == pick.zoom }) {
+                    shortlist.append(pick)
+                }
+            }
+            let diversePicks = CompositionPlanner.diverse(rankedForSamp, limit: max(1, sampBudget - shortlist.count),
                                                           raySeparation: 0.045, zoomSeparation: 0.09)
             for pick in diversePicks where shortlist.count < sampBudget {
                 if !shortlist.contains(where: { $0.sourceCorners == pick.sourceCorners && $0.zoom == pick.zoom }) {
@@ -111,6 +128,28 @@ final class CompositionAestheticSearch {
             return bestDist < 0.20 ? bestScore : proposal.gaicScore
         }
 
+        let preScoredSemantic = proposals.filter { !$0.isUnchangedView && abs($0.semanticCropBonus) > 1e-4 }
+        func matchedSemanticBonus(for proposal: CompositionProposal) -> Double {
+            guard !proposal.isUnchangedView,
+                  abs(proposal.semanticCropBonus) <= 1e-4,
+                  !preScoredSemantic.isEmpty else {
+                return proposal.semanticCropBonus
+            }
+            var bestDist = Double.infinity
+            var bestBonus = 0.0
+            for entry in preScoredSemantic {
+                let dAim = hypot(Double(entry.aimPoint.x - proposal.aimPoint.x),
+                                 Double(entry.aimPoint.y - proposal.aimPoint.y))
+                let dZoom = abs(log(max(0.1, Double(entry.zoom / max(0.1, proposal.zoom)))))
+                let dist = dAim + 0.35 * dZoom
+                if dist < bestDist {
+                    bestDist = dist
+                    bestBonus = entry.semanticCropBonus
+                }
+            }
+            return bestDist < 0.14 ? bestBonus : proposal.semanticCropBonus
+        }
+
         var specialist = modelURL.flatMap { try? PhotographicCompositionModel(url: $0) }
         var assessedCount = 0
         func evaluate(_ candidates: [CompositionProposal]) -> [View] {
@@ -121,34 +160,47 @@ final class CompositionAestheticSearch {
                 if usedGAIC && rawCandidate.gaicScore == 0.5 {
                     candidate.gaicScore = matchedGAICScore(for: rawCandidate)
                 }
+                if abs(candidate.semanticCropBonus) <= 1e-4 && sceneHints.hasRichGuidance {
+                    candidate.semanticCropBonus = matchedSemanticBonus(for: candidate)
+                }
                 let item: View? = autoreleasepool {
                     guard let preview = renderer.preview(image: image, corners: candidate.sourceCorners, aspect: aspect) else { return nil }
                     let syncCrop = raster.flatMap { renderer.synchronizedSaliencyCrop(from: $0, corners: candidate.sourceCorners, side: 224) }
                     let assessment = specialist?.assess(preview, synchronizedSaliencyCrop: syncCrop, cancellation: cancellation)
                     var proposal = candidate
                     let zoomRatio = Double(candidate.zoom) / sourceBaseZoom
-                    let zoomReg = usedGAIC ? 0.08 * max(0.0, zoomRatio - 1.65) : 0.0
+                    let justified = CompositionPreferencePolicy.isJustifiedZoom(candidate)
+                    let zoomReg = usedGAIC ? (justified ? 0.025 : 0.08) * max(0.0, zoomRatio - (justified ? 1.95 : 1.65)) : 0.0
                     let oobPenalty = min(0.18, candidate.outOfBoundsFraction * 0.22)
+                    let geomClamped = min(1.35, max(0.0, candidate.score))
+                    let gaicClamped = min(1.0, max(0.0, candidate.gaicScore))
+                    let semBonus = sceneHints.hasRichGuidance ? min(0.35, max(-0.20, candidate.semanticCropBonus)) : 0.0
                     if let assessment {
                         assessedCount += 1
                         let sampNorm = (assessment.mean - 1) / 4
                         if usedGAIC {
-                            proposal.score = 0.64 * min(1.0, max(0.0, candidate.gaicScore)) +
-                                0.18 * sampNorm +
-                                0.18 * min(1.0, max(0.0, candidate.score)) -
+                            proposal.score = 0.44 * geomClamped +
+                                0.28 * sampNorm +
+                                0.28 * gaicClamped +
+                                0.24 * semBonus -
                                 zoomReg - oobPenalty
                         } else {
                             proposal.score = 0.42 * sampNorm +
                                 0.46 * candidate.score +
-                                0.12 * min(1.0, max(0.0, candidate.gaicScore)) -
+                                0.12 * gaicClamped +
+                                0.24 * semBonus -
                                 oobPenalty
                         }
                     } else if usedGAIC {
-                        proposal.score = 0.78 * min(1.0, max(0.0, candidate.gaicScore)) +
-                            0.22 * min(1.0, max(0.0, candidate.score)) -
+                        proposal.score = 0.56 * geomClamped +
+                            0.44 * gaicClamped +
+                            0.24 * semBonus -
                             zoomReg - oobPenalty
-                    } else if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
-                        proposal.score += aesthetic * 0.075
+                    } else {
+                        proposal.score += 0.24 * semBonus
+                        if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
+                            proposal.score += aesthetic * 0.075
+                        }
                     }
                     if !proposal.isUnchangedView {
                         let subjCenterX = Double(proposal.expectedSubjectRect.midX)
@@ -156,7 +208,7 @@ final class CompositionAestheticSearch {
                         let thirdX = min(abs(subjCenterX - Double(CompositionTuning.goldenSectionLeft)),
                                          abs(subjCenterX - Double(CompositionTuning.goldenSectionRight)))
                         let thirdY = min(abs(subjTopThirdY - 0.36), abs(Double(proposal.expectedSubjectRect.midY) - 0.382))
-                        let thirdWeight = usedGAIC ? 0.012 : 0.035
+                        let thirdWeight = usedGAIC ? 0.030 : 0.035
                         proposal.score += thirdWeight * exp(-14 * (thirdX * thirdX + thirdY * thirdY))
                     }
                     // preferences bonus removed to ensure unbiased realtime evaluation
@@ -210,14 +262,13 @@ final class CompositionAestheticSearch {
             let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.20 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
             for index in zoomed.prefix(8) { include(index) }
+            let geomSorted = evaluated.indices.sorted { evaluated[$0].geometryScore > evaluated[$1].geometryScore }
+            for index in geomSorted.prefix(4) { include(index) }
             let thermalOrLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled ||
                 ProcessInfo.processInfo.thermalState == .serious
             let isLowMemory = ProcessInfo.processInfo.physicalMemory < 5_200_000_000
             let budget = thermalOrLowPower ? 12 : (isLowMemory ? 24 : 40)
-            for index in evaluated.indices.sorted(by: {
-                (evaluated[$0].proposal.score * 0.70 + evaluated[$0].proposal.gaicScore * 0.30) >
-                (evaluated[$1].proposal.score * 0.70 + evaluated[$1].proposal.gaicScore * 0.30)
-            }) {
+            for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
                 if indices.count >= budget { break }
                 include(index)
             }
@@ -245,7 +296,9 @@ final class CompositionAestheticSearch {
                            gaic: pool[index].proposal.gaicScore,
                            outOfBoundsFraction: pool[index].proposal.outOfBoundsFraction,
                            hasLearnedGAIC: usedGAIC,
-                           zoomRatio: Double(pool[index].proposal.zoom) / sourceBaseZoom
+                           zoomRatio: Double(pool[index].proposal.zoom) / sourceBaseZoom,
+                           justifiedZoom: CompositionPreferencePolicy.isJustifiedZoom(pool[index].proposal),
+                           semanticCropBonus: sceneHints.hasRichGuidance ? pool[index].proposal.semanticCropBonus : 0.0
                        ) {
                         pool[index].proposal.score = score
                         modernCount += 1
@@ -276,30 +329,58 @@ final class CompositionAestheticSearch {
         let originalZoom = baseline?.proposal.zoom
         let baseSubjectArea = baseline.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
         let maxAllowedZoom: CGFloat = baseSubjectArea < 0.08 ? 3.5 : (baseSubjectArea < 0.22 ? 3.0 : 2.2)
-        // Shot-scale prior: when only legacy SAMP+Charm are available, tighten tiny subjects toward their intent area.
-        // When learned GAIC is active, respect environmental/wide compositions unless GAIC itself selects tighter views.
+        let baseWasteRatio = baseline?.proposal.sceneWasteRatio ?? 0.0
         let zoomNeeded = baseline.map {
             usedGAIC
-                ? (CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio) &&
-                   $0.proposal.intent != .landscape && $0.proposal.intent != .environmentalPortrait)
-                : (CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio) ||
-                   ($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height < 0.18))
+                ? ((CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio,
+                                                                 sceneWasteRatio: baseWasteRatio) &&
+                    $0.proposal.intent != .landscape) ||
+                   (baseWasteRatio >= 0.34 && $0.proposal.intent != .landscape) ||
+                   (sceneHints.hasRichGuidance && sceneHints.avoid.maxAvoid >= 0.25))
+                : (CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio,
+                                                                 sceneWasteRatio: baseWasteRatio) ||
+                   ($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height < 0.18) ||
+                   (sceneHints.hasRichGuidance && sceneHints.avoid.maxAvoid >= 0.25))
         } ?? false
         // Compare the learned models jointly. When GAIC scores clear wins, legacy SAMP 2019 does not override them.
         let eligible = evaluated.filter { view in
             if view.proposal.isUnchangedView { return true }
             if view.proposal.zoom > maxAllowedZoom { return false }
-            guard usedSpecialist, let baseline, let originalZoom else { return true }
-            if view.proposal.zoom <= originalZoom * 1.08 { return true }
-            if usedGAIC && view.proposal.gaicScore >= baseline.proposal.gaicScore + 0.035 &&
-               view.proposal.score >= baseline.proposal.score - 0.02 {
-                if let aesthetics = view.aesthetics, let originalAesthetics = baseline.aesthetics {
-                    return aesthetics.mean >= originalAesthetics.mean - 1.0
-                }
-                return true
+            let v5StrongClean = sceneHints.hasRichGuidance && view.proposal.sceneCleanGain >= 0.05
+            let v5HasCleanPan = sceneHints.hasRichGuidance &&
+                (view.proposal.sceneCleanGain >= 0.025 ||
+                 view.proposal.excessTrimGain >= 0.028 ||
+                 view.proposal.semanticCropBonus >= 0.04)
+            if view.proposal.retainedAttention < 0.45 && view.proposal.frameWasteRatio < 0.48 && !v5StrongClean { return false }
+            if view.proposal.isAttentionSubject && view.proposal.retainedAttention < 0.74 &&
+               view.proposal.frameWasteRatio < 0.24 && !v5HasCleanPan {
+                return false
             }
-            if zoomNeeded, CompositionPreferencePolicy.tightensTowardTarget(
-                sizeRatio: view.proposal.sizeRatio, original: baseline.proposal.sizeRatio) {
+            guard usedSpecialist, let baseline, let originalZoom else { return true }
+            if view.proposal.gaicScore < baseline.proposal.gaicScore - 0.16 && view.proposal.retainedAttention < 0.58 {
+                return false
+            }
+            if view.proposal.zoom <= originalZoom * 1.08 { return true }
+            if usedGAIC && (view.proposal.gaicScore >= baseline.proposal.gaicScore + 0.035 ||
+                            view.proposal.excessTrimGain >= 0.028 ||
+                            (sceneHints.hasRichGuidance && view.proposal.sceneCleanGain >= 0.03)) &&
+               view.proposal.score >= baseline.proposal.score - 0.015 &&
+               view.geometryScore >= max(0.38, baseline.geometryScore * 0.75) {
+                let compOK: Bool
+                if let composition = view.assessment, let originalComposition = baseline.assessment {
+                    compOK = composition.mean >= originalComposition.mean - 0.45
+                } else {
+                    compOK = true
+                }
+                if let aesthetics = view.aesthetics, let originalAesthetics = baseline.aesthetics {
+                    return compOK && aesthetics.mean >= originalAesthetics.mean - 0.45
+                }
+                return compOK
+            }
+            if zoomNeeded, (CompositionPreferencePolicy.tightensTowardTarget(
+                sizeRatio: view.proposal.sizeRatio, original: baseline.proposal.sizeRatio) ||
+                view.proposal.excessTrimGain >= 0.028 ||
+                (sceneHints.hasRichGuidance && view.proposal.sceneCleanGain >= 0.025)) {
                 let withinTolerance = view.proposal.score >=
                     baseline.proposal.score - CompositionPreferencePolicy.necessaryCropTolerance
                 guard let composition = view.assessment, let originalComposition = baseline.assessment else {
@@ -323,19 +404,25 @@ final class CompositionAestheticSearch {
             return composition.mean >= originalComposition.mean - 0.35 &&
                    view.proposal.score >= baseline.proposal.score - 0.05
         }
-        var selected = CompositionPlanner.diverse(eligible.map(\.proposal), limit: 3).compactMap { proposal in
-            eligible.first { $0.proposal.sourceCorners == proposal.sourceCorners &&
+        var rankedEligible = eligible
+        if zoomNeeded, let baseline {
+            let bonusScale = usedGAIC ? 0.65 : 1.0
+            for index in rankedEligible.indices where !rankedEligible[index].proposal.isUnchangedView {
+                rankedEligible[index].proposal.score += bonusScale * CompositionPreferencePolicy.excessTrimAndScaleBonus(
+                    sizeRatio: rankedEligible[index].proposal.sizeRatio,
+                    original: baseline.proposal.sizeRatio,
+                    excessTrimGain: max(rankedEligible[index].proposal.excessTrimGain,
+                                        sceneHints.hasRichGuidance ? rankedEligible[index].proposal.sceneCleanGain : 0.0),
+                    retainedAttention: rankedEligible[index].proposal.retainedAttention
+                )
+            }
+        }
+        var selected = CompositionPlanner.diverse(rankedEligible.map(\.proposal), limit: 3).compactMap { proposal in
+            rankedEligible.first { $0.proposal.sourceCorners == proposal.sourceCorners &&
                 $0.proposal.intent == proposal.intent && $0.proposal.zoom == proposal.zoom }
         }
         if let baseline, !selected.contains(where: { $0.proposal.isUnchangedView }) {
             selected = Array(selected.prefix(2)) + [baseline]
-        }
-        if zoomNeeded, let baseline {
-            let bonusScale = usedGAIC ? 0.22 : 1.0
-            for index in selected.indices where !selected[index].proposal.isUnchangedView {
-                selected[index].proposal.score += bonusScale * CompositionPreferencePolicy.shotScaleBonus(
-                    sizeRatio: selected[index].proposal.sizeRatio, original: baseline.proposal.sizeRatio)
-            }
         }
         // The view model compares the leading two scores before auto-selection.
         // Restoring the original frame must not leave a stronger runner-up third.
@@ -351,8 +438,9 @@ final class CompositionAestheticSearch {
                           $0.proposal.aimPoint.y - best.proposal.aimPoint.y) < 0.055 &&
                         abs(log(Double($0.proposal.zoom / best.proposal.zoom))) < 0.12
                 }
-                robust = (nearby.filter { $0.proposal.score >= best.proposal.score - 0.035 }.count >= 1 ||
-                          best.proposal.score >= (baseline?.proposal.score ?? 0) - 0.02)
+                robust = (best.proposal.isUnchangedView || best.geometryScore >= 0.38) &&
+                    (nearby.filter { $0.proposal.score >= best.proposal.score - 0.035 }.count >= 1 ||
+                     best.proposal.score >= (baseline?.proposal.score ?? 0) - 0.02)
             }
         }
         if let best = selected.first, selected.count > 1 {
@@ -379,33 +467,47 @@ enum CompositionPreferencePolicy {
             composition >= originalComposition - 0.45 && aesthetics >= originalAesthetics - 0.65
     }
 
+    static func isJustifiedZoom(_ proposal: CompositionProposal) -> Bool {
+        (proposal.sizeRatio <= 1.25 && proposal.retainedAttention >= 0.60) ||
+        proposal.excessTrimGain >= 0.03 ||
+        proposal.sceneCleanGain >= 0.025 ||
+        proposal.semanticCropBonus >= 0.04
+    }
+
     static func score(composition: Double, aesthetics: Double, geometry: Double,
                       gaic: Double = 0.5, outOfBoundsFraction: Double = 0.0,
-                      hasLearnedGAIC: Bool = false, zoomRatio: Double = 1.0) -> Double? {
+                      hasLearnedGAIC: Bool = false, zoomRatio: Double = 1.0,
+                      justifiedZoom: Bool = false,
+                      semanticCropBonus: Double = 0.0) -> Double? {
         guard composition.isFinite, aesthetics.isFinite, geometry.isFinite,
               (1...5).contains(composition), (1...5).contains(aesthetics) else { return nil }
         let clampedOOB = outOfBoundsFraction.isFinite ? min(0.18, max(0.0, outOfBoundsFraction * 0.25)) : 0.0
         let clampedGaic = gaic.isFinite ? min(1.0, max(0.0, gaic)) : 0.5
+        let clampedSem = semanticCropBonus.isFinite ? min(0.35, max(-0.20, semanticCropBonus)) : 0.0
         if hasLearnedGAIC {
-            let gaicW = 0.64 - clampedOOB * 0.20
-            let compW = 0.12 - clampedOOB * 0.15
-            let aesthW = 0.16 - clampedOOB * 0.15
-            let geomW = 0.08 + clampedOOB * 0.50
-            let zoomReg = zoomRatio.isFinite ? 0.08 * max(0.0, zoomRatio - 1.65) : 0.0
-            return gaicW * clampedGaic +
-                compW * (composition - 1) / 4 +
+            let geomW = 0.40 + clampedOOB * 0.36
+            let aesthW = 0.24 - clampedOOB * 0.14
+            let gaicW = 0.20 - clampedOOB * 0.12
+            let compW = 0.16 - clampedOOB * 0.10
+            let regWeight = justifiedZoom ? 0.025 : 0.08
+            let regStart = justifiedZoom ? 1.95 : 1.65
+            let zoomReg = zoomRatio.isFinite ? regWeight * max(0.0, zoomRatio - regStart) : 0.0
+            return geomW * min(1.35, max(0, geometry)) +
                 aesthW * (aesthetics - 1) / 4 +
-                geomW * min(1, max(0, geometry)) -
+                compW * (composition - 1) / 4 +
+                gaicW * clampedGaic +
+                0.24 * clampedSem -
                 zoomReg
         }
-        let compW = 0.36 - clampedOOB * 0.35
-        let aesthW = 0.36 - clampedOOB * 0.35
-        let gaicW = 0.14 - clampedOOB * 0.10
-        let geomW = 0.14 + clampedOOB * 0.80
+        let compW = 0.28 - clampedOOB * 0.25
+        let aesthW = 0.32 - clampedOOB * 0.25
+        let gaicW = 0.12 - clampedOOB * 0.10
+        let geomW = 0.28 + clampedOOB * 0.60
         return compW * (composition - 1) / 4 +
             aesthW * (aesthetics - 1) / 4 +
             gaicW * clampedGaic +
-            geomW * min(1, max(0, geometry))
+            geomW * min(1.35, max(0, geometry)) +
+            0.24 * clampedSem
     }
 
     /// Below this share of its intent's target area the unchanged frame leaves the subject too small.
@@ -414,8 +516,9 @@ enum CompositionPreferencePolicy {
     static let necessaryCropTolerance = 0.12
     static let shotScaleBonusWeight = 0.18
 
-    static func zoomIsNecessary(originalSizeRatio: Double) -> Bool {
-        originalSizeRatio.isFinite && originalSizeRatio > 0 && originalSizeRatio < undersizedSubjectRatio
+    static func zoomIsNecessary(originalSizeRatio: Double, sceneWasteRatio: Double = 0.0) -> Bool {
+        (originalSizeRatio.isFinite && originalSizeRatio > 0 && originalSizeRatio < undersizedSubjectRatio) ||
+            (sceneWasteRatio.isFinite && sceneWasteRatio >= 0.34)
     }
 
     /// A crop that clearly moves the subject toward its target size without overshooting it.
@@ -428,6 +531,24 @@ enum CompositionPreferencePolicy {
         guard tightensTowardTarget(sizeRatio: sizeRatio, original: original) else { return 0 }
         let progress = (min(1, sizeRatio) - original) / max(0.001, 1 - original)
         return shotScaleBonusWeight * min(1, max(0, progress))
+    }
+
+    static func excessTrimAndScaleBonus(sizeRatio: Double, original: Double,
+                                        excessTrimGain: Double, retainedAttention: Double) -> Double {
+        let retGate = min(1.0, max(0.0, (retainedAttention - 0.42) / 0.33))
+        var scaleProg = 0.0
+        if original > 0, original < undersizedSubjectRatio, tightensTowardTarget(sizeRatio: sizeRatio, original: original) {
+            let linP = min(1.0, max(0.0, (min(1.0, sizeRatio) - original) / max(0.001, 1.0 - original)))
+            if original < 0.28 {
+                let denom = max(0.05, log(1.0 / max(0.004, original)))
+                let logP = min(1.0, max(0.0, log(max(1.0, min(1.0, sizeRatio) / max(0.004, original))) / denom))
+                scaleProg = 0.5 * linP + 0.5 * logP
+            } else {
+                scaleProg = linP
+            }
+        }
+        let trimProg = min(1.0, max(0.0, excessTrimGain / 0.10))
+        return shotScaleBonusWeight * max(scaleProg * retGate, 0.90 * trimProg)
     }
 
     static func prefersCrop(score: Double, original: Double) -> Bool {

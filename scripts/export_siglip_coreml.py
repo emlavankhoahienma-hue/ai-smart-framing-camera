@@ -37,6 +37,20 @@ PROMPTS = {
     "water": "a wide photo of the sea, a lake or a river",
     "sunset": "a landscape photo at sunset or sunrise",
     "street": "a street photograph of people and their surroundings",
+    "architecture_facade": "exterior view of residential houses, gabled rooftops, and building facades",
+    "street_perspective": "an alley, street, or paved road with receding perspective leading lines",
+    "desk_workspace": "a computer desk workspace with monitor, keyboard, mouse, or study items",
+    "tabletop_ensemble": "everyday tabletop arrangement of cups, bottles, stationery, or boxes on a desk",
+    "indoor_furnished": "indoor room corner showing wardrobe, closet, study table, books, and furniture",
+    "frame_aperture": "scenic outdoor view seen through a doorway, window, or balcony opening",
+    "foliage_garden": "lush green trees, palm fronds, leaves, and garden greenery",
+    "horizon_sky": "wide scenic view with dramatic clouds, sky, and horizon above skyline",
+    "dead_wall": "an empty plain blank white or beige wall with almost nothing interesting",
+    "dead_floor": "a bare empty tiled floor or plain concrete ground filling the bottom",
+    "edge_obstacle": "close-up vertical palm tree trunk, pole, door post, or metal railing blocking the frame edge",
+    "wire_clutter": "messy coiled electrical wires on a wall, sockets, or tangled power cords on floor",
+    "tin_roof_clutter": "plain corrugated metal tin shed roof clutter at the foreground edge",
+    "clean_composition": "a clean well-composed balanced photograph with clear subject framing and minimal distractions",
 }
 
 

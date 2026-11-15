@@ -480,7 +480,190 @@ final class CompositionImageRenderer {
                                              hasCoreMLDepth: hasCoreMLDepth)
         resultRaster.measuredHorizon = measuredHorizon
         resultRaster.measuredVanishingPoint = measuredVanishingPoint
+        populateStructuralEvidence(&resultRaster, rgba: bytes)
         return resultRaster
+    }
+
+    /// Trích xuất bản đồ cấu trúc ảnh (trời & đỉnh mái nhà, tường trống, vật cản rìa ảnh, dây tường, thanh ban công, điểm nhấn màu sắc)
+    private func populateStructuralEvidence(_ raster: inout CompositionRaster, rgba: [UInt8]) {
+        let side = raster.side
+        let count = side * side
+        guard side > 4, rgba.count >= count * 4,
+              raster.luminance.count == count,
+              raster.edges.count == count,
+              raster.foregroundDepth.count == count else { return }
+
+        let luma = raster.luminance
+        let edges = raster.edges
+        let depth = raster.foregroundDepth
+
+        var sat = [Double](repeating: 0.0, count: count)
+        var skyPix = [Bool](repeating: false, count: count)
+        var accentRaw = [Double](repeating: 0.0, count: count)
+
+        for i in 0..<count {
+            let r = Double(rgba[i * 4]) / 255.0
+            let g = Double(rgba[i * 4 + 1]) / 255.0
+            let b = Double(rgba[i * 4 + 2]) / 255.0
+            let cmax = max(r, max(g, b))
+            let cmin = min(r, min(g, b))
+            let s = cmax > 1e-4 ? (cmax - cmin) / cmax : 0.0
+            sat[i] = s
+            let isGreen = (g > r + 0.03) && (g > b + 0.02) && (s > 0.14)
+            skyPix[i] = (edges[i] < 0.09) && (luma[i] > 0.42) && (s < 0.38)
+            let warmRed = max(0.0, r - 0.5 * (g + b)) * 2.2
+            let nonGreenSat = isGreen ? s * 0.18 : s
+            accentRaw[i] = 0.55 * nonGreenSat + 0.45 * warmRed
+        }
+
+        // 1. Sky column extent & roofline peak + horizon estimate
+        var skyColBottom = [Double](repeating: 0.0, count: side)
+        var skyMask = [Double](repeating: 0.0, count: count)
+        let yMaxSky = Int(Double(side) * 0.72)
+        for x in 0..<side {
+            var yEnd = 0
+            var gaps = 0
+            for y in 0..<side {
+                if skyPix[y * side + x] {
+                    yEnd = y + 1
+                    gaps = 0
+                } else {
+                    gaps += 1
+                    if gaps >= 2 || y > yMaxSky { break }
+                }
+            }
+            skyColBottom[x] = Double(yEnd) / Double(side)
+            for y in 0..<min(side, yEnd) {
+                skyMask[y * side + x] = 1.0
+            }
+        }
+        raster.structuralSkyFraction = skyColBottom.reduce(0.0, +) / Double(side)
+        raster.structuralSkyMask = skyMask
+
+        let midX0 = Int(Double(side) * 0.08)
+        let midX1 = max(midX0 + 1, Int(Double(side) * 0.92))
+        let nonFullSky = skyColBottom[midX0..<min(side, midX1)].filter { $0 > 0.06 && $0 < 0.75 }.sorted()
+        if nonFullSky.count >= 6 {
+            let p10Idx = min(nonFullSky.count - 1, Int(Double(nonFullSky.count - 1) * 0.10))
+            raster.structuralArchRoofTopY = nonFullSky[p10Idx]
+        }
+        let validSkyCols = skyColBottom.filter { $0 > 0.08 }.sorted()
+        if Double(validSkyCols.count) >= Double(side) * 0.35 {
+            raster.structuralEstimatedHorizonY = validSkyCols[validSkyCols.count / 2]
+        }
+
+        // 2. Local smoothness (5x5 std) + 7x7 ring isolated wall anomaly detector
+        var blankSurface = [Double](repeating: 0.0, count: count)
+        var isolatedWallBlip = [Double](repeating: 0.0, count: count)
+        var bottomRailMask = [Double](repeating: 0.0, count: count)
+
+        for y in 0..<side {
+            for x in 0..<side {
+                let i = y * side + x
+                var sumL = 0.0, sqL = 0.0
+                for dy in -2...2 {
+                    let ny = min(side - 1, max(0, y + dy))
+                    for dx in -2...2 {
+                        let nx = min(side - 1, max(0, x + dx))
+                        let lv = luma[ny * side + nx]
+                        sumL += lv
+                        sqL += lv * lv
+                    }
+                }
+                let meanL = sumL / 25.0
+                let stdL = sqrt(max(0.0, sqL / 25.0 - meanL * meanL))
+                if stdL < 0.032 && edges[i] < 0.075 && sat[i] < 0.25 {
+                    blankSurface[i] = 1.0
+                }
+
+                var sumE7 = 0.0
+                var ringCnt = 0
+                for dy in -3...3 {
+                    let ny = min(side - 1, max(0, y + dy))
+                    for dx in -3...3 {
+                        if (-1...1).contains(dy) && (-1...1).contains(dx) { continue }
+                        let nx = min(side - 1, max(0, x + dx))
+                        sumE7 += edges[ny * side + nx]
+                        ringCnt += 1
+                    }
+                }
+                let meanE7 = sumE7 / Double(max(1, ringCnt))
+                if meanE7 < 0.055 && edges[i] > 0.14 && sat[i] < 0.28 {
+                    isolatedWallBlip[i] = 1.0
+                }
+
+                if edges[i] > 0.12 && sat[i] < 0.16 && luma[i] > 0.58 {
+                    bottomRailMask[i] = 1.0
+                }
+
+                // Attenuate outer corners/borders for focal accent map
+                var borderScale = 1.0
+                if y < Int(Double(side) * 0.12) { borderScale *= 0.25 }
+                if y >= Int(Double(side) * 0.90) { borderScale *= 0.25 }
+                if x < Int(Double(side) * 0.10) { borderScale *= 0.25 }
+                if x >= Int(Double(side) * 0.90) { borderScale *= 0.25 }
+                accentRaw[i] *= borderScale
+            }
+        }
+        raster.structuralBlankSurface = blankSurface
+        raster.structuralIsolatedWallBlip = isolatedWallBlip
+        raster.structuralBottomRailMask = bottomRailMask
+        raster.structuralChromaticAccentMap = accentRaw
+
+        // 3. Geometric continuous vertical dark/foreground edge pillar detection
+        let colLimit = Int(Double(side) * 0.27)
+        let graceCols = Int(Double(side) * 0.04)
+        var maxDarkLeft = 0
+        for gx in 0..<colLimit {
+            var darkHits = 0, edgeHits = 0, depthSum = 0.0
+            for gy in 0..<side {
+                let idx = gy * side + gx
+                if luma[idx] < 0.25 { darkHits += 1 }
+                if edges[idx] > 0.10 { edgeHits += 1 }
+                depthSum += depth[idx]
+            }
+            let darkFrac = Double(darkHits) / Double(side)
+            let edgeFrac = Double(edgeHits) / Double(side)
+            let meanDepth = depthSum / Double(side)
+            if darkFrac > 0.58 || (edgeFrac > 0.58 && meanDepth > 0.55) {
+                maxDarkLeft = gx + 1
+            } else if gx > graceCols {
+                break
+            }
+        }
+
+        var maxDarkRight = 0
+        for dist in 0..<colLimit {
+            let gx = side - 1 - dist
+            var darkHits = 0, edgeHits = 0, depthSum = 0.0
+            for gy in 0..<side {
+                let idx = gy * side + gx
+                if luma[idx] < 0.25 { darkHits += 1 }
+                if edges[idx] > 0.10 { edgeHits += 1 }
+                depthSum += depth[idx]
+            }
+            let darkFrac = Double(darkHits) / Double(side)
+            let edgeFrac = Double(edgeHits) / Double(side)
+            let meanDepth = depthSum / Double(side)
+            if darkFrac > 0.58 || (edgeFrac > 0.58 && meanDepth > 0.55) {
+                maxDarkRight = dist + 1
+            } else if dist > graceCols {
+                break
+            }
+        }
+
+        var geomAvoid = EdgeAvoidanceHints.zero
+        let pillarThresh = Int(Double(side) * 0.12)
+        let narrowOpp = Int(Double(side) * 0.06)
+        if maxDarkLeft >= pillarThresh && maxDarkRight < narrowOpp {
+            geomAvoid.left = min(1.0, Double(maxDarkLeft) / (Double(side) * 0.22))
+        }
+        if maxDarkRight >= pillarThresh && maxDarkLeft < narrowOpp {
+            geomAvoid.right = min(1.0, Double(maxDarkRight) / (Double(side) * 0.22))
+        }
+        raster.structuralEdgePillarColsLeft = maxDarkLeft
+        raster.structuralEdgePillarColsRight = maxDarkRight
+        raster.structuralGeometricAvoidance = geomAvoid
     }
 
     /// Trích xuất Điểm Tụ (Vanishing Point) bằng RANSAC giao điểm các đường dẫn cấu trúc từ VNDetectContoursRequest
