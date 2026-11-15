@@ -942,6 +942,7 @@ enum CompositionPlanner {
                     ? (protectedPeople.map(\.bounds) + protectedBounds.filter { valid($0) })
                     : ([protectedAnchor] + protectedBounds.filter { valid($0) })
                 let desired = preferredPlacement(subject: subject, intent: intent, raster: raster)
+                let allowHeroCrop = subject.kind == .person && intent == .portrait
                 func evaluate(_ destination: CGPoint, zoom: CGFloat) -> CompositionProposal? {
                     let unchanged = zoom == currentZoom && hypot(destination.x - subject.anchor.x,
                                                                   destination.y - subject.anchor.y) < 0.000001
@@ -959,11 +960,11 @@ enum CompositionPlanner {
                     guard sourceCorners.allSatisfy({ $0.isInFront && inside($0.point, margin: -0.36) }),
                           let box = project(subject.bounds, from: calibration, to: future, rotation: rotation),
                           let anchorBox = project(protectedAnchor, from: calibration, to: future, rotation: rotation),
-                          safe(anchorBox, original: protectedAnchor, isHero: true),
+                          safe(anchorBox, original: protectedAnchor, allowCrop: allowHeroCrop),
                           (!cropAttention || visibleFraction(box) >= 0.40),
                           protectedRects.allSatisfy({ original in
                               guard let rect = project(original, from: calibration, to: future, rotation: rotation) else { return false }
-                              return safe(rect, original: original, isHero: original == protectedAnchor)
+                              return safe(rect, original: original, allowCrop: allowHeroCrop && original == protectedAnchor)
                           }), incidentalRects.allSatisfy({ original in
                               guard let rect = project(original, from: calibration, to: future, rotation: rotation) else { return true }
                               let fraction = visibleFraction(rect)
@@ -1140,9 +1141,15 @@ enum CompositionPlanner {
             return diverse(result, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
         }
         guard proposalLimit > 6 else { return diverse(result, limit: proposalLimit, raySeparation: 0.04, zoomSeparation: 0.08) }
-        // Preserve a no-change baseline, guarantee coverage of every feasible zoom rung,
-        // retain top GAIC+Field winners, and stratify multi-scale focal exploration.
+        // Preserve a no-change baseline and a nearby gentle alternative, guarantee coverage of
+        // every feasible zoom rung, retain top GAIC+Field winners, and stratify multi-scale buckets.
         var selected = result.filter(\.isUnchangedView).prefix(1).map { $0 }
+        if let nearOriginal = result
+            .filter({ !$0.isUnchangedView && abs(log(Double($0.zoom / currentZoom))) < 0.14 &&
+                hypot($0.aimPoint.x - 0.5, $0.aimPoint.y - 0.5) < 0.06 })
+            .max(by: { $0.score < $1.score }) {
+            selected.append(nearOriginal)
+        }
         var perZoomBest: [Int: CompositionProposal] = [:]
         for proposal in result {
             let zBin = Int((log(Double(proposal.zoom / currentZoom)) * 12).rounded())
@@ -1151,14 +1158,14 @@ enum CompositionPlanner {
             }
         }
         let zoomChampions = perZoomBest.keys.sorted().compactMap { perZoomBest[$0] }
-        let zoomBudget = max(3, proposalLimit / 3)
+        let zoomBudget = max(3, proposalLimit / 4)
         if !zoomChampions.isEmpty {
             let count = min(zoomBudget, zoomChampions.count)
             for idx in 0..<count {
                 selected.append(zoomChampions[min(zoomChampions.count - 1, idx * zoomChampions.count / count)])
             }
         }
-        let directTopCount = max(4, proposalLimit / 3)
+        let directTopCount = max(4, proposalLimit / 4)
         selected += diverse(result, limit: directTopCount, raySeparation: 0.032, zoomSeparation: 0.065)
         struct BucketKey: Hashable, Comparable {
             let z: Int
@@ -1179,8 +1186,9 @@ enum CompositionPlanner {
         }
         let explored = buckets.keys.sorted().compactMap { buckets[$0] }
         if !explored.isEmpty {
-            for index in 0..<proposalLimit {
-                selected.append(explored[min(explored.count - 1, index * explored.count / proposalLimit)])
+            let exploreCount = min(explored.count, max(6, proposalLimit - selected.count + 4))
+            for index in 0..<exploreCount {
+                selected.append(explored[min(explored.count - 1, index * explored.count / exploreCount)])
             }
         }
         var unique: [CompositionProposal] = []
@@ -1721,10 +1729,10 @@ enum CompositionPlanner {
         return out
     }
 
-    private static func safe(_ rect: CGRect, original: CGRect, isHero: Bool = false) -> Bool {
-        let minAllowedX = isHero ? -0.15 : (min(0.025, original.minX) - 0.00001)
-        let maxAllowedX = isHero ? 1.15 : (max(0.975, original.maxX) + 0.00001)
-        let maxAllowedY = isHero ? 3.0 : (max(0.975, original.maxY) + 0.00001)
+    private static func safe(_ rect: CGRect, original: CGRect, allowCrop: Bool = false) -> Bool {
+        let minAllowedX = allowCrop ? -0.15 : (min(0.025, original.minX) - 0.00001)
+        let maxAllowedX = allowCrop ? 1.15 : (max(0.975, original.maxX) + 0.00001)
+        let maxAllowedY = allowCrop ? 3.0 : (max(0.975, original.maxY) + 0.00001)
         return rect.minX >= minAllowedX &&
             rect.minY >= min(0.025, original.minY) - 0.00001 &&
             rect.maxX <= maxAllowedX &&
