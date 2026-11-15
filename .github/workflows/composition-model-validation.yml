@@ -21,7 +21,7 @@ jobs:
         run: |
           pip install torch==2.5.1 torchvision==0.20.1 numpy==1.26.4 \
             coremltools==9.0 opencv-python-headless==4.11.0.86 einops==0.8.1 \
-            scipy==1.15.3 Pillow==11.0.0
+            scipy==1.15.3 Pillow==11.0.0 timm==1.0.31
       - name: Prepare real photographs from the author test split
         run: python scripts/prepare_composition_photos.py
       - name: Convert and verify Core ML on real photographs
@@ -31,6 +31,14 @@ jobs:
           pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
           python scripts/export_charm_coreml.py --photos validation/photos
           xcrun coremlc compile CharmAesthetics.mlpackage .
+          PARITY_IMG="$(find validation/photos -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) | head -n 1)"
+          python models/gaic-cropper/export_coreml.py \
+            --weights models/gaic-cropper/gaic_cropper.pt \
+            --output GAICCompositionScorer.mlpackage \
+            --manifest GAICModelManifest.json \
+            --parity-image "$PARITY_IMG" \
+            --precision fp16
+          xcrun coremlc compile GAICCompositionScorer.mlpackage .
       - name: Validate production Swift preprocessing and photographic search
         run: |
           python scripts/validate_composition_photos.py --parity-only

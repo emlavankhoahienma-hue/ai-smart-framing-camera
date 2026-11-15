@@ -57,6 +57,7 @@ jobs:
             AISmartFramingCamera/Services/CompositionPlanning.swift \
             AISmartFramingCamera/Services/CompositionImageEvidence.swift \
             AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
+            AISmartFramingCamera/Services/GAICCompositionModel.swift \
             AISmartFramingCamera/Services/CharmPhotographicModel.swift \
             AISmartFramingCamera/Services/PortraitFramingEvidence.swift \
             AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
@@ -140,14 +141,23 @@ jobs:
         run: |
           pip install "torch==2.5.1" "torchvision==0.20.1" "numpy==1.26.4" \
             "coremltools==9.0" "opencv-python-headless==4.11.0.86" \
-            "einops==0.8.1" "Pillow==11.0.0"
+            "einops==0.8.1" "Pillow==11.0.0" "timm==1.0.31"
           python scripts/prepare_composition_photos.py --per-scene 5
           python scripts/export_composition_coreml.py --photos validation/photos
           xcrun coremlc compile SAMPComposition.mlpackage .
           pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
           python scripts/export_charm_coreml.py --photos validation/photos
           xcrun coremlc compile CharmAesthetics.mlpackage .
+          PARITY_IMG="$(find validation/photos -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) | head -n 1)"
+          python models/gaic-cropper/export_coreml.py \
+            --weights models/gaic-cropper/gaic_cropper.pt \
+            --output GAICCompositionScorer.mlpackage \
+            --manifest GAICModelManifest.json \
+            --parity-image "$PARITY_IMG" \
+            --precision fp16
+          xcrun coremlc compile GAICCompositionScorer.mlpackage .
           test -d SAMPComposition.mlmodelc
+          test -d GAICCompositionScorer.mlmodelc
 
       - name: Build for iOS (unsigned)
         run: |
@@ -235,6 +245,9 @@ jobs:
           cp models/SAMP-Net-LICENSE.txt Payload/AISmartFramingCamera.app/
           cp -r CharmAesthetics.mlmodelc Payload/AISmartFramingCamera.app/
           cp CharmModelManifest.json CharmPositionEmbedding.bin models/Charm-LICENSE.txt Payload/AISmartFramingCamera.app/
+          test -d GAICCompositionScorer.mlmodelc
+          cp -r GAICCompositionScorer.mlmodelc Payload/AISmartFramingCamera.app/
+          cp GAICModelManifest.json Payload/AISmartFramingCamera.app/
           if [ -s AISmartFramingCamera/Resources/LocalAutoselectThresholds.json ]; then
             cp AISmartFramingCamera/Resources/LocalAutoselectThresholds.json Payload/AISmartFramingCamera.app/
           fi

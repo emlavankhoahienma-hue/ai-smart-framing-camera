@@ -120,8 +120,9 @@ private final class SemanticCropRanker: @unchecked Sendable {
 
     func sceneHint(scores: [String: Double], candidates: [NeuralSubjectCandidate]) -> DetectedSceneType? {
         let ordered = scores.sorted { $0.value > $1.value }
-        guard let best = ordered.first, best.value >= 0.22,
-              ordered.count < 2 || best.value - ordered[1].value >= 0.018 else { return nil }
+        // SigLIP L2-normalized cosine dot-product scores fall in [-0.01 ... 0.12]
+        guard let best = ordered.first, best.value >= 0.025,
+              ordered.count < 2 || best.value - ordered[1].value >= 0.006 else { return nil }
         switch best.key {
         case "building": return .architecture
         case "landscape", "person_scenery": return .landscape
@@ -150,8 +151,8 @@ private final class SemanticCropRanker: @unchecked Sendable {
         }
         if let vp = scores["person"], vp * 0.92 > tightScore { tightScore = vp * 0.92 }
         if let va = scores["animal"], va * 0.92 > tightScore { tightScore = va * 0.92 }
-        let shotScaleBias: Double = max(-1.0, min(1.0, (tightScore - wideScore) * 3.0))
-        let contextWeight: Double = max(0.15, min(0.95, 0.50 + (wideScore - tightScore) * 1.8))
+        let shotScaleBias: Double = max(-1.0, min(1.0, (tightScore - wideScore) * 12.0))
+        let contextWeight: Double = max(0.15, min(0.95, 0.50 + (wideScore - tightScore) * 6.0))
         return SemanticSceneGuidance(
             shotScaleBias: shotScaleBias,
             contextPreservationWeight: contextWeight,
@@ -377,13 +378,49 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 poseProfile: poseProfile,
                 isCancelled: { cancellation.isCancelled })
         }
+        let sampModelURL = Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc")
+        let gaicModelURL = GAICCompositionModel.defaultModelURL(near: sampModelURL)
+        var initialProposals = proposals()
+        if gaicModelURL != nil && !initialProposals.isEmpty {
+            let heroProtection: [CGRect]
+            if subject.kind == .person, let portraitBounds,
+               subject.bounds.contains(portraitBounds), portraitBounds.contains(subject.anchor) {
+                heroProtection = [portraitBounds]
+            } else if subject.kind == .scenery {
+                heroProtection = []
+            } else {
+                heroProtection = [CompositionCropProtection.bounds(
+                    body: subject.bounds,
+                    portrait: portraitBounds,
+                    intent: intents.first ?? .object,
+                    anchor: subject.anchor,
+                    attentionRegion: subject.allowsAttentionCrop
+                )]
+            }
+            let protectList = heroProtection + hero.companionBounds + hero.faceBounds
+            initialProposals = CompositionPlanner.denseCompositionalWindows(
+                existing: initialProposals,
+                calibration: frame.calibration,
+                currentZoom: CGFloat(frame.displayZoom),
+                allowedZooms: allowedZooms,
+                subjectAnchor: subject.anchor,
+                subjectBounds: subject.bounds,
+                protectedBounds: protectList,
+                incidentalBounds: arbitratedIncidentals,
+                intent: intents.first ?? .object,
+                confidence: subject.confidence,
+                raster: raster,
+                maxCount: GAICCompositionModel.maxBoxes
+            )
+        }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
         let search = CompositionAestheticSearch(renderer: renderer)
-        let searchResult = search.run(proposals: proposals(),
+        let searchResult = search.run(proposals: initialProposals,
             image: CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation),
             aspect: frame.calibration.aspect, preferences: preferences,
             raster: raster,
-            modelURL: Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc"),
+            modelURL: sampModelURL,
+            gaicModelURL: gaicModelURL,
             aestheticModelURL: constrained ? nil : Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
             positionURL: constrained ? nil : Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
             requiresModernModel: false,
@@ -423,10 +460,6 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         for candidate in output.allCandidates where candidate.id != hero.id {
             let box = candidate.boundingBox
             let overlapsProtected = protected.contains { $0.intersects(box) }
-            if candidate.category == .animal {
-                if !overlapsProtected { incidentals.append(box) }
-                continue
-            }
             guard !overlapsProtected else { continue }
             let edgeMargin = min(box.minX, min(1.0 - box.maxX, min(box.minY, 1.0 - box.maxY)))
             let radialDist = hypot(Double(box.midX - 0.5), Double(box.midY - 0.5))
@@ -435,7 +468,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             let depthDivergence = abs(stats.meanDepth - focalDepth)
             let weakSync = stats.meanSync < 0.22
             if (nearEdge && depthDivergence >= 0.16 && weakSync) ||
-               (nearEdge && candidate.category == .human && candidate.prominenceScore < hero.prominenceScore * 0.45) ||
+               (nearEdge && (candidate.category == .human || candidate.category == .animal) &&
+                candidate.prominenceScore < hero.prominenceScore * 0.45) ||
                (depthDivergence >= 0.28 && weakSync && candidate.areaRatio < 0.12) {
                 incidentals.append(box)
             }
@@ -446,13 +480,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     private func compositionIntents(_ output: NeuralAnalysisOutput, hero: NeuralSubjectCandidate) -> [LocalCompositionIntent] {
         if hero.isGroup { return [.group, .environmentalPortrait] }
         if hero.category == .human || hero.category == .face {
-            return [.portrait, .environmentalPortrait]
+            return output.semanticGuidance.contextPreservationWeight >= 0.62
+                ? [.environmentalPortrait, .portrait]
+                : [.portrait, .environmentalPortrait]
         }
         if hero.category == .animal { return [.animal] }
         if hero.category == .general { return [.landscape] }
         if output.detectedScene == .general,
-           let landscape = output.semanticAffinities["landscape"], landscape > 0.30,
-           landscape > (output.semanticAffinities["object"] ?? 0) + 0.025 {
+           let landscape = output.semanticAffinities["landscape"], landscape > 0.04,
+           landscape > (output.semanticAffinities["object"] ?? 0) + 0.008 {
             return [.landscape, .object]
         }
         switch output.detectedScene {

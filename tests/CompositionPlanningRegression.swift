@@ -736,6 +736,48 @@ enum CompositionPlanningRegression {
                             "zoomed proposal allowed excessive black OOB corner: \(plan.sourceCorners)")
             }
         }
+        try run("denseCompositionalWindows and learned GAIC ranking enforce zero-OOB and zoom regularization") {
+            let hero = subject(index: 0, rect: CGRect(x: 0.36, y: 0.28, width: 0.22, height: 0.44), kind: .person)
+            let companion = CGRect(x: 0.20, y: 0.32, width: 0.14, height: 0.40)
+            let incidental = CGRect(x: 0.85, y: 0.16, width: 0.11, height: 0.20)
+            let k = TrackingCalibration.fallback()
+            let base = CompositionPlanner.photographicProposals(subject: hero, intents: [.portrait, .environmentalPortrait],
+                portraitBounds: nil, raster: raster(), calibration: k, currentZoom: 1.0,
+                allowedZooms: [1.0, 2.0, 3.0], protectedBounds: [companion], incidentalBounds: [incidental],
+                proposalLimit: 36)
+            let dense = CompositionPlanner.denseCompositionalWindows(existing: base, calibration: k,
+                currentZoom: 1.0, allowedZooms: [1.0, 2.0, 3.0], subjectAnchor: hero.anchor,
+                subjectBounds: hero.bounds, protectedBounds: [companion], incidentalBounds: [incidental],
+                raster: raster(), maxCount: GAICCompositionModel.maxBoxes)
+            try require(dense.contains(where: \.isUnchangedView), "dense window pool dropped baseline")
+            try require(dense.count > base.count && dense.count <= GAICCompositionModel.maxBoxes,
+                        "dense window pool count unexpected: \(dense.count)")
+            for plan in dense {
+                try require(plan.sourceCorners.count == 4 && plan.sourceCorners.allSatisfy {
+                    (-0.00001...1.00001).contains($0.x) && (-0.00001...1.00001).contains($0.y)
+                }, "dense window stepped out of bounds: \(plan.sourceCorners)")
+                let future = TrackingCalibration(fx: k.fx * Double(plan.zoom), fy: k.fy * Double(plan.zoom),
+                    cx: 0.5, cy: 0.5, aspect: k.aspect)
+                let projComp = CompositionPlanner.project(companion, from: k, to: future, rotation: plan.rotation)
+                try require(projComp.map { CompositionPlanner.visibleFraction($0) > 0.98 } == true,
+                            "dense window clipped protected companion")
+                if let projInc = CompositionPlanner.project(incidental, from: k, to: future, rotation: plan.rotation) {
+                    let frac = CompositionPlanner.visibleFraction(projInc)
+                    try require(frac <= 0.02 || frac >= 0.98, "dense window bisected incidental")
+                }
+                let box = GAICCompositionModel.normalizedBox(from: plan.sourceCorners)
+                try require(box.minX >= 0 && box.minY >= 0 && box.maxX <= 1 && box.maxY <= 1 && box.width >= 0.01,
+                            "invalid GAIC normalized box \(box)")
+            }
+            let hi = CompositionPreferencePolicy.score(composition: 3.0, aesthetics: 3.0, geometry: 0.5,
+                gaic: 0.90, hasLearnedGAIC: true, zoomRatio: 1.25)!
+            let lo = CompositionPreferencePolicy.score(composition: 3.0, aesthetics: 3.0, geometry: 0.5,
+                gaic: 0.30, hasLearnedGAIC: true, zoomRatio: 1.25)!
+            let overZoom = CompositionPreferencePolicy.score(composition: 3.0, aesthetics: 3.0, geometry: 0.5,
+                gaic: 0.90, hasLearnedGAIC: true, zoomRatio: 2.80)!
+            try require(hi - lo > 0.30, "learned GAIC did not dominate ranking")
+            try require(hi > overZoom + 0.05, "excessive digital zoom was not regularized")
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

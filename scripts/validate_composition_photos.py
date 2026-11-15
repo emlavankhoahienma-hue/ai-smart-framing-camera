@@ -68,13 +68,16 @@ if not args.parity_only:
     for name in ("yolo12n", "yolo12s", "SigLIPBaseImage"):
         shutil.copytree(root / (name + ".mlmodelc"), resources / (name + ".mlmodelc"), dirs_exist_ok=True)
     shutil.copyfile(root / "SigLIPPrompts.json", resources / "SigLIPPrompts.json")
+if (root / "GAICCompositionScorer.mlmodelc").is_dir():
+    shutil.copytree(root / "GAICCompositionScorer.mlmodelc", resources / "GAICCompositionScorer.mlmodelc", dirs_exist_ok=True)
 with (bundle / "Info.plist").open("wb") as stream:
     plistlib.dump({"CFBundleExecutable": executable.name, "CFBundleIdentifier": "com.alignai.validation.composition",
                    "CFBundlePackageType": "APPL"}, stream)
 files = ["CompositionTuning.swift", "CompositionPureCalculations.swift", "CompositionExperiments.swift",
          "TrackingGeometry.swift", "CompositionPlanning.swift", "CompositionImageEvidence.swift",
-         "PhotographicCompositionModel.swift", "CharmPhotographicModel.swift", "PortraitFramingEvidence.swift",
-         "CompositionAestheticSearch.swift", "YOLODetectionEngine.swift", "CameraLogger.swift"]
+         "PhotographicCompositionModel.swift", "GAICCompositionModel.swift", "CharmPhotographicModel.swift",
+         "PortraitFramingEvidence.swift", "CompositionAestheticSearch.swift", "YOLODetectionEngine.swift",
+         "CameraLogger.swift"]
 subprocess.run(["xcrun", "swiftc", "-O", "-warnings-as-errors",
                 *[str(root / "AISmartFramingCamera/Services" / name) for name in files], str(generated),
                 str(root / "tests/CompositionModelValidation.swift"), "-o", str(executable)], check=True)

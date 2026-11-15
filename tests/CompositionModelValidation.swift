@@ -177,9 +177,24 @@ enum CompositionModelValidation {
                 proposalLimit: seeds.isEmpty ? 36 : 18, refining: seeds)
         }
         let started = ProcessInfo.processInfo.systemUptime
-        let broad = proposals()
+        var broad = proposals()
+        if GAICCompositionModel.defaultModelURL(near: modelURL) != nil && !broad.isEmpty {
+            let denseIntent = broad.first(where: \.isUnchangedView)?.intent ?? broad.first?.intent ?? (intents.first ?? .object)
+            let denseProtection = CompositionCropProtection.bounds(
+                body: bounds, portrait: portraitBounds, intent: denseIntent,
+                anchor: subject.anchor, attentionRegion: subject.allowsAttentionCrop
+            )
+            broad = CompositionPlanner.denseCompositionalWindows(
+                existing: broad, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
+                subjectAnchor: subject.anchor, subjectBounds: bounds,
+                protectedBounds: [denseProtection] + hero.companionBounds + ownFaces,
+                incidentalBounds: incidentalPets + incidentalFaces,
+                intent: denseIntent, confidence: Double(hero.confidence),
+                raster: raster, maxCount: GAICCompositionModel.maxBoxes
+            )
+        }
         guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: broad,
-            image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
+            image: ci, aspect: calibration.aspect, preferences: [:], raster: raster, modelURL: modelURL,
             aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
             positionURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmPositionEmbedding.bin"),
             requiresModernModel: true,
@@ -380,10 +395,25 @@ extension CompositionModelValidation {
                     proposalLimit: seeds.isEmpty ? 36 : 18, refining: seeds)
             }
             let planningStart = ProcessInfo.processInfo.systemUptime
-            let broad = proposals()
+            var broad = proposals()
+            if GAICCompositionModel.defaultModelURL(near: modelURL) != nil && !broad.isEmpty {
+                let denseIntent = broad.first(where: \.isUnchangedView)?.intent ?? broad.first?.intent ?? (intents.first ?? .object)
+                let denseProtection = CompositionCropProtection.bounds(
+                    body: bounds, portrait: portraitBounds, intent: denseIntent,
+                    anchor: subject.anchor, attentionRegion: subject.allowsAttentionCrop
+                )
+                broad = CompositionPlanner.denseCompositionalWindows(
+                    existing: broad, calibration: calibration, currentZoom: 1, allowedZooms: [1, 2, 3],
+                    subjectAnchor: subject.anchor, subjectBounds: bounds,
+                    protectedBounds: [denseProtection] + hero.companionBounds + ownFaces,
+                    incidentalBounds: incidentalPets + incidentalFaces,
+                    intent: denseIntent, confidence: Double(hero.confidence),
+                    raster: raster, maxCount: GAICCompositionModel.maxBoxes
+                )
+            }
             let planningEnd = ProcessInfo.processInfo.systemUptime
             guard let result = CompositionAestheticSearch(renderer: renderer).run(proposals: broad,
-                image: ci, aspect: calibration.aspect, preferences: [:], modelURL: modelURL,
+                image: ci, aspect: calibration.aspect, preferences: [:], raster: raster, modelURL: modelURL,
                 aestheticModelURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmAesthetics.mlmodelc"),
                 positionURL: modelURL.deletingLastPathComponent().appendingPathComponent("CharmPositionEmbedding.bin"),
                 requiresModernModel: true,

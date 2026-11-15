@@ -1092,10 +1092,9 @@ enum CompositionPlanner {
                     let sourceCorners = corners.map {
                         calibration.project(deviceRay: rotation.act(future.deviceRay(at: $0)))
                     }
-                    // Thu hẹp dần biên vượt khung khi zoom tăng (-0.14 ở 1.0x -> -0.04 từ >=1.35x) để không lộ khoảng đen vô ích
-                    let zoomProgress = min(1.0, max(0.0, (ratio - 1.0) / 0.35))
-                    let cornerOOBMargin = CGFloat(unchanged ? -0.001 : (-0.14 + 0.10 * zoomProgress))
-                    let aimMargin = CGFloat(unchanged ? 0.0 : (-0.02 + 0.06 * zoomProgress))
+                    // Thực pixel 100%: tuyệt đối không sinh góc ngoài [0, 1] gây viền đen hoặc sai lệch hình học khi xoay/zoom
+                    let cornerOOBMargin = CGFloat(unchanged ? -0.00001 : -0.000005)
+                    let aimMargin = CGFloat(unchanged ? 0.0 : 0.032)
                     guard sourceCorners.allSatisfy({ $0.isInFront && inside($0.point, margin: cornerOOBMargin) }),
                           let box = project(subject.bounds, from: calibration, to: future, rotation: rotation),
                           let anchorBox = project(protectedAnchor, from: calibration, to: future, rotation: rotation),
@@ -1153,22 +1152,13 @@ enum CompositionPlanner {
                         return acc + hypot(dx, dy)
                     }
                     let oobFraction = min(1.0, oobSum / 0.85)
-                    let observedCornerPoints = observedSourceQuad(
-                        rawCornerPoints,
-                        unchanged: unchanged,
-                        oobSum: oobSum,
-                        oobFraction: oobFraction
-                    )
                     let intentPrior = intent == intents.first ? 0.045 : (intents.contains(intent) ? 0.02 : 0)
                     let thirdX = min(abs(Double(destination.x) - Double(CompositionTuning.goldenSectionLeft)),
                                      abs(Double(destination.x) - Double(CompositionTuning.goldenSectionRight)))
                     let thirdY = min(abs(Double(destination.y) - CompositionTuning.portraitEyeLineY),
                                      abs(Double(destination.y) - Double(CompositionTuning.goldenSectionRight)))
                     let ruleOfThirdsBonus = CompositionTuning.ruleOfThirdsBonusWeight * exp(-16 * (thirdX * thirdX + thirdY * thirdY))
-                    let deadCenterDestPenalty = (intent != .architecture && intent != .group && !unchanged &&
-                        hypot(Double(destination.x - 0.5), Double(destination.y - 0.5)) < 0.04) ? 0.20 : 0.0
-                    let zoomProminenceBonus = (subject.kind != .scenery && intent != .landscape && area < effectiveDesiredArea && ratio > 1.08) ? 0.08 * min(1.0, log(ratio) / log(2.5)) : 0.0
-                    let ratioAdjustment = (subject.kind != .scenery && intent != .landscape && area < effectiveDesiredArea) ? -0.055 * min(1.0, max(0.0, log(ratio))) : 0.02 * abs(log(ratio))
+                    let ratioAdjustment = 0.015 * abs(log(max(0.25, ratio)))
                     let contextWeight = intent.preservesContext ? 0.11 : 0.05
                     let contextFitWeight = intent.preservesContext ? 0.09 : 0.04
                     let evBias = computeOptimalEVBias(raster: raster, heroRect: box, aimPoint: aim.point, zoom: zoom, scene: intent)
@@ -1191,7 +1181,7 @@ enum CompositionPlanner {
                         0.09 * space + 0.06 * edgeSafety + contextWeight * context +
                         contextFitWeight * contextFit + 0.03 * metrics.cleanEdges + 0.02 * symmetry +
                         0.02 * horizonFit + 0.07 * torqueBalance - anatomicalPenaltyValue - oobPenalty +
-                        intentPrior + ruleOfThirdsBonus + zoomProminenceBonus - deadCenterDestPenalty - ratioAdjustment
+                        intentPrior + ruleOfThirdsBonus - ratioAdjustment
                     let fieldNorm = min(1.0, max(0.0, fieldScore))
                     // Grid-Anchor RoI Pre-Screen score (RoI inner S_sync focus + depth separation + clean edges + continuous field + anatomy)
                     let gaicScore = min(1.0, max(0.0,
@@ -1204,7 +1194,7 @@ enum CompositionPlanner {
                     let combinedScore = fieldScore + 0.06 * (gaicScore - 0.5)
                     return CompositionProposal(subjectIndex: subject.index, intent: intent,
                         subjectPoint: subject.anchor, aimPoint: aim.point, expectedSubjectRect: box,
-                        sourceCorners: observedCornerPoints, rotation: rotation, zoom: zoom,
+                        sourceCorners: rawCornerPoints, rotation: rotation, zoom: zoom,
                         evidenceConfidence: min(1, max(0, subject.confidence)), score: combinedScore,
                         explanation: explanation(intent: intent, gaze: subject.gaze,
                             cleanEdges: metrics.cleanEdges, context: raster.hasAttention ? context : 0),
@@ -1587,11 +1577,11 @@ enum CompositionPlanner {
         }
 
         let gridX: [Double] = highMemory
-            ? [0.28, 0.34, 0.382, 0.44, 0.50, 0.56, 0.618, 0.66, 0.72]
-            : [0.30, 0.382, 0.46, 0.54, 0.618, 0.70]
+            ? [0.22, 0.28, 0.34, 0.382, 0.44, 0.50, 0.56, 0.618, 0.66, 0.72, 0.78]
+            : [0.22, 0.30, 0.382, 0.46, 0.50, 0.56, 0.618, 0.70, 0.78]
         let gridY: [Double] = highMemory
-            ? [0.28, 0.34, 0.382, 0.44, 0.50, 0.58, 0.65]
-            : [0.30, 0.382, 0.48, 0.58, 0.65]
+            ? [0.24, 0.30, 0.382, 0.44, 0.50, 0.58, 0.66]
+            : [0.24, 0.34, 0.382, 0.48, 0.58, 0.66]
         for gy in gridY {
             for gx in gridX {
                 points.append(CGPoint(x: gx, y: gy))
@@ -1640,9 +1630,10 @@ enum CompositionPlanner {
             ))
             options.insert(idealZoom)
 
-            for prime in [1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0] as [CGFloat] {
-                if prime >= currentZoom && prime <= maxZoom {
-                    options.insert(prime)
+            for mult in [1.06, 1.13, 1.21, 1.30, 1.40, 1.52, 1.66, 1.82, 2.02, 2.28, 2.65, 3.10] as [CGFloat] {
+                let candidate = currentZoom * mult
+                if candidate >= currentZoom && candidate <= maxZoom {
+                    options.insert(candidate)
                 }
             }
 
@@ -1857,47 +1848,166 @@ enum CompositionPlanner {
         point.x <= 1 - margin && point.y <= 1 - margin
     }
 
-    private static func observedSourceQuad(_ rawPoints: [CGPoint], unchanged: Bool,
-                                           oobSum: Double, oobFraction: Double) -> [CGPoint] {
-        guard !unchanged && oobSum > 0.000001, rawPoints.count == 4 else { return rawPoints }
-        var minX = rawPoints[0].x, maxX = rawPoints[0].x
-        var minY = rawPoints[0].y, maxY = rawPoints[0].y
-        for pt in rawPoints {
-            if pt.x < minX { minX = pt.x }
-            if pt.x > maxX { maxX = pt.x }
-            if pt.y < minY { minY = pt.y }
-            if pt.y > maxY { maxY = pt.y }
+    /// Builds a clean, zero-OOB dense multi-scale window pool (up to 256 windows) anchored in real
+    /// 3D `TrackingCalibration` + `simd_quatd` rays so `GAICCompositionScorer` can evaluate rich
+    /// scene-wide and tight compositions even when heuristics propose few windows (e.g. scenery/street).
+    static func denseCompositionalWindows(
+        existing: [CompositionProposal],
+        calibration: TrackingCalibration,
+        currentZoom: CGFloat,
+        allowedZooms: [CGFloat],
+        subjectAnchor: CGPoint = CGPoint(x: 0.5, y: 0.5),
+        subjectBounds: CGRect? = nil,
+        protectedBounds: [CGRect] = [],
+        incidentalBounds: [CGRect] = [],
+        intent: LocalCompositionIntent = .object,
+        confidence: Double = 0.72,
+        raster: CompositionRaster? = nil,
+        maxCount: Int = 256
+    ) -> [CompositionProposal] {
+        guard maxCount > 0, calibration.isValid, currentZoom.isFinite, currentZoom > 0 else {
+            return Array(existing.prefix(max(0, maxCount)))
         }
-        let spanX = maxX - minX
-        let spanY = maxY - minY
-        let span = max(0.001, max(spanX, spanY))
-        let maxAllowedSpan: CGFloat = max(0.76, 0.93 - 0.14 * CGFloat(oobFraction))
-        let scale: CGFloat = min(1.0, maxAllowedSpan / span)
-        let cx: CGFloat = (minX + maxX) * 0.5
-        let cy: CGFloat = (minY + maxY) * 0.5
-        var scaled: [CGPoint] = []
-        scaled.reserveCapacity(4)
-        var sMinX: CGFloat = 10.0, sMaxX: CGFloat = -10.0
-        var sMinY: CGFloat = 10.0, sMaxY: CGFloat = -10.0
-        for pt in rawPoints {
-            let sx = cx + (pt.x - cx) * scale
-            let sy = cy + (pt.y - cy) * scale
-            scaled.append(CGPoint(x: sx, y: sy))
-            if sx < sMinX { sMinX = sx }
-            if sx > sMaxX { sMaxX = sx }
-            if sy < sMinY { sMinY = sy }
-            if sy > sMaxY { sMaxY = sy }
+        let hardMax = allowedZooms.filter { $0.isFinite && $0 >= currentZoom }.max() ?? currentZoom
+        let maxZoom = max(currentZoom, min(hardMax, max(currentZoom, currentZoom * 2.8)))
+        let baseline = existing.first(where: \.isUnchangedView)
+        let baseAnchor = (subjectAnchor.x.isFinite && subjectAnchor.y.isFinite &&
+            (0.02...0.98).contains(subjectAnchor.x) && (0.02...0.98).contains(subjectAnchor.y))
+            ? subjectAnchor : (baseline?.subjectPoint ?? CGPoint(x: 0.5, y: 0.5))
+        let heroBounds = subjectBounds.flatMap { valid($0) ? $0 : nil } ??
+            baseline?.expectedSubjectRect ??
+            CGRect(x: max(0.0, baseAnchor.x - 0.10), y: max(0.0, baseAnchor.y - 0.12), width: 0.20, height: 0.24)
+        let safeProtected = protectedBounds.filter { valid($0) }
+        let safeIncidentals = incidentalBounds.filter { valid($0) }
+        let refSizeRatio = baseline?.sizeRatio ?? 1.0
+        let refIntent = baseline?.intent ?? intent
+        let refConfidence = baseline?.evidenceConfidence ?? min(1, max(0, confidence))
+        let refSubjectIndex = baseline?.subjectIndex ?? 0
+
+        var pool: [CompositionProposal] = []
+        pool.reserveCapacity(maxCount)
+        var seenSignatures = Set<Int>()
+        seenSignatures.reserveCapacity(maxCount * 2)
+
+        func signature(for corners: [CGPoint], unchanged: Bool) -> Int {
+            if unchanged { return -1 }
+            let xs = corners.map { Double($0.x) }
+            let ys = corners.map { Double($0.y) }
+            let x1 = Int(((xs.min() ?? 0.0) * 36.0).rounded())
+            let y1 = Int(((ys.min() ?? 0.0) * 36.0).rounded())
+            let x2 = Int(((xs.max() ?? 1.0) * 36.0).rounded())
+            let y2 = Int(((ys.max() ?? 1.0) * 36.0).rounded())
+            return (((x1 * 64 + y1) * 64 + x2) * 64 + y2)
         }
-        let shiftX: CGFloat = sMinX < 0.002 ? (0.002 - sMinX) : (sMaxX > 0.998 ? (0.998 - sMaxX) : 0)
-        let shiftY: CGFloat = sMinY < 0.002 ? (0.002 - sMinY) : (sMaxY > 0.998 ? (0.998 - sMaxY) : 0)
-        var out: [CGPoint] = []
-        out.reserveCapacity(4)
-        for pt in scaled {
-            let ox = min(0.999, max(0.001, pt.x + shiftX))
-            let oy = min(0.999, max(0.001, pt.y + shiftY))
-            out.append(CGPoint(x: ox, y: oy))
+
+        func appendIfNovel(_ proposal: CompositionProposal) -> Bool {
+            guard pool.count < maxCount, proposal.sourceCorners.count == 4,
+                  proposal.sourceCorners.allSatisfy({ (-0.00001...1.00001).contains($0.x) && (-0.00001...1.00001).contains($0.y) }) else {
+                return false
+            }
+            let sig = signature(for: proposal.sourceCorners, unchanged: proposal.isUnchangedView)
+            guard !seenSignatures.contains(sig) else { return false }
+            seenSignatures.insert(sig)
+            pool.append(proposal)
+            return true
         }
-        return out
+
+        if let baseline { _ = appendIfNovel(baseline) }
+        for candidate in existing.sorted(by: { $0.score > $1.score }) {
+            if pool.count >= min(maxCount, 72) { break }
+            _ = appendIfNovel(candidate)
+        }
+
+        let multipliers: [CGFloat] = [1.06, 1.13, 1.21, 1.30, 1.40, 1.52, 1.66, 1.82, 2.02, 2.28]
+        let zoomLevels: [CGFloat] = multipliers
+            .map { currentZoom * $0 }
+            .filter { $0 > currentZoom * 1.01 && $0 <= maxZoom + 0.001 }
+
+        for zoom in zoomLevels {
+            if pool.count >= maxCount { break }
+            let ratio = Double(zoom / currentZoom)
+            let halfSpan = 0.5 / ratio
+            let minC = min(0.5, max(0.05, halfSpan + 0.005))
+            let maxC = max(0.5, min(0.95, 1.0 - halfSpan - 0.005))
+            let xSteps: [Double] = maxC - minC < 0.04 ? [0.5] : (0..<5).map { i in
+                minC + (maxC - minC) * Double(i) / 4.0
+            }
+            let ySteps: [Double] = maxC - minC < 0.04 ? [0.5] : (0..<5).map { j in
+                minC + (maxC - minC) * Double(j) / 4.0
+            }
+
+            var centers: [CGPoint] = []
+            for cy in ySteps {
+                for cx in xSteps {
+                    centers.append(CGPoint(x: cx, y: cy))
+                }
+            }
+            // Also include windows biased toward golden-section offsets of the hero anchor
+            for gx in [0.382, 0.50, 0.618] {
+                for gy in [0.36, 0.50] {
+                    let cx = Double(baseAnchor.x) - (gx - 0.5) / ratio
+                    let cy = Double(baseAnchor.y) - (gy - 0.5) / ratio
+                    if cx >= minC && cx <= maxC && cy >= minC && cy <= maxC {
+                        centers.append(CGPoint(x: cx, y: cy))
+                    }
+                }
+            }
+
+            let future = TrackingCalibration(fx: calibration.fx * ratio, fy: calibration.fy * ratio,
+                                             cx: calibration.cx, cy: calibration.cy,
+                                             aspect: calibration.aspect, isMeasured: false)
+            for center in centers {
+                if pool.count >= maxCount { break }
+                let rotation = simd_quatd(from: SIMD3(0, 0, -1), to: calibration.deviceRay(at: center))
+                let cornerProjs = corners.map { calibration.project(deviceRay: rotation.act(future.deviceRay(at: $0))) }
+                guard cornerProjs.allSatisfy({ $0.isInFront && inside($0.point, margin: -0.000005) }) else { continue }
+                let aim = calibration.project(deviceRay: rotation.act(SIMD3(0, 0, -1)))
+                guard aim.isInFront, inside(aim.point, margin: 0.032) else { continue }
+                let protectedOK = safeProtected.allSatisfy { rect in
+                    guard let proj = project(rect, from: calibration, to: future, rotation: rotation) else { return false }
+                    return safe(proj, original: rect, allowCrop: false) && visibleFraction(proj) > 0.985
+                }
+                guard protectedOK else { continue }
+                let incidentalsOK = safeIncidentals.allSatisfy { rect in
+                    guard let proj = project(rect, from: calibration, to: future, rotation: rotation) else { return true }
+                    let frac = visibleFraction(proj)
+                    return frac <= 0.02 || frac >= 0.98
+                }
+                guard incidentalsOK else { continue }
+
+                let projSubject = project(heroBounds, from: calibration, to: future, rotation: rotation)
+                    ?? CGRect(x: 0.35, y: 0.35, width: 0.3, height: 0.3)
+                let projArea = Double(max(0.0001, projSubject.width * projSubject.height))
+                let origArea = Double(max(0.0001, heroBounds.width * heroBounds.height))
+                let estSizeRatio = refSizeRatio * (projArea / origArea)
+                let evBias = raster.map {
+                    computeOptimalEVBias(raster: $0, heroRect: projSubject, aimPoint: aim.point, zoom: zoom, scene: refIntent)
+                } ?? 0.0
+
+                let candidate = CompositionProposal(
+                    subjectIndex: refSubjectIndex,
+                    intent: refIntent,
+                    subjectPoint: baseAnchor,
+                    aimPoint: aim.point,
+                    expectedSubjectRect: projSubject,
+                    sourceCorners: cornerProjs.map(\.point),
+                    rotation: rotation,
+                    zoom: zoom,
+                    evidenceConfidence: refConfidence,
+                    score: max(0.05, 0.55 - 0.025 * abs(log(max(0.25, ratio)))),
+                    explanation: "Khám phá khung đa tỷ lệ cho GAIC",
+                    usesCenter: abs(projSubject.midX - 0.5) < 0.055,
+                    retainedAttention: 1.0,
+                    recommendedEVBias: evBias,
+                    outOfBoundsFraction: 0.0,
+                    continuousFieldScore: max(0.05, 0.55 - 0.025 * abs(log(max(0.25, ratio)))),
+                    gaicScore: 0.5,
+                    sizeRatio: estSizeRatio
+                )
+                _ = appendIfNovel(candidate)
+            }
+        }
+        return pool
     }
 
     private static func safe(_ rect: CGRect, original: CGRect, allowCrop: Bool = false) -> Bool {

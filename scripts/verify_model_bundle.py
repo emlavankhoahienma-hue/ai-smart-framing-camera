@@ -84,9 +84,20 @@ def main() -> None:
                            "compiledSHA256": yolo[name]} for name in yolo},
     }
     (bundle / "YOLOModelManifest.json").write_text(json.dumps(yolo_manifest_data, indent=2), encoding="utf-8")
+    gaic_manifest_path = bundle / "GAICModelManifest.json"
+    gaic_manifest = json.loads(gaic_manifest_path.read_text(encoding="utf-8"))
+    if gaic_manifest.get("weightsSHA256") != "82492f3a1c72a8b2db605dc1962b0f50898b11c3676899fdbe3ee60427596b41":
+        raise RuntimeError("Invalid GAICCompositionScorer checkpoint provenance")
+    gaic_parity = gaic_manifest.get("parity") or {}
+    if not gaic_parity.get("checked") or gaic_parity.get("max_abs_diff", 1) > 0.08 or gaic_parity.get("pearson_corr", 0) < 0.995:
+        raise RuntimeError(f"GAICCompositionScorer failed macOS Core ML parity check: {gaic_parity}")
+    gaic_compiled = tree_hash(bundle / "GAICCompositionScorer.mlmodelc")
+    gaic_manifest["compiledSHA256"] = gaic_compiled
+    gaic_manifest_path.write_text(json.dumps(gaic_manifest, indent=2), encoding="utf-8")
     print(f"SigLIP compiled SHA256: {siglip}")
     print(f"YOLO compiled SHA256: {yolo}")
     print(f"SAMP-Net compiled SHA256: {composition}")
+    print(f"GAIC compiled SHA256: {gaic_compiled}")
 
 
 if __name__ == "__main__":

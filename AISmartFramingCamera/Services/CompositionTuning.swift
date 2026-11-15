@@ -57,16 +57,16 @@ public enum CompositionTuning {
     public static let centerDistanceDecay: Double = 0.7
 
     // MARK: - 3. Target Desired Area Fraction (Dien tich mong muon theo y do)
-    public static let desiredAreaPortrait: Double = 0.31
-    public static let desiredAreaFace: Double = 0.095
-    public static let desiredAreaFood: Double = 0.34
-    public static let desiredAreaCloseUp: Double = 0.35
-    public static let desiredAreaAnimal: Double = 0.28
-    public static let desiredAreaGroup: Double = 0.38
-    public static let desiredAreaEnvironment: Double = 0.22
-    public static let desiredAreaStreet: Double = 0.22
-    public static let desiredAreaLandscape: Double = 0.15
-    public static let desiredAreaArchitecture: Double = 0.48
+    public static let desiredAreaPortrait: Double = 0.20
+    public static let desiredAreaFace: Double = 0.075
+    public static let desiredAreaFood: Double = 0.26
+    public static let desiredAreaCloseUp: Double = 0.26
+    public static let desiredAreaAnimal: Double = 0.19
+    public static let desiredAreaGroup: Double = 0.28
+    public static let desiredAreaEnvironment: Double = 0.14
+    public static let desiredAreaStreet: Double = 0.14
+    public static let desiredAreaLandscape: Double = 0.12
+    public static let desiredAreaArchitecture: Double = 0.28
 
     /// Mau so chuan hoa dien tich de tinh diem kich thuoc chu the
     public static let heroFaceAreaDivisor: Double = 0.06
