@@ -669,7 +669,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             verticalGaze: hero.verticalGaze,
             shotScaleBias: output.semanticGuidance.shotScaleBias,
             contextPreservationWeight: output.semanticGuidance.contextPreservationWeight,
-            isAttentionOnly: hero.isAttentionRegion)
+            isAttentionOnly: hero.isAttentionRegion || allowsHeroAttentionCrop)
         let intents = refinedIntents(base: compositionIntents(output, hero: hero),
                                      hero: hero, role: sceneHints.role)
         if poseProfile == nil && (hero.category == .human || hero.category == .face) {
@@ -966,7 +966,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 let desc = names.isEmpty ? "đồ vật trên bàn" : names.prefix(3).joined(separator: " + ")
                 sceneHints.reasonSubject = "\(baseLbl) (\(desc))"
                 let synthHero = NeuralSubjectCandidate(
-                    boundingBox: groupBox, category: .object, confidence: 0.85,
+                    boundingBox: groupBox, category: .foregroundObject, confidence: 0.85,
                     label: baseLbl, prominenceScore: 0.85, trackingPoint: anchor
                 )
                 return IntelligentSubjectPlan(
@@ -990,8 +990,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 let anchor = CGPoint(x: gb.midX, y: gb.minY + 0.48 * gb.height)
                 sceneHints.reasonSubject = "Không gian góc phòng & nội thất"
                 let synthHero = NeuralSubjectCandidate(
-                    boundingBox: gb, category: .object, confidence: 0.80,
-                    label: "Góc nội thất", prominenceScore: 0.78, trackingPoint: anchor, isAttentionRegion: true
+                    boundingBox: gb, category: .foregroundObject, confidence: 0.80,
+                    label: "Góc nội thất", prominenceScore: 0.78, trackingPoint: anchor
                 )
                 return IntelligentSubjectPlan(
                     hero: synthHero, subjectKind: .object, protectedBounds: [gb],
@@ -1027,8 +1027,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
             sceneHints.reasonSubject = "Ngõ phố có đường dẫn" + (sceneHints.focalAccent != nil ? " & điểm nhấn màu" : "")
             let synthHero = NeuralSubjectCandidate(
-                boundingBox: gb, category: .object, confidence: 0.80,
-                label: "Đường dẫn & tiêu điểm", prominenceScore: 0.78, trackingPoint: anchor, isAttentionRegion: true
+                boundingBox: gb, category: .foregroundObject, confidence: 0.80,
+                label: "Đường dẫn & tiêu điểm", prominenceScore: 0.78, trackingPoint: anchor
             )
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: .object, protectedBounds: [gb],
@@ -1061,8 +1061,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
             sceneHints.reasonSubject = "Kiến trúc công trình & mái nhà"
             let synthHero = NeuralSubjectCandidate(
-                boundingBox: gb, category: .object, confidence: 0.80,
-                label: "Kiến trúc ngôi nhà", prominenceScore: 0.78, trackingPoint: anchor, isAttentionRegion: true
+                boundingBox: gb, category: .foregroundObject, confidence: 0.80,
+                label: "Kiến trúc ngôi nhà", prominenceScore: 0.78, trackingPoint: anchor
             )
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: .object, protectedBounds: [gb],
@@ -1080,7 +1080,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             let synthHero = NeuralSubjectCandidate(
                 boundingBox: gb, category: .general, confidence: 0.78,
                 label: "Bầu trời & đường chân trời", prominenceScore: 0.72,
-                trackingPoint: CGPoint(x: 0.50, y: hy), isAttentionRegion: true
+                trackingPoint: CGPoint(x: 0.50, y: hy)
             )
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: .scenery, protectedBounds: [prot],
@@ -1110,8 +1110,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
             sceneHints.reasonSubject = "Khung cảnh nhìn qua cửa/ban công"
             let synthHero = NeuralSubjectCandidate(
-                boundingBox: gb, category: .object, confidence: 0.78,
-                label: "Khung nhìn qua cửa", prominenceScore: 0.75, trackingPoint: anchor, isAttentionRegion: true
+                boundingBox: gb, category: .foregroundObject, confidence: 0.78,
+                label: "Khung nhìn qua cửa", prominenceScore: 0.75, trackingPoint: anchor
             )
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: .object, protectedBounds: [gb],
@@ -1142,9 +1142,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             let lbl = isFoliage ? "Tán cây & thiên nhiên" : "Chủ thể nổi bật"
             sceneHints.reasonSubject = lbl
             let synthHero = NeuralSubjectCandidate(
-                boundingBox: gb, category: isFoliage ? .general : .object, confidence: 0.74,
-                label: lbl, prominenceScore: 0.70, trackingPoint: CGPoint(x: gb.midX, y: gb.midY),
-                isAttentionRegion: true
+                boundingBox: gb, category: isFoliage ? .general : .foregroundObject, confidence: 0.74,
+                label: lbl, prominenceScore: 0.70, trackingPoint: CGPoint(x: gb.midX, y: gb.midY)
             )
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: isFoliage ? .scenery : .object, protectedBounds: [gb],
@@ -1156,8 +1155,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // Fallback Scenery
         let fallbackHero = NeuralSubjectCandidate(
             boundingBox: CGRect(x: 0.20, y: 0.20, width: 0.60, height: 0.60),
-            category: .general, confidence: 0.70, label: "Khung cảnh", prominenceScore: 0.20,
-            isAttentionRegion: true
+            category: .general, confidence: 0.70, label: "Khung cảnh", prominenceScore: 0.20
         )
         sceneHints.reasonSubject = "Toàn cảnh"
         return IntelligentSubjectPlan(
