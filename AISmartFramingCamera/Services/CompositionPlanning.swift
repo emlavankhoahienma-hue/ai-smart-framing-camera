@@ -1136,38 +1136,49 @@ enum CompositionPlanner {
         if !refining.isEmpty {
             return diverse(result, limit: proposalLimit, raySeparation: 0.008, zoomSeparation: 0.018)
         }
+        var perSubjectBest: [Int: CompositionProposal] = [:]
         var perZoomBest: [Int: CompositionProposal] = [:]
         for proposal in result {
+            if proposal.score > (perSubjectBest[proposal.subjectIndex]?.score ?? -.infinity) {
+                perSubjectBest[proposal.subjectIndex] = proposal
+            }
             let zBin = Int((log(Double(proposal.zoom / currentZoom)) * 12).rounded())
             if proposal.score > (perZoomBest[zBin]?.score ?? -.infinity) {
                 perZoomBest[zBin] = proposal
             }
         }
+        let subjectChampions = perSubjectBest.values.sorted { $0.score > $1.score }
         if proposalLimit <= 6 {
             let topDiverse = diverse(result, limit: proposalLimit, raySeparation: 0.04, zoomSeparation: 0.08)
-            guard proposalLimit > 1, perZoomBest.count > 1, let leader = topDiverse.first else {
+            guard proposalLimit > 1, let leader = topDiverse.first else {
                 return topDiverse
             }
             var compact: [CompositionProposal] = [leader]
-            let zoomSlots = min(proposalLimit, max(2, proposalLimit / 2 + 1))
+            for candidate in subjectChampions where candidate.subjectIndex != leader.subjectIndex {
+                guard compact.count < proposalLimit else { break }
+                compact.append(candidate)
+            }
+            let zoomSlots = min(proposalLimit, max(compact.count + 2, proposalLimit / 2 + 2))
             for candidate in perZoomBest.values.sorted(by: { $0.score > $1.score }) {
                 guard compact.count < zoomSlots else { break }
-                if !compact.contains(where: { abs(log(Double($0.zoom / candidate.zoom))) < 0.045 &&
+                if !compact.contains(where: { $0.subjectIndex == candidate.subjectIndex &&
+                    abs(log(Double($0.zoom / candidate.zoom))) < 0.045 &&
                     hypot($0.aimPoint.x - candidate.aimPoint.x, $0.aimPoint.y - candidate.aimPoint.y) < 0.020 }) {
                     compact.append(candidate)
                 }
             }
             for candidate in topDiverse {
                 guard compact.count < proposalLimit else { break }
-                if !compact.contains(where: { abs(log(Double($0.zoom / candidate.zoom))) < 0.045 &&
+                if !compact.contains(where: { $0.subjectIndex == candidate.subjectIndex &&
+                    abs(log(Double($0.zoom / candidate.zoom))) < 0.045 &&
                     hypot($0.aimPoint.x - candidate.aimPoint.x, $0.aimPoint.y - candidate.aimPoint.y) < 0.040 }) {
                     compact.append(candidate)
                 }
             }
             return compact.sorted { $0.score > $1.score }
         }
-        // Preserve a no-change baseline and a nearby gentle alternative, guarantee coverage of
-        // every feasible zoom rung, retain top GAIC+Field winners, and stratify multi-scale buckets.
+        // Preserve a no-change baseline and a nearby gentle alternative, guarantee per-subject and
+        // per-zoom-rung coverage, retain top GAIC+Field winners, and stratify multi-scale buckets.
         var selected = result.filter(\.isUnchangedView).prefix(1).map { $0 }
         if let nearOriginal = result
             .filter({ !$0.isUnchangedView && abs(log(Double($0.zoom / currentZoom))) < 0.14 &&
@@ -1175,6 +1186,7 @@ enum CompositionPlanner {
             .max(by: { $0.score < $1.score }) {
             selected.append(nearOriginal)
         }
+        selected.append(contentsOf: subjectChampions)
         let zoomChampions = perZoomBest.keys.sorted().compactMap { perZoomBest[$0] }
         let zoomBudget = max(3, proposalLimit / 4)
         if !zoomChampions.isEmpty {
@@ -1211,7 +1223,8 @@ enum CompositionPlanner {
         }
         var unique: [CompositionProposal] = []
         for proposal in selected + result.sorted(by: { $0.score > $1.score }) {
-            if !unique.contains(where: { hypot($0.aimPoint.x - proposal.aimPoint.x, $0.aimPoint.y - proposal.aimPoint.y) < 0.020 &&
+            if !unique.contains(where: { $0.subjectIndex == proposal.subjectIndex &&
+                hypot($0.aimPoint.x - proposal.aimPoint.x, $0.aimPoint.y - proposal.aimPoint.y) < 0.020 &&
                 abs(log(Double($0.zoom / proposal.zoom))) < 0.045 }) { unique.append(proposal) }
             if unique.count == proposalLimit { break }
         }
