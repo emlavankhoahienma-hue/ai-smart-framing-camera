@@ -170,8 +170,8 @@ public struct CapturedPhotoPreviewView: View {
     @State private var activeAIColorParams: AIColorParameters? = nil
     @State private var microDetailLevel: PhotoMicroDetailLevel = .off
     @State private var isMasterFrameApplied: Bool = false
-    @State private var masterFrameTheme: MasterWatermarkTheme = .classicWhite
-    @State private var masterFrameLogo: MasterWatermarkLogoStyle = .leicaRedDot
+    @State private var masterFrameTheme: WatermarkTheme = .white
+    @State private var masterFrameLogo: WatermarkLogoStyle = .alignStudio
 
     @State private var isProcessingFilter: Bool = false
     @State private var isSavingToLibrary: Bool = false
@@ -202,8 +202,8 @@ public struct CapturedPhotoPreviewView: View {
         self.item = item
         self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
-        _activePreset = State(initialValue: item.appliedFilter)
-        _selectedCategory = State(initialValue: item.appliedFilter.category)
+        _activePreset = State(initialValue: item.appliedPreset)
+        _selectedCategory = State(initialValue: item.appliedPreset.category)
         if let vm = viewModel {
             _masterFrameTheme = State(initialValue: vm.masterWatermarkTheme)
             _masterFrameLogo = State(initialValue: vm.masterWatermarkLogoStyle)
@@ -211,7 +211,7 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     private var hasModifiedSinceOpen: Bool {
-        activePreset != item.appliedFilter ||
+        activePreset != item.appliedPreset ||
         abs(activeFilmIntensity - 1.0) > 0.02 ||
         isAIEnhanced ||
         microDetailLevel != .off ||
@@ -761,7 +761,7 @@ public struct CapturedPhotoPreviewView: View {
                 VStack(spacing: 6) {
                     HStack(spacing: 6) {
                         exifMiniTile(title: "TIÊU CỰ", value: focalLengthDisplayString, accent: AlignTheme.amberGold)
-                        exifMiniTile(title: "KHẨU ĐỘ", value: String(format: "f/%.1f", item.aperture > 0 ? item.aperture : 1.8), accent: .white)
+                        exifMiniTile(title: "KHẨU ĐỘ", value: "f/1.8", accent: .white)
                     }
                     HStack(spacing: 6) {
                         exifMiniTile(title: "TỐC ĐỘ", value: formattedShutterSpeed, accent: AlignTheme.electricCyan)
@@ -998,9 +998,9 @@ public struct CapturedPhotoPreviewView: View {
             }
             .padding(.horizontal, 14)
 
-            // Theme Picker Row
+            // Theme & Logo Picker Row
             HStack(spacing: 8) {
-                ForEach(MasterWatermarkTheme.allCases) { theme in
+                ForEach(WatermarkTheme.allCases) { theme in
                     let isSelected = masterFrameTheme == theme
                     Button(action: {
                         masterFrameTheme = theme
@@ -1009,7 +1009,7 @@ public struct CapturedPhotoPreviewView: View {
                     }) {
                         HStack(spacing: 5) {
                             Circle()
-                                .fill(theme == .classicWhite ? Color.white : (theme == .obsidianBlack ? Color(white: 0.18) : AlignTheme.amberGold))
+                                .fill(theme == .white ? Color.white : Color(white: 0.16))
                                 .frame(width: 10, height: 10)
                                 .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.6))
                             Text(theme.rawValue)
@@ -1027,6 +1027,31 @@ public struct CapturedPhotoPreviewView: View {
                                         .stroke(isSelected ? AlignTheme.amberGold : Color.clear, lineWidth: 1.0)
                                 )
                         )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ForEach([WatermarkLogoStyle.alignStudio, .aperturePro, .none]) { logo in
+                    let isSelected = masterFrameLogo == logo
+                    Button(action: {
+                        masterFrameLogo = logo
+                        isMasterFrameApplied = true
+                        rebuildEditedImage()
+                    }) {
+                        Text(logo.rawValue)
+                            .font(.system(size: 10.0, weight: isSelected ? .bold : .medium, design: .rounded))
+                            .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.68))
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(isSelected ? AlignTheme.electricCyan.opacity(0.14) : Color.white.opacity(0.06))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                            .stroke(isSelected ? AlignTheme.electricCyan.opacity(0.6) : Color.clear, lineWidth: 0.9)
+                                    )
+                            )
                     }
                     .buttonStyle(.plain)
                 }
@@ -1199,8 +1224,8 @@ public struct CapturedPhotoPreviewView: View {
         let specs = PhotoWatermarkSpecs.from(
             iso: item.iso,
             shutterSpeed: item.shutterSpeed,
-            focalLength: item.focalLength > 0 ? item.focalLength : 24.0,
-            aperture: Double(item.aperture > 0 ? item.aperture : 1.8)
+            focalLength: 24.0,
+            aperture: 1.8
         )
 
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1223,13 +1248,13 @@ public struct CapturedPhotoPreviewView: View {
 
             // 3. Master Art Frame Watermark
             if applyMaster {
-                working = MasterWatermarkRenderer.shared.renderMasterFrame(
+                working = MasterWatermarkRenderer.shared.renderWatermark(
                     on: working,
                     deviceName: deviceName,
-                    specs: specs,
                     theme: theme,
                     logoStyle: logo,
-                    customLogo: customLogo
+                    customLogo: customLogo,
+                    specs: specs
                 ) ?? working
             }
 
@@ -1317,18 +1342,17 @@ public struct CapturedPhotoPreviewView: View {
             processedImage: currentProcessedImage,
             rawPhotoData: item.rawPhotoData,
             processedCompanionData: preserveOriginal ? item.processedCompanionData : nil,
+            saveFormat: item.saveFormat,
             preservesOriginalFile: preserveOriginal,
             rawLocalFileURL: item.rawLocalFileURL,
             livePhotoMovieURL: item.livePhotoMovieURL,
             sceneType: item.sceneType,
+            appliedPreset: activePreset,
             compositionRule: item.compositionRule,
-            appliedFilter: activePreset,
             alignmentScore: item.alignmentScore,
             iso: item.iso,
             shutterSpeed: item.shutterSpeed,
-            focalLength: item.focalLength,
-            aperture: item.aperture,
-            saveFormat: item.saveFormat
+            aiColorParameters: isAIEnhanced ? (activeAIColorParams ?? item.sceneType.aiFullColorParameters) : item.aiColorParameters
         )
 
         vm.savePhotoToLibrary(updatedItem) { success in
@@ -1462,8 +1486,16 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     private var focalLengthDisplayString: String {
-        let fl = item.focalLength > 0 ? item.focalLength : 24.0
-        return "\(Int(round(fl)))mm"
+        if let vm = viewModel {
+            if vm.isWindowedZoomActive {
+                return "\(Int(round(vm.windowedZoomFocalLength)))mm"
+            }
+            let z = vm.displayZoom
+            if z < 0.75 { return "13mm" }
+            if z >= 2.8 { return "77mm" }
+            if z >= 1.9 { return "48mm" }
+        }
+        return "24mm"
     }
 
     private var formattedShutterSpeed: String {
@@ -1477,9 +1509,8 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     private var opticalSummaryLine: String {
-        let ap = item.aperture > 0 ? item.aperture : 1.8
         let isoVal = Int(round(max(25, item.iso)))
-        return "\(focalLengthDisplayString) · f/\(String(format: "%.1f", ap)) · \(formattedShutterSpeed) · ISO \(isoVal)"
+        return "\(focalLengthDisplayString) · f/1.8 · \(formattedShutterSpeed) · ISO \(isoVal)"
     }
 
     private var estimatedFileSizeString: String {
