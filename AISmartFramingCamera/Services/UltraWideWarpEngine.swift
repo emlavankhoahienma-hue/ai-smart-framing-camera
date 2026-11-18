@@ -4,15 +4,18 @@ import CoreGraphics
 import Metal
 import CoreVideo
 
-/// Động cơ Giả lập Quang học Góc Siêu rộng Full-Frame (Simulated Ultra-Wide 0.5x Full Frame Engine)
-/// Phiên bản nâng cấp SuperView Anamorphic Warp + Độ cong quang học thấu kính 13mm (Subtle Optical Barrel Curvature)
-/// Tràn viền 100% không viền đen, không viền mờ nhân tạo, bảo toàn hình thái người và khuôn mặt tự nhiên.
+/// Động cơ Quang học Góc Siêu rộng 0.5x Tuyến tính C++20 NEON + Metal Catmull-Rom
+/// (Rectilinear-Conformal Ultra-Wide 0.5x Engine):
+/// - Giải lưới quang học Hyperbolic-Rectilinear C∞ bằng C++20 (`NativeOpticsCore`):
+///   giữ 100% đường thẳng dọc & ngang KHÔNG CONG (triệt tiêu méo mắt cá / barrel),
+///   giữ nguyên tỷ lệ 1:1 trung tâm (không làm méo mặt/người), tràn viền 100% không đen góc.
+/// - Liveview & Video 60FPS: Metal 16-tap Catmull-Rom Bicubic Anti-Ringing + Bù nét theo Jacobian.
+/// - Ảnh chụp tĩnh (Still Photo): C++20 ARM64 NEON đa luồng 6×6 Lanczos-3 Sinc + Phục hồi vi chi tiết biên.
 public final class UltraWideWarpEngine: @unchecked Sendable {
     public static let shared = UltraWideWarpEngine()
     public static var live: UltraWideWarpEngine { shared }
     public static var photo: UltraWideWarpEngine { shared }
 
-    /// Cờ tuỳ chọn cho phép chuyển đổi chế độ (mặc định là false dùng SuperView quang học tràn viền)
     public static var useCanvasMode: Bool = false
 
     public let device: MTLDevice?
@@ -28,17 +31,24 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
     private var pongOutTex: MTLTexture?
     private var usePingSlot = true
 
-    public struct SuperViewParams {
-        public var beta_x: Float
-        public var beta_y: Float
-        public var barrel_k: Float
-        public var edge_clarity: Float
+    // Lưới quang học 33x33 tính từ C++20 (cached theo factor & rigidity)
+    private let meshSize: Int = 33
+    private var opticalMeshTexture: MTLTexture?
+    private var cachedMeshFactor: Float = -1.0
+    private var cachedMeshRigidity: Float = -1.0
+    private var cachedMeshAspect: Float = -1.0
 
-        public init(beta_x: Float, beta_y: Float, barrel_k: Float, edge_clarity: Float) {
-            self.beta_x = beta_x
-            self.beta_y = beta_y
-            self.barrel_k = barrel_k
+    public struct SuperViewParams {
+        public var edge_clarity: Float
+        public var vignette_mix: Float
+        public var chroma_guard: Float
+        public var reserved: Float
+
+        public init(edge_clarity: Float, vignette_mix: Float, chroma_guard: Float, reserved: Float = 0.0) {
             self.edge_clarity = edge_clarity
+            self.vignette_mix = vignette_mix
+            self.chroma_guard = chroma_guard
+            self.reserved = reserved
         }
     }
 
@@ -69,7 +79,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         }
     }
 
-    // MARK: - Core Processing for CIImage
+    // MARK: - Liveview & Video Pipeline (C++20 Rectilinear Mesh + Metal 16-Tap Catmull-Rom Bicubic)
     public func applySimulatedUltraWide(
         to image: CIImage,
         factor: CGFloat = 0.5,
@@ -80,29 +90,49 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
     ) -> CIImage {
         let extent = image.extent
         guard extent.width > 1, extent.height > 1 else { return image }
-        guard factor < 0.999 else { return image }
+
+        var workingImage = image
+        if abs(horizonRollAngle) > 0.0005 || horizonZoomScale > 1.001 ||
+           abs(horizonShakeX) > 1e-5 || abs(horizonShakeY) > 1e-5 {
+            let roll = CGFloat(-horizonRollAngle)
+            let zoom = CGFloat(max(1.0, horizonZoomScale))
+            let shakeX = CGFloat(horizonShakeX) * extent.width
+            let shakeY = CGFloat(horizonShakeY) * extent.height
+            let t = CGAffineTransform(translationX: -extent.midX, y: -extent.midY)
+                .concatenating(CGAffineTransform(rotationAngle: roll))
+                .concatenating(CGAffineTransform(scaleX: zoom, y: zoom))
+                .concatenating(CGAffineTransform(translationX: extent.midX + shakeX, y: extent.midY + shakeY))
+            let bgBlack = CIImage(color: .black).cropped(to: extent)
+            workingImage = image.transformed(by: t).composited(over: bgBlack).cropped(to: extent)
+        }
+
+        guard factor < 0.999 else { return workingImage }
 
         let width = Int(extent.width)
         let height = Int(extent.height)
-
-        let progress = Float(min(max((1.0 - factor) / 0.5, 0.0), 1.0))
-        // Thông số SuperView nâng cấp quang học:
-        // betaX dãn ngang mạnh mẽ mở rộng tầm nhìn, betaY dãn nhẹ để mặt và người không bị kéo dài méo mó
-        let betaX: Float = 0.22 * progress
-        let betaY: Float = 0.08 * progress
-        let barrelK: Float = 0.035 * progress
-        let edgeClarity: Float = 0.12 * progress
+        guard width >= 4, height >= 4 else { return workingImage }
 
         guard let dev = device,
               let cmdQueue = commandQueue,
               let pState = pipelineState else {
-            return image
+            return workingImage
         }
 
         textureLock.lock()
         defer { textureLock.unlock() }
 
-        // Kiểm tra và tái sử dụng bộ texture ping-pong
+        let aspect = Float(width) / Float(max(1, height))
+        let fZoom = Float(factor)
+        let defaultRigidity: Float = 0.45
+        guard let meshTex = ensureOpticalMeshTexture(
+            device: dev,
+            zoomFactor: fZoom,
+            aspect: aspect,
+            rigidity: defaultRigidity
+        ) else {
+            return workingImage
+        }
+
         let inTex: MTLTexture
         let outTex: MTLTexture
 
@@ -113,7 +143,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
                 outTex = pOut
             } else {
                 guard let (newIn, newOut) = makeTexturePair(device: dev, width: width, height: height) else {
-                    return image
+                    return workingImage
                 }
                 pingInTex = newIn
                 pingOutTex = newOut
@@ -127,7 +157,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
                 outTex = pOut
             } else {
                 guard let (newIn, newOut) = makeTexturePair(device: dev, width: width, height: height) else {
-                    return image
+                    return workingImage
                 }
                 pongInTex = newIn
                 pongOutTex = newOut
@@ -137,10 +167,10 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         }
         usePingSlot.toggle()
 
-        let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        let colorSpace = workingImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
 
         ciContext.render(
-            image,
+            workingImage,
             to: inTex,
             commandBuffer: nil,
             bounds: extent,
@@ -149,24 +179,26 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
 
         guard let cmdBuffer = cmdQueue.makeCommandBuffer(),
               let encoder = cmdBuffer.makeComputeCommandEncoder() else {
-            return image
+            return workingImage
         }
 
         encoder.setComputePipelineState(pState)
         encoder.setTexture(inTex, index: 0)
         encoder.setTexture(outTex, index: 1)
+        encoder.setTexture(meshTex, index: 2)
 
+        let progress = Float(min(max((1.0 - factor) / 0.5, 0.0), 1.0))
         var params = SuperViewParams(
-            beta_x: betaX,
-            beta_y: betaY,
-            barrel_k: barrelK,
-            edge_clarity: edgeClarity
+            edge_clarity: 0.72 * progress,
+            vignette_mix: 0.75 * progress,
+            chroma_guard: 0.006,
+            reserved: 0.0
         )
         encoder.setBytes(&params, length: MemoryLayout<SuperViewParams>.stride, index: 0)
 
         let w = pState.threadExecutionWidth
-        let h = pState.maxTotalThreadsPerThreadgroup / w
-        let threadsPerGroup = MTLSize(width: max(1, w), height: max(1, h), depth: 1)
+        let h = max(1, pState.maxTotalThreadsPerThreadgroup / max(1, w))
+        let threadsPerGroup = MTLSize(width: max(1, w), height: h, depth: 1)
         let numGroups = MTLSize(
             width: (width + threadsPerGroup.width - 1) / threadsPerGroup.width,
             height: (height + threadsPerGroup.height - 1) / threadsPerGroup.height,
@@ -177,11 +209,12 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         encoder.endEncoding()
 
         cmdBuffer.commit()
+        cmdBuffer.waitUntilCompleted()
 
-        return CIImage(mtlTexture: outTex, options: [.colorSpace: colorSpace]) ?? image
+        return CIImage(mtlTexture: outTex, options: [.colorSpace: colorSpace]) ?? workingImage
     }
 
-    // MARK: - CGImage Overload for Still Photo Capture
+    // MARK: - High-Precision C++20 ARM64 NEON Multi-Core 6x6 Lanczos-3 Still Photo Pipeline
     public func applySimulatedUltraWide(
         to cgImage: CGImage,
         factor: CGFloat = 0.5,
@@ -190,28 +223,117 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         horizonShakeX: Float = 0.0,
         horizonShakeY: Float = 0.0
     ) -> CGImage? {
-        let colorSpace = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
-        var ciImage = CIImage(cgImage: cgImage, options: [.colorSpace: colorSpace])
-        let extent = ciImage.extent
-        if abs(horizonRollAngle) > 0.0005 || horizonZoomScale > 1.001 {
-            let roll = CGFloat(-horizonRollAngle)
-            let zoom = CGFloat(horizonZoomScale)
-            let shakeX = CGFloat(horizonShakeX) * extent.width
-            let shakeY = CGFloat(horizonShakeY) * extent.height
-            let t = CGAffineTransform(translationX: -extent.midX, y: -extent.midY)
-                .concatenating(CGAffineTransform(rotationAngle: roll))
-                .concatenating(CGAffineTransform(scaleX: zoom, y: zoom))
-                .concatenating(CGAffineTransform(translationX: extent.midX + shakeX, y: extent.midY + shakeY))
-            let bgBlack = CIImage(color: .black).cropped(to: extent)
-            ciImage = ciImage.transformed(by: t).composited(over: bgBlack).cropped(to: extent)
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width >= 16, height >= 16 else { return cgImage }
+
+        let hasHorizon = abs(horizonRollAngle) > 0.0005 || horizonZoomScale > 1.001 ||
+                         abs(horizonShakeX) > 1e-5 || abs(horizonShakeY) > 1e-5
+        guard factor < 0.999 || hasHorizon else { return cgImage }
+
+        let colorSpace = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let rowBytes = width * 4
+        let totalBytes = height * rowBytes
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+
+        var srcPixels = [UInt8](repeating: 0, count: totalBytes)
+        let drawn: Bool = srcPixels.withUnsafeMutableBytes { buf in
+            guard let ptr = buf.baseAddress,
+                  let ctx = CGContext(
+                    data: ptr,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: rowBytes,
+                    space: colorSpace,
+                    bitmapInfo: bitmapInfo
+                  ) else { return false }
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
         }
-        let warpedCI = (factor < 0.999) ? applySimulatedUltraWide(to: ciImage, factor: factor) : ciImage
-        return ciContext.createCGImage(
-            warpedCI,
-            from: extent,
-            format: .RGBA8,
-            colorSpace: colorSpace
+        guard drawn else { return cgImage }
+
+        // 1. Phân tích hình học kiến trúc & đường thẳng trong ảnh bằng C++20 NEON (< 1ms)
+        let sceneMetrics: NOCUltraWideSceneMetrics = srcPixels.withUnsafeBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return NOCUltraWideSceneMetrics(architecturalLineStrength: 0.45, peripheralDetailDensity: 0.4, recommendedK: 0.78)
+            }
+            return noc_uw_analyze_scene_bgra(ptr, Int32(width), Int32(height), Int32(rowBytes))
+        }
+
+        let rigidity = sceneMetrics.architecturalLineStrength
+        let horizon = NOCHorizonTransformParams(
+            rollRadians: horizonRollAngle,
+            zoomScale: max(1.0, horizonZoomScale),
+            shakeNormX: horizonShakeX,
+            shakeNormY: horizonShakeY
         )
+
+        var lanczosPixels = [UInt8](repeating: 0, count: totalBytes)
+        var finalPixels = [UInt8](repeating: 0, count: totalBytes)
+        let bandCount = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount))
+        let rowsPerBand = (height + bandCount - 1) / bandCount
+        let fZoom = Float(factor)
+
+        // 2. Chiếu quang học tuyến tính 0.5x + Cân bằng chân trời bằng 6x6 Lanczos-3 C++20 NEON đa luồng
+        srcPixels.withUnsafeBytes { srcBuf in
+            lanczosPixels.withUnsafeMutableBytes { midBuf in
+                guard let sPtr = srcBuf.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                      let mPtr = midBuf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                DispatchQueue.concurrentPerform(iterations: bandCount) { band in
+                    let y0 = band * rowsPerBand
+                    let y1 = min(height, y0 + rowsPerBand)
+                    if y0 < y1 {
+                        noc_uw_render_lanczos3_rgba8_rows(
+                            sPtr, Int32(width), Int32(height), Int32(rowBytes),
+                            mPtr, Int32(width), Int32(height), Int32(rowBytes),
+                            fZoom, rigidity, horizon,
+                            Int32(y0), Int32(y1)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. Phục hồi độ sắc nét & vi tương phản vùng biên theo Jacobian bằng C++20 NEON đa luồng
+        if factor < 0.999 {
+            lanczosPixels.withUnsafeBytes { midBuf in
+                finalPixels.withUnsafeMutableBytes { dstBuf in
+                    guard let mPtr = midBuf.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                          let dPtr = dstBuf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                    DispatchQueue.concurrentPerform(iterations: bandCount) { band in
+                        let y0 = band * rowsPerBand
+                        let y1 = min(height, y0 + rowsPerBand)
+                        if y0 < y1 {
+                            noc_uw_restore_edge_clarity_rgba8_rows(
+                                mPtr, Int32(width), Int32(height), Int32(rowBytes),
+                                dPtr, Int32(rowBytes),
+                                fZoom, rigidity,
+                                Int32(y0), Int32(y1)
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            finalPixels = lanczosPixels
+        }
+
+        let outData = Data(finalPixels)
+        guard let provider = CGDataProvider(data: outData as CFData) else { return cgImage }
+        return CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: rowBytes,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: true,
+            intent: .defaultIntent
+        ) ?? cgImage
     }
 
     // MARK: - CVPixelBuffer Process Helper
@@ -227,6 +349,56 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
     }
 
     // MARK: - Helper Methods
+    private func ensureOpticalMeshTexture(
+        device: MTLDevice,
+        zoomFactor: Float,
+        aspect: Float,
+        rigidity: Float
+    ) -> MTLTexture? {
+        if let existing = opticalMeshTexture,
+           abs(cachedMeshFactor - zoomFactor) < 0.002,
+           abs(cachedMeshRigidity - rigidity) < 0.02,
+           abs(cachedMeshAspect - aspect) < 0.02 {
+            return existing
+        }
+
+        let w = meshSize
+        let h = meshSize
+        var meshFloats = [Float](repeating: 0.0, count: w * h * 4)
+        meshFloats.withUnsafeMutableBufferPointer { buf in
+            guard let ptr = buf.baseAddress else { return }
+            noc_uw_build_rectilinear_mesh(zoomFactor, aspect, rigidity, Int32(w), Int32(h), ptr)
+        }
+
+        let tex: MTLTexture
+        if let existing = opticalMeshTexture, existing.width == w, existing.height == h {
+            tex = existing
+        } else {
+            let desc = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: .rgba32Float,
+                width: w,
+                height: h,
+                mipmapped: false
+            )
+            desc.usage = [.shaderRead]
+            desc.storageMode = .shared
+            guard let created = device.makeTexture(descriptor: desc) else { return nil }
+            opticalMeshTexture = created
+            tex = created
+        }
+
+        let region = MTLRegionMake2D(0, 0, w, h)
+        meshFloats.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                tex.replace(region: region, mipmapLevel: 0, withBytes: base, bytesPerRow: w * 4 * MemoryLayout<Float>.stride)
+            }
+        }
+        cachedMeshFactor = zoomFactor
+        cachedMeshRigidity = rigidity
+        cachedMeshAspect = aspect
+        return tex
+    }
+
     private func makeTexturePair(device: MTLDevice, width: Int, height: Int) -> (MTLTexture, MTLTexture)? {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm,

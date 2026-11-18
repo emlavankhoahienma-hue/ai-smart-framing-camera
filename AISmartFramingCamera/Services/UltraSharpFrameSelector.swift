@@ -16,83 +16,32 @@ public final class UltraSharpFrameSelector: UltraSharpFrameSelectorProtocol, Sen
 
     public init() {}
 
-    /// Đo lường độ sắc nét thực tế của một frame CVPixelBuffer thông qua phương sai toán tử Laplacian
+    /// Đo lường độ sắc nét quang học thực tế bằng C++20 NEON (Center-Weighted Sobel Tenengrad + Laplacian)
     public func evaluateSharpness(of pixelBuffer: CVPixelBuffer) -> Float {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 0.0 }
-
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
-
-        // Lấy mẫu nhanh trên lưới cách đều (stride 4x4) để tính toán dưới 1ms
-        let step = 4
-        var sumLaplacian: Double = 0.0
-        var sumLaplacianSq: Double = 0.0
-        var sampleCount: Double = 0.0
 
         let isBGRA = (pixelFormat == kCVPixelFormatType_32BGRA)
         let isBiPlanar = (pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
                           pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
 
         if isBiPlanar {
-            // Đọc trực tiếp Plane 0 (Y Luma)
             guard let lumaAddress = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return 0.0 }
             let lumaStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
             let ptr = lumaAddress.assumingMemoryBound(to: UInt8.self)
-
-            for y in stride(from: step, to: height - step, by: step) {
-                let row = y * lumaStride
-                let rowUp = (y - 1) * lumaStride
-                let rowDown = (y + 1) * lumaStride
-
-                for x in stride(from: step, to: width - step, by: step) {
-                    let center = Double(ptr[row + x])
-                    let left   = Double(ptr[row + x - 1])
-                    let right  = Double(ptr[row + x + 1])
-                    let up     = Double(ptr[rowUp + x])
-                    let down   = Double(ptr[rowDown + x])
-
-                    // Discrete Laplacian 2D: L = 4*Center - Left - Right - Up - Down
-                    let lap = 4.0 * center - left - right - up - down
-                    sumLaplacian += lap
-                    sumLaplacianSq += lap * lap
-                    sampleCount += 1.0
-                }
-            }
+            return noc_us_evaluate_sharpness_luma(ptr, Int32(width), Int32(height), Int32(lumaStride))
         } else if isBGRA {
-            // Lấy mẫu kênh Green làm xấp xỉ Luma nhanh (Rec.709: Green chiếm 71.5% độ sáng)
+            guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 0.0 }
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
             let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
-
-            for y in stride(from: step, to: height - step, by: step) {
-                let row = y * bytesPerRow
-                let rowUp = (y - 1) * bytesPerRow
-                let rowDown = (y + 1) * bytesPerRow
-
-                for x in stride(from: step, to: width - step, by: step) {
-                    let center = Double(ptr[row + x * 4 + 1])
-                    let left   = Double(ptr[row + (x - 1) * 4 + 1])
-                    let right  = Double(ptr[row + (x + 1) * 4 + 1])
-                    let up     = Double(ptr[rowUp + x * 4 + 1])
-                    let down   = Double(ptr[rowDown + x * 4 + 1])
-
-                    let lap = 4.0 * center - left - right - up - down
-                    sumLaplacian += lap
-                    sumLaplacianSq += lap * lap
-                    sampleCount += 1.0
-                }
-            }
+            return noc_us_evaluate_sharpness_bgra(ptr, Int32(width), Int32(height), Int32(bytesPerRow))
         } else {
-            return 100.0 // Mặc định an toàn cho các định dạng không xác định
+            return 100.0
         }
-
-        guard sampleCount > 10.0 else { return 0.0 }
-        let mean = sumLaplacian / sampleCount
-        let variance = (sumLaplacianSq / sampleCount) - (mean * mean)
-        return Float(max(0.0, variance))
     }
 
     /// Chọn frame nét nhất làm tham chiếu và loại bỏ các frame rung nhòe kém hơn thresholdRatio (~60%)

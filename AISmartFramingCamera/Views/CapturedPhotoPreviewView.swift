@@ -4,21 +4,13 @@ import CoreImage
 import UniformTypeIdentifiers
 import ImageIO
 
-// MARK: - Inspector Tabs & Detail Levels
-private enum PhotoDetailInspectorTab: String, CaseIterable, Identifiable {
-    case telemetryAndDetail = "Thông số & Nét"
-    case filmPresets = "Màu Phim"
-    case masterFrame = "Khung Master"
+// MARK: - Edit Drawer Tabs & Detail Levels
+private enum PhotoEditPanelTab: String, CaseIterable, Identifiable {
+    case film = "Màu phim"
+    case detail = "Độ nét"
+    case frame = "Khung ảnh"
 
     var id: String { rawValue }
-
-    var iconName: String {
-        switch self {
-        case .telemetryAndDetail: return "waveform.path.ecg.rectangle"
-        case .filmPresets: return "camera.filters"
-        case .masterFrame: return "photo.artframe"
-        }
-    }
 }
 
 private enum PhotoMicroDetailLevel: Int, CaseIterable, Identifiable {
@@ -39,29 +31,29 @@ private enum PhotoMicroDetailLevel: Int, CaseIterable, Identifiable {
     var unsharpIntensity: Float {
         switch self {
         case .off: return 0.0
-        case .natural: return 0.36
-        case .ultra: return 0.68
+        case .natural: return 0.34
+        case .ultra: return 0.62
         }
     }
 
     var luminanceSharpness: Float {
         switch self {
         case .off: return 0.0
-        case .natural: return 0.24
-        case .ultra: return 0.48
+        case .natural: return 0.22
+        case .ultra: return 0.45
         }
     }
 
     var microContrast: Float {
         switch self {
         case .off: return 1.0
-        case .natural: return 1.025
-        case .ultra: return 1.048
+        case .natural: return 1.022
+        case .ultra: return 1.042
         }
     }
 }
 
-// MARK: - Real RGB + Luminance Histogram Model for Photo Detail
+// MARK: - Real RGB + Luminance Histogram Snapshot (Shown Cleanly Inside Info Sheet)
 private struct PhotoDetailHistogramSnapshot: Sendable {
     let lumaBins: [Double]
     let redBins: [Double]
@@ -125,19 +117,13 @@ private struct PhotoDetailHistogramSnapshot: Sendable {
             if y <= 4.0 { shadowClip += 1 }
             if y >= 251.0 { highlightClip += 1 }
 
-            let rBin = max(0, min(binCount - 1, Int((r * scale).rounded())))
-            let gBin = max(0, min(binCount - 1, Int((g * scale).rounded())))
-            let bBin = max(0, min(binCount - 1, Int((b * scale).rounded())))
-            let lBin = max(0, min(binCount - 1, Int((y * scale).rounded())))
-
-            rHist[rBin] += 1
-            gHist[gBin] += 1
-            bHist[bBin] += 1
-            lHist[lBin] += 1
+            rHist[max(0, min(binCount - 1, Int((r * scale).rounded())))] += 1
+            gHist[max(0, min(binCount - 1, Int((g * scale).rounded())))] += 1
+            bHist[max(0, min(binCount - 1, Int((b * scale).rounded())))] += 1
+            lHist[max(0, min(binCount - 1, Int((y * scale).rounded())))] += 1
         }
 
         func normalize(_ arr: [Double]) -> [Double] {
-            // Bỏ qua 2 bin đầu/cuối khi tìm đỉnh để biểu đồ không bị dẹt khi có vùng cháy/tối thuần
             let interiorMax = arr.dropFirst().dropLast().max() ?? 1.0
             let peak = max(1.0, max(interiorMax, (arr.max() ?? 1.0) * 0.65))
             return arr.map { min(1.0, max(0.03, pow($0 / peak, 0.72))) }
@@ -155,7 +141,7 @@ private struct PhotoDetailHistogramSnapshot: Sendable {
     }
 }
 
-// MARK: - Flagship Pro Studio Photo Detail & Inspection View
+// MARK: - Clean Minimalist Photo Detail View (Calm, Spacious, Uncluttered Form)
 public struct CapturedPhotoPreviewView: View {
     public let item: CapturedPhotoItem
     public var viewModel: CameraViewModel?
@@ -173,20 +159,21 @@ public struct CapturedPhotoPreviewView: View {
     @State private var masterFrameTheme: WatermarkTheme = .white
     @State private var masterFrameLogo: WatermarkLogoStyle = .alignStudio
 
+    // Quiet Drawer & Info Sheet States (Both Closed by Default so Photo Shines!)
+    @State private var isEditDrawerOpen: Bool = false
+    @State private var selectedEditTab: PhotoEditPanelTab = .film
+    @State private var isShowingInfoSheet: Bool = false
+    @State private var histogramSnapshot: PhotoDetailHistogramSnapshot = .empty
+
     @State private var isProcessingFilter: Bool = false
     @State private var isSavingToLibrary: Bool = false
     @State private var hasSavedNewEnhancement: Bool = false
-    @State private var selectedInspectorTab: PhotoDetailInspectorTab = .telemetryAndDetail
-    @State private var isInspectorCollapsed: Bool = false
-    @State private var histogramSnapshot: PhotoDetailHistogramSnapshot = .empty
-    @State private var showRGBChannelsInHistogram: Bool = true
 
-    // Split-Screen & Hold-Original Comparison States
+    // Comparison & Zoom States
     @State private var isSplitCompareMode: Bool = false
     @State private var splitRatio: CGFloat = 0.5
-    @State private var isHoldingOriginal: Bool = false
+    @State private var isPeekingOriginal: Bool = false
 
-    // Zoom & Pan States (1.0x -> 8.0x)
     @State private var zoomScale: CGFloat = 1.0
     @State private var lastZoomScale: CGFloat = 1.0
     @State private var panOffset: CGSize = .zero
@@ -221,238 +208,145 @@ public struct CapturedPhotoPreviewView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.031, green: 0.035, blue: 0.047).ignoresSafeArea()
+                Color(red: 0.025, green: 0.028, blue: 0.036).ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    topStudioHeaderBar
+                    cleanTopHeaderBar
 
-                    interactivePhotoViewport
+                    heroPhotoViewport
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    if !isInspectorCollapsed {
-                        studioInspectorDeck
+                    if isEditDrawerOpen && item.saveFormat != .dng {
+                        compactEditDrawer
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
-                    bottomPrimaryActionBar
+                    calmBottomActionBar
                 }
             }
             .navigationBarHidden(true)
+            .sheet(isPresented: $isShowingInfoSheet) {
+                photoInfoInspectorSheet
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
             .onAppear {
                 refreshHistogram(for: currentProcessedImage)
             }
         }
     }
 
-    // MARK: - 1. Top Studio Header Bar
-    private var topStudioHeaderBar: some View {
-        HStack(spacing: 10) {
+    // MARK: - 1. Clean Top Header Bar (Only Close + Quiet Metadata + Info)
+    private var cleanTopHeaderBar: some View {
+        HStack {
             Button(action: { dismiss() }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 13, weight: .bold))
-                    Text("Đóng")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                }
-                .foregroundColor(.white.opacity(0.92))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Capsule().fill(Color.white.opacity(0.10)))
-            }
-            .buttonStyle(.plain)
-
-            // Format & Resolution Pill
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(formatAccentColor)
-                    .frame(width: 6.5, height: 6.5)
-
-                Text(formatBadgeTitle)
-                    .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
-                    .foregroundColor(formatAccentColor)
-
-                Text("•")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.white.opacity(0.35))
-
-                Text("\(megapixelsString) · \(currentProcessedImage.width)×\(currentProcessedImage.height)")
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.82))
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(Color.white.opacity(0.07))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.7))
-            )
-
-            Spacer(minLength: 4)
-
-            // Quick Loupe 1x / 2.5x / 5x Button
-            Button(action: {
-                cycleQuickLoupeZoom()
-            }) {
-                HStack(spacing: 3) {
-                    Image(systemName: zoomScale > 1.05 ? "plus.magnifyingglass" : "magnifyingglass")
-                        .font(.system(size: 11, weight: .bold))
-                    Text(String(format: "%.1fx", zoomScale))
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                }
-                .foregroundColor(zoomScale > 1.05 ? AlignTheme.electricCyan : .white.opacity(0.85))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(zoomScale > 1.05 ? AlignTheme.electricCyan.opacity(0.18) : Color.white.opacity(0.08))
-                        .overlay(
-                            Capsule().stroke(zoomScale > 1.05 ? AlignTheme.electricCyan.opacity(0.55) : Color.white.opacity(0.12), lineWidth: 0.8)
-                        )
-                )
-            }
-            .buttonStyle(.plain)
-
-            // Collapse/Expand Inspector Button
-            Button(action: {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-                    isInspectorCollapsed.toggle()
-                }
-            }) {
-                Image(systemName: isInspectorCollapsed ? "slider.horizontal.below.rectangle" : "rectangle.expand.vertical")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(isInspectorCollapsed ? AlignTheme.amberGold : .white.opacity(0.82))
-                    .frame(width: 32, height: 32)
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.90))
+                    .frame(width: 36, height: 36)
                     .background(Circle().fill(Color.white.opacity(0.09)))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Ẩn hiện bảng chi tiết")
+            .accessibilityLabel("Đóng")
+
+            Spacer()
+
+            VStack(spacing: 2) {
+                Text("\(formatBadgeTitle) · \(megapixelsString)")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+
+                Text(opticalSummaryLine)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.55))
+            }
+
+            Spacer()
+
+            Button(action: {
+                isShowingInfoSheet = true
+            }) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white.opacity(0.90))
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Color.white.opacity(0.09)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Thông số ảnh")
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Color(red: 0.04, green: 0.045, blue: 0.06))
     }
 
-    // MARK: - 2. Interactive Photo Inspection Viewport
-    private var interactivePhotoViewport: some View {
+    // MARK: - 2. Unobstructed Hero Photo Viewport
+    private var heroPhotoViewport: some View {
         GeometryReader { geo in
             ZStack {
-                Color(red: 0.02, green: 0.022, blue: 0.03)
+                Color.clear
 
                 if isSplitCompareMode && zoomScale <= 1.05 && item.saveFormat != .dng {
                     splitScreenComparisonCanvas(in: geo.size)
                 } else {
-                    zoomableSingleCanvas(in: geo.size)
+                    zoomableHeroCanvas(in: geo.size)
                 }
 
-                // Processing Shimmer Overlay
+                // Subtle Processing Pill
                 if isProcessingFilter {
-                    ZStack {
-                        Color.black.opacity(0.32)
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.electricCyan))
-                            Text("Đang kết xuất quang học...")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .fill(Color.black.opacity(0.82))
-                                .overlay(Capsule().stroke(AlignTheme.electricCyan.opacity(0.5), lineWidth: 1))
-                        )
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(0.85)
+                        Text("Đang xử lý...")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.black.opacity(0.75)))
                     .transition(.opacity)
                 }
 
-                // Top-Right Zoom Mini-Map
+                // Only visible while actively peeking original
+                if isPeekingOriginal {
+                    VStack {
+                        Text("ẢNH GỐC")
+                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 4.5)
+                            .background(Capsule().fill(Color.white.opacity(0.92)))
+                            .padding(.top, 12)
+                        Spacer()
+                    }
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                }
+
+                // Single quiet reset pill only when zoomed in
                 if zoomScale > 1.05 {
                     VStack {
                         HStack {
                             Spacer()
-                            zoomMiniMapOverlay(viewportSize: geo.size)
-                                .padding(.top, 12)
-                                .padding(.trailing, 12)
-                        }
-                        Spacer()
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                }
-
-                // Bottom Viewport Floating Quick Bar (EXIF Pill + Split/Hold Original Controls)
-                VStack {
-                    Spacer()
-                    HStack(alignment: .center, spacing: 8) {
-                        // Quick Optical EXIF Pill
-                        HStack(spacing: 6) {
-                            Image(systemName: "camera.aperture")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(AlignTheme.amberGold)
-                            Text(opticalSummaryLine)
-                                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.92))
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5.5)
-                        .background(
-                            Capsule()
-                                .fill(Color.black.opacity(0.72))
-                                .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.7))
-                        )
-
-                        Spacer()
-
-                        if item.saveFormat != .dng {
-                            // Split Curtain Toggle
-                            if zoomScale <= 1.05 {
-                                Button(action: {
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                                        isSplitCompareMode.toggle()
-                                    }
-                                }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "square.split.2x1")
-                                            .font(.system(size: 10.5, weight: .bold))
-                                        Text(isSplitCompareMode ? "Tắt chia đôi" : "So sánh")
-                                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                                    }
-                                    .foregroundColor(isSplitCompareMode ? .black : .white)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5.5)
-                                    .background(
-                                        Capsule().fill(isSplitCompareMode ? AlignTheme.amberGold : Color.black.opacity(0.72))
-                                    )
-                                    .overlay(
-                                        Capsule().stroke(Color.white.opacity(isSplitCompareMode ? 0 : 0.16), lineWidth: 0.7)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-
-                            // Hold / Toggle Original Button
                             Button(action: {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    isHoldingOriginal.toggle()
+                                withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                                    resetZoomAndPan()
                                 }
                             }) {
-                                Text(isHoldingOriginal ? "ĐANG XEM GỐC" : "Xem gốc")
-                                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                                    .foregroundColor(isHoldingOriginal ? .black : .white.opacity(0.92))
+                                Text(String(format: "%.1fx · Đặt lại", zoomScale))
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.white)
                                     .padding(.horizontal, 10)
-                                    .padding(.vertical, 5.5)
-                                    .background(
-                                        Capsule().fill(isHoldingOriginal ? AlignTheme.electricCyan : Color.black.opacity(0.72))
-                                    )
-                                    .overlay(
-                                        Capsule().stroke(Color.white.opacity(isHoldingOriginal ? 0 : 0.16), lineWidth: 0.7)
-                                    )
+                                    .padding(.vertical, 5)
+                                    .background(Capsule().fill(Color.black.opacity(0.72)))
                             }
                             .buttonStyle(.plain)
+                            .padding(.top, 12)
+                            .padding(.trailing, 14)
                         }
+                        Spacer()
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
+                    .transition(.opacity)
                 }
             }
             .clipped()
@@ -460,8 +354,8 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     @ViewBuilder
-    private func zoomableSingleCanvas(in size: CGSize) -> some View {
-        let displayCG = isHoldingOriginal ? item.originalImage : currentProcessedImage
+    private func zoomableHeroCanvas(in size: CGSize) -> some View {
+        let displayCG = isPeekingOriginal ? item.originalImage : currentProcessedImage
         Image(uiImage: UIImage(cgImage: displayCG))
             .resizable()
             .aspectRatio(contentMode: .fit)
@@ -472,11 +366,8 @@ public struct CapturedPhotoPreviewView: View {
             .gesture(
                 MagnificationGesture()
                     .onChanged { val in
-                        let nextScale = lastZoomScale * val
-                        zoomScale = min(max(nextScale, 1.0), 8.0)
-                        if zoomScale <= 1.02 {
-                            panOffset = .zero
-                        }
+                        zoomScale = min(max(lastZoomScale * val, 1.0), 8.0)
+                        if zoomScale <= 1.02 { panOffset = .zero }
                     }
                     .onEnded { _ in
                         if zoomScale < 1.05 {
@@ -494,11 +385,11 @@ public struct CapturedPhotoPreviewView: View {
                 DragGesture(minimumDistance: zoomScale > 1.02 ? 2 : 1000)
                     .onChanged { val in
                         guard zoomScale > 1.02 else { return }
-                        let rawOffset = CGSize(
+                        let raw = CGSize(
                             width: lastPanOffset.width + val.translation.width,
                             height: lastPanOffset.height + val.translation.height
                         )
-                        panOffset = clampPanOffset(rawOffset, in: size, scale: zoomScale)
+                        panOffset = clampPanOffset(raw, in: size, scale: zoomScale)
                     }
                     .onEnded { _ in
                         guard zoomScale > 1.02 else { return }
@@ -511,6 +402,12 @@ public struct CapturedPhotoPreviewView: View {
                         handleDoubleTap(at: event.location, in: size)
                     }
             )
+            .onLongPressGesture(minimumDuration: 0.28, pressing: { pressing in
+                guard item.saveFormat != .dng, zoomScale <= 1.05 else { return }
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    isPeekingOriginal = pressing
+                }
+            }, perform: {})
     }
 
     @ViewBuilder
@@ -533,600 +430,363 @@ public struct CapturedPhotoPreviewView: View {
                     }
                 )
 
-            // Vertical Curtain Handle
             ZStack {
                 Rectangle()
-                    .fill(Color.white)
-                    .frame(width: 2, height: size.height)
-                    .shadow(color: .black.opacity(0.6), radius: 3)
+                    .fill(Color.white.opacity(0.9))
+                    .frame(width: 1.8, height: size.height)
 
                 Circle()
                     .fill(Color.black.opacity(0.82))
-                    .frame(width: 36, height: 36)
-                    .overlay(Circle().stroke(AlignTheme.amberGold, lineWidth: 1.5))
+                    .frame(width: 34, height: 34)
+                    .overlay(Circle().stroke(Color.white.opacity(0.85), lineWidth: 1.2))
                     .overlay(
                         Image(systemName: "arrow.left.and.right")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(AlignTheme.amberGold)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.white)
                     )
-                    .shadow(color: .black.opacity(0.5), radius: 5)
             }
             .position(x: splitX, y: size.height / 2)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        let newRatio = value.location.x / max(1, size.width)
-                        splitRatio = min(max(newRatio, 0.05), 0.95)
+                        splitRatio = min(max(value.location.x / max(1, size.width), 0.06), 0.94)
                     }
             )
-
-            VStack {
-                HStack {
-                    Text("ẢNH GỐC")
-                        .font(.system(size: 10, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.black.opacity(0.65)))
-                        .padding(.leading, 12)
-
-                    Spacer()
-
-                    Text("ĐÃ CHỈNH")
-                        .font(.system(size: 10, weight: .heavy, design: .rounded))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(AlignTheme.amberGold))
-                        .padding(.trailing, 12)
-                }
-                .padding(.top, 12)
-                Spacer()
-            }
         }
     }
 
-    private func zoomMiniMapOverlay(viewportSize: CGSize) -> some View {
-        let thumbW: CGFloat = 76
-        let thumbH: CGFloat = 96
-        let visibleFraction = 1.0 / zoomScale
-        let maxPanX = max(1.0, (viewportSize.width * (zoomScale - 1.0)) / 2.0)
-        let maxPanY = max(1.0, (viewportSize.height * (zoomScale - 1.0)) / 2.0)
-        let normOffsetX = -panOffset.width / maxPanX
-        let normOffsetY = -panOffset.height / maxPanY
-        let boxW = thumbW * visibleFraction
-        let boxH = thumbH * visibleFraction
-        let centerX = (thumbW / 2.0) + (normOffsetX * (thumbW - boxW) / 2.0)
-        let centerY = (thumbH / 2.0) + (normOffsetY * (thumbH - boxH) / 2.0)
-
-        return VStack(alignment: .trailing, spacing: 5) {
-            ZStack {
-                Image(uiImage: UIImage(cgImage: currentProcessedImage))
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: thumbW, height: thumbH)
-                    .clipped()
-                    .overlay(Color.black.opacity(0.32))
-
-                Rectangle()
-                    .stroke(AlignTheme.electricCyan, lineWidth: 1.5)
-                    .frame(width: boxW, height: boxH)
-                    .position(x: centerX, y: centerY)
-            }
-            .frame(width: thumbW, height: thumbH)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
-            )
-
-            Button(action: {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-                    resetZoomAndPan()
-                }
-            }) {
-                Text("Đặt lại 1.0x")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3.5)
-                    .background(Capsule().fill(AlignTheme.electricCyan))
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    // MARK: - 3. Tabbed Studio Inspector Deck
-    private var studioInspectorDeck: some View {
-        VStack(spacing: 10) {
-            // Segmented Inspector Tab Bar
-            if item.saveFormat != .dng {
-                HStack(spacing: 6) {
-                    ForEach(PhotoDetailInspectorTab.allCases) { tab in
-                        let isSelected = selectedInspectorTab == tab
+    // MARK: - 3. Optional Compact Edit Drawer (Opens Only On Demand)
+    private var compactEditDrawer: some View {
+        VStack(spacing: 12) {
+            // Quiet Tab Selector + Optional Reset Link
+            HStack {
+                HStack(spacing: 4) {
+                    ForEach(PhotoEditPanelTab.allCases) { tab in
+                        let selected = selectedEditTab == tab
                         Button(action: {
-                            withAnimation(.spring(response: 0.26, dampingFraction: 0.82)) {
-                                selectedInspectorTab = tab
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                selectedEditTab = tab
                             }
                         }) {
-                            HStack(spacing: 5) {
-                                Image(systemName: tab.iconName)
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text(tab.rawValue)
-                                    .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                            }
-                            .foregroundColor(isSelected ? .white : .white.opacity(0.58))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(isSelected ? Color.white.opacity(0.14) : Color.clear)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                            .stroke(isSelected ? AlignTheme.electricCyan.opacity(0.45) : Color.clear, lineWidth: 0.9)
-                                    )
-                            )
+                            Text(tab.rawValue)
+                                .font(.system(size: 12, weight: selected ? .semibold : .medium, design: .rounded))
+                                .foregroundColor(selected ? .white : .white.opacity(0.50))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(selected ? Color.white.opacity(0.14) : Color.clear)
+                                )
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(3)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.05))
-                )
-                .padding(.horizontal, 14)
-            }
 
-            // Tab Content
+                Spacer()
+
+                if hasModifiedSinceOpen {
+                    Button("Đặt lại") {
+                        resetToOriginalPhoto()
+                    }
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundColor(AlignTheme.amberGold)
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+
+            // Active Drawer Body
             Group {
-                if item.saveFormat == .dng || selectedInspectorTab == .telemetryAndDetail {
-                    telemetryAndDetailTabContent
-                } else if selectedInspectorTab == .filmPresets {
-                    filmPresetsTabContent
-                } else {
-                    masterFrameTabContent
+                switch selectedEditTab {
+                case .film:
+                    filmEditSection
+                case .detail:
+                    detailEditSection
+                case .frame:
+                    frameEditSection
                 }
             }
         }
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
         .background(
-            Color(red: 0.055, green: 0.06, blue: 0.078)
+            Color(red: 0.055, green: 0.060, blue: 0.075)
                 .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.08))
-                        .frame(height: 0.8)
+                    Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.7)
                 }
         )
     }
 
-    // MARK: - Tab 1: Optical Telemetry, RGB/Luma Histogram & Micro-Detail Studio
-    private var telemetryAndDetailTabContent: some View {
+    private var filmEditSection: some View {
         VStack(spacing: 10) {
-            // Row A: Real RGB/Luma Histogram + Exposure Telemetry
-            HStack(spacing: 12) {
-                // Histogram Canvas
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(showRGBChannelsInHistogram ? "BIỂU ĐỒ QUANG PHỔ RGB + LUMA" : "BIỂU ĐỒ ĐỘ SÁNG LUMA")
-                            .font(.system(size: 9.0, weight: .heavy, design: .rounded))
-                            .foregroundColor(.white.opacity(0.55))
-                        Spacer()
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.18)) {
-                                showRGBChannelsInHistogram.toggle()
-                            }
-                        }) {
-                            Text(showRGBChannelsInHistogram ? "RGB" : "LUMA")
-                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                                .foregroundColor(AlignTheme.electricCyan)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1.5)
-                                .background(Capsule().fill(AlignTheme.electricCyan.opacity(0.15)))
+            if activePreset != .standard {
+                HStack(spacing: 10) {
+                    Text("Cường độ")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.65))
+                    Slider(
+                        value: $activeFilmIntensity,
+                        in: 0.15...1.0,
+                        step: 0.05,
+                        onEditingChanged: { editing in
+                            if !editing { rebuildEditedImage() }
                         }
-                        .buttonStyle(.plain)
-                    }
-
-                    PhotoDetailHistogramCanvasView(
-                        snapshot: histogramSnapshot,
-                        showRGB: showRGBChannelsInHistogram
                     )
-                    .frame(height: 46)
-
-                    HStack(spacing: 8) {
-                        Text("TB: \(Int(round(histogramSnapshot.meanLuminance * 100)))%")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.70))
-                        Text("Tối: \(String(format: "%.1f%%", histogramSnapshot.shadowClipPercent))")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.60))
-                        Text("Cháy: \(String(format: "%.1f%%", histogramSnapshot.highlightClipPercent))")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                            .foregroundColor(histogramSnapshot.highlightClipPercent > 3.5 ? AlignTheme.amberGold : .white.opacity(0.60))
-                    }
+                    .tint(.white)
+                    Text("\(Int(round(activeFilmIntensity * 100)))%")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.85))
+                        .frame(width: 36, alignment: .trailing)
                 }
-                .padding(9)
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(Color.black.opacity(0.42))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 0.7)
-                        )
-                )
-
-                // 2x2 EXIF Telemetry Grid
-                VStack(spacing: 6) {
-                    HStack(spacing: 6) {
-                        exifMiniTile(title: "TIÊU CỰ", value: focalLengthDisplayString, accent: AlignTheme.amberGold)
-                        exifMiniTile(title: "KHẨU ĐỘ", value: "f/1.8", accent: .white)
-                    }
-                    HStack(spacing: 6) {
-                        exifMiniTile(title: "TỐC ĐỘ", value: formattedShutterSpeed, accent: AlignTheme.electricCyan)
-                        exifMiniTile(title: "ĐỘ NHẠY", value: "ISO \(Int(round(max(25, item.iso))))", accent: .white)
-                    }
-                }
-                .frame(width: 158)
+                .padding(.horizontal, 16)
             }
-            .padding(.horizontal, 14)
 
-            // Row B: AI Scene & Composition Telemetry Strip
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    telemetryBadgeChip(
-                        icon: "sparkles",
-                        label: "Bối cảnh: \(item.sceneType.rawValue)",
-                        tint: AlignTheme.electricCyan
-                    )
-                    telemetryBadgeChip(
-                        icon: "viewfinder",
-                        label: "Bố cục: \(item.compositionRule.rawValue) (\(Int(round(item.alignmentScore * 100)))%)",
-                        tint: AlignTheme.amberGold
-                    )
-                    telemetryBadgeChip(
-                        icon: "camera.filters",
-                        label: "Màu: \(activePreset.rawValue)",
-                        tint: .white.opacity(0.9)
-                    )
-                    telemetryBadgeChip(
-                        icon: "doc.richtext",
-                        label: estimatedFileSizeString,
-                        tint: .white.opacity(0.75)
-                    )
-                }
-                .padding(.horizontal, 14)
-            }
-
-            // Row C: Optical Micro-Detail & AI Auto Color Controls (for non-DNG)
-            if item.saveFormat != .dng {
-                HStack(spacing: 8) {
-                    // 3-Level Micro-Detail Selector
-                    HStack(spacing: 3) {
-                        Image(systemName: "dial.high.fill")
-                            .font(.system(size: 10.5, weight: .bold))
-                            .foregroundColor(AlignTheme.amberGold)
-                            .padding(.leading, 6)
-
-                        ForEach(PhotoMicroDetailLevel.allCases) { level in
-                            let selected = microDetailLevel == level
-                            Button(action: {
-                                guard microDetailLevel != level else { return }
-                                microDetailLevel = level
-                                rebuildEditedImage()
-                            }) {
-                                Text(level.title)
-                                    .font(.system(size: 10.5, weight: selected ? .bold : .medium, design: .rounded))
-                                    .foregroundColor(selected ? .black : .white.opacity(0.80))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        Capsule()
-                                            .fill(selected ? AlignTheme.amberGold : Color.clear)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(3)
-                    .background(
-                        Capsule()
-                            .fill(Color.white.opacity(0.07))
-                            .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 0.7))
-                    )
-
-                    Spacer(minLength: 4)
-
-                    // AI Auto Color Enhancement Toggle
-                    Button(action: {
-                        toggleAIFullColorEnhancement()
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 11, weight: .bold))
-                            Text(isAIEnhanced ? "AI Màu: Bật" : "AI Cân Màu")
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                        }
-                        .foregroundColor(isAIEnhanced ? .black : .white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule()
-                                .fill(
-                                    isAIEnhanced
-                                    ? LinearGradient(colors: [AlignTheme.electricCyan, AlignTheme.amberGold], startPoint: .leading, endPoint: .trailing)
-                                    : LinearGradient(colors: [Color.white.opacity(0.12), Color.white.opacity(0.08)], startPoint: .leading, endPoint: .trailing)
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isProcessingFilter)
-                }
-                .padding(.horizontal, 14)
-            }
-        }
-    }
-
-    // MARK: - Tab 2: Film Presets & Live Intensity Studio
-    private var filmPresetsTabContent: some View {
-        VStack(spacing: 8) {
-            // Intensity Slider Row
-            HStack(spacing: 10) {
-                Text("CƯỜNG ĐỘ MÀU")
-                    .font(.system(size: 9.5, weight: .heavy, design: .rounded))
-                    .foregroundColor(.white.opacity(0.60))
-
-                Slider(
-                    value: $activeFilmIntensity,
-                    in: 0.15...1.0,
-                    step: 0.05,
-                    onEditingChanged: { editing in
-                        if !editing {
-                            rebuildEditedImage()
-                        }
-                    }
-                )
-                .tint(AlignTheme.electricCyan)
-                .disabled(activePreset == .standard)
-
-                Text("\(Int(round(activeFilmIntensity * 100)))%")
-                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(AlignTheme.electricCyan)
-                    .frame(width: 38, alignment: .trailing)
-            }
-            .padding(.horizontal, 16)
-
-            // Category Filter Tabs
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 14) {
                     ForEach(FilmPresetCategory.allCases) { category in
-                        let isSelected = selectedCategory == category
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.18)) {
-                                selectedCategory = category
-                            }
-                        }) {
+                        let selected = selectedCategory == category
+                        Button(action: { selectedCategory = category }) {
                             Text(category.displayName)
-                                .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
-                                .foregroundColor(isSelected ? .black : .white.opacity(0.75))
-                                .padding(.horizontal, 11)
-                                .padding(.vertical, 5)
-                                .background(
-                                    Capsule()
-                                        .fill(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.08))
-                                )
+                                .font(.system(size: 11.5, weight: selected ? .semibold : .regular, design: .rounded))
+                                .foregroundColor(selected ? .white : .white.opacity(0.48))
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
             }
 
-            // Preset Cards Strip
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(selectedCategory.presets) { preset in
-                        let isSelected = activePreset == preset
+                        let selected = activePreset == preset
                         Button(action: {
                             activePreset = preset
                             rebuildEditedImage()
                         }) {
                             VStack(spacing: 4) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .fill(preset.previewColor.opacity(isSelected ? 0.35 : 0.18))
-                                        .frame(width: 64, height: 42)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                                .stroke(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.14), lineWidth: isSelected ? 1.8 : 0.8)
-                                        )
-
-                                    VStack(spacing: 2) {
-                                        Image(systemName: preset.deviceIconSF)
-                                            .font(.system(size: 13, weight: .bold))
-                                            .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.9))
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(preset.previewColor.opacity(selected ? 0.34 : 0.16))
+                                    .frame(width: 60, height: 38)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.7)
+                                    )
+                                    .overlay(
                                         Text(preset.deviceBadge)
-                                            .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
-                                            .foregroundColor(preset.previewColor)
-                                    }
-                                }
+                                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                            .foregroundColor(.white.opacity(0.9))
+                                    )
 
                                 Text(preset.shortTitle)
-                                    .font(.system(size: 10, weight: isSelected ? .bold : .medium, design: .rounded))
-                                    .foregroundColor(isSelected ? .white : .white.opacity(0.70))
+                                    .font(.system(size: 10, weight: selected ? .semibold : .regular, design: .rounded))
+                                    .foregroundColor(selected ? .white : .white.opacity(0.62))
                                     .lineLimit(1)
-                                    .frame(width: 66)
+                                    .frame(width: 62)
                             }
                         }
                         .buttonStyle(.plain)
                         .disabled(isProcessingFilter)
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
             }
         }
     }
 
-    // MARK: - Tab 3: Master Frame Watermark Studio
-    private var masterFrameTabContent: some View {
-        VStack(spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("KHUNG NGHỆ THUẬT MASTER")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white)
-                    Text("Đính kèm thông số tiêu cự, khẩu độ, ISO & chữ ký quang học")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundColor(.white.opacity(0.55))
-                }
-                Spacer()
-                Button(action: {
-                    isMasterFrameApplied.toggle()
-                    rebuildEditedImage()
-                }) {
-                    Text(isMasterFrameApplied ? "ĐANG BẬT" : "BẬT KHUNG")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(isMasterFrameApplied ? .black : .white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule().fill(isMasterFrameApplied ? AlignTheme.amberGold : Color.white.opacity(0.12))
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
-
-            // Theme & Logo Picker Row
-            HStack(spacing: 8) {
-                ForEach(WatermarkTheme.allCases) { theme in
-                    let isSelected = masterFrameTheme == theme
+    private var detailEditSection: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 6) {
+                ForEach(PhotoMicroDetailLevel.allCases) { level in
+                    let selected = microDetailLevel == level
                     Button(action: {
-                        masterFrameTheme = theme
-                        isMasterFrameApplied = true
+                        guard microDetailLevel != level else { return }
+                        microDetailLevel = level
                         rebuildEditedImage()
                     }) {
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(theme == .white ? Color.white : Color(white: 0.16))
-                                .frame(width: 10, height: 10)
-                                .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.6))
-                            Text(theme.rawValue)
-                                .font(.system(size: 10.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                                .foregroundColor(isSelected ? .white : .white.opacity(0.72))
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(isSelected ? Color.white.opacity(0.14) : Color.white.opacity(0.06))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                        .stroke(isSelected ? AlignTheme.amberGold : Color.clear, lineWidth: 1.0)
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                ForEach([WatermarkLogoStyle.alignStudio, .aperturePro, .none]) { logo in
-                    let isSelected = masterFrameLogo == logo
-                    Button(action: {
-                        masterFrameLogo = logo
-                        isMasterFrameApplied = true
-                        rebuildEditedImage()
-                    }) {
-                        Text(logo.rawValue)
-                            .font(.system(size: 10.0, weight: isSelected ? .bold : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.68))
-                            .lineLimit(1)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 7)
+                        Text(level.title)
+                            .font(.system(size: 12, weight: selected ? .semibold : .medium, design: .rounded))
+                            .foregroundColor(selected ? .black : .white.opacity(0.80))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
                             .background(
                                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(isSelected ? AlignTheme.electricCyan.opacity(0.14) : Color.white.opacity(0.06))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                            .stroke(isSelected ? AlignTheme.electricCyan.opacity(0.6) : Color.clear, lineWidth: 0.9)
-                                    )
+                                    .fill(selected ? Color.white : Color.white.opacity(0.08))
                             )
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 14)
-        }
-    }
+            .padding(.horizontal, 16)
 
-    // MARK: - 4. Bottom Primary Action Bar
-    private var bottomPrimaryActionBar: some View {
-        HStack(spacing: 10) {
-            // Reset to Original Button (when modified)
-            if hasModifiedSinceOpen && item.saveFormat != .dng {
-                Button(action: {
-                    resetToOriginalPhoto()
-                }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 12, weight: .bold))
-                        Text("Gốc")
-                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+            HStack(spacing: 10) {
+                Button(action: { toggleAIFullColorEnhancement() }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(isAIEnhanced ? "AI Cân Màu: Bật" : "AI Cân Màu")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 11)
+                    .foregroundColor(isAIEnhanced ? .black : .white.opacity(0.88))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
                     .background(
-                        Capsule()
-                            .fill(Color.white.opacity(0.11))
-                            .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.8))
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(isAIEnhanced ? AlignTheme.amberGold : Color.white.opacity(0.08))
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        resetZoomAndPan()
+                        isSplitCompareMode.toggle()
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.split.2x1")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(isSplitCompareMode ? "Tắt so sánh" : "So sánh gốc")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(isSplitCompareMode ? .black : .white.opacity(0.88))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(isSplitCompareMode ? Color.white : Color.white.opacity(0.08))
                     )
                 }
                 .buttonStyle(.plain)
             }
+            .padding(.horizontal, 16)
+        }
+    }
 
-            // Save to Apple Photos Button
-            Button(action: {
-                saveCurrentVersionToPhotos()
-            }) {
-                HStack(spacing: 7) {
+    private var frameEditSection: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Button(action: {
+                    isMasterFrameApplied = false
+                    rebuildEditedImage()
+                }) {
+                    Text("Tắt khung")
+                        .font(.system(size: 12, weight: !isMasterFrameApplied ? .semibold : .medium, design: .rounded))
+                        .foregroundColor(!isMasterFrameApplied ? .black : .white.opacity(0.75))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(!isMasterFrameApplied ? Color.white : Color.white.opacity(0.08))
+                        )
+                }
+                .buttonStyle(.plain)
+
+                ForEach(WatermarkTheme.allCases) { theme in
+                    let selected = isMasterFrameApplied && masterFrameTheme == theme
+                    Button(action: {
+                        masterFrameTheme = theme
+                        isMasterFrameApplied = true
+                        rebuildEditedImage()
+                    }) {
+                        Text(theme.rawValue)
+                            .font(.system(size: 12, weight: selected ? .semibold : .medium, design: .rounded))
+                            .foregroundColor(selected ? .black : .white.opacity(0.78))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(selected ? Color.white : Color.white.opacity(0.08))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+
+            if isMasterFrameApplied {
+                HStack(spacing: 8) {
+                    ForEach([WatermarkLogoStyle.alignStudio, .aperturePro, .none]) { logo in
+                        let selected = masterFrameLogo == logo
+                        Button(action: {
+                            masterFrameLogo = logo
+                            rebuildEditedImage()
+                        }) {
+                            Text(logo.rawValue)
+                                .font(.system(size: 11, weight: selected ? .semibold : .regular, design: .rounded))
+                                .foregroundColor(selected ? .white : .white.opacity(0.55))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(selected ? Color.white.opacity(0.14) : Color.clear)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    // MARK: - 4. Calm Bottom Action Bar (Strictly 3 Clean Controls)
+    private var calmBottomActionBar: some View {
+        HStack(spacing: 12) {
+            if item.saveFormat != .dng {
+                Button(action: {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        isEditDrawerOpen.toggle()
+                        if !isEditDrawerOpen { isSplitCompareMode = false }
+                    }
+                }) {
+                    VStack(spacing: 3) {
+                        Image(systemName: isEditDrawerOpen ? "checkmark.circle.fill" : "slider.horizontal.3")
+                            .font(.system(size: 17, weight: .medium))
+                        Text(isEditDrawerOpen ? "Xong" : "Chỉnh ảnh")
+                            .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(isEditDrawerOpen ? AlignTheme.amberGold : .white.opacity(0.88))
+                    .frame(width: 70, height: 44)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Primary Save Pill
+            Button(action: { saveCurrentVersionToPhotos() }) {
+                HStack(spacing: 6) {
                     if isSavingToLibrary {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle(tint: .black))
                             .scaleEffect(0.8)
                     } else {
-                        Image(systemName: hasSavedNewEnhancement ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
+                        Image(systemName: hasSavedNewEnhancement ? "checkmark" : "square.and.arrow.down")
                             .font(.system(size: 13.5, weight: .bold))
                     }
-                    Text(hasSavedNewEnhancement ? "Đã lưu vào Photos" : (hasModifiedSinceOpen ? "Lưu bản chỉnh sửa" : "Lưu vào Photos"))
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                    Text(hasSavedNewEnhancement ? "Đã lưu" : (item.saveFormat == .dng ? "Lưu RAW" : "Lưu ảnh"))
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
                 }
                 .foregroundColor(hasSavedNewEnhancement ? .white : .black)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 11)
+                .frame(height: 44)
                 .background(
                     Capsule()
-                        .fill(
-                            hasSavedNewEnhancement
-                            ? Color.green.opacity(0.75)
-                            : AlignTheme.electricCyan
-                        )
+                        .fill(hasSavedNewEnhancement ? Color.green.opacity(0.75) : Color.white)
                 )
             }
             .buttonStyle(.plain)
             .disabled(isSavingToLibrary || isProcessingFilter)
 
-            // Share Link (Preserving OriginalDNGShare contract for RAW DNG)
+            // Share Control (Preserving OriginalDNGShare contract)
             if item.saveFormat == .dng {
                 if let url = item.rawLocalFileURL, FileManager.default.fileExists(atPath: url.path) {
                     ShareLink(item: url) {
-                        shareButtonLabel(title: "RAW")
+                        shareIconLabel
                     }
                 } else if let data = item.rawPhotoData, SuperResolutionRAWEngine.isDNGData(data) {
                     ShareLink(item: OriginalDNGShare(data: data),
                               preview: SharePreview("AlignAI True RAW DNG")) {
-                        shareButtonLabel(title: "RAW")
+                        shareIconLabel
                     }
                 }
             } else if let shareURL = currentPhotoShareURL {
@@ -1137,72 +797,108 @@ public struct CapturedPhotoPreviewView: View {
                         image: Image(uiImage: UIImage(cgImage: currentProcessedImage))
                     )
                 ) {
-                    shareButtonLabel(title: "Chia sẻ")
+                    shareIconLabel
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(red: 0.035, green: 0.04, blue: 0.055))
+        .padding(.horizontal, 18)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(Color(red: 0.03, green: 0.033, blue: 0.045))
     }
 
-    private func shareButtonLabel(title: String) -> some View {
-        HStack(spacing: 5) {
+    private var shareIconLabel: some View {
+        VStack(spacing: 3) {
             Image(systemName: "square.and.arrow.up")
-                .font(.system(size: 12.5, weight: .bold))
-            Text(title)
-                .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                .font(.system(size: 17, weight: .medium))
+            Text("Chia sẻ")
+                .font(.system(size: 10.5, weight: .medium, design: .rounded))
         }
-        .foregroundColor(.white)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(
-            Capsule()
-                .fill(Color.white.opacity(0.12))
-                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
-        )
+        .foregroundColor(.white.opacity(0.88))
+        .frame(width: 70, height: 44)
     }
 
-    // MARK: - Helper Subviews
-    private func exifMiniTile(title: String, value: String, accent: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 8.5, weight: .heavy, design: .rounded))
-                .foregroundColor(.white.opacity(0.48))
-            Text(value)
-                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                .foregroundColor(accent)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+    // MARK: - 5. Clean Slide-Up EXIF & Histogram Info Sheet (Opened via `i`)
+    private var photoInfoInspectorSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    // RGB + Luminance Histogram Card
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("BIỂU ĐỒ QUANG PHỔ RGB")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundColor(.white.opacity(0.6))
+                            Spacer()
+                            Text("Sáng TB \(Int(round(histogramSnapshot.meanLuminance * 100)))%")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.75))
+                        }
+
+                        PhotoDetailHistogramCanvasView(snapshot: histogramSnapshot)
+                            .frame(height: 82)
+
+                        HStack {
+                            Text("Vùng tối sâu: \(String(format: "%.1f%%", histogramSnapshot.shadowClipPercent))")
+                            Spacer()
+                            Text("Cháy sáng: \(String(format: "%.1f%%", histogramSnapshot.highlightClipPercent))")
+                                .foregroundColor(histogramSnapshot.highlightClipPercent > 3.5 ? AlignTheme.amberGold : .white.opacity(0.55))
+                        }
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.55))
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                    )
+
+                    // Optical EXIF Grid
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("THÔNG SỐ QUANG HỌC")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.6))
+
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            infoStatCell(label: "Độ phân giải", value: "\(currentProcessedImage.width) × \(currentProcessedImage.height) (\(megapixelsString))")
+                            infoStatCell(label: "Định dạng & Dung lượng", value: "\(formatBadgeTitle) · \(estimatedFileSizeString)")
+                            infoStatCell(label: "Tiêu cự & Khẩu độ", value: "\(focalLengthDisplayString) · f/1.8")
+                            infoStatCell(label: "Phơi sáng", value: "\(formattedShutterSpeed) · ISO \(Int(round(max(25, item.iso))))")
+                            infoStatCell(label: "Bối cảnh AI", value: item.sceneType.rawValue)
+                            infoStatCell(label: "Bố cục & Điểm", value: "\(item.compositionRule.rawValue) (\(Int(round(item.alignmentScore * 100)))%)")
+                        }
+                    }
+                }
+                .padding(18)
+            }
+            .background(Color(red: 0.05, green: 0.055, blue: 0.07).ignoresSafeArea())
+            .navigationTitle("Thông số ảnh")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Xong") { isShowingInfoSheet = false }
+                        .foregroundColor(.white)
+                }
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.black.opacity(0.42))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.7)
-                )
-        )
+        .preferredColorScheme(.dark)
     }
 
-    private func telemetryBadgeChip(icon: String, label: String, tint: Color) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(tint)
+    private func infoStatCell(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                .foregroundColor(.white.opacity(0.88))
+                .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                .foregroundColor(.white.opacity(0.52))
+            Text(value)
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(2)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
         .background(
-            Capsule()
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(Color.white.opacity(0.06))
-                .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 0.6))
         )
     }
 
@@ -1231,7 +927,6 @@ public struct CapturedPhotoPreviewView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             var working = baseImage
 
-            // 1. Film Simulation & AI Color Parameters
             if preset != .standard || aiParams != nil {
                 working = FilmFilterEngine.shared.applyPresetAndAIParameters(
                     to: working,
@@ -1241,12 +936,10 @@ public struct CapturedPhotoPreviewView: View {
                 ) ?? working
             }
 
-            // 2. Optical Micro-Detail & Clarity
             if detailLevel != .off {
                 working = Self.applyMicroDetailEnhancement(to: working, level: detailLevel)
             }
 
-            // 3. Master Art Frame Watermark
             if applyMaster {
                 working = MasterWatermarkRenderer.shared.renderWatermark(
                     on: working,
@@ -1261,7 +954,7 @@ public struct CapturedPhotoPreviewView: View {
             let hist = PhotoDetailHistogramSnapshot.compute(from: working)
 
             DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withAnimation(.easeInOut(duration: 0.16)) {
                     self.currentProcessedImage = working
                     self.histogramSnapshot = hist
                     self.isProcessingFilter = false
@@ -1316,7 +1009,8 @@ public struct CapturedPhotoPreviewView: View {
         activeAIColorParams = nil
         microDetailLevel = .off
         isMasterFrameApplied = false
-        isHoldingOriginal = false
+        isPeekingOriginal = false
+        isSplitCompareMode = false
         currentProcessedImage = item.originalImage
         hasSavedNewEnhancement = false
         refreshHistogram(for: item.originalImage)
@@ -1362,20 +1056,6 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     // MARK: - Zoom & Pan Helpers
-    private func cycleQuickLoupeZoom() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-            if zoomScale < 1.5 {
-                zoomScale = 2.5
-                lastZoomScale = 2.5
-            } else if zoomScale < 4.0 {
-                zoomScale = 5.0
-                lastZoomScale = 5.0
-            } else {
-                resetZoomAndPan()
-            }
-        }
-    }
-
     private func resetZoomAndPan() {
         zoomScale = 1.0
         lastZoomScale = 1.0
@@ -1394,22 +1074,17 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     private func handleDoubleTap(at location: CGPoint, in size: CGSize) {
-        withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
-            let nextScale: CGFloat
-            if zoomScale < 1.5 {
-                nextScale = 2.8
-            } else if zoomScale < 4.2 {
-                nextScale = 5.0
-            } else {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+            if zoomScale > 1.3 {
                 resetZoomAndPan()
                 return
             }
-
+            let nextScale: CGFloat = 2.8
             let center = CGPoint(x: size.width / 2.0, y: size.height / 2.0)
-            let dx = center.x - location.x
-            let dy = center.y - location.y
-            let targetOffset = CGSize(width: dx * (nextScale - 1.0), height: dy * (nextScale - 1.0))
-
+            let targetOffset = CGSize(
+                width: (center.x - location.x) * (nextScale - 1.0),
+                height: (center.y - location.y) * (nextScale - 1.0)
+            )
             zoomScale = nextScale
             lastZoomScale = nextScale
             panOffset = clampPanOffset(targetOffset, in: size, scale: nextScale)
@@ -1469,20 +1144,14 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     private var formatBadgeTitle: String {
-        if item.saveFormat == .dng { return "TRUE RAW DNG" }
-        if item.livePhotoMovieURL != nil { return "LIVE • \(item.saveFormat.rawValue)" }
+        if item.saveFormat == .dng { return "RAW DNG" }
+        if item.livePhotoMovieURL != nil { return "LIVE" }
         return item.saveFormat.rawValue
-    }
-
-    private var formatAccentColor: Color {
-        if item.saveFormat == .dng { return AlignTheme.amberGold }
-        if item.livePhotoMovieURL != nil { return AlignTheme.electricCyan }
-        return .white
     }
 
     private var megapixelsString: String {
         let mp = Double(currentProcessedImage.width * currentProcessedImage.height) / 1_000_000.0
-        return String(format: "%.1fMP", mp)
+        return String(format: "%.1f MP", mp)
     }
 
     private var focalLengthDisplayString: String {
@@ -1501,11 +1170,8 @@ public struct CapturedPhotoPreviewView: View {
     private var formattedShutterSpeed: String {
         let s = item.shutterSpeed
         guard s > 0 else { return "1/120s" }
-        if s >= 1.0 {
-            return String(format: "%.1fs", s)
-        }
-        let denom = max(1, Int(round(1.0 / s)))
-        return "1/\(denom)s"
+        if s >= 1.0 { return String(format: "%.1fs", s) }
+        return "1/\(max(1, Int(round(1.0 / s))))s"
     }
 
     private var opticalSummaryLine: String {
@@ -1528,30 +1194,22 @@ public struct CapturedPhotoPreviewView: View {
 // MARK: - Smooth RGB + Luminance Histogram Waveform Canvas
 private struct PhotoDetailHistogramCanvasView: View {
     let snapshot: PhotoDetailHistogramSnapshot
-    let showRGB: Bool
 
-    private func buildSmoothPath(bins: [Double], in size: CGSize, closed: Bool) -> Path {
+    private func buildPath(bins: [Double], in size: CGSize, closed: Bool) -> Path {
         var path = Path()
         guard bins.count >= 2 else { return path }
         let stepX = size.width / CGFloat(bins.count - 1)
         if closed {
             path.move(to: CGPoint(x: 0, y: size.height))
             for (idx, val) in bins.enumerated() {
-                let x = CGFloat(idx) * stepX
-                let y = size.height * (1.0 - CGFloat(min(1.0, max(0.0, val))))
-                path.addLine(to: CGPoint(x: x, y: y))
+                path.addLine(to: CGPoint(x: CGFloat(idx) * stepX, y: size.height * (1.0 - CGFloat(min(1.0, max(0.0, val))))))
             }
             path.addLine(to: CGPoint(x: size.width, y: size.height))
             path.closeSubpath()
         } else {
             for (idx, val) in bins.enumerated() {
-                let x = CGFloat(idx) * stepX
-                let y = size.height * (1.0 - CGFloat(min(1.0, max(0.0, val))))
-                if idx == 0 {
-                    path.move(to: CGPoint(x: x, y: y))
-                } else {
-                    path.addLine(to: CGPoint(x: x, y: y))
-                }
+                let pt = CGPoint(x: CGFloat(idx) * stepX, y: size.height * (1.0 - CGFloat(min(1.0, max(0.0, val)))))
+                if idx == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
             }
         }
         return path
@@ -1561,44 +1219,13 @@ private struct PhotoDetailHistogramCanvasView: View {
         GeometryReader { geo in
             let size = geo.size
             ZStack {
-                // Subtle EV Zone Grid Lines (25%, 50%, 75%)
-                HStack(spacing: 0) {
-                    Spacer()
-                    Rectangle().fill(Color.white.opacity(0.07)).frame(width: 0.7)
-                    Spacer()
-                    Rectangle().fill(Color.white.opacity(0.07)).frame(width: 0.7)
-                    Spacer()
-                    Rectangle().fill(Color.white.opacity(0.07)).frame(width: 0.7)
-                    Spacer()
-                }
-
-                if showRGB {
-                    buildSmoothPath(bins: snapshot.redBins, in: size, closed: true)
-                        .fill(Color.red.opacity(0.22))
-                    buildSmoothPath(bins: snapshot.greenBins, in: size, closed: true)
-                        .fill(Color.green.opacity(0.22))
-                    buildSmoothPath(bins: snapshot.blueBins, in: size, closed: true)
-                        .fill(Color.cyan.opacity(0.24))
-
-                    buildSmoothPath(bins: snapshot.redBins, in: size, closed: false)
-                        .stroke(Color.red.opacity(0.80), lineWidth: 1.0)
-                    buildSmoothPath(bins: snapshot.greenBins, in: size, closed: false)
-                        .stroke(Color.green.opacity(0.80), lineWidth: 1.0)
-                    buildSmoothPath(bins: snapshot.blueBins, in: size, closed: false)
-                        .stroke(Color.cyan.opacity(0.85), lineWidth: 1.0)
-                }
-
-                buildSmoothPath(bins: snapshot.lumaBins, in: size, closed: true)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.white.opacity(showRGB ? 0.22 : 0.42), Color.white.opacity(0.03)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-
-                buildSmoothPath(bins: snapshot.lumaBins, in: size, closed: false)
-                    .stroke(Color.white.opacity(0.92), lineWidth: 1.25)
+                buildPath(bins: snapshot.redBins, in: size, closed: true).fill(Color.red.opacity(0.20))
+                buildPath(bins: snapshot.greenBins, in: size, closed: true).fill(Color.green.opacity(0.20))
+                buildPath(bins: snapshot.blueBins, in: size, closed: true).fill(Color.cyan.opacity(0.22))
+                buildPath(bins: snapshot.redBins, in: size, closed: false).stroke(Color.red.opacity(0.75), lineWidth: 1.0)
+                buildPath(bins: snapshot.greenBins, in: size, closed: false).stroke(Color.green.opacity(0.75), lineWidth: 1.0)
+                buildPath(bins: snapshot.blueBins, in: size, closed: false).stroke(Color.cyan.opacity(0.80), lineWidth: 1.0)
+                buildPath(bins: snapshot.lumaBins, in: size, closed: false).stroke(Color.white.opacity(0.90), lineWidth: 1.2)
             }
         }
     }

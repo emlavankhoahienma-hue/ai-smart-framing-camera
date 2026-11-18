@@ -312,7 +312,8 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         warpDesc.storageMode = .private
         warpedTexture = device.makeTexture(descriptor: warpDesc)
 
-        let resDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+        // Dùng .rg16Float thay cho .rgba16Float giúp giảm 50% VRAM residual (~49 MB trên ảnh 12MP)
+        let resDesc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg16Float, width: width, height: height, mipmapped: false)
         resDesc.usage = [.shaderRead, .shaderWrite]
         resDesc.storageMode = .private
         residualTexture = device.makeTexture(descriptor: resDesc)
@@ -348,6 +349,28 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         retainedCVTextures.append(cvTex)
         stateLock.unlock()
         return mtlTex
+    }
+
+    /// Tạo cặp (MTLTexture, CVMetalTexture) có vòng đời gắn chặt trong scope của người gọi (tránh tích tụ bộ đệm giữa các frame 12MP)
+    public func makeScopedTexture(from pixelBuffer: CVPixelBuffer, pixelFormat: MTLPixelFormat = .bgra8Unorm) -> (MTLTexture, CVMetalTexture)? {
+        guard let cache = textureCache else { return nil }
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+
+        var cvTexture: CVMetalTexture?
+        CVMetalTextureCacheCreateTextureFromImage(
+            kCFAllocatorDefault,
+            cache,
+            pixelBuffer,
+            nil,
+            pixelFormat,
+            width,
+            height,
+            0,
+            &cvTexture
+        )
+        guard let cvTex = cvTexture, let mtlTex = CVMetalTextureGetTexture(cvTex) else { return nil }
+        return (mtlTex, cvTex)
     }
 
     // MARK: - Xây dựng Kim tự tháp Gaussian (4 Tầng)
@@ -609,6 +632,160 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         activeAccumIndex ^= 1
 
         return (true, 0.05)
+    }
+
+    // MARK: - Căn chỉnh & Gộp C++20 NEON Huber-IRLS + Adaptive MAD Noise Sigma (Chống Bóng Ma Tuyệt Đối)
+
+    public func accumulateFrameWithNativeOptics(
+        secondaryTexture: MTLTexture,
+        referenceTexture: MTLTexture,
+        frameIndex: Int,
+        totalFrames: Int,
+        iso: Float,
+        queue: MTLCommandQueue
+    ) -> (success: Bool, qualityError: Float, validRatio: Float) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
+        let w = referenceTexture.width
+        let h = referenceTexture.height
+        guard secondaryTexture.width == w, secondaryTexture.height == h else {
+            return (false, 1.0, 0.0)
+        }
+
+        // Giai đoạn 1: Xây kim tự tháp + Căn chỉnh phân cấp trên GPU
+        guard let alignCB = queue.makeCommandBuffer() else { return (false, 1.0, 0.0) }
+        buildGaussianPyramid(sourceTexture: secondaryTexture, pyramid: secPyramidLuma, commandBuffer: alignCB)
+        guard alignHierarchical(commandBuffer: alignCB, imageWidth: w, imageHeight: h) else {
+            return (false, 1.0, 0.0)
+        }
+        alignCB.commit()
+        alignCB.waitUntilCompleted()
+        guard alignCB.status == .completed else {
+            return (false, 1.0, 0.0)
+        }
+
+        // Giai đoạn 2: C++20 Huber-IRLS Global Affine Camera-Shake Fit & Spatial 3x3 Outlier Repair
+        // Đọc/sửa trực tiếp zero-copy trên .storageModeShared buffer tileVectorBuffers[0]!
+        guard let l0Vectors = tileVectorBuffers.first else {
+            return (false, 1.0, 0.0)
+        }
+        let numTilesX = Int32((w + 15) / 16)
+        let numTilesY = Int32((h + 15) / 16)
+        let motionPtr = l0Vectors.contents().assumingMemoryBound(to: NOCTileMotionVector.self)
+        let motionStats = noc_us_regularize_motion_field(motionPtr, numTilesX, numTilesY)
+        guard motionStats.isReliable else {
+            CameraLogger.warning(
+                "UltraSharp C++20: Loại bỏ frame rung mạnh (validRatio=\(String(format: "%.2f", motionStats.validTileRatio)), err=\(String(format: "%.3f", motionStats.meanAlignmentError)))",
+                category: .capture
+            )
+            return (false, motionStats.meanAlignmentError, motionStats.validTileRatio)
+        }
+
+        // Giai đoạn 3: Warp Catmull-Rom Bicubic + Ước lượng Histogram Nhiễu MAD thực tế
+        let colorIn = (activeAccumIndex == 0) ? accumSumColorA : accumSumColorB
+        let weightIn = (activeAccumIndex == 0) ? accumSumWeightA : accumSumWeightB
+        let colorOut = (activeAccumIndex == 0) ? accumSumColorB : accumSumColorA
+        let weightOut = (activeAccumIndex == 0) ? accumSumWeightB : accumSumWeightA
+
+        guard let warpPipe = warpPipeline,
+              let robustPipe = robustAccumulatePipeline,
+              let warpedTex = self.warpedTexture,
+              let resTex = self.residualTexture,
+              let sumColorIn = colorIn,
+              let sumWeightIn = weightIn,
+              let sumColorOut = colorOut,
+              let sumWeightOut = weightOut,
+              let warpCB = queue.makeCommandBuffer(),
+              let warpEnc = warpCB.makeComputeCommandEncoder() else {
+            return (false, 1.0, 0.0)
+        }
+
+        if let histBuf = noiseHistogramBuffer, let countBuf = validSampleCountBuffer {
+            memset(histBuf.contents(), 0, 128 * MemoryLayout<UInt32>.stride)
+            memset(countBuf.contents(), 0, MemoryLayout<UInt32>.stride)
+        }
+
+        var tileUniforms = UltraSharpTileUniforms(
+            imageWidth: UInt32(w),
+            imageHeight: UInt32(h),
+            tileWidth: 16,
+            tileHeight: 16,
+            numTilesX: UInt32(numTilesX),
+            numTilesY: UInt32(numTilesY)
+        )
+
+        warpEnc.label = "UltraSharpWarpAndMAD"
+        warpEnc.setComputePipelineState(warpPipe)
+        warpEnc.setTexture(secondaryTexture, index: 0)
+        warpEnc.setTexture(referenceTexture, index: 1)
+        warpEnc.setBuffer(l0Vectors, offset: 0, index: 0)
+        warpEnc.setTexture(warpedTex, index: 2)
+        warpEnc.setTexture(resTex, index: 3)
+        warpEnc.setBytes(&tileUniforms, length: MemoryLayout<UltraSharpTileUniforms>.size, index: 1)
+        dispatch2D(encoder: warpEnc, pipeline: warpPipe, width: w, height: h)
+
+        warpEnc.memoryBarrier(scope: .textures)
+
+        if let madPipe = noiseMADPipeline,
+           let histBuf = noiseHistogramBuffer,
+           let countBuf = validSampleCountBuffer {
+            warpEnc.setComputePipelineState(madPipe)
+            warpEnc.setTexture(resTex, index: 0)
+            warpEnc.setBuffer(histBuf, offset: 0, index: 0)
+            warpEnc.setBuffer(countBuf, offset: 0, index: 1)
+            var fusUni = UltraSharpFusionUniforms(width: UInt32(w), height: UInt32(h))
+            warpEnc.setBytes(&fusUni, length: MemoryLayout<UltraSharpFusionUniforms>.size, index: 2)
+            dispatch2D(encoder: warpEnc, pipeline: madPipe, width: w, height: h)
+        }
+        warpEnc.endEncoding()
+        warpCB.commit()
+        warpCB.waitUntilCompleted()
+        guard warpCB.status == .completed else {
+            return (false, 1.0, 0.0)
+        }
+
+        // Giai đoạn 4: Tính toán Adaptive Noise Sigma thực từ Histogram MAD bằng C++20
+        var adaptiveSigma: Float = 0.014
+        if let histBuf = noiseHistogramBuffer, let countBuf = validSampleCountBuffer {
+            let histPtr = histBuf.contents().assumingMemoryBound(to: UInt32.self)
+            let validCount = countBuf.contents().assumingMemoryBound(to: UInt32.self).pointee
+            adaptiveSigma = noc_us_estimate_mad_sigma(histPtr, validCount, iso)
+        }
+
+        // Giai đoạn 5: Gộp Wiener-Style Shrinkage chống bóng ma vào Bộ tích lũy 16-bit Float
+        guard let accumCB = queue.makeCommandBuffer(),
+              let accumEnc = accumCB.makeComputeCommandEncoder() else {
+            return (false, 1.0, 0.0)
+        }
+        var fusionUniforms = UltraSharpFusionUniforms(
+            width: UInt32(w),
+            height: UInt32(h),
+            baseNoiseSigma: adaptiveSigma,
+            noiseScaleK: 1.78,
+            frameIndex: UInt32(frameIndex),
+            totalFrames: UInt32(totalFrames)
+        )
+        accumEnc.label = "UltraSharpAdaptiveWienerAccum"
+        accumEnc.setComputePipelineState(robustPipe)
+        accumEnc.setTexture(warpedTex, index: 0)
+        accumEnc.setTexture(resTex, index: 1)
+        accumEnc.setTexture(sumColorIn, index: 2)
+        accumEnc.setTexture(sumWeightIn, index: 3)
+        accumEnc.setTexture(sumColorOut, index: 4)
+        accumEnc.setTexture(sumWeightOut, index: 5)
+        accumEnc.setBytes(&fusionUniforms, length: MemoryLayout<UltraSharpFusionUniforms>.size, index: 0)
+        dispatch2D(encoder: accumEnc, pipeline: robustPipe, width: w, height: h)
+        accumEnc.endEncoding()
+
+        accumCB.commit()
+        accumCB.waitUntilCompleted()
+        guard accumCB.status == .completed else {
+            return (false, 1.0, 0.0)
+        }
+
+        activeAccumIndex ^= 1
+        return (true, motionStats.meanAlignmentError, motionStats.validTileRatio)
     }
 
     // MARK: - Hoàn thiện Gộp, Chuẩn hóa & Làm Nét Halo-Clamped

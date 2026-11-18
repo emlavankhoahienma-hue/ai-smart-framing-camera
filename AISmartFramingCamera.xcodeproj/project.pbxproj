@@ -99,6 +99,8 @@
 		C20000000000000000000061 /* CompositionAestheticSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000061 /* CompositionAestheticSearch.swift */; };
 		B20000000000000000000047 /* GeminiLiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000047 /* GeminiLiveService.swift */; };
 		C20000000000000000000076 /* NativeTrackingCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000076 /* NativeTrackingCore.cpp */; };
+		C20000000000000000000079 /* NativeOpticsCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000079 /* NativeOpticsCore.cpp */; };
+		C2000000000000000000007A /* NativeOpticsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007A /* NativeOpticsBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -197,6 +199,9 @@
 		B100000000000000000000047 /* GeminiLiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiLiveService.swift; sourceTree = "<group>"; };
 		C10000000000000000000075 /* NativeTrackingCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeTrackingCore.h; sourceTree = "<group>"; };
 		C10000000000000000000076 /* NativeTrackingCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeTrackingCore.cpp; sourceTree = "<group>"; };
+		C10000000000000000000078 /* NativeOpticsCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeOpticsCore.h; sourceTree = "<group>"; };
+		C10000000000000000000079 /* NativeOpticsCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeOpticsCore.cpp; sourceTree = "<group>"; };
+		C1000000000000000000007A /* NativeOpticsBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeOpticsBridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -301,6 +306,9 @@
 				C10000000000000000000070 /* SmartSceneExposureEngine.swift */,
 				C10000000000000000000075 /* NativeTrackingCore.h */,
 				C10000000000000000000076 /* NativeTrackingCore.cpp */,
+				C10000000000000000000078 /* NativeOpticsCore.h */,
+				C10000000000000000000079 /* NativeOpticsCore.cpp */,
+				C1000000000000000000007A /* NativeOpticsBridge.swift */,
 				C10000000000000000000060 /* PhotographicCompositionModel.swift */,
 				C10000000000000000000077 /* GAICCompositionModel.swift */,
 				C30000000000000000000001 /* FilmSimulations */,
@@ -541,6 +549,8 @@
 				C20000000000000000000069 /* DualCameraAssetRecorder.swift in Sources */,
 				C20000000000000000000070 /* SmartSceneExposureEngine.swift in Sources */,
 				C20000000000000000000076 /* NativeTrackingCore.cpp in Sources */,
+				C20000000000000000000079 /* NativeOpticsCore.cpp in Sources */,
+				C2000000000000000000007A /* NativeOpticsBridge.swift in Sources */,
 				C20000000000000000000060 /* PhotographicCompositionModel.swift in Sources */,
 				C20000000000000000000077 /* GAICCompositionModel.swift in Sources */,
 			);

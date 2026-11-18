@@ -234,17 +234,19 @@ kernel void ultrasharpSubpixelRefineKernel(
                 float rx = tileStartX + px;
                 float sx = rx + currentDx;
 
-                // Gradient không gian trên ảnh tham chiếu (Scharr 1D vi phân)
-                float rLeft  = refLuma.sample(bilinearSampler, float2(rx - 1.0f, ry)).r;
-                float rRight = refLuma.sample(bilinearSampler, float2(rx + 1.0f, ry)).r;
-                float rUp    = refLuma.sample(bilinearSampler, float2(rx, ry - 1.0f)).r;
-                float rDown  = refLuma.sample(bilinearSampler, float2(rx, ry + 1.0f)).r;
+                // Gradient không gian chính xác tại tâm pixel (+0.5f cho coord::pixel của Metal)
+                float2 refPt = float2(rx + 0.5f, ry + 0.5f);
+                float2 secPt = float2(sx + 0.5f, sy + 0.5f);
+                float rLeft  = refLuma.sample(bilinearSampler, refPt + float2(-1.0f,  0.0f)).r;
+                float rRight = refLuma.sample(bilinearSampler, refPt + float2( 1.0f,  0.0f)).r;
+                float rUp    = refLuma.sample(bilinearSampler, refPt + float2( 0.0f, -1.0f)).r;
+                float rDown  = refLuma.sample(bilinearSampler, refPt + float2( 0.0f,  1.0f)).r;
 
                 float Ix = 0.5f * (rRight - rLeft);
                 float Iy = 0.5f * (rDown - rUp);
 
-                float refVal = refLuma.sample(bilinearSampler, float2(rx, ry)).r;
-                float secVal = secLuma.sample(bilinearSampler, float2(sx, sy)).r;
+                float refVal = refLuma.sample(bilinearSampler, refPt).r;
+                float secVal = secLuma.sample(bilinearSampler, secPt).r;
                 float It = secVal - refVal;
 
                 sumIxx += Ix * Ix;
@@ -328,16 +330,20 @@ kernel void ultrasharpDenseFlowWarpKernel(
     TileMotionVector mv01 = tileVectors[tY1 * uniforms.numTilesX + tX0];
     TileMotionVector mv11 = tileVectors[tY1 * uniforms.numTilesX + tX1];
 
-    // Nội suy 2D vector dịch chuyển
-    float interpDx = (1.0f - fx) * (1.0f - fy) * mv00.dx +
-                             fx  * (1.0f - fy) * mv10.dx +
-                     (1.0f - fx) *        fy   * mv01.dx +
-                             fx  *        fy   * mv11.dx;
+    // Nội suy 2D vector dịch chuyển có trọng số an toàn (loại trừ tile isInvalid nếu có)
+    float w00 = (mv00.isInvalid == 0) ? ((1.0f - fx) * (1.0f - fy)) : 0.0f;
+    float w10 = (mv10.isInvalid == 0) ? (        fx  * (1.0f - fy)) : 0.0f;
+    float w01 = (mv01.isInvalid == 0) ? ((1.0f - fx) *         fy ) : 0.0f;
+    float w11 = (mv11.isInvalid == 0) ? (        fx  *         fy ) : 0.0f;
+    float wSum = w00 + w10 + w01 + w11;
 
-    float interpDy = (1.0f - fx) * (1.0f - fy) * mv00.dy +
-                             fx  * (1.0f - fy) * mv10.dy +
-                     (1.0f - fx) *        fy   * mv01.dy +
-                             fx  *        fy   * mv11.dy;
+    float interpDx = 0.0f;
+    float interpDy = 0.0f;
+    if (wSum > 1e-4f) {
+        float invW = 1.0f / wSum;
+        interpDx = clamp((w00 * mv00.dx + w10 * mv10.dx + w01 * mv01.dx + w11 * mv11.dx) * invW, -64.0f, 64.0f);
+        interpDy = clamp((w00 * mv00.dy + w10 * mv10.dy + w01 * mv01.dy + w11 * mv11.dy) * invW, -64.0f, 64.0f);
+    }
 
     constexpr sampler nearestSampler(coord::pixel, address::clamp_to_edge, filter::nearest);
     float2 warpedPos = float2(gid) + float2(interpDx, interpDy);
@@ -377,7 +383,8 @@ kernel void ultrasharpDenseFlowWarpKernel(
     float residual = 0.70f * lumaDiff + 0.30f * chromaDiff;
 
     warpedTexture.write(warpedColor, gid);
-    residualTexture.write(float4(residual, warpedLuma, refLuma, 1.0f), gid);
+    // Lưu dạng rg16Float gọn nhẹ (tiết kiệm 50% VRAM cho ảnh 12MP): .r = residual, .g = refLuma
+    residualTexture.write(float4(residual, refLuma, 0.0f, 1.0f), gid);
 }
 
 // MARK: - 6. Ước lượng Nhiễu Cảm biến Động (Noise Estimation MAD)
@@ -431,7 +438,7 @@ kernel void ultrasharpRobustAccumulateKernel(
 
     float4 warpedColor = warpedTexture.read(gid);
     float4 centerRes = residualTexture.read(gid);
-    float refLuma = centerRes.b;
+    float refLuma = centerRes.g;
 
     // Tổng hợp sai số cấu trúc trong lân cận 3x3 (HDR+ / Wronski Neighborhood Robustness)
     // giúp phân biệt chính xác nhiễu hạt đơn điểm với chuyển động thật của vật thể (chống ghosting)
@@ -516,13 +523,13 @@ kernel void ultrasharpNormalizeAndSharpenKernel(
     float centerW = max(accumSumWeight.read(gid).r, 1.0f);
     float4 centerNorm = centerColorAcc / centerW;
 
-    // 2. Tìm min/max cục bộ trong cửa sổ 3x3 để kẹp triệt tiêu quầng hào quang (Halo Clamping)
+    // 2. Dual-Scale Structure-Aware Detail & Local Clarity Restoration (3x3 Fine + 5x5 Micro-Contrast)
+    // Kẹp chống halo chặt chẽ + lọc ngưỡng nhiễu vùng phẳng để ảnh vừa trong trẻo vừa sắc nét từng sợi chi tiết
     float3 minVal = centerNorm.rgb;
     float3 maxVal = centerNorm.rgb;
-    float3 blurSum = float3(0.0f);
-    float blurWeightTotal = 0.0f;
+    float3 fineBlurSum = float3(0.0f);
+    float3 wideBlurSum = float3(0.0f);
 
-    // Ma trận làm mờ Gauss 3x3 nhẹ
     const float kernel3x3[3][3] = {
         { 0.0625f, 0.125f, 0.0625f },
         { 0.125f,  0.25f,  0.125f  },
@@ -539,25 +546,40 @@ kernel void ultrasharpNormalizeAndSharpenKernel(
 
             minVal = min(minVal, sampleNorm);
             maxVal = max(maxVal, sampleNorm);
-
-            float kw = kernel3x3[dy + 1][dx + 1];
-            blurSum += sampleNorm * kw;
-            blurWeightTotal += kw;
+            fineBlurSum += sampleNorm * kernel3x3[dy + 1][dx + 1];
         }
     }
 
-    float3 blurred = blurSum / blurWeightTotal;
+    // Lấy mẫu vòng ngoài bán kính 2px (8 điểm cân xứng) cho lớp tương phản vi mô (Micro-Contrast)
+    const int2 ringOffsets[8] = {
+        int2(-2,  0), int2( 2,  0), int2( 0, -2), int2( 0,  2),
+        int2(-2, -2), int2( 2, -2), int2(-2,  2), int2( 2,  2)
+    };
+    for (int k = 0; k < 8; ++k) {
+        int nx = clamp(gx + ringOffsets[k].x, 0, w - 1);
+        int ny = clamp(gy + ringOffsets[k].y, 0, h - 1);
+        float4 sAcc = accumSumColor.read(uint2(nx, ny));
+        float sw = max(accumSumWeight.read(uint2(nx, ny)).r, 1.0f);
+        wideBlurSum += (sAcc / sw).rgb * 0.125f;
+    }
 
-    // 3. Chi tiết tần số cao (High-pass detail)
-    float3 detail = centerNorm.rgb - blurred;
+    // 3. Tách chi tiết đa tần số trên kênh Luma (không khuếch đại nhiễu màu Chroma)
+    float3 fineDetail = centerNorm.rgb - fineBlurSum;
+    float3 midDetail  = fineBlurSum - wideBlurSum;
+    float fineLuma = dot(fineDetail, float3(0.2126f, 0.7152f, 0.0722f));
+    float midLuma  = dot(midDetail,  float3(0.2126f, 0.7152f, 0.0722f));
 
-    // 4. Điều biến cường độ làm nét theo SNR cục bộ:
-    // Số frame hợp lệ càng nhiều (sumWeight cao) thì nhiễu càng thấp -> cho phép làm nét mạnh hơn
-    float snrFactor = clamp(sqrt(centerW / float(uniforms.totalFrames)), 0.6f, 1.3f);
-    float alpha = uniforms.sharpnessAlpha * snrFactor;
+    // Lọc ngưỡng nhiễu vùng phẳng (trời, da mặt mịn) dựa trên SNR thực tế
+    float snrFactor = clamp(sqrt(centerW / max(1.0f, float(uniforms.totalFrames))), 0.65f, 1.45f);
+    float noiseFloor = mix(0.010f, 0.004f, clamp((centerW - 1.0f) / 3.0f, 0.0f, 1.0f));
+    float edgeMask = smoothstep(noiseFloor, noiseFloor * 3.5f, abs(fineLuma) + 0.5f * abs(midLuma));
 
-    // 5. Kẹp biên độ Halo (Halo Clamping) & Bảo toàn kênh Alpha = 1.0 tuyệt đối
-    float3 unclampedSharp = centerNorm.rgb + alpha * detail;
+    float fineAlpha = uniforms.sharpnessAlpha * 1.15f * snrFactor * edgeMask;
+    float midAlpha  = uniforms.sharpnessAlpha * 0.38f * snrFactor * edgeMask;
+
+    // 4. Kẹp biên độ Halo (Halo Clamping) & Bảo toàn kênh Alpha = 1.0 tuyệt đối
+    float lumaBoost = fineAlpha * fineLuma + midAlpha * midLuma;
+    float3 unclampedSharp = centerNorm.rgb + float3(lumaBoost);
     float3 lowBound = max(float3(0.0f), minVal - uniforms.haloClampLimit);
     float3 highBound = min(float3(1.0f), maxVal + uniforms.haloClampLimit);
     float3 clampedSharp = clamp(unclampedSharp, lowBound, highBound);
