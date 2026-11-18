@@ -39,12 +39,20 @@ private final class SemanticCropRanker: @unchecked Sendable {
 
     static let shared = SemanticCropRanker()
     private var attemptedLoad = false
+    private var activeSessionDepth = 0
     private var model: VNCoreMLModel?
     private var prompts: [String: [Double]] = [:]
     private(set) var didProduceEvidence = false
 
-    func beginAnalysis() { didProduceEvidence = false }
+    func beginAnalysis() {
+        if activeSessionDepth == 0 {
+            didProduceEvidence = false
+        }
+        activeSessionDepth += 1
+    }
     func endAnalysis() {
+        activeSessionDepth = max(0, activeSessionDepth - 1)
+        guard activeSessionDepth == 0 else { return }
         model = nil
         prompts.removeAll(keepingCapacity: false)
         attemptedLoad = false
@@ -172,22 +180,35 @@ private final class SemanticCropRanker: @unchecked Sendable {
         }
 
         let hasRichPrompts = prompts["architecture_facade"] != nil && model != nil && !fullS.isEmpty && !cancellation.isCancelled
+        let isThermalConstrained = ProcessInfo.processInfo.thermalState == .serious ||
+            ProcessInfo.processInfo.thermalState == .critical ||
+            ProcessInfo.processInfo.isLowPowerModeEnabled
+        let fullClutterSignal =
+            0.48 * max(0.0, Self.sc(fullS, "edge_obstacle")) +
+            0.40 * max(0.0, Self.sc(fullS, "dead_wall")) +
+            0.40 * max(0.0, Self.sc(fullS, "dead_floor")) +
+            0.42 * max(0.0, Self.sc(fullS, "wire_clutter")) +
+            0.28 * max(0.0, Self.sc(fullS, "tin_roof_clutter"))
         let leftS: [String: Double]
         let rightS: [String: Double]
         let topS: [String: Double]
         let botS: [String: Double]
         let coreS: [String: Double]
-        if hasRichPrompts, let model {
-            leftS = affinities(model: model, handler: handler, cancellation: cancellation,
-                               topLeftRoI: CGRect(x: 0.0, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
-            rightS = affinities(model: model, handler: handler, cancellation: cancellation,
-                                topLeftRoI: CGRect(x: 0.48, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
-            topS = affinities(model: model, handler: handler, cancellation: cancellation,
-                              topLeftRoI: CGRect(x: 0.06, y: 0.0, width: 0.88, height: 0.42), cropScale: .scaleFill)
-            botS = affinities(model: model, handler: handler, cancellation: cancellation,
-                              topLeftRoI: CGRect(x: 0.06, y: 0.58, width: 0.88, height: 0.42), cropScale: .scaleFill)
+        if hasRichPrompts, let model, !isThermalConstrained {
             coreS = affinities(model: model, handler: handler, cancellation: cancellation,
                                topLeftRoI: CGRect(x: 0.16, y: 0.16, width: 0.68, height: 0.68), cropScale: .scaleFill)
+            if fullClutterSignal >= 0.008 {
+                leftS = affinities(model: model, handler: handler, cancellation: cancellation,
+                                   topLeftRoI: CGRect(x: 0.0, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
+                rightS = affinities(model: model, handler: handler, cancellation: cancellation,
+                                    topLeftRoI: CGRect(x: 0.48, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
+                topS = affinities(model: model, handler: handler, cancellation: cancellation,
+                                  topLeftRoI: CGRect(x: 0.06, y: 0.0, width: 0.88, height: 0.42), cropScale: .scaleFill)
+                botS = affinities(model: model, handler: handler, cancellation: cancellation,
+                                  topLeftRoI: CGRect(x: 0.06, y: 0.58, width: 0.88, height: 0.42), cropScale: .scaleFill)
+            } else {
+                leftS = [:]; rightS = [:]; topS = [:]; botS = [:]
+            }
         } else {
             leftS = [:]; rightS = [:]; topS = [:]; botS = [:]; coreS = fullS
         }
@@ -393,11 +414,18 @@ private final class SemanticCropRanker: @unchecked Sendable {
             .filter { !$0.element.isUnchangedView }
             .sorted { $0.element.score > $1.element.score }
 
+        let maxSemanticCrops: Int = {
+            let thermal = ProcessInfo.processInfo.thermalState
+            if thermal == .serious || thermal == .critical || ProcessInfo.processInfo.isLowPowerModeEnabled {
+                return 2
+            }
+            return thermal == .fair ? 3 : 5
+        }()
         var chosen: [(idx: Int, rect: CGRect, bonus: Double)] = []
         for item in indexed {
-            guard chosen.count < 12, !cancellation.isCancelled else { break }
+            guard chosen.count < maxSemanticCrops, !cancellation.isCancelled else { break }
             let rect = cropRect(from: item.element.sourceCorners)
-            if chosen.contains(where: { rectIoU($0.rect, rect) > 0.86 }) { continue }
+            if chosen.contains(where: { rectIoU($0.rect, rect) > 0.84 }) { continue }
             let cropScores = affinities(model: model, handler: handler, cancellation: cancellation,
                                         topLeftRoI: rect, cropScale: .scaleFill)
             guard !cropScores.isEmpty else { continue }
@@ -411,7 +439,7 @@ private final class SemanticCropRanker: @unchecked Sendable {
             if let exact = chosen.first(where: { $0.idx == i }) {
                 updated[i].semanticCropBonus = exact.bonus
             } else if let near = chosen.max(by: { rectIoU($0.rect, r) < rectIoU($1.rect, r) }),
-                      rectIoU(near.rect, r) >= 0.80 {
+                      rectIoU(near.rect, r) >= 0.72 {
                 updated[i].semanticCropBonus = near.bonus
             }
         }
@@ -574,6 +602,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                             progress: @Sendable (String) -> Void = { _ in }) -> LocalCompositionAnalysis? {
         guard !cancellation.isCancelled else { return nil }
         analysisLock.lock()
+        SemanticCropRanker.shared.beginAnalysis()
         defer { SemanticCropRanker.shared.endAnalysis(); analysisLock.unlock() }
         let started = ProcessInfo.processInfo.systemUptime
         func receipt(count: Int = 0, specialist: Bool = false, modern: Int = 0) -> CompositionAnalysisReceipt {

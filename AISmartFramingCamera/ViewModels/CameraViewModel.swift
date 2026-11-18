@@ -100,11 +100,16 @@ private final class CameraFrameProcessor: @unchecked Sendable {
 
 
 
-            if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.10 {
+            if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.24 {
                 lastHistogramComputeTime = now
                 let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
                 DispatchQueue.main.async { [weak self] in
-                    self?.owner?.histogramBars = bars
+                    guard let owner = self?.owner else { return }
+                    let old = owner.histogramBars
+                    let changed = old.count != bars.count || zip(old, bars).contains { abs($0.height - $1.height) >= 0.025 }
+                    if changed {
+                        owner.histogramBars = bars
+                    }
                 }
             }
             return
@@ -127,10 +132,11 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             visionInterval = 0
         } else if snapshot.isDualCameraActive {
             visionInterval = 1.0 / 5.0
-        } else if SpatialTrackingEngine.shared.isTrackingActive {
+        } else if SpatialTrackingEngine.shared.isTrackingActive || snapshot.tracksSuggestions {
             visionInterval = 0
         } else {
-            visionInterval = 1.0 / 12.0
+            let thermal = ProcessInfo.processInfo.thermalState
+            visionInterval = (thermal == .nominal) ? (1.0 / 7.0) : (1.0 / 4.0)
         }
         if visionInterval == 0 || (now - lastVisionProcessTime >= visionInterval) {
             lastVisionProcessTime = now
@@ -153,11 +159,16 @@ private final class CameraFrameProcessor: @unchecked Sendable {
                 self?.owner?.refreshSuggestionProjection(frame: frame)
             }
         }
-        if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.10 {
+        if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.24 {
             lastHistogramComputeTime = now
             let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
             DispatchQueue.main.async { [weak self] in
-                self?.owner?.histogramBars = bars
+                guard let owner = self?.owner else { return }
+                let old = owner.histogramBars
+                let changed = old.count != bars.count || zip(old, bars).contains { abs($0.height - $1.height) >= 0.025 }
+                if changed {
+                    owner.histogramBars = bars
+                }
             }
         }
 
@@ -413,6 +424,177 @@ public final class CameraViewModel: ObservableObject {
         }
         zoomHUDDismissWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
+    }
+
+    public var minAvailableDisplayZoom: CGFloat {
+        if isDualCameraActive || isFrontCamera {
+            return 1.0
+        }
+        if cameraService.hasUltraWideLens || UltraWideWarpEngine.live.isSupported {
+            return 0.5
+        }
+        return 1.0
+    }
+
+    public var maxAvailableDisplayZoom: CGFloat {
+        return 10.0
+    }
+
+    private var videoContinuousZoomTimestamp: CFTimeInterval = 0
+    private var videoContinuousLastZoom: CGFloat = 1.0
+
+    public func canPerformPhysicalLensSwitch(for targetDisplayZoom: CGFloat) -> Bool {
+        if isRecordingVideo || recordingState != .idle || wantsVideoRecording || isDualCameraActive || isFrontCamera {
+            return false
+        }
+        if captureMode.isVideo {
+            // Ở chế độ Video, tuyệt đối không gọi switchInputDeviceInternal sang camera Telephoto rời
+            // để tránh configureVideoFormatInternal (60fps) tự động fallback ngược về Wide 1.0x gây mất zoom.
+            // Các máy có Virtual Multi-Camera vẫn tự động chuyển ống kính quang học qua videoZoomFactor.
+            return false
+        }
+        return true
+    }
+
+    private func syncSimulatedUltraWideState(for displayZoomVal: CGFloat) {
+        if displayZoomVal < 0.99 && !cameraService.hasUltraWideLens && !isFrontCamera && !isDualCameraActive {
+            self.isSimulatedUltraWideActive = true
+            self.simulatedUltraWideFactor = displayZoomVal
+            self.cameraService.isSimulatedUltraWideActive = true
+            self.cameraService.simulatedUltraWideFactor = displayZoomVal
+            EffectVideoAssetRecorder.shared.isSimulatedUW = true
+            EffectVideoAssetRecorder.shared.simulatedFactor = displayZoomVal
+        } else {
+            self.isSimulatedUltraWideActive = false
+            self.simulatedUltraWideFactor = 1.0
+            self.cameraService.isSimulatedUltraWideActive = false
+            self.cameraService.simulatedUltraWideFactor = 1.0
+            EffectVideoAssetRecorder.shared.isSimulatedUW = false
+            EffectVideoAssetRecorder.shared.simulatedFactor = 1.0
+        }
+    }
+
+    public func beginVideoAwareManualZoomGesture() {
+        if captureMode.isVideo && isShutterPressing {
+            isShutterPressing = false
+        }
+        guard (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
+              !isCameraHibernating else { return }
+        if !captureMode.isVideo && isShutterPressing { return }
+        cancelAIZoomForGesture()
+        isPinchingZoom = true
+    }
+
+    public func setVideoAwareZoomContinuous(_ rawDisplayZoom: CGFloat) {
+        if captureMode.isVideo && isShutterPressing {
+            isShutterPressing = false
+        }
+        guard rawDisplayZoom.isFinite,
+              (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
+              !isCameraHibernating else { return }
+        if !captureMode.isVideo && isShutterPressing { return }
+        if !isPinchingZoom {
+            beginVideoAwareManualZoomGesture()
+        }
+        let clamped = max(minAvailableDisplayZoom, min(rawDisplayZoom, maxAvailableDisplayZoom))
+        syncSimulatedUltraWideState(for: clamped)
+        self.displayZoom = clamped
+        self.selectedZoomPreset = resolveClosestZoomPreset(for: clamped)
+        presentZoomChangeHUD(displayZoom: clamped)
+
+        let now = CACurrentMediaTime()
+        if now - videoContinuousZoomTimestamp >= 0.020 || abs(clamped - videoContinuousLastZoom) > 0.04 {
+            videoContinuousZoomTimestamp = now
+            videoContinuousLastZoom = clamped
+            cameraService.applyDisplayZoomWithPhysicalLensSwitching(
+                clamped,
+                smooth: false,
+                allowPhysicalSwitch: false
+            )
+        }
+    }
+
+    public func finishVideoAwareZoomGesture(_ rawFinalDisplayZoom: CGFloat) {
+        if captureMode.isVideo && isShutterPressing {
+            isShutterPressing = false
+        }
+        guard (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
+              !isCameraHibernating else {
+            isPinchingZoom = false
+            return
+        }
+        if !captureMode.isVideo && isShutterPressing {
+            isPinchingZoom = false
+            return
+        }
+        guard rawFinalDisplayZoom.isFinite else {
+            isPinchingZoom = false
+            return
+        }
+        let clamped = max(minAvailableDisplayZoom, min(rawFinalDisplayZoom, maxAvailableDisplayZoom))
+        syncSimulatedUltraWideState(for: clamped)
+        self.displayZoom = clamped
+        self.selectedZoomPreset = resolveClosestZoomPreset(for: clamped)
+        videoContinuousLastZoom = clamped
+        isPinchingZoom = false
+        presentZoomChangeHUD(displayZoom: clamped)
+
+        let allowSwitch = canPerformPhysicalLensSwitch(for: clamped)
+        let requestID = UUID()
+        manualZoomRequestID = requestID
+        manualZoomSettledAt = CACurrentMediaTime()
+        cameraService.applyDisplayZoomWithPhysicalLensSwitching(
+            clamped,
+            smooth: false,
+            rate: 4.5,
+            allowPhysicalSwitch: allowSwitch
+        ) { [weak self] actualDeviceZoom in
+            guard let self, self.manualZoomRequestID == requestID else { return }
+            self.manualZoomRequestID = nil
+            self.pendingManualZoomTarget = nil
+            self.manualZoomSettledAt = CACurrentMediaTime()
+            self.zoomVerified = actualDeviceZoom != nil
+            self.alignmentGate.reset()
+        }
+        haptics.triggerSelectionChange()
+    }
+
+    public func setVideoAwareZoomFromButton(_ rawDisplayZoom: CGFloat, smooth: Bool = true) {
+        if captureMode.isVideo && isShutterPressing {
+            isShutterPressing = false
+        }
+        guard rawDisplayZoom.isFinite,
+              (isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning),
+              !isCameraHibernating else { return }
+        if !captureMode.isVideo && isShutterPressing { return }
+        cancelAIZoomForGesture()
+        let clamped = max(minAvailableDisplayZoom, min(rawDisplayZoom, maxAvailableDisplayZoom))
+        let prevZoom = displayZoom
+        syncSimulatedUltraWideState(for: clamped)
+        self.displayZoom = clamped
+        self.selectedZoomPreset = resolveClosestZoomPreset(for: clamped)
+        if abs(clamped - prevZoom) >= 0.45 && !isRecordingVideo {
+            previewContainerView?.animateLensTransition()
+        }
+        presentZoomChangeHUD(displayZoom: clamped)
+
+        let allowSwitch = canPerformPhysicalLensSwitch(for: clamped)
+        let requestID = UUID()
+        manualZoomRequestID = requestID
+        manualZoomSettledAt = CACurrentMediaTime()
+        cameraService.applyDisplayZoomWithPhysicalLensSwitching(
+            clamped,
+            smooth: smooth && !captureMode.isVideo,
+            rate: 5.5,
+            allowPhysicalSwitch: allowSwitch
+        ) { [weak self] actualDeviceZoom in
+            guard let self, self.manualZoomRequestID == requestID else { return }
+            self.manualZoomRequestID = nil
+            self.pendingManualZoomTarget = nil
+            self.manualZoomSettledAt = CACurrentMediaTime()
+            self.zoomVerified = actualDeviceZoom != nil
+            self.alignmentGate.reset()
+        }
     }
 
     @Published public var isRevealingZoomTarget: Bool = false
@@ -1508,12 +1690,34 @@ public final class CameraViewModel: ObservableObject {
               recordingState == .idle,
               !isShutterPressing, aiSessionState != .capturing else { return }
 
-        isShutterPressing = true
+        if aiSessionState == .analyzing { cancelAISession() }
+        pinZoomPlanTask?.cancel()
+        isPreparingPinZoom = false
+        zoomVerificationTask?.cancel()
+        if zoomAwaitingVerification || zoomFallbackAfter.isFinite { cameraService.cancelZoomRamp() }
+        zoomAwaitingVerification = false
+        isRevealingZoomTarget = false
+        autoCaptureTask?.cancel()
+        autoCaptureTask = nil
+        isPerfectAlignment = false
+        stateBeforeCapture = aiSessionState
+        visionEngine.stopTrackingObject()
+        SpatialTrackingEngine.shared.stopTracking()
+        activeFocusSquarePoint = nil
+        isShowingSunSlider = false
+        let now = CACurrentMediaTime()
+        manualFocusLockUntil = now + 2.5
+        ignoreSubjectAreaChangeUntil = now + 2.5
+
+        withAnimation {
+            aiSessionState = .capturing
+            isShutterPressing = true
+        }
         photoCapturePhase = .preparing
         captureProcessingSettings = currentPhotoProcessingSettings()
         hasTriggeredInstantShutterForCurrentCapture = false
         ultraSharpProgressPercentage = 0.05
-        ultraSharpProgressString = "Đang chuẩn bị Ultra Sharp..."
+        ultraSharpProgressString = "Đang chụp Ultra Sharp..."
 
         UltraSharpService.shared.processUltraSharpCapture(
             cameraService: cameraService,

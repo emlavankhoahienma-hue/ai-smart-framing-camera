@@ -172,26 +172,20 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         self.onFrameReceived = onFrameReceived
         self.onBurstFinished = completion
 
-        let finalCount = calculateOptimalBurstCount(requestedCount: requestedCount)
+        let finalCount = min(3, calculateOptimalBurstCount(requestedCount: requestedCount))
         self.targetBurstCount = finalCount
         captureLock.unlock()
 
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             let camera = (cameraService.captureSession.inputs.compactMap { ($0 as? AVCaptureDeviceInput)?.device }).first
-            guard let camera = camera else {
+            guard camera != nil else {
                 self.finishBurst(with: .failure(CameraServiceError.cameraNotReady))
                 return
             }
 
-            do {
-                try self.lockCameraConfiguration(device: camera)
-            } catch {
-                self.finishBurst(with: .failure(error))
-                return
-            }
-
-            // Kích hoạt phát chụp đầu tiên trong chuỗi burst trên sessionQueue tuần tự
+            // Không gọi lockCameraConfiguration (.locked AE/AF) trên queue riêng để triệt tiêu hoàn toàn
+            // hiện tượng nháy sáng / nhảy nét trên Liveview khi bắt đầu chụp Ultra Sharp!
             self.triggerNextPhotoShot(cameraService: cameraService, shotIndex: 0)
         }
     }
@@ -252,6 +246,9 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         } else {
             settings.photoQualityPrioritization = .speed
         }
+        if photoOutput.supportedFlashModes.contains(.off) {
+            settings.flashMode = .off
+        }
 
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
@@ -280,7 +277,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
             let current = self.capturedFrames
             captureLock.unlock()
 
-            if count >= 4 {
+            if count >= 1 {
                 finishBurst(with: .success(current))
             } else {
                 finishBurst(with: .failure(error))
@@ -296,7 +293,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
             let count = self.capturedFrames.count
             let current = self.capturedFrames
             captureLock.unlock()
-            if count >= 3 {
+            if count >= 1 {
                 finishBurst(with: .success(current))
             } else {
                 finishBurst(with: .failure(CameraServiceError.photoProcessingFailed))
@@ -344,7 +341,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: 4032
+            kCGImageSourceThumbnailMaxPixelSize: 2880
         ]
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary) ??
                             CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -353,6 +350,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
 
         let width = cgImage.width
         let height = cgImage.height
+        guard width >= 16, height >= 16 else { return nil }
 
         var pixelBuffer: CVPixelBuffer?
         let attrs: [CFString: Any] = [
@@ -376,23 +374,38 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
 
-        if let baseAddress = CVPixelBufferGetBaseAddress(buffer) {
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-            let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
 
-            if let context = CGContext(
-                data: baseAddress,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: colorSpace,
-                bitmapInfo: bitmapInfo
-            ) {
-                context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let context = CGContext(
+            data: baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return nil
+        }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Kiểm tra đảm bảo buffer vừa giải mã không phải ảnh đen rỗng
+        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+        var maxSample: UInt8 = 0
+        let stepY = max(1, height / 6)
+        let stepX = max(1, width / 6)
+        for sy in stride(from: stepY / 2, to: height, by: stepY) {
+            let row = sy * bytesPerRow
+            for sx in stride(from: stepX / 2, to: width, by: stepX) {
+                let off = row + sx * 4
+                let peak = max(ptr[off], max(ptr[off + 1], ptr[off + 2]))
+                if peak > maxSample { maxSample = peak }
             }
         }
+        guard maxSample >= 2 else { return nil }
 
         return buffer
     }

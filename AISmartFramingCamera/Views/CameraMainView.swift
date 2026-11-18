@@ -560,12 +560,27 @@ struct TopCameraBar: View {
     }
 }
 
-// MARK: - Minimalist Optical Zoom Selector (Strictly 1x, 2x, 3x with Single Matched Ring, No Capsule Background)
+// MARK: - Minimalist Optical Zoom Selector (0.5x, 1x, 2x, 3x + Smooth Horizontal Drag Scrubbing)
 struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
+    @State private var dragStartZoom: CGFloat = 1.0
+    @State private var isScrubbingZoom: Bool = false
+
     private var zoomOptions: [CGFloat] {
         viewModel.availableDisplayZoomOptions.filter { $0 < 4.9 }
+    }
+
+    private func label(for zoom: CGFloat, isSelected: Bool) -> String {
+        if isSelected {
+            let liveZ = viewModel.displayZoom
+            let roundedTenth = (liveZ * 10.0).rounded() / 10.0
+            if abs(roundedTenth - roundedTenth.rounded()) > 0.04 || roundedTenth < 0.95 {
+                return String(format: "%.1fx", roundedTenth)
+            }
+            return "\(Int(roundedTenth.rounded()))x"
+        }
+        return zoom == 0.5 ? "0.5x" : "\(Int(zoom))x"
     }
 
     var body: some View {
@@ -577,25 +592,27 @@ struct ViewfinderZoomSelectorPill: View {
                     impact.prepare()
                     impact.impactOccurred()
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.75)) {
-                        viewModel.setZoomFromButton(zoom)
+                        viewModel.setVideoAwareZoomFromButton(zoom)
                     }
                 }) {
                     ZStack {
                         Circle()
-                            .fill(Color.black.opacity(isSelected ? 0.60 : 0.32))
-                            .frame(width: 34, height: 34)
+                            .fill(Color.black.opacity(isSelected ? 0.65 : 0.34))
+                            .frame(width: 36, height: 36)
 
                         if isSelected {
                             Circle()
                                 .stroke(AlignTheme.signatureGradient, lineWidth: 1.8)
-                                .frame(width: 34, height: 34)
+                                .frame(width: 36, height: 36)
                                 .shadow(color: AlignTheme.electricCyan.opacity(0.55), radius: 6)
                                 .matchedGeometryEffect(id: "active_viewfinder_zoom_ring", in: zoomPillNamespace)
                         }
 
-                        Text(zoom == 0.5 ? "0.5x" : "\(Int(zoom))x")
-                            .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                        Text(label(for: zoom, isSelected: isSelected))
+                            .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
                             .foregroundColor(isSelected ? .white : Color.white.opacity(0.75))
+                            .minimumScaleFactor(0.75)
+                            .lineLimit(1)
                     }
                     .scaleEffect(isSelected ? 1.08 : 0.96)
                     .frame(width: 42, height: 42)
@@ -605,6 +622,34 @@ struct ViewfinderZoomSelectorPill: View {
                 .accessibilityLabel(zoom == 0.5 ? "Thu phong 0.5 lan" : "Thu phong \(Int(zoom)) lan")
             }
         }
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .highPriorityGesture(
+            DragGesture(minimumDistance: 6)
+                .onChanged { value in
+                    if !isScrubbingZoom {
+                        isScrubbingZoom = true
+                        dragStartZoom = viewModel.displayZoom
+                        viewModel.beginVideoAwareManualZoomGesture()
+                    }
+                    // Vuốt sang phải tăng zoom, sang trái giảm zoom theo thang logarit mượt mà
+                    let octaves = Double(value.translation.width) / 95.0
+                    let rawTarget = dragStartZoom * CGFloat(pow(2.0, octaves))
+                    let minZ = viewModel.minAvailableDisplayZoom
+                    let maxZ = min(5.0, viewModel.maxAvailableDisplayZoom)
+                    let clamped = max(minZ, min(rawTarget, maxZ))
+                    viewModel.setVideoAwareZoomContinuous(clamped)
+                }
+                .onEnded { value in
+                    let octaves = Double(value.translation.width) / 95.0
+                    let rawTarget = dragStartZoom * CGFloat(pow(2.0, octaves))
+                    let minZ = viewModel.minAvailableDisplayZoom
+                    let maxZ = min(5.0, viewModel.maxAvailableDisplayZoom)
+                    let clamped = max(minZ, min(rawTarget, maxZ))
+                    viewModel.finishVideoAwareZoomGesture(clamped)
+                    isScrubbingZoom = false
+                }
+        )
     }
 }
 

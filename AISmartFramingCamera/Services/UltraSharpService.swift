@@ -10,6 +10,7 @@
 import Foundation
 import CoreGraphics
 import CoreVideo
+import CoreImage
 import Metal
 import AVFoundation
 
@@ -134,9 +135,9 @@ public final class UltraSharpService: @unchecked Sendable {
         CameraLogger.info("UltraSharp: Đã chọn frame index \(refFrame.index) (Độ nét: \(refFrame.sharpnessScore)). Số frame hợp lệ: \(validCandidates.count)/\(frames.count)", category: .capture)
 
         // KIỂM TRA ĐIỀU KIỆN FALLBACK AN TOÀN:
-        // Nếu số frame đạt chuẩn < 3 frame, không cố gộp mà trả về trực tiếp frame gốc để tránh ảnh lỗi
-        if validCandidates.count < 3 {
-            CameraLogger.warning("UltraSharp: Số frame đạt chuẩn quá ít (\(validCandidates.count) < 3) -> Kích hoạt Fallback an toàn (Lưu Frame gốc nét nhất)!", category: .capture)
+        // Nếu số frame đạt chuẩn < 2 frame, không cố gộp mà trả về trực tiếp frame gốc đã nâng cấp chi tiết để tránh ảnh lỗi
+        if validCandidates.count < 2 {
+            CameraLogger.warning("UltraSharp: Số frame đạt chuẩn quá ít (\(validCandidates.count) < 2) -> Kích hoạt Fallback an toàn (Lưu Frame gốc nét nhất)!", category: .capture)
             fallbackToReferenceFrame(
                 refFrame: refFrame,
                 totalFrames: frames.count,
@@ -162,6 +163,11 @@ public final class UltraSharpService: @unchecked Sendable {
         metalEngine.initializeAccumulator(referenceTexture: refTexture, commandBuffer: initCB)
         initCB.commit()
         initCB.waitUntilCompleted()
+        guard initCB.status == .completed else {
+            CameraLogger.error("UltraSharp: initCB thất bại (status: \(initCB.status.rawValue)) -> Fallback frame gốc!", category: .capture)
+            fallbackToReferenceFrame(refFrame: refFrame, totalFrames: frames.count, startTime: startTime, completion: completion)
+            return
+        }
 
         // BƯỚC 4: Căn chỉnh Sub-pixel & Gộp Robust từng frame phụ theo luồng Streaming
         var fusedCount = 1
@@ -181,7 +187,7 @@ public final class UltraSharpService: @unchecked Sendable {
             }
 
             let currentStep = idx + 1
-            let progressPct = 0.55 + 0.35 * (Float(currentStep) / Float(totalSecondary))
+            let progressPct = 0.55 + 0.35 * (Float(currentStep) / Float(max(1, totalSecondary)))
             progressHandler(UltraSharpProgressInfo(
                 phase: .aligning(current: currentStep, total: totalSecondary),
                 percentage: progressPct,
@@ -205,7 +211,7 @@ public final class UltraSharpService: @unchecked Sendable {
                 frameCB.commit()
                 frameCB.waitUntilCompleted()
 
-                if alignResult.success {
+                if frameCB.status == .completed && alignResult.success {
                     fusedCount += 1
                     accumulatedError += alignResult.qualityError
                 }
@@ -231,6 +237,11 @@ public final class UltraSharpService: @unchecked Sendable {
 
         finalizeCB.commit()
         finalizeCB.waitUntilCompleted()
+        guard finalizeCB.status == .completed else {
+            CameraLogger.error("UltraSharp: finalizeCB thất bại (status: \(finalizeCB.status.rawValue)) -> Fallback frame gốc!", category: .capture)
+            fallbackToReferenceFrame(refFrame: refFrame, totalFrames: frames.count, startTime: startTime, completion: completion)
+            return
+        }
 
         // BƯỚC 6: Trích xuất CGImage đầu ra
         progressHandler(UltraSharpProgressInfo(
@@ -239,11 +250,12 @@ public final class UltraSharpService: @unchecked Sendable {
             message: "Đang lưu ảnh hoàn tất..."
         ))
 
-        guard let finalCGImage = metalEngine.makeCGImage(from: outputTexture) else {
-            CameraLogger.error("UltraSharp: Không thể trích xuất CGImage từ outputTexture -> Fallback!", category: .capture)
+        guard let rawFinalCGImage = metalEngine.makeCGImage(from: outputTexture) else {
+            CameraLogger.error("UltraSharp: outputTexture rỗng/đen hoặc lỗi trích xuất CGImage -> Fallback sang frame gốc!", category: .capture)
             fallbackToReferenceFrame(refFrame: refFrame, totalFrames: frames.count, startTime: startTime, completion: completion)
             return
         }
+        let finalCGImage = Self.enhanceUltraSharpOpticalDetail(rawFinalCGImage)
 
         let totalTime = CACurrentMediaTime() - startTime
         let noiseReduction = sqrt(Float(fusedCount))
@@ -275,6 +287,39 @@ public final class UltraSharpService: @unchecked Sendable {
 
     // MARK: - Cơ chế Fallback an toàn Tuyệt đối
 
+    private static let detailCIContext = CIContext(options: [
+        .useSoftwareRenderer: false,
+        .highQualityDownsample: true,
+        .cacheIntermediates: false
+    ])
+
+    /// Tăng cường chi tiết quang học vi mô (Micro-Contrast & Dual-Band Unsharp) cho ảnh Ultra Sharp
+    private static func enhanceUltraSharpOpticalDetail(_ image: CGImage) -> CGImage {
+        guard image.width >= 32, image.height >= 32 else { return image }
+        return autoreleasepool {
+            var ciImage = CIImage(cgImage: image)
+            if let denoise = CIFilter(name: "CINoiseReduction") {
+                denoise.setValue(ciImage, forKey: kCIInputImageKey)
+                denoise.setValue(0.012, forKey: "inputNoiseLevel")
+                denoise.setValue(0.48, forKey: "inputSharpness")
+                if let out = denoise.outputImage { ciImage = out }
+            }
+            if let unsharp = CIFilter(name: "CIUnsharpMask") {
+                unsharp.setValue(ciImage, forKey: kCIInputImageKey)
+                unsharp.setValue(1.20, forKey: kCIInputRadiusKey)
+                unsharp.setValue(0.45, forKey: kCIInputIntensityKey)
+                if let out = unsharp.outputImage { ciImage = out }
+            }
+            if let sharpen = CIFilter(name: "CISharpenLuminance") {
+                sharpen.setValue(ciImage, forKey: kCIInputImageKey)
+                sharpen.setValue(0.32, forKey: kCIInputSharpnessKey)
+                if let out = sharpen.outputImage { ciImage = out }
+            }
+            let extent = ciImage.extent.integral
+            return detailCIContext.createCGImage(ciImage, from: extent) ?? image
+        }
+    }
+
     private func fallbackToReferenceFrame(
         refFrame: UltraSharpFrame,
         totalFrames: Int,
@@ -285,10 +330,11 @@ public final class UltraSharpService: @unchecked Sendable {
         isProcessing = false
         stateLock.unlock()
 
-        guard let cg = decodeCGImage(from: refFrame.pixelBuffer) else {
+        guard let rawCG = decodeCGImage(from: refFrame.pixelBuffer) else {
             finishWithFailure(error: CameraServiceError.photoProcessingFailed, completion: completion)
             return
         }
+        let cg = Self.enhanceUltraSharpOpticalDetail(rawCG)
 
         let elapsed = CACurrentMediaTime() - startTime
         completion(.success(UltraSharpFusionResult(

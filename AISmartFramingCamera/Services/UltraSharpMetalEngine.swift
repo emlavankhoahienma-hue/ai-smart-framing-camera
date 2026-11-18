@@ -141,6 +141,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
     private var tileVectorBuffers: [MTLBuffer] = []
     private var noiseHistogramBuffer: MTLBuffer?
     private var validSampleCountBuffer: MTLBuffer?
+    private var retainedCVTextures: [CVMetalTexture] = []
 
     private var currentWidth: Int = 0
     private var currentHeight: Int = 0
@@ -242,6 +243,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         accumSumWeightA = nil
         accumSumWeightB = nil
         outputTexture = nil
+        retainedCVTextures.removeAll()
         currentWidth = 0
         currentHeight = 0
         if let cache = textureCache {
@@ -341,8 +343,11 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             0,
             &cvTexture
         )
-        guard let cvTex = cvTexture else { return nil }
-        return CVMetalTextureGetTexture(cvTex)
+        guard let cvTex = cvTexture, let mtlTex = CVMetalTextureGetTexture(cvTex) else { return nil }
+        stateLock.lock()
+        retainedCVTextures.append(cvTex)
+        stateLock.unlock()
+        return mtlTex
     }
 
     // MARK: - Xây dựng Kim tự tháp Gaussian (4 Tầng)
@@ -431,7 +436,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
                 numTilesX: numTilesX,
                 numTilesY: numTilesY,
                 searchRadius: 4,
-                scaleFactor: 2.0
+                scaleFactor: level < 3 ? 2.0 : 0.0
             )
 
             // Bước A: Block Matching
@@ -661,6 +666,38 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         var rawBytes = [UInt8](repeating: 0, count: totalBytes)
         let region = MTLRegionMake2D(0, 0, width, height)
         texture.getBytes(&rawBytes, bytesPerRow: rowBytes, from: region, mipmapLevel: 0)
+
+        // Kiểm tra chống ảnh đen (All-Black Sanity Guard): nếu GPU command buffer bị lỗi/hủy khiến texture toàn 0,
+        // trả về nil ngay lập tức để kích hoạt cơ chế Fallback sang ảnh gốc sắc nét!
+        var maxSampledLuma: UInt8 = 0
+        let stepY = max(1, height / 8)
+        let stepX = max(1, width / 8)
+        outerCheck: for sy in stride(from: stepY / 2, to: height, by: stepY) {
+            let rowOffset = sy * rowBytes
+            for sx in stride(from: stepX / 2, to: width, by: stepX) {
+                let pxOffset = rowOffset + sx * 4
+                if pxOffset + 3 < totalBytes {
+                    let b = rawBytes[pxOffset]
+                    let g = rawBytes[pxOffset + 1]
+                    let r = rawBytes[pxOffset + 2]
+                    let peak = max(r, max(g, b))
+                    if peak > maxSampledLuma {
+                        maxSampledLuma = peak
+                        if maxSampledLuma >= 6 { break outerCheck }
+                    }
+                    // Đảm bảo kênh Alpha = 255 cho premultipliedFirst
+                    rawBytes[pxOffset + 3] = 255
+                }
+            }
+        }
+        guard maxSampledLuma >= 3 else {
+            return nil
+        }
+
+        // Chuẩn hóa kênh Alpha = 255 trên toàn bộ buffer để không bao giờ bị tối/đen do premultiplied alpha
+        for idx in stride(from: 3, to: totalBytes, by: 4) {
+            rawBytes[idx] = 255
+        }
 
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue // Chuẩn BGRA

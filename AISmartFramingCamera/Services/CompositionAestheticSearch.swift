@@ -56,11 +56,11 @@ final class CompositionAestheticSearch {
         }
         guard !cancellation.isCancelled else { return nil }
 
-        // When dense multi-scale windows were scored by GAIC (>48), shortlist diverse peak candidates for SAMP
+        // When dense multi-scale windows were scored by GAIC, shortlist diverse peak candidates for SAMP
         // to stay within mobile RAM & compute latency budgets while keeping baseline and zoom spread intact.
         let isHighMem = ProcessInfo.processInfo.physicalMemory >= 5_200_000_000
-        let sampBudget = isHighMem ? 36 : 24
-        if usedGAIC && workingProposals.count > 48 {
+        let sampBudget = isHighMem ? 20 : 14
+        if usedGAIC && workingProposals.count > sampBudget {
             let rankedForSamp = workingProposals.map { candidate -> CompositionProposal in
                 var copy = candidate
                 let zoomRatio = Double(candidate.zoom) / sourceBaseZoom
@@ -223,9 +223,11 @@ final class CompositionAestheticSearch {
         }
         var evaluated = evaluate(workingProposals)
         guard !cancellation.isCancelled else { return nil }
-        let initial = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: 3)
+        let initial = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: usedGAIC ? 2 : 3)
         progress("Đang kiểm tra lại khung và các mức zoom lân cận…")
-        let neighbours = evaluate(refine(initial))
+        let refinedSeeds = refine(initial)
+        let cappedNeighbours = usedGAIC ? Array(refinedSeeds.prefix(isHighMem ? 8 : 6)) : refinedSeeds
+        let neighbours = evaluate(cappedNeighbours)
         evaluated.append(contentsOf: neighbours)
         guard !cancellation.isCancelled else { return nil }
         var usedSpecialist = !evaluated.isEmpty && assessedCount == evaluated.count
@@ -267,7 +269,9 @@ final class CompositionAestheticSearch {
             let thermalOrLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled ||
                 ProcessInfo.processInfo.thermalState == .serious
             let isLowMemory = ProcessInfo.processInfo.physicalMemory < 5_200_000_000
-            let budget = thermalOrLowPower ? 12 : (isLowMemory ? 24 : 40)
+            let budget = usedGAIC
+                ? (thermalOrLowPower ? 4 : (isLowMemory ? 6 : 8))
+                : (thermalOrLowPower ? 12 : (isLowMemory ? 24 : 40))
             for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
                 if indices.count >= budget { break }
                 include(index)

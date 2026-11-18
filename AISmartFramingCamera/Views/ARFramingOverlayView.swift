@@ -19,6 +19,8 @@ public struct ARFramingOverlayView: View {
             let bottomChromeInset = max(70, min(96, size.height * 0.18))
 
             ZStack {
+                Color.clear
+
                 // 1. Composition Grid Lines (hiện khi AI session active hoặc người dùng bật thủ công từ kho chức năng)
                 if viewModel.isAISessionActive || viewModel.isManualGridVisible {
                     CompositionGridLines(rule: viewModel.activeCompositionRule, size: size)
@@ -253,6 +255,7 @@ public struct ARFramingOverlayView: View {
                     CompositionDebugOverlayView(viewModel: viewModel, containerSize: size)
                 }
             }
+            .frame(width: size.width, height: size.height)
             .contentShape(Rectangle())
             .gesture(SpatialTapGesture().onEnded { event in
                 let location = event.location
@@ -267,9 +270,9 @@ public struct ARFramingOverlayView: View {
                 }
             })
             .simultaneousGesture(
-                DragGesture(minimumDistance: 4)
+                DragGesture(minimumDistance: 8)
                     .onChanged { val in
-                        guard viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint else { return }
+                        guard viewModel.showTargetCircle, !viewModel.captureMode.isVideo, let targetPoint = viewModel.currentTargetPoint else { return }
                         let currentScreen = convertBufferPointToScreen(targetPoint, in: size)
                         let dist = hypot(val.startLocation.x - currentScreen.x, val.startLocation.y - currentScreen.y)
                         if dist <= 44 {
@@ -299,18 +302,18 @@ public struct ARFramingOverlayView: View {
                         if !isPinching {
                             isPinching = true
                             pinchBaseZoom = viewModel.displayZoom
-                            viewModel.beginManualZoomGesture()
+                            viewModel.beginVideoAwareManualZoomGesture()
                         }
-                        let minZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.minZoom)
-                        let maxZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.maxZoom)
+                        let minZ = viewModel.minAvailableDisplayZoom
+                        let maxZ = viewModel.maxAvailableDisplayZoom
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
-                        viewModel.setZoomContinuous(targetZoom)
+                        viewModel.setVideoAwareZoomContinuous(targetZoom)
                     }
                     .onEnded { scale in
-                        let minZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.minZoom)
-                        let maxZ = viewModel.cameraService.convertDeviceZoomToDisplayZoom(viewModel.cameraService.maxZoom)
+                        let minZ = viewModel.minAvailableDisplayZoom
+                        let maxZ = viewModel.maxAvailableDisplayZoom
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))
-                        viewModel.finishZoomGesture(targetZoom)
+                        viewModel.finishVideoAwareZoomGesture(targetZoom)
                         isPinching = false
                         pinchBaseZoom = targetZoom
                     }

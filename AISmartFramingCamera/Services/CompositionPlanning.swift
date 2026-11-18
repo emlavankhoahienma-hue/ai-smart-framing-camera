@@ -362,6 +362,12 @@ struct CompositionSceneHints: Sendable {
     var cleanInterest: [Double] = []
     var clutterMap: [Double] = []
     var blankSurface: [Double] = []
+    var satSide: Int = 0
+    var cleanInterestSAT: [Double] = []
+    var clutterMapSAT: [Double] = []
+    var blankSurfaceSAT: [Double] = []
+    var weightedXSAT: [Double] = []
+    var weightedYSAT: [Double] = []
     var skyFraction: Double = 0.0
     var archRoofTopY: Double? = nil
     var estimatedHorizonY: Double? = nil
@@ -372,22 +378,50 @@ struct CompositionSceneHints: Sendable {
 
     static let neutral = CompositionSceneHints()
 
+    static func buildSAT(_ grid: [Double], side: Int) -> [Double] {
+        guard side > 0, grid.count == side * side else { return [] }
+        let stride = side + 1
+        var sat = [Double](repeating: 0.0, count: stride * stride)
+        for y in 0..<side {
+            var rowSum = 0.0
+            let srcRow = y * side
+            let dstRow = (y + 1) * stride
+            let prevRow = y * stride
+            for x in 0..<side {
+                rowSum += grid[srcRow + x]
+                sat[dstRow + x + 1] = sat[prevRow + x + 1] + rowSum
+            }
+        }
+        return sat
+    }
+
+    @inline(__always)
+    static func querySAT(_ sat: [Double], stride: Int, x0: Int, y0: Int, x1: Int, y1: Int) -> Double {
+        guard x1 > x0, y1 > y0 else { return 0.0 }
+        let r0 = y0 * stride
+        let r1 = y1 * stride
+        return sat[r1 + x1] - sat[r0 + x1] - sat[r1 + x0] + sat[r0 + x0]
+    }
+
     func clutterDensity(in rect: CGRect, side: Int) -> Double {
         guard side > 0, clutterMap.count == side * side, rect.width > 0, rect.height > 0 else { return 0.0 }
         let x0 = max(0, min(side - 1, Int(Double(rect.minX) * Double(side))))
         let x1 = max(x0 + 1, min(side, Int(ceil(Double(rect.maxX) * Double(side)))))
         let y0 = max(0, min(side - 1, Int(Double(rect.minY) * Double(side))))
         let y1 = max(y0 + 1, min(side, Int(ceil(Double(rect.maxY) * Double(side)))))
+        let count = (x1 - x0) * (y1 - y0)
+        guard count > 0 else { return 0.0 }
+        if satSide == side, clutterMapSAT.count == (side + 1) * (side + 1) {
+            return Self.querySAT(clutterMapSAT, stride: side + 1, x0: x0, y0: y0, x1: x1, y1: y1) / Double(count)
+        }
         var sum = 0.0
-        var count = 0
         for y in y0..<y1 {
             let row = y * side
             for x in x0..<x1 {
                 sum += clutterMap[row + x]
-                count += 1
             }
         }
-        return count > 0 ? sum / Double(count) : 0.0
+        return sum / Double(count)
     }
 
     func trimBoxAwayFromClutter(_ rect: CGRect) -> CGRect {
@@ -551,6 +585,8 @@ struct CompositionSceneHints: Sendable {
         let blankSurf = raster.structuralBlankSurface.count == count ? raster.structuralBlankSurface : [Double](repeating: 0.0, count: count)
         let skyMask = raster.structuralSkyMask.count == count ? raster.structuralSkyMask : [Double](repeating: 0.0, count: count)
         var cleanInterest = [Double](repeating: 0.0, count: count)
+        var weightedX = [Double](repeating: 0.0, count: count)
+        var weightedY = [Double](repeating: 0.0, count: count)
         for y in 0..<side {
             let py = (Double(y) + 0.5) / Double(side)
             for x in 0..<side {
@@ -564,9 +600,18 @@ struct CompositionSceneHints: Sendable {
                     let dyF = py - Double(fa.point.y)
                     val = max(val, fa.strength * 0.85 * exp(-(dxF * dxF + dyF * dyF) / (2.0 * 0.08 * 0.08)))
                 }
-                cleanInterest[i] = min(1.0, max(0.0, val))
+                let ci = min(1.0, max(0.0, val))
+                cleanInterest[i] = ci
+                let iw = 0.05 + ci
+                weightedX[i] = px * iw
+                weightedY[i] = py * iw
             }
         }
+        let cleanSAT = buildSAT(cleanInterest, side: side)
+        let clutterSAT = buildSAT(clutter, side: side)
+        let blankSAT = buildSAT(blankSurf, side: side)
+        let wxSAT = buildSAT(weightedX, side: side)
+        let wySAT = buildSAT(weightedY, side: side)
 
         var refinedVP: VanishingPointHint? = nil
         if role == .streetLeading || role == .architecture || role == .apertureView {
@@ -634,6 +679,12 @@ struct CompositionSceneHints: Sendable {
             cleanInterest: cleanInterest,
             clutterMap: clutter,
             blankSurface: blankSurf,
+            satSide: side,
+            cleanInterestSAT: cleanSAT,
+            clutterMapSAT: clutterSAT,
+            blankSurfaceSAT: blankSAT,
+            weightedXSAT: wxSAT,
+            weightedYSAT: wySAT,
             skyFraction: raster.structuralSkyFraction,
             archRoofTopY: raster.structuralArchRoofTopY,
             estimatedHorizonY: horizonY,
@@ -1774,39 +1825,63 @@ enum CompositionPlanner {
         let vw = max(1e-4, vx1 - vx0)
         let vh = max(1e-4, vy1 - vy0)
 
-        let cleanInt = sceneHints.cleanInterest.count == count ? sceneHints.cleanInterest : raster.synchronizedSaliency
-        let clutMap = sceneHints.clutterMap.count == count ? sceneHints.clutterMap : [Double](repeating: 0.0, count: count)
-        let blankMap = sceneHints.blankSurface.count == count ? sceneHints.blankSurface : [Double](repeating: 0.0, count: count)
-
         var totalCI = 0.0, keptCI = 0.0
         var totalClut = 0.0, keptClut = 0.0
         var totalBlank = 0.0, keptBlank = 0.0
         var insideCount = 0
         var wSum = 0.0, wXSum = 0.0, wYSum = 0.0
 
-        for y in 0..<side {
-            let py = (Double(y) + 0.5) / Double(side)
-            let yIn = (py >= vy0 && py <= vy1)
-            let row = y * side
-            for x in 0..<side {
-                let i = row + x
-                let ci = cleanInt[i]
-                let cl = clutMap[i]
-                let bl = blankMap[i]
-                totalCI += ci
-                totalClut += cl
-                totalBlank += bl
-                if yIn {
-                    let px = (Double(x) + 0.5) / Double(side)
-                    if px >= vx0 && px <= vx1 {
-                        insideCount += 1
-                        keptCI += ci
-                        keptClut += cl
-                        keptBlank += bl
-                        let iw = 0.05 + ci
-                        wSum += iw
-                        wXSum += px * iw
-                        wYSum += py * iw
+        let satStride = side + 1
+        let expectedSATCount = satStride * satStride
+        if sceneHints.satSide == side,
+           sceneHints.cleanInterestSAT.count == expectedSATCount,
+           sceneHints.clutterMapSAT.count == expectedSATCount,
+           sceneHints.blankSurfaceSAT.count == expectedSATCount,
+           sceneHints.weightedXSAT.count == expectedSATCount,
+           sceneHints.weightedYSAT.count == expectedSATCount {
+            let lastIdx = side * satStride + side
+            totalCI = sceneHints.cleanInterestSAT[lastIdx]
+            totalClut = sceneHints.clutterMapSAT[lastIdx]
+            totalBlank = sceneHints.blankSurfaceSAT[lastIdx]
+            let rx0 = max(0, min(side, Int(ceil(vx0 * Double(side) - 0.5))))
+            let rx1 = max(rx0, min(side, Int(floor(vx1 * Double(side) - 0.5)) + 1))
+            let ry0 = max(0, min(side, Int(ceil(vy0 * Double(side) - 0.5))))
+            let ry1 = max(ry0, min(side, Int(floor(vy1 * Double(side) - 0.5)) + 1))
+            insideCount = max(0, (rx1 - rx0) * (ry1 - ry0))
+            keptCI = CompositionSceneHints.querySAT(sceneHints.cleanInterestSAT, stride: satStride, x0: rx0, y0: ry0, x1: rx1, y1: ry1)
+            keptClut = CompositionSceneHints.querySAT(sceneHints.clutterMapSAT, stride: satStride, x0: rx0, y0: ry0, x1: rx1, y1: ry1)
+            keptBlank = CompositionSceneHints.querySAT(sceneHints.blankSurfaceSAT, stride: satStride, x0: rx0, y0: ry0, x1: rx1, y1: ry1)
+            wSum = 0.05 * Double(insideCount) + keptCI
+            wXSum = CompositionSceneHints.querySAT(sceneHints.weightedXSAT, stride: satStride, x0: rx0, y0: ry0, x1: rx1, y1: ry1)
+            wYSum = CompositionSceneHints.querySAT(sceneHints.weightedYSAT, stride: satStride, x0: rx0, y0: ry0, x1: rx1, y1: ry1)
+        } else {
+            let cleanInt = sceneHints.cleanInterest.count == count ? sceneHints.cleanInterest : raster.synchronizedSaliency
+            let clutMap = sceneHints.clutterMap.count == count ? sceneHints.clutterMap : [Double](repeating: 0.0, count: count)
+            let blankMap = sceneHints.blankSurface.count == count ? sceneHints.blankSurface : [Double](repeating: 0.0, count: count)
+            for y in 0..<side {
+                let py = (Double(y) + 0.5) / Double(side)
+                let yIn = (py >= vy0 && py <= vy1)
+                let row = y * side
+                for x in 0..<side {
+                    let i = row + x
+                    let ci = cleanInt[i]
+                    let cl = clutMap[i]
+                    let bl = blankMap[i]
+                    totalCI += ci
+                    totalClut += cl
+                    totalBlank += bl
+                    if yIn {
+                        let px = (Double(x) + 0.5) / Double(side)
+                        if px >= vx0 && px <= vx1 {
+                            insideCount += 1
+                            keptCI += ci
+                            keptClut += cl
+                            keptBlank += bl
+                            let iw = 0.05 + ci
+                            wSum += iw
+                            wXSum += px * iw
+                            wYSum += py * iw
+                        }
                     }
                 }
             }
@@ -2271,7 +2346,7 @@ enum CompositionPlanner {
                                                 currentZoom: currentZoom, maxZoom: maxZoom,
                                                 allowedZooms: allowedZooms, highMemory: isHighMemory,
                                                 sceneHints: sceneHints)
-                let rawEvaluationCap = isHighMemory ? 1024 : 512
+                let rawEvaluationCap = sceneHints.hasRichGuidance ? (isHighMemory ? 360 : 240) : (isHighMemory ? 1024 : 512)
                 // Iterate placements outer and zooms inner so priority anchors explore the FULL zoom ladder evenly.
                 outer: for destination in placements {
                     for zoom in subjectZooms {

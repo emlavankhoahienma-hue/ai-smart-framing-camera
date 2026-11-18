@@ -1,1021 +1,1574 @@
 import SwiftUI
-import Photos
 import UIKit
+import CoreImage
 import UniformTypeIdentifiers
-import CoreTransferable
-import Combine
+import ImageIO
 
-public struct CapturedPhotoPreviewView: View {
-    let item: CapturedPhotoItem
-    var viewModel: CameraViewModel? = nil
-    @Environment(\.presentationMode) var presentationMode
+// MARK: - Inspector Tabs & Detail Levels
+private enum PhotoDetailInspectorTab: String, CaseIterable, Identifiable {
+    case telemetryAndDetail = "Thông số & Nét"
+    case filmPresets = "Màu Phim"
+    case masterFrame = "Khung Master"
 
-    @State private var currentProcessedImage: CGImage
-    @State private var baseProcessedImage: CGImage
-    @State private var isAISharpnessEnabled: Bool = false
-    @State private var isSharpeningProcessing: Bool = false
-    @State private var splitOffset: CGFloat = 0.5
-    @State private var isShowingOriginalOnly: Bool = false
-    @State private var isOptimizingWithAI: Bool = false
-    @State private var aiOptimizationSuccessNote: String? = nil
-    @State private var aiErrorMessage: String? = nil
-    @State private var aiLatency: Int = 0
-    @State private var renderGeneration = 0
-    @State private var hasSavedNewEnhancement: Bool = false
-    @State private var selectedPreviewPreset: FilmPreset
-    @State private var currentAIParams: AIColorParameters?
-    @State private var aiRecommendedPreset: FilmPreset? = nil
+    var id: String { rawValue }
 
+    var iconName: String {
+        switch self {
+        case .telemetryAndDetail: return "waveform.path.ecg.rectangle"
+        case .filmPresets: return "camera.filters"
+        case .masterFrame: return "photo.artframe"
+        }
+    }
+}
 
-    private var shareButtonLabel: some View {
-        Label("Chia sẻ", systemImage: "square.and.arrow.up")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundColor(.white)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 11)
-            .background(Color.white.opacity(0.12))
-            .cornerRadius(10)
+private enum PhotoMicroDetailLevel: Int, CaseIterable, Identifiable {
+    case off = 0
+    case natural = 1
+    case ultra = 2
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: return "Gốc"
+        case .natural: return "Tự nhiên"
+        case .ultra: return "Ultra Nét"
+        }
     }
 
-    // MARK: - Zoom & Pan Inspection States (Modern iPhone Style)
-    @State private var zoomScale: CGFloat = 1.0
-    @State private var gestureScale: CGFloat = 1.0
-    @State private var panOffset: CGSize = .zero
-    @State private var gesturePanOffset: CGSize = .zero
-    @State private var isPinching: Bool = false
-    @State private var isPanning: Bool = false
-
-    private var effectiveScale: CGFloat {
-        max(0.88, min(7.0, zoomScale * gestureScale))
+    var unsharpIntensity: Float {
+        switch self {
+        case .off: return 0.0
+        case .natural: return 0.36
+        case .ultra: return 0.68
+        }
     }
 
-    private var effectiveOffset: CGSize {
-        CGSize(
-            width: panOffset.width + gesturePanOffset.width,
-            height: panOffset.height + gesturePanOffset.height
+    var luminanceSharpness: Float {
+        switch self {
+        case .off: return 0.0
+        case .natural: return 0.24
+        case .ultra: return 0.48
+        }
+    }
+
+    var microContrast: Float {
+        switch self {
+        case .off: return 1.0
+        case .natural: return 1.025
+        case .ultra: return 1.048
+        }
+    }
+}
+
+// MARK: - Real RGB + Luminance Histogram Model for Photo Detail
+private struct PhotoDetailHistogramSnapshot: Sendable {
+    let lumaBins: [Double]
+    let redBins: [Double]
+    let greenBins: [Double]
+    let blueBins: [Double]
+    let meanLuminance: Double
+    let shadowClipPercent: Double
+    let highlightClipPercent: Double
+
+    static let empty = PhotoDetailHistogramSnapshot(
+        lumaBins: Array(repeating: 0.05, count: 48),
+        redBins: Array(repeating: 0.05, count: 48),
+        greenBins: Array(repeating: 0.05, count: 48),
+        blueBins: Array(repeating: 0.05, count: 48),
+        meanLuminance: 0.5,
+        shadowClipPercent: 0.0,
+        highlightClipPercent: 0.0
+    )
+
+    static func compute(from cgImage: CGImage, binCount: Int = 48) -> PhotoDetailHistogramSnapshot {
+        let sampleW = min(256, max(32, cgImage.width / 8))
+        let sampleH = min(256, max(32, cgImage.height / 8))
+        let bytesPerRow = sampleW * 4
+        var raw = [UInt8](repeating: 0, count: sampleH * bytesPerRow)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+
+        guard let ctx = CGContext(
+            data: &raw,
+            width: sampleW,
+            height: sampleH,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return .empty
+        }
+        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: sampleW, height: sampleH))
+
+        var lHist = [Double](repeating: 0, count: binCount)
+        var rHist = [Double](repeating: 0, count: binCount)
+        var gHist = [Double](repeating: 0, count: binCount)
+        var bHist = [Double](repeating: 0, count: binCount)
+
+        let totalPixels = sampleW * sampleH
+        guard totalPixels > 0 else { return .empty }
+        var lumaSum = 0.0
+        var shadowClip = 0
+        var highlightClip = 0
+        let scale = Double(binCount - 1) / 255.0
+
+        for i in 0..<totalPixels {
+            let offset = i * 4
+            let r = Double(raw[offset])
+            let g = Double(raw[offset + 1])
+            let b = Double(raw[offset + 2])
+            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+            lumaSum += y / 255.0
+            if y <= 4.0 { shadowClip += 1 }
+            if y >= 251.0 { highlightClip += 1 }
+
+            let rBin = max(0, min(binCount - 1, Int((r * scale).rounded())))
+            let gBin = max(0, min(binCount - 1, Int((g * scale).rounded())))
+            let bBin = max(0, min(binCount - 1, Int((b * scale).rounded())))
+            let lBin = max(0, min(binCount - 1, Int((y * scale).rounded())))
+
+            rHist[rBin] += 1
+            gHist[gBin] += 1
+            bHist[bBin] += 1
+            lHist[lBin] += 1
+        }
+
+        func normalize(_ arr: [Double]) -> [Double] {
+            // Bỏ qua 2 bin đầu/cuối khi tìm đỉnh để biểu đồ không bị dẹt khi có vùng cháy/tối thuần
+            let interiorMax = arr.dropFirst().dropLast().max() ?? 1.0
+            let peak = max(1.0, max(interiorMax, (arr.max() ?? 1.0) * 0.65))
+            return arr.map { min(1.0, max(0.03, pow($0 / peak, 0.72))) }
+        }
+
+        return PhotoDetailHistogramSnapshot(
+            lumaBins: normalize(lHist),
+            redBins: normalize(rHist),
+            greenBins: normalize(gHist),
+            blueBins: normalize(bHist),
+            meanLuminance: lumaSum / Double(totalPixels),
+            shadowClipPercent: (Double(shadowClip) / Double(totalPixels)) * 100.0,
+            highlightClipPercent: (Double(highlightClip) / Double(totalPixels)) * 100.0
         )
     }
+}
 
-    private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
-    private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
+// MARK: - Flagship Pro Studio Photo Detail & Inspection View
+public struct CapturedPhotoPreviewView: View {
+    public let item: CapturedPhotoItem
+    public var viewModel: CameraViewModel?
+    @Environment(\.dismiss) private var dismiss
+
+    // Non-destructive Editing States
+    @State private var currentProcessedImage: CGImage
+    @State private var activePreset: FilmPreset
+    @State private var activeFilmIntensity: Double = 1.0
+    @State private var selectedCategory: FilmPresetCategory
+    @State private var isAIEnhanced: Bool = false
+    @State private var activeAIColorParams: AIColorParameters? = nil
+    @State private var microDetailLevel: PhotoMicroDetailLevel = .off
+    @State private var isMasterFrameApplied: Bool = false
+    @State private var masterFrameTheme: MasterWatermarkTheme = .classicWhite
+    @State private var masterFrameLogo: MasterWatermarkLogoStyle = .leicaRedDot
+
+    @State private var isProcessingFilter: Bool = false
+    @State private var isSavingToLibrary: Bool = false
+    @State private var hasSavedNewEnhancement: Bool = false
+    @State private var selectedInspectorTab: PhotoDetailInspectorTab = .telemetryAndDetail
+    @State private var isInspectorCollapsed: Bool = false
+    @State private var histogramSnapshot: PhotoDetailHistogramSnapshot = .empty
+    @State private var showRGBChannelsInHistogram: Bool = true
+
+    // Split-Screen & Hold-Original Comparison States
+    @State private var isSplitCompareMode: Bool = false
+    @State private var splitRatio: CGFloat = 0.5
+    @State private var isHoldingOriginal: Bool = false
+
+    // Zoom & Pan States (1.0x -> 8.0x)
+    @State private var zoomScale: CGFloat = 1.0
+    @State private var lastZoomScale: CGFloat = 1.0
+    @State private var panOffset: CGSize = .zero
+    @State private var lastPanOffset: CGSize = .zero
+
+    private static let detailCIContext = CIContext(options: [
+        .useSoftwareRenderer: false,
+        .highQualityDownsample: true,
+        .cacheIntermediates: false
+    ])
 
     public init(item: CapturedPhotoItem, viewModel: CameraViewModel? = nil) {
         self.item = item
         self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
-        _baseProcessedImage = State(initialValue: item.processedImage)
-        _selectedPreviewPreset = State(initialValue: item.appliedPreset)
-        _currentAIParams = State(initialValue: item.aiColorParameters)
+        _activePreset = State(initialValue: item.appliedFilter)
+        _selectedCategory = State(initialValue: item.appliedFilter.category)
+        if let vm = viewModel {
+            _masterFrameTheme = State(initialValue: vm.masterWatermarkTheme)
+            _masterFrameLogo = State(initialValue: vm.masterWatermarkLogoStyle)
+        }
+    }
+
+    private var hasModifiedSinceOpen: Bool {
+        activePreset != item.appliedFilter ||
+        abs(activeFilmIntensity - 1.0) > 0.02 ||
+        isAIEnhanced ||
+        microDetailLevel != .off ||
+        isMasterFrameApplied
     }
 
     public var body: some View {
         NavigationStack {
             ZStack {
-                darkBg.edgesIgnoringSafeArea(.all)
+                Color(red: 0.031, green: 0.035, blue: 0.047).ignoresSafeArea()
 
-                VStack(spacing: 14) {
-                    // 1. Photo Viewport with Interactive Smooth Zoom & Comparison
-                    GeometryReader { proxy in
-                        let size = proxy.size
-                        ZStack(alignment: .topLeading) {
-                            // 1.1 Zoomable & Pannable Base Layers
-                            ZStack {
-                                // Original Image (Base)
-                                Image(decorative: item.originalImage, scale: 1.0, orientation: .up)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: size.width, height: size.height)
+                VStack(spacing: 0) {
+                    topStudioHeaderBar
 
-                                // Processed Image (Overlaid with Clipping Mask)
-                                Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: size.width, height: size.height)
-                                    .mask(
-                                        Rectangle()
-                                            .size(
-                                                width: isShowingOriginalOnly ? 0 : size.width * splitOffset,
-                                                height: size.height
-                                            )
-                                    )
-                            }
-                            .scaleEffect(effectiveScale)
-                            .offset(effectiveOffset)
-                            .contentShape(Rectangle())
-                            .gesture(zoomPanGesture(in: size))
-                            .simultaneousGesture(
-                                SpatialTapGesture(count: 2)
-                                    .onEnded { event in
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                                            if effectiveScale > 1.15 {
-                                                // Đang zoom: thu về 1.0x ở chính giữa
-                                                zoomScale = 1.0
-                                                gestureScale = 1.0
-                                                panOffset = .zero
-                                                gesturePanOffset = .zero
-                                            } else {
-                                                // Zoom 2.8x hướng thẳng vào toạ độ vừa chạm (góc, cạnh, chủ thể)
-                                                let targetScale: CGFloat = 2.8
-                                                let dx = event.location.x - size.width / 2.0
-                                                let dy = event.location.y - size.height / 2.0
-                                                let targetOffset = CGSize(
-                                                    width: -dx * (targetScale - 1.0),
-                                                    height: -dy * (targetScale - 1.0)
-                                                )
-                                                zoomScale = targetScale
-                                                gestureScale = 1.0
-                                                panOffset = clampOffset(targetOffset, scale: targetScale, viewportSize: size)
-                                                gesturePanOffset = .zero
-                                            }
-                                        }
-                                    }
-                            )
+                    interactivePhotoViewport
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                            // 1.2 Split Comparison Divider & Handle (Chỉ hiện khi ở mức 1.0x và không phải ảnh RAW nguyên bản)
-                            if !isShowingOriginalOnly && effectiveScale <= 1.05 && item.saveFormat != .dng {
-                                splitComparisonControls(size: size)
-                            }
-
-                            // 1.3 Mini-Map hiển thị vùng đang zoom theo phong cách iPhone đời mới
-                            zoomRegionMiniMap(viewportSize: size)
-                                .padding(10)
-
-                            // 1.4 Nút Chuyển nhanh Ảnh Gốc / Đã chỉnh khi đang zoom chi tiết (chỉ cho ảnh đã qua xử lý màu)
-                            if effectiveScale > 1.05 && item.saveFormat != .dng {
-                                VStack {
-                                    Spacer()
-                                    HStack {
-                                        Spacer()
-                                        Button(action: {
-                                            withAnimation(.easeInOut(duration: 0.18)) {
-                                                isShowingOriginalOnly.toggle()
-                                            }
-                                        }) {
-                                            HStack(spacing: 4) {
-                                                Image(systemName: isShowingOriginalOnly ? "photo.fill" : "wand.and.stars")
-                                                    .font(.system(size: 10, weight: .semibold))
-                                                Text(isShowingOriginalOnly ? "Ảnh gốc" : "Đã chỉnh")
-                                                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                                            }
-                                            .foregroundColor(isShowingOriginalOnly ? .yellow : champagne)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 5)
-                                            .background(Capsule().fill(Color.black.opacity(0.74)))
-                                            .overlay(Capsule().stroke(champagne.opacity(0.4), lineWidth: 1))
-                                            .shadow(color: Color.black.opacity(0.5), radius: 4)
-                                        }
-                                        .padding(10)
-                                    }
-                                }
-                            }
-
-                            // 1.5 AI Processing Loading Overlay
-                            if isOptimizingWithAI {
-                                aiLoadingOverlay
-                            }
-                        }
-                        .frame(width: size.width, height: size.height)
-                        .coordinateSpace(name: "PhotoViewport")
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                    }
-                    .frame(maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .padding(.horizontal, 16)
-
-                    // 2. Status Notifications (Subtle)
-                    if let note = aiOptimizationSuccessNote {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(champagne)
-                            Text(note)
-                                .font(.caption.weight(.medium))
-                                .foregroundColor(.white.opacity(0.9))
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                    if !isInspectorCollapsed {
+                        studioInspectorDeck
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
-                    if let err = aiErrorMessage {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .foregroundColor(.orange)
-                            Text(err)
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.9))
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.orange.opacity(0.15)))
-                    }
-
-                    // 3. Metadata Dashboard (Quiet Pro style)
-                    // 3. Metadata Dashboard (Quiet Pro style)
-                    VStack(spacing: 6) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                if item.saveFormat == .dng {
-                                    HStack(spacing: 6) {
-                                        Text("RAW (DNG)")
-                                            .font(.system(size: 14, weight: .bold))
-                                            .foregroundColor(champagne)
-                                        Text("•").foregroundColor(.white.opacity(0.3))
-                                        Text("Cảm biến gốc")
-                                            .font(.system(size: 13))
-                                            .foregroundColor(.yellow)
-                                    }
-                                    Text(item.resolutionDescription)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.7))
-                                    Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.5))
-                                } else {
-                                    HStack(spacing: 6) {
-                                        if item.isLivePhoto {
-                                            HStack(spacing: 3) {
-                                                 Image(systemName: "livephoto")
-                                                     .font(.system(size: 10, weight: .bold))
-                                                 Text("LIVE PHOTO")
-                                                     .font(.system(size: 9, weight: .heavy, design: .rounded))
-                                            }
-                                            .foregroundColor(.yellow)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 3)
-                                            .background(Capsule().fill(Color.yellow.opacity(0.18)))
-                                        }
-                                        Text(selectedPreviewPreset.displayName)
-                                            .font(.system(size: 14, weight: .semibold))
-                                            .foregroundColor(.white)
-                                        Text("•").foregroundColor(.white.opacity(0.3))
-                                        Text(item.sceneType.rawValue)
-                                            .font(.system(size: 13))
-                                            .foregroundColor(.white.opacity(0.7))
-                                    }
-                                    Text(item.resolutionDescription)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.7))
-                                    Text("Bố cục: \(item.compositionRule.rawValue) · Điểm: \(Int(item.alignmentScore * 100))%")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.white.opacity(0.5))
-                                }
-                            }
-
-                            Spacer()
-
-                            // EXIF Capsule
-                            HStack(spacing: 8) {
-                                Text("ISO \(Int(item.iso))")
-                                Text(String(format: "1/%.0fs", 1.0 / max(0.0001, item.shutterSpeed)))
-                            }
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.7))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Color.white.opacity(0.06))
-                            .cornerRadius(6)
-                        }
-                        .padding(.horizontal, 20)
-                    }
-
-                    // 4. Horizontal Film Preset Selector (Ẩn khi xem ảnh RAW nguyên bản)
-                    if item.saveFormat != .dng {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(FilmPreset.selectablePresets) { preset in
-                                    let isCurrent = selectedPreviewPreset == preset
-                                    let isAIChosen = aiRecommendedPreset == preset
-
-                                    Button(action: {
-                                        applyPresetToPreview(preset)
-                                    }) {
-                                        HStack(spacing: 5) {
-                                            if isAIChosen {
-                                                Image(systemName: "wand.and.stars")
-                                                    .font(.system(size: 10, weight: .bold))
-                                                    .foregroundColor(isCurrent ? .black : champagne)
-                                            } else if isCurrent {
-                                                Image(systemName: "checkmark")
-                                                    .font(.system(size: 9, weight: .bold))
-                                            }
-                                            Text(preset.displayName)
-                                                .font(.system(size: 12, weight: isCurrent ? .bold : .medium, design: .rounded))
-                                        }
-                                        .foregroundColor(isCurrent ? .black : .white.opacity(0.85))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 7)
-                                        .background(
-                                            Capsule()
-                                                .fill(isCurrent ? champagne : (isAIChosen ? Color.yellow.opacity(0.18) : Color.white.opacity(0.08)))
-                                        )
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(isAIChosen ? champagne : (isCurrent ? champagne : Color.white.opacity(0.12)), lineWidth: isAIChosen ? 1.5 : 1)
-                                        )
-                                    }
-                                    .buttonStyle(PlainButtonStyle())
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                        }
-                    }
-
-                    // 5. Tool & Action Buttons
-                    VStack(spacing: 10) {
-                        if item.saveFormat == .dng {
-                            // Pro RAW Information Banner (Không cho phép sửa bất kỳ thứ gì trên RAW gốc)
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "camera.metering.matrix")
-                                        .font(.system(size: 13, weight: .bold))
-                                        .foregroundColor(champagne)
-                                    Text("FILE RAW NGUYÊN BẢN (DNG)")
-                                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                                        .foregroundColor(champagne)
-                                    Spacer()
-                                    Text("CHẤT LƯỢNG FULL")
-                                        .font(.system(size: 9, weight: .heavy, design: .rounded))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2.5)
-                                        .background(champagne.opacity(0.2))
-                                        .foregroundColor(champagne)
-                                        .cornerRadius(4)
-                                    Text("KHÔNG SỬA ĐỔI")
-                                        .font(.system(size: 9, weight: .heavy, design: .rounded))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2.5)
-                                        .background(Color.yellow.opacity(0.18))
-                                        .foregroundColor(.yellow)
-                                        .cornerRadius(4)
-                                }
-
-                                Text("Tệp DNG lưu trực tiếp từ cảm biến camera, không qua khử nhiễu làm bết màu, không áp bộ lọc và không nén dữ liệu. Đã lưu an toàn vào ứng dụng & Thư viện ảnh.")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.70))
-                                    .lineLimit(2)
-
-                                if let data = item.rawPhotoData {
-                                    HStack(spacing: 12) {
-                                        Label(String(format: "%.1f MB", Double(data.count) / (1024 * 1024)), systemImage: "internaldrive")
-                                        Label("Adobe DNG / ProRAW", systemImage: "doc.text")
-                                        if item.rawLocalFileURL != nil {
-                                            Label("Đã lưu App", systemImage: "checkmark.circle.fill")
-                                                .foregroundColor(.green.opacity(0.9))
-                                        }
-                                    }
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.white.opacity(0.60))
-                                    .padding(.top, 2)
-                                }
-                            }
-                            .padding(12)
-                            .background(Color.white.opacity(0.06))
-                            .cornerRadius(10)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(champagne.opacity(0.25), lineWidth: 1)
-                            )
-                        } else {
-                            // 5.1 AI Enhancement Row: [AI Chỉnh màu] & [Làm nét] (Chỉ cho ảnh JPEG / HEIF)
-                            HStack(spacing: 10) {
-                                // Nút AI Chỉnh màu
-                                Button(action: optimizeWithAIStudio) {
-                                    HStack(spacing: 6) {
-                                        if isOptimizingWithAI {
-                                            ProgressView()
-                                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                                .scaleEffect(0.8)
-                                        } else {
-                                            Image(systemName: "wand.and.stars")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        Text(isOptimizingWithAI ? "Đang chọn màu…" : "AI Chỉnh màu")
-                                            .font(.system(size: 13, weight: .semibold))
-                                    }
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 11)
-                                    .background(Color.white.opacity(0.12))
-                                    .cornerRadius(10)
-                                }
-                                .disabled(isOptimizingWithAI)
-
-                                // Nút Làm nét AI (Bật / Tắt - Bảo toàn 100% màu & chất ảnh)
-                                Button(action: toggleAISharpness) {
-                                    HStack(spacing: 6) {
-                                        if isSharpeningProcessing {
-                                            ProgressView()
-                                                .progressViewStyle(CircularProgressViewStyle(tint: isAISharpnessEnabled ? .black : .white))
-                                                .scaleEffect(0.8)
-                                        } else {
-                                            Image(systemName: isAISharpnessEnabled ? "sparkle.magnifyingglass" : "sparkles")
-                                                .font(.system(size: 13, weight: .semibold))
-                                        }
-                                        Text(isAISharpnessEnabled ? "Đang làm nét" : "Làm nét")
-                                            .font(.system(size: 13, weight: .semibold))
-                                        if isAISharpnessEnabled && !isSharpeningProcessing {
-                                            Image(systemName: "checkmark")
-                                                .font(.system(size: 10, weight: .bold))
-                                        }
-                                    }
-                                    .foregroundColor(isAISharpnessEnabled ? .black : .white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 11)
-                                    .background(isAISharpnessEnabled ? champagne : Color.white.opacity(0.12))
-                                    .cornerRadius(10)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .stroke(isAISharpnessEnabled ? champagne : Color.white.opacity(0.15), lineWidth: 1)
-                                    )
-                                }
-                            }
-                        }
-
-                        // 5.2 Action Row: [Lưu ảnh], [Khung Master] & [Chia sẻ]
-                        HStack(spacing: 10) {
-                            Button(action: {
-                                let focal = (viewModel?.displayZoom ?? 1.0) >= 1.9 ? 52.0 : 24.0
-                                let specs = PhotoWatermarkSpecs.from(iso: item.iso, shutterSpeed: item.shutterSpeed, focalLength: focal, aperture: 1.8)
-                                let devName = viewModel?.masterWatermarkDeviceName ?? "ALIGN STUDIO ULTRA"
-                                let theme = viewModel?.masterWatermarkTheme ?? .white
-                                let logoStyle = viewModel?.masterWatermarkLogoStyle ?? .alignStudio
-                                let customLogo = viewModel?.masterWatermarkCustomLogoImage
-                                if let framed = MasterWatermarkRenderer.shared.renderWatermark(
-                                    on: currentProcessedImage,
-                                    deviceName: devName,
-                                    theme: theme,
-                                    logoStyle: logoStyle,
-                                    customLogo: customLogo,
-                                    specs: specs
-                                ) {
-                                    currentProcessedImage = framed
-                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                }
-                            }) {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "seal.fill")
-                                        .font(.system(size: 13, weight: .semibold))
-                                    Text("Khung Master")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 11)
-                                .background(Color.white.opacity(0.12))
-                                .cornerRadius(10)
-                            }
-                            // Nút Lưu ảnh
-                            Button(action: {
-                                if item.saveFormat == .dng {
-                                    viewModel?.savePhotoToLibrary(item) { success in
-                                        hasSavedNewEnhancement = success
-                                    }
-                                } else {
-                                    saveEnhancedImageToPhotos(currentProcessedImage)
-                                }
-                            }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: hasSavedNewEnhancement ? "checkmark" : "arrow.down")
-                                        .font(.system(size: 13, weight: .semibold))
-                                    Text(hasSavedNewEnhancement ? "Đã lưu vào Photos" : "Lưu vào Photos")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
-                                .foregroundColor(.black)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 11)
-                                .background(champagne)
-                                .cornerRadius(10)
-                            }
-
-                            // Nút Chia sẻ
-                            if item.saveFormat == .dng, let data = item.rawPhotoData {
-                                ShareLink(item: OriginalDNGShare(data: data),
-                                    preview: SharePreview("AlignAI_RAW.dng", image: Image(decorative: item.originalImage, scale: 1, orientation: .up))) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "square.and.arrow.up")
-                                            .font(.system(size: 13, weight: .semibold))
-                                        Text("Chia sẻ tệp RAW")
-                                            .font(.system(size: 13, weight: .semibold))
-                                    }
-                                    .foregroundColor(.white)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 11)
-                                    .background(Color.white.opacity(0.12))
-                                    .cornerRadius(10)
-                                }
-                            } else {
-                                ShareLink(item: Image(decorative: currentProcessedImage, scale: 1, orientation: .up),
-                                    preview: SharePreview("AlignAI Photo", image: Image(decorative: currentProcessedImage, scale: 1, orientation: .up))) {
-                                    shareButtonLabel
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
+                    bottomPrimaryActionBar
                 }
             }
-            .onReceive(viewModel.map { $0.$saveErrorMessage.eraseToAnyPublisher() } ??
-                Just<String?>(nil).eraseToAnyPublisher()) { message in
-                if let message { aiErrorMessage = message }
-            }
-            .navigationTitle("Chi tiết ảnh")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Đóng") {
-                        presentationMode.wrappedValue.dismiss()
-                    }
-                    .foregroundColor(champagne)
-                }
+            .navigationBarHidden(true)
+            .onAppear {
+                refreshHistogram(for: currentProcessedImage)
             }
         }
     }
 
-    // MARK: - Zoom & Pan Gesture Builder
-    private func zoomPanGesture(in size: CGSize) -> some Gesture {
-        SimultaneousGesture(
-            MagnificationGesture()
-                .onChanged { val in
-                    isPinching = true
-                    gestureScale = val
+    // MARK: - 1. Top Studio Header Bar
+    private var topStudioHeaderBar: some View {
+        HStack(spacing: 10) {
+            Button(action: { dismiss() }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Đóng")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
                 }
-                .onEnded { val in
-                    isPinching = false
-                    let targetScale = zoomScale * val
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                        if targetScale < 1.05 {
-                            zoomScale = 1.0
-                            gestureScale = 1.0
-                            panOffset = .zero
-                            gesturePanOffset = .zero
-                        } else {
-                            let newScale = min(6.0, max(1.0, targetScale))
-                            zoomScale = newScale
-                            gestureScale = 1.0
-                            let combined = CGSize(
-                                width: panOffset.width + gesturePanOffset.width,
-                                height: panOffset.height + gesturePanOffset.height
-                            )
-                            panOffset = clampOffset(combined, scale: newScale, viewportSize: size)
-                            gesturePanOffset = .zero
-                        }
-                    }
-                },
-            DragGesture(minimumDistance: 4)
-                .onChanged { val in
-                    if effectiveScale > 1.05 {
-                        isPanning = true
-                        gesturePanOffset = val.translation
-                    }
+                .foregroundColor(.white.opacity(0.92))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Capsule().fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+
+            // Format & Resolution Pill
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(formatAccentColor)
+                    .frame(width: 6.5, height: 6.5)
+
+                Text(formatBadgeTitle)
+                    .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
+                    .foregroundColor(formatAccentColor)
+
+                Text("•")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white.opacity(0.35))
+
+                Text("\(megapixelsString) · \(currentProcessedImage.width)×\(currentProcessedImage.height)")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.82))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.07))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.7))
+            )
+
+            Spacer(minLength: 4)
+
+            // Quick Loupe 1x / 2.5x / 5x Button
+            Button(action: {
+                cycleQuickLoupeZoom()
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: zoomScale > 1.05 ? "plus.magnifyingglass" : "magnifyingglass")
+                        .font(.system(size: 11, weight: .bold))
+                    Text(String(format: "%.1fx", zoomScale))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
                 }
-                .onEnded { val in
-                    if effectiveScale > 1.05 {
-                        isPanning = false
-                        let combined = CGSize(
-                            width: panOffset.width + val.translation.width,
-                            height: panOffset.height + val.translation.height
+                .foregroundColor(zoomScale > 1.05 ? AlignTheme.electricCyan : .white.opacity(0.85))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(zoomScale > 1.05 ? AlignTheme.electricCyan.opacity(0.18) : Color.white.opacity(0.08))
+                        .overlay(
+                            Capsule().stroke(zoomScale > 1.05 ? AlignTheme.electricCyan.opacity(0.55) : Color.white.opacity(0.12), lineWidth: 0.8)
                         )
-                        let clamped = clampOffset(combined, scale: effectiveScale, viewportSize: size)
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-                            panOffset = clamped
-                            gesturePanOffset = .zero
+                )
+            }
+            .buttonStyle(.plain)
+
+            // Collapse/Expand Inspector Button
+            Button(action: {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                    isInspectorCollapsed.toggle()
+                }
+            }) {
+                Image(systemName: isInspectorCollapsed ? "slider.horizontal.below.rectangle" : "rectangle.expand.vertical")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(isInspectorCollapsed ? AlignTheme.amberGold : .white.opacity(0.82))
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Color.white.opacity(0.09)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Ẩn hiện bảng chi tiết")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.04, green: 0.045, blue: 0.06))
+    }
+
+    // MARK: - 2. Interactive Photo Inspection Viewport
+    private var interactivePhotoViewport: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color(red: 0.02, green: 0.022, blue: 0.03)
+
+                if isSplitCompareMode && zoomScale <= 1.05 && item.saveFormat != .dng {
+                    splitScreenComparisonCanvas(in: geo.size)
+                } else {
+                    zoomableSingleCanvas(in: geo.size)
+                }
+
+                // Processing Shimmer Overlay
+                if isProcessingFilter {
+                    ZStack {
+                        Color.black.opacity(0.32)
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.electricCyan))
+                            Text("Đang kết xuất quang học...")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .fill(Color.black.opacity(0.82))
+                                .overlay(Capsule().stroke(AlignTheme.electricCyan.opacity(0.5), lineWidth: 1))
+                        )
+                    }
+                    .transition(.opacity)
+                }
+
+                // Top-Right Zoom Mini-Map
+                if zoomScale > 1.05 {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            zoomMiniMapOverlay(viewportSize: geo.size)
+                                .padding(.top, 12)
+                                .padding(.trailing, 12)
+                        }
+                        Spacer()
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                }
+
+                // Bottom Viewport Floating Quick Bar (EXIF Pill + Split/Hold Original Controls)
+                VStack {
+                    Spacer()
+                    HStack(alignment: .center, spacing: 8) {
+                        // Quick Optical EXIF Pill
+                        HStack(spacing: 6) {
+                            Image(systemName: "camera.aperture")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(AlignTheme.amberGold)
+                            Text(opticalSummaryLine)
+                                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.92))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5.5)
+                        .background(
+                            Capsule()
+                                .fill(Color.black.opacity(0.72))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.7))
+                        )
+
+                        Spacer()
+
+                        if item.saveFormat != .dng {
+                            // Split Curtain Toggle
+                            if zoomScale <= 1.05 {
+                                Button(action: {
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                                        isSplitCompareMode.toggle()
+                                    }
+                                }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "square.split.2x1")
+                                            .font(.system(size: 10.5, weight: .bold))
+                                        Text(isSplitCompareMode ? "Tắt chia đôi" : "So sánh")
+                                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                                    }
+                                    .foregroundColor(isSplitCompareMode ? .black : .white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5.5)
+                                    .background(
+                                        Capsule().fill(isSplitCompareMode ? AlignTheme.amberGold : Color.black.opacity(0.72))
+                                    )
+                                    .overlay(
+                                        Capsule().stroke(Color.white.opacity(isSplitCompareMode ? 0 : 0.16), lineWidth: 0.7)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            // Hold / Toggle Original Button
+                            Button(action: {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    isHoldingOriginal.toggle()
+                                }
+                            }) {
+                                Text(isHoldingOriginal ? "ĐANG XEM GỐC" : "Xem gốc")
+                                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                                    .foregroundColor(isHoldingOriginal ? .black : .white.opacity(0.92))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5.5)
+                                    .background(
+                                        Capsule().fill(isHoldingOriginal ? AlignTheme.electricCyan : Color.black.opacity(0.72))
+                                    )
+                                    .overlay(
+                                        Capsule().stroke(Color.white.opacity(isHoldingOriginal ? 0 : 0.16), lineWidth: 0.7)
+                                    )
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                }
+            }
+            .clipped()
+        }
+    }
+
+    @ViewBuilder
+    private func zoomableSingleCanvas(in size: CGSize) -> some View {
+        let displayCG = isHoldingOriginal ? item.originalImage : currentProcessedImage
+        Image(uiImage: UIImage(cgImage: displayCG))
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size.width, height: size.height)
+            .scaleEffect(zoomScale)
+            .offset(panOffset)
+            .contentShape(Rectangle())
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { val in
+                        let nextScale = lastZoomScale * val
+                        zoomScale = min(max(nextScale, 1.0), 8.0)
+                        if zoomScale <= 1.02 {
+                            panOffset = .zero
+                        }
+                    }
+                    .onEnded { _ in
+                        if zoomScale < 1.05 {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                                resetZoomAndPan()
+                            }
+                        } else {
+                            lastZoomScale = zoomScale
+                            panOffset = clampPanOffset(panOffset, in: size, scale: zoomScale)
+                            lastPanOffset = panOffset
+                        }
+                    }
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: zoomScale > 1.02 ? 2 : 1000)
+                    .onChanged { val in
+                        guard zoomScale > 1.02 else { return }
+                        let rawOffset = CGSize(
+                            width: lastPanOffset.width + val.translation.width,
+                            height: lastPanOffset.height + val.translation.height
+                        )
+                        panOffset = clampPanOffset(rawOffset, in: size, scale: zoomScale)
+                    }
+                    .onEnded { _ in
+                        guard zoomScale > 1.02 else { return }
+                        lastPanOffset = panOffset
+                    }
+            )
+            .highPriorityGesture(
+                SpatialTapGesture(count: 2)
+                    .onEnded { event in
+                        handleDoubleTap(at: event.location, in: size)
+                    }
+            )
+    }
+
+    @ViewBuilder
+    private func splitScreenComparisonCanvas(in size: CGSize) -> some View {
+        let splitX = size.width * splitRatio
+        ZStack {
+            Image(uiImage: UIImage(cgImage: currentProcessedImage))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size.width, height: size.height)
+
+            Image(uiImage: UIImage(cgImage: item.originalImage))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size.width, height: size.height)
+                .mask(
+                    HStack(spacing: 0) {
+                        Rectangle().frame(width: splitX)
+                        Spacer(minLength: 0)
+                    }
+                )
+
+            // Vertical Curtain Handle
+            ZStack {
+                Rectangle()
+                    .fill(Color.white)
+                    .frame(width: 2, height: size.height)
+                    .shadow(color: .black.opacity(0.6), radius: 3)
+
+                Circle()
+                    .fill(Color.black.opacity(0.82))
+                    .frame(width: 36, height: 36)
+                    .overlay(Circle().stroke(AlignTheme.amberGold, lineWidth: 1.5))
+                    .overlay(
+                        Image(systemName: "arrow.left.and.right")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(AlignTheme.amberGold)
+                    )
+                    .shadow(color: .black.opacity(0.5), radius: 5)
+            }
+            .position(x: splitX, y: size.height / 2)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let newRatio = value.location.x / max(1, size.width)
+                        splitRatio = min(max(newRatio, 0.05), 0.95)
+                    }
+            )
+
+            VStack {
+                HStack {
+                    Text("ẢNH GỐC")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.black.opacity(0.65)))
+                        .padding(.leading, 12)
+
+                    Spacer()
+
+                    Text("ĐÃ CHỈNH")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(AlignTheme.amberGold))
+                        .padding(.trailing, 12)
+                }
+                .padding(.top, 12)
+                Spacer()
+            }
+        }
+    }
+
+    private func zoomMiniMapOverlay(viewportSize: CGSize) -> some View {
+        let thumbW: CGFloat = 76
+        let thumbH: CGFloat = 96
+        let visibleFraction = 1.0 / zoomScale
+        let maxPanX = max(1.0, (viewportSize.width * (zoomScale - 1.0)) / 2.0)
+        let maxPanY = max(1.0, (viewportSize.height * (zoomScale - 1.0)) / 2.0)
+        let normOffsetX = -panOffset.width / maxPanX
+        let normOffsetY = -panOffset.height / maxPanY
+        let boxW = thumbW * visibleFraction
+        let boxH = thumbH * visibleFraction
+        let centerX = (thumbW / 2.0) + (normOffsetX * (thumbW - boxW) / 2.0)
+        let centerY = (thumbH / 2.0) + (normOffsetY * (thumbH - boxH) / 2.0)
+
+        return VStack(alignment: .trailing, spacing: 5) {
+            ZStack {
+                Image(uiImage: UIImage(cgImage: currentProcessedImage))
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: thumbW, height: thumbH)
+                    .clipped()
+                    .overlay(Color.black.opacity(0.32))
+
+                Rectangle()
+                    .stroke(AlignTheme.electricCyan, lineWidth: 1.5)
+                    .frame(width: boxW, height: boxH)
+                    .position(x: centerX, y: centerY)
+            }
+            .frame(width: thumbW, height: thumbH)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
+            )
+
+            Button(action: {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                    resetZoomAndPan()
+                }
+            }) {
+                Text("Đặt lại 1.0x")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(AlignTheme.electricCyan))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - 3. Tabbed Studio Inspector Deck
+    private var studioInspectorDeck: some View {
+        VStack(spacing: 10) {
+            // Segmented Inspector Tab Bar
+            if item.saveFormat != .dng {
+                HStack(spacing: 6) {
+                    ForEach(PhotoDetailInspectorTab.allCases) { tab in
+                        let isSelected = selectedInspectorTab == tab
+                        Button(action: {
+                            withAnimation(.spring(response: 0.26, dampingFraction: 0.82)) {
+                                selectedInspectorTab = tab
+                            }
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: tab.iconName)
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(tab.rawValue)
+                                    .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                            }
+                            .foregroundColor(isSelected ? .white : .white.opacity(0.58))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(isSelected ? Color.white.opacity(0.14) : Color.clear)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                            .stroke(isSelected ? AlignTheme.electricCyan.opacity(0.45) : Color.clear, lineWidth: 0.9)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(3)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.white.opacity(0.05))
+                )
+                .padding(.horizontal, 14)
+            }
+
+            // Tab Content
+            Group {
+                if item.saveFormat == .dng || selectedInspectorTab == .telemetryAndDetail {
+                    telemetryAndDetailTabContent
+                } else if selectedInspectorTab == .filmPresets {
+                    filmPresetsTabContent
+                } else {
+                    masterFrameTabContent
+                }
+            }
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(
+            Color(red: 0.055, green: 0.06, blue: 0.078)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 0.8)
                 }
         )
     }
 
-    // MARK: - Pan & Bounds Clamping Helper
-    private func clampOffset(_ offset: CGSize, scale: CGFloat, viewportSize: CGSize) -> CGSize {
-        guard scale > 1.0 else { return .zero }
-        let imgW = CGFloat(item.originalImage.width)
-        let imgH = CGFloat(max(1, item.originalImage.height))
-        let imgAspect = imgW / imgH
-        let vpAspect = viewportSize.width / max(1, viewportSize.height)
-
-        let baseW: CGFloat = (vpAspect > imgAspect) ? (viewportSize.height * imgAspect) : viewportSize.width
-        let baseH: CGFloat = (vpAspect > imgAspect) ? viewportSize.height : (viewportSize.width / imgAspect)
-
-        let renderedW = baseW * scale
-        let renderedH = baseH * scale
-
-        let maxPanX = max(0, (renderedW - viewportSize.width) / 2)
-        let maxPanY = max(0, (renderedH - viewportSize.height) / 2)
-
-        let clampedX = min(maxPanX, max(-maxPanX, offset.width))
-        let clampedY = min(maxPanY, max(-maxPanY, offset.height))
-
-        return CGSize(width: clampedX, height: clampedY)
-    }
-
-    // MARK: - Split Comparison Controls (Active only at 1.0x)
-    @ViewBuilder
-    private func splitComparisonControls(size: CGSize) -> some View {
-        let dividerX = min(max(0, size.width * splitOffset), size.width)
-        ZStack(alignment: .topLeading) {
-            // 1. Vertical Split Line
-            Rectangle()
-                .fill(Color.white.opacity(0.92))
-                .frame(width: 2, height: size.height)
-                .shadow(color: Color.black.opacity(0.70), radius: 3, x: 0, y: 0)
-                .position(x: dividerX, y: size.height / 2)
-
-            // 2. Subtle Before / After Badges
-            HStack {
-                Text("ĐÃ LỌC")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.45)))
-                    .padding(.leading, 8)
-                Spacer()
-                Text("ẢNH GỐC")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.black.opacity(0.45)))
-                    .padding(.trailing, 8)
-            }
-            .frame(width: size.width)
-            .padding(.top, 10)
-            .allowsHitTesting(false)
-
-            // 3. Center Draggable Knob with Left/Right Indicator Arrows
-            ZStack {
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 32, height: 32)
-                    .shadow(color: Color.black.opacity(0.60), radius: 4, x: 0, y: 1)
-
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color.black.opacity(0.80))
-                    .offset(x: -7)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color.black.opacity(0.80))
-                    .offset(x: 7)
-
-                Circle()
-                    .fill(Color.black.opacity(0.35))
-                    .frame(width: 3.5, height: 3.5)
-            }
-            .position(x: dividerX, y: size.height / 2)
-
-            // 4. Full-Height 56pt Wide Hit-Target Area with High Priority Gesture
-            Rectangle()
-                .fill(Color.white.opacity(0.001))
-                .frame(width: 56, height: size.height)
-                .contentShape(Rectangle())
-                .position(x: dividerX, y: size.height / 2)
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 0, coordinateSpace: .named("PhotoViewport"))
-                        .onChanged { val in
-                            let rawSplit = val.location.x / max(1, size.width)
-                            splitOffset = max(0.01, min(0.99, rawSplit))
+    // MARK: - Tab 1: Optical Telemetry, RGB/Luma Histogram & Micro-Detail Studio
+    private var telemetryAndDetailTabContent: some View {
+        VStack(spacing: 10) {
+            // Row A: Real RGB/Luma Histogram + Exposure Telemetry
+            HStack(spacing: 12) {
+                // Histogram Canvas
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(showRGBChannelsInHistogram ? "BIỂU ĐỒ QUANG PHỔ RGB + LUMA" : "BIỂU ĐỒ ĐỘ SÁNG LUMA")
+                            .font(.system(size: 9.0, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white.opacity(0.55))
+                        Spacer()
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                showRGBChannelsInHistogram.toggle()
+                            }
+                        }) {
+                            Text(showRGBChannelsInHistogram ? "RGB" : "LUMA")
+                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(AlignTheme.electricCyan)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1.5)
+                                .background(Capsule().fill(AlignTheme.electricCyan.opacity(0.15)))
                         }
-                )
-        }
-    }
-
-    // MARK: - Modern iPhone Style Mini-Map (Vùng đang zoom)
-    @ViewBuilder
-    private func zoomRegionMiniMap(viewportSize: CGSize) -> some View {
-        if effectiveScale > 1.05 {
-            let imgW = CGFloat(item.originalImage.width)
-            let imgH = CGFloat(max(1, item.originalImage.height))
-            let imgAspect = imgW / imgH
-            let vpAspect = viewportSize.width / max(1, viewportSize.height)
-
-            let baseW: CGFloat = (vpAspect > imgAspect) ? (viewportSize.height * imgAspect) : viewportSize.width
-            let baseH: CGFloat = (vpAspect > imgAspect) ? viewportSize.height : (viewportSize.width / imgAspect)
-            let renderedW = baseW * effectiveScale
-            let renderedH = baseH * effectiveScale
-            let maxPanX = max(1.0, (renderedW - viewportSize.width) / 2)
-            let maxPanY = max(1.0, (renderedH - viewportSize.height) / 2)
-
-            let miniWidth: CGFloat = imgAspect >= 1.0 ? 74 : 56
-            let miniHeight: CGFloat = max(40, min(86, miniWidth / imgAspect))
-
-            // Viewport indicator dimensions in mini-map
-            let indicatorW = max(10.0, miniWidth / effectiveScale)
-            let indicatorH = max(10.0, miniHeight / effectiveScale)
-
-            let maxIndicatorShiftX = max(0, (miniWidth - indicatorW) / 2)
-            let maxIndicatorShiftY = max(0, (miniHeight - indicatorH) / 2)
-
-            let currOffset = effectiveOffset
-            let normX = max(-1.0, min(1.0, currOffset.width / maxPanX))
-            let normY = max(-1.0, min(1.0, currOffset.height / maxPanY))
-
-            let indicatorOffsetX = -normX * maxIndicatorShiftX
-            let indicatorOffsetY = -normY * maxIndicatorShiftY
-
-            VStack(alignment: .leading, spacing: 5) {
-                // Header: Zoom Level Badge & 1.0x Reset Button
-                HStack(spacing: 4) {
-                    HStack(spacing: 2) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 8, weight: .bold))
-                        Text(String(format: "%.1f×", effectiveScale))
-                            .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
+                        .buttonStyle(.plain)
                     }
-                    .foregroundColor(champagne)
 
-                    Spacer(minLength: 2)
-
-                    Button(action: {
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                            zoomScale = 1.0
-                            gestureScale = 1.0
-                            panOffset = .zero
-                            gesturePanOffset = .zero
-                        }
-                    }) {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.white.opacity(0.85))
-                            .padding(3)
-                            .background(Circle().fill(Color.white.opacity(0.18)))
-                    }
-                }
-                .frame(width: miniWidth)
-
-                // Thumbnail with Live Viewport Box
-                ZStack {
-                    Image(decorative: currentProcessedImage, scale: 1.0, orientation: .up)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: miniWidth, height: miniHeight)
-                        .cornerRadius(5)
-
-                    // Darkened backdrop so illuminated box stands out
-                    Color.black.opacity(0.35)
-                        .frame(width: miniWidth, height: miniHeight)
-                        .cornerRadius(5)
-
-                    // Illuminated viewport rectangle
-                    RoundedRectangle(cornerRadius: 2.5)
-                        .fill(Color.white.opacity(0.15))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 2.5)
-                                .stroke(champagne, lineWidth: 1.5)
-                        )
-                        .frame(width: indicatorW, height: indicatorH)
-                        .offset(x: indicatorOffsetX, y: indicatorOffsetY)
-                        .shadow(color: Color.black.opacity(0.6), radius: 2)
-                }
-                .frame(width: miniWidth, height: miniHeight)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(Color.white.opacity(0.24), lineWidth: 0.8)
-                )
-            }
-            .padding(6)
-            .background(
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(Color.black.opacity(0.75))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                    PhotoDetailHistogramCanvasView(
+                        snapshot: histogramSnapshot,
+                        showRGB: showRGBChannelsInHistogram
                     )
-                    .shadow(color: Color.black.opacity(0.55), radius: 6, x: 0, y: 3)
-            )
-            .transition(.asymmetric(
-                insertion: .scale(scale: 0.88).combined(with: .opacity),
-                removal: .scale(scale: 0.92).combined(with: .opacity)
-            ))
-            .animation(.spring(response: 0.28, dampingFraction: 0.8), value: effectiveScale)
-        }
-    }
+                    .frame(height: 46)
 
-    // MARK: - AI Loading Overlay
-    private var aiLoadingOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.6)
-            VStack(spacing: 10) {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: champagne))
-                    .scaleEffect(1.2)
-                Text("Đang tối ưu màu…")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white)
-            }
-            .padding(18)
-            .background(RoundedRectangle(cornerRadius: 14).fill(Color(white: 0.12)))
-        }
-    }
-
-    // MARK: - Subtle AI Sharpness Action (Làm nét nhẹ AI - Giữ 100% màu sắc & chất ảnh)
-    private func toggleAISharpness() {
-        guard item.saveFormat != .dng else {
-            aiOptimizationSuccessNote = "DNG giữ nguyên dữ liệu gốc. Chọn JPEG/HEIF để dùng bộ lọc."
-            return
-        }
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.prepare()
-        generator.impactOccurred()
-
-        if isAISharpnessEnabled {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isAISharpnessEnabled = false
-                currentProcessedImage = baseProcessedImage
-                aiOptimizationSuccessNote = "Đã tắt làm nét AI"
-            }
-        } else {
-            isSharpeningProcessing = true
-            let input = baseProcessedImage
-            DispatchQueue.global(qos: .userInitiated).async {
-                let sharpened = FilmFilterEngine.shared.applySubtleAISharpness(to: input, intensity: 0.50) ?? input
-                DispatchQueue.main.async {
-                    self.isSharpeningProcessing = false
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        self.isAISharpnessEnabled = true
-                        self.currentProcessedImage = sharpened
-                        self.aiOptimizationSuccessNote = "\u{2728} Đã bật làm nét nhẹ AI (bảo toàn 100% màu sắc)"
+                    HStack(spacing: 8) {
+                        Text("TB: \(Int(round(histogramSnapshot.meanLuminance * 100)))%")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.70))
+                        Text("Tối: \(String(format: "%.1f%%", histogramSnapshot.shadowClipPercent))")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.60))
+                        Text("Cháy: \(String(format: "%.1f%%", histogramSnapshot.highlightClipPercent))")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(histogramSnapshot.highlightClipPercent > 3.5 ? AlignTheme.amberGold : .white.opacity(0.60))
                     }
                 }
-            }
-        }
-    }
+                .padding(9)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Color.black.opacity(0.42))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 0.7)
+                        )
+                )
 
-    // MARK: - Preset Switcher Action
-    private func applyPresetToPreview(_ preset: FilmPreset) {
-        guard item.saveFormat != .dng else {
-            aiOptimizationSuccessNote = "DNG giữ nguyên dữ liệu gốc. Chọn JPEG/HEIF để dùng bộ lọc."
-            return
-        }
-        let generator = UISelectionFeedbackGenerator()
-        generator.prepare()
-        generator.selectionChanged()
-
-        renderGeneration += 1
-        let generation = renderGeneration
-        let sharpen = isAISharpnessEnabled
-        selectedPreviewPreset = preset
-        let original = item.originalImage
-        let params = currentAIParams
-        DispatchQueue.global(qos: .userInitiated).async {
-            let rendered = autoreleasepool {
-                FilmFilterEngine.shared.applyPresetAndAIParameters(to: original, preset: preset, params: params) ?? original
-            }
-            let finalImage: CGImage
-            if sharpen {
-                finalImage = autoreleasepool {
-                    FilmFilterEngine.shared.applySubtleAISharpness(to: rendered, intensity: 0.50) ?? rendered
-                }
-            } else {
-                finalImage = rendered
-            }
-            DispatchQueue.main.async {
-                guard self.renderGeneration == generation else { return }
-                self.baseProcessedImage = rendered
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    self.currentProcessedImage = finalImage
-                    if self.splitOffset >= 0.98 || self.splitOffset <= 0.02 {
-                        self.splitOffset = 0.5
+                // 2x2 EXIF Telemetry Grid
+                VStack(spacing: 6) {
+                    HStack(spacing: 6) {
+                        exifMiniTile(title: "TIÊU CỰ", value: focalLengthDisplayString, accent: AlignTheme.amberGold)
+                        exifMiniTile(title: "KHẨU ĐỘ", value: String(format: "f/%.1f", item.aperture > 0 ? item.aperture : 1.8), accent: .white)
+                    }
+                    HStack(spacing: 6) {
+                        exifMiniTile(title: "TỐC ĐỘ", value: formattedShutterSpeed, accent: AlignTheme.electricCyan)
+                        exifMiniTile(title: "ĐỘ NHẠY", value: "ISO \(Int(round(max(25, item.iso))))", accent: .white)
                     }
                 }
+                .frame(width: 158)
             }
-        }
-    }
+            .padding(.horizontal, 14)
 
-    // MARK: - Post-Capture AI Color Optimization (AI Color Director)
+            // Row B: AI Scene & Composition Telemetry Strip
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    telemetryBadgeChip(
+                        icon: "sparkles",
+                        label: "Bối cảnh: \(item.sceneType.rawValue)",
+                        tint: AlignTheme.electricCyan
+                    )
+                    telemetryBadgeChip(
+                        icon: "viewfinder",
+                        label: "Bố cục: \(item.compositionRule.rawValue) (\(Int(round(item.alignmentScore * 100)))%)",
+                        tint: AlignTheme.amberGold
+                    )
+                    telemetryBadgeChip(
+                        icon: "camera.filters",
+                        label: "Màu: \(activePreset.rawValue)",
+                        tint: .white.opacity(0.9)
+                    )
+                    telemetryBadgeChip(
+                        icon: "doc.richtext",
+                        label: estimatedFileSizeString,
+                        tint: .white.opacity(0.75)
+                    )
+                }
+                .padding(.horizontal, 14)
+            }
 
-    private func optimizeWithAIStudio() {
-        guard item.saveFormat != .dng else {
-            aiOptimizationSuccessNote = "DNG giữ nguyên dữ liệu gốc. Chọn JPEG/HEIF để dùng bộ lọc."
-            return
-        }
-        guard !isOptimizingWithAI else { return }
-        isOptimizingWithAI = true
-        aiErrorMessage = nil
-        aiOptimizationSuccessNote = nil
+            // Row C: Optical Micro-Detail & AI Auto Color Controls (for non-DNG)
+            if item.saveFormat != .dng {
+                HStack(spacing: 8) {
+                    // 3-Level Micro-Detail Selector
+                    HStack(spacing: 3) {
+                        Image(systemName: "dial.high.fill")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundColor(AlignTheme.amberGold)
+                            .padding(.leading, 6)
 
-        let metrics = GeminiService.extractColorMetrics(from: item.originalImage)
-
-        GeminiService.shared.analyzeAndSelectBestFilmPreset(
-            image: item.originalImage,
-            sceneContext: item.sceneType,
-            colorMetrics: metrics,
-            allowCloud: viewModel?.useGeminiForAnalysis ?? false
-        ) { result in
-            DispatchQueue.main.async {
-                self.isOptimizingWithAI = false
-                switch result {
-                case .success(let data):
-                    let chosenPreset = data.preset
-                    let recipe = data.recipe
-                    let explanation = data.explanation
-                    let latency = data.latencyMs
-                    let aiParams = recipe.asAIColorParameters
-
-                    self.aiRecommendedPreset = chosenPreset
-                    self.selectedPreviewPreset = chosenPreset
-                    self.currentAIParams = aiParams
-
-                    if let enhanced = FilmFilterEngine.shared.applyPresetAndAIParameters(to: self.item.originalImage, preset: chosenPreset, params: aiParams) {
-                        self.baseProcessedImage = enhanced
-                        let finalImage: CGImage
-                        if self.isAISharpnessEnabled {
-                            finalImage = FilmFilterEngine.shared.applySubtleAISharpness(to: enhanced, intensity: 0.50) ?? enhanced
-                        } else {
-                            finalImage = enhanced
+                        ForEach(PhotoMicroDetailLevel.allCases) { level in
+                            let selected = microDetailLevel == level
+                            Button(action: {
+                                guard microDetailLevel != level else { return }
+                                microDetailLevel = level
+                                rebuildEditedImage()
+                            }) {
+                                Text(level.title)
+                                    .font(.system(size: 10.5, weight: selected ? .bold : .medium, design: .rounded))
+                                    .foregroundColor(selected ? .black : .white.opacity(0.80))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        Capsule()
+                                            .fill(selected ? AlignTheme.amberGold : Color.clear)
+                                    )
+                            }
+                            .buttonStyle(.plain)
                         }
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            self.currentProcessedImage = finalImage
-                            if self.splitOffset >= 0.98 || self.splitOffset <= 0.02 {
-                                self.splitOffset = 0.5
+                    }
+                    .padding(3)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.07))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 0.7))
+                    )
+
+                    Spacer(minLength: 4)
+
+                    // AI Auto Color Enhancement Toggle
+                    Button(action: {
+                        toggleAIFullColorEnhancement()
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(isAIEnhanced ? "AI Màu: Bật" : "AI Cân Màu")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                        }
+                        .foregroundColor(isAIEnhanced ? .black : .white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule()
+                                .fill(
+                                    isAIEnhanced
+                                    ? LinearGradient(colors: [AlignTheme.electricCyan, AlignTheme.amberGold], startPoint: .leading, endPoint: .trailing)
+                                    : LinearGradient(colors: [Color.white.opacity(0.12), Color.white.opacity(0.08)], startPoint: .leading, endPoint: .trailing)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isProcessingFilter)
+                }
+                .padding(.horizontal, 14)
+            }
+        }
+    }
+
+    // MARK: - Tab 2: Film Presets & Live Intensity Studio
+    private var filmPresetsTabContent: some View {
+        VStack(spacing: 8) {
+            // Intensity Slider Row
+            HStack(spacing: 10) {
+                Text("CƯỜNG ĐỘ MÀU")
+                    .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white.opacity(0.60))
+
+                Slider(
+                    value: $activeFilmIntensity,
+                    in: 0.15...1.0,
+                    step: 0.05,
+                    onEditingChanged: { editing in
+                        if !editing {
+                            rebuildEditedImage()
+                        }
+                    }
+                )
+                .tint(AlignTheme.electricCyan)
+                .disabled(activePreset == .standard)
+
+                Text("\(Int(round(activeFilmIntensity * 100)))%")
+                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(AlignTheme.electricCyan)
+                    .frame(width: 38, alignment: .trailing)
+            }
+            .padding(.horizontal, 16)
+
+            // Category Filter Tabs
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(FilmPresetCategory.allCases) { category in
+                        let isSelected = selectedCategory == category
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                selectedCategory = category
+                            }
+                        }) {
+                            Text(category.displayName)
+                                .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                                .foregroundColor(isSelected ? .black : .white.opacity(0.75))
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 5)
+                                .background(
+                                    Capsule()
+                                        .fill(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.08))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 14)
+            }
+
+            // Preset Cards Strip
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(selectedCategory.presets) { preset in
+                        let isSelected = activePreset == preset
+                        Button(action: {
+                            activePreset = preset
+                            rebuildEditedImage()
+                        }) {
+                            VStack(spacing: 4) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .fill(preset.previewColor.opacity(isSelected ? 0.35 : 0.18))
+                                        .frame(width: 64, height: 42)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                                .stroke(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.14), lineWidth: isSelected ? 1.8 : 0.8)
+                                        )
+
+                                    VStack(spacing: 2) {
+                                        Image(systemName: preset.deviceIconSF)
+                                            .font(.system(size: 13, weight: .bold))
+                                            .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.9))
+                                        Text(preset.deviceBadge)
+                                            .font(.system(size: 7.5, weight: .heavy, design: .monospaced))
+                                            .foregroundColor(preset.previewColor)
+                                    }
+                                }
+
+                                Text(preset.shortTitle)
+                                    .font(.system(size: 10, weight: isSelected ? .bold : .medium, design: .rounded))
+                                    .foregroundColor(isSelected ? .white : .white.opacity(0.70))
+                                    .lineLimit(1)
+                                    .frame(width: 66)
                             }
                         }
-                        self.aiOptimizationSuccessNote = "AI khuyen dung \(chosenPreset.displayName): \(explanation) (\(latency)ms)"
-                        self.saveEnhancedImageToPhotos(finalImage, appliedPreset: chosenPreset, aiParams: aiParams)
+                        .buttonStyle(.plain)
+                        .disabled(isProcessingFilter)
                     }
-                case .failure(let error):
-                    self.aiErrorMessage = "Lỗi: \(error.localizedDescription)"
+                }
+                .padding(.horizontal, 14)
+            }
+        }
+    }
+
+    // MARK: - Tab 3: Master Frame Watermark Studio
+    private var masterFrameTabContent: some View {
+        VStack(spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("KHUNG NGHỆ THUẬT MASTER")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("Đính kèm thông số tiêu cự, khẩu độ, ISO & chữ ký quang học")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+                Spacer()
+                Button(action: {
+                    isMasterFrameApplied.toggle()
+                    rebuildEditedImage()
+                }) {
+                    Text(isMasterFrameApplied ? "ĐANG BẬT" : "BẬT KHUNG")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundColor(isMasterFrameApplied ? .black : .white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(isMasterFrameApplied ? AlignTheme.amberGold : Color.white.opacity(0.12))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+
+            // Theme Picker Row
+            HStack(spacing: 8) {
+                ForEach(MasterWatermarkTheme.allCases) { theme in
+                    let isSelected = masterFrameTheme == theme
+                    Button(action: {
+                        masterFrameTheme = theme
+                        isMasterFrameApplied = true
+                        rebuildEditedImage()
+                    }) {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(theme == .classicWhite ? Color.white : (theme == .obsidianBlack ? Color(white: 0.18) : AlignTheme.amberGold))
+                                .frame(width: 10, height: 10)
+                                .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 0.6))
+                            Text(theme.rawValue)
+                                .font(.system(size: 10.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                                .foregroundColor(isSelected ? .white : .white.opacity(0.72))
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(isSelected ? Color.white.opacity(0.14) : Color.white.opacity(0.06))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                        .stroke(isSelected ? AlignTheme.amberGold : Color.clear, lineWidth: 1.0)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+    }
+
+    // MARK: - 4. Bottom Primary Action Bar
+    private var bottomPrimaryActionBar: some View {
+        HStack(spacing: 10) {
+            // Reset to Original Button (when modified)
+            if hasModifiedSinceOpen && item.saveFormat != .dng {
+                Button(action: {
+                    resetToOriginalPhoto()
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("Gốc")
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 11)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.11))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.8))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Save to Apple Photos Button
+            Button(action: {
+                saveCurrentVersionToPhotos()
+            }) {
+                HStack(spacing: 7) {
+                    if isSavingToLibrary {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: hasSavedNewEnhancement ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
+                            .font(.system(size: 13.5, weight: .bold))
+                    }
+                    Text(hasSavedNewEnhancement ? "Đã lưu vào Photos" : (hasModifiedSinceOpen ? "Lưu bản chỉnh sửa" : "Lưu vào Photos"))
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(hasSavedNewEnhancement ? .white : .black)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(
+                    Capsule()
+                        .fill(
+                            hasSavedNewEnhancement
+                            ? Color.green.opacity(0.75)
+                            : AlignTheme.electricCyan
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isSavingToLibrary || isProcessingFilter)
+
+            // Share Link (Preserving OriginalDNGShare contract for RAW DNG)
+            if item.saveFormat == .dng {
+                if let url = item.rawLocalFileURL, FileManager.default.fileExists(atPath: url.path) {
+                    ShareLink(item: url) {
+                        shareButtonLabel(title: "RAW")
+                    }
+                } else if let data = item.rawPhotoData, SuperResolutionRAWEngine.isDNGData(data) {
+                    ShareLink(item: OriginalDNGShare(data: data),
+                              preview: SharePreview("AlignAI True RAW DNG")) {
+                        shareButtonLabel(title: "RAW")
+                    }
+                }
+            } else if let shareURL = currentPhotoShareURL {
+                ShareLink(
+                    item: shareURL,
+                    preview: SharePreview(
+                        "AlignAI Studio • \(activePreset.rawValue)",
+                        image: Image(uiImage: UIImage(cgImage: currentProcessedImage))
+                    )
+                ) {
+                    shareButtonLabel(title: "Chia sẻ")
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.035, green: 0.04, blue: 0.055))
+    }
+
+    private func shareButtonLabel(title: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 12.5, weight: .bold))
+            Text(title)
+                .font(.system(size: 12.5, weight: .bold, design: .rounded))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(
+            Capsule()
+                .fill(Color.white.opacity(0.12))
+                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+        )
+    }
+
+    // MARK: - Helper Subviews
+    private func exifMiniTile(title: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                .foregroundColor(.white.opacity(0.48))
+            Text(value)
+                .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                .foregroundColor(accent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.black.opacity(0.42))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.7)
+                )
+        )
+    }
+
+    private func telemetryBadgeChip(icon: String, label: String, tint: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(tint)
+            Text(label)
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .foregroundColor(.white.opacity(0.88))
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            Capsule()
+                .fill(Color.white.opacity(0.06))
+                .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 0.6))
+        )
+    }
+
+    // MARK: - Non-Destructive Rendering Pipeline
+    private func rebuildEditedImage() {
+        isProcessingFilter = true
+        hasSavedNewEnhancement = false
+
+        let baseImage = item.originalImage
+        let preset = activePreset
+        let intensity = Float(activeFilmIntensity)
+        let aiParams = isAIEnhanced ? (activeAIColorParams ?? item.sceneType.aiFullColorParameters) : nil
+        let detailLevel = microDetailLevel
+        let applyMaster = isMasterFrameApplied
+        let theme = masterFrameTheme
+        let logo = masterFrameLogo
+        let deviceName = viewModel?.masterWatermarkDeviceName ?? "ALIGN STUDIO OPTICAL"
+        let customLogo = viewModel?.masterWatermarkCustomLogoImage
+        let specs = PhotoWatermarkSpecs.from(
+            iso: item.iso,
+            shutterSpeed: item.shutterSpeed,
+            focalLength: item.focalLength > 0 ? item.focalLength : 24.0,
+            aperture: Double(item.aperture > 0 ? item.aperture : 1.8)
+        )
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var working = baseImage
+
+            // 1. Film Simulation & AI Color Parameters
+            if preset != .standard || aiParams != nil {
+                working = FilmFilterEngine.shared.applyPresetAndAIParameters(
+                    to: working,
+                    preset: preset,
+                    params: aiParams,
+                    intensity: intensity
+                ) ?? working
+            }
+
+            // 2. Optical Micro-Detail & Clarity
+            if detailLevel != .off {
+                working = Self.applyMicroDetailEnhancement(to: working, level: detailLevel)
+            }
+
+            // 3. Master Art Frame Watermark
+            if applyMaster {
+                working = MasterWatermarkRenderer.shared.renderMasterFrame(
+                    on: working,
+                    deviceName: deviceName,
+                    specs: specs,
+                    theme: theme,
+                    logoStyle: logo,
+                    customLogo: customLogo
+                ) ?? working
+            }
+
+            let hist = PhotoDetailHistogramSnapshot.compute(from: working)
+
+            DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    self.currentProcessedImage = working
+                    self.histogramSnapshot = hist
+                    self.isProcessingFilter = false
                 }
             }
         }
     }
 
-    private func saveEnhancedImageToPhotos(_ cgImage: CGImage, appliedPreset: FilmPreset? = nil, aiParams: AIColorParameters? = nil) {
-        if item.saveFormat == .dng {
-            if let vm = viewModel {
-                vm.savePhotoToLibrary(item) { success in
-                    self.hasSavedNewEnhancement = success
-                    if !success { self.aiErrorMessage = vm.saveErrorMessage }
-                }
-            } else if let data = item.rawPhotoData, SuperResolutionRAWEngine.isDNGData(data) {
-                let access: PHAccessLevel = Bundle.main.object(forInfoDictionaryKey: "NSPhotoLibraryAddUsageDescription") != nil ? .addOnly : .readWrite
-                PHPhotoLibrary.requestAuthorization(for: access) { status in
-                    guard status == .authorized || status == .limited else { return }
-                    PHPhotoLibrary.shared().performChanges({
-                        let options = PHAssetResourceCreationOptions()
-                        options.uniformTypeIdentifier = "com.adobe.raw-image"
-                        options.originalFilename = "AlignAI.dng"
-                        let request = PHAssetCreationRequest.forAsset()
-                        request.addResource(with: .photo, data: data, options: options)
-                        if let companion = item.processedCompanionData {
-                            let previewOptions = PHAssetResourceCreationOptions()
-                            previewOptions.uniformTypeIdentifier = UTType.jpeg.identifier
-                            previewOptions.originalFilename = "AlignAI_preview.jpg"
-                            request.addResource(with: .alternatePhoto, data: companion, options: previewOptions)
-                        }
-                    }) { success, _ in
-                        DispatchQueue.main.async { self.hasSavedNewEnhancement = success }
-                    }
-                }
+    private static func applyMicroDetailEnhancement(to image: CGImage, level: PhotoMicroDetailLevel) -> CGImage {
+        guard level != .off, image.width >= 32, image.height >= 32 else { return image }
+        return autoreleasepool {
+            var ci = CIImage(cgImage: image)
+            if let unsharp = CIFilter(name: "CIUnsharpMask") {
+                unsharp.setValue(ci, forKey: kCIInputImageKey)
+                unsharp.setValue(1.18, forKey: kCIInputRadiusKey)
+                unsharp.setValue(level.unsharpIntensity, forKey: kCIInputIntensityKey)
+                if let out = unsharp.outputImage { ci = out }
             }
-            return
+            if let sharpen = CIFilter(name: "CISharpenLuminance") {
+                sharpen.setValue(ci, forKey: kCIInputImageKey)
+                sharpen.setValue(level.luminanceSharpness, forKey: kCIInputSharpnessKey)
+                if let out = sharpen.outputImage { ci = out }
+            }
+            if let color = CIFilter(name: "CIColorControls") {
+                color.setValue(ci, forKey: kCIInputImageKey)
+                color.setValue(level.microContrast, forKey: kCIInputContrastKey)
+                if let out = color.outputImage { ci = out }
+            }
+            return detailCIContext.createCGImage(ci, from: ci.extent.integral) ?? image
         }
-        let presetToSave = appliedPreset ?? selectedPreviewPreset
-        let paramsToSave = aiParams ?? currentAIParams ?? item.aiColorParameters
+    }
 
-        if let vm = viewModel {
-            // Giữ trọn vẹn Live Photo: đặt processedCompanionData = nil để mã hóa lại cgImage đã áp màu mới kèm metadata Live Photo
-            let updatedItem = CapturedPhotoItem(
-                originalImage: item.originalImage,
-                processedImage: cgImage,
-                rawPhotoData: item.rawPhotoData,
-                processedCompanionData: nil,
-                saveFormat: item.saveFormat,
-                preservesOriginalFile: false,
-                livePhotoMovieURL: item.livePhotoMovieURL,
-                sceneType: item.sceneType,
-                appliedPreset: presetToSave,
-                compositionRule: item.compositionRule,
-                alignmentScore: item.alignmentScore,
-                timestamp: Date(),
-                iso: item.iso,
-                shutterSpeed: item.shutterSpeed,
-                aiColorParameters: paramsToSave
-            )
-            vm.savePhotoToLibrary(updatedItem) { success in
-                self.hasSavedNewEnhancement = success
-                if !success { self.aiErrorMessage = vm.saveErrorMessage }
+    private func toggleAIFullColorEnhancement() {
+        isAIEnhanced.toggle()
+        if isAIEnhanced {
+            activeAIColorParams = item.sceneType.aiFullColorParameters
+            if activePreset == .standard {
+                activePreset = item.sceneType.recommendedFilter
+                selectedCategory = activePreset.category
             }
         } else {
-            let uiImage = UIImage(cgImage: cgImage)
-            PHPhotoLibrary.shared().performChanges({
-                PHAssetChangeRequest.creationRequestForAsset(from: uiImage)
-            }) { success, error in
-                DispatchQueue.main.async {
-                    self.hasSavedNewEnhancement = success
-                    if !success { self.aiErrorMessage = error?.localizedDescription }
-                }
+            activeAIColorParams = nil
+        }
+        rebuildEditedImage()
+    }
+
+    private func resetToOriginalPhoto() {
+        activePreset = .standard
+        activeFilmIntensity = 1.0
+        selectedCategory = .original
+        isAIEnhanced = false
+        activeAIColorParams = nil
+        microDetailLevel = .off
+        isMasterFrameApplied = false
+        isHoldingOriginal = false
+        currentProcessedImage = item.originalImage
+        hasSavedNewEnhancement = false
+        refreshHistogram(for: item.originalImage)
+    }
+
+    private func refreshHistogram(for image: CGImage) {
+        DispatchQueue.global(qos: .utility).async {
+            let snap = PhotoDetailHistogramSnapshot.compute(from: image)
+            DispatchQueue.main.async {
+                self.histogramSnapshot = snap
             }
         }
+    }
+
+    private func saveCurrentVersionToPhotos() {
+        guard let vm = viewModel else { return }
+        isSavingToLibrary = true
+
+        let preserveOriginal = !hasModifiedSinceOpen && item.preservesOriginalFile &&
+            currentProcessedImage === item.processedImage
+        let updatedItem = CapturedPhotoItem(
+            originalImage: item.originalImage,
+            processedImage: currentProcessedImage,
+            rawPhotoData: item.rawPhotoData,
+            processedCompanionData: preserveOriginal ? item.processedCompanionData : nil,
+            preservesOriginalFile: preserveOriginal,
+            rawLocalFileURL: item.rawLocalFileURL,
+            livePhotoMovieURL: item.livePhotoMovieURL,
+            sceneType: item.sceneType,
+            compositionRule: item.compositionRule,
+            appliedFilter: activePreset,
+            alignmentScore: item.alignmentScore,
+            iso: item.iso,
+            shutterSpeed: item.shutterSpeed,
+            focalLength: item.focalLength,
+            aperture: item.aperture,
+            saveFormat: item.saveFormat
+        )
+
+        vm.savePhotoToLibrary(updatedItem) { success in
+            self.isSavingToLibrary = false
+            self.hasSavedNewEnhancement = success
+        }
+    }
+
+    // MARK: - Zoom & Pan Helpers
+    private func cycleQuickLoupeZoom() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+            if zoomScale < 1.5 {
+                zoomScale = 2.5
+                lastZoomScale = 2.5
+            } else if zoomScale < 4.0 {
+                zoomScale = 5.0
+                lastZoomScale = 5.0
+            } else {
+                resetZoomAndPan()
+            }
+        }
+    }
+
+    private func resetZoomAndPan() {
+        zoomScale = 1.0
+        lastZoomScale = 1.0
+        panOffset = .zero
+        lastPanOffset = .zero
+    }
+
+    private func clampPanOffset(_ offset: CGSize, in size: CGSize, scale: CGFloat) -> CGSize {
+        guard scale > 1.0 else { return .zero }
+        let maxX = (size.width * (scale - 1.0)) / 2.0
+        let maxY = (size.height * (scale - 1.0)) / 2.0
+        return CGSize(
+            width: min(max(offset.width, -maxX), maxX),
+            height: min(max(offset.height, -maxY), maxY)
+        )
+    }
+
+    private func handleDoubleTap(at location: CGPoint, in size: CGSize) {
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
+            let nextScale: CGFloat
+            if zoomScale < 1.5 {
+                nextScale = 2.8
+            } else if zoomScale < 4.2 {
+                nextScale = 5.0
+            } else {
+                resetZoomAndPan()
+                return
+            }
+
+            let center = CGPoint(x: size.width / 2.0, y: size.height / 2.0)
+            let dx = center.x - location.x
+            let dy = center.y - location.y
+            let targetOffset = CGSize(width: dx * (nextScale - 1.0), height: dy * (nextScale - 1.0))
+
+            zoomScale = nextScale
+            lastZoomScale = nextScale
+            panOffset = clampPanOffset(targetOffset, in: size, scale: nextScale)
+            lastPanOffset = panOffset
+        }
+    }
+
+    // MARK: - Share & Format Metadata Helpers
+    private struct OriginalDNGShare: Transferable {
+        let data: Data
+        static var transferRepresentation: some TransferRepresentation {
+            DataRepresentation(exportedContentType: UTType(filenameExtension: "dng") ?? .rawImage) { value in
+                value.data
+            }
+        }
+    }
+
+    private var originalPhotoShareURL: URL? {
+        guard item.preservesOriginalFile, !hasModifiedSinceOpen,
+              currentProcessedImage === item.processedImage,
+              let data = item.rawPhotoData else { return nil }
+        let ext = item.saveFormat == .jpeg ? "jpg" : "heic"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AlignAI_Original_\(item.id.uuidString).\(ext)")
+        do {
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    private var currentPhotoShareURL: URL? {
+        if let originalURL = originalPhotoShareURL {
+            return originalURL
+        }
+        let tempDir = FileManager.default.temporaryDirectory
+        let isHEIC = item.saveFormat == .heif || item.saveFormat == .heic
+        let ext = isHEIC ? "heic" : "jpg"
+        let utType = isHEIC ? UTType.heic : UTType.jpeg
+        let fileURL = tempDir.appendingPathComponent("AlignAI_Studio_\(item.id.uuidString).\(ext)")
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, utType.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        let props: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.96,
+            kCGImagePropertyOrientation: 1
+        ]
+        CGImageDestinationAddImage(dest, currentProcessedImage, props as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        do {
+            try (data as Data).write(to: fileURL, options: .atomic)
+            return fileURL
+        } catch {
+            return nil
+        }
+    }
+
+    private var formatBadgeTitle: String {
+        if item.saveFormat == .dng { return "TRUE RAW DNG" }
+        if item.livePhotoMovieURL != nil { return "LIVE • \(item.saveFormat.rawValue)" }
+        return item.saveFormat.rawValue
+    }
+
+    private var formatAccentColor: Color {
+        if item.saveFormat == .dng { return AlignTheme.amberGold }
+        if item.livePhotoMovieURL != nil { return AlignTheme.electricCyan }
+        return .white
+    }
+
+    private var megapixelsString: String {
+        let mp = Double(currentProcessedImage.width * currentProcessedImage.height) / 1_000_000.0
+        return String(format: "%.1fMP", mp)
+    }
+
+    private var focalLengthDisplayString: String {
+        let fl = item.focalLength > 0 ? item.focalLength : 24.0
+        return "\(Int(round(fl)))mm"
+    }
+
+    private var formattedShutterSpeed: String {
+        let s = item.shutterSpeed
+        guard s > 0 else { return "1/120s" }
+        if s >= 1.0 {
+            return String(format: "%.1fs", s)
+        }
+        let denom = max(1, Int(round(1.0 / s)))
+        return "1/\(denom)s"
+    }
+
+    private var opticalSummaryLine: String {
+        let ap = item.aperture > 0 ? item.aperture : 1.8
+        let isoVal = Int(round(max(25, item.iso)))
+        return "\(focalLengthDisplayString) · f/\(String(format: "%.1f", ap)) · \(formattedShutterSpeed) · ISO \(isoVal)"
+    }
+
+    private var estimatedFileSizeString: String {
+        if let rawData = item.rawPhotoData, !hasModifiedSinceOpen {
+            let mb = Double(rawData.count) / (1024.0 * 1024.0)
+            return String(format: "%.2f MB", mb)
+        }
+        let pixels = Double(currentProcessedImage.width * currentProcessedImage.height)
+        let bytesPerPx = (item.saveFormat == .dng) ? 1.8 : ((item.saveFormat == .jpeg) ? 0.42 : 0.24)
+        let estMB = max(0.25, (pixels * bytesPerPx) / (1024.0 * 1024.0))
+        return String(format: "~%.1f MB", estMB)
     }
 }
 
-private struct OriginalDNGShare: Transferable {
-    let data: Data
-    static var transferRepresentation: some TransferRepresentation {
-        DataRepresentation(exportedContentType: UTType(filenameExtension: "dng") ?? .rawImage) { value in
-            value.data
+// MARK: - Smooth RGB + Luminance Histogram Waveform Canvas
+private struct PhotoDetailHistogramCanvasView: View {
+    let snapshot: PhotoDetailHistogramSnapshot
+    let showRGB: Bool
+
+    private func buildSmoothPath(bins: [Double], in size: CGSize, closed: Bool) -> Path {
+        var path = Path()
+        guard bins.count >= 2 else { return path }
+        let stepX = size.width / CGFloat(bins.count - 1)
+        if closed {
+            path.move(to: CGPoint(x: 0, y: size.height))
+            for (idx, val) in bins.enumerated() {
+                let x = CGFloat(idx) * stepX
+                let y = size.height * (1.0 - CGFloat(min(1.0, max(0.0, val))))
+                path.addLine(to: CGPoint(x: x, y: y))
+            }
+            path.addLine(to: CGPoint(x: size.width, y: size.height))
+            path.closeSubpath()
+        } else {
+            for (idx, val) in bins.enumerated() {
+                let x = CGFloat(idx) * stepX
+                let y = size.height * (1.0 - CGFloat(min(1.0, max(0.0, val))))
+                if idx == 0 {
+                    path.move(to: CGPoint(x: x, y: y))
+                } else {
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
         }
-        .suggestedFileName("AlignAI.dng")
+        return path
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let size = geo.size
+            ZStack {
+                // Subtle EV Zone Grid Lines (25%, 50%, 75%)
+                HStack(spacing: 0) {
+                    Spacer()
+                    Rectangle().fill(Color.white.opacity(0.07)).frame(width: 0.7)
+                    Spacer()
+                    Rectangle().fill(Color.white.opacity(0.07)).frame(width: 0.7)
+                    Spacer()
+                    Rectangle().fill(Color.white.opacity(0.07)).frame(width: 0.7)
+                    Spacer()
+                }
+
+                if showRGB {
+                    buildSmoothPath(bins: snapshot.redBins, in: size, closed: true)
+                        .fill(Color.red.opacity(0.22))
+                    buildSmoothPath(bins: snapshot.greenBins, in: size, closed: true)
+                        .fill(Color.green.opacity(0.22))
+                    buildSmoothPath(bins: snapshot.blueBins, in: size, closed: true)
+                        .fill(Color.cyan.opacity(0.24))
+
+                    buildSmoothPath(bins: snapshot.redBins, in: size, closed: false)
+                        .stroke(Color.red.opacity(0.80), lineWidth: 1.0)
+                    buildSmoothPath(bins: snapshot.greenBins, in: size, closed: false)
+                        .stroke(Color.green.opacity(0.80), lineWidth: 1.0)
+                    buildSmoothPath(bins: snapshot.blueBins, in: size, closed: false)
+                        .stroke(Color.cyan.opacity(0.85), lineWidth: 1.0)
+                }
+
+                buildSmoothPath(bins: snapshot.lumaBins, in: size, closed: true)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(showRGB ? 0.22 : 0.42), Color.white.opacity(0.03)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                buildSmoothPath(bins: snapshot.lumaBins, in: size, closed: false)
+                    .stroke(Color.white.opacity(0.92), lineWidth: 1.25)
+            }
+        }
     }
 }

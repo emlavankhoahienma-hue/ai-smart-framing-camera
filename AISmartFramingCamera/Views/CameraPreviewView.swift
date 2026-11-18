@@ -12,6 +12,10 @@ public struct CameraPreviewView: UIViewRepresentable {
         let view = PreviewContainerView()
         view.setupLayer(session: viewModel.cameraService.captureSession)
         view.setupMetalPreview(viewModel: viewModel)
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
+        pinch.delegate = context.coordinator
+        pinch.cancelsTouchesInView = false
+        view.addGestureRecognizer(pinch)
         viewModel.previewLayer = view.previewLayer
         viewModel.previewContainerView = view
         return view
@@ -86,15 +90,16 @@ public struct CameraPreviewView: UIViewRepresentable {
         @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
             if gesture.state == .began {
                 initialZoom = parent.viewModel.displayZoom
+                parent.viewModel.beginVideoAwareManualZoomGesture()
             }
-            let minDisplay = parent.viewModel.cameraService.convertDeviceZoomToDisplayZoom(parent.viewModel.cameraService.minZoom)
-            let maxDisplay = parent.viewModel.cameraService.convertDeviceZoomToDisplayZoom(parent.viewModel.cameraService.maxZoom)
+            let minDisplay = parent.viewModel.minAvailableDisplayZoom
+            let maxDisplay = parent.viewModel.maxAvailableDisplayZoom
             let newDisplayZoom = max(minDisplay, min(initialZoom * gesture.scale, maxDisplay))
 
             if gesture.state == .ended || gesture.state == .cancelled {
-                parent.viewModel.finishZoomGesture(newDisplayZoom)
+                parent.viewModel.finishVideoAwareZoomGesture(newDisplayZoom)
             } else {
-                parent.viewModel.setZoomContinuous(newDisplayZoom)
+                parent.viewModel.setVideoAwareZoomContinuous(newDisplayZoom)
             }
         }
 
@@ -285,7 +290,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
 
             let filteredCI: CIImage
             if filmActive {
-                let maxWorkingDim: CGFloat = 1440.0
+                let maxWorkingDim: CGFloat = 1080.0
                 let longSide = max(drawableSize.width, drawableSize.height)
                 let workingScale: CGFloat = (longSide > maxWorkingDim && longSide > 0) ? (maxWorkingDim / longSide) : 1.0
                 let workingInput = workingScale < 0.999
@@ -439,7 +444,7 @@ public class PreviewContainerView: UIView {
         let mtk = MTKView(frame: bounds, device: metalDevice)
         mtk.framebufferOnly = false
         mtk.colorPixelFormat = .bgra8Unorm
-        mtk.preferredFramesPerSecond = 60
+        mtk.preferredFramesPerSecond = 30
         mtk.contentScaleFactor = min(currentDisplayScale, 2.0)
         mtk.isPaused = true
         mtk.enableSetNeedsDisplay = false

@@ -112,13 +112,21 @@ kernel void ultrasharpTileBlockMatchingKernel(
 
     uint linearTileIdx = tileId.y * uniforms.numTilesX + tileId.x;
 
-    // Lấy vector dự đoán ban đầu từ tầng thô (coarse vector)
+    // Lấy vector dự đoán ban đầu từ tầng thô (coarse vector) với kiểm tra biên an toàn tuyệt đối
     float initialDx = 0.0f;
     float initialDy = 0.0f;
-    if (coarseVectors != nullptr) {
-        TileMotionVector cv = coarseVectors[linearTileIdx];
-        initialDx = cv.dx * uniforms.scaleFactor;
-        initialDy = cv.dy * uniforms.scaleFactor;
+    if (coarseVectors != nullptr && uniforms.scaleFactor > 0.5f) {
+        uint coarseW = max(1u, uniforms.imageWidth / 2u);
+        uint coarseH = max(1u, uniforms.imageHeight / 2u);
+        uint coarseNumTilesX = max(1u, (coarseW + 15u) / 16u);
+        uint coarseNumTilesY = max(1u, (coarseH + 15u) / 16u);
+        uint cX = min(tileId.x / 2u, coarseNumTilesX - 1u);
+        uint cY = min(tileId.y / 2u, coarseNumTilesY - 1u);
+        TileMotionVector cv = coarseVectors[cY * coarseNumTilesX + cX];
+        if (isfinite(cv.dx) && isfinite(cv.dy)) {
+            initialDx = clamp(cv.dx * uniforms.scaleFactor, -64.0f, 64.0f);
+            initialDy = clamp(cv.dy * uniforms.scaleFactor, -64.0f, 64.0f);
+        }
     }
 
     int initX = int(round(initialDx));
@@ -548,9 +556,11 @@ kernel void ultrasharpNormalizeAndSharpenKernel(
     float snrFactor = clamp(sqrt(centerW / float(uniforms.totalFrames)), 0.6f, 1.3f);
     float alpha = uniforms.sharpnessAlpha * snrFactor;
 
-    // 5. Kẹp biên độ Halo (Halo Clamping)
+    // 5. Kẹp biên độ Halo (Halo Clamping) & Bảo toàn kênh Alpha = 1.0 tuyệt đối
     float3 unclampedSharp = centerNorm.rgb + alpha * detail;
-    float3 clampedSharp = clamp(unclampedSharp, minVal - uniforms.haloClampLimit, maxVal + uniforms.haloClampLimit);
+    float3 lowBound = max(float3(0.0f), minVal - uniforms.haloClampLimit);
+    float3 highBound = min(float3(1.0f), maxVal + uniforms.haloClampLimit);
+    float3 clampedSharp = clamp(unclampedSharp, lowBound, highBound);
 
-    outFinalTexture.write(float4(clampedSharp, centerNorm.a), gid);
+    outFinalTexture.write(float4(clamp(clampedSharp, 0.0f, 1.0f), 1.0f), gid);
 }
