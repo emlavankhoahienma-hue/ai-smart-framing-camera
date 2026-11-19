@@ -189,15 +189,26 @@ jobs:
           for entry in "${SCREENS[@]}"; do
             FILE_TAG="${entry%%:*}"
             SCREEN_ARG="${entry##*:}"
+            OUT_PNG="ui_snapshots/${FILE_TAG}.png"
             echo "=== Capturing $FILE_TAG ($SCREEN_ARG) ==="
             xcrun simctl terminate "$SIM_UDID" com.aismartframing.camera || true
-            sleep 0.5
+            sleep 0.6
             xcrun simctl launch "$SIM_UDID" com.aismartframing.camera \
               -UI_SNAPSHOT_MODE \
               -UI_SNAPSHOT_SCREEN "$SCREEN_ARG" \
               -UI_SNAPSHOT_BG "$BG_PATH"
-            sleep 3.2
-            xcrun simctl io "$SIM_UDID" screenshot "ui_snapshots/${FILE_TAG}.png"
+            sleep 3.6
+            xcrun simctl io "$SIM_UDID" screenshot "$OUT_PNG"
+            # Retry if Simulator was still transitioning off the white UILaunchScreen (~74KB)
+            for attempt in 1 2 3 4; do
+              SZ=$(stat -f%z "$OUT_PNG" 2>/dev/null || echo 0)
+              if [ "$SZ" -ge 180000 ]; then
+                break
+              fi
+              echo "Retry $attempt for $FILE_TAG (size=$SZ bytes < 180KB, waiting for SwiftUI first frame)..."
+              sleep 2.5
+              xcrun simctl io "$SIM_UDID" screenshot "$OUT_PNG"
+            done
           done
           ls -lh ui_snapshots/
 

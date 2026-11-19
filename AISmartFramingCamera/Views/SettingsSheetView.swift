@@ -377,6 +377,7 @@ public struct SettingsToggleRow: View {
                     .font(.system(size: 14.5, weight: .medium))
                     .foregroundColor(AlignTheme.studioInkPrimary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.92)
 
                 if let sub = subtitle, !sub.isEmpty {
                     Text(sub)
@@ -386,11 +387,13 @@ public struct SettingsToggleRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 8)
 
             Toggle("", isOn: $isOn)
                 .labelsHidden()
+                .fixedSize()
                 .tint(AlignTheme.studioAccent)
         }
         .padding(.vertical, 8)
@@ -711,14 +714,14 @@ struct PhotoCaptureSettingsSection: View {
                 SettingsToggleRow(
                     title: "Khung nhận diện chủ thể",
                     subtitle: "Hiện bounding box xung quanh người, khuôn mặt hoặc đồ vật",
-                    icon: "boundingbox",
+                    icon: "viewfinder.rectangular",
                     isOn: $viewModel.showDetectionBoxes
                 )
 
                 dividerLine
 
                 SettingsToggleRow(
-                    title: "Biểu đồ Pro RGB & báo cháy sáng",
+                    title: "Biểu đồ Pro RGB",
                     subtitle: "Mở hộp quang phổ RGB + Luma chi tiết kèm chỉ số SH / AVG / HI và EV",
                     icon: "waveform.path.ecg",
                     isOn: $viewModel.isHistogramBarExpanded
@@ -727,7 +730,7 @@ struct PhotoCaptureSettingsSection: View {
                 dividerLine
 
                 SettingsToggleRow(
-                    title: "Thước đo âm thanh (Audio VU Meter)",
+                    title: "Thước đo âm thanh (VU)",
                     subtitle: "Hiển thị thanh đo mức tín hiệu stereo kèm biểu tượng mic khi quay video",
                     icon: "waveform",
                     isOn: $viewModel.showAudioLevelMeter
@@ -758,7 +761,7 @@ struct PhotoCaptureSettingsSection: View {
                 dividerLine
 
                 SettingsToggleRow(
-                    title: "Áp dụng Khung Master cho Video",
+                    title: "Khung Master cho Video",
                     subtitle: "Ghép khung dưới đáy giữ nguyên độ phân giải, FPS và âm thanh gốc",
                     icon: "video.badge.checkmark",
                     isOn: $viewModel.isVideoMasterFrameEnabled
@@ -1151,7 +1154,7 @@ struct AIFramingSettingsSection: View {
         SettingsSectionCard(title: "Động cơ AI & Kết nối Cloud", icon: "network") {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggleRow(
-                    title: "Ưu tiên Cloud AI (Tự động Fallback)",
+                    title: "Ưu tiên Cloud AI (Tự chuyển)",
                     subtitle: "Dùng Cloud AI khi có mạng & Key; tự chuyển sang Local AI trên máy nếu mất mạng",
                     icon: "icloud",
                     isOn: $viewModel.useGeminiForAnalysis

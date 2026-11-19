@@ -63,11 +63,12 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             'title: "Lưu kèm bản gốc"',
             'Số khung hình gộp Ultra Sharp',
             'title: "Focus peaking (Báo nét)"',
-            'title: "Biểu đồ Pro RGB & báo cháy sáng"',
-            'title: "Áp dụng Khung Master cho Video"',
+            'title: "Biểu đồ Pro RGB"',
+            'title: "Khung Master cho Video"',
             'title: "Tự động cân chỉnh màu AI"',
         ]:
             self.assertIn(kept, settings)
+        self.assertNotIn('icon: "boundingbox"', settings)
 
     def test_04_centralized_capability_gating(self):
         gate = source("Models/CameraFeatureGate.swift")
