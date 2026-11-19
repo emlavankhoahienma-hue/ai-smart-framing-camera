@@ -109,36 +109,52 @@ jobs:
               shutil.copyfile(repo_photos[0], out_path)
               print(f"Copied repo sample photo: {repo_photos[0]}")
           else:
-              # Generate a warm realistic daylight window + walnut desk + coffee cup studio scene (PNG saved as .jpg readable by UIImage)
-              W, H = 900, 1200
+              # Generate a soft photographic daylight architectural interior + walnut table + warm bokeh backdrop
+              W, H = 720, 960
               raw = bytearray()
               for y in range(H):
                   raw.append(0)
                   ny = y / H
                   for x in range(W):
                       nx = x / W
-                      if ny < 0.64:
-                          # Soft sunlit plaster wall with warm diagonal window light
-                          sun = max(0.0, 1.0 - abs((nx - 0.58) - (ny - 0.25) * 0.45) * 2.2)
-                          r = int(min(255, 208 + 38 * sun - 35 * ny))
-                          g = int(min(255, 202 + 34 * sun - 36 * ny))
-                          b = int(min(255, 192 + 26 * sun - 38 * ny))
-                          # Dark monitor / frame silhouette on upper left for high-contrast glass blur check
-                          if 0.06 < nx < 0.42 and 0.14 < ny < 0.52:
-                              r, g, b = int(r * 0.18), int(g * 0.20), int(b * 0.24)
-                          # Botanical warm green accent on right
-                          if (nx - 0.78)**2 * 1.8 + (ny - 0.42)**2 < 0.025:
-                              r, g, b = 76, 122, 74
+                      # Natural lens vignette
+                      vx = (nx - 0.5) * 1.4
+                      vy = (ny - 0.48) * 1.3
+                      vig = max(0.68, 1.0 - 0.24 * (vx * vx + vy * vy))
+                      if ny < 0.66:
+                          # Soft sunlit warm travertine studio wall with natural diagonal window light falloff
+                          beam = math.exp(-((nx - 0.62 - (ny - 0.18) * 0.42) ** 2) / 0.10)
+                          r = (176 + 52 * beam - 42 * ny)
+                          g = (170 + 46 * beam - 44 * ny)
+                          b = (158 + 36 * beam - 46 * ny)
+                          # Soft out-of-focus architectural window frame shadow on left
+                          fx = max(0.0, min(1.0, (0.38 - nx) * 8.0)) * max(0.0, min(1.0, (nx - 0.05) * 8.0))
+                          fy = max(0.0, min(1.0, (0.56 - ny) * 8.0)) * max(0.0, min(1.0, (ny - 0.12) * 8.0))
+                          win = fx * fy
+                          r = r * (1.0 - 0.65 * win) + 34 * win
+                          g = g * (1.0 - 0.65 * win) + 36 * win
+                          b = b * (1.0 - 0.65 * win) + 40 * win
+                          # Soft out-of-focus warm sunset/lamp bokeh orb on upper right
+                          orb1 = math.exp(-(((nx - 0.74) ** 2) / 0.018 + ((ny - 0.36) ** 2) / 0.028))
+                          r += 38 * orb1
+                          g += 24 * orb1
+                          b += 8 * orb1
+                          # Subtle soft sage-olive botanical bokeh silhouette
+                          orb2 = math.exp(-(((nx - 0.80) ** 2) / 0.015 + ((ny - 0.54) ** 2) / 0.030))
+                          r = r * (1.0 - 0.45 * orb2) + 52 * orb2
+                          g = g * (1.0 - 0.45 * orb2) + 74 * orb2
+                          b = b * (1.0 - 0.45 * orb2) + 54 * orb2
                       else:
-                          # Rich walnut wooden desk surface with subtle grain
-                          grain = math.sin(y * 0.35 + math.sin(x * 0.04) * 3.0) * 7.0
-                          depth = (ny - 0.64) / 0.36
-                          r = int(max(18, min(255, 114 - 44 * depth + grain)))
-                          g = int(max(14, min(255, 78 - 32 * depth + grain * 0.7)))
-                          b = int(max(10, min(255, 54 - 22 * depth + grain * 0.5)))
-                          # Crisp white ceramic mug / highlight object on desk
-                          if 0.64 < nx < 0.84 and 0.56 < ny < 0.78:
-                              r, g, b = 228, 224, 214
+                          # Rich brushed walnut table surface with subtle perspective depth
+                          depth = (ny - 0.66) / 0.34
+                          grain = math.sin(y * 0.42 + math.sin(x * 0.025) * 4.0) * 5.0
+                          spec = math.exp(-((nx - 0.56) ** 2) / 0.14) * (1.0 - depth * 0.65) * 28.0
+                          r = 88 - 34 * depth + grain + spec
+                          g = 64 - 25 * depth + grain * 0.7 + spec * 0.85
+                          b = 48 - 18 * depth + grain * 0.5 + spec * 0.65
+                      r = int(max(12, min(255, r * vig)))
+                      g = int(max(12, min(255, g * vig)))
+                      b = int(max(12, min(255, b * vig)))
                       raw.extend((r, g, b))
               def chunk(tag, data):
                   return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
@@ -147,6 +163,15 @@ jobs:
               out_path.write_bytes(png)
               print(f"Synthesized studio backdrop at {out_path}")
           PY
+
+          # Pre-warm app binary/dyld cache on freshly booted simulator so 01_main_photo never catches the launch screen
+          xcrun simctl launch "$SIM_UDID" com.aismartframing.camera \
+            -UI_SNAPSHOT_MODE \
+            -UI_SNAPSHOT_SCREEN "main_photo" \
+            -UI_SNAPSHOT_BG "$BG_PATH" || true
+          sleep 5.0
+          xcrun simctl terminate "$SIM_UDID" com.aismartframing.camera || true
+          sleep 0.6
 
           SCREENS=(
             "01_main_photo:main_photo"
@@ -169,7 +194,7 @@ jobs:
               -UI_SNAPSHOT_MODE \
               -UI_SNAPSHOT_SCREEN "$SCREEN_ARG" \
               -UI_SNAPSHOT_BG "$BG_PATH"
-            sleep 2.8
+            sleep 3.2
             xcrun simctl io "$SIM_UDID" screenshot "ui_snapshots/${FILE_TAG}.png"
           done
           ls -lh ui_snapshots/

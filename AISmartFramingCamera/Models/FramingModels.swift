@@ -30,7 +30,7 @@ public enum CompositionRule: String, CaseIterable, Identifiable, Sendable {
         case .frameInFrame: return "viewfinder.rectangular"
         case .negativeSpace: return "square.dashed"
         case .lookingRoom: return "eye.circle"
-        case .dynamicAI: return "wand.and.stars"
+        case .dynamicAI: return "viewfinder.circle"
         }
     }
 
@@ -299,7 +299,7 @@ public enum AIEngineSource: Equatable {
 
     public var iconName: String {
         switch self {
-        case .geminiCloud: return "sparkles"
+        case .geminiCloud: return "cloud.fill"
         case .compositionLocal, .semanticLocal: return "brain.head.profile"
         case .yoloNeural: return "bolt.shield.fill"
         case .appleNeuralEngine: return "cpu.fill"
@@ -420,7 +420,7 @@ public enum DetectedSceneType: String, CaseIterable, Sendable {
         case .food: return "fork.knife"
         case .macro: return "camera.macro"
         case .street: return "figure.walk"
-        case .general: return "sparkles"
+        case .general: return "camera.aperture"
         }
     }
 
@@ -612,7 +612,7 @@ public enum FilmPresetCategory: String, CaseIterable, Identifiable, Sendable {
         case .canon: return "camera.viewfinder"
         case .dv: return "video.fill"
         case .instant: return "photo.fill"
-        case .original: return "sparkles"
+        case .original: return "circle.lefthalf.filled"
         }
     }
 
@@ -998,7 +998,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
         case .polaroid600, .sx70TimeZero, .instaxMini, .instaxWide, .instaxSquare, .polaroidSpectra:
             return "photo.fill"
         default:
-            return "sparkles"
+            return "camera.filters"
         }
     }
 

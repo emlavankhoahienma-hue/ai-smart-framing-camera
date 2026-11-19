@@ -671,7 +671,7 @@ public struct SelectedCameraBadgeButton: View {
                             .stroke(isHighlighted ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline, lineWidth: isHighlighted ? 0.9 : 0.65)
                     )
 
-                Image(systemName: viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.deviceIconSF : "camera.filters")
+                Image(systemName: "camera.filters")
                     .font(.system(size: 15.5, weight: .medium))
                     .foregroundColor(isHighlighted ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
             }
@@ -683,18 +683,27 @@ public struct SelectedCameraBadgeButton: View {
     }
 }
 
-// MARK: - 35mm Film Sprocket Perforation Track
+// MARK: - 35mm Film Sprocket Perforation Track (Width-Adaptive Canvas, Zero Overflow)
 private struct SprocketPerforationsRow: View {
     var body: some View {
-        HStack(spacing: 7) {
-            ForEach(0..<45, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 0.8)
-                    .fill(Color.white.opacity(0.18))
-                    .frame(width: 4.5, height: 3.2)
+        Canvas { context, size in
+            let holeWidth: CGFloat = 4.5
+            let holeHeight: CGFloat = 3.0
+            let step: CGFloat = 11.5
+            let y = (size.height - holeHeight) * 0.5
+            var x: CGFloat = 8
+            while x + holeWidth <= size.width - 8 {
+                let rect = CGRect(x: x, y: y, width: holeWidth, height: holeHeight)
+                context.fill(
+                    Path(roundedRect: rect, cornerRadius: 0.8),
+                    with: .color(Color.white.opacity(0.18))
+                )
+                x += step
             }
         }
+        .frame(maxWidth: .infinity)
         .frame(height: 4)
-        .clipped()
+        .allowsHitTesting(false)
     }
 }
 
@@ -827,31 +836,35 @@ public struct FilmPresetDrawer: View {
     }
 
     public var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             headerBar
             if viewModel.isFilmSimulationActive {
                 intensitySliderBar
             }
             filmstripTrack
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
         .background(drawerBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .gesture(dismissDragGesture)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 
     // MARK: - Subviews
 
     @ViewBuilder
     private var intensitySliderBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Text("CƯỜNG ĐỘ")
-                .font(.system(size: 9.0, weight: .semibold, design: .monospaced))
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                 .foregroundColor(AlignTheme.studioInkSecondary)
+                .fixedSize()
 
             Slider(value: $viewModel.filmSimulationIntensity, in: 0.1...1.0, step: 0.05)
                 .tint(AlignTheme.studioAccent)
+                .controlSize(.mini)
 
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -861,18 +874,18 @@ public struct FilmPresetDrawer: View {
                 Text("\(Int(round(viewModel.filmSimulationIntensity * 100)))%")
                     .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                     .foregroundColor(AlignTheme.studioAccent)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2.5)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
                     .background(
                         Capsule()
                             .fill(AlignTheme.studioAccentSoft)
                     )
+                    .fixedSize()
             }
             .buttonStyle(PlainButtonStyle())
             .accessibilityLabel("Đặt lại cường độ 100%")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 1)
         .transition(.opacity)
     }
 

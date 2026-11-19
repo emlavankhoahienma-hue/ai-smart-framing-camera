@@ -10,25 +10,24 @@ public struct AudioVULevelMeterView: View {
         self.levels = levels
     }
 
-    private let barWidth: CGFloat = 48
-    private let barHeight: CGFloat = 3.5
+    private let barWidth: CGFloat = 42
+    private let barHeight: CGFloat = 3.0
     private let spacing: CGFloat = 2.5
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            channelBar(level: CGFloat(levels.left))
-            channelBar(level: CGFloat(levels.right))
+        HStack(spacing: 6) {
+            Image(systemName: "mic.fill")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundColor(AlignTheme.studioInkSecondary)
+
+            VStack(alignment: .leading, spacing: spacing) {
+                channelBar(level: CGFloat(levels.left))
+                channelBar(level: CGFloat(levels.right))
+            }
         }
-        .padding(.horizontal, 5)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Color.black.opacity(0.55))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(StudioGlassCapsule(tintOpacity: 0.52, borderOpacity: 0.14))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Mức âm thanh: Trái \(Int(levels.left * 100))%, Phải \(Int(levels.right * 100))%")
     }
@@ -39,28 +38,26 @@ public struct AudioVULevelMeterView: View {
         ZStack(alignment: .leading) {
             // Muted dark track background
             Capsule()
-                .fill(Color(white: 0.18))
+                .fill(Color.white.opacity(0.14))
                 .frame(width: barWidth, height: barHeight)
 
-            // Dynamic level bar
+            // Dynamic level bar (Restrained studio palette: ivory -> warm titanium -> peak crimson)
             if clampedLevel > 0.01 {
                 Capsule()
-                    .fill(barGradient(for: clampedLevel))
+                    .fill(barFillColor(for: clampedLevel))
                     .frame(width: max(barHeight, barWidth * clampedLevel), height: barHeight)
                     .animation(.linear(duration: 0.04), value: clampedLevel)
             }
         }
     }
 
-    private func barGradient(for level: CGFloat) -> LinearGradient {
-        LinearGradient(
-            colors: [
-                Color(red: 0.18, green: 0.85, blue: 0.35),
-                level > 0.75 ? Color(red: 0.95, green: 0.75, blue: 0.15) : Color(red: 0.18, green: 0.85, blue: 0.35),
-                level > 0.92 ? Color(red: 0.95, green: 0.25, blue: 0.25) : (level > 0.75 ? Color(red: 0.95, green: 0.75, blue: 0.15) : Color(red: 0.18, green: 0.85, blue: 0.35))
-            ],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
+    private func barFillColor(for level: CGFloat) -> Color {
+        if level > 0.90 {
+            return AlignTheme.studioRecordRed
+        }
+        if level > 0.72 {
+            return AlignTheme.studioAccent
+        }
+        return AlignTheme.studioInkPrimary.opacity(0.86)
     }
 }

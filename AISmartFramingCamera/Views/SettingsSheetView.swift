@@ -428,32 +428,26 @@ public struct SettingsPickerRow<Content: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 14.5, weight: .medium))
-                    .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255))
+                    .foregroundColor(AlignTheme.studioInkPrimary)
                     .lineLimit(1)
 
                 if let sub = subtitle, !sub.isEmpty {
                     Text(sub)
                         .font(.system(size: 11.5, weight: .regular))
-                        .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.48))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 4) {
-                picker
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: 160, alignment: .trailing)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.35))
-            }
+            picker
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 7)
         .frame(minHeight: 48)
         .contentShape(Rectangle())
     }
@@ -597,6 +591,13 @@ struct CompositionRuleCard: View {
     let isSelected: Bool
     let onSelect: () -> Void
 
+    private var compactTitle: String {
+        switch rule {
+        case .diagonal: return "Đường chéo / Tam giác"
+        default: return rule.displayNameVietnamese
+        }
+    }
+
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 6) {
@@ -605,7 +606,7 @@ struct CompositionRuleCard: View {
                     .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkTertiary)
                     .frame(width: 18)
 
-                Text(rule.displayNameVietnamese)
+                Text(compactTitle)
                     .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium, design: .rounded))
                     .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
                     .lineLimit(1)
@@ -619,7 +620,7 @@ struct CompositionRuleCard: View {
                         .frame(width: 5, height: 5)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 9)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity)
             .background(
@@ -683,32 +684,51 @@ struct PhotoCaptureSettingsSection: View {
     private var photoStillCard: some View {
         SettingsSectionCard(title: "Ảnh tĩnh", icon: "camera.fill") {
             VStack(spacing: 0) {
-                // Định dạng chụp: HEIF / JPEG / RAW
-                HStack(spacing: 12) {
-                    SettingsRowIcon("photo.fill", isActive: true)
+                // Định dạng chụp: JPEG / HEIF / RAW (Full-width equal pills, zero wrapping)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        SettingsRowIcon("photo.fill", isActive: true)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Định dạng chụp")
-                            .font(.system(size: 14.5, weight: .medium))
-                            .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255))
-                        Text("Chuẩn lưu trữ hình ảnh cảm biến")
-                            .font(.system(size: 11.5, weight: .regular))
-                            .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.48))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Định dạng chụp")
+                                .font(.system(size: 14.5, weight: .medium))
+                                .foregroundColor(AlignTheme.studioInkPrimary)
+                            Text("Chuẩn lưu trữ hình ảnh cảm biến")
+                                .font(.system(size: 11.5, weight: .regular))
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+                        }
+
+                        Spacer(minLength: 8)
                     }
 
-                    Spacer(minLength: 8)
-
-                    HStack(spacing: 4) {
+                    HStack(spacing: 8) {
                         ForEach(PhotoSaveFormat.allCases) { format in
                             let label = (format == .dng ? "RAW" : format.rawValue)
-                            pillSelectButton(label, isSelected: viewModel.selectedPhotoFormat == format) {
-                                $viewModel.selectedPhotoFormat.wrappedValue = format
+                            let isSelected = viewModel.selectedPhotoFormat == format
+                            Button(action: {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                viewModel.selectedPhotoFormat = format
+                            }) {
+                                Text(label)
+                                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .rounded))
+                                    .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 34)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                            .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.055))
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                            .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 0.9 : 0.6)
+                                    )
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
                 .padding(.vertical, 8)
-                .frame(minHeight: 48)
 
                 dividerLine
 
@@ -723,7 +743,7 @@ struct PhotoCaptureSettingsSection: View {
 
                 SettingsToggleRow(
                     title: "Chụp Ultra Sharp (Độ nét cao)",
-                    subtitle: "Chụp chùm N frame chuẩn HDR, cân bằng sáng và gộp đa khung hình giảm nhiễu",
+                    subtitle: "Gộp đa khung hình HDR, giảm nhiễu và giữ chi tiết sắc nét",
                     icon: "square.stack.3d.up",
                     isOn: $viewModel.isUltraSharpEnabled
                 )
@@ -761,35 +781,39 @@ struct PhotoCaptureSettingsSection: View {
         SettingsSectionCard(title: "Quay Video", icon: "video.fill") {
             VStack(spacing: 0) {
                 SettingsPickerRow(
-                    title: "Độ phân giải & Tốc độ",
+                    title: "Độ phân giải & FPS",
                     subtitle: "Chuẩn video ghi hình cảm biến camera",
                     icon: "video.badge.waveform.fill",
                     selectedValueString: videoFormatCleanTitle(viewModel.selectedVideoFormatOption)
                 ) {
-                    Picker("", selection: $viewModel.selectedVideoFormatOption) {
-                        ForEach(viewModel.supportedVideoFormatOptions) { opt in
-                            Text(videoFormatCleanTitle(opt)).tag(opt)
+                    Menu {
+                        Picker("", selection: $viewModel.selectedVideoFormatOption) {
+                            ForEach(viewModel.supportedVideoFormatOptions) { opt in
+                                Text(videoFormatCleanTitle(opt)).tag(opt)
+                            }
                         }
+                    } label: {
+                        studioMenuValuePill(videoFormatCleanTitle(viewModel.selectedVideoFormatOption))
                     }
-                    .pickerStyle(.menu)
-                    .tint(AlignTheme.studioAccent)
                 }
 
                 dividerLine
 
                 SettingsPickerRow(
-                    title: "Định dạng nén Codec",
+                    title: "Chuẩn nén video",
                     subtitle: "Chuẩn mã hóa tối ưu phần cứng Apple",
                     icon: "cylinder.split.1x2.fill",
                     selectedValueString: viewModel.selectedVideoCodec.rawValue
                 ) {
-                    Picker("", selection: $viewModel.selectedVideoCodec) {
-                        ForEach(VideoCodec.allCases) { codec in
-                            Text(codec.rawValue).tag(codec)
+                    Menu {
+                        Picker("", selection: $viewModel.selectedVideoCodec) {
+                            ForEach(VideoCodec.allCases) { codec in
+                                Text(codec.rawValue).tag(codec)
+                            }
                         }
+                    } label: {
+                        studioMenuValuePill(viewModel.selectedVideoCodec.rawValue)
                     }
-                    .pickerStyle(.menu)
-                    .tint(AlignTheme.studioAccent)
                 }
             }
         }
@@ -800,7 +824,7 @@ struct PhotoCaptureSettingsSection: View {
         SettingsSectionCard(title: "Màu sắc & Giả lập phim", icon: "camera.filters") {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggleRow(
-                    title: "Tự động phân tích màu theo cảnh",
+                    title: "Tự động cân màu bối cảnh",
                     subtitle: "Nhận diện bối cảnh để cân chỉnh độ tương phản và nhiệt độ màu",
                     icon: "slider.horizontal.3",
                     isOn: $viewModel.isAIFullColorEnabled
@@ -814,13 +838,15 @@ struct PhotoCaptureSettingsSection: View {
                     icon: "camera.filters",
                     selectedValueString: viewModel.selectedFilmPreset.displayName
                 ) {
-                    Picker("", selection: $viewModel.selectedFilmPreset) {
-                        ForEach(FilmPreset.selectablePresets) { preset in
-                            Text(preset.displayName).tag(preset)
+                    Menu {
+                        Picker("", selection: $viewModel.selectedFilmPreset) {
+                            ForEach(FilmPreset.selectablePresets) { preset in
+                                Text(preset.displayName).tag(preset)
+                            }
                         }
+                    } label: {
+                        studioMenuValuePill(viewModel.selectedFilmPreset.displayName)
                     }
-                    .pickerStyle(.menu)
-                    .tint(AlignTheme.studioAccent)
                     .onChangeCompatible(of: viewModel.selectedFilmPreset) { newPreset in
                         viewModel.selectPreset(newPreset)
                     }
@@ -1107,17 +1133,18 @@ struct PhotoCaptureSettingsSection: View {
     private func pillSelectButton(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? .white : Color.white.opacity(0.60))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .rounded))
+                .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .frame(height: 32)
                 .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(isSelected ? AlignTheme.studioAccent.opacity(0.24) : Color.white.opacity(0.06))
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.055))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(isSelected ? AlignTheme.studioAccent.opacity(0.70) : Color.clear, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 0.9 : 0.6)
                 )
         }
         .buttonStyle(.plain)
@@ -1148,6 +1175,30 @@ struct PhotoCaptureSettingsSection: View {
             .foregroundColor(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.70))
         }
         .buttonStyle(.plain)
+    }
+
+    // Helper: Clean Studio Menu Value Pill (Compact, Single-Line, Zero Wrapping)
+    private func studioMenuValuePill(_ value: String) -> some View {
+        HStack(spacing: 5) {
+            Text(value)
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .foregroundColor(AlignTheme.studioAccent)
+                .lineLimit(1)
+
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundColor(AlignTheme.studioAccent.opacity(0.75))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(AlignTheme.studioAccentSoft)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(AlignTheme.studioAccentBorder.opacity(0.7), lineWidth: 0.6)
+                )
+        )
     }
 
     // Helper: Clean title for video format option
@@ -1230,15 +1281,19 @@ struct AIFramingSettingsSection: View {
                 dividerLine
 
                 // Tracking Sensitivity Segmented Control
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("Độ nhạy bám chủ thể", systemImage: "bolt.badge.clock.fill")
-                            .font(.system(size: 13.5, weight: .medium))
-                            .foregroundColor(.white)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        SettingsRowIcon("scope", isActive: true)
+
+                        Text("Độ nhạy bám chủ thể")
+                            .font(.system(size: 14.5, weight: .medium))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
                             .lineLimit(1)
+
                         Spacer()
+
                         Text(viewModel.trackingSensitivity.shortName)
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundColor(AlignTheme.studioAccent)
                     }
 
@@ -1837,7 +1892,7 @@ struct AdvancedSettingsSection: View {
         SettingsSectionCard(title: "Hệ thống & Chuyển động", icon: "gearshape.fill") {
             VStack(spacing: 0) {
                 SettingsToggleRow(
-                    title: "Chế độ đi đường (Street Tracking)",
+                    title: "Chế độ đi đường",
                     subtitle: "Tăng cường độ mượt và bù trừ rung lắc khi vừa đi bộ vừa chụp",
                     icon: "figure.walk",
                     isOn: $viewModel.isStreetTrackingModeEnabled
@@ -1846,7 +1901,7 @@ struct AdvancedSettingsSection: View {
                 dividerLine
 
                 SettingsToggleRow(
-                    title: "Âm thanh & Rung khi căn đúng",
+                    title: "Âm thanh & Rung căn góc",
                     subtitle: "Phát nhịp rung Haptics thông minh khi tâm camera hút vào điểm vàng",
                     icon: "hand.tap.fill",
                     isOn: $viewModel.isProximityHapticsEnabled

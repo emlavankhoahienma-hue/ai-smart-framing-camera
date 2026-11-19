@@ -1801,12 +1801,14 @@ public final class CameraViewModel: ObservableObject {
         showHistogramInViewfinder = true
         isFunctionDrawerOpen = false
         isShowingFilmDrawer = false
+        isFilmSimulationActive = false
         isWindowedZoomActive = false
         isShowingSettings = false
         isUltraSharpEnabled = true
         captureMode = .photo
         selectedZoomPreset = 1.0
         displayZoom = 1.0
+        audioLevels = (left: 0.44, right: 0.36)
 
         // Tạo sóng biểu đồ sáng thực tế và ảnh thu nhỏ album từ ảnh mẫu snapshot nếu có
         histogramBars = (0..<32).map { i in
