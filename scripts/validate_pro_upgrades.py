@@ -194,6 +194,32 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         gemini = source("Services/GeminiService.swift")
         self.assertIn("let maxSafeZoom = (0.5 - margin) / maxSpan", gemini)
 
+    def test_10_openworld_depth_and_3d_camera_director(self):
+        director = source("Services/CameraFramingDirector.swift")
+        self.assertIn("enum CameraFramingDirector", director)
+        self.assertIn("let solvedRotation = simd_quatd(from: targetRay, to: sourceRay)", director)
+        self.assertIn("isCornerHeadless", director)
+        self.assertIn("isSeverelyCramped", director)
+        self.assertIn("extractSharpForegroundClusters", director)
+
+        ow = source("Services/OpenWorldSubjectDetector.swift")
+        self.assertIn("OpenWorldPhotoYOLOE", ow)
+        self.assertIn("OpenWorldPhotoClasses", ow)
+        self.assertIn("VNGenerateForegroundInstanceMaskRequest", ow)
+
+        evidence = source("Services/CompositionImageEvidence.swift")
+        self.assertIn('"DepthAnythingV2SmallF16INT8"', evidence)
+        self.assertIn("private func depthBufferMap(", evidence)
+
+        neural = source("Services/NeuralSubjectIntelligenceEngine.swift")
+        self.assertIn("OpenWorldSubjectDetector.shared.detect(", neural)
+        self.assertIn("CameraFramingDirector.direct(", neural)
+
+        pbx = PBXPROJ.read_text(encoding="utf-8")
+        for filename in ["CameraFramingDirector.swift", "OpenWorldSubjectDetector.swift"]:
+            self.assertIn(f"/* {filename} */", pbx)
+            self.assertIn(f"/* {filename} in Sources */", pbx)
+
 
 if __name__ == "__main__":
     unittest.main()

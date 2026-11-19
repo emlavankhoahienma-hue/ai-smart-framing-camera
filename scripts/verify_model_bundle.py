@@ -95,10 +95,35 @@ def main() -> None:
     gaic_compiled = tree_hash(bundle / "GAICCompositionScorer.mlmodelc")
     gaic_manifest["compiledSHA256"] = gaic_compiled
     gaic_manifest_path.write_text(json.dumps(gaic_manifest, indent=2), encoding="utf-8")
+
+    ow_manifest_path = bundle / "OpenWorldPhotoManifest.json"
+    ow_manifest = json.loads(ow_manifest_path.read_text(encoding="utf-8"))
+    if ow_manifest.get("weightsSHA256") != "48f24206bc8680d60cbbfa296b0140da849669b9515058b72f5a945142df0654":
+        raise RuntimeError("Invalid OpenWorldPhotoYOLOE checkpoint provenance")
+    ow_classes = json.loads((bundle / "OpenWorldPhotoClasses.json").read_text(encoding="utf-8"))
+    if len(ow_classes) < 90 or "flower" not in ow_classes or "sky" not in ow_classes or "building" not in ow_classes:
+        raise RuntimeError("OpenWorldPhotoClasses.json missing core photographic categories")
+    ow_parity = ow_manifest.get("parity") or {}
+    if not ow_parity.get("checked") or ow_parity.get("scorePearsonCorr", 0) < 0.99:
+        raise RuntimeError(f"OpenWorldPhotoYOLOE failed Core ML parity: {ow_parity}")
+    ow_compiled = tree_hash(bundle / "OpenWorldPhotoYOLOE.mlmodelc")
+    ow_manifest["compiledSHA256"] = ow_compiled
+    ow_manifest_path.write_text(json.dumps(ow_manifest, indent=2), encoding="utf-8")
+
+    depth_manifest_path = bundle / "DepthAnythingManifest.json"
+    depth_manifest = json.loads(depth_manifest_path.read_text(encoding="utf-8"))
+    if depth_manifest.get("weightsSHA256") != "a8b775b4f0f1f843d6d7252eb4487ad2ebbcbcf7e35f3ddab3d98f030b9cbeb5":
+        raise RuntimeError("Invalid DepthAnythingV2SmallF16INT8 provenance")
+    depth_compiled = tree_hash(bundle / "DepthAnythingV2SmallF16INT8.mlmodelc")
+    depth_manifest["compiledSHA256"] = depth_compiled
+    depth_manifest_path.write_text(json.dumps(depth_manifest, indent=2), encoding="utf-8")
+
     print(f"SigLIP compiled SHA256: {siglip}")
     print(f"YOLO compiled SHA256: {yolo}")
     print(f"SAMP-Net compiled SHA256: {composition}")
     print(f"GAIC compiled SHA256: {gaic_compiled}")
+    print(f"OpenWorldPhotoYOLOE compiled SHA256: {ow_compiled}")
+    print(f"DepthAnythingV2SmallF16INT8 compiled SHA256: {depth_compiled}")
 
 
 if __name__ == "__main__":

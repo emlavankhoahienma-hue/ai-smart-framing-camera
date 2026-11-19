@@ -3259,7 +3259,7 @@ public final class CameraViewModel: ObservableObject {
         if let first = activeChoice,
            CACurrentMediaTime() - source.frame.timestamp <= 30,
            first.plan.confidence >= first.plan.minimumAutoselectConfidence,
-           analysis.canAutoselectComposition || !output.allCandidates.isEmpty {
+           analysis.canAutoselectComposition || !output.allCandidates.isEmpty || !analysis.fallbackCandidates.isEmpty {
             acceptLocalPlan(first.plan, source: source)
         } else if let first = activeChoice,
                   CACurrentMediaTime() - source.frame.timestamp <= 30 {
@@ -3454,7 +3454,7 @@ public final class CameraViewModel: ObservableObject {
         let touchesBorder = subRect.minX <= 0.025 || subRect.maxX >= 0.975 || subRect.minY <= 0.025 || subRect.maxY >= 0.975
         let isCrampedAtCurrentZoom = crampedArea > 0.50 || (touchesBorder && max(subRect.width, subRect.height) > 0.60)
         if isCrampedAtCurrentZoom && evaluatedFraming.recommendedZoomFactor < displayZoom - 0.10 {
-            effectiveZoom = evaluatedFraming.recommendedZoomFactor
+            effectiveZoom = min(effectiveZoom, evaluatedFraming.recommendedZoomFactor)
         }
         if !(effectiveZoom < 0.99 && !cameraService.hasUltraWideLens) {
             effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(
@@ -3485,7 +3485,10 @@ public final class CameraViewModel: ObservableObject {
             activeCompositionRule = .ruleOfThirds
         }
         localCompositionIntent = plan.intent
-        let zoomText = abs(effectiveZoom - displayZoom) > 0.12 ? String(format: " · Smart Zoom %.1fx", effectiveZoom) : ""
+        let zoomText = (abs(effectiveZoom - displayZoom) > 0.12 &&
+                        !plan.explanation.contains("Zoom") &&
+                        !plan.explanation.contains("Lùi góc rộng"))
+            ? String(format: " · Smart Zoom %.1fx", effectiveZoom) : ""
         localCompositionExplanation = plan.explanation + zoomText
 
         // Doka Unified ScanResp for Local AI: Tin tưởng 100% mức Zoom được SAMP-Net và Charm-PARA chấm điểm

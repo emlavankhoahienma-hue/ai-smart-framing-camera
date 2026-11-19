@@ -222,20 +222,20 @@ private final class SemanticCropRanker: @unchecked Sendable {
         }
 
         var roleScores: [SemanticCompositionRole: Double] = [
-            .portrait: max(Self.sc(comb, "person"), Self.sc(comb, "person_scenery") * 0.95),
+            .portrait: max(Self.sc(comb, "person"), max(Self.sc(comb, "portrait_closeup"), Self.sc(comb, "person_scenery") * 0.95)),
             .group: Self.sc(comb, "group"),
-            .animal: Self.sc(comb, "animal"),
-            .food: Self.sc(comb, "food"),
-            .flower: Self.sc(comb, "flower"),
-            .streetLeading: max(Self.sc(comb, "street_perspective", fallback: "street"), Self.sc(comb, "street")) +
+            .animal: max(Self.sc(comb, "animal"), Self.sc(comb, "pet_portrait")),
+            .food: max(Self.sc(comb, "food"), max(Self.sc(comb, "food_spread"), Self.sc(comb, "coffee_drink"))),
+            .flower: max(Self.sc(comb, "flower"), Self.sc(comb, "flower_closeup")),
+            .streetLeading: max(Self.sc(comb, "street_perspective", fallback: "street"), max(Self.sc(comb, "street"), Self.sc(comb, "night_city"))) +
                 (Self.sc(fullS, "street_perspective") > 0.03 ? 0.015 : 0.0),
-            .architecture: max(Self.sc(comb, "architecture_facade", fallback: "building"), Self.sc(comb, "building")),
-            .landscapeSky: 0.55 * Self.sc(comb, "horizon_sky", fallback: "landscape") +
-                0.45 * max(Self.sc(comb, "sky"), max(Self.sc(comb, "landscape"), Self.sc(comb, "sunset"))),
-            .foliageGarden: max(Self.sc(comb, "foliage_garden", fallback: "foliage"), Self.sc(comb, "foliage")),
+            .architecture: max(Self.sc(comb, "architecture_facade", fallback: "building"), max(Self.sc(comb, "building"), Self.sc(comb, "architecture_symmetry"))),
+            .landscapeSky: 0.55 * max(Self.sc(comb, "horizon_sky", fallback: "landscape"), Self.sc(comb, "dramatic_clouds")) +
+                0.45 * max(Self.sc(comb, "sky"), max(Self.sc(comb, "landscape"), max(Self.sc(comb, "sunset"), max(Self.sc(comb, "golden_hour"), max(Self.sc(comb, "mountain_vista"), Self.sc(comb, "ocean_beach")))))),
+            .foliageGarden: max(Self.sc(comb, "foliage_garden", fallback: "foliage"), max(Self.sc(comb, "foliage"), Self.sc(comb, "forest_woods"))),
             .deskWorkspace: Self.sc(comb, "desk_workspace"),
             .tabletopEnsemble: Self.sc(comb, "tabletop_ensemble"),
-            .indoorRoom: Self.sc(comb, "indoor_furnished"),
+            .indoorRoom: max(Self.sc(comb, "indoor_furnished"), Self.sc(comb, "indoor_living_room")),
             .apertureView: Self.sc(comb, "frame_aperture")
         ]
 
@@ -634,11 +634,88 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             )
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [basicHero], receipt: receipt())
         }
+        // Run Open-World Photographic YOLOE-26s (101 classes) + iOS 17+ Foreground Instance Mask
+        progress("Đang nhận diện vật thể mở rộng & chiều sâu cảnh…")
+        let openWorldDetections = OpenWorldSubjectDetector.shared.detect(
+            pixelBuffer: pixelBuffer,
+            orientation: frame.orientation,
+            cancellation: cancellation
+        )
+        let directorDetections: [DirectorDetection] = {
+            var list: [DirectorDetection] = output.allCandidates.map { c in
+                let domain = CameraFramingDirector.classifyDomain(
+                    label: c.label,
+                    isHumanCategory: c.category == .human,
+                    isFaceCategory: c.category == .face,
+                    isAnimalCategory: c.category == .animal,
+                    isGeneralCategory: c.category == .general
+                )
+                return DirectorDetection(
+                    label: c.label,
+                    localizedLabel: CameraFramingDirector.localizedName(for: c.label),
+                    boundingBox: c.boundingBox,
+                    anchor: c.eyePosition ?? c.trackingPoint,
+                    confidence: Double(c.confidence),
+                    domain: domain,
+                    gazeX: Double(c.gaze),
+                    isGroup: c.isGroup,
+                    isAttentionOnly: c.isAttentionRegion,
+                    companionBounds: c.companionBounds,
+                    faceBounds: c.faceBounds
+                )
+            }
+            for faceRect in output.allFaceRects {
+                list.append(DirectorDetection(
+                    label: "human face",
+                    localizedLabel: "Khuôn mặt",
+                    boundingBox: faceRect,
+                    anchor: CGPoint(x: faceRect.midX, y: faceRect.minY + 0.42 * faceRect.height),
+                    confidence: 0.90,
+                    domain: .face
+                ))
+            }
+            list.append(contentsOf: openWorldDetections)
+            return list
+        }()
+
+        // Enrich candidates for SigLIP spatial profile without mutating locked analyzeCapturedFrame
+        let enrichedCandidates: [NeuralSubjectCandidate] = {
+            var merged = output.allCandidates
+            for ow in openWorldDetections where ow.domain != .backgroundSurface && ow.domain != .wideNature && ow.confidence >= 0.24 {
+                let duplicate = merged.contains { existing in
+                    let inter = existing.boundingBox.intersection(ow.boundingBox)
+                    guard !inter.isNull, !inter.isEmpty else { return false }
+                    let ia = Double(inter.width * inter.height)
+                    let ua = existing.areaRatio + ow.area - ia
+                    return ua > 1e-6 && (ia / ua) > 0.55
+                }
+                if !duplicate {
+                    let cat: NeuralSubjectCategory = {
+                        switch ow.domain {
+                        case .human: return .human
+                        case .face: return .face
+                        case .animal: return .animal
+                        default: return .foregroundObject
+                        }
+                    }()
+                    merged.append(NeuralSubjectCandidate(
+                        boundingBox: ow.boundingBox,
+                        category: cat,
+                        confidence: Float(ow.confidence),
+                        label: ow.localizedLabel,
+                        prominenceScore: ow.confidence * sqrt(max(0.01, ow.area)),
+                        trackingPoint: ow.anchor
+                    ))
+                }
+            }
+            return merged
+        }()
+
         let spatialProfile = SemanticCropRanker.shared.spatialProfile(
             pixelBuffer: pixelBuffer,
             orientation: frame.orientation,
             fullScores: output.semanticAffinities,
-            candidates: output.allCandidates,
+            candidates: enrichedCandidates,
             detectedScene: output.detectedScene,
             cancellation: cancellation
         )
@@ -847,9 +924,10 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             SemanticCropRanker.shared.endAnalysis()
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
+        let orientedCI = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
         let search = CompositionAestheticSearch(renderer: renderer)
         let searchResult = search.run(proposals: initialProposals,
-            image: CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation),
+            image: orientedCI,
             aspect: frame.calibration.aspect, preferences: preferences,
             raster: raster,
             modelURL: sampModelURL,
@@ -859,10 +937,46 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             requiresModernModel: false,
             sceneHints: sceneHints,
             cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
+        guard let result = searchResult else {
+            renderer.clearCaches()
+            return nil
+        }
+
+        // Solve true 3D physical camera pan/tilt + smart optical zoom (including 1.0x off-center pan,
+        // 0.5x cramped zoom-out, and 1.2x/1.5x/2.0x/3.0x optical zoom-in) fusing OpenWorld YOLOE +
+        // DepthAnythingV2 + iOS 17 Foreground Mask + SigLIP + normalized GAIC/SAMP/Charm scores.
+        let directorDecision = CameraFramingDirector.direct(
+            detections: directorDetections,
+            raster: raster,
+            sceneHints: sceneHints,
+            semanticAffinities: spatialProfile.fullScores.isEmpty ? output.semanticAffinities : spatialProfile.fullScores,
+            neuralProposals: result.allEvaluatedViews.map(\.proposal),
+            calibration: frame.calibration,
+            pose: pose,
+            currentZoom: CGFloat(frame.displayZoom),
+            allowedZooms: allowedZooms
+        )
+        let directorPreviewCorners: [CGPoint] = {
+            let relZoom = max(1.0, Double(directorDecision.recommendedZoom) / max(0.5, frame.displayZoom))
+            let half = 0.5 / relZoom
+            let cx = max(half, min(1.0 - half, Double(directorDecision.aimPointInSource.x)))
+            let cy = max(half, min(1.0 - half, Double(directorDecision.aimPointInSource.y)))
+            return [
+                CGPoint(x: cx - half, y: cy - half),
+                CGPoint(x: cx + half, y: cy - half),
+                CGPoint(x: cx + half, y: cy + half),
+                CGPoint(x: cx - half, y: cy + half),
+            ]
+        }()
+        let directorPreviewImage = renderer.preview(
+            image: orientedCI,
+            corners: directorPreviewCorners,
+            aspect: frame.calibration.aspect
+        ) ?? result.views.first?.image
         renderer.clearCaches()
-        guard let result = searchResult else { return nil }
+
         let primaryHero = hero
-        let choices = result.views.map { view -> LocalCompositionChoice in
+        let neuralChoices = result.views.map { view -> LocalCompositionChoice in
             let proposal = view.proposal
             let hero = (proposal.subjectIndex == 1 ? (builtPlan.secondaryHero ?? primaryHero) : primaryHero)
             let activePortraitBounds = (proposal.subjectIndex == 1 ? nil : portraitBounds)
@@ -877,18 +991,71 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     attentionRegion: activeAllowsAtt),
                 aimPointInSource: proposal.aimPoint, aimWorldRay: pose.act(proposal.rotation.act(SIMD3(0, 0, -1))),
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
-                minimumAutoselectConfidence: (output.detectedScene == .night ? 0.42 :
-                    (LocalAutoselectCalibration.threshold(scene: output.detectedScene, category: hero.category) ?? 0.56)),
+                minimumAutoselectConfidence: (output.detectedScene == .night ? 0.28 :
+                    (LocalAutoselectCalibration.threshold(scene: output.detectedScene, category: hero.category) ?? 0.32)),
                 intent: proposal.intent, score: proposal.score, explanation: explanationText,
                 usesCenter: proposal.usesCenter, preferenceKey: proposal.preferenceKey,
                 recommendedEVBias: proposal.recommendedEVBias)
             return LocalCompositionChoice(candidate: hero, plan: plan, preview: view.image,
                                           preservesOriginalFrame: proposal.isUnchangedView)
         }
-        let effectiveCandidates = output.allCandidates.isEmpty ? [hero] : output.allCandidates
+
+        let directedCategory: NeuralSubjectCategory = {
+            switch directorDecision.role {
+            case .portrait, .environmentalPortrait, .group: return .human
+            case .animal: return .animal
+            case .skyLandscape, .scene: return .general
+            default: return .foregroundObject
+            }
+        }()
+        let directedHero = NeuralSubjectCandidate(
+            boundingBox: directorDecision.heroBounds,
+            category: directedCategory,
+            confidence: Float(directorDecision.confidence),
+            label: directorDecision.heroLocalizedLabel,
+            prominenceScore: directorDecision.confidence,
+            eyePosition: (directedCategory == .human) ? directorDecision.heroAnchor : nil,
+            trackingPoint: directorDecision.heroAnchor,
+            isGroup: directorDecision.role == .group
+        )
+        var choices: [LocalCompositionChoice] = []
+        if let dirImage = directorPreviewImage {
+            let topNeuralScore = result.views.first?.proposal.score ?? 0.85
+            let directedPlan = LocalFramingPlan(
+                subjectPoint: directorDecision.heroAnchor,
+                subjectRect: directorDecision.heroBounds,
+                cropProtectionRect: directorDecision.heroBounds,
+                aimPointInSource: directorDecision.aimPointInSource,
+                aimWorldRay: directorDecision.aimWorldRay,
+                zoom: directorDecision.recommendedZoom,
+                confidence: directorDecision.confidence,
+                minimumAutoselectConfidence: output.detectedScene == .night ? 0.28 : 0.32,
+                intent: directorDecision.role.intent,
+                score: topNeuralScore + 0.05,
+                explanation: directorDecision.explanation,
+                usesCenter: directorDecision.usesCenter,
+                preferenceKey: "director|\(directorDecision.role.rawValue)|\(Int((directorDecision.recommendedZoom * 10).rounded()))",
+                recommendedEVBias: result.views.first?.proposal.recommendedEVBias ?? 0.0
+            )
+            choices.append(LocalCompositionChoice(
+                candidate: directedHero,
+                plan: directedPlan,
+                preview: dirImage,
+                preservesOriginalFrame: directorDecision.preservesOriginalFrame
+            ))
+        }
+        for alt in neuralChoices where choices.count < 3 {
+            let duplicate = choices.contains { existing in
+                hypot(Double(existing.plan.aimPointInSource.x - alt.plan.aimPointInSource.x),
+                      Double(existing.plan.aimPointInSource.y - alt.plan.aimPointInSource.y)) < 0.04 &&
+                abs(Double(existing.plan.zoom - alt.plan.zoom)) < 0.08
+            }
+            if !duplicate { choices.append(alt) }
+        }
+        let effectiveCandidates = [directedHero] + enrichedCandidates.filter { $0.boundingBox != directedHero.boundingBox }
         return LocalCompositionAnalysis(detection: output, choices: choices, fallbackCandidates: effectiveCandidates,
             assessedCompositionCount: result.assessedCount, usedCompositionModel: result.usedSpecialist,
-            canAutoselectComposition: result.canAutoselect,
+            canAutoselectComposition: result.canAutoselect || directorDecision.confidence >= 0.38,
             receipt: receipt(count: result.assessedCount, specialist: result.usedSpecialist, modern: result.modernAssessmentCount))
     }
 

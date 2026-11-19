@@ -827,6 +827,122 @@ enum CompositionPlanningRegression {
                 try require(topPlan.zoom <= 1.35, "well-sized foreground object was forced into excessive zoom (\(topPlan.zoom)x)")
             }
         }
+        try run("CameraFramingDirector solves true 3D pan/tilt at 1x, smart zoom-in/out, sky horizon, flower, and corner-sliver rejection") {
+            let k = TrackingCalibration.fallback()
+            let identityPose = simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+            let baseRaster = raster()
+
+            // 1. Portrait at center-right looking right -> true 3D pan (NOT dead center 0.5, 0.5!)
+            let portraitDet = DirectorDetection(
+                label: "person", localizedLabel: "Người",
+                boundingBox: CGRect(x: 0.36, y: 0.18, width: 0.32, height: 0.56),
+                anchor: CGPoint(x: 0.52, y: 0.30),
+                confidence: 0.90, domain: .human, gazeX: 0.45,
+                faceBounds: [CGRect(x: 0.46, y: 0.22, width: 0.12, height: 0.15)]
+            )
+            let portraitRes = CameraFramingDirector.direct(
+                detections: [portraitDet], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["person": 0.08], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(portraitRes.role == .portrait, "expected portrait role, got \(portraitRes.role)")
+            try require(portraitRes.destinationPoint.x < 0.42, "right gaze should place portrait on left golden ratio")
+            try require(hypot(Double(portraitRes.aimPointInSource.x - 0.5), Double(portraitRes.aimPointInSource.y - 0.5)) > 0.08,
+                        "1x portrait target collapsed to dead center \(portraitRes.aimPointInSource)")
+            let projAim = k.project(deviceRay: portraitRes.aimWorldRay)
+            try require(projAim.isInFront && hypot(Double(projAim.point.x - portraitRes.aimPointInSource.x), Double(projAim.point.y - portraitRes.aimPointInSource.y)) < 1e-4,
+                        "aimWorldRay diverged from aimPointInSource")
+
+            // 2. Distant small animal -> Smart Optical Zoom-In >= 2.0x + safe zoomed pan bounds
+            let smallDog = DirectorDetection(
+                label: "dog", localizedLabel: "Chú chó",
+                boundingBox: CGRect(x: 0.62, y: 0.50, width: 0.14, height: 0.14),
+                anchor: nil, confidence: 0.86, domain: .animal
+            )
+            let dogRes = CameraFramingDirector.direct(
+                detections: [smallDog], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["animal": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(dogRes.role == .animal, "expected animal role")
+            try require(dogRes.recommendedZoom >= 2.0, "distant animal failed to zoom in: \(dogRes.recommendedZoom)x")
+            let halfSpan = 0.5 / Double(dogRes.recommendedZoom)
+            try require(Double(dogRes.aimPointInSource.x) >= halfSpan - 0.001 && Double(dogRes.aimPointInSource.x) <= 1.0 - halfSpan + 0.001,
+                        "zoomed aim drifted outside sensor bounds: \(dogRes.aimPointInSource)")
+
+            // 3. Dramatic sky + clouds horizon -> 1.0x wide view, tilts UP to place horizon on lower third 0.667
+            let skyDet = DirectorDetection(
+                label: "sky", localizedLabel: "Bầu trời",
+                boundingBox: CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.42),
+                anchor: nil, confidence: 0.80, domain: .wideNature
+            )
+            let skyRes = CameraFramingDirector.direct(
+                detections: [skyDet], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["dramatic_clouds": 0.11, "sky": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(skyRes.role == .skyLandscape, "expected skyLandscape role, got \(skyRes.role)")
+            try require(abs(skyRes.recommendedZoom - 1.0) < 0.05, "sky landscape should keep 1.0x wide view")
+            try require(skyRes.destinationPoint.y > 0.60 && skyRes.aimPointInSource.y < 0.42,
+                        "dramatic sky should tilt camera UP (aimY=\(skyRes.aimPointInSource.y), destY=\(skyRes.destinationPoint.y))")
+
+            // 4. Corner headless person sliver next to dominant pizza -> pizza wins!
+            let cornerShoulder = DirectorDetection(
+                label: "person", localizedLabel: "Người",
+                boundingBox: CGRect(x: 0.0, y: 0.0, width: 0.24, height: 0.36),
+                anchor: nil, confidence: 0.78, domain: .human
+            )
+            let giantPizza = DirectorDetection(
+                label: "pizza", localizedLabel: "Bánh pizza",
+                boundingBox: CGRect(x: 0.18, y: 0.24, width: 0.62, height: 0.56),
+                anchor: nil, confidence: 0.94, domain: .food
+            )
+            let pizzaRes = CameraFramingDirector.direct(
+                detections: [cornerShoulder, giantPizza], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["food": 0.10], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(pizzaRes.role == .food && pizzaRes.heroLabel == "pizza",
+                        "corner headless shoulder stole dominant pizza: got \(pizzaRes.role) / \(pizzaRes.heroLabel)")
+
+            // 5. Severely cramped close-up portrait -> 0.5x Ultra-Wide zoom-out; balanced group -> stays 1.0x
+            let crampedPerson = DirectorDetection(
+                label: "person", localizedLabel: "Người",
+                boundingBox: CGRect(x: 0.01, y: 0.0, width: 0.85, height: 0.96),
+                anchor: CGPoint(x: 0.44, y: 0.18), confidence: 0.92, domain: .human,
+                faceBounds: [CGRect(x: 0.30, y: 0.02, width: 0.28, height: 0.28)]
+            )
+            let crampedRes = CameraFramingDirector.direct(
+                detections: [crampedPerson], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["person": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(abs(crampedRes.recommendedZoom - 0.5) < 0.05, "severely cramped portrait should trigger 0.5x, got \(crampedRes.recommendedZoom)")
+
+            let groupA = DirectorDetection(label: "person", localizedLabel: "Người", boundingBox: CGRect(x: 0.16, y: 0.20, width: 0.26, height: 0.58), anchor: nil, confidence: 0.90, domain: .human)
+            let groupB = DirectorDetection(label: "person", localizedLabel: "Người", boundingBox: CGRect(x: 0.52, y: 0.22, width: 0.26, height: 0.56), anchor: nil, confidence: 0.88, domain: .human)
+            let groupRes = CameraFramingDirector.direct(
+                detections: [groupA, groupB], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["group": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(groupRes.role == .group && abs(groupRes.recommendedZoom - 1.0) < 0.05,
+                        "well-framed group should stay 1.0x, got \(groupRes.role) @ \(groupRes.recommendedZoom)x")
+
+            // 6. Non-COCO open-world flower detection -> flower role with Golden Ratio placement
+            let flowerDet = DirectorDetection(
+                label: "blossom", localizedLabel: "Cụm hoa",
+                boundingBox: CGRect(x: 0.56, y: 0.34, width: 0.24, height: 0.26),
+                anchor: nil, confidence: 0.62, domain: .pureFlower
+            )
+            let flowerRes = CameraFramingDirector.direct(
+                detections: [flowerDet], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["flower_closeup": 0.10], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(flowerRes.role == .flower && flowerRes.recommendedZoom >= 1.45,
+                        "open-world blossom should zoom cleanly onto Golden Ratio: \(flowerRes.role) @ \(flowerRes.recommendedZoom)x")
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

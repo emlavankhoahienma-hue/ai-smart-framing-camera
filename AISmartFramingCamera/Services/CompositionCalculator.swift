@@ -60,11 +60,11 @@ enum LocalAutoselectCalibration {
         guard let url = Bundle.main.url(forResource: "LocalAutoselectThresholds", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let values = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
-        return values.filter { $0.value.isFinite && (0.55...1.0).contains($0.value) }
+        return values.filter { $0.value.isFinite && (0.28...1.0).contains($0.value) }
     }()
     static func threshold(scene: DetectedSceneType,
                           category: NeuralSubjectCategory) -> Double? {
-        thresholds[scene.rawValue + "|" + category.rawValue] ?? 0.60
+        thresholds[scene.rawValue + "|" + category.rawValue] ?? 0.32
     }
 }
 

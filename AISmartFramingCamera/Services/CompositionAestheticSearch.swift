@@ -336,6 +336,50 @@ final class CompositionAestheticSearch {
                 for index in evaluated.indices { evaluated[index].proposal.score = evaluated[index].geometryScore }
             }
         }
+        // Per-photo neural consensus normalization: prevents narrow raw GAIC/SAMP/Charm
+        // variance (~0.05) from being drowned 10:1 by wider hand-tuned geometryScore variance (~0.38).
+        if (usedSpecialist || usedGAIC) && evaluated.count >= 2 {
+            let geomVals = evaluated.map(\.geometryScore)
+            let gMin = geomVals.min() ?? 0.0, gMax = geomVals.max() ?? 1.0
+            let gSpan = gMax - gMin
+            let gaicVals = evaluated.map(\.proposal.gaicScore)
+            let kMin = gaicVals.min() ?? 0.0, kMax = gaicVals.max() ?? 1.0
+            let kSpan = kMax - kMin
+            let sampVals = evaluated.compactMap { $0.assessment?.mean }
+            let sMin = sampVals.min() ?? 1.0, sMax = sampVals.max() ?? 5.0
+            let sSpan = sMax - sMin
+            let charmVals = evaluated.compactMap { $0.aesthetics?.mean }
+            let cMin = charmVals.min() ?? 1.0, cMax = charmVals.max() ?? 5.0
+            let cSpan = cMax - cMin
+
+            for idx in evaluated.indices {
+                let normGeom = gSpan > 1e-4 ? (evaluated[idx].geometryScore - gMin) / gSpan : 0.5
+                var neuralSum = 0.0
+                var neuralWeight = 0.0
+                if usedGAIC && kSpan > 1e-4 {
+                    neuralSum += 0.48 * ((evaluated[idx].proposal.gaicScore - kMin) / kSpan)
+                    neuralWeight += 0.48
+                }
+                if let samp = evaluated[idx].assessment?.mean, sSpan > 1e-4 {
+                    neuralSum += 0.26 * ((samp - sMin) / sSpan)
+                    neuralWeight += 0.26
+                }
+                if let charm = evaluated[idx].aesthetics?.mean, cSpan > 1e-4 {
+                    neuralSum += 0.26 * ((charm - cMin) / cSpan)
+                    neuralWeight += 0.26
+                }
+                if neuralWeight > 0.0 {
+                    let neuralConsensus = neuralSum / neuralWeight
+                    let zoomRatio = Double(evaluated[idx].proposal.zoom) / sourceBaseZoom
+                    let justified = CompositionPreferencePolicy.isJustifiedZoom(evaluated[idx].proposal)
+                    let zoomReg = (justified ? 0.025 : 0.075) * max(0.0, zoomRatio - (justified ? 1.95 : 1.65))
+                    let oobPen = min(0.18, evaluated[idx].proposal.outOfBoundsFraction * 0.22)
+                    let semB = sceneHints.hasRichGuidance ? min(0.28, max(-0.18, evaluated[idx].proposal.semanticCropBonus)) : 0.0
+                    let normalizedRank = 0.42 * normGeom + 0.58 * neuralConsensus + 0.16 * semB - zoomReg - oobPen
+                    evaluated[idx].proposal.score = 0.45 * evaluated[idx].proposal.score + 0.55 * normalizedRank
+                }
+            }
+        }
         let baseline = evaluated.first { $0.proposal.isUnchangedView }
         let originalZoom = baseline?.proposal.zoom
         let baseSubjectArea = baseline.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
@@ -369,11 +413,11 @@ final class CompositionAestheticSearch {
                 return false
             }
             if view.proposal.zoom <= originalZoom * 1.08 { return true }
-            if usedGAIC && (view.proposal.gaicScore >= baseline.proposal.gaicScore + 0.035 ||
+            if usedGAIC && (view.proposal.gaicScore >= baseline.proposal.gaicScore + 0.020 ||
                             view.proposal.excessTrimGain >= 0.028 ||
                             (sceneHints.hasRichGuidance && view.proposal.sceneCleanGain >= 0.03)) &&
-               view.proposal.score >= baseline.proposal.score - 0.015 &&
-               view.geometryScore >= max(0.38, baseline.geometryScore * 0.75) {
+               view.proposal.score >= baseline.proposal.score - 0.025 &&
+               view.geometryScore >= max(0.34, baseline.geometryScore * 0.70) {
                 let compOK: Bool
                 if let composition = view.assessment, let originalComposition = baseline.assessment {
                     compOK = composition.mean >= originalComposition.mean - 0.45

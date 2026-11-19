@@ -61,6 +61,7 @@ jobs:
             AISmartFramingCamera/Services/CharmPhotographicModel.swift \
             AISmartFramingCamera/Services/PortraitFramingEvidence.swift \
             AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
+            AISmartFramingCamera/Services/CameraFramingDirector.swift \
             tests/CompositionPlanningRegression.swift \
             -o "$RUNNER_TEMP/composition-regressions"
           "$RUNNER_TEMP/composition-regressions"
@@ -102,7 +103,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install "torch==2.5.1" "numpy==1.26.4" \
-            "ultralytics==8.4.178" "coremltools==9.0"
+            "ultralytics==8.4.190" "coremltools==9.0"
           if ! xcrun coremlc compile models/yolov26-engine/weights/yolov26_ane.mlpackage .; then
             cp models/yolov26-engine/weights/yolov26_ane.mlpackage/Data/com.apple.CoreML/model.mlmodel yolov26_ane.mlmodel
             xcrun coremlc compile yolov26_ane.mlmodel .
@@ -151,12 +152,23 @@ jobs:
             "coremltools==9.0" "opencv-python-headless==4.11.0.86" \
             "einops==0.8.1" "Pillow==11.0.0" "timm==1.0.31"
           python scripts/prepare_composition_photos.py --per-scene 5
+          PARITY_IMG="$(find validation/photos -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) | head -n 1)"
+          pip install --no-deps "git+https://github.com/ultralytics/CLIP.git"
+          pip install ftfy regex
+          python scripts/export_openworld_yoloe_coreml.py --parity-image "$PARITY_IMG"
+          xcrun coremlc compile OpenWorldPhotoYOLOE.mlpackage .
+          python scripts/fetch_depth_anything_coreml.py
+          xcrun coremlc compile DepthAnythingV2SmallF16INT8.mlpackage .
+          test -d OpenWorldPhotoYOLOE.mlmodelc
+          test -s OpenWorldPhotoClasses.json
+          test -s OpenWorldPhotoManifest.json
+          test -d DepthAnythingV2SmallF16INT8.mlmodelc
+          test -s DepthAnythingManifest.json
           python scripts/export_composition_coreml.py --photos validation/photos
           xcrun coremlc compile SAMPComposition.mlpackage .
           pip install "transformers==4.36.0" "tokenizers==0.15.2" "ml-collections==0.1.1"
           python scripts/export_charm_coreml.py --photos validation/photos
           xcrun coremlc compile CharmAesthetics.mlpackage .
-          PARITY_IMG="$(find validation/photos -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) | head -n 1)"
           python models/gaic-cropper/export_coreml.py \
             --weights models/gaic-cropper/gaic_cropper.pt \
             --output GAICCompositionScorer.mlpackage \
@@ -256,6 +268,12 @@ jobs:
           test -d GAICCompositionScorer.mlmodelc
           cp -r GAICCompositionScorer.mlmodelc Payload/AISmartFramingCamera.app/
           cp GAICModelManifest.json Payload/AISmartFramingCamera.app/
+          test -d OpenWorldPhotoYOLOE.mlmodelc
+          cp -r OpenWorldPhotoYOLOE.mlmodelc Payload/AISmartFramingCamera.app/
+          cp OpenWorldPhotoClasses.json OpenWorldPhotoManifest.json Payload/AISmartFramingCamera.app/
+          test -d DepthAnythingV2SmallF16INT8.mlmodelc
+          cp -r DepthAnythingV2SmallF16INT8.mlmodelc Payload/AISmartFramingCamera.app/
+          cp DepthAnythingManifest.json Payload/AISmartFramingCamera.app/
           if [ -s AISmartFramingCamera/Resources/LocalAutoselectThresholds.json ]; then
             cp AISmartFramingCamera/Resources/LocalAutoselectThresholds.json Payload/AISmartFramingCamera.app/
           fi

@@ -1,0 +1,418 @@
+import Foundation
+import CoreGraphics
+import CoreImage
+import CoreML
+import CoreVideo
+import ImageIO
+import Vision
+
+/// Open-world photographic subject detector running two complementary iOS 17+ engines:
+/// 1. `OpenWorldPhotoYOLOE.mlmodelc` (101 open-vocabulary photography classes: flowers,
+///    blossoms, leaves, trees, sky, clouds, sunset, mountains, sea, beach, rivers,
+///    buildings, skyscrapers, temples, bridges, coffee, dishes, cameras, watches, etc.)
+/// 2. Apple Vision `VNGenerateForegroundInstanceMaskRequest` (0 MB native iOS 17+ class-agnostic
+///    pixel-exact foreground instance lifter for any unknown object, statue, or blossom).
+///
+/// Runs ONLY on the serialized one-shot composition worker — never inside the 30fps live tracking loop.
+final class OpenWorldSubjectDetector: @unchecked Sendable {
+    static let shared = OpenWorldSubjectDetector()
+
+    private let lock = NSLock()
+    private let ciContext = CIContext(options: [.cacheIntermediates: false])
+    private let inputSide: Int = 640
+
+    private var cachedModel: MLModel?
+    private var cachedClasses: [String]?
+
+    private static let lowThresholdClasses: Set<String> = [
+        "sky", "cloud", "sunset", "sun", "moon", "mountain", "hill", "sea", "ocean",
+        "beach", "river", "lake", "waterfall", "rainbow", "flower", "blossom",
+        "rose", "sunflower", "tulip", "bouquet", "leaf", "branch", "cactus",
+        "building", "skyscraper", "tower", "temple", "church", "bridge", "street sign"
+    ]
+
+    private init() {}
+
+    /// Runs OpenWorldPhotoYOLOE (when bundled & within RAM/thermal budgets) and iOS 17+
+    /// foreground instance segmentation, returning unified `DirectorDetection` entries.
+    func detect(
+        pixelBuffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation,
+        cancellation: CompositionAnalysisCancellation
+    ) -> [DirectorDetection] {
+        guard !cancellation.isCancelled else { return [] }
+        var combined: [DirectorDetection] = []
+
+        if !cancellation.isCancelled {
+            let yoloeDets = detectOpenWorldYOLOE(
+                pixelBuffer: pixelBuffer,
+                orientation: orientation,
+                cancellation: cancellation
+            )
+            combined.append(contentsOf: yoloeDets)
+        }
+
+        if !cancellation.isCancelled {
+            let maskDets = detectForegroundInstances(
+                pixelBuffer: pixelBuffer,
+                orientation: orientation,
+                cancellation: cancellation
+            )
+            combined.append(contentsOf: maskDets)
+        }
+
+        return combined
+    }
+
+    // MARK: - 1. OpenWorldPhotoYOLOE (101 Photographic Classes)
+
+    private func loadClassesIfNeeded() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = cachedClasses { return existing }
+        guard let url = Bundle.main.url(forResource: "OpenWorldPhotoClasses", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let parsed = try? JSONDecoder().decode([String].self, from: data),
+              !parsed.isEmpty else {
+            return []
+        }
+        cachedClasses = parsed
+        return parsed
+    }
+
+    private func detectOpenWorldYOLOE(
+        pixelBuffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation,
+        cancellation: CompositionAnalysisCancellation
+    ) -> [DirectorDetection] {
+        guard !cancellation.isCancelled,
+              ProcessInfo.processInfo.physicalMemory >= 3_500_000_000,
+              ProcessInfo.processInfo.thermalState != .critical,
+              !ProcessInfo.processInfo.isLowPowerModeEnabled else {
+            return []
+        }
+        let classes = loadClassesIfNeeded()
+        guard !classes.isEmpty,
+              let modelURL = Bundle.main.url(forResource: "OpenWorldPhotoYOLOE", withExtension: "mlmodelc") else {
+            return []
+        }
+
+        let keepCached = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
+        return autoreleasepool {
+            guard !cancellation.isCancelled else { return [] }
+            let model: MLModel? = lock.withLock {
+                if let cached = cachedModel { return cached }
+                let config = MLModelConfiguration()
+                config.computeUnits = .cpuAndNeuralEngine
+                guard let loaded = try? MLModel(contentsOf: modelURL, configuration: config) else { return nil }
+                if keepCached { cachedModel = loaded }
+                return loaded
+            }
+            guard let model, !cancellation.isCancelled else { return [] }
+
+            guard let letterboxed = makeLetterboxBuffer(from: pixelBuffer, orientation: orientation) else {
+                return []
+            }
+            let inputName = model.modelDescription.inputDescriptionsByName.keys.first ?? "image"
+            guard !cancellation.isCancelled,
+                  let provider = try? MLDictionaryFeatureProvider(dictionary: [
+                    inputName: MLFeatureValue(pixelBuffer: letterboxed.buffer)
+                  ]),
+                  let output = try? model.prediction(from: provider),
+                  !cancellation.isCancelled else {
+                return []
+            }
+
+            let outVal = output.featureValue(for: "detections")
+                ?? output.featureNames.compactMap({ output.featureValue(for: $0) }).first(where: { $0.multiArrayValue != nil })
+            guard let array = outVal?.multiArrayValue else { return [] }
+
+            let rawDets = decodeYOLOEOutput(
+                array,
+                classes: classes,
+                padX: letterboxed.padX,
+                padY: letterboxed.padY,
+                scaledWidth: letterboxed.scaledWidth,
+                scaledHeight: letterboxed.scaledHeight
+            )
+            return applyClassAwareNMS(rawDets, iouThreshold: 0.50, maxDetections: 28)
+        }
+    }
+
+    private struct LetterboxResult {
+        let buffer: CVPixelBuffer
+        let padX: Double
+        let padY: Double
+        let scaledWidth: Double
+        let scaledHeight: Double
+    }
+
+    private func makeLetterboxBuffer(
+        from pixelBuffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation
+    ) -> LetterboxResult? {
+        let oriented = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+        let extent = oriented.extent
+        guard !extent.isEmpty, extent.width > 1, extent.height > 1 else { return nil }
+
+        let side = Double(inputSide)
+        let srcW = Double(extent.width)
+        let srcH = Double(extent.height)
+        let ratio = min(side / srcW, side / srcH)
+        let scaledW = max(1.0, (srcW * ratio).rounded())
+        let scaledH = max(1.0, (srcH * ratio).rounded())
+        let padX = floor((side - scaledW) * 0.5)
+        let padYTop = floor((side - scaledH) * 0.5)
+        // CoreImage has bottom-left origin; placing image top at y_ci = side - padYTop maps to top-left y = padYTop.
+        let padYBottom = side - padYTop - scaledH
+
+        let translated = oriented.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+        let scaled = translated.transformed(by: CGAffineTransform(scaleX: CGFloat(scaledW / srcW), y: CGFloat(scaledH / srcH)))
+        let placed = scaled.transformed(by: CGAffineTransform(translationX: CGFloat(padX), y: CGFloat(padYBottom)))
+
+        let gray = CIImage(color: CIColor(red: 114.0 / 255.0, green: 114.0 / 255.0, blue: 114.0 / 255.0, alpha: 1.0))
+            .cropped(to: CGRect(x: 0, y: 0, width: side, height: side))
+        let composed = placed.composited(over: gray)
+
+        var outBuffer: CVPixelBuffer?
+        let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+        guard CVPixelBufferCreate(
+            kCFAllocatorDefault, inputSide, inputSide,
+            kCVPixelFormatType_32BGRA, attrs, &outBuffer
+        ) == kCVReturnSuccess, let buffer = outBuffer else {
+            return nil
+        }
+
+        ciContext.render(
+            composed,
+            to: buffer,
+            bounds: CGRect(x: 0, y: 0, width: side, height: side),
+            colorSpace: CGColorSpaceCreateDeviceRGB()
+        )
+        return LetterboxResult(buffer: buffer, padX: padX, padY: padYTop, scaledWidth: scaledW, scaledHeight: scaledH)
+    }
+
+    private static func float16ToFloat(_ bits: UInt16) -> Float {
+        let sign: Float = (bits & 0x8000) != 0 ? -1.0 : 1.0
+        let exp = Int((bits >> 10) & 0x1F)
+        let mant = Int(bits & 0x03FF)
+        if exp == 0 {
+            return mant == 0 ? 0.0 : sign * powf(2.0, -14.0) * (Float(mant) / 1024.0)
+        } else if exp == 31 {
+            return 0.0
+        }
+        return sign * powf(2.0, Float(exp - 15)) * (1.0 + Float(mant) / 1024.0)
+    }
+
+    /// Decodes `[1, 4 + nc, 8400]` detection tensor (verified 1:1 against Ultralytics YOLOE-26s).
+    private func decodeYOLOEOutput(
+        _ array: MLMultiArray,
+        classes: [String],
+        padX: Double,
+        padY: Double,
+        scaledWidth: Double,
+        scaledHeight: Double
+    ) -> [DirectorDetection] {
+        let shape = array.shape.map(\.intValue)
+        let strides = array.strides.map(\.intValue)
+        guard shape.count >= 2, strides.count == shape.count else { return [] }
+
+        let rows = shape[shape.count - 2]
+        let anchors = shape[shape.count - 1]
+        let nc = classes.count
+        guard rows >= 4 + nc, anchors > 0, scaledWidth > 1, scaledHeight > 1 else { return [] }
+
+        let rowStride = strides[strides.count - 2]
+        let colStride = strides[strides.count - 1]
+        let isFloat16 = array.dataType == .float16
+        let ptrF32 = isFloat16 ? nil : array.dataPointer.bindMemory(to: Float.self, capacity: array.count)
+        let ptrU16 = isFloat16 ? array.dataPointer.bindMemory(to: UInt16.self, capacity: array.count) : nil
+
+        @inline(__always)
+        func read(_ r: Int, _ a: Int) -> Float {
+            let offset = r * rowStride + a * colStride
+            if let p32 = ptrF32 { return p32[offset] }
+            if let p16 = ptrU16 { return Self.float16ToFloat(p16[offset]) }
+            return 0.0
+        }
+
+        let invW = 1.0 / scaledWidth
+        let invH = 1.0 / scaledHeight
+        var detections: [DirectorDetection] = []
+        detections.reserveCapacity(64)
+
+        for a in 0..<anchors {
+            var bestScore: Float = 0.13
+            var bestCls: Int = -1
+            for c in 0..<nc {
+                let s = read(4 + c, a)
+                if s > bestScore {
+                    bestScore = s
+                    bestCls = c
+                }
+            }
+            guard bestCls >= 0 else { continue }
+            let label = classes[bestCls]
+            let minThreshold: Float = Self.lowThresholdClasses.contains(label) ? 0.13 : 0.20
+            guard bestScore >= minThreshold else { continue }
+
+            let cx = Double(read(0, a))
+            let cy = Double(read(1, a))
+            let bw = Double(read(2, a))
+            let bh = Double(read(3, a))
+            guard cx.isFinite, cy.isFinite, bw.isFinite, bh.isFinite, bw > 2.0, bh > 2.0 else { continue }
+
+            let x1 = max(0.0, min(1.0, (cx - bw * 0.5 - padX) * invW))
+            let y1 = max(0.0, min(1.0, (cy - bh * 0.5 - padY) * invH))
+            let x2 = max(0.0, min(1.0, (cx + bw * 0.5 - padX) * invW))
+            let y2 = max(0.0, min(1.0, (cy + bh * 0.5 - padY) * invH))
+            let rw = x2 - x1
+            let rh = y2 - y1
+            guard rw >= 0.015, rh >= 0.015 else { continue }
+
+            let domain = CameraFramingDirector.classifyDomain(label: label)
+            detections.append(DirectorDetection(
+                label: label,
+                localizedLabel: CameraFramingDirector.localizedName(for: label),
+                boundingBox: CGRect(x: x1, y: y1, width: rw, height: rh),
+                anchor: nil,
+                confidence: Double(bestScore),
+                domain: domain
+            ))
+        }
+        return detections
+    }
+
+    private func applyClassAwareNMS(
+        _ detections: [DirectorDetection],
+        iouThreshold: Double,
+        maxDetections: Int
+    ) -> [DirectorDetection] {
+        let sorted = detections.sorted { $0.confidence > $1.confidence }
+        var kept: [DirectorDetection] = []
+        kept.reserveCapacity(min(maxDetections, sorted.count))
+        for cand in sorted {
+            if kept.count >= maxDetections { break }
+            let suppressed = kept.contains { prev in
+                guard prev.label == cand.label || (prev.domain == cand.domain && prev.domain != .object) else {
+                    return false
+                }
+                let inter = prev.boundingBox.intersection(cand.boundingBox)
+                guard !inter.isNull, !inter.isEmpty else { return false }
+                let ia = Double(inter.width * inter.height)
+                let ua = prev.area + cand.area - ia
+                return ua > 1e-6 && (ia / ua) > iouThreshold
+            }
+            if !suppressed { kept.append(cand) }
+        }
+        return kept
+    }
+
+    // MARK: - 2. iOS 17+ Apple Vision Foreground Instance Mask (Class-Agnostic Subject Lifter)
+
+    private func detectForegroundInstances(
+        pixelBuffer: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation,
+        cancellation: CompositionAnalysisCancellation
+    ) -> [DirectorDetection] {
+        guard !cancellation.isCancelled,
+              ProcessInfo.processInfo.thermalState != .critical else {
+            return []
+        }
+        guard #available(iOS 17.0, macOS 14.0, *) else { return [] }
+        return autoreleasepool {
+            let request = VNGenerateForegroundInstanceMaskRequest()
+            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
+            guard (try? cancellation.perform(request, with: handler)) != nil,
+                  let observation = request.results?.first,
+                  !observation.allInstances.isEmpty else {
+                return []
+            }
+            let maskBuffer = observation.instanceMask
+            guard CVPixelBufferGetPixelFormatType(maskBuffer) == kCVPixelFormatType_OneComponent8,
+                  CVPixelBufferLockBaseAddress(maskBuffer, .readOnly) == kCVReturnSuccess else {
+                return []
+            }
+            defer { CVPixelBufferUnlockBaseAddress(maskBuffer, .readOnly) }
+
+            let width = CVPixelBufferGetWidth(maskBuffer)
+            let height = CVPixelBufferGetHeight(maskBuffer)
+            let stride = CVPixelBufferGetBytesPerRow(maskBuffer)
+            guard width > 4, height > 4, stride >= width,
+                  let base = CVPixelBufferGetBaseAddress(maskBuffer) else {
+                return []
+            }
+
+            struct Accum {
+                var minX: Int
+                var maxX: Int
+                var minY: Int
+                var maxY: Int
+                var sumX: Double = 0.0
+                var sumY: Double = 0.0
+                var count: Int = 0
+            }
+            var stats: [Int: Accum] = [:]
+            let allowed = observation.allInstances
+            let step = max(1, min(width, height) / 160)
+            var sampledTotal = 0
+
+            var y = 0
+            while y < height {
+                let row = base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)
+                var x = 0
+                while x < width {
+                    sampledTotal += 1
+                    let id = Int(row[x])
+                    if id > 0 && allowed.contains(id) {
+                        if var acc = stats[id] {
+                            if x < acc.minX { acc.minX = x }
+                            if x > acc.maxX { acc.maxX = x }
+                            if y < acc.minY { acc.minY = y }
+                            if y > acc.maxY { acc.maxY = y }
+                            acc.sumX += Double(x)
+                            acc.sumY += Double(y)
+                            acc.count += 1
+                            stats[id] = acc
+                        } else {
+                            stats[id] = Accum(
+                                minX: x, maxX: x, minY: y, maxY: y,
+                                sumX: Double(x), sumY: Double(y), count: 1
+                            )
+                        }
+                    }
+                    x += step
+                }
+                y += step
+            }
+
+            guard sampledTotal > 0 else { return [] }
+            let invW = 1.0 / Double(width)
+            let invH = 1.0 / Double(height)
+            var results: [DirectorDetection] = []
+            for (_, acc) in stats {
+                let maskFraction = Double(acc.count) / Double(sampledTotal)
+                guard maskFraction >= 0.012 && maskFraction <= 0.78 else { continue }
+                let x0 = max(0.0, min(1.0, Double(acc.minX) * invW))
+                let y0 = max(0.0, min(1.0, Double(acc.minY) * invH))
+                let x1 = max(0.0, min(1.0, Double(acc.maxX + step) * invW))
+                let y1 = max(0.0, min(1.0, Double(acc.maxY + step) * invH))
+                let rw = x1 - x0
+                let rh = y1 - y0
+                guard rw >= 0.04, rh >= 0.04 else { continue }
+                let cx = max(x0, min(x1, (acc.sumX / Double(acc.count)) * invW))
+                let cy = max(y0, min(y1, (acc.sumY / Double(acc.count)) * invH))
+                let conf = min(0.84, 0.56 + 0.35 * sqrt(maskFraction))
+                results.append(DirectorDetection(
+                    label: "foreground_instance",
+                    localizedLabel: "Chủ thể tiền cảnh",
+                    boundingBox: CGRect(x: x0, y: y0, width: rw, height: rh),
+                    anchor: CGPoint(x: cx, y: cy),
+                    confidence: conf,
+                    domain: .foregroundMask
+                ))
+            }
+            return results.sorted { $0.area > $1.area }.prefix(4).map { $0 }
+        }
+    }
+}

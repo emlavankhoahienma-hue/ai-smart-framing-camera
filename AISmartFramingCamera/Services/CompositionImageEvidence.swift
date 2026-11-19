@@ -70,7 +70,13 @@ final class CompositionImageRenderer {
               ProcessInfo.processInfo.physicalMemory >= 3_500_000_000,
               ProcessInfo.processInfo.thermalState != .critical,
               !ProcessInfo.processInfo.isLowPowerModeEnabled else { return nil }
-        let candidateNames = ["DepthAnythingV2SmallF16", "DepthAnythingV2Small", "DepthAnythingV2", "DepthAnything"]
+        let candidateNames = [
+            "DepthAnythingV2SmallF16INT8",
+            "DepthAnythingV2SmallF16",
+            "DepthAnythingV2Small",
+            "DepthAnythingV2",
+            "DepthAnything",
+        ]
         guard let url = candidateNames.compactMap({ Bundle.main.url(forResource: $0, withExtension: "mlmodelc") }).first else {
             return nil
         }
@@ -139,8 +145,10 @@ final class CompositionImageRenderer {
             let preferredOutputs = ["depth", "predicted_depth", "inverse_depth"] + Array(output.featureNames)
             for outName in preferredOutputs {
                 guard let val = output.featureValue(for: outName) else { continue }
-                if let pb = val.imageBufferValue {
-                    return maskMap(pb, side: side)
+                if let pb = val.imageBufferValue,
+                   let raw = depthBufferMap(pb, side: side),
+                   let normalized = percentileNormalize(raw) {
+                    return normalized
                 }
                 if let arr = val.multiArrayValue, arr.shape.count >= 2 {
                     let h = arr.shape[arr.shape.count - 2].intValue
@@ -154,6 +162,84 @@ final class CompositionImageRenderer {
         }
     }
 
+    private static func float16ToDouble(_ bits: UInt16) -> Double {
+        let sign = (bits & 0x8000) != 0 ? -1.0 : 1.0
+        let exp = Int((bits >> 10) & 0x1F)
+        let mant = Int(bits & 0x03FF)
+        if exp == 0 {
+            return mant == 0 ? 0.0 : sign * pow(2.0, -14.0) * (Double(mant) / 1024.0)
+        } else if exp == 31 {
+            return 0.0
+        }
+        return sign * pow(2.0, Double(exp - 15)) * (1.0 + Double(mant) / 1024.0)
+    }
+
+    /// Reads raw unclipped monocular disparity values from Apple Core ML DepthAnythingV2 output buffers
+    /// (supports OneComponent16Half, OneComponent32Float, OneComponent8, and CoreImage RGBA8 fallback).
+    private func depthBufferMap(_ buffer: CVPixelBuffer, side: Int) -> [Double]? {
+        let fmt = CVPixelBufferGetPixelFormatType(buffer)
+        if fmt == kCVPixelFormatType_OneComponent16Half ||
+            fmt == kCVPixelFormatType_OneComponent32Float ||
+            fmt == kCVPixelFormatType_OneComponent8 {
+            guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            let width = CVPixelBufferGetWidth(buffer)
+            let height = CVPixelBufferGetHeight(buffer)
+            let stride = CVPixelBufferGetBytesPerRow(buffer)
+            guard width > 0, height > 0, let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+            var values = [Double](repeating: 0, count: side * side)
+            if fmt == kCVPixelFormatType_OneComponent16Half {
+                guard stride >= width * MemoryLayout<UInt16>.stride else { return nil }
+                for y in 0..<side {
+                    let row = base.advanced(by: min(height - 1, y * height / side) * stride)
+                        .assumingMemoryBound(to: UInt16.self)
+                    for x in 0..<side {
+                        let v = Self.float16ToDouble(row[min(width - 1, x * width / side)])
+                        values[y * side + x] = v.isFinite ? v : 0.0
+                    }
+                }
+                return values
+            } else if fmt == kCVPixelFormatType_OneComponent32Float {
+                guard stride >= width * MemoryLayout<Float>.stride else { return nil }
+                for y in 0..<side {
+                    let row = base.advanced(by: min(height - 1, y * height / side) * stride)
+                        .assumingMemoryBound(to: Float.self)
+                    for x in 0..<side {
+                        let v = Double(row[min(width - 1, x * width / side)])
+                        values[y * side + x] = v.isFinite ? v : 0.0
+                    }
+                }
+                return values
+            } else {
+                guard stride >= width else { return nil }
+                for y in 0..<side {
+                    let row = base.advanced(by: min(height - 1, y * height / side) * stride)
+                        .assumingMemoryBound(to: UInt8.self)
+                    for x in 0..<side {
+                        values[y * side + x] = Double(row[min(width - 1, x * width / side)]) / 255.0
+                    }
+                }
+                return values
+            }
+        }
+        guard let cg = render(CIImage(cvPixelBuffer: buffer), size: CGSize(width: side, height: side)) else {
+            return nil
+        }
+        var rgba = [UInt8](repeating: 0, count: side * side * 4)
+        let ok = rgba.withUnsafeMutableBytes { ptr -> Bool in
+            guard let ctx = CGContext(
+                data: ptr.baseAddress, width: side, height: side,
+                bitsPerComponent: 8, bytesPerRow: side * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        guard ok else { return nil }
+        return (0..<(side * side)).map { Double(rgba[$0 * 4]) / 255.0 }
+    }
+
     private func readDepthArray(_ array: MLMultiArray, width: Int, height: Int, targetSide: Int) -> [Double] {
         var result = [Double](repeating: 0, count: targetSide * targetSide)
         let rowStride = array.strides.count >= 2 ? array.strides[array.strides.count - 2].intValue : width
@@ -161,18 +247,6 @@ final class CompositionImageRenderer {
         let isFloat16 = array.dataType == .float16
         let ptrF32 = isFloat16 ? nil : array.dataPointer.bindMemory(to: Float.self, capacity: array.count)
         let ptrU16 = isFloat16 ? array.dataPointer.bindMemory(to: UInt16.self, capacity: array.count) : nil
-
-        func float16ToDouble(_ bits: UInt16) -> Double {
-            let sign = (bits & 0x8000) != 0 ? -1.0 : 1.0
-            let exp = Int((bits >> 10) & 0x1F)
-            let mant = Int(bits & 0x03FF)
-            if exp == 0 {
-                return mant == 0 ? 0.0 : sign * pow(2.0, -14.0) * (Double(mant) / 1024.0)
-            } else if exp == 31 {
-                return 0.0
-            }
-            return sign * pow(2.0, Double(exp - 15)) * (1.0 + Double(mant) / 1024.0)
-        }
 
         for y in 0..<targetSide {
             let sy = min(height - 1, y * height / targetSide)
@@ -183,7 +257,7 @@ final class CompositionImageRenderer {
                 if let p32 = ptrF32 {
                     value = Double(p32[offset])
                 } else if let p16 = ptrU16 {
-                    value = float16ToDouble(p16[offset])
+                    value = Self.float16ToDouble(p16[offset])
                 } else {
                     value = 0.0
                 }
