@@ -228,7 +228,14 @@ final class CompositionAestheticSearch {
         let refinedSeeds = refine(initial)
         let cappedNeighbours = usedGAIC ? Array(refinedSeeds.prefix(isHighMem ? 8 : 6)) : refinedSeeds
         let neighbours = evaluate(cappedNeighbours)
-        evaluated.append(contentsOf: neighbours)
+        if usedGAIC {
+            let bestSeedScore = initial.map(\.score).max() ?? 0.0
+            for nb in neighbours where nb.proposal.score >= bestSeedScore - 0.008 {
+                evaluated.append(nb)
+            }
+        } else {
+            evaluated.append(contentsOf: neighbours)
+        }
         guard !cancellation.isCancelled else { return nil }
         var usedSpecialist = !evaluated.isEmpty && assessedCount == evaluated.count
         if specialist != nil && !usedSpecialist {
@@ -336,11 +343,8 @@ final class CompositionAestheticSearch {
         let baseWasteRatio = baseline?.proposal.sceneWasteRatio ?? 0.0
         let zoomNeeded = baseline.map {
             usedGAIC
-                ? ((CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio,
-                                                                 sceneWasteRatio: baseWasteRatio) &&
-                    $0.proposal.intent != .landscape) ||
-                   (baseWasteRatio >= 0.34 && $0.proposal.intent != .landscape) ||
-                   (sceneHints.hasRichGuidance && sceneHints.avoid.maxAvoid >= 0.25))
+                ? (($0.proposal.sizeRatio < 0.48 && baseSubjectArea < 0.16 && $0.proposal.intent != .landscape) ||
+                   (sceneHints.hasRichGuidance && sceneHints.avoid.maxAvoid >= 0.56 && baseWasteRatio >= 0.46))
                 : (CompositionPreferencePolicy.zoomIsNecessary(originalSizeRatio: $0.proposal.sizeRatio,
                                                                  sceneWasteRatio: baseWasteRatio) ||
                    ($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height < 0.18) ||
@@ -410,8 +414,11 @@ final class CompositionAestheticSearch {
         }
         var rankedEligible = eligible
         if zoomNeeded, let baseline {
-            let bonusScale = usedGAIC ? 0.65 : 1.0
+            let bonusScale = usedGAIC ? 0.32 : 1.0
             for index in rankedEligible.indices where !rankedEligible[index].proposal.isUnchangedView {
+                if usedGAIC && rankedEligible[index].proposal.gaicScore < baseline.proposal.gaicScore - 0.045 {
+                    continue
+                }
                 rankedEligible[index].proposal.score += bonusScale * CompositionPreferencePolicy.excessTrimAndScaleBonus(
                     sizeRatio: rankedEligible[index].proposal.sizeRatio,
                     original: baseline.proposal.sizeRatio,

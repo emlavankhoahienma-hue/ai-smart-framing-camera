@@ -800,6 +800,33 @@ enum CompositionPlanningRegression {
             try require(sceneryDense.allSatisfy { Double($0.zoom) <= 1.35 && hypot($0.aimPoint.x - 0.5, $0.aimPoint.y - 0.5) <= 0.19 },
                         "scenery fallback produced aggressive off-center corner targets")
         }
+        try run("well-sized foreground object in indoor or tabletop scene avoids forced over-zoom and explores prime rungs") {
+            let k = TrackingCalibration.fallback()
+            let heroRect = CGRect(x: 0.32, y: 0.24, width: 0.36, height: 0.50)
+            let hero = CompositionSubject(index: 0, bounds: heroRect, anchor: CGPoint(x: heroRect.midX, y: heroRect.midY),
+                kind: .object, confidence: 0.92, importance: 0.90, gaze: 0)
+            let hints = CompositionSceneHints.build(
+                from: raster(),
+                role: .tabletopEnsemble,
+                semanticAvoid: EdgeAvoidanceHints(left: 0.30, right: 0.10, top: 0.20, bottom: 0.10)
+            )
+            let base = CompositionPlanner.photographicProposals(
+                subject: hero, intents: [.object], portraitBounds: nil,
+                raster: raster(), calibration: k, currentZoom: 1.0, allowedZooms: [1.0, 2.0, 3.0],
+                protectedBounds: [heroRect], sceneHints: hints
+            )
+            try require(base.contains(where: \.isUnchangedView), "tabletop foreground object dropped 1.0x baseline")
+            let dense = CompositionPlanner.denseCompositionalWindows(
+                existing: base, calibration: k, currentZoom: 1.0, allowedZooms: [1.0, 2.0, 3.0],
+                subjectAnchor: hero.anchor, subjectBounds: hero.bounds, protectedBounds: [heroRect],
+                intent: .object, confidence: hero.confidence, raster: raster(),
+                maxCount: 128, subject: hero, sceneHints: hints
+            )
+            try require(dense.contains { abs(Double($0.zoom) - 1.20) < 0.02 }, "dense windows missed 1.2x (28mm) prime rung")
+            if let topPlan = base.max(by: { $0.score < $1.score }) {
+                try require(topPlan.zoom <= 1.35, "well-sized foreground object was forced into excessive zoom (\(topPlan.zoom)x)")
+            }
+        }
         print("Composition regressions: \(passed) passed")
     }
 }

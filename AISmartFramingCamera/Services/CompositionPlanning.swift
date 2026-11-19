@@ -1985,17 +1985,17 @@ enum CompositionPlanner {
         let origArea = max(0.01, Double(subject.bounds.width * subject.bounds.height))
         let targetArea: Double = {
             switch role {
-            case .portrait: return 0.30
-            case .animal: return 0.28
-            case .deskWorkspace: return 0.44
-            case .tabletopEnsemble: return 0.46
-            case .indoorRoom: return 0.56
-            case .architecture: return 0.46
-            case .streetLeading: return 0.44
-            case .landscapeSky: return 0.42
-            case .apertureView: return 0.50
-            case .foliageGarden: return 0.52
-            default: return 0.34
+            case .portrait: return 0.26
+            case .animal: return 0.25
+            case .deskWorkspace: return 0.34
+            case .tabletopEnsemble: return 0.36
+            case .indoorRoom: return 0.44
+            case .architecture: return 0.38
+            case .streetLeading: return 0.34
+            case .landscapeSky: return 0.34
+            case .apertureView: return 0.42
+            case .foliageGarden: return 0.42
+            default: return 0.28
             }
         }()
         let scaleFit: Double
@@ -2076,22 +2076,22 @@ enum CompositionPlanner {
         var necPen = cleanClipPen
         let maxAvoid = avoid.maxAvoid
         let cleanGain = clutterCleanliness - baselineCleanliness
-        if ratio < 1.03 && maxAvoid >= 0.38 {
-            necPen += 0.11 * (maxAvoid - 0.25)
+        if ratio < 1.03 && maxAvoid >= 0.58 && areaIn < targetArea * 0.65 {
+            necPen += 0.05 * (maxAvoid - 0.45)
         } else if ratio > 1.02 {
-            if ratio > 1.24 && cleanGain < 0.03 && exclScore < 0.35 && areaIn > 0.35 {
-                necPen += 0.14 * (ratio - 1.24)
+            if ratio > 1.20 && cleanGain < 0.035 && exclScore < 0.38 && areaIn > 0.30 {
+                necPen += 0.16 * (ratio - 1.20)
             }
-            if role == .indoorRoom && ratio > 1.44 {
-                necPen += 0.42 * (ratio - 1.44)
-            } else if (role == .architecture || role == .apertureView || role == .streetLeading) && ratio > 1.44 {
-                necPen += 0.22 * (ratio - 1.44)
+            if role == .indoorRoom && ratio > 1.38 {
+                necPen += 0.42 * (ratio - 1.38)
+            } else if (role == .architecture || role == .apertureView || role == .streetLeading) && ratio > 1.38 {
+                necPen += 0.24 * (ratio - 1.38)
             }
-            if (role == .tabletopEnsemble || role == .deskWorkspace) && ratio > 1.28 && minProtVis < 0.90 {
-                necPen += 0.25 * (ratio - 1.25)
+            if (role == .tabletopEnsemble || role == .deskWorkspace) && ratio > 1.25 && minProtVis < 0.90 {
+                necPen += 0.26 * (ratio - 1.22)
             }
-            if ratio > 1.75 && exclClutFrac < 0.25 && exclBlankFrac < 0.25 {
-                necPen += 0.12 * (ratio - 1.75)
+            if ratio > 1.65 && exclClutFrac < 0.25 && exclBlankFrac < 0.25 {
+                necPen += 0.14 * (ratio - 1.65)
             }
         }
 
@@ -3129,7 +3129,7 @@ enum CompositionPlanner {
             _ = appendIfNovel(candidate)
         }
 
-        let multipliers: [CGFloat] = [1.06, 1.13, 1.21, 1.30, 1.40, 1.52, 1.66, 1.82, 2.02, 2.28]
+        let multipliers: [CGFloat] = [1.12, 1.20, 1.30, 1.40, 1.50, 1.65, 1.80, 2.00, 2.25]
         let zoomLevels: [CGFloat] = multipliers
             .map { currentZoom * $0 }
             .filter { $0 > currentZoom * 1.01 && $0 <= maxZoom + 0.001 }
@@ -3143,6 +3143,14 @@ enum CompositionPlanner {
         let isNonPersonSubject = evalSubject.kind != .person && evalSubject.kind != .face && evalSubject.kind != .group
         let isNonPersonOrAnimal = isNonPersonSubject && evalSubject.kind != .animal
         let rawHeroArea = Double(heroBounds.width * heroBounds.height)
+        let sceneClusterAnchors: [CGPoint] = {
+            guard !sceneryFallback, let r = validRaster else { return [] }
+            var pts = r.extractSynchronizedClusters(minPeak: 0.26, maxClusters: 2).map(\.anchor)
+            if sceneHints.hasRichGuidance {
+                pts.append(contentsOf: sceneHints.extractCleanClusters(raster: r, minPeak: 0.24, maxCount: 2).map(\.anchor))
+            }
+            return pts
+        }()
 
         for zoom in zoomLevels {
             let ratio = Double(zoom / currentZoom)
@@ -3170,7 +3178,7 @@ enum CompositionPlanner {
                     centers.append(CGPoint(x: cx, y: cy))
                 }
             }
-            for seedPt in [actPt, CGPoint(x: 0.5 * (actPt.x + baseAnchor.x), y: 0.5 * (actPt.y + baseAnchor.y))] {
+            for seedPt in ([actPt, CGPoint(x: 0.5 * (actPt.x + baseAnchor.x), y: 0.5 * (actPt.y + baseAnchor.y))] + sceneClusterAnchors) {
                 centers.append(CGPoint(x: min(maxC, max(minC, Double(seedPt.x))),
                                        y: min(maxC, max(minC, Double(seedPt.y)))))
             }

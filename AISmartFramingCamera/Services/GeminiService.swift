@@ -2969,8 +2969,8 @@ public final class GeminiService: ObservableObject {
             gPoint = sPoint
         }
 
-        // 3. Giữ nguyên 100% mức zoom liên tục (continuous zoom) do Gemini quyết định
-        let finalZoom: CGFloat
+        // 3. Mức zoom liên tục do Gemini quyết định, có kiểm tra chéo với biên khuôn mặt/chủ thể cảm biến để không cắt mặt
+        var finalZoom: CGFloat
         if rawZoom.isFinite && rawZoom >= 0.5 {
             finalZoom = max(0.5, min(8.0, (rawZoom * 100.0).rounded() / 100.0))
         } else {
@@ -2978,9 +2978,7 @@ public final class GeminiService: ObservableObject {
         }
 
         // 4. Giải bài toán chiếu quang học chính xác C_aim = S - (G - 0.5) / Z:
-        // Khi Gemini chỉ định điểm bố cục G, dùng công thức chiếu quang học chuẩn xác để khi người dùng đưa tâm màn hình (0.5, 0.5)
-        // trùng vào Vòng vàng C_aim và zoom Z, chủ thể S luôn rơi đúng vào điểm nghệ thuật đích G:
-        let effZ = max(0.5, finalZoom)
+        var effZ = max(0.5, finalZoom)
         let opticalAimX = sPoint.x - (gPoint.x - 0.5) / effZ
         let opticalAimY = sPoint.y - (gPoint.y - 0.5) / effZ
 
@@ -2994,14 +2992,48 @@ public final class GeminiService: ObservableObject {
             }
         }
 
-        // 5. Bảo vệ Headroom khi zoom lớn (không để cắt đỉnh đầu chủ thể trừ khi chụp macro/extreme close-up)
+        // 5. Bảo vệ Headroom & Biên Khuôn mặt/Chủ thể khi zoom lớn
         let scaleLower = shotScale.lowercased()
         let isTightMacroOrCloseUp = scaleLower.contains("macro") || scaleLower.contains("close")
-        if !isTightMacroOrCloseUp, let size = aiEstimatedSize, size.height > 0.04, effZ > 1.05 {
-            let estimatedTopY = max(0.01, sPoint.y - size.height * 0.38)
-            let projectedTopInCrop = 0.5 + (estimatedTopY - rawAimY) * effZ
-            if projectedTopInCrop < 0.04 {
-                rawAimY = estimatedTopY - (0.04 - 0.5) / effZ
+        if !isTightMacroOrCloseUp && effZ > 1.05 {
+            let validFaces = sensorFaceRects.filter {
+                $0.width > 0.01 && $0.height > 0.01 &&
+                $0.minX.isFinite && $0.minY.isFinite && $0.maxX.isFinite && $0.maxY.isFinite
+            }
+            let protectRect: CGRect? = {
+                if !validFaces.isEmpty {
+                    return validFaces.dropFirst().reduce(validFaces[0]) { $0.union($1) }
+                }
+                if let sub = sensorSubjectRect, sub.width > 0.02, sub.height > 0.02,
+                   sub.width * sub.height < 0.72 {
+                    return CGRect(x: sub.minX, y: sub.minY, width: sub.width, height: min(sub.height, sub.height * 0.65))
+                }
+                return nil
+            }()
+            if let rect = protectRect {
+                let margin: CGFloat = 0.04
+                let spanX = max(abs(rect.minX - rawAimX), abs(rect.maxX - rawAimX))
+                let spanY = max(abs(rect.minY - rawAimY), abs(rect.maxY - rawAimY))
+                let maxSpan = max(spanX, spanY)
+                if maxSpan > 0.01 {
+                    let maxSafeZoom = (0.5 - margin) / maxSpan
+                    if maxSafeZoom < effZ {
+                        finalZoom = max(1.0, (maxSafeZoom * 100.0).rounded() / 100.0)
+                        effZ = finalZoom
+                        rawAimX = sPoint.x - (gPoint.x - 0.5) / effZ
+                        rawAimY = sPoint.y - (gPoint.y - 0.5) / effZ
+                    }
+                }
+                let projTopY = 0.5 + (rect.minY - rawAimY) * effZ
+                if projTopY < margin {
+                    rawAimY = rect.minY - (margin - 0.5) / effZ
+                }
+            } else if let size = aiEstimatedSize, size.height > 0.04 {
+                let estimatedTopY = max(0.01, sPoint.y - size.height * 0.38)
+                let projectedTopInCrop = 0.5 + (estimatedTopY - rawAimY) * effZ
+                if projectedTopInCrop < 0.04 {
+                    rawAimY = estimatedTopY - (0.04 - 0.5) / effZ
+                }
             }
         }
 

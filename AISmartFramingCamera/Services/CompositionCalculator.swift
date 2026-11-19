@@ -127,8 +127,11 @@ enum LocalFramingGeometry {
                              currentZoom: CGFloat, allowedZooms: [CGFloat]) -> CGFloat {
         let k = frame.calibration
         guard valid(subject), k.isValid, currentZoom.isFinite, currentZoom > 0 else { return currentZoom }
+        if Double(subject.width * subject.height) >= 0.22 {
+            return currentZoom
+        }
         let rotation = simd_quatd(from: forward, to: k.deviceRay(at: aim))
-        let targetArea = scene == .landscape || scene == .sky || scene == .water ? 0.14 : 0.26
+        let targetArea = scene == .landscape || scene == .sky || scene == .water ? 0.14 : 0.22
         var bestZoom = currentZoom
         var bestScore = -Double.infinity
         for zoom in Set(allowedZooms + [currentZoom]).sorted() where zoom.isFinite && zoom > 0 {
@@ -141,7 +144,7 @@ enum LocalFramingGeometry {
                       return safe(p, margin: 0.025)
                   }) else { continue }
             let area = Double(projected.width * projected.height)
-            let score = -abs(log(max(0.001, area) / targetArea)) - 0.12 * abs(log(ratio))
+            let score = -abs(log(max(0.001, area) / targetArea)) - 0.20 * abs(log(ratio))
             if score > bestScore { bestScore = score; bestZoom = zoom }
         }
         return bestZoom
@@ -723,7 +726,8 @@ public final class CompositionCalculator: @unchecked Sendable {
         defer { stateLock.unlock() }
 
         let currentZoom = max(0.5, currentDisplayZoom)
-        let intermediateZooms: [CGFloat] = [1.0, 1.25, 1.5, 1.8, 2.0, 2.5, 3.0]
+        let hasUltraWide = availableZooms.contains(where: { $0 < 0.9 })
+        let intermediateZooms: [CGFloat] = (hasUltraWide ? [0.5] : []) + [1.0, 1.2, 1.5, 2.0, 3.0]
         let testZooms = Array(Set(availableZooms + [currentDisplayZoom] + intermediateZooms)).filter { $0.isFinite && $0 >= 0.5 && $0 <= 10.0 }.sorted()
         var scoredList: [VirtualCropZoomScore] = []
 
@@ -759,25 +763,23 @@ public final class CompositionCalculator: @unchecked Sendable {
                     focalDensityScore = evidence.focalSaliencyRatio * min(1.0, sqrt(Double(z)) * 0.55) * 0.40
                 }
             } else {
-                // Có chủ thể rõ ràng (hoặc người/vật thể ở cự ly xa):
-                // Kích thích Smart Telephoto Zoom (1.8x - 2.5x) theo cơ chế Đa cự ly (Multi-scale Framing)
+                // Có chủ thể rõ ràng: ưu tiên kích thước hài hòa tự nhiên, chỉ zoom khi chủ thể thực sự nhỏ ở xa
                 let optimalLinearSize: Double
                 if isActualSubject && baseLinearSize1x < 0.12 {
-                    // Chủ thể ở xa: mục tiêu phóng đại để chiếm 40% - 55% khung hình chân dung/đặc tả
-                    optimalLinearSize = 0.48
+                    optimalLinearSize = 0.44
                 } else if evidence.detectedScene == .landscape || evidence.detectedScene == .architecture {
-                    optimalLinearSize = 0.28
+                    optimalLinearSize = 0.26
                 } else {
-                    optimalLinearSize = 0.52
+                    optimalLinearSize = 0.40
                 }
 
-                let sizeFitness = exp(-pow(log(max(0.02, projectedLinearSize) / optimalLinearSize), 2) / 0.55)
+                let sizeFitness = exp(-pow(log(max(0.02, projectedLinearSize) / optimalLinearSize), 2) / 0.62)
                 let saliencyGain = min(1.0, evidence.focalSaliencyRatio * sqrt(Double(z)))
                 
                 // Khuyến khích phóng đại khi chủ thể nhỏ ở xa
                 let distantSubjectBonus: Double
                 if isActualSubject && baseLinearSize1x < 0.10 && z >= 1.5 && z <= 3.0 {
-                    distantSubjectBonus = 0.22 * (1.0 - baseLinearSize1x / 0.10)
+                    distantSubjectBonus = 0.18 * (1.0 - baseLinearSize1x / 0.10)
                 } else {
                     distantSubjectBonus = 0.0
                 }
@@ -853,16 +855,19 @@ public final class CompositionCalculator: @unchecked Sendable {
                 }
             }
 
-            // Phạt nếu chủ thể quá nhỏ tại mức zoom đang xét (khuyến khích Smart Zoom 1.5x / 2x / 3x khi chủ thể nhỏ/vừa)
+            // Phạt nếu chủ thể thực sự quá nhỏ tại mức zoom đang xét (chỉ phạt khi < 22% khung hình)
             var underfillPenalty = 0.0
-            if baseLinearSize1x >= 0.07 && evidence.detectedScene != .landscape && evidence.detectedScene != .architecture {
-                if projectedLinearSize < 0.36 {
-                    underfillPenalty = -0.34 * (0.36 - projectedLinearSize) / 0.36
+            if baseLinearSize1x >= 0.06 && evidence.detectedScene != .landscape && evidence.detectedScene != .architecture {
+                if projectedLinearSize < 0.22 {
+                    underfillPenalty = -0.18 * (0.22 - projectedLinearSize) / 0.22
                 }
             }
 
-            // Yếu tố 4: Quán tính nhẹ (tránh lỗi cũ 0.22 làm kẹt cứng ở 1x không bao giờ dám zoom)
-            let momentumBonus = (abs(z - currentDisplayZoom) < 0.12) ? 0.025 : 0.0
+            // Yếu tố 4: Quán tính giữ nguyên tiêu cự hiện tại + Ưu tiên tiêu cự quang học / sensor-crop sắc nét
+            let isOpticalRung = availableZooms.contains(where: { abs($0 - z) < 0.04 })
+            let isPrimeSensorCrop = abs(z - 1.2) < 0.06 || abs(z - 1.5) < 0.06
+            let opticalQualityBonus = isOpticalRung ? 0.030 : (isPrimeSensorCrop ? 0.012 : 0.0)
+            let momentumBonus = ((abs(z - currentDisplayZoom) < 0.12) ? 0.035 : 0.0) + opticalQualityBonus
 
             let totalScore = max(-10.0, focalDensityScore + clutterRemovalGain + integrityPenalty + underfillPenalty + momentumBonus)
             let rationale = String(format: "Zoom %.1fx · Mật độ: %.2f · Khử rác: %.2f · Phạt cắt: %.2f", z, focalDensityScore, clutterRemovalGain, integrityPenalty)

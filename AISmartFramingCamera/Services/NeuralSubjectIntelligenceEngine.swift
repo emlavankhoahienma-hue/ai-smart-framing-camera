@@ -246,21 +246,34 @@ private final class SemanticCropRanker: @unchecked Sendable {
         let deskObjs = candidates.filter {
             !$0.isAttentionRegion && $0.confidence >= 0.25 &&
             Self.deskTabletopLabelTokens.contains($0.label.lowercased())
+        }.sorted { $0.prominenceScore > $1.prominenceScore }
+        let hasSingleDominantForeground = candidates.contains {
+            !$0.isAttentionRegion && $0.category == .foregroundObject &&
+            $0.confidence >= 0.32 && $0.areaRatio >= 0.015 &&
+            hypot(Double($0.center.x - 0.50), Double($0.center.y - 0.48)) <= 0.28
         }
         if hasHuman { roleScores[.portrait, default: 0.0] += 0.05 }
         if hasAnimal { roleScores[.animal, default: 0.0] += 0.05 }
         if deskObjs.count >= 2 {
-            roleScores[.tabletopEnsemble, default: 0.0] += 0.025
+            let isBalancedEnsemble = deskObjs[0].prominenceScore < deskObjs[1].prominenceScore * 1.42
+            roleScores[.tabletopEnsemble, default: 0.0] += isBalancedEnsemble ? 0.014 : 0.006
             if deskObjs.contains(where: { $0.confidence >= 0.28 && Self.deskDisplayLabelTokens.contains($0.label.lowercased()) }) {
-                roleScores[.deskWorkspace, default: 0.0] += 0.030
+                roleScores[.deskWorkspace, default: 0.0] += isBalancedEnsemble ? 0.016 : 0.007
             }
         }
 
         var bestRole: SemanticCompositionRole = roleScores.max(by: { $0.value < $1.value })?.key ?? .general
+        if bestRole == .indoorRoom && hasSingleDominantForeground {
+            let indoorScore = roleScores[.indoorRoom] ?? 0.0
+            let nextBest = roleScores.filter { $0.key != .indoorRoom }.map(\.value).max() ?? 0.0
+            if indoorScore - nextBest < 0.012 {
+                bestRole = .general
+            }
+        }
         if comb.isEmpty || (roleScores[bestRole] ?? 0.0) <= 0.005 {
             if hasHuman { bestRole = candidates.contains(where: \.isGroup) ? .group : .portrait }
             else if hasAnimal { bestRole = .animal }
-            else if deskObjs.count >= 2 { bestRole = .tabletopEnsemble }
+            else if deskObjs.count >= 2 && !hasSingleDominantForeground { bestRole = .tabletopEnsemble }
             else {
                 switch detectedScene {
                 case .portrait: bestRole = .portrait
@@ -711,16 +724,61 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let refineLimit = constrained ? 8 : (isHighMemory ? 28 : 20)
         let resolvedProtected = hero.companionBounds.isEmpty ? extraProtectedBounds : (extraProtectedBounds + hero.companionBounds)
         let arbitratedIncidentals = arbitratedIncidentalBounds(hero: hero, output: output, raster: raster) + extraIncidentalBounds
+        let secondarySubject: CompositionSubject? = builtPlan.secondaryHero.map { sec in
+            let secAnchor: CGPoint = {
+                if let eye = sec.eyePosition { return eye }
+                if let tp = sec.trackingPoint {
+                    return CGPoint(x: min(sec.boundingBox.maxX, max(sec.boundingBox.minX, tp.x)),
+                                   y: min(sec.boundingBox.maxY, max(sec.boundingBox.minY, tp.y)))
+                }
+                return sec.center
+            }()
+            return CompositionSubject(
+                index: 1, bounds: sec.boundingBox, anchor: secAnchor,
+                kind: builtPlan.secondarySubjectKind,
+                confidence: Double(sec.confidence), importance: sec.prominenceScore, gaze: sec.gaze,
+                allowsAttentionCrop: sec.isAttentionRegion, verticalGaze: sec.verticalGaze,
+                shotScaleBias: output.semanticGuidance.shotScaleBias,
+                contextPreservationWeight: output.semanticGuidance.contextPreservationWeight,
+                isAttentionOnly: sec.isAttentionRegion
+            )
+        }
+        let secondaryIntents: [LocalCompositionIntent] = builtPlan.secondaryHero.map { sec in
+            refinedIntents(base: compositionIntents(output, hero: sec), hero: sec, role: sceneHints.role)
+        } ?? []
         func proposals(refining seeds: [CompositionProposal] = []) -> [CompositionProposal] {
-            CompositionPlanner.photographicProposals(subject: subject, intents: intents,
-                portraitBounds: portraitBounds, raster: raster, calibration: frame.calibration,
-                currentZoom: CGFloat(frame.displayZoom), allowedZooms: allowedZooms,
-                protectedBounds: resolvedProtected,
-                incidentalBounds: arbitratedIncidentals,
-                proposalLimit: seeds.isEmpty ? seedLimit : refineLimit, refining: seeds,
-                poseProfile: poseProfile,
-                sceneHints: sceneHints,
-                isCancelled: { cancellation.isCancelled })
+            let primarySeeds = seeds.filter { $0.subjectIndex == 0 }
+            let secondarySeeds = seeds.filter { $0.subjectIndex == 1 }
+            var combined: [CompositionProposal] = []
+            if seeds.isEmpty || !primarySeeds.isEmpty {
+                combined.append(contentsOf: CompositionPlanner.photographicProposals(subject: subject, intents: intents,
+                    portraitBounds: portraitBounds, raster: raster, calibration: frame.calibration,
+                    currentZoom: CGFloat(frame.displayZoom), allowedZooms: allowedZooms,
+                    protectedBounds: resolvedProtected,
+                    incidentalBounds: arbitratedIncidentals,
+                    proposalLimit: seeds.isEmpty ? seedLimit : refineLimit, refining: primarySeeds,
+                    poseProfile: poseProfile,
+                    sceneHints: sceneHints,
+                    isCancelled: { cancellation.isCancelled }))
+            }
+            if let secSub = secondarySubject, let secHero = builtPlan.secondaryHero,
+               !secondaryIntents.isEmpty, (seeds.isEmpty || !secondarySeeds.isEmpty) {
+                let secLimit = seeds.isEmpty ? max(8, seedLimit / 3) : max(4, refineLimit / 3)
+                let secProtected = secHero.companionBounds.isEmpty ? [secHero.boundingBox] : secHero.companionBounds
+                let secProps = CompositionPlanner.photographicProposals(subject: secSub, intents: secondaryIntents,
+                    portraitBounds: nil, raster: raster, calibration: frame.calibration,
+                    currentZoom: CGFloat(frame.displayZoom), allowedZooms: allowedZooms,
+                    protectedBounds: secProtected,
+                    incidentalBounds: arbitratedIncidentals,
+                    proposalLimit: secLimit, refining: secondarySeeds,
+                    poseProfile: nil,
+                    sceneHints: sceneHints,
+                    isCancelled: { cancellation.isCancelled })
+                for sp in secProps where !sp.isUnchangedView {
+                    combined.append(sp)
+                }
+            }
+            return combined
         }
         let sampModelURL = Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc")
         let gaicModelURL = GAICCompositionModel.defaultModelURL(near: sampModelURL)
@@ -803,15 +861,20 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
         renderer.clearCaches()
         guard let result = searchResult else { return nil }
+        let primaryHero = hero
         let choices = result.views.map { view -> LocalCompositionChoice in
             let proposal = view.proposal
+            let hero = (proposal.subjectIndex == 1 ? (builtPlan.secondaryHero ?? primaryHero) : primaryHero)
+            let activePortraitBounds = (proposal.subjectIndex == 1 ? nil : portraitBounds)
+            let activeAnchor = (proposal.subjectIndex == 1 ? (secondarySubject?.anchor ?? hero.center) : subject.anchor)
+            let activeAllowsAtt = (proposal.subjectIndex == 1 ? (secondarySubject?.allowsAttentionCrop ?? false) : subject.allowsAttentionCrop)
             let explanationText = sceneHints.hasRichGuidance
                 ? proposal.explanation
                 : (proposal.explanation + (result.usedSpecialist ? " Đã tối ưu bố cục theo Tỷ lệ vàng và Luật một phần ba." : " Bố cục tự nhiên."))
             let plan = LocalFramingPlan(subjectPoint: hero.trackingPoint ?? proposal.subjectPoint, subjectRect: hero.boundingBox,
                 cropProtectionRect: CompositionCropProtection.bounds(body: hero.boundingBox,
-                    portrait: portraitBounds, intent: proposal.intent, anchor: subject.anchor,
-                    attentionRegion: subject.allowsAttentionCrop),
+                    portrait: activePortraitBounds, intent: proposal.intent, anchor: activeAnchor,
+                    attentionRegion: activeAllowsAtt),
                 aimPointInSource: proposal.aimPoint, aimWorldRay: pose.act(proposal.rotation.act(SIMD3(0, 0, -1))),
                 zoom: proposal.zoom, confidence: proposal.evidenceConfidence,
                 minimumAutoselectConfidence: (output.detectedScene == .night ? 0.42 :
@@ -837,7 +900,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         var sceneHints: CompositionSceneHints
         let allowsAttentionCrop: Bool
         let isFallbackScenery: Bool
+        var secondaryHero: NeuralSubjectCandidate? = nil
+        var secondarySubjectKind: CompositionSubjectKind = .object
     }
+
+    private static let deskEquipmentTokens: Set<String> = [
+        "tv", "tivi", "laptop", "keyboard", "bàn phím"
+    ]
 
     private static let suspiciousOutdoorTokens: Set<String> = [
         "knife", "dao", "bench", "ghế dài", "umbrella", "chiếc ô",
@@ -944,74 +1013,194 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
 
         let cleanClusters = sceneHints.extractCleanClusters(raster: raster, minPeak: 0.22, maxCount: 5)
 
+        func aimDistance(_ c: NeuralSubjectCandidate) -> Double {
+            hypot(Double(c.center.x - 0.50), Double(c.center.y - 0.48))
+        }
+        func isPeripheralClippedEquipment(_ c: NeuralSubjectCandidate) -> Bool {
+            let lower = c.label.lowercased()
+            let b = c.boundingBox
+            let touchesEdge = b.minX <= 0.025 || b.maxX >= 0.975 || b.minY <= 0.025 || b.maxY >= 0.975
+            guard touchesEdge else { return false }
+            if Self.deskEquipmentTokens.contains(lower) {
+                return aimDistance(c) > 0.18 || c.areaRatio > 0.22
+            }
+            return (b.minX <= 0.012 || b.maxX >= 0.988) && aimDistance(c) > 0.28 && c.areaRatio > 0.28
+        }
+        func heroSelectionScore(_ c: NeuralSubjectCandidate) -> Double {
+            let rawScore = Double(c.confidence) * sqrt(max(0.002, c.areaRatio))
+            let baseScore = max(rawScore, c.prominenceScore * 0.82)
+            let dAim = aimDistance(c)
+            let aimFactor = 0.72 + 0.48 * exp(-(dAim * dAim) / (2.0 * 0.26 * 0.26))
+            let dStats = raster.depthStats(in: c.boundingBox)
+            let depthFactor = 0.80 + 0.32 * dStats.meanDepth + 0.14 * dStats.depthContrast
+            let clutterFactor = max(0.35, 1.0 - 0.50 * sceneHints.clutterDensity(in: c.boundingBox, side: raster.side))
+            let b = c.boundingBox
+            let touchesBorder = b.minX <= 0.018 || b.maxX >= 0.982 || b.minY <= 0.018 || b.maxY >= 0.982
+            let borderFactor: Double
+            if isPeripheralClippedEquipment(c) {
+                borderFactor = 0.52
+            } else if touchesBorder && c.category == .foregroundObject && dAim > 0.24 {
+                borderFactor = 0.76
+            } else {
+                borderFactor = 1.0
+            }
+            let categoryFactor: Double
+            if c.category == .human || c.category == .face {
+                categoryFactor = (!c.faceBounds.isEmpty || c.eyePosition != nil) ? 1.38 : 1.18
+            } else if c.category == .animal {
+                categoryFactor = 1.15
+            } else {
+                categoryFactor = 1.0
+            }
+            return baseScore * aimFactor * depthFactor * clutterFactor * borderFactor * categoryFactor
+        }
+
         // Case A: Clear Human / Face / Animal hero
         let humanAnimal = validYolo.filter {
             ($0.category == .human || $0.category == .face || $0.category == .animal) &&
             ($0.areaRatio >= 0.012 || ($0.category == .face && $0.confidence >= 0.54 && $0.areaRatio >= 0.004)) &&
             !($0.boundingBox.maxY >= 0.96 && $0.boundingBox.height < 0.24)
-        }
-        if let topHA = humanAnimal.max(by: { a, b in
-            let sa = Double(a.confidence) * sqrt(max(0.001, a.areaRatio)) * (a.category == .animal ? 1.0 : 1.2)
-            let sb = Double(b.confidence) * sqrt(max(0.001, b.areaRatio)) * (b.category == .animal ? 1.0 : 1.2)
-            return sa < sb
-        }) {
+        }.sorted { heroSelectionScore($0) > heroSelectionScore($1) }
+        if let topHA = humanAnimal.first {
+            let runnerUpHA = humanAnimal.dropFirst().first
+            let topObject = validYolo.filter { $0.category == .foregroundObject && !isPeripheralClippedEquipment($0) }
+                .max(by: { heroSelectionScore($0) < heroSelectionScore($1) })
+            let secCandidate = runnerUpHA ?? topObject
             sceneHints.reasonSubject = "Nhận diện \(topHA.label) nổi bật"
             return IntelligentSubjectPlan(
                 hero: topHA, subjectKind: kind(topHA.category), protectedBounds: [],
                 incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
-                allowsAttentionCrop: false, isFallbackScenery: false
+                allowsAttentionCrop: false, isFallbackScenery: false,
+                secondaryHero: secCandidate,
+                secondarySubjectKind: secCandidate.map { kind($0.category) } ?? .object
             )
         }
 
-        // Case B: Desk Workspace or Tabletop Ensemble -> Group cohesive tabletop items + clean clusters
         let deskItems = validYolo.filter { Self.deskTabletopTokens.contains($0.label.lowercased()) }
-        if role == .tabletopEnsemble || role == .deskWorkspace || deskItems.count >= 2 {
-            var coreItems = deskItems.map(\.boundingBox).filter { !isEdgeSliver($0) }
-            for cl in cleanClusters.prefix(3) {
+        let rankedObjects = validYolo.filter { $0.category == .foregroundObject }
+            .sorted { heroSelectionScore($0) > heroSelectionScore($1) }
+
+        func buildCohesiveTabletopEnsemble() -> (hero: NeuralSubjectCandidate, protected: [CGRect], reason: String)? {
+            let focalDeskItems = deskItems.filter { !isPeripheralClippedEquipment($0) }
+            let chosenDeskItems = focalDeskItems.isEmpty ? deskItems : focalDeskItems
+            var coreItems: [CGRect] = []
+            for item in chosenDeskItems.sorted(by: { heroSelectionScore($0) > heroSelectionScore($1) }) where !isEdgeSliver(item.boundingBox) {
+                if coreItems.isEmpty {
+                    coreItems.append(item.boundingBox)
+                } else {
+                    let tentative = unionRects(coreItems + [item.boundingBox])
+                    if tentative.width <= 0.84 && tentative.height <= 0.82 {
+                        coreItems.append(item.boundingBox)
+                    }
+                }
+            }
+            for cl in cleanClusters.prefix(2) {
                 let cb = cl.bounds
-                if sceneHints.clutterDensity(in: cb, side: raster.side) < 0.38 && !isEdgeSliver(cb) {
+                if sceneHints.clutterDensity(in: cb, side: raster.side) < 0.34 && !isEdgeSliver(cb) {
                     if coreItems.isEmpty {
                         coreItems.append(cb)
                     } else {
                         let cu = unionRects(coreItems)
-                        if abs(cb.midY - cu.midY) < 0.36, let topScore = cleanClusters.first?.score, cl.score >= 0.12 * topScore {
+                        let tentative = cu.union(cb)
+                        if abs(cb.midY - cu.midY) < 0.30, tentative.width <= 0.82, tentative.height <= 0.80,
+                           let topScore = cleanClusters.first?.score, cl.score >= 0.18 * topScore {
                             coreItems.append(cb)
                         }
                     }
                 }
             }
-            if !coreItems.isEmpty {
-                let groupBox = unionRects(coreItems)
-                var cxSum = 0.0, cySum = 0.0, wSum = 0.0
-                for b in coreItems {
-                    let wt = sqrt(max(0.01, Double(b.width * b.height)))
-                    cxSum += Double(b.midX) * wt
-                    cySum += Double(b.midY) * wt
-                    wSum += wt
+            guard !coreItems.isEmpty else { return nil }
+            let groupBox = unionRects(coreItems)
+            var cxSum = 0.0, cySum = 0.0, wSum = 0.0
+            for b in coreItems {
+                let wt = sqrt(max(0.01, Double(b.width * b.height)))
+                cxSum += Double(b.midX) * wt
+                cySum += Double(b.midY) * wt
+                wSum += wt
+            }
+            let anchor = CGPoint(x: cxSum / max(1e-6, wSum), y: cySum / max(1e-6, wSum))
+            let names = Array(Set(chosenDeskItems.map(\.label))).sorted()
+            let baseLbl = role == .deskWorkspace ? "Góc bàn học" : "Cụm đồ vật"
+            let desc = names.isEmpty ? "đồ vật trên bàn" : names.prefix(3).joined(separator: " + ")
+            let synthHero = NeuralSubjectCandidate(
+                boundingBox: groupBox, category: .foregroundObject, confidence: 0.85,
+                label: baseLbl, prominenceScore: 0.85, trackingPoint: anchor
+            )
+            return (synthHero, coreItems, "\(baseLbl) (\(desc))")
+        }
+
+        // Case A2: Dominant Foreground YOLO Object (promoted before room/tabletop merge when clearly aimed/isolated)
+        if let topObj = rankedObjects.first,
+           !isPeripheralClippedEquipment(topObj),
+           topObj.confidence >= (isLowLuma ? 0.24 : 0.29),
+           topObj.areaRatio >= 0.010, topObj.areaRatio <= 0.72 {
+            let topScore = heroSelectionScore(topObj)
+            let topAim = aimDistance(topObj)
+            let topDepth = raster.depthStats(in: topObj.boundingBox).meanDepth
+            let dominatesRunnerUp: Bool = {
+                guard rankedObjects.count >= 2 else { return true }
+                let second = rankedObjects[1]
+                if isPeripheralClippedEquipment(second) { return true }
+                let secondScore = heroSelectionScore(second)
+                let secondAim = aimDistance(second)
+                return topScore >= secondScore * 1.32 ||
+                    (topAim <= 0.22 && topAim + 0.08 < secondAim)
+            }()
+            let overridesSceneRole: Bool = {
+                if !role.isWideRole && role != .tabletopEnsemble && role != .deskWorkspace {
+                    return true
                 }
-                let anchor = CGPoint(x: cxSum / max(1e-6, wSum), y: cySum / max(1e-6, wSum))
-                let names = Array(Set(deskItems.map(\.label))).sorted()
-                let baseLbl = role == .deskWorkspace ? "Góc bàn học" : "Cụm đồ vật"
-                let desc = names.isEmpty ? "đồ vật trên bàn" : names.prefix(3).joined(separator: " + ")
-                sceneHints.reasonSubject = "\(baseLbl) (\(desc))"
-                let synthHero = NeuralSubjectCandidate(
-                    boundingBox: groupBox, category: .foregroundObject, confidence: 0.85,
-                    label: baseLbl, prominenceScore: 0.85, trackingPoint: anchor
-                )
+                if role == .tabletopEnsemble || role == .deskWorkspace {
+                    return dominatesRunnerUp && (topAim <= 0.28 || topObj.areaRatio >= 0.035)
+                }
+                if role == .indoorRoom {
+                    return topAim <= 0.34 && topDepth >= raster.focalDepthPlane - 0.12
+                }
+                return topObj.confidence >= 0.35 && topObj.areaRatio >= 0.018 &&
+                    topAim <= 0.26 && topDepth >= raster.focalDepthPlane - 0.08
+            }()
+            if dominatesRunnerUp && overridesSceneRole {
+                let secHero: NeuralSubjectCandidate? = {
+                    if deskItems.count >= 2, let ensemble = buildCohesiveTabletopEnsemble(),
+                       ensemble.hero.boundingBox != topObj.boundingBox {
+                        return ensemble.hero
+                    }
+                    return rankedObjects.dropFirst().first(where: { !isPeripheralClippedEquipment($0) })
+                }()
+                sceneHints.reasonSubject = "Chủ thể \(topObj.label)"
                 return IntelligentSubjectPlan(
-                    hero: synthHero, subjectKind: .object, protectedBounds: coreItems,
+                    hero: topObj, subjectKind: kind(topObj.category), protectedBounds: [],
                     incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
-                    allowsAttentionCrop: false, isFallbackScenery: false
+                    allowsAttentionCrop: false, isFallbackScenery: false,
+                    secondaryHero: secHero,
+                    secondarySubjectKind: secHero.map { kind($0.category) } ?? .object
                 )
             }
         }
+
+        // Case B: Desk Workspace or Tabletop Ensemble -> Group cohesive tabletop items + clean clusters
+        if role == .tabletopEnsemble || role == .deskWorkspace || deskItems.count >= 2 {
+            if let ensemble = buildCohesiveTabletopEnsemble() {
+                let singleBest = rankedObjects.first(where: { !isPeripheralClippedEquipment($0) }) ?? rankedObjects.first
+                sceneHints.reasonSubject = ensemble.reason
+                return IntelligentSubjectPlan(
+                    hero: ensemble.hero, subjectKind: .object, protectedBounds: ensemble.protected,
+                    incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
+                    allowsAttentionCrop: false, isFallbackScenery: false,
+                    secondaryHero: singleBest,
+                    secondarySubjectKind: singleBest.map { kind($0.category) } ?? .object
+                )
+            }
+        }
+
+        let bestObjectHypothesis = rankedObjects.first(where: { !isPeripheralClippedEquipment($0) }) ?? rankedObjects.first
 
         // Case C: Indoor Furnished Room
         if role == .indoorRoom {
             var furnBoxes = cleanClusters.filter {
                 $0.area >= 0.04 && sceneHints.clutterDensity(in: $0.bounds, side: raster.side) < 0.35
             }.map(\.bounds)
-            for y in validYolo where y.areaRatio >= 0.015 && !isEdgeSliver(y.boundingBox) {
+            for y in validYolo where y.areaRatio >= 0.015 && !isEdgeSliver(y.boundingBox) && !isPeripheralClippedEquipment(y) {
                 furnBoxes.append(y.boundingBox)
             }
             if !furnBoxes.isEmpty {
@@ -1025,7 +1214,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 return IntelligentSubjectPlan(
                     hero: synthHero, subjectKind: .object, protectedBounds: [gb],
                     incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
-                    allowsAttentionCrop: true, isFallbackScenery: false
+                    allowsAttentionCrop: true, isFallbackScenery: false,
+                    secondaryHero: bestObjectHypothesis,
+                    secondarySubjectKind: bestObjectHypothesis.map { kind($0.category) } ?? .object
                 )
             }
         }
@@ -1062,7 +1253,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: .object, protectedBounds: [gb],
                 incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
-                allowsAttentionCrop: true, isFallbackScenery: false
+                allowsAttentionCrop: true, isFallbackScenery: false,
+                secondaryHero: bestObjectHypothesis,
+                secondarySubjectKind: bestObjectHypothesis.map { kind($0.category) } ?? .object
             )
         }
 
@@ -1096,7 +1289,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: .object, protectedBounds: [gb],
                 incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
-                allowsAttentionCrop: true, isFallbackScenery: false
+                allowsAttentionCrop: true, isFallbackScenery: false,
+                secondaryHero: bestObjectHypothesis,
+                secondarySubjectKind: bestObjectHypothesis.map { kind($0.category) } ?? .object
             )
         }
 
@@ -1114,7 +1309,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: .scenery, protectedBounds: [prot],
                 incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
-                allowsAttentionCrop: true, isFallbackScenery: false
+                allowsAttentionCrop: true, isFallbackScenery: false,
+                secondaryHero: bestObjectHypothesis,
+                secondarySubjectKind: bestObjectHypothesis.map { kind($0.category) } ?? .object
             )
         }
 
@@ -1145,22 +1342,22 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return IntelligentSubjectPlan(
                 hero: synthHero, subjectKind: .object, protectedBounds: [gb],
                 incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
-                allowsAttentionCrop: true, isFallbackScenery: false
+                allowsAttentionCrop: true, isFallbackScenery: false,
+                secondaryHero: bestObjectHypothesis,
+                secondarySubjectKind: bestObjectHypothesis.map { kind($0.category) } ?? .object
             )
         }
 
         // Case H: Single clear YOLO object (food, vehicle, vase, etc.)
-        if let topObj = validYolo.max(by: { a, b in
-            let ca = 1.0 - 0.5 * sceneHints.clutterDensity(in: a.boundingBox, side: raster.side)
-            let cb = 1.0 - 0.5 * sceneHints.clutterDensity(in: b.boundingBox, side: raster.side)
-            return Double(a.confidence) * sqrt(max(0.001, a.areaRatio)) * ca <
-                   Double(b.confidence) * sqrt(max(0.001, b.areaRatio)) * cb
-        }) {
+        if let topObj = validYolo.max(by: { heroSelectionScore($0) < heroSelectionScore($1) }) {
+            let runnerUp = rankedObjects.dropFirst().first(where: { !isPeripheralClippedEquipment($0) })
             sceneHints.reasonSubject = "Chủ thể \(topObj.label)"
             return IntelligentSubjectPlan(
                 hero: topObj, subjectKind: kind(topObj.category), protectedBounds: [],
                 incidentalBounds: incidentalSlivers, sceneHints: sceneHints,
-                allowsAttentionCrop: false, isFallbackScenery: false
+                allowsAttentionCrop: false, isFallbackScenery: false,
+                secondaryHero: runnerUp,
+                secondarySubjectKind: runnerUp.map { kind($0.category) } ?? .object
             )
         }
 

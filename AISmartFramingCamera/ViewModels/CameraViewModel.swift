@@ -2854,7 +2854,7 @@ public final class CameraViewModel: ObservableObject {
         let rawCompY = response.compositionAnchorY.isFinite ? response.compositionAnchorY : rawSubjY
         let rawZoom = (response.suggestedZoom.isFinite && response.suggestedZoom >= 0.5) ? response.suggestedZoom : 1.0
 
-        // 100% do Gemini quyết định target và mức zoom phù hợp (không bị gò bó bởi cảm biến cục bộ hay isPlan2)
+        // 100% do Gemini quyết định target và mức zoom phù hợp (kết hợp bảo vệ không cắt khuôn mặt/chủ thể từ cảm biến)
         let solved = GeminiService.computeOptimalFramingGeometry(
             rawSubjectPoint: CGPoint(x: rawSubjX, y: rawSubjY),
             rawCompositionPoint: CGPoint(x: rawCompX, y: rawCompY),
@@ -2862,8 +2862,8 @@ public final class CameraViewModel: ObservableObject {
             rawZoom: rawZoom,
             shotScale: response.shotScale,
             compositionRule: response.compositionRule,
-            sensorSubjectRect: nil,
-            sensorFaceRects: [],
+            sensorSubjectRect: normalizedSubjectRect(cloudTrackingSource?.subjectRect),
+            sensorFaceRects: cloudTrackingSource?.faceRects ?? [],
             aiEstimatedSize: response.estimatedSubjectSize
         )
 
@@ -3121,7 +3121,19 @@ public final class CameraViewModel: ObservableObject {
                 )
                 let frameTimestamp = effectiveFrame.timestamp
                 let isFresh = frameTimestamp >= (requestedAt - 0.25) || (now - requestedAt >= 0.8)
-                guard self.manualZoomRequestID == nil, !self.isPinchingZoom, isFresh else {
+                let recentAngularSpeed: Double = {
+                    guard let prevPose = SpatialTrackingEngine.shared.pose(at: frameTimestamp - 0.05),
+                          let currPose = SpatialTrackingEngine.shared.pose(at: frameTimestamp) ?? SpatialTrackingEngine.shared.latestPose() else {
+                        return 0.0
+                    }
+                    let deltaQ = prevPose.inverse * currPose
+                    let halfAngle = atan2(simd_length(deltaQ.imag), abs(deltaQ.real))
+                    return (2.0 * halfAngle) / 0.05
+                }()
+                let maxStableAngularSpeed = self.isWalkingModeEnabled ? 0.55 : 0.34
+                let isStabilizedOrTimedOut = (now - requestedAt >= 0.34) ||
+                    (recentAngularSpeed <= maxStableAngularSpeed && self.cameraService.isFocusSettled)
+                guard self.manualZoomRequestID == nil, !self.isPinchingZoom, isFresh, isStabilizedOrTimedOut else {
                     if now - requestedAt < 5 {
                         self.requestFreshAIFrame(generation: generation, requestedAt: requestedAt, completion: completion)
                         self.visionEngine.captureNextFrameForGemini = true
@@ -3289,8 +3301,7 @@ public final class CameraViewModel: ObservableObject {
             let aimPoint = evaluatedFraming.targetPoint
             self.activeCompositionRule = evaluatedFraming.optimalRule
             self.framingResult = evaluatedFraming
-            let isDistant = first.boundingBox.width * first.boundingBox.height < 0.10
-            let zoomTarget: CGFloat = isDistant && evaluatedFraming.recommendedZoomFactor < 1.7 ? 2.0 : evaluatedFraming.recommendedZoomFactor
+            let zoomTarget: CGFloat = evaluatedFraming.recommendedZoomFactor
             self.pendingSuggestedZoom = zoomTarget
             self.aiSuggestedZoom = zoomTarget
             self.plannedEVBias = evaluatedFraming.recommendedEVBias
@@ -3403,7 +3414,10 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func acceptLocalPlan(_ plan: LocalFramingPlan, source: AITrackingSource) {
-        let hero = localEvidenceCandidates.first
+        let hero = localEvidenceCandidates.first(where: {
+            abs($0.boundingBox.midX - plan.subjectRect.midX) < 0.04 &&
+            abs($0.boundingBox.midY - plan.subjectRect.midY) < 0.04
+        }) ?? localEvidenceCandidates.first
         let anchor = hero?.eyePosition ?? plan.subjectPoint
         let category = hero?.category ?? .foregroundObject
         let gaze = hero?.gaze ?? 0
@@ -3434,9 +3448,31 @@ public final class CameraViewModel: ObservableObject {
         let planDistFromCenter = hypot(sourceAimPoint.x - 0.5, sourceAimPoint.y - 0.5)
 
         var effectiveZoom = plan.zoom
+        // Smart Zoom-Out: Khi chủ thể quá sát/tràn viền ở tiêu cự hiện tại (ví dụ đang ở 2x/3x hoặc sát rìa 1x), cho phép lùi về 1x hoặc 0.5x
+        let subRect = plan.subjectRect
+        let subArea = subRect.width * subRect.height
+        let touchesBorder = subRect.minX <= 0.025 || subRect.maxX >= 0.975 || subRect.minY <= 0.025 || subRect.maxY >= 0.975
+        let isCrampedAtCurrentZoom = subArea > 0.50 || (touchesBorder && max(subRect.width, subRect.height) > 0.60)
+        if isCrampedAtCurrentZoom && evaluatedFraming.recommendedZoomFactor < displayZoom - 0.10 {
+            effectiveZoom = evaluatedFraming.recommendedZoomFactor
+        }
         if !(effectiveZoom < 0.99 && !cameraService.hasUltraWideLens) {
             effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(
                 cameraService.convertDisplayZoomToDeviceZoom(effectiveZoom))
+        }
+        // Ưu tiên khớp vào nấc ống kính quang học phần cứng (0.5x, 1.0x, 2.0x, 3.0x, 5.0x) hoặc tiêu cự prime 28mm/35mm (1.2x, 1.5x)
+        if let opticalMatch = availableZooms.min(by: { abs($0 - effectiveZoom) < abs($1 - effectiveZoom) }),
+           abs(effectiveZoom - opticalMatch) / max(0.5, opticalMatch) <= 0.08,
+           opticalMatch <= effectiveZoom * 1.04 {
+            effectiveZoom = opticalMatch
+        } else if abs(effectiveZoom - 1.2) <= 0.06 {
+            effectiveZoom = 1.2
+        } else if abs(effectiveZoom - 1.5) <= 0.06 {
+            effectiveZoom = 1.5
+        }
+        // Triệt tiêu micro-zoom vô nghĩa (< 0.11x) gây mờ nội suy kỹ thuật số mà không thay đổi bố cục
+        if abs(effectiveZoom - displayZoom) < 0.11 {
+            effectiveZoom = displayZoom
         }
 
         if planDistFromCenter < 0.09 && detectedScene != .architecture {

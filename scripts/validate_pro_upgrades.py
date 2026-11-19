@@ -161,6 +161,39 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             self.assertIn(f"/* {filename} */", pbx)
             self.assertIn(f"/* {filename} in Sources */", pbx)
 
+    def test_09_livecompose_inspired_local_ai_and_zoom_intelligence(self):
+        neural = source("Services/NeuralSubjectIntelligenceEngine.swift")
+        self.assertIn("func heroSelectionScore(_ c: NeuralSubjectCandidate) -> Double", neural)
+        self.assertIn("func isPeripheralClippedEquipment(_ c: NeuralSubjectCandidate) -> Bool", neural)
+        self.assertIn("var secondaryHero: NeuralSubjectCandidate? = nil", neural)
+        self.assertIn("// Case A2: Dominant Foreground YOLO Object", neural)
+        self.assertLess(
+            neural.index("// Case A2: Dominant Foreground YOLO Object"),
+            neural.index("// Case B: Desk Workspace or Tabletop Ensemble"),
+        )
+
+        planner = source("Services/CompositionPlanning.swift")
+        self.assertIn("let multipliers: [CGFloat] = [1.12, 1.20, 1.30, 1.40, 1.50, 1.65, 1.80, 2.00, 2.25]", planner)
+        self.assertIn("let sceneClusterAnchors: [CGPoint]", planner)
+
+        search = source("Services/CompositionAestheticSearch.swift")
+        self.assertIn("let bonusScale = usedGAIC ? 0.32 : 1.0", search)
+        self.assertIn("if usedGAIC && rankedEligible[index].proposal.gaicScore < baseline.proposal.gaicScore - 0.045", search)
+
+        calc = source("Services/CompositionCalculator.swift")
+        self.assertIn("let opticalQualityBonus = isOpticalRung ? 0.030 : (isPrimeSensorCrop ? 0.012 : 0.0)", calc)
+        self.assertIn("if Double(subject.width * subject.height) >= 0.22 {", calc)
+
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("let isStabilizedOrTimedOut = (now - requestedAt >= 0.34)", vm)
+        self.assertIn("if isCrampedAtCurrentZoom && evaluatedFraming.recommendedZoomFactor < displayZoom - 0.10", vm)
+        self.assertIn("if abs(effectiveZoom - displayZoom) < 0.11 {", vm)
+        self.assertNotIn("isDistant && evaluatedFraming.recommendedZoomFactor < 1.7 ? 2.0", vm)
+        self.assertIn("sensorSubjectRect: normalizedSubjectRect(cloudTrackingSource?.subjectRect)", vm)
+
+        gemini = source("Services/GeminiService.swift")
+        self.assertIn("let maxSafeZoom = (0.5 - margin) / maxSpan", gemini)
+
 
 if __name__ == "__main__":
     unittest.main()
