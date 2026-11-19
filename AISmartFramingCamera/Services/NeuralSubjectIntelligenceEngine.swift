@@ -197,7 +197,7 @@ private final class SemanticCropRanker: @unchecked Sendable {
         if hasRichPrompts, let model, !isThermalConstrained {
             coreS = affinities(model: model, handler: handler, cancellation: cancellation,
                                topLeftRoI: CGRect(x: 0.16, y: 0.16, width: 0.68, height: 0.68), cropScale: .scaleFill)
-            if fullClutterSignal >= 0.008 {
+            if fullClutterSignal >= 0.015 {
                 leftS = affinities(model: model, handler: handler, cancellation: cancellation,
                                    topLeftRoI: CGRect(x: 0.0, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
                 rightS = affinities(model: model, handler: handler, cancellation: cancellation,
@@ -430,9 +430,9 @@ private final class SemanticCropRanker: @unchecked Sendable {
         let maxSemanticCrops: Int = {
             let thermal = ProcessInfo.processInfo.thermalState
             if thermal == .serious || thermal == .critical || ProcessInfo.processInfo.isLowPowerModeEnabled {
-                return 2
+                return 1
             }
-            return thermal == .fair ? 3 : 5
+            return thermal == .fair ? 2 : 3
         }()
         var chosen: [(idx: Int, rect: CGRect, bonus: Double)] = []
         for item in indexed {

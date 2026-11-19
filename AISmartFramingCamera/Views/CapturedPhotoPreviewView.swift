@@ -323,11 +323,16 @@ public struct CapturedPhotoPreviewView: View {
                     .transition(.opacity)
                 }
 
-                // Single quiet reset pill only when zoomed in
+                // Zoom Region Mini-Map (top-leading) + Reset Pill (top-trailing) when zoomed in
                 if zoomScale > 1.05 {
                     VStack {
-                        HStack {
+                        HStack(alignment: .top) {
+                            zoomRegionMiniMap(viewportSize: geo.size)
+                                .padding(.top, 12)
+                                .padding(.leading, 14)
+
                             Spacer()
+
                             Button(action: {
                                 withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
                                     resetZoomAndPan()
@@ -1055,6 +1060,78 @@ public struct CapturedPhotoPreviewView: View {
         }
     }
 
+    // MARK: - Interactive Zoom Navigator Mini-Map (Khung báo vùng đang zoom)
+    @ViewBuilder
+    private func zoomRegionMiniMap(viewportSize: CGSize) -> some View {
+        let displayCG = isPeekingOriginal ? item.originalImage : currentProcessedImage
+        let imgW = CGFloat(max(1, displayCG.width))
+        let imgH = CGFloat(max(1, displayCG.height))
+        let imgAspect = imgW / imgH
+        let vpAspect = viewportSize.width / max(1.0, viewportSize.height)
+
+        let baseW: CGFloat = (vpAspect > imgAspect) ? (viewportSize.height * imgAspect) : viewportSize.width
+        let baseH: CGFloat = (vpAspect > imgAspect) ? viewportSize.height : (viewportSize.width / imgAspect)
+        let renderedW = max(1.0, baseW * zoomScale)
+        let renderedH = max(1.0, baseH * zoomScale)
+
+        let miniW: CGFloat = imgAspect >= 1.0 ? 78 : 58
+        let miniH: CGFloat = max(42, min(88, miniW / imgAspect))
+
+        let visibleFracW = min(1.0, viewportSize.width / renderedW)
+        let visibleFracH = min(1.0, viewportSize.height / renderedH)
+        let indW = max(10.0, miniW * visibleFracW)
+        let indH = max(10.0, miniH * visibleFracH)
+
+        let maxShiftX = max(0.0, (miniW - indW) / 2.0)
+        let maxShiftY = max(0.0, (miniH - indH) / 2.0)
+        let rawIndOffsetX = -(panOffset.width / renderedW) * miniW
+        let rawIndOffsetY = -(panOffset.height / renderedH) * miniH
+        let indOffsetX = min(maxShiftX, max(-maxShiftX, rawIndOffsetX))
+        let indOffsetY = min(maxShiftY, max(-maxShiftY, rawIndOffsetY))
+
+        ZStack {
+            Image(uiImage: UIImage(cgImage: displayCG))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: miniW, height: miniH)
+
+            Color.black.opacity(0.40)
+                .frame(width: miniW, height: miniH)
+
+            // Khung sáng đánh dấu chính xác vùng ảnh đang phóng to
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                .fill(Color.white.opacity(0.16))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                        .stroke(AlignTheme.studioAccent, lineWidth: 1.5)
+                )
+                .frame(width: indW, height: indH)
+                .offset(x: indOffsetX, y: indOffsetY)
+                .shadow(color: Color.black.opacity(0.65), radius: 2)
+        }
+        .frame(width: miniW, height: miniH)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.white.opacity(0.28), lineWidth: 0.9)
+        )
+        .shadow(color: Color.black.opacity(0.45), radius: 8, y: 3)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let targetPan = CGSize(
+                        width: -((value.location.x - miniW * 0.5) / miniW) * renderedW,
+                        height: -((value.location.y - miniH * 0.5) / miniH) * renderedH
+                    )
+                    let clamped = clampPanOffset(targetPan, in: viewportSize, scale: zoomScale)
+                    panOffset = clamped
+                    lastPanOffset = clamped
+                }
+        )
+        .accessibilityLabel("Bản đồ vùng đang phóng to \(String(format: "%.1f", zoomScale)) lần")
+    }
+
     // MARK: - Zoom & Pan Helpers
     private func resetZoomAndPan() {
         zoomScale = 1.0
@@ -1065,8 +1142,15 @@ public struct CapturedPhotoPreviewView: View {
 
     private func clampPanOffset(_ offset: CGSize, in size: CGSize, scale: CGFloat) -> CGSize {
         guard scale > 1.0 else { return .zero }
-        let maxX = (size.width * (scale - 1.0)) / 2.0
-        let maxY = (size.height * (scale - 1.0)) / 2.0
+        let displayCG = isPeekingOriginal ? item.originalImage : currentProcessedImage
+        let imgW = CGFloat(max(1, displayCG.width))
+        let imgH = CGFloat(max(1, displayCG.height))
+        let imgAspect = imgW / imgH
+        let vpAspect = size.width / max(1.0, size.height)
+        let baseW: CGFloat = (vpAspect > imgAspect) ? (size.height * imgAspect) : size.width
+        let baseH: CGFloat = (vpAspect > imgAspect) ? size.height : (size.width / imgAspect)
+        let maxX = max(0, (baseW * scale - size.width) / 2.0)
+        let maxY = max(0, (baseH * scale - size.height) / 2.0)
         return CGSize(
             width: min(max(offset.width, -maxX), maxX),
             height: min(max(offset.height, -maxY), maxY)

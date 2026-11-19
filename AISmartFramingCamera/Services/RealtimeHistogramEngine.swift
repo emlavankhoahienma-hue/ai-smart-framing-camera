@@ -2,8 +2,8 @@ import CoreVideo
 import CoreGraphics
 import SwiftUI
 
-/// Động cơ tính toán Histogram quang phổ thực tế Rec.709 (Luma + R/G/B 48 bins)
-/// Tối ưu CPU: Fixed-point integer BT.709 matrix, tái sử dụng bộ đệm nội bộ, không cấp phát rác theo từng frame.
+/// Động cơ tính toán Histogram quang phổ thực tế Rec.709 (Luma + R/G/B 48 bins) + Đo nhiễu cảm biến thực (Spatial Noise & ISO)
+/// Tối ưu CPU: Fixed-point integer BT.709 matrix, làm mượt đỉnh P96 chống giật biên độ, tái sử dụng bộ đệm nội bộ.
 public final class RealtimeHistogramEngine: @unchecked Sendable {
     public static let shared = RealtimeHistogramEngine()
 
@@ -14,9 +14,10 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
     private var smoothedRed: [Float] = Array(repeating: 0.06, count: binCount)
     private var smoothedGreen: [Float] = Array(repeating: 0.06, count: binCount)
     private var smoothedBlue: [Float] = Array(repeating: 0.06, count: binCount)
+    private var smoothedRefPeak: Float = 0.0
     private var lastTelemetry: HistogramTelemetry = .neutral
 
-    // Bộ đệm tạm tái sử dụng (giảm áp lực heap khi chạy 10–12 Hz)
+    // Bộ đệm tạm tái sử dụng (giảm áp lực heap khi chạy ~15 Hz)
     private var rawLuma = [Int32](repeating: 0, count: binCount)
     private var rawRed = [Int32](repeating: 0, count: binCount)
     private var rawGreen = [Int32](repeating: 0, count: binCount)
@@ -27,6 +28,8 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
     private var _averageLuminance: Float = 0.5
     private var _highlightClipRatio: Float = 0.0
     private var _shadowClipRatio: Float = 0.0
+    private var _noiseLevel: Float = 0.0
+    private var _sensorISO: Float = 0.0
 
     /// Độ sáng trung bình chuẩn hóa (0.0 = tối hoàn toàn, 1.0 = sáng trắng hoàn toàn)
     public var averageLuminance: Float {
@@ -49,10 +52,22 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
         return _shadowClipRatio
     }
 
+    /// Mức nhiễu cảm biến chuẩn hóa (0.0 = sạch, 1.0 = nhiễu rất cao)
+    public var noiseLevel: Float {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _noiseLevel
+    }
+
     private init() {}
 
-    /// Tính toán toàn bộ dữ liệu quang phổ thực tế Rec.709 (Luma + R/G/B + Clipping + EV Offset)
+    /// Giữ nguyên chữ ký công khai cho mọi caller cũ (và hợp đồng kiểm thử)
     public func computeTelemetry(from pixelBuffer: CVPixelBuffer) -> HistogramTelemetry {
+        computeTelemetry(from: pixelBuffer, sensorISO: 0)
+    }
+
+    /// Tính toán toàn bộ dữ liệu quang phổ thực tế Rec.709 (Luma + R/G/B + Clipping + EV + Nhiễu thực)
+    public func computeTelemetry(from pixelBuffer: CVPixelBuffer, sensorISO: Float) -> HistogramTelemetry {
         let formatType = CVPixelBufferGetPixelFormatType(pixelBuffer)
         let isBGRA = (formatType == kCVPixelFormatType_32BGRA)
         let isBiPlanarFull = (formatType == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
@@ -81,18 +96,20 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
         var shadowClipCount: Int32 = 0
         var highlightClipCount: Int32 = 0
         var sampleCount: Int32 = 0
+        var flatNoiseSum: Int64 = 0
+        var flatNoiseSamples: Int32 = 0
 
         if isBGRA {
             let width = CVPixelBufferGetWidth(pixelBuffer)
             let height = CVPixelBufferGetHeight(pixelBuffer)
             let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
             guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
-                  width > 0, height > 0, bytesPerRow >= width * 4 else {
+                  width > 1, height > 0, bytesPerRow >= width * 4 else {
                 return lastTelemetry
             }
             let data = baseAddress.assumingMemoryBound(to: UInt8.self)
-            let stepX = max(2, width / 96)
-            let stepY = max(2, height / 72)
+            let stepX = max(2, width / 80)
+            let stepY = max(2, height / 60)
 
             var y = 0
             while y < height {
@@ -110,6 +127,17 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
                     sampleCount += 1
                     if lum <= 5 { shadowClipCount += 1 }
                     else if lum >= 248 { highlightClipCount += 1 }
+
+                    // Đo nhiễu hạt thật trên cặp điểm ảnh liền kề thuộc vùng phẳng (bỏ qua cạnh cấu trúc > 24)
+                    if x + 1 < width && lum < 220 {
+                        let offR = offset + 4
+                        let lumR = (Int32(data[offR + 2]) * 54 + Int32(data[offR + 1]) * 183 + Int32(data[offR]) * 19) >> 8
+                        let diff = abs(lum - lumR)
+                        if diff <= 24 {
+                            flatNoiseSum += Int64(diff)
+                            flatNoiseSamples += 1
+                        }
+                    }
 
                     rawLuma[Int((lum * 48) >> 8)] += 1
                     rawRed[Int((r * 48) >> 8)] += 1
@@ -129,15 +157,15 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
             let chromaBPR = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
 
             guard let lumaBase = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0),
-                  lumaW > 0, lumaH > 0, lumaBPR >= lumaW else {
+                  lumaW > 1, lumaH > 0, lumaBPR >= lumaW else {
                 return lastTelemetry
             }
             let lumaPlane = lumaBase.assumingMemoryBound(to: UInt8.self)
             let chromaPlane = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 1)?.assumingMemoryBound(to: UInt8.self)
             let hasValidChroma = (chromaPlane != nil && chromaW > 0 && chromaH > 0 && chromaBPR >= chromaW * 2)
 
-            let stepX = max(2, lumaW / 96)
-            let stepY = max(2, lumaH / 72)
+            let stepX = max(2, lumaW / 80)
+            let stepY = max(2, lumaH / 60)
 
             var y = 0
             while y < lumaH {
@@ -154,6 +182,16 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
                         lum = scaled < 0 ? 0 : (scaled > 255 ? 255 : scaled)
                     } else {
                         lum = rawY
+                    }
+
+                    // Đo nhiễu hạt thật trên kênh Y liền kề ở vùng phẳng (chi phí ~0 ms)
+                    if x + 1 < lumaW && lum < 220 {
+                        let rawYR = Int32(lumaPlane[lumaRow + x + 1])
+                        let diff = abs(rawY - rawYR)
+                        if diff <= 24 {
+                            flatNoiseSum += Int64(diff)
+                            flatNoiseSamples += 1
+                        }
                     }
 
                     let r: Int32
@@ -209,24 +247,44 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
         let rawHighlightClip = Float(highlightClipCount) * invSamples
         let rawShadowClip = Float(shadowClipCount) * invSamples
 
-        _averageLuminance = _averageLuminance * 0.78 + rawAvg * 0.22
-        _highlightClipRatio = _highlightClipRatio * 0.72 + rawHighlightClip * 0.28
-        _shadowClipRatio = _shadowClipRatio * 0.72 + rawShadowClip * 0.28
+        let meanFlatDiff = flatNoiseSamples > 0 ? Float(flatNoiseSum) / Float(flatNoiseSamples) : 0.0
+        // Ảnh đủ sáng sạch thường có độ lệch điểm ảnh liền kề ~0.8..2.2; thiếu sáng ISO cao tăng lên 4.5..9.0+
+        let spatialNoise = min(1.0, max(0.0, (meanFlatDiff - 1.2) / 6.8))
+        let validISO = sensorISO.isFinite && sensorISO > 0 ? sensorISO : 0.0
+        let rawNoise: Float
+        if validISO > 0 {
+            let isoNorm = min(1.0, max(0.0, log2f(max(1.0, validISO / 200.0)) / 3.8))
+            rawNoise = min(1.0, 0.56 * spatialNoise + 0.44 * isoNorm)
+            _sensorISO = _sensorISO > 0 ? (_sensorISO * 0.78 + validISO * 0.22) : validISO
+        } else {
+            rawNoise = spatialNoise
+        }
+
+        _averageLuminance = _averageLuminance * 0.84 + rawAvg * 0.16
+        _highlightClipRatio = _highlightClipRatio * 0.78 + rawHighlightClip * 0.22
+        _shadowClipRatio = _shadowClipRatio * 0.78 + rawShadowClip * 0.22
+        _noiseLevel = _noiseLevel * 0.82 + rawNoise * 0.18
 
         // Độ lệch phơi sáng thực theo stop so với xám chuẩn 18% (middle gray)
         let evRaw = log2f(max(0.015, _averageLuminance) / 0.18) * 0.65
         let clampedEV = max(-3.0, min(3.0, evRaw))
 
-        // Chuẩn hóa cùng một thang tham chiếu P96 giữa 4 kênh để giữ đúng tỉ lệ tương đối giữa R, G, B và Luma
-        let refPeak = max(
+        // Làm mượt đỉnh tham chiếu P96 theo thời gian: triệt tiêu hiện tượng toàn bộ biểu đồ bật lên/tụt xuống giật cục
+        let instantRefPeak = max(
             robustPeak(rawLuma),
             max(robustPeak(rawRed), max(robustPeak(rawGreen), robustPeak(rawBlue)))
         )
+        if smoothedRefPeak <= 1.0 {
+            smoothedRefPeak = instantRefPeak
+        } else {
+            let peakAlpha: Float = instantRefPeak > smoothedRefPeak ? 0.18 : 0.12
+            smoothedRefPeak = smoothedRefPeak * (1.0 - peakAlpha) + instantRefPeak * peakAlpha
+        }
 
-        normalizeAndSmooth(raw: rawLuma, refPeak: refPeak, target: &smoothedLuma)
-        normalizeAndSmooth(raw: rawRed, refPeak: refPeak, target: &smoothedRed)
-        normalizeAndSmooth(raw: rawGreen, refPeak: refPeak, target: &smoothedGreen)
-        normalizeAndSmooth(raw: rawBlue, refPeak: refPeak, target: &smoothedBlue)
+        normalizeAndSmooth(raw: rawLuma, refPeak: smoothedRefPeak, target: &smoothedLuma)
+        normalizeAndSmooth(raw: rawRed, refPeak: smoothedRefPeak, target: &smoothedRed)
+        normalizeAndSmooth(raw: rawGreen, refPeak: smoothedRefPeak, target: &smoothedGreen)
+        normalizeAndSmooth(raw: rawBlue, refPeak: smoothedRefPeak, target: &smoothedBlue)
 
         let telemetry = HistogramTelemetry(
             luma: smoothedLuma,
@@ -236,13 +294,15 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
             shadowClipRatio: _shadowClipRatio,
             highlightClipRatio: _highlightClipRatio,
             averageLuminance: _averageLuminance,
-            evOffset: clampedEV
+            evOffset: clampedEV,
+            noiseLevel: _noiseLevel,
+            sensorISO: _sensorISO
         )
         lastTelemetry = telemetry
         return telemetry
     }
 
-    /// Chuẩn hóa mạnh chống bẹt dải midtone: phối P96 với 0.35*max để 1 mảng tường trắng/đen không đè xẹp phần còn lại
+    /// Chuẩn hóa mạnh chống bẹt dải midtone: phối P96 với 0.42*max để 1 mảng tường trắng/đen không đè xẹp phần còn lại
     private func robustPeak(_ bins: [Int32]) -> Float {
         var maxVal: Float = 1.0
         for i in 0..<Self.binCount {
@@ -262,15 +322,17 @@ public final class RealtimeHistogramEngine: @unchecked Sendable {
             // Nâng nhẹ dải midtone để biểu đồ rõ chi tiết như scope máy ảnh chuyên nghiệp
             scratchNorm[i] = powf(linear, 0.72)
         }
-        // Lọc không gian 3 điểm [0.18, 0.64, 0.18] + 1 lớp EMA bất đối xứng duy nhất
+        // Lọc không gian 5 điểm dịu [0.08, 0.22, 0.40, 0.22, 0.08] + EMA êm triệt tiêu cà giật nhưng vẫn bám sát ánh sáng thật
         for i in 0..<Self.binCount {
-            let prevBin = i > 0 ? scratchNorm[i - 1] : scratchNorm[i]
-            let currBin = scratchNorm[i]
-            let nextBin = i + 1 < Self.binCount ? scratchNorm[i + 1] : scratchNorm[i]
-            let spatial = prevBin * 0.18 + currBin * 0.64 + nextBin * 0.18
+            let b0 = scratchNorm[max(0, i - 2)]
+            let b1 = scratchNorm[max(0, i - 1)]
+            let b2 = scratchNorm[i]
+            let b3 = scratchNorm[min(Self.binCount - 1, i + 1)]
+            let b4 = scratchNorm[min(Self.binCount - 1, i + 2)]
+            let spatial = b0 * 0.08 + b1 * 0.22 + b2 * 0.40 + b3 * 0.22 + b4 * 0.08
 
             let current = target[i]
-            let alpha: Float = spatial > current ? 0.42 : 0.24
+            let alpha: Float = spatial > current ? 0.24 : 0.16
             let next = current * (1.0 - alpha) + spatial * alpha
             target[i] = max(0.02, min(1.0, next))
         }

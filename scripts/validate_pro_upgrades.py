@@ -220,6 +220,40 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             self.assertIn(f"/* {filename} */", pbx)
             self.assertIn(f"/* {filename} in Sources */", pbx)
 
+    def test_11_six_real_device_bugfixes(self):
+        # 1. Faster local AI (concurrent OpenWorld + hardware Float16 + cached models + trimmed budgets)
+        ow = source("Services/OpenWorldSubjectDetector.swift")
+        self.assertIn("DispatchGroup()", ow)
+        self.assertIn("Float16.self", ow)
+        gaic = source("Services/GAICCompositionModel.swift")
+        self.assertIn("static func cachedOrLoad(url: URL)", gaic)
+        search = source("Services/CompositionAestheticSearch.swift")
+        self.assertIn("GAICCompositionModel.cachedOrLoad(url: resolvedGaicURL)", search)
+
+        # 2. Target alignment -> 2x zoom & auto-capture reliability (no dead zone or stale lock)
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("let effectiveRadius = max(alignmentRadius, 0.072)", vm)
+        self.assertIn("zoomAwaitingVerification || isRevealingZoomTarget", vm)
+
+        # 3 & 6. Smooth animatable Histogram + Real Highlight Clipping & High Noise alerts
+        histo_engine = source("Services/RealtimeHistogramEngine.swift")
+        self.assertIn("smoothedRefPeak", histo_engine)
+        self.assertIn("flatNoiseSum", histo_engine)
+        self.assertIn("sensorISO: Float", histo_engine)
+        histo_hud = source("Views/LiveColorHistogramHUDView.swift")
+        self.assertIn("SmoothHistogramCurveShape", histo_hud)
+        self.assertIn("telemetry.isHighNoise", histo_hud)
+        self.assertIn("Cháy sáng", histo_hud)
+
+        # 4. In-app Align Studio gallery EXIF orientation fix
+        models = source("Models/FramingModels.swift")
+        self.assertIn("private func orientedCGImage(from source: CGImageSource)", models)
+        self.assertIn("kCGImagePropertyOrientation", models)
+
+        # 5. Photo Detail interactive Zoom Navigator Mini-Map restored
+        preview = source("Views/CapturedPhotoPreviewView.swift")
+        self.assertIn("private func zoomRegionMiniMap(viewportSize: CGSize)", preview)
+
 
 if __name__ == "__main__":
     unittest.main()

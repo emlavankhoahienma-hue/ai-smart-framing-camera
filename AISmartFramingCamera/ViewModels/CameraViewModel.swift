@@ -35,10 +35,26 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     private var lastFocusPeakingComputeTime: CFTimeInterval = 0
     private var lastSuggestionUpdateTime: CFTimeInterval = 0
     private var lastVisionProcessTime: CFTimeInterval = 0
+    private var latestSensorISO: Float = 0
 
     @MainActor
     func attach(to owner: CameraViewModel) {
         self.owner = owner
+    }
+
+    func updateSensorISO(_ iso: Float) {
+        stateLock.lock()
+        latestSensorISO = iso
+        stateLock.unlock()
+    }
+
+    private static func extractSensorISO(from sampleBuffer: CMSampleBuffer) -> Float {
+        guard let exif = CMGetAttachment(sampleBuffer, key: kCGImagePropertyExifDictionary, attachmentModeOut: nil) as? [CFString: Any],
+              let isoList = exif[kCGImagePropertyExifISOSpeedRatings] as? [NSNumber],
+              let first = isoList.first else {
+            return 0
+        }
+        return first.floatValue
     }
 
     func updateConfiguration(_ configuration: CameraFrameProcessingConfiguration) {
@@ -97,12 +113,17 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             guard !snapshot.isSettingsVisible else { return }
             let now = CACurrentMediaTime()
             let thermal = ProcessInfo.processInfo.thermalState
-            let histInterval: CFTimeInterval = (thermal == .serious || thermal == .critical) ? 0.20 : 0.09
+            let histInterval: CFTimeInterval = (thermal == .serious || thermal == .critical) ? 0.16 : 0.068
             if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= histInterval {
                 lastHistogramComputeTime = now
-                let telemetry = RealtimeHistogramEngine.shared.computeTelemetry(from: pixelBuffer)
+                stateLock.lock()
+                let cachedISO = latestSensorISO
+                stateLock.unlock()
+                let iso = cachedISO > 0 ? cachedISO : Self.extractSensorISO(from: sampleBuffer)
+                let telemetry = RealtimeHistogramEngine.shared.computeTelemetry(from: pixelBuffer, sensorISO: iso)
                 DispatchQueue.main.async { [weak self] in
                     guard let owner = self?.owner else { return }
+                    self?.updateSensorISO(owner.cameraService.currentISO)
                     if !owner.histogramTelemetry.isVisuallySimilar(to: telemetry) {
                         owner.histogramTelemetry = telemetry
                     }
@@ -156,12 +177,17 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             }
         }
         let histThermal = ProcessInfo.processInfo.thermalState
-        let histInterval: CFTimeInterval = (histThermal == .serious || histThermal == .critical) ? 0.20 : 0.09
+        let histInterval: CFTimeInterval = (histThermal == .serious || histThermal == .critical) ? 0.16 : 0.068
         if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= histInterval {
             lastHistogramComputeTime = now
-            let telemetry = RealtimeHistogramEngine.shared.computeTelemetry(from: pixelBuffer)
+            stateLock.lock()
+            let cachedISO = latestSensorISO
+            stateLock.unlock()
+            let iso = cachedISO > 0 ? cachedISO : Self.extractSensorISO(from: sampleBuffer)
+            let telemetry = RealtimeHistogramEngine.shared.computeTelemetry(from: pixelBuffer, sensorISO: iso)
             DispatchQueue.main.async { [weak self] in
                 guard let owner = self?.owner else { return }
+                self?.updateSensorISO(owner.cameraService.currentISO)
                 if !owner.histogramTelemetry.isVisuallySimilar(to: telemetry) {
                     owner.histogramTelemetry = telemetry
                 }
@@ -1209,7 +1235,6 @@ public final class CameraViewModel: ObservableObject {
         // Phase 4: Đồng bộ chu trình Khóa tâm Hard Lock với chuyển Zoom quang học Z* mượt mà 60fps
         let targetZoom = pendingSuggestedZoom
         if isAutoZoomEnabled, abs(displayZoom - targetZoom) > 0.05, !hasExecutedAutoZoomForSession, !zoomAwaitingVerification, canZoomCurrentSubject(to: targetZoom) {
-            hasExecutedAutoZoomForSession = true
             triggerZoomRevealAnimation(targetZoom: targetZoom)
         } else {
             // Pha 3: Nếu không cần zoom ống kính, thực thi ngay bước chỉnh sáng thông minh
@@ -1232,8 +1257,8 @@ public final class CameraViewModel: ObservableObject {
     private func shouldUnlockHardTarget() -> Bool {
         guard isTargetLocked else { return false }
 
-        // 1. Nếu đang trong tiến trình chụp ảnh (Capture Sequence Active): Tuyệt đối giữ khóa 100%
-        if aiSessionState == .capturing || isShutterPressing {
+        // 1. Nếu đang trong tiến trình chụp ảnh hoặc đang chuyển ống kính AI Zoom: Tuyệt đối giữ khóa 100%
+        if aiSessionState == .capturing || isShutterPressing || zoomAwaitingVerification || isRevealingZoomTarget {
             return false
         }
 
@@ -3561,6 +3586,10 @@ public final class CameraViewModel: ObservableObject {
             guideDescription: localCompositionExplanation)
         pendingSuggestedZoom = effectiveZoom
         aiSuggestedZoom = effectiveZoom
+        isTargetLocked = false
+        zoomAwaitingVerification = false
+        zoomVerified = true
+        zoomFallbackAfter = .infinity
         hasExecutedAutoZoomForSession = false
         allowsAutoCaptureForCurrentTarget = true
         localCompositionChoices = []
@@ -3590,9 +3619,8 @@ public final class CameraViewModel: ObservableObject {
 
     var localCompositionNeedsLevel: Bool {
         guard isHorizonLevelerEnabled else { return false }
-        let isLandscapeOrArch = (localCompositionIntent == .landscape || localCompositionIntent == .architecture ||
-                                 localCompositionIntent == .environmentalPortrait)
-        return isLandscapeOrArch && abs(currentRollDegrees) > 8.0
+        // Chỉ chặn chụp khi máy nghiêng rất gắt (> 24°) ở bố cục toàn cảnh; không tự khóa lệnh Zoom 2x/chụp ở góc cầm tay bình thường
+        return localCompositionIntent == .landscape && abs(currentRollDegrees) > 24.0
     }
 
     var needsManualShutter: Bool {
@@ -4004,7 +4032,8 @@ public final class CameraViewModel: ObservableObject {
         let aspect = max(0.1, SpatialTrackingEngine.shared.currentBufferAspect)
         let distance = hypot(dx, dy / aspect)
         alignmentDistance = distance
-        let effectiveRadius = max(alignmentRadius, 0.048)
+        // Đồng bộ bán kính khớp với vùng hút nam châm hiển thị (~26pt trên màn hình) để không tạo vùng chết "khớp mắt nhưng không zoom/chụp"
+        let effectiveRadius = max(alignmentRadius, 0.072)
         let snapOnThreshold: CGFloat = effectiveRadius * 1.05
         let snapOffThreshold: CGFloat = effectiveRadius * 1.35
         if distance <= snapOnThreshold {

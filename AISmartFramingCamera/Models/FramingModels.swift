@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import CoreImage
 import SwiftUI
 import UIKit
 import ImageIO
@@ -1834,6 +1835,10 @@ public struct HistogramTelemetry: Equatable, Sendable {
     public var highlightClipRatio: Float
     public var averageLuminance: Float
     public var evOffset: Float
+    /// Mức nhiễu cảm biến thực tế chuẩn hóa (0.0 = rất sạch, 1.0 = nhiễu rất cao)
+    public var noiseLevel: Float
+    /// Độ nhạy sáng ISO phần cứng hiện tại của cảm biến
+    public var sensorISO: Float
 
     public init(
         luma: [Float],
@@ -1843,7 +1848,9 @@ public struct HistogramTelemetry: Equatable, Sendable {
         shadowClipRatio: Float = 0,
         highlightClipRatio: Float = 0,
         averageLuminance: Float = 0.5,
-        evOffset: Float = 0
+        evOffset: Float = 0,
+        noiseLevel: Float = 0,
+        sensorISO: Float = 0
     ) {
         self.luma = luma
         self.red = red
@@ -1853,6 +1860,8 @@ public struct HistogramTelemetry: Equatable, Sendable {
         self.highlightClipRatio = highlightClipRatio
         self.averageLuminance = averageLuminance
         self.evOffset = evOffset
+        self.noiseLevel = noiseLevel
+        self.sensorISO = sensorISO
     }
 
     public static let neutral: HistogramTelemetry = {
@@ -1869,28 +1878,37 @@ public struct HistogramTelemetry: Equatable, Sendable {
             shadowClipRatio: 0,
             highlightClipRatio: 0,
             averageLuminance: 0.45,
-            evOffset: 0
+            evOffset: 0,
+            noiseLevel: 0,
+            sensorISO: 0
         )
     }()
 
     public var isHighlightClipping: Bool { highlightClipRatio >= 0.015 }
+    public var isSevereHighlightClipping: Bool { highlightClipRatio >= 0.038 }
     public var isShadowClipping: Bool { shadowClipRatio >= 0.020 }
+    public var isHighNoise: Bool { noiseLevel >= 0.52 || (sensorISO >= 1400 && noiseLevel >= 0.34) }
 
     public func isVisuallySimilar(to other: HistogramTelemetry) -> Bool {
         guard luma.count == other.luma.count,
               red.count == other.red.count,
               green.count == other.green.count,
               blue.count == other.blue.count else { return false }
-        if abs(shadowClipRatio - other.shadowClipRatio) >= 0.004 ||
+        if isHighlightClipping != other.isHighlightClipping ||
+           isSevereHighlightClipping != other.isSevereHighlightClipping ||
+           isShadowClipping != other.isShadowClipping ||
+           isHighNoise != other.isHighNoise ||
+           abs(shadowClipRatio - other.shadowClipRatio) >= 0.004 ||
            abs(highlightClipRatio - other.highlightClipRatio) >= 0.004 ||
+           abs(noiseLevel - other.noiseLevel) >= 0.04 ||
            abs(evOffset - other.evOffset) >= 0.08 {
             return false
         }
         for i in 0..<luma.count {
-            if abs(luma[i] - other.luma[i]) >= 0.018 ||
-               abs(red[i] - other.red[i]) >= 0.022 ||
-               abs(green[i] - other.green[i]) >= 0.022 ||
-               abs(blue[i] - other.blue[i]) >= 0.022 {
+            if abs(luma[i] - other.luma[i]) >= 0.012 ||
+               abs(red[i] - other.red[i]) >= 0.016 ||
+               abs(green[i] - other.green[i]) >= 0.016 ||
+               abs(blue[i] - other.blue[i]) >= 0.016 {
                 return false
             }
         }
@@ -2439,11 +2457,38 @@ public final class AppPhotoStorageService: @unchecked Sendable {
         return fileManager.fileExists(atPath: url.path) ? url : nil
     }
 
+    private static let orientationCIContext = CIContext(options: [
+        .useSoftwareRenderer: false,
+        .cacheIntermediates: false
+    ])
+
+    /// Giải mã CGImage và áp dụng đúng thẻ EXIF Orientation (tránh ảnh chụp dọc bị xoay ngang 90° trong Thư viện Align Studio).
+    private func orientedCGImage(from source: CGImageSource) -> CGImage? {
+        guard let rawCG = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let exifOrientation = (props?[kCGImagePropertyOrientation] as? Int32)
+            ?? (props?[kCGImagePropertyOrientation] as? NSNumber)?.int32Value
+            ?? 1
+        guard exifOrientation != 1, (1...8).contains(exifOrientation) else {
+            return rawCG
+        }
+        let orientedCI = CIImage(cgImage: rawCG).oriented(forExifOrientation: exifOrientation)
+        let extent = orientedCI.extent
+        guard !extent.isEmpty, extent.width > 0, extent.height > 0 else { return rawCG }
+        let colorSpace = rawCG.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        return Self.orientationCIContext.createCGImage(
+            orientedCI,
+            from: extent,
+            format: .RGBA8,
+            colorSpace: colorSpace
+        ) ?? rawCG
+    }
+
     public func loadThumbnailImage(for record: StoredPhotoRecord) -> CGImage? {
         if let thumbURL = thumbnailURL(for: record),
            let data = try? Data(contentsOf: thumbURL),
            let source = CGImageSourceCreateWithData(data as CFData, nil) {
-            return CGImageSourceCreateImageAtIndex(source, 0, nil)
+            return orientedCGImage(from: source)
         }
         let fullURL = photoURL(for: record)
         guard let source = CGImageSourceCreateWithURL(fullURL as CFURL, nil) else { return nil }
@@ -2458,7 +2503,7 @@ public final class AppPhotoStorageService: @unchecked Sendable {
     public func loadFullImage(for record: StoredPhotoRecord) -> CGImage? {
         let fullURL = photoURL(for: record)
         guard let source = CGImageSourceCreateWithURL(fullURL as CFURL, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        return orientedCGImage(from: source)
     }
 
     public func deleteRecord(_ record: StoredPhotoRecord) {

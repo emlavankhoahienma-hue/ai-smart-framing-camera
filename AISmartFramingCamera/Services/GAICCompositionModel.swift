@@ -3,6 +3,9 @@ import CoreGraphics
 import CoreImage
 import CoreVideo
 import CoreML
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Learned GAIC (Grid-Anchoring Image Cropping) CoreML scorer: evaluates up to 256
 /// upright normalized crop windows per pass from a single shared 256x256 backbone forward.
@@ -10,6 +13,51 @@ final class GAICCompositionModel {
     static let maxBoxes = 256
     static let imageSide = 256
     static let bundleModelName = "GAICCompositionScorer"
+
+    private final class ModelCache: @unchecked Sendable {
+        static let shared = ModelCache()
+        private let lock = NSLock()
+        private var cachedURL: URL?
+        private var cachedInstance: GAICCompositionModel?
+
+        private init() {
+            #if canImport(UIKit)
+            _ = NotificationCenter.default.addObserver(
+                forName: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                self?.clear()
+            }
+            #endif
+        }
+
+        func clear() {
+            lock.withLock {
+                cachedURL = nil
+                cachedInstance = nil
+            }
+        }
+
+        func getOrLoad(url: URL) -> GAICCompositionModel? {
+            let keepCached = ProcessInfo.processInfo.physicalMemory >= 5_200_000_000
+            return lock.withLock {
+                if keepCached, cachedURL == url, let existing = cachedInstance {
+                    return existing
+                }
+                guard let loaded = try? GAICCompositionModel(url: url) else { return nil }
+                if keepCached {
+                    cachedURL = url
+                    cachedInstance = loaded
+                }
+                return loaded
+            }
+        }
+    }
+
+    static func cachedOrLoad(url: URL) -> GAICCompositionModel? {
+        ModelCache.shared.getOrLoad(url: url)
+    }
 
     private let model: MLModel
     private let context: CIContext

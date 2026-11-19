@@ -5,6 +5,9 @@ import CoreImage.CIFilterBuiltins
 import CoreVideo
 import CoreML
 import Vision
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Cancellation reaches the active Vision request as well as the bounded search.
 final class CompositionAnalysisCancellation: @unchecked Sendable {
@@ -38,6 +41,20 @@ final class CompositionAnalysisCancellation: @unchecked Sendable {
 /// Used only by the serialized analysis worker. Outputs are immutable preview images.
 final class CompositionImageRenderer {
     private let context = CIContext(options: [.cacheIntermediates: false])
+    private let depthModelLock = NSLock()
+    private var cachedDepthModel: MLModel?
+
+    init() {
+        #if canImport(UIKit)
+        _ = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.depthModelLock.withLock { self?.cachedDepthModel = nil }
+        }
+        #endif
+    }
 
     func clearCaches() {
         context.clearCaches()
@@ -80,12 +97,18 @@ final class CompositionImageRenderer {
         guard let url = candidateNames.compactMap({ Bundle.main.url(forResource: $0, withExtension: "mlmodelc") }).first else {
             return nil
         }
+        let keepCached = ProcessInfo.processInfo.physicalMemory >= 5_200_000_000
         return autoreleasepool {
             guard !cancellation.isCancelled else { return nil }
-            let config = MLModelConfiguration()
-            config.computeUnits = .cpuAndNeuralEngine
-            guard let model = try? MLModel(contentsOf: url, configuration: config) else { return nil }
-            defer { _ = model }
+            let model: MLModel? = depthModelLock.withLock {
+                if let cached = cachedDepthModel { return cached }
+                let config = MLModelConfiguration()
+                config.computeUnits = .cpuAndNeuralEngine
+                guard let loaded = try? MLModel(contentsOf: url, configuration: config) else { return nil }
+                if keepCached { cachedDepthModel = loaded }
+                return loaded
+            }
+            guard let model else { return nil }
 
             let inputEntries = model.modelDescription.inputDescriptionsByName
             guard let (inputName, inputDesc) = inputEntries.first else { return nil }

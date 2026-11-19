@@ -41,7 +41,7 @@ final class CompositionAestheticSearch {
         var preScoredGAIC: [(corners: [CGPoint], gaic: Double)] = []
         if let resolvedGaicURL, !workingProposals.isEmpty {
             let evaluatedGAIC: [Double]? = autoreleasepool {
-                guard let gaicModel = try? GAICCompositionModel(url: resolvedGaicURL) else { return nil }
+                guard let gaicModel = GAICCompositionModel.cachedOrLoad(url: resolvedGaicURL) else { return nil }
                 return gaicModel.evaluate(image: image, proposals: workingProposals, cancellation: cancellation)
             }
             if let evaluatedGAIC, evaluatedGAIC.count == workingProposals.count {
@@ -59,7 +59,7 @@ final class CompositionAestheticSearch {
         // When dense multi-scale windows were scored by GAIC, shortlist diverse peak candidates for SAMP
         // to stay within mobile RAM & compute latency budgets while keeping baseline and zoom spread intact.
         let isHighMem = ProcessInfo.processInfo.physicalMemory >= 5_200_000_000
-        let sampBudget = isHighMem ? 20 : 14
+        let sampBudget = isHighMem ? 10 : 8
         if usedGAIC && workingProposals.count > sampBudget {
             let rankedForSamp = workingProposals.map { candidate -> CompositionProposal in
                 var copy = candidate
@@ -226,7 +226,7 @@ final class CompositionAestheticSearch {
         let initial = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: usedGAIC ? 2 : 3)
         progress("Đang kiểm tra lại khung và các mức zoom lân cận…")
         let refinedSeeds = refine(initial)
-        let cappedNeighbours = usedGAIC ? Array(refinedSeeds.prefix(isHighMem ? 8 : 6)) : refinedSeeds
+        let cappedNeighbours = usedGAIC ? Array(refinedSeeds.prefix(2)) : refinedSeeds
         let neighbours = evaluate(cappedNeighbours)
         if usedGAIC {
             let bestSeedScore = initial.map(\.score).max() ?? 0.0
@@ -277,8 +277,8 @@ final class CompositionAestheticSearch {
                 ProcessInfo.processInfo.thermalState == .serious
             let isLowMemory = ProcessInfo.processInfo.physicalMemory < 5_200_000_000
             let budget = usedGAIC
-                ? (thermalOrLowPower ? 4 : (isLowMemory ? 6 : 8))
-                : (thermalOrLowPower ? 12 : (isLowMemory ? 24 : 40))
+                ? (thermalOrLowPower ? 2 : (isLowMemory ? 3 : 4))
+                : (thermalOrLowPower ? 10 : (isLowMemory ? 18 : 28))
             for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
                 if indices.count >= budget { break }
                 include(index)
