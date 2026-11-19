@@ -3130,7 +3130,7 @@ public final class CameraViewModel: ObservableObject {
                     let halfAngle = atan2(simd_length(deltaQ.imag), abs(deltaQ.real))
                     return (2.0 * halfAngle) / 0.05
                 }()
-                let maxStableAngularSpeed = self.isWalkingModeEnabled ? 0.55 : 0.34
+                let maxStableAngularSpeed = 0.36
                 let isStabilizedOrTimedOut = (now - requestedAt >= 0.34) ||
                     (recentAngularSpeed <= maxStableAngularSpeed && self.cameraService.isFocusSettled)
                 guard self.manualZoomRequestID == nil, !self.isPinchingZoom, isFresh, isStabilizedOrTimedOut else {
@@ -3450,9 +3450,9 @@ public final class CameraViewModel: ObservableObject {
         var effectiveZoom = plan.zoom
         // Smart Zoom-Out: Khi chủ thể quá sát/tràn viền ở tiêu cự hiện tại (ví dụ đang ở 2x/3x hoặc sát rìa 1x), cho phép lùi về 1x hoặc 0.5x
         let subRect = plan.subjectRect
-        let subArea = subRect.width * subRect.height
+        let crampedArea = subRect.width * subRect.height
         let touchesBorder = subRect.minX <= 0.025 || subRect.maxX >= 0.975 || subRect.minY <= 0.025 || subRect.maxY >= 0.975
-        let isCrampedAtCurrentZoom = subArea > 0.50 || (touchesBorder && max(subRect.width, subRect.height) > 0.60)
+        let isCrampedAtCurrentZoom = crampedArea > 0.50 || (touchesBorder && max(subRect.width, subRect.height) > 0.60)
         if isCrampedAtCurrentZoom && evaluatedFraming.recommendedZoomFactor < displayZoom - 0.10 {
             effectiveZoom = evaluatedFraming.recommendedZoomFactor
         }
