@@ -1791,6 +1791,57 @@ public final class CameraViewModel: ObservableObject {
         showHUDNotice("Đã hủy Ultra Sharp")
     }
 
+    /// Chỉ dùng trong Simulator UI Snapshot CI (`-UI_SNAPSHOT_MODE`), tuyệt đối không chạy trên người dùng thật
+    public func applyUISnapshotState(screen: String) {
+        hasCameraPermission = true
+        isCameraReady = true
+        isCameraHibernating = false
+        currentLiveISO = 200
+        liveISO = "ISO 200"
+        showHistogramInViewfinder = true
+        isFunctionDrawerOpen = false
+        isShowingFilmDrawer = false
+        isWindowedZoomActive = false
+        isShowingSettings = false
+        isUltraSharpEnabled = true
+        captureMode = .photo
+        selectedZoomPreset = 1.0
+        displayZoom = 1.0
+
+        // Tạo sóng biểu đồ sáng thực tế và ảnh thu nhỏ album từ ảnh mẫu snapshot nếu có
+        histogramBars = (0..<32).map { i in
+            let t = Double(i) / 31.0
+            let h = 0.14 + 0.62 * exp(-pow((t - 0.52) / 0.24, 2.0)) + 0.18 * exp(-pow((t - 0.22) / 0.12, 2.0))
+            return HistogramBarData(id: i, height: CGFloat(min(0.95, h)), color: .white)
+        }
+        let args = ProcessInfo.processInfo.arguments
+        if let idx = args.firstIndex(of: "-UI_SNAPSHOT_BG"), idx + 1 < args.count,
+           let thumbImg = UIImage(contentsOfFile: args[idx + 1]) {
+            latestAlbumThumbnail = thumbImg
+        }
+
+        switch screen {
+        case "main_drawer":
+            isFunctionDrawerOpen = true
+        case "main_film":
+            isFilmSimulationActive = true
+            isShowingFilmDrawer = true
+        case "main_windowed":
+            isWindowedZoomActive = true
+            windowedZoomFocalLength = 50.0
+            windowedZoomAspectRatio = .ratio3_4
+            windowedZoomNormalizedCenter = CGPoint(x: 0.5, y: 0.46)
+        case "main_video":
+            captureMode = .video
+            isUltraSharpEnabled = false
+            windowedZoomAspectRatio = .ratio16_9
+        case "settings_capture", "settings_ai", "settings_advanced":
+            isShowingSettings = true
+        default:
+            break
+        }
+    }
+
     // MARK: - Initialization & Permissions
     public func requestPermissionsAndStart() {
         // 1. Camera Permission (.video)

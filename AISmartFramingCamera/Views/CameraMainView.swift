@@ -48,7 +48,7 @@ extension View {
     }
 }
 
-// MARK: - Camera Main View (Obsidian Minimalist Pro Edition)
+// MARK: - Camera Main View (Monochrome Carbon & Smoked Glass Pro Edition)
 public struct CameraMainView: View {
     @StateObject private var viewModel = CameraViewModel()
     @Environment(\.scenePhase) private var scenePhase
@@ -56,7 +56,34 @@ public struct CameraMainView: View {
 
     public init() {}
 
-    private let canvasBackground = Color(red: 0.031, green: 0.035, blue: 0.047) // #08090C
+    // Simulator UI Snapshot Harness (hoàn toàn không ảnh hưởng máy thật nếu không có launch argument)
+    private static let isUISnapshotMode: Bool = ProcessInfo.processInfo.arguments.contains("-UI_SNAPSHOT_MODE")
+
+    private static var snapshotScreen: String {
+        let args = ProcessInfo.processInfo.arguments
+        if let idx = args.firstIndex(of: "-UI_SNAPSHOT_SCREEN"), idx + 1 < args.count {
+            return args[idx + 1]
+        }
+        return "main_photo"
+    }
+
+    private static var snapshotBackdropPath: String? {
+        let args = ProcessInfo.processInfo.arguments
+        if let idx = args.firstIndex(of: "-UI_SNAPSHOT_BG"), idx + 1 < args.count {
+            return args[idx + 1]
+        }
+        return nil
+    }
+
+    private static var snapshotSettingsTab: SettingsSheetTab {
+        switch snapshotScreen {
+        case "settings_ai": return .ai
+        case "settings_advanced": return .advanced
+        default: return .capture
+        }
+    }
+
+    private let canvasBackground = AlignTheme.studioCanvas
 
     public var body: some View {
         GeometryReader { geometry in
@@ -64,13 +91,13 @@ public struct CameraMainView: View {
                                                 safeAreaInsets: geometry.safeAreaInsets,
                                                 isVideo: viewModel.captureMode.isVideo)
             ZStack {
-                // 1. Deep Obsidian Canvas
+                // 1. Pure Matte Carbon Canvas
                 canvasBackground
                     .ignoresSafeArea()
 
-                if viewModel.hasCameraPermission {
+                if viewModel.hasCameraPermission || Self.isUISnapshotMode {
                     VStack(spacing: 0) {
-                        // 2. Minimalist Top Pro Toolbar
+                        // 2. Balanced Twin Smoked-Glass Top Toolbar
                         TopCameraBar(viewModel: viewModel, histogramWidth: layout.histogramWidth)
                             .frame(height: 44)
                             .frame(maxWidth: .infinity)
@@ -80,9 +107,13 @@ public struct CameraMainView: View {
 
                         Spacer(minLength: layout.minimumGap / 2)
 
-                        // 3. High-End Viewfinder (Consistent Full-Width in Photo & Video)
+                        // 3. Viewfinder Frame (4:3 Precision Optical Window)
                         ZStack {
-                            CameraPreviewView(viewModel: viewModel)
+                            if Self.isUISnapshotMode {
+                                UISnapshotBackdropView(imagePath: Self.snapshotBackdropPath)
+                            } else {
+                                CameraPreviewView(viewModel: viewModel)
+                            }
 
                             // Realtime Film Atmosphere Overlay
                             if viewModel.isFilmSimulationActive {
@@ -113,107 +144,85 @@ public struct CameraMainView: View {
                                     .transition(.scale(scale: 0.85).combined(with: .opacity))
                             }
 
-                            // 360° Horizon Lock HUD Vector Feedback Badge (Top Trailing)
+                            // 360° Horizon Lock HUD Badge (Quiet Smoked Glass)
                             if viewModel.isHorizonLockEnabled {
                                 VStack {
                                     HStack {
                                         Spacer()
                                         HStack(spacing: 5) {
                                             Image(systemName: "level.fill")
-                                                .font(.system(size: 10, weight: .bold))
-                                                .foregroundColor(AlignTheme.electricCyan)
-                                            Text("360° KHÓA")
-                                                .font(.system(size: 10, weight: .heavy, design: .rounded))
-                                                .foregroundColor(AlignTheme.platinumWhite)
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundColor(AlignTheme.studioAccent)
+                                            Text("360°")
+                                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                                .foregroundColor(AlignTheme.studioInkPrimary)
                                         }
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(
-                                            Capsule()
-                                                .fill(AlignTheme.obsidianBlack.opacity(0.85))
-                                                .overlay(
-                                                    Capsule()
-                                                        .stroke(AlignTheme.rimGradient, lineWidth: 0.8)
-                                                )
-                                        )
-                                        .shadow(color: AlignTheme.electricCyan.opacity(0.35), radius: 6)
-                                        .padding(.top, 14)
-                                        .padding(.trailing, 14)
+                                        .padding(.horizontal, 9)
+                                        .padding(.vertical, 4.5)
+                                        .background(StudioGlassCapsule(tintOpacity: 0.52, borderOpacity: 0.14))
+                                        .padding(.top, 12)
+                                        .padding(.trailing, 12)
                                     }
                                     Spacer()
                                 }
-                                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                                .transition(.opacity.combined(with: .scale(scale: 0.94)))
                             }
 
-                            // Optical Zoom HUD Feedback Badge
+                            // Optical Zoom HUD Feedback Badge (Smoked Glass)
                             if viewModel.isZoomHUDVisible, let hudText = viewModel.activeZoomHUDText {
                                 VStack {
                                     HStack(spacing: 6) {
                                         Image(systemName: "camera.aperture")
-                                            .font(.system(size: 11, weight: .bold))
-                                            .foregroundColor(AlignTheme.electricCyan)
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundColor(AlignTheme.studioAccent)
                                         Text(hudText)
-                                            .font(.system(size: 11, weight: .heavy, design: .rounded))
-                                            .foregroundColor(AlignTheme.platinumWhite)
+                                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                            .foregroundColor(AlignTheme.studioInkPrimary)
                                     }
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
-                                    .background(
-                                        Capsule()
-                                            .fill(AlignTheme.obsidianBlack.opacity(0.85))
-                                            .overlay(
-                                                Capsule()
-                                                    .stroke(AlignTheme.rimGradient, lineWidth: 1.0)
-                                            )
-                                    )
-                                    .shadow(color: AlignTheme.electricCyan.opacity(0.35), radius: 8)
-                                    .padding(.top, 16)
+                                    .background(StudioGlassCapsule(tintOpacity: 0.54, borderOpacity: 0.14))
+                                    .padding(.top, 14)
                                     Spacer()
                                 }
-                                .transition(.scale(scale: 0.88).combined(with: .opacity))
+                                .transition(.scale(scale: 0.92).combined(with: .opacity))
                             }
 
-                            // Ultra Sharp Progress HUD & Nút Hủy
+                            // Ultra Sharp Progress HUD & Cancel Button (Smoked Glass)
                             if let progressText = viewModel.ultraSharpProgressString {
                                 VStack {
                                     HStack(spacing: 8) {
                                         ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .yellow))
-                                            .scaleEffect(0.8)
+                                            .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.studioAccent))
+                                            .scaleEffect(0.78)
 
                                         Text(progressText)
-                                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                                            .foregroundColor(.white)
+                                            .font(.system(size: 11.5, weight: .medium))
+                                            .foregroundColor(AlignTheme.studioInkPrimary)
 
                                         Button(action: {
                                             viewModel.cancelUltraSharpCapture()
                                         }) {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .font(.system(size: 14, weight: .bold))
-                                                .foregroundColor(.white.opacity(0.8))
+                                            Image(systemName: "xmark")
+                                                .font(.system(size: 10.5, weight: .bold))
+                                                .foregroundColor(AlignTheme.studioInkSecondary)
+                                                .frame(width: 22, height: 22)
+                                                .background(Circle().fill(Color.white.opacity(0.10)))
                                         }
                                         .buttonStyle(.plain)
                                     }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        Capsule()
-                                            .fill(Color.black.opacity(0.85))
-                                            .overlay(
-                                                Capsule()
-                                                    .stroke(Color.yellow.opacity(0.6), lineWidth: 1.0)
-                                            )
-                                    )
-                                    .shadow(color: Color.yellow.opacity(0.25), radius: 8)
-                                    .padding(.top, 16)
+                                    .padding(.leading, 13)
+                                    .padding(.trailing, 8)
+                                    .padding(.vertical, 6.5)
+                                    .background(StudioGlassCapsule(tintOpacity: 0.60, borderOpacity: 0.16))
+                                    .padding(.top, 14)
                                     Spacer()
                                 }
-                                .transition(.scale(scale: 0.90).combined(with: .opacity))
+                                .transition(.scale(scale: 0.94).combined(with: .opacity))
                             }
 
-                            // Keep the viewfinder responsive when AVFoundation is
-                            // configuring or temporarily unavailable.
-                            if viewModel.isCameraHibernating || !viewModel.isCameraReady {
+                            // Standby when AVFoundation is configuring
+                            if !Self.isUISnapshotMode && (viewModel.isCameraHibernating || !viewModel.isCameraReady) {
                                 CameraHibernationStandbyView()
                                     .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                                 if !viewModel.isCameraHibernating {
@@ -221,7 +230,7 @@ public struct CameraMainView: View {
                                         Spacer()
                                         Text("Đang kết nối camera")
                                             .font(.caption.weight(.medium))
-                                            .foregroundColor(.white.opacity(0.8))
+                                            .foregroundColor(AlignTheme.studioInkSecondary)
                                         Button("Thử lại") {
                                             viewModel.requestPermissionsAndStart()
                                         }
@@ -238,9 +247,8 @@ public struct CameraMainView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .stroke(Color(red: 0.15, green: 0.16, blue: 0.20), lineWidth: 1.0)
+                                .stroke(Color.white.opacity(0.10), lineWidth: 0.65)
                         }
-                        .shadow(color: Color.black.opacity(0.60), radius: 12, y: 4)
                         // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
                         .overlay(alignment: .topLeading) {
                             if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating && viewModel.captureMode.isVideo {
@@ -255,14 +263,14 @@ public struct CameraMainView: View {
                             VStack(spacing: 6) {
                                 if viewModel.isRecordingVideo {
                                     videoRecordingHUD
-                                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                                        .transition(.opacity.combined(with: .scale(scale: 0.94)))
                                 }
 
                                 AIStatusHUDView(viewModel: viewModel)
                             }
                             .padding(.top, layout.viewfinderTopInset)
                         }
-                        // Bottom In-Viewfinder Minimalist Zoom Selector (Centered, No Capsule Background)
+                        // Bottom In-Viewfinder Smoked Glass Zoom Capsule
                         .overlay(alignment: .bottom) {
                             if !viewModel.isWindowedZoomActive {
                                 ViewfinderZoomSelectorPill(viewModel: viewModel)
@@ -273,7 +281,7 @@ public struct CameraMainView: View {
 
                         Spacer(minLength: layout.minimumGap / 2)
 
-                        // 4. Bottom Control Deck (Album + Minimalist Shutter + Camera Flip + AI Button + Mode Switcher)
+                        // 4. Unified Tactile Bottom Control Deck
                         CameraControlsView(viewModel: viewModel, compact: layout.isCompact)
                             .frame(height: layout.controlDeckHeight)
                             .frame(maxWidth: .infinity)
@@ -299,22 +307,24 @@ public struct CameraMainView: View {
                 if viewModel.countdownSecondsRemaining > 0 {
                     ZStack {
                         Circle()
-                            .fill(Color.black.opacity(0.60))
-                            .frame(width: 88, height: 88)
+                            .fill(.ultraThinMaterial)
+                            .overlay(Circle().fill(AlignTheme.studioGlassTint.opacity(0.55)))
+                            .overlay(Circle().stroke(Color.white.opacity(0.16), lineWidth: 0.7))
+                            .frame(width: 86, height: 86)
                         Text("\(viewModel.countdownSecondsRemaining)")
-                            .font(.system(size: 46, weight: .heavy, design: .rounded))
-                            .foregroundColor(.white)
+                            .font(.system(size: 42, weight: .semibold, design: .rounded))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
                     }
                     .transition(.scale.combined(with: .opacity))
                     .zIndex(500)
                 }
 
-                // Kho Chức Năng Backdrop & Sliding Bottom Drawer
+                // Kho Chức Năng Backdrop & Smoked Frosted Glass Sheet
                 if viewModel.isFunctionDrawerOpen {
-                    Color.black.opacity(0.40)
+                    Color.black.opacity(0.36)
                         .ignoresSafeArea()
                         .onTapGesture {
-                            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
                                 viewModel.isFunctionDrawerOpen = false
                             }
                         }
@@ -328,7 +338,7 @@ public struct CameraMainView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .sheet(isPresented: $viewModel.isShowingSettings) {
-            SettingsSheetView(viewModel: viewModel)
+            SettingsSheetView(viewModel: viewModel, initialTab: Self.snapshotSettingsTab)
         }
         .sheet(isPresented: $viewModel.isShowingMasterWatermarkConfig) {
             MasterWatermarkConfigSheet(viewModel: viewModel)
@@ -356,7 +366,11 @@ public struct CameraMainView: View {
             }
         }
         .onAppear {
-            viewModel.requestPermissionsAndStart()
+            if Self.isUISnapshotMode {
+                viewModel.applyUISnapshotState(screen: Self.snapshotScreen)
+            } else {
+                viewModel.requestPermissionsAndStart()
+            }
         }
         .onChangeCompatible(of: viewModel.isRecordingVideo) { isRecording in
             if isRecording {
@@ -368,7 +382,9 @@ public struct CameraMainView: View {
             }
         }
         .onChangeCompatible(of: scenePhase) { newPhase in
-            viewModel.handleScenePhaseChange(newPhase)
+            if !Self.isUISnapshotMode {
+                viewModel.handleScenePhaseChange(newPhase)
+            }
         }
     }
 
@@ -376,24 +392,56 @@ public struct CameraMainView: View {
     private var videoRecordingHUD: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(Color.red)
-                .frame(width: 8, height: 8)
-                .opacity(isBlinkingRed ? 1.0 : 0.25)
+                .fill(AlignTheme.studioRecordRed)
+                .frame(width: 7, height: 7)
+                .opacity(isBlinkingRed ? 1.0 : 0.30)
 
             Text(viewModel.videoRecordingTimeString)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundColor(AlignTheme.studioInkPrimary)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(Color.black.opacity(0.65))
-                .overlay(
-                    Capsule()
-                        .stroke(Color.red.opacity(0.35), lineWidth: 1.0)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        .background(StudioGlassCapsule(tintOpacity: 0.56, borderOpacity: 0.14))
+    }
+}
+
+// MARK: - Simulator UI Snapshot Backdrop (Rendered ONLY under -UI_SNAPSHOT_MODE)
+private struct UISnapshotBackdropView: View {
+    let imagePath: String?
+
+    var body: some View {
+        if let path = imagePath, let img = UIImage(contentsOfFile: path) {
+            Image(uiImage: img)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .clipped()
+        } else {
+            // Subtle warm studio architectural backdrop for realistic glass-blur inspection
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.84, green: 0.82, blue: 0.78),
+                        Color(red: 0.62, green: 0.58, blue: 0.52),
+                        Color(red: 0.28, green: 0.22, blue: 0.17)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-        )
+                VStack {
+                    Spacer()
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(red: 0.34, green: 0.25, blue: 0.18), Color(red: 0.18, green: 0.13, blue: 0.10)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(height: 190)
+                }
+            }
+        }
     }
 }
 
@@ -421,60 +469,99 @@ public struct SixDotsIcon: View {
     }
 }
 
-// MARK: - Top Camera Bar (Flash, Mini Histogram, Centered ISO Pill & 3 Top Capsule Buttons)
+// MARK: - Top Camera Bar (Balanced Twin Smoked-Glass Capsules + Center Telemetry)
 struct TopCameraBar: View {
     @ObservedObject var viewModel: CameraViewModel
     let histogramWidth: CGFloat
 
     var body: some View {
         ZStack {
-            // Layer 1: Center-Aligned Live ISO Pill (Always 100% horizontally centered on screen)
-            HStack(spacing: 4) {
-                Text("ISO")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.60))
-                Text(viewModel.currentLiveISO > 0 ? "\(Int(round(viewModel.currentLiveISO)))" : "AUTO")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.95))
+            // Center: Quiet Tabular Exposure / Mode Telemetry Pill
+            HStack(spacing: 5) {
+                HStack(spacing: 3.5) {
+                    Text("ISO")
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                    Text(viewModel.currentLiveISO > 0 ? "\(Int(round(viewModel.currentLiveISO)))" : "AUTO")
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioInkPrimary)
+                }
+
+                if viewModel.isUltraSharpEnabled && !viewModel.captureMode.isVideo {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: 0.7, height: 10)
+
+                    Text("US")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioAccent)
+                }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4.5)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
             .background(
                 Capsule()
-                    .fill(Color(white: 0.16).opacity(0.88))
+                    .fill(AlignTheme.studioSurface)
                     .overlay(
-                        Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                        Capsule().stroke(AlignTheme.studioHairline, lineWidth: 0.6)
                     )
             )
 
-            // Layer 2: Left and Right Toolbar Items
+            // Left & Right Symmetric Smoked Glass Capsules
             HStack(alignment: .center, spacing: 0) {
-                // Left: Flash & Live Color Histogram
-                HStack(spacing: 4) {
+                // Left Capsule: Flash + Quiet Monochrome Histogram (or Format Label)
+                HStack(spacing: 6) {
                     Button(action: {
                         viewModel.toggleFlash()
                     }) {
                         Image(systemName: flashIconName)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(viewModel.activeFlashMode == .off ? Color.white.opacity(0.85) : AlignTheme.amberGold)
-                            .frame(width: 34, height: 34)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(viewModel.activeFlashMode == .off ? AlignTheme.studioInkPrimary.opacity(0.82) : AlignTheme.studioAccent)
+                            .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(PlainButtonStyle())
                     .accessibilityLabel("Đèn flash")
 
+                    Rectangle()
+                        .fill(Color.white.opacity(0.14))
+                        .frame(width: 0.6, height: 14)
+
                     if viewModel.showHistogramInViewfinder {
                         LiveColorHistogramHUDView(viewModel: viewModel, width: histogramWidth)
-                            .frame(height: 26)
-                            .padding(.leading, 2)
+                            .frame(height: 22)
+                            .padding(.trailing, 2)
+                    } else {
+                        Button(action: {
+                            if viewModel.captureMode.isVideo {
+                                viewModel.toggleVideoFormat()
+                            } else {
+                                viewModel.togglePhotoFormat()
+                            }
+                        }) {
+                            Text(currentFormatLabel)
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundColor(AlignTheme.studioInkPrimary.opacity(0.86))
+                                .padding(.horizontal, 4)
+                                .frame(height: 28)
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
                 }
+                .padding(.horizontal, 8)
+                .frame(height: 34)
+                .background(
+                    Capsule()
+                        .fill(AlignTheme.studioSurface)
+                        .overlay(
+                            Capsule().stroke(AlignTheme.studioHairline, lineWidth: 0.6)
+                        )
+                )
 
                 Spacer()
 
-                // Right: Floating Control Capsule (1: Live Photo, 2: Windowed Zoom, 3: Kho Chức Năng 6-Dots)
-                HStack(spacing: 8) {
-                    // 1. Live Photo Toggle Button
+                // Right Capsule: Live Photo, Windowed Zoom, 6-Dot Control Sheet
+                HStack(spacing: 6) {
                     Button(action: {
                         let generator = UIImpactFeedbackGenerator(style: .light)
                         generator.prepare()
@@ -482,20 +569,20 @@ struct TopCameraBar: View {
                         viewModel.isLivePhotoEnabled.toggle()
                     }) {
                         Image(systemName: viewModel.isLivePhotoEnabled ? "livephoto" : "livephoto.slash")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(viewModel.isLivePhotoEnabled ? AlignTheme.amberGold : Color.white.opacity(0.88))
-                            .frame(width: 30, height: 30)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(viewModel.isLivePhotoEnabled ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(viewModel.captureMode.isVideo ? 0.32 : 0.80))
+                            .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .disabled(viewModel.captureMode.isVideo)
                     .accessibilityLabel("Chế độ Live Photo")
 
-                    // 2. Windowed Zoom Toggle Button
                     Button(action: {
                         let generator = UIImpactFeedbackGenerator(style: .light)
                         generator.prepare()
                         generator.impactOccurred()
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.76)) {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
                             viewModel.isWindowedZoomActive.toggle()
                             if viewModel.isWindowedZoomActive && viewModel.windowedZoomFocalLength <= 24.5 {
                                 viewModel.windowedZoomFocalLength = 50.0
@@ -503,38 +590,36 @@ struct TopCameraBar: View {
                         }
                     }) {
                         Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
-                            .frame(width: 30, height: 30)
+                            .font(.system(size: 14.5, weight: .medium))
+                            .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.82))
+                            .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(PlainButtonStyle())
                     .accessibilityLabel("Chế độ khung ngắm Windowed Zoom")
 
-                    // 3. Nút mở Kho Chức Năng (6-Dots Drawer Button)
                     Button(action: {
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.prepare()
                         generator.impactOccurred()
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) {
                             viewModel.isFunctionDrawerOpen.toggle()
                         }
                     }) {
-                        SixDotsIcon(color: viewModel.isFunctionDrawerOpen ? AlignTheme.electricCyan : Color.white.opacity(0.88))
-                            .frame(width: 30, height: 30)
+                        SixDotsIcon(color: viewModel.isFunctionDrawerOpen ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.86))
+                            .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(PlainButtonStyle())
                     .accessibilityLabel("Mở kho chức năng máy ảnh")
                 }
                 .padding(.horizontal, 8)
-                .padding(.vertical, 3.5)
+                .frame(height: 34)
                 .background(
                     Capsule()
-                        .fill(Color(white: 0.16).opacity(0.88))
+                        .fill(AlignTheme.studioSurface)
                         .overlay(
-                            Capsule()
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                            Capsule().stroke(AlignTheme.studioHairline, lineWidth: 0.6)
                         )
                 )
             }
@@ -545,10 +630,10 @@ struct TopCameraBar: View {
 
     private var flashIconName: String {
         switch viewModel.activeFlashMode {
-        case .auto: return "bolt.badge.automatic.fill"
+        case .auto: return "bolt.badge.automatic"
         case .on: return "bolt.fill"
-        case .off: return "bolt.slash.fill"
-        @unknown default: return "bolt.fill"
+        case .off: return "bolt.slash"
+        @unknown default: return "bolt"
         }
     }
 
@@ -556,17 +641,17 @@ struct TopCameraBar: View {
         if viewModel.captureMode.isVideo {
             let w = viewModel.selectedVideoFormatOption.width
             let fps = Int(round(viewModel.selectedVideoFormatOption.fps))
-            return w >= 3840 ? "4K·\(fps)" : "1080P·\(fps)"
+            return w >= 3840 ? "4K·\(fps)" : "1080·\(fps)"
         }
         switch viewModel.selectedPhotoFormat {
         case .dng: return "RAW"
         case .heif, .heic: return "HEIF"
-        case .jpeg: return "JPEG"
+        case .jpeg: return "JPG"
         }
     }
 }
 
-// MARK: - Minimalist Optical Zoom Selector (0.5x, 1x, 2x, 3x + Smooth Horizontal Drag Scrubbing)
+// MARK: - Smoked Frosted Glass Optical Zoom Capsule (0.5x, 1x, 2x, 3x + Smooth Scrubbing)
 struct ViewfinderZoomSelectorPill: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var zoomPillNamespace
@@ -586,50 +671,50 @@ struct ViewfinderZoomSelectorPill: View {
             }
             return "\(Int(roundedTenth.rounded()))x"
         }
-        return zoom == 0.5 ? "0.5x" : "\(Int(zoom))x"
+        return zoom == 0.5 ? ".5" : "\(Int(zoom))"
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             ForEach(zoomOptions, id: \.self) { zoom in
                 let isSelected = viewModel.selectedZoomPreset == zoom
                 Button(action: {
-                    let impact = UIImpactFeedbackGenerator(style: .medium)
+                    let impact = UIImpactFeedbackGenerator(style: .light)
                     impact.prepare()
                     impact.impactOccurred()
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.75)) {
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
                         viewModel.setVideoAwareZoomFromButton(zoom)
                     }
                 }) {
                     ZStack {
-                        Circle()
-                            .fill(Color.black.opacity(isSelected ? 0.65 : 0.34))
-                            .frame(width: 36, height: 36)
-
                         if isSelected {
                             Circle()
-                                .stroke(AlignTheme.signatureGradient, lineWidth: 1.8)
-                                .frame(width: 36, height: 36)
-                                .shadow(color: AlignTheme.electricCyan.opacity(0.55), radius: 6)
+                                .fill(Color.white.opacity(0.16))
+                                .overlay(
+                                    Circle()
+                                        .stroke(AlignTheme.studioAccent.opacity(0.45), lineWidth: 0.7)
+                                )
+                                .frame(width: 32, height: 32)
                                 .matchedGeometryEffect(id: "active_viewfinder_zoom_ring", in: zoomPillNamespace)
                         }
 
                         Text(label(for: zoom, isSelected: isSelected))
-                            .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                            .foregroundColor(isSelected ? .white : Color.white.opacity(0.75))
+                            .font(.system(size: isSelected ? 11.5 : 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                            .foregroundColor(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.76))
                             .minimumScaleFactor(0.75)
                             .lineLimit(1)
                     }
-                    .scaleEffect(isSelected ? 1.08 : 0.96)
-                    .frame(width: 42, height: 42)
+                    .frame(width: 34, height: 32)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
                 .accessibilityLabel(zoom == 0.5 ? "Thu phong 0.5 lan" : "Thu phong \(Int(zoom)) lan")
             }
         }
-        .padding(.horizontal, 6)
-        .contentShape(Rectangle())
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
+        .background(StudioGlassCapsule(tintOpacity: 0.48, borderOpacity: 0.14))
+        .contentShape(Capsule())
         .highPriorityGesture(
             DragGesture(minimumDistance: 6)
                 .onChanged { value in
@@ -681,14 +766,14 @@ struct CompositionRuleSheet: View {
 
                 bottomActionBar
             }
-            .background(Color(red: 0.031, green: 0.035, blue: 0.047).ignoresSafeArea())
+            .background(AlignTheme.studioCanvas.ignoresSafeArea())
             .navigationTitle("Bố cục thông minh")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Xong") { dismiss() }
-                        .foregroundColor(AlignTheme.electricCyan)
-                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(AlignTheme.studioAccent)
+                        .font(.system(size: 15, weight: .semibold))
                 }
             }
         }
@@ -708,7 +793,7 @@ struct CompositionRuleSheet: View {
 
     private var bottomActionBar: some View {
         VStack(spacing: 0) {
-            Divider().background(Color.white.opacity(0.08))
+            Divider().background(AlignTheme.studioHairlineSubtle)
 
             if viewModel.aiSessionState.isSessionActive {
                 Button(action: {
@@ -719,11 +804,11 @@ struct CompositionRuleSheet: View {
                         Image(systemName: "stop.fill")
                         Text("Dừng căn bố cục")
                     }
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.red.opacity(0.85)))
+                    .frame(height: 48)
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(AlignTheme.studioRecordRed.opacity(0.88)))
                 }
                 .padding(16)
             } else {
@@ -735,19 +820,19 @@ struct CompositionRuleSheet: View {
                         Image(systemName: "viewfinder")
                         Text("Bắt đầu căn bố cục")
                     }
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(.white)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.black)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 50)
+                    .frame(height: 48)
                     .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(AlignTheme.signatureGradient)
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(AlignTheme.studioAccent)
                     )
                 }
                 .padding(16)
             }
         }
-        .background(Color(red: 0.075, green: 0.082, blue: 0.102))
+        .background(AlignTheme.studioSurface)
     }
 }
 
@@ -761,42 +846,35 @@ struct CompositionRuleRow: View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
                 Image(systemName: rule.iconName)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(isSelected ? AlignTheme.irisViolet : Color.white.opacity(0.8))
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.75))
                     .frame(width: 28)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(rule.displayNameVietnamese)
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundColor(Color.white)
+                        .font(.system(size: 14.5, weight: .semibold))
+                        .foregroundColor(AlignTheme.studioInkPrimary)
                     Text(rule.descriptionVietnamese)
                         .font(.system(size: 12))
-                        .foregroundColor(Color(red: 0.58, green: 0.60, blue: 0.66))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
                 }
 
                 Spacer()
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(AlignTheme.electricCyan)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(AlignTheme.studioAccent)
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isSelected ? AlignTheme.irisViolet.opacity(0.18) : Color(red: 0.075, green: 0.082, blue: 0.102))
+                    .fill(isSelected ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
                     .overlay(
-                        Group {
-                            if isSelected {
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(AlignTheme.signatureGradient, lineWidth: 1.0)
-                            } else {
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(Color.white.opacity(0.08), lineWidth: 1.0)
-                            }
-                        }
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 0.9 : 0.7)
                     )
             )
         }
@@ -810,17 +888,17 @@ struct CameraPermissionPlaceholderView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Image(systemName: "camera.fill")
-                .font(.system(size: 54))
-                .foregroundColor(AlignTheme.electricCyan)
+            Image(systemName: "camera.aperture")
+                .font(.system(size: 46, weight: .light))
+                .foregroundColor(AlignTheme.studioAccent)
 
             Text("Cho phép camera để bắt đầu")
-                .font(.title2.bold())
-                .foregroundColor(.white)
+                .font(.title3.weight(.semibold))
+                .foregroundColor(AlignTheme.studioInkPrimary)
 
             Text("AlignAI Camera cần quyền truy cập camera để hiển thị khung ngắm thời gian thực và hỗ trợ căn bố cục chuẩn xác.")
                 .font(.subheadline)
-                .foregroundColor(Color(red: 0.58, green: 0.60, blue: 0.66))
+                .foregroundColor(AlignTheme.studioInkSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
 
@@ -830,11 +908,11 @@ struct CameraPermissionPlaceholderView: View {
                 }
             }) {
                 Text("Mở Cài đặt")
-                    .font(.headline)
-                    .foregroundColor(.white)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.black)
                     .padding(.horizontal, 28)
-                    .padding(.vertical, 14)
-                    .background(AlignTheme.signatureGradient)
+                    .padding(.vertical, 13)
+                    .background(AlignTheme.studioAccent)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }
@@ -1016,7 +1094,7 @@ struct DrawerFunctionButton: View {
     let isActive: Bool
     let action: () -> Void
 
-    private let accentGold = Color(red: 0.93, green: 0.83, blue: 0.64)
+    private let accentGold = AlignTheme.studioAccent
 
     var body: some View {
         Button(action: {
@@ -1077,7 +1155,7 @@ private struct DrawerHeroCard: View {
     let isActive: Bool
     let action: () -> Void
 
-    private let accentGold = Color(red: 0.93, green: 0.83, blue: 0.64)
+    private let accentGold = AlignTheme.studioAccent
 
     var body: some View {
         Button(action: {
@@ -1151,7 +1229,7 @@ private struct DrawerHeroCard: View {
 struct CameraFunctionDrawerView: View {
     @ObservedObject var viewModel: CameraViewModel
 
-    private let accentGold = Color(red: 0.93, green: 0.83, blue: 0.64)
+    private let accentGold = AlignTheme.studioAccent
 
     private var videoQualityBadge: String {
         let w = viewModel.selectedVideoFormatOption.width
@@ -1265,7 +1343,7 @@ struct CameraFunctionDrawerView: View {
                         )
                     } else {
                         DrawerHeroCard(
-                            icon: "sparkles",
+                            icon: "square.stack.3d.up.fill",
                             title: "Ultra Sharp",
                             valueText: viewModel.isUltraSharpEnabled ? "Bật · 12MP" : "Tắt",
                             isActive: viewModel.isUltraSharpEnabled,
@@ -1396,20 +1474,8 @@ struct CameraFunctionDrawerView: View {
                 .padding(.bottom, 30)
             }
             .background(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Color(red: 0.078, green: 0.082, blue: 0.098).opacity(0.97))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [Color.white.opacity(0.18), Color.white.opacity(0.05)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                ),
-                                lineWidth: 0.9
-                            )
-                    )
-                    .shadow(color: Color.black.opacity(0.75), radius: 28, y: -8)
+                StudioGlassRoundedSurface(cornerRadius: 28, tintOpacity: 0.78, borderOpacity: 0.16)
+                    .shadow(color: Color.black.opacity(0.65), radius: 28, y: -8)
             )
             .gesture(
                 DragGesture(minimumDistance: 15)

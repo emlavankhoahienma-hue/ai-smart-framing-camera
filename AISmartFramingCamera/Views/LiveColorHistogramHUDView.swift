@@ -18,9 +18,8 @@ public struct LiveColorHistogramHUDView: View {
     public var body: some View {
         Button(action: toggleActiveFormat) {
             rgbWaveformCanvas
-                .frame(width: width, height: 26)
-                .background(Color.black.opacity(0.20))
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .frame(width: width, height: 22)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
         .onAppear {
@@ -33,67 +32,53 @@ public struct LiveColorHistogramHUDView: View {
         .accessibilityLabel("Histogram, \(viewModel.liveISO), độ phơi sáng \(formattedExposure), định dạng \(activeFormatTitle)")
     }
 
-    // MARK: - 1. RGB Continuous Curved Waveform (SwiftUI Canvas)
+    // MARK: - 1. Monochrome Luminance & Tonal Waveform (Quiet Leica Optical Meter)
     private var rgbWaveformCanvas: some View {
         Canvas { context, size in
             let rect = CGRect(origin: .zero, size: size)
             guard smoothedHeights.count >= 2 else { return }
 
-            // 1. Derive 3 Spectral Curves (Red, Green, Blue) from Luminance + Frequency
-            let redValues = channelValues(weights: (midBoost: 0.28, highBoost: 0.35, offset: 0.08))
-            let greenValues = channelValues(weights: (midBoost: 0.40, highBoost: 0.12, offset: 0.0))
-            let blueValues = channelValues(weights: (midBoost: 0.18, highBoost: 0.08, offset: 0.22))
+            let lumaValues = channelValues(weights: (midBoost: 0.34, highBoost: 0.16, offset: 0.04))
+            let highlightValues = channelValues(weights: (midBoost: 0.16, highBoost: 0.30, offset: 0.0))
 
-            // 2. Draw Subtle Spectral Needles (Vertical Filaments matching Pro Cinema UI)
+            // Subtle tonal vertical reference bars
             let stepX = rect.width / CGFloat(smoothedHeights.count - 1)
             for i in 0..<smoothedHeights.count {
                 let x = rect.minX + CGFloat(i) * stepX
-                let maxH = max(redValues[i], max(greenValues[i], blueValues[i])) * rect.height
+                let maxH = lumaValues[i] * rect.height
                 let needlePath = Path { p in
                     p.move(to: CGPoint(x: x, y: rect.maxY))
                     p.addLine(to: CGPoint(x: x, y: rect.maxY - maxH))
                 }
                 context.stroke(
                     needlePath,
-                    with: .color(needleColor(for: i).opacity(0.22)),
-                    lineWidth: 0.75
+                    with: .color(Color.white.opacity(0.14)),
+                    lineWidth: 0.7
                 )
             }
 
-            // 3. Layer: Blue / Cyan (Cool & Shadows)
+            // Secondary warm highlight envelope
             drawChannelLayer(
                 in: &context,
                 rect: rect,
-                values: blueValues,
+                values: highlightValues,
                 fillGradient: Gradient(colors: [
-                    Color(red: 0.20, green: 0.65, blue: 1.0).opacity(0.30),
-                    Color(red: 0.10, green: 0.40, blue: 0.90).opacity(0.02)
+                    AlignTheme.studioAccent.opacity(0.24),
+                    AlignTheme.studioAccent.opacity(0.02)
                 ]),
-                strokeColor: Color(red: 0.35, green: 0.75, blue: 1.0).opacity(0.85)
+                strokeColor: AlignTheme.studioAccent.opacity(0.65)
             )
 
-            // 4. Layer: Green (Luminance & Midtones)
+            // Primary crisp luminance curve
             drawChannelLayer(
                 in: &context,
                 rect: rect,
-                values: greenValues,
+                values: lumaValues,
                 fillGradient: Gradient(colors: [
-                    Color(red: 0.25, green: 0.90, blue: 0.45).opacity(0.32),
-                    Color(red: 0.15, green: 0.70, blue: 0.35).opacity(0.02)
+                    Color.white.opacity(0.32),
+                    Color.white.opacity(0.03)
                 ]),
-                strokeColor: Color(red: 0.35, green: 0.95, blue: 0.50).opacity(0.85)
-            )
-
-            // 5. Layer: Red (Warmth & Highlights)
-            drawChannelLayer(
-                in: &context,
-                rect: rect,
-                values: redValues,
-                fillGradient: Gradient(colors: [
-                    Color(red: 1.0, green: 0.30, blue: 0.35).opacity(0.32),
-                    Color(red: 0.85, green: 0.15, blue: 0.20).opacity(0.02)
-                ]),
-                strokeColor: Color(red: 1.0, green: 0.35, blue: 0.40).opacity(0.85)
+                strokeColor: Color.white.opacity(0.84)
             )
         }
     }

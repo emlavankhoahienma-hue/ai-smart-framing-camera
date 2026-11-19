@@ -15,7 +15,7 @@ import PhotosUI
 // MARK: - Settings Tab Category
 public enum SettingsSheetTab: String, CaseIterable, Identifiable {
     case capture = "Chụp"
-    case ai = "AI Bố cục"
+    case ai = "Bố cục"
     case advanced = "Nâng cao"
 
     public var id: String { rawValue }
@@ -24,19 +24,19 @@ public enum SettingsSheetTab: String, CaseIterable, Identifiable {
 
     public var icon: String {
         switch self {
-        case .capture: return "camera.fill"
-        case .ai: return "sparkles"
-        case .advanced: return "gearshape.2.fill"
+        case .capture: return "camera"
+        case .ai: return "viewfinder"
+        case .advanced: return "slider.horizontal.3"
         }
     }
 }
 
-// MARK: - Main Settings View (Leica Studio Obsidian Edition)
+// MARK: - Main Settings View (Monochrome Carbon & Smoked Glass Edition)
 public struct SettingsSheetView: View {
     @ObservedObject var viewModel: CameraViewModel
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedTab: SettingsSheetTab = .capture
+    @State private var selectedTab: SettingsSheetTab
     @Namespace private var tabNamespace
 
     // Multi-Provider 2026 API & Model State
@@ -60,14 +60,15 @@ public struct SettingsSheetView: View {
     private let hapticSelection = UISelectionFeedbackGenerator()
     private let hapticImpact = UIImpactFeedbackGenerator(style: .medium)
 
-    // Design System Tokens (Leica Studio Obsidian)
-    private let canvasBackground = Color(red: 12/255, green: 12/255, blue: 14/255)   // #0C0C0E
-    private let cardBackground = Color(red: 24/255, green: 24/255, blue: 27/255)     // #18181B
-    private let cardBorder = Color(red: 39/255, green: 39/255, blue: 42/255)         // #27272A
-    private let accentCyan = Color(red: 56/255, green: 189/255, blue: 248/255)       // #38BDF8
+    // Unified Monochrome + Warm Titanium Tokens
+    private let canvasBackground = AlignTheme.studioCanvas
+    private let cardBackground = AlignTheme.studioSurface
+    private let cardBorder = AlignTheme.studioHairline
+    private let accentTone = AlignTheme.studioAccent
 
-    public init(viewModel: CameraViewModel) {
+    public init(viewModel: CameraViewModel, initialTab: SettingsSheetTab = .capture) {
         self.viewModel = viewModel
+        _selectedTab = State(initialValue: initialTab)
     }
 
     public var body: some View {
@@ -193,27 +194,40 @@ public struct SettingsSheetView: View {
         }
     }
 
-    // MARK: - Navigation Header ("Cài đặt" on Left, "Xong" on Right)
+    // MARK: - Navigation Header ("Cài đặt" on Left, Quiet Glass "Xong" Pill on Right)
     private var navigationHeader: some View {
         HStack(alignment: .center) {
             Text("Cài đặt")
-                .font(.system(size: 22, weight: .bold, design: .default))
-                .foregroundColor(.white)
+                .font(.system(size: 21, weight: .semibold, design: .default))
+                .foregroundColor(AlignTheme.studioInkPrimary)
 
             Spacer()
 
-            Button("Xong") {
+            Button(action: {
                 hapticImpact.prepare()
                 hapticImpact.impactOccurred()
                 dismiss()
+            }) {
+                Text("Xong")
+                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(AlignTheme.studioInkPrimary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6.5)
+                    .background(
+                        Capsule()
+                            .fill(AlignTheme.studioElevated)
+                            .overlay(
+                                Capsule()
+                                    .stroke(AlignTheme.studioHairline, lineWidth: 0.65)
+                            )
+                    )
             }
-            .font(.system(size: 16, weight: .bold, design: .rounded))
-            .foregroundColor(accentCyan)
+            .buttonStyle(.plain)
             .accessibilityLabel("Đóng cài đặt")
         }
     }
 
-    // MARK: - Segmented Tab Selector (Chụp • AI Bố cục • Nâng cao)
+    // MARK: - Segmented Tab Selector (Chụp · Bố cục · Nâng cao)
     private var tabSelectorPills: some View {
         HStack(spacing: 4) {
             ForEach(SettingsSheetTab.allCases) { tab in
@@ -221,25 +235,30 @@ public struct SettingsSheetView: View {
                 Button(action: {
                     hapticSelection.prepare()
                     hapticSelection.selectionChanged()
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
                         selectedTab = tab
                     }
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 12, weight: isSelected ? .bold : .medium))
+                            .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                            .foregroundColor(isSelected ? accentTone : AlignTheme.studioInkSecondary)
 
                         Text(tab.shortTitle)
                             .font(.system(size: 13, weight: isSelected ? .semibold : .medium, design: .rounded))
+                            .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
                             .lineLimit(1)
                     }
-                    .foregroundColor(isSelected ? .white : Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.55))
                     .frame(maxWidth: .infinity)
-                    .frame(height: 38)
+                    .frame(height: 36)
                     .background {
                         if isSelected {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Color(red: 39/255, green: 39/255, blue: 42/255))
+                                .fill(Color.white.opacity(0.11))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
+                                )
                                 .matchedGeometryEffect(id: "active_studio_tab", in: tabNamespace)
                         }
                     }
@@ -253,20 +272,20 @@ public struct SettingsSheetView: View {
                 .fill(cardBackground)
                 .overlay {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(cardBorder, lineWidth: 1)
+                        .stroke(cardBorder, lineWidth: 0.65)
                 }
         )
-        .frame(height: 46)
+        .frame(height: 44)
     }
 
     private func showToast(_ msg: String) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
             toastMessage = msg
         }
     }
 }
 
-// MARK: - Dedicated Row Icon Component (Flat Vector SF Symbol 28x28)
+// MARK: - Dedicated Row Icon Component (Quiet Monochrome Squircle 28x28)
 public struct SettingsRowIcon: View {
     let icon: String
     let isActive: Bool
@@ -278,19 +297,19 @@ public struct SettingsRowIcon: View {
 
     public var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color(red: 36/255, green: 36/255, blue: 41/255))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isActive ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
                 .frame(width: 28, height: 28)
 
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(isActive ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color(red: 228/255, green: 228/255, blue: 231/255))
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundColor(isActive ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.78))
         }
         .frame(width: 28, height: 28)
     }
 }
 
-// MARK: - Card Surface Component (16px CornerRadius, 1px Border #27272A)
+// MARK: - Card Surface Component (16px CornerRadius, 0.65pt Hairline Border)
 public struct SettingsSectionCard<Content: View>: View {
     let title: String
     let icon: String
@@ -308,15 +327,15 @@ public struct SettingsSectionCard<Content: View>: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Card Header
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
 
                 Text(title.uppercased())
-                    .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                    .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.85))
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .tracking(0.8)
+                    .foregroundColor(AlignTheme.studioInkSecondary)
 
                 Spacer()
             }
@@ -324,7 +343,6 @@ public struct SettingsSectionCard<Content: View>: View {
             .padding(.top, 14)
             .padding(.bottom, 8)
 
-            // Card Body
             VStack(spacing: 0) {
                 content
             }
@@ -334,10 +352,10 @@ public struct SettingsSectionCard<Content: View>: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(red: 24/255, green: 24/255, blue: 27/255))
+                .fill(AlignTheme.studioSurface)
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color(red: 39/255, green: 39/255, blue: 42/255), lineWidth: 1)
+                        .stroke(AlignTheme.studioHairline, lineWidth: 0.65)
                 )
         )
     }
@@ -357,13 +375,13 @@ public struct SettingsToggleRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 14.5, weight: .medium))
-                    .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255))
+                    .foregroundColor(AlignTheme.studioInkPrimary)
                     .lineLimit(1)
 
                 if let sub = subtitle, !sub.isEmpty {
                     Text(sub)
                         .font(.system(size: 11.5, weight: .regular))
-                        .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.48))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -373,7 +391,7 @@ public struct SettingsToggleRow: View {
 
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
+                .tint(AlignTheme.studioAccent)
         }
         .padding(.vertical, 8)
         .frame(minHeight: 48)
@@ -487,12 +505,12 @@ public struct SettingsActionRow: View {
 
                 if let badge = badgeText, !badge.isEmpty {
                     Text(badge)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(AlignTheme.studioAccent)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(
-                            Capsule().fill(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.15))
+                            Capsule().fill(AlignTheme.studioAccentSoft)
                         )
                 }
 
@@ -518,26 +536,26 @@ struct FilmPresetPill: View {
         Button(action: onSelect) {
             HStack(spacing: 6) {
                 if preset.isAIFullAuto {
-                    Image(systemName: "wand.and.stars")
-                        .font(.system(size: 11, weight: .bold))
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 11, weight: .semibold))
                 } else if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .heavy))
+                        .font(.system(size: 10, weight: .bold))
                 }
 
                 Text(preset.displayName)
-                    .font(.system(size: 12, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .rounded))
             }
-            .foregroundColor(isSelected ? .white : Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.55))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 7.5)
             .background(
                 Capsule()
-                    .fill(isSelected ? AnyShapeStyle(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.24)) : AnyShapeStyle(Color.white.opacity(0.06)))
+                    .fill(isSelected ? AnyShapeStyle(AlignTheme.studioAccentSoft) : AnyShapeStyle(Color.white.opacity(0.055)))
             )
             .overlay(
                 Capsule()
-                    .stroke(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.70) : Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
             )
         }
         .buttonStyle(.plain)
@@ -565,10 +583,9 @@ struct PeakingColorCircleButton: View {
             }
             .overlay(
                 Circle()
-                    .stroke(isPicked ? Color.white : Color.clear, lineWidth: 2)
+                    .stroke(isPicked ? Color.white : Color.clear, lineWidth: 1.8)
                     .padding(-2)
             )
-            .shadow(color: isPicked ? color.swiftUIColor.opacity(0.60) : Color.clear, radius: 6)
         }
         .buttonStyle(.plain)
     }
@@ -584,13 +601,13 @@ struct CompositionRuleCard: View {
         Button(action: onSelect) {
             HStack(spacing: 6) {
                 Image(systemName: rule.iconName)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white.opacity(0.40))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkTertiary)
                     .frame(width: 18)
 
                 Text(rule.displayNameVietnamese)
-                    .font(.system(size: 11.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                    .foregroundColor(isSelected ? .white : Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.60))
+                    .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium, design: .rounded))
+                    .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
 
@@ -598,7 +615,7 @@ struct CompositionRuleCard: View {
 
                 if isSelected {
                     Circle()
-                        .fill(Color(red: 56/255, green: 189/255, blue: 248/255))
+                        .fill(AlignTheme.studioAccent)
                         .frame(width: 5, height: 5)
                 }
             }
@@ -607,11 +624,11 @@ struct CompositionRuleCard: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? AnyShapeStyle(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.18)) : AnyShapeStyle(Color(red: 36/255, green: 36/255, blue: 41/255)))
+                    .fill(isSelected ? AnyShapeStyle(AlignTheme.studioAccentSoft) : AnyShapeStyle(AlignTheme.studioElevated))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.70) : Color.white.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
+                    .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 0.9 : 0.65)
             )
         }
         .buttonStyle(.plain)
@@ -627,17 +644,17 @@ struct SensitivityPill: View {
     var body: some View {
         Button(action: onSelect) {
             Text(preset.shortName)
-                .font(.system(size: 13, weight: isPicked ? .bold : .medium, design: .rounded))
-                .foregroundColor(isPicked ? .white : Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.55))
+                .font(.system(size: 12.5, weight: isPicked ? .semibold : .medium, design: .rounded))
+                .foregroundColor(isPicked ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
                 .frame(maxWidth: .infinity)
                 .frame(height: 36)
                 .background(
                     Capsule()
-                        .fill(isPicked ? AnyShapeStyle(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.24)) : AnyShapeStyle(Color.white.opacity(0.06)))
+                        .fill(isPicked ? AnyShapeStyle(AlignTheme.studioAccentSoft) : AnyShapeStyle(Color.white.opacity(0.055)))
                 )
                 .overlay(
                     Capsule()
-                        .stroke(isPicked ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.70) : Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(isPicked ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
                 )
         }
         .buttonStyle(.plain)
@@ -706,8 +723,8 @@ struct PhotoCaptureSettingsSection: View {
 
                 SettingsToggleRow(
                     title: "Chụp Ultra Sharp (Độ nét cao)",
-                    subtitle: "Chụp chùm N frame đồng phơi sáng, căn chỉnh sub-pixel và gộp đa khung hình giảm nhiễu",
-                    icon: "sparkles.rectangle.stack",
+                    subtitle: "Chụp chùm N frame chuẩn HDR, cân bằng sáng và gộp đa khung hình giảm nhiễu",
+                    icon: "square.stack.3d.up",
                     isOn: $viewModel.isUltraSharpEnabled
                 )
 
@@ -716,11 +733,11 @@ struct PhotoCaptureSettingsSection: View {
                         HStack {
                             Text("Số frame gộp:")
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.75))
+                                .foregroundColor(AlignTheme.studioInkSecondary)
                             Spacer()
                             Text("\(viewModel.ultraSharpBurstCount) frames")
-                                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                                .foregroundColor(Color(red: 255/255, green: 215/255, blue: 0/255))
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundColor(AlignTheme.studioAccent)
                         }
                         HStack(spacing: 6) {
                             ForEach([5, 6, 8, 10, 12], id: \.self) { count in
@@ -755,7 +772,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
+                    .tint(AlignTheme.studioAccent)
                 }
 
                 dividerLine
@@ -772,7 +789,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
+                    .tint(AlignTheme.studioAccent)
                 }
             }
         }
@@ -780,12 +797,12 @@ struct PhotoCaptureSettingsSection: View {
 
     // Card 4: Màu sắc & Preset Film
     private var filmColorCard: some View {
-        SettingsSectionCard(title: "Màu sắc & Giả lập phim", icon: "paintpalette.fill") {
+        SettingsSectionCard(title: "Màu sắc & Giả lập phim", icon: "camera.filters") {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggleRow(
                     title: "Tự động phân tích màu theo cảnh",
-                    subtitle: "AI nhận diện bối cảnh để cân chỉnh độ tương phản và nhiệt độ màu",
-                    icon: "wand.and.stars",
+                    subtitle: "Nhận diện bối cảnh để cân chỉnh độ tương phản và nhiệt độ màu",
+                    icon: "slider.horizontal.3",
                     isOn: $viewModel.isAIFullColorEnabled
                 )
 
@@ -803,7 +820,7 @@ struct PhotoCaptureSettingsSection: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
+                    .tint(AlignTheme.studioAccent)
                     .onChangeCompatible(of: viewModel.selectedFilmPreset) { newPreset in
                         viewModel.selectPreset(newPreset)
                     }
@@ -920,7 +937,7 @@ struct PhotoCaptureSettingsSection: View {
                             .font(.system(size: 14, weight: .semibold))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 8)
-                            .background(Color(red: 36/255, green: 36/255, blue: 41/255))
+                            .background(AlignTheme.studioElevated)
                             .cornerRadius(8)
                             .foregroundColor(.white)
 
@@ -933,8 +950,8 @@ struct PhotoCaptureSettingsSection: View {
                                         .font(.system(size: 10, weight: .medium))
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(viewModel.masterWatermarkDeviceName == name ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.20) : Color.white.opacity(0.06))
-                                        .foregroundColor(viewModel.masterWatermarkDeviceName == name ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white.opacity(0.70))
+                                        .background(viewModel.masterWatermarkDeviceName == name ? AlignTheme.studioAccent.opacity(0.20) : Color.white.opacity(0.06))
+                                        .foregroundColor(viewModel.masterWatermarkDeviceName == name ? AlignTheme.studioAccent : Color.white.opacity(0.70))
                                         .cornerRadius(5)
                                 }
                                 .buttonStyle(.plain)
@@ -966,9 +983,9 @@ struct PhotoCaptureSettingsSection: View {
                                 .padding(.vertical, 6)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(isCustomStyle ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.18) : Color.white.opacity(0.06))
+                                        .fill(isCustomStyle ? AlignTheme.studioAccent.opacity(0.18) : Color.white.opacity(0.06))
                                 )
-                                .foregroundColor(isCustomStyle ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white.opacity(0.70))
+                                .foregroundColor(isCustomStyle ? AlignTheme.studioAccent : Color.white.opacity(0.70))
                             }
                             .onChangeCompatible(of: selectedPhotoItem) { item in
                                 guard let item else { return }
@@ -1003,8 +1020,8 @@ struct PhotoCaptureSettingsSection: View {
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
-                                .background(viewModel.masterWatermarkTheme == .white ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.20) : Color.white.opacity(0.06))
-                                .foregroundColor(viewModel.masterWatermarkTheme == .white ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white)
+                                .background(viewModel.masterWatermarkTheme == .white ? AlignTheme.studioAccent.opacity(0.20) : Color.white.opacity(0.06))
+                                .foregroundColor(viewModel.masterWatermarkTheme == .white ? AlignTheme.studioAccent : Color.white)
                                 .cornerRadius(8)
                             }
                             .buttonStyle(.plain)
@@ -1019,8 +1036,8 @@ struct PhotoCaptureSettingsSection: View {
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
-                                .background(viewModel.masterWatermarkTheme == .black ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.20) : Color.white.opacity(0.06))
-                                .foregroundColor(viewModel.masterWatermarkTheme == .black ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white)
+                                .background(viewModel.masterWatermarkTheme == .black ? AlignTheme.studioAccent.opacity(0.20) : Color.white.opacity(0.06))
+                                .foregroundColor(viewModel.masterWatermarkTheme == .black ? AlignTheme.studioAccent : Color.white)
                                 .cornerRadius(8)
                             }
                             .buttonStyle(.plain)
@@ -1083,7 +1100,7 @@ struct PhotoCaptureSettingsSection: View {
     // Helper: Divider line
     private var dividerLine: some View {
         Divider()
-            .background(Color(red: 39/255, green: 39/255, blue: 42/255))
+            .background(AlignTheme.studioHairlineSubtle)
     }
 
     // Helper: Pill select button
@@ -1096,11 +1113,11 @@ struct PhotoCaptureSettingsSection: View {
                 .padding(.vertical, 5)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.24) : Color.white.opacity(0.06))
+                        .fill(isSelected ? AlignTheme.studioAccent.opacity(0.24) : Color.white.opacity(0.06))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.70) : Color.clear, lineWidth: 1)
+                        .stroke(isSelected ? AlignTheme.studioAccent.opacity(0.70) : Color.clear, lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -1122,13 +1139,13 @@ struct PhotoCaptureSettingsSection: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.18) : Color.white.opacity(0.06))
+                    .fill(isSelected ? AlignTheme.studioAccent.opacity(0.18) : Color.white.opacity(0.06))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.60) : Color.clear, lineWidth: 1)
+                    .stroke(isSelected ? AlignTheme.studioAccent.opacity(0.60) : Color.clear, lineWidth: 1)
             )
-            .foregroundColor(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255) : Color.white.opacity(0.70))
+            .foregroundColor(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.70))
         }
         .buttonStyle(.plain)
     }
@@ -1222,7 +1239,7 @@ struct AIFramingSettingsSection: View {
                         Spacer()
                         Text(viewModel.trackingSensitivity.shortName)
                             .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .foregroundColor(AlignTheme.studioAccent)
                     }
 
                     HStack(spacing: 8) {
@@ -1258,7 +1275,7 @@ struct AIFramingSettingsSection: View {
                 SettingsToggleRow(
                     title: "Tự động chụp khi đúng bố cục",
                     subtitle: "Kích hoạt màn trập ngay khi hai tâm đạt độ khớp hoàn hảo",
-                    icon: "sparkles",
+                    icon: "viewfinder.circle",
                     isOn: $viewModel.isAutoCaptureOnAlignEnabled
                 )
 
@@ -1276,7 +1293,7 @@ struct AIFramingSettingsSection: View {
                 SettingsToggleRow(
                     title: "Tự động cân chỉnh màu AI",
                     subtitle: "Tối ưu tương phản và tone màu theo ánh sáng thực tế",
-                    icon: "wand.and.stars",
+                    icon: "slider.horizontal.3",
                     isOn: $viewModel.isAIFullColorEnabled
                 )
             }
@@ -1285,18 +1302,18 @@ struct AIFramingSettingsSection: View {
 
     // Card 3: Động cơ AI & Kết nối Cloud (Multi-Provider 2026)
     private var aiEngineCloudCard: some View {
-        SettingsSectionCard(title: "Động cơ AI & Kết nối Cloud", icon: "network.badge.shield.half.filled") {
+        SettingsSectionCard(title: "Động cơ AI & Kết nối Cloud", icon: "network") {
             VStack(alignment: .leading, spacing: 12) {
                 SettingsToggleRow(
                     title: "Ưu tiên Cloud AI (Tự động Fallback)",
                     subtitle: "Dùng Cloud AI khi có mạng & Key; tự chuyển sang Local AI trên máy nếu mất mạng",
-                    icon: "sparkles.tv.fill",
+                    icon: "icloud",
                     isOn: $viewModel.useGeminiForAnalysis
                 )
 
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(viewModel.useGeminiForAnalysis && viewModel.geminiService.hasAPIKey ? Color.green : Color(red: 56/255, green: 189/255, blue: 248/255))
+                        .fill(viewModel.useGeminiForAnalysis && viewModel.geminiService.hasAPIKey ? Color.green : AlignTheme.studioAccent)
                         .frame(width: 7, height: 7)
                     Text(viewModel.useGeminiForAnalysis && viewModel.geminiService.hasAPIKey
                          ? "Đang hoạt động: \(viewModel.geminiService.selectedProvider.shortBadge) • \(viewModel.geminiService.activeModelID) (Tự dự phòng Local)"
@@ -1323,7 +1340,7 @@ struct AIFramingSettingsSection: View {
                         Spacer()
                         Text(viewModel.geminiService.selectedProvider.displayName)
                             .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .foregroundColor(AlignTheme.studioAccent)
                     }
 
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
@@ -1363,12 +1380,12 @@ struct AIFramingSettingsSection: View {
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 8)
                                 .background(
-                                    isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.24) : Color(red: 36/255, green: 36/255, blue: 41/255)
+                                    isSelected ? AlignTheme.studioAccent.opacity(0.24) : AlignTheme.studioElevated
                                 )
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(isSelected ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.70) : Color.white.opacity(0.08), lineWidth: 1)
+                                        .stroke(isSelected ? AlignTheme.studioAccent.opacity(0.70) : Color.white.opacity(0.08), lineWidth: 1)
                                 )
                             }
                             .buttonStyle(.plain)
@@ -1389,11 +1406,11 @@ struct AIFramingSettingsSection: View {
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled(true)
                                 .padding(8)
-                                .background(Color(red: 36/255, green: 36/255, blue: 41/255))
+                                .background(AlignTheme.studioElevated)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(Color(red: 39/255, green: 39/255, blue: 42/255), lineWidth: 1)
+                                        .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 1)
                                 )
 
                             Button("Lưu URL") {
@@ -1404,7 +1421,7 @@ struct AIFramingSettingsSection: View {
                             .foregroundColor(.white)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 8)
-                            .background(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.30))
+                            .background(AlignTheme.studioAccent.opacity(0.30))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
@@ -1446,16 +1463,16 @@ struct AIFramingSettingsSection: View {
                         }
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(.white)
-                        .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
+                        .tint(AlignTheme.studioAccent)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 9)
-                        .background(Color(red: 36/255, green: 36/255, blue: 41/255))
+                        .background(AlignTheme.studioElevated)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Color(red: 39/255, green: 39/255, blue: 42/255), lineWidth: 1)
+                                .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 1)
                         )
 
                         // Nút Hiện/Ẩn
@@ -1483,7 +1500,7 @@ struct AIFramingSettingsSection: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)
-                        .background(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.35))
+                        .background(AlignTheme.studioAccent.opacity(0.35))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                         // Nút Xóa Key
@@ -1519,7 +1536,7 @@ struct AIFramingSettingsSection: View {
                                 if viewModel.geminiService.isFetchingModels {
                                     ProgressView()
                                         .scaleEffect(0.65)
-                                        .tint(Color(red: 56/255, green: 189/255, blue: 248/255))
+                                        .tint(AlignTheme.studioAccent)
                                 } else {
                                     Image(systemName: "arrow.triangle.2.circlepath")
                                         .font(.system(size: 10, weight: .bold))
@@ -1529,17 +1546,17 @@ struct AIFramingSettingsSection: View {
                                      : (viewModel.geminiService.discoveredModels.isEmpty ? "Tải Model từ API" : "Làm mới (\(viewModel.geminiService.discoveredModels.count))"))
                                     .font(.system(size: 10.5, weight: .bold, design: .rounded))
                             }
-                            .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .foregroundColor(AlignTheme.studioAccent)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.16))
+                            .background(AlignTheme.studioAccent.opacity(0.16))
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
 
                         Text(viewModel.geminiService.activeModelID)
                             .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .foregroundColor(AlignTheme.studioAccent)
                             .lineLimit(1)
                     }
 
@@ -1614,11 +1631,11 @@ struct AIFramingSettingsSection: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Color(red: 36/255, green: 36/255, blue: 41/255))
+                            .background(AlignTheme.studioElevated)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color(red: 39/255, green: 39/255, blue: 42/255), lineWidth: 1)
+                                    .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 1)
                             )
                         }
                     }
@@ -1631,11 +1648,11 @@ struct AIFramingSettingsSection: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .padding(8)
-                            .background(Color(red: 36/255, green: 36/255, blue: 41/255))
+                            .background(AlignTheme.studioElevated)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color(red: 39/255, green: 39/255, blue: 42/255), lineWidth: 1)
+                                    .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 1)
                             )
 
                         Button("Lưu Model") {
@@ -1647,7 +1664,7 @@ struct AIFramingSettingsSection: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
-                        .background(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.30))
+                        .background(AlignTheme.studioAccent.opacity(0.30))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
 
@@ -1695,11 +1712,11 @@ struct AIFramingSettingsSection: View {
                                             .padding(.vertical, 5)
                                             .background(
                                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                    .fill(isPicked ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.35) : Color.white.opacity(0.09))
+                                                    .fill(isPicked ? AlignTheme.studioAccent.opacity(0.35) : Color.white.opacity(0.09))
                                             )
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                    .stroke(isPicked ? Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1)
+                                                    .stroke(isPicked ? AlignTheme.studioAccent.opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1)
                                             )
                                         }
                                         .buttonStyle(.plain)
@@ -1732,7 +1749,7 @@ struct AIFramingSettingsSection: View {
                         Text(isTestingKey ? "Đang kiểm tra kết nối..." : "Kiểm tra kết nối & độ trễ API")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                     }
-                    .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                    .foregroundColor(AlignTheme.studioAccent)
                     .padding(.vertical, 4)
                 }
 
@@ -1765,7 +1782,7 @@ struct AIFramingSettingsSection: View {
                     ShareLink(item: url) {
                         Label("Xuất dữ liệu lựa chọn", systemImage: "square.and.arrow.up")
                             .font(.system(size: 12.5, weight: .medium))
-                            .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .foregroundColor(AlignTheme.studioAccent)
                     }
                     .id(feedbackRevision)
                 }
@@ -1797,7 +1814,7 @@ struct AIFramingSettingsSection: View {
     }
 
     private var dividerLine: some View {
-        Divider().background(Color(red: 39/255, green: 39/255, blue: 42/255))
+        Divider().background(AlignTheme.studioHairlineSubtle)
     }
 }
 
@@ -1912,7 +1929,7 @@ struct AdvancedSettingsSection: View {
                             .foregroundColor(Color.white.opacity(0.55))
                     }
                 }
-                .toggleStyle(SwitchToggleStyle(tint: Color(red: 56/255, green: 189/255, blue: 248/255)))
+                .toggleStyle(SwitchToggleStyle(tint: AlignTheme.studioAccent))
                 .padding(.vertical, 4)
 
                 HStack(spacing: 8) {
@@ -1993,7 +2010,7 @@ struct AdvancedSettingsSection: View {
 
                         Text("Ủng hộ tác giả")
                             .font(.system(size: 14.5, weight: .bold, design: .rounded))
-                            .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .foregroundColor(AlignTheme.studioAccent)
 
                         Spacer()
 
@@ -2031,7 +2048,7 @@ struct AdvancedSettingsSection: View {
     }
 
     private var dividerLine: some View {
-        Divider().background(Color(red: 39/255, green: 39/255, blue: 42/255))
+        Divider().background(AlignTheme.studioHairlineSubtle)
     }
 }
 
@@ -2052,12 +2069,12 @@ public struct SupportDeveloperView: View {
                 VStack(spacing: 8) {
                     ZStack {
                         Circle()
-                            .fill(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.18))
+                            .fill(AlignTheme.studioAccent.opacity(0.18))
                             .frame(width: 72, height: 72)
 
                         Image(systemName: "cup.and.saucer.fill")
                             .font(.system(size: 32, weight: .bold))
-                            .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                            .foregroundColor(AlignTheme.studioAccent)
                     }
                     .padding(.top, 10)
 
@@ -2083,7 +2100,7 @@ public struct SupportDeveloperView: View {
                                 .foregroundColor(.white)
                             Text("STK: 0344197212")
                                 .font(.system(size: 13, weight: .bold, design: .monospaced))
-                                .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
+                                .foregroundColor(AlignTheme.studioAccent)
                         }
 
                         Spacer()
@@ -2101,7 +2118,7 @@ public struct SupportDeveloperView: View {
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Color(red: 56/255, green: 189/255, blue: 248/255).opacity(0.25))
+                            .background(AlignTheme.studioAccent.opacity(0.25))
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
@@ -2173,7 +2190,7 @@ public struct SupportDeveloperView: View {
             }
             .padding(16)
         }
-        .background(Color(red: 12/255, green: 12/255, blue: 14/255).ignoresSafeArea())
+        .background(AlignTheme.studioCanvas.ignoresSafeArea())
         .navigationTitle("Ủng hộ tác giả")
         .navigationBarTitleDisplayMode(.inline)
         .overlay(
@@ -2204,32 +2221,25 @@ public struct SupportDeveloperView: View {
     }
 }
 
-// MARK: - TOAST BANNER NOTIFICATION
+// MARK: - TOAST BANNER NOTIFICATION (Smoked Frosted Glass)
 public struct ToastBanner: View {
     let message: String
 
     public var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundColor(Color(red: 56/255, green: 189/255, blue: 248/255))
-                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(AlignTheme.studioAccent)
+                .font(.system(size: 13, weight: .semibold))
 
             Text(message)
                 .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(AlignTheme.studioInkPrimary)
                 .lineLimit(2)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(
-            Capsule()
-                .fill(Color(red: 24/255, green: 24/255, blue: 27/255))
-                .overlay(
-                    Capsule()
-                        .stroke(Color(red: 39/255, green: 39/255, blue: 42/255), lineWidth: 1)
-                )
-        )
-        .shadow(color: Color.black.opacity(0.45), radius: 12, y: 6)
+        .background(StudioGlassCapsule(tintOpacity: 0.72, borderOpacity: 0.16))
+        .shadow(color: Color.black.opacity(0.45), radius: 14, y: 6)
     }
 }
 

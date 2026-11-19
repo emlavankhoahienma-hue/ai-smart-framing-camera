@@ -143,27 +143,27 @@ public struct WindowedZoomOverlayView: View {
             // 2. Khung ngắm Rangefinder bo tròn hiện đại, di chuyển siêu mượt 120Hz (không còn 4 chấm tròn)
             if shouldShowViewfinderWindow {
                 ZStack(alignment: .center) {
-                    // Viền ngoài bo tròn continuous 20pt dày dặn, sắc nét chuẩn Kapi Cam, KHÔNG viền kép thừa
+                    // Viền ngoài bo tròn continuous 20pt thanh lịch, chuyển vàng titan dịu khi đang kéo/zoom
                     RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous)
                         .stroke(
-                            isInteracting ? AlignTheme.electricCyan.opacity(0.98) : Color.white.opacity(0.92),
-                            lineWidth: isInteracting ? 2.6 : 2.0
+                            isInteracting ? AlignTheme.studioAccent : Color.white.opacity(0.90),
+                            lineWidth: isInteracting ? 2.2 : 1.6
                         )
-                        .shadow(color: Color.black.opacity(0.35), radius: 2, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(0.32), radius: 2, x: 0, y: 1)
                         .background(Color.white.opacity(0.001))
                         .frame(width: windowRect.width, height: windowRect.height)
 
-                    // Lưới bố cục 3x3 Rule of Thirds luôn hiển thị bên trong cửa sổ để căn chỉnh bố cục
+                    // Lưới bố cục 3x3 Rule of Thirds bên trong cửa sổ
                     opticalGridView
                         .clipShape(RoundedRectangle(cornerRadius: windowCornerRadius, style: .continuous))
 
                     // Tâm ngắm siêu mảnh tại chính giữa cửa sổ
                     ZStack {
                         Circle()
-                            .stroke(Color.white.opacity(isInteracting ? 0.55 : 0.25), lineWidth: 0.8)
+                            .stroke(Color.white.opacity(isInteracting ? 0.50 : 0.24), lineWidth: 0.7)
                             .frame(width: 8, height: 8)
                         Circle()
-                            .fill(isInteracting ? AlignTheme.electricCyan : Color.white.opacity(0.55))
+                            .fill(isInteracting ? AlignTheme.studioAccent : Color.white.opacity(0.55))
                             .frame(width: 2.5, height: 2.5)
                     }
                 }
@@ -223,11 +223,11 @@ public struct WindowedZoomOverlayView: View {
                     viewModel.haptics.triggerSelectionChange()
                 }
 
-                // 3. Thông số tiêu cự mm hiển thị trên đỉnh mép trên cửa sổ (Font đậm, sắc nét, dễ nhìn như ảnh 3)
+                // 3. Thông số tiêu cự mm hiển thị trên đỉnh mép trên cửa sổ
                 Text("\(Int(round(effectiveFocalLength)))mm")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(isInteracting ? AlignTheme.electricCyan : .white)
-                    .shadow(color: Color.black.opacity(0.85), radius: 2.5, x: 0, y: 1)
+                    .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(isInteracting ? AlignTheme.studioAccent : .white)
+                    .shadow(color: Color.black.opacity(0.80), radius: 2.5, x: 0, y: 1)
                     .position(x: windowRect.midX, y: max(16, windowRect.minY - 14))
                     .allowsHitTesting(false)
                     .transition(.opacity)
@@ -377,8 +377,8 @@ public struct WindowedZoomOverlayView: View {
                 viewModel.haptics.triggerSelectionChange()
             }) {
                 Text(viewModel.windowedZoomAspectRatio.rawValue)
-                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                    .foregroundColor(viewModel.windowedZoomAspectRatio != nativeAspectRatio ? AlignTheme.electricCyan : Color.white.opacity(0.88))
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(viewModel.windowedZoomAspectRatio != nativeAspectRatio ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.88))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 5)
                     .frame(height: 30)
@@ -387,14 +387,7 @@ public struct WindowedZoomOverlayView: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(Color.black.opacity(0.55))
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
-                )
-        )
+        .background(StudioGlassCapsule(tintOpacity: 0.50, borderOpacity: 0.14))
         .fixedSize(horizontal: true, vertical: false)
     }
 }
@@ -456,14 +449,17 @@ private struct FocalPresetButton: View {
             ZStack {
                 if isSelected {
                     Capsule()
-                        .stroke(AlignTheme.signatureGradient, lineWidth: 1.5)
-                        .background(Capsule().fill(Color.black.opacity(0.40)))
+                        .fill(Color.white.opacity(0.16))
+                        .overlay(
+                            Capsule()
+                                .stroke(AlignTheme.studioAccentBorder, lineWidth: 0.7)
+                        )
                         .matchedGeometryEffect(id: "active_windowed_focal_ring", in: focalPillNamespace)
                 }
 
                 Text(preset.label)
                     .font(.system(size: 10.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                    .foregroundColor(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.82))
+                    .foregroundColor(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.80))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 5)
             }

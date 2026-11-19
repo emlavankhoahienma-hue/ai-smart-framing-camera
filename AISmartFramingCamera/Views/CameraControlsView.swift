@@ -68,7 +68,7 @@ public struct CameraControlsView: View {
         .frame(height: deckHeight)
         .frame(maxWidth: .infinity)
         .background(
-            Color(red: 0.031, green: 0.035, blue: 0.043)
+            AlignTheme.studioCanvas
                 .ignoresSafeArea(edges: .bottom)
         )
         .overlay(alignment: .bottom) {
@@ -142,14 +142,18 @@ struct CameraModeSegmentedSwitcher: View {
                     }
                 }) {
                     Text(item.title)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .rounded))
-                        .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
+                        .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium, design: .rounded))
+                        .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
                         .frame(width: 78, height: 32)
                         .background(
                             ZStack {
                                 if isSelected {
                                     Capsule()
-                                        .fill(Color(white: 0.24))
+                                        .fill(Color.white.opacity(0.14))
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                                        )
                                         .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
                                 }
                             }
@@ -162,10 +166,10 @@ struct CameraModeSegmentedSwitcher: View {
         .padding(3)
         .background(
             Capsule()
-                .fill(Color(white: 0.08))
+                .fill(AlignTheme.studioSurface)
                 .overlay {
                     Capsule()
-                        .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                        .stroke(AlignTheme.studioHairline, lineWidth: 0.6)
                 }
         )
         .frame(height: 38)
@@ -240,67 +244,70 @@ struct MainCaptureButton: View {
         .frame(width: 160, height: 80)
     }
 
-    // MARK: - Minimalist Photo Shutter (Thin White Outer Ring & Solid White Core)
+    // MARK: - Machined Tactile Photo Shutter (Crisp Outer Ring & Subtle Ivory Core)
     private var minimalistPhotoShutter: some View {
         ZStack {
-            // Outer Ring: Pure White, Fixed 76x76 Size
+            // Outer Anodized Ring: Fixed 74x74
             Circle()
-                .stroke(shutterRingBorderColor, lineWidth: 3.5)
-                .frame(width: 76, height: 76)
+                .stroke(shutterRingBorderColor, lineWidth: 2.6)
+                .frame(width: 74, height: 74)
 
-            // Inner Core: Solid White Circle, Scaled upon press
+            // Inner Core: Crisp Ivory Disc with subtle edge depth
             Circle()
-                .fill(Color.white)
-                .frame(width: 62, height: 62)
+                .fill(AlignTheme.studioInkPrimary)
+                .overlay(
+                    Circle()
+                        .stroke(Color.black.opacity(0.10), lineWidth: 0.8)
+                        .padding(1)
+                )
+                .frame(width: 60, height: 60)
                 .offset(x: dragOffset)
-                .scaleEffect((isTouchingShutter || viewModel.isShutterPressing) ? 0.92 : 1.0)
+                .scaleEffect((isTouchingShutter || viewModel.isShutterPressing) ? 0.91 : 1.0)
 
             // Progress Indicator when Capturing
             if case .capturing = viewModel.aiSessionState {
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.electricCyan))
-                    .scaleEffect(0.95)
+                    .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.studioCanvas))
+                    .scaleEffect(0.92)
                     .offset(x: dragOffset)
             }
         }
         .contentShape(Circle())
-        .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isTouchingShutter)
+        .animation(.spring(response: 0.22, dampingFraction: 0.72), value: isTouchingShutter)
         .gesture(dragAndTapGesture(isForVideo: false))
         .accessibilityLabel("Nút chụp ảnh: Chạm để chụp, giữ kéo sang trái để bật AI Bố cục")
     }
 
-    // MARK: - Minimalist Video Shutter (Outer Ring Fixed 76x76 & Red Core Morphs to Rounded Square)
+    // MARK: - Machined Tactile Video Shutter (Crisp Outer Ring & Matte Crimson Core)
     private var minimalistVideoShutter: some View {
         ZStack {
-            // Outer Ring: Fixed 76x76 Size
             Circle()
-                .stroke(viewModel.isAIVideoDirectorActive ? AlignTheme.electricCyan : Color.white, lineWidth: 3.5)
-                .frame(width: 76, height: 76)
+                .stroke(viewModel.isAIVideoDirectorActive ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary, lineWidth: 2.6)
+                .frame(width: 74, height: 74)
 
-            // Inner Core: Red Circle / Rounded Rectangle
             if viewModel.isRecordingVideo {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(red: 0.95, green: 0.15, blue: 0.20))
-                    .frame(width: 28, height: 28)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(AlignTheme.studioRecordRed)
+                    .frame(width: 26, height: 26)
                     .offset(x: dragOffset)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.72), value: viewModel.isRecordingVideo)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.74), value: viewModel.isRecordingVideo)
             } else {
                 Circle()
-                    .fill(Color(red: 0.95, green: 0.15, blue: 0.20))
-                    .frame(width: 62, height: 62)
+                    .fill(AlignTheme.studioRecordRed)
+                    .frame(width: 60, height: 60)
                     .offset(x: dragOffset)
-                    .scaleEffect(isTouchingShutter ? 0.92 : 1.0)
+                    .scaleEffect(isTouchingShutter ? 0.91 : 1.0)
             }
 
             if viewModel.isAIVideoDirectorAnalyzing {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .scaleEffect(0.95)
+                    .scaleEffect(0.92)
                     .offset(x: dragOffset)
             }
         }
         .contentShape(Circle())
-        .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isTouchingShutter)
+        .animation(.spring(response: 0.22, dampingFraction: 0.72), value: isTouchingShutter)
         .gesture(dragAndTapGesture(isForVideo: true))
         .accessibilityLabel("Nút quay video: Chạm để quay hoặc dừng, giữ kéo sang trái để AI Đạo diễn")
     }
@@ -389,13 +396,11 @@ struct MainCaptureButton: View {
     private var shutterRingBorderColor: Color {
         switch viewModel.aiSessionState {
         case .idle, .done:
-            return Color.white
-        case .analyzing, .targetPlaced:
-            return AlignTheme.electricCyan
+            return AlignTheme.studioInkPrimary
+        case .analyzing, .targetPlaced, .capturing:
+            return AlignTheme.studioAccent
         case .alignmentPerfect:
-            return Color.green
-        case .capturing:
-            return AlignTheme.electricCyan
+            return AlignTheme.studioPositive
         }
     }
 
@@ -418,25 +423,24 @@ struct MainCaptureButton: View {
         return CGFloat(0.85) + progress * CGFloat(0.25)
     }
 
-    // MARK: - AI Compose Left Dock Target
+    // MARK: - AI Compose Left Dock Target (Smoked Glass)
     private var aiComposeDockTarget: some View {
         HStack {
             ZStack {
                 Circle()
-                    .fill(Color.black.opacity(0.80))
+                    .fill(AlignTheme.studioSurface)
                     .frame(width: 44, height: 44)
 
                 Circle()
-                    .stroke(hasReachedDock ? AlignTheme.electricCyan : Color.white.opacity(0.35), lineWidth: hasReachedDock ? 2.2 : 1.0)
+                    .stroke(hasReachedDock ? AlignTheme.studioAccent : Color.white.opacity(0.22), lineWidth: hasReachedDock ? 1.5 : 0.8)
                     .frame(width: 44, height: 44)
 
-                Image(systemName: "wand.and.stars")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(hasReachedDock ? AlignTheme.electricCyan : Color.white.opacity(0.75))
-                    .scaleEffect(hasReachedDock ? 1.20 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(hasReachedDock ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
+                    .scaleEffect(hasReachedDock ? 1.12 : 1.0)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.72), value: hasReachedDock)
             }
-            .shadow(color: hasReachedDock ? AlignTheme.electricCyan.opacity(0.60) : Color.clear, radius: 8)
             .offset(x: -56)
             .scaleEffect(dockScale)
             .opacity(dockOpacity)
@@ -446,25 +450,24 @@ struct MainCaptureButton: View {
         }
     }
 
-    // MARK: - AI Video Director Left Dock Target
+    // MARK: - AI Video Director Left Dock Target (Smoked Glass)
     private var aiVideoDirectorDockTarget: some View {
         HStack {
             ZStack {
                 Circle()
-                    .fill(Color.black.opacity(0.80))
+                    .fill(AlignTheme.studioSurface)
                     .frame(width: 44, height: 44)
 
                 Circle()
-                    .stroke(hasReachedDock ? AlignTheme.electricCyan : (viewModel.isAIVideoDirectorActive ? AlignTheme.electricCyan.opacity(0.85) : Color.white.opacity(0.35)), lineWidth: hasReachedDock ? 2.2 : 1.0)
+                    .stroke(hasReachedDock || viewModel.isAIVideoDirectorActive ? AlignTheme.studioAccent : Color.white.opacity(0.22), lineWidth: hasReachedDock ? 1.5 : 0.8)
                     .frame(width: 44, height: 44)
 
-                Image(systemName: "sparkles.tv")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(hasReachedDock ? AlignTheme.electricCyan : (viewModel.isAIVideoDirectorActive ? AlignTheme.electricCyan : Color.white.opacity(0.75)))
-                    .scaleEffect(hasReachedDock ? 1.20 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: hasReachedDock)
+                Image(systemName: "video")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(hasReachedDock || viewModel.isAIVideoDirectorActive ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
+                    .scaleEffect(hasReachedDock ? 1.12 : 1.0)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.72), value: hasReachedDock)
             }
-            .shadow(color: (hasReachedDock || viewModel.isAIVideoDirectorActive) ? AlignTheme.electricCyan.opacity(0.60) : Color.clear, radius: 8)
             .offset(x: -56)
             .scaleEffect(dockScale)
             .opacity(dockOpacity)
@@ -488,34 +491,35 @@ struct GalleryThumbnailButton: View {
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(red: 0.10, green: 0.11, blue: 0.14))
-                    .frame(width: 50, height: 50)
+                    .fill(AlignTheme.studioSurface)
+                    .frame(width: 46, height: 46)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.28), lineWidth: 1.0)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 0.7)
                     )
 
                 if let photo = viewModel.latestCapturedPhoto {
                     Image(decorative: photo.processedImage, scale: 1.0, orientation: .up)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 48, height: 48)
+                        .frame(width: 44, height: 44)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 } else if let thumb = viewModel.latestAlbumThumbnail {
                     Image(uiImage: thumb)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 48, height: 48)
+                        .frame(width: 44, height: 44)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 } else {
                     CustomAppIconView(
                         name: "iconnutxemanhganday",
-                        fallbackSF: "photo.on.rectangle.angled",
-                        size: 24,
-                        color: .white.opacity(0.82)
+                        fallbackSF: "photo.on.rectangle",
+                        size: 20,
+                        color: AlignTheme.studioInkPrimary.opacity(0.76)
                     )
                 }
             }
+            .frame(width: 50, height: 50)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -543,18 +547,19 @@ struct CameraFlipButton: View {
         }) {
             ZStack {
                 Circle()
-                    .fill(Color(red: 0.10, green: 0.11, blue: 0.14))
-                    .frame(width: 50, height: 50)
+                    .fill(AlignTheme.studioSurface)
+                    .frame(width: 46, height: 46)
                     .overlay(
                         Circle()
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1.0)
+                            .stroke(AlignTheme.studioHairline, lineWidth: 0.7)
                     )
 
                 Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(.white)
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundColor(AlignTheme.studioInkPrimary.opacity(0.90))
                     .rotationEffect(.degrees(flipDegrees))
             }
+            .frame(width: 50, height: 50)
             .contentShape(Circle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -563,7 +568,7 @@ struct CameraFlipButton: View {
     }
 }
 
-// MARK: - AI Viewfinder Button (nutAI Asset, No Background, No Border, 44x44pt Target)
+// MARK: - AI Viewfinder Button (Unified Monochrome Smoked Surface, Symmetric with Film Button)
 struct AIViewfinderButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
@@ -588,30 +593,37 @@ struct AIViewfinderButton: View {
             }
         }) {
             ZStack {
+                Circle()
+                    .fill(isPulsing ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
+                    .frame(width: 38, height: 38)
+                    .overlay(
+                        Circle()
+                            .stroke(isPulsing ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline, lineWidth: isPulsing ? 0.9 : 0.65)
+                    )
+
                 if let uiImage = UIImage(named: "nutAI") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nutAI", ofType: "png") ?? "") {
                     Image(uiImage: uiImage)
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 32, height: 32)
-                        .foregroundColor(isPulsing ? AlignTheme.electricCyan : Color.white.opacity(0.90))
+                        .frame(width: 22, height: 22)
+                        .foregroundColor(isPulsing ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
                 } else if let altImage = UIImage(named: "nuticonbocuc") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nuticonbocuc", ofType: "png") ?? "") {
                     Image(uiImage: altImage)
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 32, height: 32)
-                        .foregroundColor(isPulsing ? AlignTheme.electricCyan : Color.white.opacity(0.90))
+                        .frame(width: 22, height: 22)
+                        .foregroundColor(isPulsing ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
                 } else {
                     Image(systemName: "viewfinder")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundColor(isPulsing ? AlignTheme.electricCyan : Color.white.opacity(0.90))
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(isPulsing ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
                 }
             }
             .frame(width: 44, height: 44)
-            .shadow(color: isPulsing ? AlignTheme.electricCyan.opacity(0.55) : .clear, radius: 6)
-            .scaleEffect(isPulsing ? 1.06 : 1.0)
-            .animation(.spring(response: 0.35, dampingFraction: 0.65), value: isPulsing)
+            .scaleEffect(isPulsing ? 1.04 : 1.0)
+            .animation(.spring(response: 0.30, dampingFraction: 0.72), value: isPulsing)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -631,7 +643,7 @@ struct AIViewfinderButton: View {
     }
 }
 
-// MARK: - Selected Camera Mini Badge Button (Opens Drawer)
+// MARK: - Selected Camera Mini Badge Button (Symmetric Smoked Surface Matching AI Button)
 public struct SelectedCameraBadgeButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
@@ -639,35 +651,29 @@ public struct SelectedCameraBadgeButton: View {
         self.viewModel = viewModel
     }
 
+    private var isHighlighted: Bool {
+        viewModel.isShowingFilmDrawer || viewModel.isFilmSimulationActive
+    }
+
     public var body: some View {
         Button(action: {
             HapticFeedbackService.shared.triggerSelectionChange()
-            withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
                 viewModel.isShowingFilmDrawer.toggle()
             }
         }) {
             ZStack {
                 Circle()
-                    .fill(AlignTheme.carbonSurface)
-                    .frame(width: 36, height: 36)
+                    .fill(isHighlighted ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
+                    .frame(width: 38, height: 38)
                     .overlay(
                         Circle()
-                            .stroke(
-                                viewModel.isShowingFilmDrawer ? AlignTheme.electricCyan :
-                                    (viewModel.isFilmSimulationActive ? AlignTheme.irisViolet.opacity(0.80) : Color.white.opacity(0.18)),
-                                lineWidth: 1.0
-                            )
+                            .stroke(isHighlighted ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline, lineWidth: isHighlighted ? 0.9 : 0.65)
                     )
 
-                if viewModel.isFilmSimulationActive {
-                    Image(systemName: viewModel.selectedFilmPreset.deviceIconSF)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(viewModel.isShowingFilmDrawer ? AlignTheme.electricCyan : viewModel.selectedFilmPreset.previewColor)
-                } else {
-                    Image(systemName: "camera.filters")
-                        .font(.system(size: 15, weight: .regular))
-                        .foregroundColor(AlignTheme.platinumWhite.opacity(0.55))
-                }
+                Image(systemName: viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.deviceIconSF : "camera.filters")
+                    .font(.system(size: 15.5, weight: .medium))
+                    .foregroundColor(isHighlighted ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
             }
             .frame(width: 44, height: 44)
             .contentShape(Rectangle())
@@ -697,62 +703,59 @@ private struct RawCleanCardView: View {
     let isSelected: Bool
 
     var body: some View {
-        VStack(spacing: 1.5) {
-            // Top Badge Chip
+        VStack(spacing: 2) {
             HStack {
                 Text("GỐC")
-                    .font(.system(size: 7.0, weight: .heavy, design: .monospaced))
-                    .foregroundColor(isSelected ? .black : .white.opacity(0.80))
-                    .padding(.horizontal, 3.5)
-                    .padding(.vertical, 1.2)
+                    .font(.system(size: 7.0, weight: .bold, design: .monospaced))
+                    .foregroundColor(isSelected ? .black : AlignTheme.studioInkSecondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
                     .background(
                         Capsule()
-                            .fill(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.15))
+                            .fill(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.10))
                     )
                 Spacer()
             }
-            .padding(.top, 3)
-            .padding(.horizontal, 4)
+            .padding(.top, 4)
+            .padding(.horizontal, 5)
 
             Spacer(minLength: 1)
 
-            // Center Device Icon
             ZStack {
                 Circle()
-                    .fill(Color.white.opacity(isSelected ? 0.25 : 0.08))
-                    .frame(width: 30, height: 30)
+                    .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
+                    .frame(width: 28, height: 28)
 
                 Image(systemName: "circle.slash")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.70))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
             }
 
             Spacer(minLength: 1)
 
-            // Bottom Name Label
             Text("TẮT MÀU")
-                .font(.system(size: 8.0, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.70))
+                .font(.system(size: 8.0, weight: isSelected ? .semibold : .medium, design: .rounded))
+                .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.70)
                 .padding(.horizontal, 2)
-                .padding(.bottom, 3.5)
+                .padding(.bottom, 4)
         }
-        .frame(width: 54, height: 68)
+        .frame(width: 56, height: 68)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(AlignTheme.carbonSurface)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.05))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.12), lineWidth: isSelected ? 1.8 : 0.8)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 1.1 : 0.6)
         )
-        .scaleEffect(isSelected ? 1.04 : 1.0)
-        .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isSelected)
+        .scaleEffect(isSelected ? 1.03 : 1.0)
+        .animation(.spring(response: 0.22, dampingFraction: 0.74), value: isSelected)
     }
 }
 
-// MARK: - Camera Card View (Compact Storyboard Filmstrip Card)
+// MARK: - Camera Card View (Compact Monochrome Studio Filmstrip Card)
 public struct CameraCardView: View {
     let preset: FilmPreset
     let isSelected: Bool
@@ -763,62 +766,59 @@ public struct CameraCardView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 1.5) {
-            // Top Badge Chip
+        VStack(spacing: 2) {
             HStack {
                 Text(preset.deviceBadge)
-                    .font(.system(size: 7.0, weight: .heavy, design: .monospaced))
-                    .foregroundColor(isSelected ? .white : preset.previewColor)
-                    .padding(.horizontal, 3.5)
-                    .padding(.vertical, 1.2)
+                    .font(.system(size: 7.0, weight: .bold, design: .monospaced))
+                    .foregroundColor(isSelected ? .black : AlignTheme.studioInkSecondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
                     .background(
                         Capsule()
-                            .fill(isSelected ? AlignTheme.irisViolet : Color.black.opacity(0.45))
+                            .fill(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.10))
                     )
                 Spacer()
             }
-            .padding(.top, 3)
-            .padding(.horizontal, 4)
+            .padding(.top, 4)
+            .padding(.horizontal, 5)
 
             Spacer(minLength: 1)
 
-            // Center Device Icon
             ZStack {
                 Circle()
-                    .fill(preset.previewColor.opacity(isSelected ? 0.30 : 0.14))
-                    .frame(width: 30, height: 30)
+                    .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.07))
+                    .frame(width: 28, height: 28)
 
                 Image(systemName: preset.deviceIconSF)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(isSelected ? AlignTheme.electricCyan : .white.opacity(0.92))
+                    .font(.system(size: 13.5, weight: .medium))
+                    .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
             }
 
             Spacer(minLength: 1)
 
-            // Bottom Name Label
             Text(preset.shortTitle)
-                .font(.system(size: 8.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? AlignTheme.platinumWhite : .white)
+                .font(.system(size: 8.5, weight: isSelected ? .semibold : .medium, design: .rounded))
+                .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.70)
                 .padding(.horizontal, 2)
-                .padding(.bottom, 3.5)
+                .padding(.bottom, 4)
         }
-        .frame(width: 54, height: 68)
+        .frame(width: 56, height: 68)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(AlignTheme.carbonSurface)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.05))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.12), lineWidth: isSelected ? 1.8 : 0.8)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 1.1 : 0.6)
         )
-        .scaleEffect(isSelected ? 1.04 : 1.0)
-        .animation(.spring(response: 0.22, dampingFraction: 0.70), value: isSelected)
+        .scaleEffect(isSelected ? 1.03 : 1.0)
+        .animation(.spring(response: 0.22, dampingFraction: 0.74), value: isSelected)
     }
 }
 
-// MARK: - Film Preset Drawer (Compact Storyboard 35mm Reel & Tabs)
+// MARK: - Film Preset Drawer (Smoked Frosted Glass Storyboard)
 public struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
 
@@ -827,18 +827,18 @@ public struct FilmPresetDrawer: View {
     }
 
     public var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             headerBar
             if viewModel.isFilmSimulationActive {
                 intensitySliderBar
             }
             filmstripTrack
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
         .background(drawerBackground)
         .gesture(dismissDragGesture)
-        .padding(.horizontal, 8)
-        .padding(.bottom, 2)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
     }
 
     // MARK: - Subviews
@@ -847,11 +847,11 @@ public struct FilmPresetDrawer: View {
     private var intensitySliderBar: some View {
         HStack(spacing: 8) {
             Text("CƯỜNG ĐỘ")
-                .font(.system(size: 9.0, weight: .bold, design: .rounded))
-                .foregroundColor(.white.opacity(0.60))
+                .font(.system(size: 9.0, weight: .semibold, design: .monospaced))
+                .foregroundColor(AlignTheme.studioInkSecondary)
 
             Slider(value: $viewModel.filmSimulationIntensity, in: 0.1...1.0, step: 0.05)
-                .accentColor(AlignTheme.electricCyan)
+                .tint(AlignTheme.studioAccent)
 
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -859,13 +859,13 @@ public struct FilmPresetDrawer: View {
                 }
             }) {
                 Text("\(Int(round(viewModel.filmSimulationIntensity * 100)))%")
-                    .font(.system(size: 9.5, weight: .heavy, design: .monospaced))
-                    .foregroundColor(AlignTheme.electricCyan)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(AlignTheme.studioAccent)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
                     .background(
                         Capsule()
-                            .fill(AlignTheme.electricCyan.opacity(0.15))
+                            .fill(AlignTheme.studioAccentSoft)
                     )
             }
             .buttonStyle(PlainButtonStyle())
@@ -879,37 +879,36 @@ public struct FilmPresetDrawer: View {
     @ViewBuilder
     private var headerBar: some View {
         HStack(spacing: 8) {
-            // Master ON / OFF Toggle Pill
             Button(action: {
                 viewModel.toggleFilmSimulation()
             }) {
                 HStack(spacing: 4.5) {
                     Circle()
-                        .fill(viewModel.isFilmSimulationActive ? AlignTheme.electricCyan : Color.gray.opacity(0.60))
-                        .frame(width: 6.5, height: 6.5)
+                        .fill(viewModel.isFilmSimulationActive ? AlignTheme.studioAccent : AlignTheme.studioInkTertiary)
+                        .frame(width: 6, height: 6)
 
-                    Text(viewModel.isFilmSimulationActive ? "MÀU: BẬT" : "MÀU: TẮT")
-                        .font(.system(size: 9.5, weight: .heavy, design: .rounded))
-                        .foregroundColor(viewModel.isFilmSimulationActive ? AlignTheme.electricCyan : .white.opacity(0.70))
+                    Text(viewModel.isFilmSimulationActive ? "MÀU BẬT" : "MÀU TẮT")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(viewModel.isFilmSimulationActive ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
                 }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3.5)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(viewModel.isFilmSimulationActive ? AlignTheme.electricCyan.opacity(0.16) : Color.white.opacity(0.08))
+                        .fill(viewModel.isFilmSimulationActive ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
                 )
                 .overlay(
                     Capsule()
-                        .stroke(viewModel.isFilmSimulationActive ? AlignTheme.electricCyan.opacity(0.45) : Color.white.opacity(0.16), lineWidth: 1.0)
+                        .stroke(viewModel.isFilmSimulationActive ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: 0.6)
                 )
             }
             .buttonStyle(PlainButtonStyle())
             .padding(.leading, 10)
             .accessibilityLabel("Bật tắt màu giả lập")
 
-            Divider()
-                .frame(height: 16)
-                .background(Color.white.opacity(0.20))
+            Rectangle()
+                .fill(Color.white.opacity(0.14))
+                .frame(width: 0.6, height: 14)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
@@ -920,13 +919,12 @@ public struct FilmPresetDrawer: View {
                         }) {
                             VStack(spacing: 3) {
                                 Text(category.displayName)
-                                    .font(.system(size: 11.0, weight: isSelected ? .bold : .medium, design: .rounded))
-                                    .foregroundColor(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.60))
+                                    .font(.system(size: 11.0, weight: isSelected ? .semibold : .medium, design: .rounded))
+                                    .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
 
-                                // Selection bar indicator
                                 Rectangle()
-                                    .fill(isSelected ? AlignTheme.electricCyan : Color.clear)
-                                    .frame(height: 1.8)
+                                    .fill(isSelected ? AlignTheme.studioAccent : Color.clear)
+                                    .frame(height: 1.5)
                                     .cornerRadius(1)
                             }
                             .padding(.horizontal, 1)
@@ -938,17 +936,19 @@ public struct FilmPresetDrawer: View {
                 .padding(.vertical, 2)
             }
 
-            // Close Drawer Button
             Button(action: {
-                withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
                     viewModel.isShowingFilmDrawer = false
                 }
             }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 17))
-                    .foregroundColor(.white.opacity(0.55))
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
                     .padding(.trailing, 10)
             }
+            .buttonStyle(PlainButtonStyle())
             .accessibilityLabel("Đóng bảng màu máy ảnh")
         }
     }
@@ -961,7 +961,6 @@ public struct FilmPresetDrawer: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        // Dedicated [ GỐC / TẮT MÀU ] Card
                         Button(action: {
                             viewModel.disableFilmSimulation()
                         }) {
@@ -997,17 +996,12 @@ public struct FilmPresetDrawer: View {
             SprocketPerforationsRow()
         }
         .padding(.vertical, 2)
-        .background(Color.black.opacity(0.40))
+        .background(Color.black.opacity(0.24))
     }
 
     private var drawerBackground: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color(red: 0.08, green: 0.09, blue: 0.12).opacity(0.96))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
-            )
-            .shadow(color: Color.black.opacity(0.6), radius: 10, y: 3)
+        StudioGlassRoundedSurface(cornerRadius: 20, tintOpacity: 0.76, borderOpacity: 0.15)
+            .shadow(color: Color.black.opacity(0.55), radius: 18, y: 4)
     }
 
     private var dismissDragGesture: some Gesture {

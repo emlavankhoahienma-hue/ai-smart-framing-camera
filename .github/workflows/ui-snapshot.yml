@@ -1,0 +1,182 @@
+name: UI Simulator Snapshots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    name: Render iOS Simulator UI Snapshots
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Select latest Xcode
+        run: |
+          latest=$(ls -d /Applications/Xcode_16*.app /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then
+            sudo xcode-select -s "$latest/Contents/Developer"
+          else
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          xcodebuild -version
+
+      - name: Build for iOS Simulator (arm64)
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project AISmartFramingCamera.xcodeproj \
+            -scheme AISmartFramingCamera \
+            -sdk iphonesimulator \
+            -arch arm64 \
+            -configuration Debug \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            ONLY_ACTIVE_ARCH=YES \
+            ENABLE_ON_DEMAND_RESOURCES=NO \
+            ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS=NO \
+            ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
+            BUILD_DIR=${{ github.workspace }}/simbuild 2>&1 | tee simbuild.log
+
+      - name: Boot iPhone Simulator & Capture Real UI Screenshots
+        run: |
+          set -euo pipefail
+          mkdir -p ui_snapshots
+
+          # Pick latest available iPhone Pro / standard iPhone simulator
+          SIM_UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)['devices']
+          candidates = []
+          for runtime, devs in data.items():
+              if 'iOS' not in runtime: continue
+              for d in devs:
+                  if d.get('isAvailable') and 'iPhone' in d.get('name', ''):
+                      score = 0
+                      name = d['name']
+                      if '16 Pro' in name and 'Max' not in name: score = 100
+                      elif '16' in name and 'Max' not in name and 'Plus' not in name: score = 90
+                      elif '15 Pro' in name and 'Max' not in name: score = 80
+                      elif '15' in name: score = 70
+                      else: score = 50
+                      candidates.append((score, runtime, d['udid'], name))
+          candidates.sort(reverse=True)
+          print(candidates[0][2])
+          ")
+          echo "Using Simulator UDID: $SIM_UDID"
+
+          xcrun simctl boot "$SIM_UDID" || true
+          xcrun simctl bootstatus "$SIM_UDID" -b
+
+          # Set clean studio status bar (9:41, 5G, full battery)
+          xcrun simctl status_bar "$SIM_UDID" override \
+            --time "9:41" \
+            --dataNetwork 5g \
+            --wifiMode active \
+            --wifiBars 3 \
+            --cellularMode active \
+            --cellularBars 4 \
+            --batteryState charged \
+            --batteryLevel 100 || true
+
+          # Install built simulator app
+          APP_PATH="${{ github.workspace }}/simbuild/Debug-iphonesimulator/AISmartFramingCamera.app"
+          xcrun simctl install "$SIM_UDID" "$APP_PATH"
+
+          # Stage a rich photorealistic interior/architectural scene inside the app's Documents dir
+          # so real SwiftUI .ultraThinMaterial glass blur is tested authentically!
+          DATA_DIR=$(xcrun simctl get_app_container "$SIM_UDID" com.aismartframing.camera data)
+          mkdir -p "$DATA_DIR/Documents"
+          BG_PATH="$DATA_DIR/Documents/snapshot_bg.jpg"
+
+          python3 - "$BG_PATH" <<'PY'
+          import math, struct, zlib, sys
+          # Try to find a real JPEG/PNG photo in repo first, else synthesize a crisp warm daylight studio interior scene
+          from pathlib import Path
+          import shutil
+          out_path = Path(sys.argv[1])
+          repo_photos = sorted(
+              list(Path(".").glob("validation/**/*.jpg")) +
+              list(Path(".").glob("validation/**/*.jpeg")) +
+              list(Path(".").glob("docs/**/*.jpg"))
+          )
+          if repo_photos:
+              shutil.copyfile(repo_photos[0], out_path)
+              print(f"Copied repo sample photo: {repo_photos[0]}")
+          else:
+              # Generate a warm realistic daylight window + walnut desk + coffee cup studio scene (PNG saved as .jpg readable by UIImage)
+              W, H = 900, 1200
+              raw = bytearray()
+              for y in range(H):
+                  raw.append(0)
+                  ny = y / H
+                  for x in range(W):
+                      nx = x / W
+                      if ny < 0.64:
+                          # Soft sunlit plaster wall with warm diagonal window light
+                          sun = max(0.0, 1.0 - abs((nx - 0.58) - (ny - 0.25) * 0.45) * 2.2)
+                          r = int(min(255, 208 + 38 * sun - 35 * ny))
+                          g = int(min(255, 202 + 34 * sun - 36 * ny))
+                          b = int(min(255, 192 + 26 * sun - 38 * ny))
+                          # Dark monitor / frame silhouette on upper left for high-contrast glass blur check
+                          if 0.06 < nx < 0.42 and 0.14 < ny < 0.52:
+                              r, g, b = int(r * 0.18), int(g * 0.20), int(b * 0.24)
+                          # Botanical warm green accent on right
+                          if (nx - 0.78)**2 * 1.8 + (ny - 0.42)**2 < 0.025:
+                              r, g, b = 76, 122, 74
+                      else:
+                          # Rich walnut wooden desk surface with subtle grain
+                          grain = math.sin(y * 0.35 + math.sin(x * 0.04) * 3.0) * 7.0
+                          depth = (ny - 0.64) / 0.36
+                          r = int(max(18, min(255, 114 - 44 * depth + grain)))
+                          g = int(max(14, min(255, 78 - 32 * depth + grain * 0.7)))
+                          b = int(max(10, min(255, 54 - 22 * depth + grain * 0.5)))
+                          # Crisp white ceramic mug / highlight object on desk
+                          if 0.64 < nx < 0.84 and 0.56 < ny < 0.78:
+                              r, g, b = 228, 224, 214
+                      raw.extend((r, g, b))
+              def chunk(tag, data):
+                  return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
+              ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+              png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw), 6)) + chunk(b"IEND", b"")
+              out_path.write_bytes(png)
+              print(f"Synthesized studio backdrop at {out_path}")
+          PY
+
+          SCREENS=(
+            "01_main_photo:main_photo"
+            "02_main_drawer:main_drawer"
+            "03_main_film:main_film"
+            "04_main_windowed:main_windowed"
+            "05_main_video:main_video"
+            "06_settings_capture:settings_capture"
+            "07_settings_ai:settings_ai"
+            "08_settings_advanced:settings_advanced"
+          )
+
+          for entry in "${SCREENS[@]}"; do
+            FILE_TAG="${entry%%:*}"
+            SCREEN_ARG="${entry##*:}"
+            echo "=== Capturing $FILE_TAG ($SCREEN_ARG) ==="
+            xcrun simctl terminate "$SIM_UDID" com.aismartframing.camera || true
+            sleep 0.5
+            xcrun simctl launch "$SIM_UDID" com.aismartframing.camera \
+              -UI_SNAPSHOT_MODE \
+              -UI_SNAPSHOT_SCREEN "$SCREEN_ARG" \
+              -UI_SNAPSHOT_BG "$BG_PATH"
+            sleep 2.8
+            xcrun simctl io "$SIM_UDID" screenshot "ui_snapshots/${FILE_TAG}.png"
+          done
+          ls -lh ui_snapshots/
+
+      - name: Upload UI Snapshots Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ui-snapshots-${{ github.run_id }}
+          path: ui_snapshots/*.png
+          retention-days: 7

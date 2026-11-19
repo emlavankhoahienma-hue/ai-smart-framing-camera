@@ -2028,6 +2028,78 @@ public struct AlignTheme {
     // Optical Reticle Color: Strictly reserved for target tracking & optical framing
     public static let opticalTargetColor = amberGold
     public static let opticalAlignedColor = Color(red: 0.19, green: 0.82, blue: 0.35) // #30D158 (ISO Green)
+
+    // 4. Unified Monochrome Hardware + Warm Titanium Studio System (Zero Neon / Zero AI Gradients):
+    public static let studioCanvas = Color(red: 0.031, green: 0.031, blue: 0.036)         // #080809 Matte Carbon
+    public static let studioSurface = Color(red: 0.075, green: 0.075, blue: 0.084)        // #131315 Obsidian Card
+    public static let studioElevated = Color(red: 0.122, green: 0.122, blue: 0.135)       // #1F1F22 Graphite Control
+    public static let studioGlassTint = Color(red: 0.055, green: 0.055, blue: 0.064)      // Smoked glass darkener
+    public static let studioHairline = Color.white.opacity(0.12)                          // Crisp anodized 0.6pt edge
+    public static let studioHairlineSubtle = Color.white.opacity(0.065)                   // Quiet divider
+    public static let studioInkPrimary = Color(red: 0.96, green: 0.96, blue: 0.97)        // #F5F5F7 Snow White
+    public static let studioInkSecondary = Color.white.opacity(0.58)                      // Quiet label
+    public static let studioInkTertiary = Color.white.opacity(0.36)                       // Subtle caption
+    public static let studioAccent = Color(red: 0.847, green: 0.780, blue: 0.659)         // #D8C7A8 Matte Warm Titanium
+    public static let studioAccentSoft = Color(red: 0.847, green: 0.780, blue: 0.659).opacity(0.15)
+    public static let studioAccentBorder = Color(red: 0.847, green: 0.780, blue: 0.659).opacity(0.42)
+    public static let studioRecordRed = Color(red: 0.89, green: 0.21, blue: 0.21)         // Matte Cinema Crimson
+    public static let studioPositive = Color(red: 0.24, green: 0.78, blue: 0.44)          // Calm Optical Lock Green
+}
+
+// MARK: - Reusable Smoked Frosted Glass Surfaces (True iOS Material Blur + Controlled Contrast)
+public struct StudioGlassCapsule: View {
+    public var tintOpacity: Double
+    public var borderOpacity: Double
+
+    public init(tintOpacity: Double = 0.56, borderOpacity: Double = 0.13) {
+        self.tintOpacity = tintOpacity
+        self.borderOpacity = borderOpacity
+    }
+
+    public var body: some View {
+        Capsule()
+            .fill(.ultraThinMaterial)
+            .overlay(
+                Capsule()
+                    .fill(AlignTheme.studioGlassTint.opacity(tintOpacity))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color.white.opacity(borderOpacity), lineWidth: 0.6)
+            )
+    }
+}
+
+public struct StudioGlassRoundedSurface: View {
+    public var cornerRadius: CGFloat
+    public var tintOpacity: Double
+    public var borderOpacity: Double
+
+    public init(cornerRadius: CGFloat = 24, tintOpacity: Double = 0.76, borderOpacity: Double = 0.14) {
+        self.cornerRadius = cornerRadius
+        self.tintOpacity = tintOpacity
+        self.borderOpacity = borderOpacity
+    }
+
+    public var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(AlignTheme.studioGlassTint.opacity(tintOpacity))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(borderOpacity), Color.white.opacity(borderOpacity * 0.35)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 0.7
+                    )
+            )
+    }
 }
 
 // MARK: - Persistent App Photo Storage Service
