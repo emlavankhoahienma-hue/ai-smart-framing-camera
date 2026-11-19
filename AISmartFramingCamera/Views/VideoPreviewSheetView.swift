@@ -11,20 +11,17 @@ public struct VideoPreviewSheetView: View {
 
     @State private var player: AVPlayer?
     @State private var isProcessingVideo: Bool = false
+    @State private var exportProgress: Double = 0.0
+    @State private var processingTitle: String = "Đang xử lý video chất lượng gốc..."
     @State private var gradingSuccessNote: String? = nil
     @State private var exportErrorMessage: String? = nil
     @State private var hasSavedToPhotos: Bool = false
     @State private var processedVideoURL: URL? = nil
     @State private var isWindowedZoomAlreadyCropped: Bool = false
+    @State private var activeFrameStyle: VideoInfoFrameStyle = .off
 
-    private static let exportCIContext = CIContext(options: [
-        .useSoftwareRenderer: false,
-        .priorityRequestLow: false,
-        .cacheIntermediates: false
-    ])
-
-    private let champagne = Color(red: 0.92, green: 0.82, blue: 0.65)
-    private let darkBg = Color(red: 11/255, green: 11/255, blue: 12/255)
+    private let accent = AlignTheme.studioAccent
+    private let darkBg = AlignTheme.studioCanvas
 
     private var hasWindowedParams: Bool {
         if let focal = viewModel.lastRecordedVideoWindowedFocal {
@@ -35,46 +32,58 @@ public struct VideoPreviewSheetView: View {
         return viewModel.recordedVideoWindowedKeyframes.contains(where: { $0.focalLength > 24.1 || $0.aspectRatio != .ratio16_9 })
     }
 
+    private var shouldAutoApplyMasterFrame: Bool {
+        viewModel.isMasterWatermarkEnabled && viewModel.isVideoMasterFrameEnabled && !viewModel.isDualCameraActive
+    }
+
     public var body: some View {
         NavigationView {
             ZStack {
                 darkBg.edgesIgnoringSafeArea(.all)
 
                 VStack(spacing: 14) {
-                    // 1. Video Player (kèm lớp phủ báo tiến trình khi đang cắt Windowed Zoom)
+                    // 1. Video Player (kèm lớp phủ tiến trình % chất lượng gốc)
                     ZStack {
                         if let player = player {
                             VideoPlayer(player: player)
                                 .frame(maxHeight: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .stroke(AlignTheme.studioHairline, lineWidth: 0.7)
+                                )
                                 .onAppear {
                                     if !isProcessingVideo {
                                         player.play()
                                     }
                                 }
                         } else {
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(Color.white.opacity(0.04))
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(AlignTheme.studioSurface)
                                 .frame(maxHeight: .infinity)
                         }
 
                         if isProcessingVideo {
-                            RoundedRectangle(cornerRadius: 14)
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
                                 .fill(Color.black.opacity(0.62))
                             VStack(spacing: 10) {
                                 ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: champagne))
-                                    .scaleEffect(1.1)
-                                Text(hasWindowedParams && !isWindowedZoomAlreadyCropped ? "Đang cắt Windowed Zoom..." : "Đang xử lý video...")
+                                    .progressViewStyle(CircularProgressViewStyle(tint: accent))
+                                    .scaleEffect(1.05)
+
+                                Text(processingTitle)
                                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(AlignTheme.studioInkPrimary)
+
+                                if exportProgress > 0.01 {
+                                    Text("\(Int(round(exportProgress * 100)))% · Giữ nguyên độ phân giải & âm thanh gốc")
+                                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                        .foregroundColor(accent)
+                                }
                             }
                             .padding(.horizontal, 20)
-                            .padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(Color(white: 0.12).opacity(0.92))
-                            )
+                            .padding(.vertical, 15)
+                            .background(StudioGlassRoundedSurface(cornerRadius: 16, tintOpacity: 0.74, borderOpacity: 0.18))
                         }
                     }
                     .padding(.horizontal, 16)
@@ -83,56 +92,82 @@ public struct VideoPreviewSheetView: View {
                     if let err = exportErrorMessage {
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
+                                .foregroundColor(AlignTheme.studioRecordRed)
                             Text(err)
                                 .font(.caption.weight(.medium))
-                                .foregroundColor(.white.opacity(0.92))
+                                .foregroundColor(AlignTheme.studioInkPrimary)
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.orange.opacity(0.18)))
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(Capsule().fill(AlignTheme.studioRecordRed.opacity(0.16)))
                     } else if let note = gradingSuccessNote {
                         HStack(spacing: 6) {
                             Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(champagne)
+                                .foregroundColor(accent)
                             Text(note)
                                 .font(.caption.weight(.medium))
-                                .foregroundColor(.white.opacity(0.9))
+                                .foregroundColor(AlignTheme.studioInkPrimary)
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(StudioGlassCapsule(tintOpacity: 0.60, borderOpacity: 0.14))
                     }
 
-                    // 3. Khung Thông Tin Điện Ảnh (Video Cinema Info Frame Selector)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("KHUNG THÔNG TIN EXIF:")
-                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.55))
-                            .padding(.horizontal, 18)
+                    // 3. Khung Master & Khung Điện Ảnh Cho Video (Giữ Nguyên Chất Lượng Gốc)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("KHUNG MASTER & ĐIỆN ẢNH")
+                                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                .tracking(0.6)
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+                            Spacer()
+                            if activeFrameStyle == .masterFrame {
+                                Text(viewModel.masterWatermarkTheme == .white ? "Trắng Leica" : "Đen Studio")
+                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                    .foregroundColor(accent)
+                            }
+                        }
+                        .padding(.horizontal, 18)
 
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(VideoInfoFrameStyle.allCases) { style in
+                                    let isSelected = (activeFrameStyle == style)
                                     Button(action: {
-                                        viewModel.videoInfoFrameStyle = style
                                         viewModel.haptics.triggerSelectionChange()
-                                        processVideoExport(applyColorGrading: false, applyWindowCrop: hasWindowedParams && !isWindowedZoomAlreadyCropped)
-                                    }) {
-                                        HStack(spacing: 4) {
-                                            Image(systemName: style.icon)
-                                                .font(.system(size: 11))
-                                            Text(style.rawValue)
-                                                .font(.system(size: 11, weight: viewModel.videoInfoFrameStyle == style ? .bold : .medium))
+                                        activeFrameStyle = style
+                                        viewModel.videoInfoFrameStyle = style
+                                        if style == .off && !hasWindowedParams {
+                                            processedVideoURL = nil
+                                            gradingSuccessNote = "Đang phát video gốc nguyên bản"
+                                            player?.pause()
+                                            let origPlayer = AVPlayer(url: videoURL)
+                                            player = origPlayer
+                                            origPlayer.play()
+                                        } else {
+                                            processVideoExport(
+                                                applyColorGrading: false,
+                                                applyWindowCrop: hasWindowedParams && !isWindowedZoomAlreadyCropped,
+                                                frameStyle: style,
+                                                autoSave: true
+                                            )
                                         }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(viewModel.videoInfoFrameStyle == style ? AlignTheme.electricCyan.opacity(0.22) : Color.white.opacity(0.06))
-                                        .foregroundColor(viewModel.videoInfoFrameStyle == style ? AlignTheme.electricCyan : Color.white.opacity(0.80))
-                                        .cornerRadius(8)
+                                    }) {
+                                        HStack(spacing: 5) {
+                                            Image(systemName: style.icon)
+                                                .font(.system(size: 11, weight: .medium))
+                                            Text(style.rawValue)
+                                                .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium, design: .rounded))
+                                        }
+                                        .padding(.horizontal, 11)
+                                        .padding(.vertical, 7)
+                                        .background(isSelected ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
+                                        .foregroundColor(isSelected ? accent : AlignTheme.studioInkSecondary)
+                                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                                         .overlay(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .stroke(viewModel.videoInfoFrameStyle == style ? AlignTheme.electricCyan.opacity(0.6) : Color.clear, lineWidth: 1)
+                                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                                .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 0.9 : 0.65)
                                         )
                                     }
+                                    .buttonStyle(.plain)
                                     .disabled(isProcessingVideo)
                                 }
                             }
@@ -147,50 +182,53 @@ public struct VideoPreviewSheetView: View {
                             applyWindowedZoomCrop()
                         }) {
                             HStack(spacing: 6) {
-                                if isProcessingVideo {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .scaleEffect(0.8)
-                                } else {
-                                    Image(systemName: "viewfinder")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
-                                Text(isProcessingVideo ? "Đang xử lý…" : "Cắt Windowed Zoom (\(Int(focal))mm)")
+                                Image(systemName: "viewfinder")
                                     .font(.system(size: 13, weight: .semibold))
+                                Text("Cắt Windowed Zoom (\(Int(focal))mm)")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(AlignTheme.studioInkPrimary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
+                            .background(AlignTheme.studioElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(AlignTheme.studioHairline, lineWidth: 0.7)
+                            )
                         }
+                        .buttonStyle(.plain)
                         .disabled(isProcessingVideo)
                         .padding(.horizontal, 16)
                     }
 
                     // 5. Action Buttons: [Chỉnh màu], [Lưu], [Chia sẻ]
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         Button(action: {
-                            processVideoExport(applyColorGrading: true, applyWindowCrop: hasWindowedParams && !isWindowedZoomAlreadyCropped)
+                            processVideoExport(
+                                applyColorGrading: true,
+                                applyWindowCrop: hasWindowedParams && !isWindowedZoomAlreadyCropped,
+                                frameStyle: activeFrameStyle,
+                                autoSave: true
+                            )
                         }) {
                             HStack(spacing: 6) {
-                                if isProcessingVideo {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .scaleEffect(0.8)
-                                } else {
-                                    Image(systemName: "wand.and.stars")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
-                                Text(isProcessingVideo ? "Đang xử lý…" : "Chỉnh màu")
+                                Image(systemName: "camera.filters")
                                     .font(.system(size: 13, weight: .semibold))
+                                Text(isProcessingVideo ? "Đang xử lý…" : "Áp màu")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(AlignTheme.studioInkPrimary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
+                            .background(AlignTheme.studioElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(AlignTheme.studioHairline, lineWidth: 0.7)
+                            )
                         }
+                        .buttonStyle(.plain)
                         .disabled(isProcessingVideo)
 
                         Button(action: { saveVideoToPhotos() }) {
@@ -198,27 +236,33 @@ public struct VideoPreviewSheetView: View {
                                 Image(systemName: hasSavedToPhotos ? "checkmark" : "arrow.down")
                                     .font(.system(size: 13, weight: .semibold))
                                 Text(hasSavedToPhotos ? "Đã lưu" : "Lưu")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                             }
                             .foregroundColor(.black)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(champagne)
-                            .cornerRadius(10)
+                            .background(accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
+                        .buttonStyle(.plain)
+                        .disabled(isProcessingVideo)
 
                         ShareLink(item: processedVideoURL ?? videoURL) {
                             HStack(spacing: 6) {
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 13, weight: .semibold))
                                 Text("Chia sẻ")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                             }
-                            .foregroundColor(.white)
+                            .foregroundColor(AlignTheme.studioInkPrimary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.12))
-                            .cornerRadius(10)
+                            .background(AlignTheme.studioElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(AlignTheme.studioHairline, lineWidth: 0.7)
+                            )
                         }
                     }
                     .padding(.horizontal, 16)
@@ -231,11 +275,15 @@ public struct VideoPreviewSheetView: View {
                     player?.pause()
                     presentationMode.wrappedValue.dismiss()
                 }
-                .foregroundColor(champagne)
+                .foregroundColor(accent)
             )
             .onAppear {
+                let initialStyle: VideoInfoFrameStyle = shouldAutoApplyMasterFrame ? .masterFrame : viewModel.videoInfoFrameStyle
+                activeFrameStyle = initialStyle
                 if hasWindowedParams {
                     applyWindowedZoomCrop()
+                } else if initialStyle != .off {
+                    processVideoExport(applyColorGrading: false, applyWindowCrop: false, frameStyle: initialStyle, autoSave: true)
                 } else {
                     player = AVPlayer(url: videoURL)
                 }
@@ -244,6 +292,7 @@ public struct VideoPreviewSheetView: View {
                 player?.pause()
             }
         }
+        .preferredColorScheme(.dark)
     }
 
     private func applyWindowedZoomCrop() {
@@ -254,22 +303,41 @@ public struct VideoPreviewSheetView: View {
         guard !isWindowedZoomAlreadyCropped,
               (windowFocal > 24.1 || windowAspect != .ratio16_9 || viewModel.recordedVideoWindowedKeyframes.contains(where: { $0.focalLength > 24.1 || $0.aspectRatio != .ratio16_9 })) else { return }
         let shouldApplyWindowedCrop = !self.isWindowedZoomAlreadyCropped
-        processVideoExport(applyColorGrading: false, applyWindowCrop: shouldApplyWindowedCrop)
+        processVideoExport(
+            applyColorGrading: false,
+            applyWindowCrop: shouldApplyWindowedCrop,
+            frameStyle: activeFrameStyle,
+            autoSave: true
+        )
     }
 
-    // MARK: - Core Video Rendering Pipeline (Windowed Zoom Crop + Info Frame + Film LUT)
-    private func processVideoExport(applyColorGrading: Bool, applyWindowCrop: Bool) {
+    // MARK: - High-Fidelity Video Rendering Pipeline (AVAssetReader + AVAssetWriter + Audio Passthrough)
+    private func processVideoExport(
+        applyColorGrading: Bool,
+        applyWindowCrop: Bool,
+        frameStyle: VideoInfoFrameStyle,
+        autoSave: Bool
+    ) {
         guard !isProcessingVideo else { return }
         isProcessingVideo = true
+        exportProgress = 0.02
         exportErrorMessage = nil
         player?.pause()
 
-        let sourceURL = processedVideoURL ?? videoURL
-        let asset = AVURLAsset(url: sourceURL)
-        let filterPreset = viewModel.selectedFilmPreset
-        let aiColorParameters = viewModel.currentAIColorParams
+        if applyWindowCrop && frameStyle == .masterFrame {
+            processingTitle = "Đang cắt Windowed Zoom & ghép Khung Master..."
+        } else if applyWindowCrop {
+            processingTitle = "Đang cắt Windowed Zoom chất lượng gốc..."
+        } else if frameStyle == .masterFrame {
+            processingTitle = "Đang ghép Khung Master (giữ chất lượng gốc)..."
+        } else {
+            processingTitle = "Đang xuất video chất lượng gốc..."
+        }
+
+        // Luôn đọc từ videoURL gốc khi đổi khung để KHÔNG BAO GIỜ nén chồng nhiều thế hệ làm giảm chất lượng!
+        // Chỉ dùng processedVideoURL nếu video đã cắt Windowed Zoom trước đó và lần này không cắt lại.
+        let sourceURL = (isWindowedZoomAlreadyCropped && !applyWindowCrop) ? (processedVideoURL ?? videoURL) : videoURL
         let windowAspect = viewModel.lastRecordedVideoWindowedAspect ?? viewModel.recordedVideoWindowedKeyframes.last?.aspectRatio ?? viewModel.windowedZoomAspectRatio
-        let infoStyle = viewModel.videoInfoFrameStyle
         let deviceName = viewModel.masterWatermarkDeviceName.isEmpty ? "ALIGN STUDIO" : viewModel.masterWatermarkDeviceName
         let recordedKeyframes = viewModel.recordedVideoWindowedKeyframes
         let fallbackKeyframe = WindowedZoomKeyframe(
@@ -285,240 +353,70 @@ public struct VideoPreviewSheetView: View {
         let liveShutterText = "1/\(activeShutterReciprocal)s"
         let liveISOValue = max(25, Int(round(proControls.isAutoISO ? proControls.measuredLiveISO : proControls.currentISO)))
         let fallbackFPS = max(1, Int(round(viewModel.selectedVideoFormatOption.fps)))
-        let ciContext = Self.exportCIContext
 
-        // Đọc track video để xác định độ phân giải gốc và cấu hình AVMutableVideoComposition chuẩn renderSize + SDR Rec.709
+        let masterConfig = HighFidelityVideoExporter.MasterFrameConfig(
+            deviceName: deviceName,
+            theme: viewModel.masterWatermarkTheme,
+            logoStyle: viewModel.masterWatermarkLogoStyle,
+            customLogo: viewModel.masterWatermarkCustomLogoImage,
+            specs: viewModel.lastRecordedVideoSpecs,
+            videoTag: "\(viewModel.selectedVideoFormatOption.width >= 3840 ? "4K" : "1080p") · \(fallbackFPS)fps"
+        )
+
+        let options = HighFidelityVideoExporter.ExportOptions(
+            sourceURL: sourceURL,
+            preferredCodec: viewModel.selectedVideoCodec,
+            applyWindowCrop: applyWindowCrop,
+            windowAspect: windowAspect,
+            recordedKeyframes: recordedKeyframes,
+            fallbackKeyframe: fallbackKeyframe,
+            applyColorGrading: applyColorGrading,
+            filterPreset: viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset : .standard,
+            aiColorParams: viewModel.isAIFullColorEnabled ? viewModel.currentAIColorParams : nil,
+            infoFrameStyle: frameStyle,
+            masterFrameConfig: masterConfig,
+            liveAperture: liveAperture,
+            liveShutterText: liveShutterText,
+            liveISOValue: liveISOValue,
+            fallbackFPS: fallbackFPS
+        )
+
         Task {
-            guard let videoTrack = try? await asset.loadTracks(withMediaType: .video).first else {
-                await MainActor.run {
-                    self.isProcessingVideo = false
-                    self.exportErrorMessage = "Không đọc được track video gốc"
-                    if self.player == nil { self.player = AVPlayer(url: sourceURL) }
-                }
-                return
-            }
-
-            let naturalSize = (try? await videoTrack.load(.naturalSize)) ?? CGSize(width: 1080, height: 1920)
-            let preferredTransform = (try? await videoTrack.load(.preferredTransform)) ?? .identity
-            let nominalFPS = (try? await videoTrack.load(.nominalFrameRate)) ?? 0
-            let exportFPS: Int = nominalFPS > 0 ? max(1, Int(round(Double(nominalFPS)))) : fallbackFPS
-
-            // Kích thước hiển thị thực tế sau transform
-            let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
-            let effectiveSourceSize = CGSize(width: abs(transformedRect.width), height: abs(transformedRect.height))
-
-            // Tính toán kích thước Render chuẩn theo Aspect Ratio (chẵn 2px, không méo hình)
-            let targetRenderSize: CGSize
-            if applyWindowCrop {
-                targetRenderSize = Self.computeTargetRenderSize(sourceSize: effectiveSourceSize, aspect: windowAspect)
-            } else {
-                targetRenderSize = CGSize(
-                    width: max(2, CGFloat(Int(effectiveSourceSize.width) & ~1)),
-                    height: max(2, CGFloat(Int(effectiveSourceSize.height) & ~1))
-                )
-            }
-
-            let baseComposition: AVVideoComposition
             do {
-                baseComposition = try await AVVideoComposition.videoComposition(with: asset, applyingCIFiltersWithHandler: { request in
-                    let rawSource = request.sourceImage
-                    let origExtent = rawSource.extent
-                    guard origExtent.width > 1, origExtent.height > 1 else {
-                        request.finish(with: rawSource, context: ciContext)
-                        return
+                let finalURL = try await HighFidelityVideoExporter.export(options: options) { progress in
+                    Task { @MainActor in
+                        self.exportProgress = progress
                     }
+                }
 
-                    let source = rawSource.clampedToExtent()
-                    let frameTime = max(0.0, request.compositionTime.seconds.isFinite ? request.compositionTime.seconds : 0.0)
-
-                    var outputImage: CIImage
-
-                    // 1. Cắt Windowed Zoom mượt mà theo Hermite Keyframes
-                    if applyWindowCrop {
-                        let state = CameraViewModel.interpolateKeyframe(
-                            at: frameTime,
-                            keyframes: recordedKeyframes,
-                            fallback: fallbackKeyframe
-                        )
-                        let fractions = state.aspectRatio.windowFractions(
-                            focalLength: state.focalLength,
-                            baseOpticalZoom: state.baseOpticalZoom,
-                            containerAspect: origExtent.width / origExtent.height
-                        )
-
-                        let cropW = max(2.0, origExtent.width * fractions.widthFraction)
-                        let cropH = max(2.0, origExtent.height * fractions.heightFraction)
-                        let normCenter = state.normalizedCenter
-
-                        // Trục Y của CoreImage bắt đầu từ cạnh dưới
-                        let ciCenterX = origExtent.origin.x + origExtent.width * normCenter.x
-                        let ciCenterY = origExtent.origin.y + origExtent.height * (1.0 - normCenter.y)
-
-                        let minCIX = origExtent.origin.x + cropW / 2.0
-                        let maxCIX = origExtent.origin.x + origExtent.width - cropW / 2.0
-                        let minCIY = origExtent.origin.y + cropH / 2.0
-                        let maxCIY = origExtent.origin.y + origExtent.height - cropH / 2.0
-
-                        let cropX = max(minCIX, min(ciCenterX, maxCIX)) - cropW / 2.0
-                        let cropY = max(minCIY, min(ciCenterY, maxCIY)) - cropH / 2.0
-
-                        let cropped = source.cropped(to: CGRect(x: cropX, y: cropY, width: cropW, height: cropH))
-                        let translated = cropped.transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
-
-                        // Uniform Scale: Phóng to tỷ lệ đều cả 2 chiều, chống méo hình 100%
-                        let uniformScale = max(targetRenderSize.width / max(1.0, cropW), targetRenderSize.height / max(1.0, cropH))
-                        let scaled = translated.transformed(by: CGAffineTransform(scaleX: uniformScale, y: uniformScale))
-                        let offsetX = (targetRenderSize.width - cropW * uniformScale) / 2.0
-                        let offsetY = (targetRenderSize.height - cropH * uniformScale) / 2.0
-
-                        outputImage = scaled
-                            .transformed(by: CGAffineTransform(translationX: offsetX, y: offsetY))
-                            .cropped(to: CGRect(origin: .zero, size: targetRenderSize))
-
-                        if uniformScale > 1.02, let sharpen = CIFilter(name: "CISharpenLuminance") {
-                            sharpen.setValue(outputImage, forKey: kCIInputImageKey)
-                            sharpen.setValue(min(0.38, 0.16 + Float(uniformScale - 1.0) * 0.08), forKey: kCIInputSharpnessKey)
-                            if let sharpened = sharpen.outputImage {
-                                outputImage = sharpened.cropped(to: CGRect(origin: .zero, size: targetRenderSize))
-                            }
-                        }
-                    } else {
-                        outputImage = source
-                            .transformed(by: CGAffineTransform(translationX: -origExtent.origin.x, y: -origExtent.origin.y))
-                            .cropped(to: CGRect(origin: .zero, size: targetRenderSize))
-                    }
-
-                    // 2. Chỉnh màu Film Simulation hoặc AI Cinematic Recipe
-                    if applyColorGrading {
-                        if let filtered = FilmFilterEngine.shared.applyPreset(to: outputImage, preset: filterPreset) {
-                            outputImage = filtered.cropped(to: CGRect(origin: .zero, size: targetRenderSize))
-                        }
-                        if let aiParams = aiColorParameters,
-                           let aiFiltered = FilmFilterEngine.shared.applyAIColorParameters(to: outputImage, params: aiParams) {
-                            outputImage = aiFiltered.cropped(to: CGRect(origin: .zero, size: targetRenderSize))
-                        }
-                    }
-
-                    // 3. Ghép Khung Thông Tin Điện Ảnh (Video Info Frame) nếu bật
-                    if infoStyle != .off {
-                        let totalFrames = Int(frameTime * Double(exportFPS))
-                        let tcSec = Int(frameTime) % 60
-                        let tcMin = (Int(frameTime) / 60) % 60
-                        let tcHour = Int(frameTime) / 3600
-                        let subFrame = totalFrames % exportFPS
-                        let timecode = String(format: "%02d:%02d:%02d:%02d", tcHour, tcMin, tcSec, subFrame)
-
-                        let currentFocal = applyWindowCrop ? Int(CameraViewModel.interpolateKeyframe(
-                            at: frameTime,
-                            keyframes: recordedKeyframes,
-                            fallback: fallbackKeyframe
-                        ).focalLength) : 24
-                        let metadata = VideoFrameMetadata(
-                            deviceName: deviceName,
-                            lensDescription: "\(currentFocal)mm OPTICAL",
-                            focalLengthMM: currentFocal,
-                            aperture: liveAperture,
-                            shutterSpeed: liveShutterText,
-                            iso: liveISOValue,
-                            fps: exportFPS,
-                            resolutionTag: "\(Int(targetRenderSize.width))x\(Int(targetRenderSize.height))",
-                            lutName: filterPreset.rawValue.uppercased(),
-                            dateString: "",
-                            timecode: timecode
-                        )
-
-                        outputImage = VideoInfoFrameCompositor.shared.composite(
-                            frame: outputImage,
-                            metadata: metadata,
-                            style: infoStyle
-                        )
-                    }
-
-                    request.finish(with: outputImage, context: ciContext)
-                })
-            } catch {
-                CameraLogger.error("Khởi tạo VideoComposition thất bại: \(error.localizedDescription)", category: .photoKit)
                 await MainActor.run {
                     self.isProcessingVideo = false
-                    self.exportErrorMessage = "Lỗi khởi tạo xử lý video: \(error.localizedDescription)"
-                    if self.player == nil { self.player = AVPlayer(url: sourceURL) }
-                }
-                return
-            }
-
-            // QUAN TRỌNG: Thiết lập renderSize đích & không gian màu Rec.709 cho CoreImage để
-            // xuất 1:1 / 3:4 / 16:9 và video HDR 10-bit HEVC thành công 100% trên mọi iPhone!
-            let finalComposition: AVVideoComposition
-            if let mutable = baseComposition.mutableCopy() as? AVMutableVideoComposition {
-                mutable.renderSize = targetRenderSize
-                mutable.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, exportFPS)))
-                mutable.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
-                mutable.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
-                mutable.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
-                finalComposition = mutable
-            } else {
-                finalComposition = baseComposition
-            }
-
-            let presetAttempts: [(preset: String, fileType: AVFileType, ext: String)] = [
-                (AVAssetExportPresetHighestQuality, .mov, "mov"),
-                (AVAssetExportPreset1920x1080, .mp4, "mp4")
-            ]
-
-            var exportedURL: URL? = nil
-            var lastError: Error? = nil
-
-            for attempt in presetAttempts {
-                let tempURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("exported_\(UUID().uuidString).\(attempt.ext)")
-                if FileManager.default.fileExists(atPath: tempURL.path) {
-                    try? FileManager.default.removeItem(at: tempURL)
-                }
-
-                guard let exportSession = AVAssetExportSession(asset: asset, presetName: attempt.preset) else {
-                    continue
-                }
-                exportSession.videoComposition = finalComposition
-                exportSession.outputURL = tempURL
-                exportSession.outputFileType = attempt.fileType
-                exportSession.shouldOptimizeForNetworkUse = true
-
-                await exportSession.export()
-
-                if exportSession.status == .completed {
-                    exportedURL = tempURL
-                    break
-                } else {
-                    lastError = exportSession.error
-                    CameraLogger.warning(
-                        "VideoPreviewSheetView: Xuất với \(attempt.preset) thất bại (\(String(describing: exportSession.error))), thử cấu hình dự phòng...",
-                        category: .photoKit
-                    )
-                    try? FileManager.default.removeItem(at: tempURL)
-                }
-            }
-
-            await MainActor.run {
-                self.isProcessingVideo = false
-                if let finalURL = exportedURL {
+                    self.exportProgress = 1.0
                     if applyWindowCrop {
                         self.isWindowedZoomAlreadyCropped = true
                     }
                     self.processedVideoURL = finalURL
                     var notes: [String] = []
-                    if applyWindowCrop { notes.append("Cắt Windowed Zoom (\(windowAspect.rawValue))") }
-                    if applyColorGrading { notes.append("Màu Film \(filterPreset.displayName)") }
-                    if infoStyle != .off { notes.append(infoStyle.rawValue) }
-                    self.gradingSuccessNote = "Đã xuất: " + notes.joined(separator: " • ")
+                    if applyWindowCrop { notes.append("Windowed \(windowAspect.rawValue)") }
+                    if applyColorGrading && viewModel.selectedFilmPreset != .standard { notes.append(viewModel.selectedFilmPreset.displayName) }
+                    if frameStyle != .off { notes.append(frameStyle.rawValue) }
+                    notes.append("Chất lượng gốc")
+                    self.gradingSuccessNote = "Đã xuất: " + notes.joined(separator: " · ")
+
                     self.player?.pause()
                     let newPlayer = AVPlayer(url: finalURL)
                     self.player = newPlayer
                     newPlayer.play()
-                    self.saveVideoToPhotos(url: finalURL)
-                } else {
-                    let msg = lastError?.localizedDescription ?? "Không thể xuất video"
-                    CameraLogger.error("Xử lý video thất bại: \(msg)", category: .photoKit)
-                    self.exportErrorMessage = "Xuất video thất bại: \(msg)"
+                    if autoSave {
+                        self.saveVideoToPhotos(url: finalURL)
+                    }
+                }
+            } catch {
+                CameraLogger.error("HighFidelityVideoExporter thất bại: \(error.localizedDescription)", category: .photoKit)
+                await MainActor.run {
+                    self.isProcessingVideo = false
+                    self.exportProgress = 0
+                    self.exportErrorMessage = "Xuất video thất bại: \(error.localizedDescription)"
                     if self.player == nil {
                         let fallbackPlayer = AVPlayer(url: sourceURL)
                         self.player = fallbackPlayer
@@ -529,73 +427,11 @@ public struct VideoPreviewSheetView: View {
         }
     }
 
-    nonisolated private static func computeTargetRenderSize(sourceSize: CGSize, aspect: WindowedZoomAspectRatio) -> CGSize {
-        let origW = sourceSize.width
-        let origH = sourceSize.height
-        let isPortrait = origW <= origH
-
-        let targetW: CGFloat
-        let targetH: CGFloat
-        switch aspect {
-        case .ratio1_1:
-            let side = min(origW, origH)
-            targetW = side
-            targetH = side
-        case .ratio3_4:
-            if isPortrait {
-                let h = origH
-                let w = round(h * 3.0 / 4.0)
-                if w <= origW {
-                    targetW = w
-                    targetH = h
-                } else {
-                    targetW = origW
-                    targetH = round(origW * 4.0 / 3.0)
-                }
-            } else {
-                let w = origW
-                let h = round(w * 3.0 / 4.0)
-                if h <= origH {
-                    targetW = w
-                    targetH = h
-                } else {
-                    targetH = origH
-                    targetW = round(origH * 4.0 / 3.0)
-                }
-            }
-        case .ratio16_9:
-            if isPortrait {
-                let h = origH
-                let w = round(h * 9.0 / 16.0)
-                if w <= origW {
-                    targetW = w
-                    targetH = h
-                } else {
-                    targetW = origW
-                    targetH = round(origW * 16.0 / 9.0)
-                }
-            } else {
-                let w = origW
-                let h = round(w * 9.0 / 16.0)
-                if h <= origH {
-                    targetW = w
-                    targetH = h
-                } else {
-                    targetH = origH
-                    targetW = round(origH * 16.0 / 9.0)
-                }
-            }
-        }
-        let evenW = CGFloat(Int(targetW) & ~1)
-        let evenH = CGFloat(Int(targetH) & ~1)
-        return CGSize(width: max(2, evenW), height: max(2, evenH))
-    }
-
     private func saveVideoToPhotos(url: URL? = nil) {
         let targetURL = url ?? processedVideoURL ?? videoURL
         PHPhotoLibrary.shared().performChanges({
             PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: targetURL)
-        }) { success, error in
+        }) { success, _ in
             DispatchQueue.main.async {
                 if success {
                     self.hasSavedToPhotos = true

@@ -218,30 +218,10 @@ struct MainCaptureButton: View {
         .frame(width: 160, height: 80)
     }
 
-    // MARK: - Video Record Control
+    // MARK: - Video Record Control (Clean Tactile Record/Stop — Đã gỡ bỏ Đạo diễn AI Video)
     private var videoRecordControl: some View {
-        ZStack {
-            // 1. Sliding Track Slot
-            if isDraggingToAI {
-                Capsule()
-                    .fill(Color.black.opacity(0.65))
-                    .frame(width: 76, height: 46)
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.20), lineWidth: 1.0)
-                    )
-                    .offset(x: -30)
-                    .opacity(trackOpacity)
-                    .animation(.easeOut(duration: 0.15), value: dragOffset)
-            }
-
-            // 2. AI Video Director Left Dock Target
-            aiVideoDirectorDockTarget
-
-            // 3. Central Minimalist Video Shutter
-            minimalistVideoShutter
-        }
-        .frame(width: 160, height: 80)
+        minimalistVideoShutter
+            .frame(width: 80, height: 80)
     }
 
     // MARK: - Machined Tactile Photo Shutter (Crisp Outer Ring & Subtle Ivory Core)
@@ -280,46 +260,39 @@ struct MainCaptureButton: View {
 
     // MARK: - Machined Tactile Video Shutter (Crisp Outer Ring & Matte Crimson Core)
     private var minimalistVideoShutter: some View {
-        ZStack {
-            Circle()
-                .stroke(viewModel.isAIVideoDirectorActive ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary, lineWidth: 2.6)
-                .frame(width: 74, height: 74)
-
-            if viewModel.isRecordingVideo {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(AlignTheme.studioRecordRed)
-                    .frame(width: 26, height: 26)
-                    .offset(x: dragOffset)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.74), value: viewModel.isRecordingVideo)
-            } else {
+        Button(action: {
+            viewModel.toggleVideoRecording()
+        }) {
+            ZStack {
                 Circle()
-                    .fill(AlignTheme.studioRecordRed)
-                    .frame(width: 60, height: 60)
-                    .offset(x: dragOffset)
-                    .scaleEffect(isTouchingShutter ? 0.91 : 1.0)
-            }
+                    .stroke(AlignTheme.studioInkPrimary, lineWidth: 2.6)
+                    .frame(width: 74, height: 74)
 
-            if viewModel.isAIVideoDirectorAnalyzing {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .scaleEffect(0.92)
-                    .offset(x: dragOffset)
+                if viewModel.isRecordingVideo {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(AlignTheme.studioRecordRed)
+                        .frame(width: 26, height: 26)
+                        .animation(.spring(response: 0.25, dampingFraction: 0.74), value: viewModel.isRecordingVideo)
+                } else {
+                    Circle()
+                        .fill(AlignTheme.studioRecordRed)
+                        .frame(width: 60, height: 60)
+                }
             }
+            .contentShape(Circle())
         }
-        .contentShape(Circle())
-        .animation(.spring(response: 0.22, dampingFraction: 0.72), value: isTouchingShutter)
-        .gesture(dragAndTapGesture(isForVideo: true))
-        .accessibilityLabel("Nút quay video: Chạm để quay hoặc dừng, giữ kéo sang trái để AI Đạo diễn")
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("Nút quay video: Chạm để bắt đầu hoặc dừng quay")
     }
 
-    // MARK: - Gesture Handler (Tap & Drag to AI Dock)
+    // MARK: - Gesture Handler (Tap & Drag to AI Dock for Photo Mode)
     private func dragAndTapGesture(isForVideo: Bool) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 let transX = value.translation.width
                 isTouchingShutter = true
 
-                if transX < -6 {
+                if !isForVideo && transX < -6 && viewModel.featureAvailability(.aiComposition).isAvailable {
                     isDraggingToAI = true
                     if transX < -56 {
                         dragOffset = -56 + (transX + 56) * 0.25
@@ -351,18 +324,12 @@ struct MainCaptureButton: View {
                 let transY = value.translation.height
                 let didReachDock = hasReachedDock || dragOffset <= -42
 
-                if didReachDock {
+                if didReachDock && !isForVideo {
                     let generator = UIImpactFeedbackGenerator(style: .heavy)
                     generator.prepare()
                     generator.impactOccurred()
 
-                    if isForVideo {
-                        if viewModel.isAIVideoDirectorActive {
-                            viewModel.dismissAIVideoDirector()
-                        } else {
-                            viewModel.requestAIVideoCinematographyGuidance()
-                        }
-                    } else {
+                    viewModel.attemptFeature(.aiComposition) {
                         if viewModel.aiSessionState.isSessionActive {
                             viewModel.cancelAISession()
                         } else {
@@ -375,7 +342,7 @@ struct MainCaptureButton: View {
                         viewModel.toggleVideoRecording()
                     } else {
                         if viewModel.aiSessionState != .capturing {
-                            if viewModel.isUltraSharpEnabled && viewModel.captureMode == .photo {
+                            if viewModel.isUltraSharpEnabled && viewModel.captureMode == .photo && viewModel.featureAvailability(.ultraSharp).isAvailable {
                                 viewModel.performUltraSharpPhotoCapture()
                             } else {
                                 viewModel.takePhotoManual()
@@ -449,33 +416,6 @@ struct MainCaptureButton: View {
             Spacer()
         }
     }
-
-    // MARK: - AI Video Director Left Dock Target (Smoked Glass)
-    private var aiVideoDirectorDockTarget: some View {
-        HStack {
-            ZStack {
-                Circle()
-                    .fill(AlignTheme.studioSurface)
-                    .frame(width: 44, height: 44)
-
-                Circle()
-                    .stroke(hasReachedDock || viewModel.isAIVideoDirectorActive ? AlignTheme.studioAccent : Color.white.opacity(0.22), lineWidth: hasReachedDock ? 1.5 : 0.8)
-                    .frame(width: 44, height: 44)
-
-                Image(systemName: "video")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(hasReachedDock || viewModel.isAIVideoDirectorActive ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
-                    .scaleEffect(hasReachedDock ? 1.12 : 1.0)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.72), value: hasReachedDock)
-            }
-            .offset(x: -56)
-            .scaleEffect(dockScale)
-            .opacity(dockOpacity)
-            .animation(.easeOut(duration: 0.15), value: isDraggingToAI)
-
-            Spacer()
-        }
-    }
 }
 
 // MARK: - Gallery Thumbnail Button (Balanced Left Deck Item)
@@ -527,21 +467,23 @@ struct GalleryThumbnailButton: View {
     }
 }
 
-// MARK: - Camera Flip Button (Balanced Right Deck Item with 180° Spin)
+// MARK: - Camera Flip Button (Balanced Right Deck Item with 180° Spin & Capability Gating)
 struct CameraFlipButton: View {
     @ObservedObject var viewModel: CameraViewModel
     @State private var flipDegrees: Double = 0
 
     var body: some View {
+        let availability = viewModel.featureAvailability(.cameraFlip)
         Button(action: {
-            guard viewModel.canSwitchCamera else { return }
-            viewModel.switchCamera { didSwitch in
-                guard didSwitch else { return }
-                let haptic = UISelectionFeedbackGenerator()
-                haptic.prepare()
-                haptic.selectionChanged()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
-                    flipDegrees += 180
+            viewModel.attemptFeature(.cameraFlip) {
+                viewModel.switchCamera { didSwitch in
+                    guard didSwitch else { return }
+                    let haptic = UISelectionFeedbackGenerator()
+                    haptic.prepare()
+                    haptic.selectionChanged()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.72)) {
+                        flipDegrees += 180
+                    }
                 }
             }
         }) {
@@ -560,31 +502,27 @@ struct CameraFlipButton: View {
                     .rotationEffect(.degrees(flipDegrees))
             }
             .frame(width: 50, height: 50)
+            .opacity(availability.isAvailable ? 1.0 : 0.36)
             .contentShape(Circle())
         }
         .buttonStyle(PlainButtonStyle())
-        .disabled(!viewModel.canSwitchCamera)
         .accessibilityLabel("Đổi camera trước và sau")
     }
 }
 
-// MARK: - AI Viewfinder Button (Unified Monochrome Smoked Surface, Symmetric with Film Button)
+// MARK: - AI Viewfinder Button (Photo-Only Capability Gated — Đã gỡ Đạo diễn AI Video)
 struct AIViewfinderButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
     var body: some View {
-        Button(action: {
-            let haptic = UIImpactFeedbackGenerator(style: .medium)
-            haptic.prepare()
-            haptic.impactOccurred()
+        let availability = viewModel.featureAvailability(.aiComposition)
+        let activeHighlight = availability.isAvailable && isPulsing
 
-            if viewModel.captureMode.isVideo {
-                if viewModel.isAIVideoDirectorActive {
-                    viewModel.dismissAIVideoDirector()
-                } else {
-                    viewModel.requestAIVideoCinematographyGuidance()
-                }
-            } else {
+        Button(action: {
+            viewModel.attemptFeature(.aiComposition) {
+                let haptic = UIImpactFeedbackGenerator(style: .medium)
+                haptic.prepare()
+                haptic.impactOccurred()
                 if viewModel.aiSessionState.isSessionActive {
                     viewModel.cancelAISession()
                 } else {
@@ -594,11 +532,11 @@ struct AIViewfinderButton: View {
         }) {
             ZStack {
                 Circle()
-                    .fill(isPulsing ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
+                    .fill(activeHighlight ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
                     .frame(width: 38, height: 38)
                     .overlay(
                         Circle()
-                            .stroke(isPulsing ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline, lineWidth: isPulsing ? 0.9 : 0.65)
+                            .stroke(activeHighlight ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline, lineWidth: activeHighlight ? 0.9 : 0.65)
                     )
 
                 if let uiImage = UIImage(named: "nutAI") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nutAI", ofType: "png") ?? "") {
@@ -607,33 +545,31 @@ struct AIViewfinderButton: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 22, height: 22)
-                        .foregroundColor(isPulsing ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
+                        .foregroundColor(activeHighlight ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
                 } else if let altImage = UIImage(named: "nuticonbocuc") ?? UIImage(contentsOfFile: Bundle.main.path(forResource: "nuticonbocuc", ofType: "png") ?? "") {
                     Image(uiImage: altImage)
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 22, height: 22)
-                        .foregroundColor(isPulsing ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
+                        .foregroundColor(activeHighlight ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
                 } else {
                     Image(systemName: "viewfinder")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(isPulsing ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
+                        .foregroundColor(activeHighlight ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
                 }
             }
             .frame(width: 44, height: 44)
-            .scaleEffect(isPulsing ? 1.04 : 1.0)
-            .animation(.spring(response: 0.30, dampingFraction: 0.72), value: isPulsing)
+            .opacity(availability.isAvailable ? 1.0 : 0.34)
+            .scaleEffect(activeHighlight ? 1.04 : 1.0)
+            .animation(.spring(response: 0.30, dampingFraction: 0.72), value: activeHighlight)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
-        .accessibilityLabel(viewModel.captureMode.isVideo ? "AI Đạo diễn video" : "Nút AI Bố cục")
+        .accessibilityLabel(availability.isAvailable ? "Nút AI Bố cục" : (availability.detailReason ?? "AI Bố cục đang khóa"))
     }
 
     private var isPulsing: Bool {
-        if viewModel.captureMode.isVideo {
-            return viewModel.isAIVideoDirectorActive
-        }
         switch viewModel.aiSessionState {
         case .analyzing, .targetPlaced, .alignmentPerfect:
             return true
@@ -643,7 +579,7 @@ struct AIViewfinderButton: View {
     }
 }
 
-// MARK: - Selected Camera Mini Badge Button (Symmetric Smoked Surface Matching AI Button)
+// MARK: - Selected Camera Mini Badge Button (Symmetric Smoked Surface + Capability Gating)
 public struct SelectedCameraBadgeButton: View {
     @ObservedObject var viewModel: CameraViewModel
 
@@ -656,26 +592,32 @@ public struct SelectedCameraBadgeButton: View {
     }
 
     public var body: some View {
+        let availability = viewModel.featureAvailability(.filmColor)
+        let activeHighlight = availability.isAvailable && isHighlighted
+
         Button(action: {
-            HapticFeedbackService.shared.triggerSelectionChange()
-            withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
-                viewModel.isShowingFilmDrawer.toggle()
+            viewModel.attemptFeature(.filmColor) {
+                HapticFeedbackService.shared.triggerSelectionChange()
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
+                    viewModel.isShowingFilmDrawer.toggle()
+                }
             }
         }) {
             ZStack {
                 Circle()
-                    .fill(isHighlighted ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
+                    .fill(activeHighlight ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
                     .frame(width: 38, height: 38)
                     .overlay(
                         Circle()
-                            .stroke(isHighlighted ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline, lineWidth: isHighlighted ? 0.9 : 0.65)
+                            .stroke(activeHighlight ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline, lineWidth: activeHighlight ? 0.9 : 0.65)
                     )
 
                 Image(systemName: "camera.filters")
                     .font(.system(size: 15.5, weight: .medium))
-                    .foregroundColor(isHighlighted ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
+                    .foregroundColor(activeHighlight ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
             }
             .frame(width: 44, height: 44)
+            .opacity(availability.isAvailable ? 1.0 : 0.34)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -893,7 +835,11 @@ public struct FilmPresetDrawer: View {
     private var headerBar: some View {
         HStack(spacing: 8) {
             Button(action: {
-                viewModel.toggleFilmSimulation()
+                if viewModel.isFilmSimulationActive {
+                    viewModel.resetToNaturalColor()
+                } else {
+                    viewModel.enableFilmSimulation(preset: viewModel.selectedFilmCategory.presets.first)
+                }
             }) {
                 HStack(spacing: 4.5) {
                     Circle()

@@ -107,7 +107,7 @@ public final class MasterWatermarkRenderer: @unchecked Sendable {
         let imgH = CGFloat(image.height)
         guard imgW > 0, imgH > 0 else { return image }
 
-        let barHeight = round(max(imgW, imgH) * 0.088)
+        let barHeight = Self.recommendedFooterHeight(width: imgW, height: imgH)
         let canvasSize = CGSize(width: imgW, height: imgH + barHeight)
 
         let format = UIGraphicsImageRendererFormat()
@@ -121,75 +121,149 @@ public final class MasterWatermarkRenderer: @unchecked Sendable {
             // 1. Vẽ ảnh gốc giữ nguyên 100% độ sắc nét pixel
             UIImage(cgImage: image).draw(in: CGRect(x: 0, y: 0, width: imgW, height: imgH))
 
-            // 2. Vẽ dải nền khung bên dưới (Footer Bar)
+            // 2. Vẽ dải Khung Master phía dưới (dùng chung 100% cho cả Ảnh & Video)
             let barRect = CGRect(x: 0, y: imgH, width: imgW, height: barHeight)
-            theme.backgroundColor.setFill()
-            cgContext.fill(barRect)
-
-            let hPadding = imgW * 0.055
-
-            // 3. Bên Trái: Tên Thiết Bị / Thương Hiệu (Geometric Bold Tracking)
-            let deviceFontSize = round(barHeight * 0.24)
-            let deviceFont = UIFont.systemFont(ofSize: deviceFontSize, weight: .bold)
-            let deviceAttrs: [NSAttributedString.Key: Any] = [
-                .font: deviceFont,
-                .foregroundColor: theme.textColor,
-                .kern: NSNumber(value: Float(deviceFontSize * 0.08))
-            ]
-            let displayName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "ALIGN STUDIO ULTRA"
-                : deviceName.uppercased()
-            let deviceAttrString = NSAttributedString(string: displayName, attributes: deviceAttrs)
-            let deviceSize = deviceAttrString.size()
-            let deviceY = imgH + (barHeight - deviceSize.height) / 2.0
-            deviceAttrString.draw(at: CGPoint(x: hPadding, y: deviceY))
-
-            // 4. Cụm Bên Phải: [Logo Badge]  |  [EXIF Specs] (hoặc chỉ [EXIF Specs] nếu .none)
-            let specFontSize = round(barHeight * 0.20)
-            let specFont = UIFont.monospacedDigitSystemFont(ofSize: specFontSize, weight: .semibold)
-            let specAttrs: [NSAttributedString.Key: Any] = [
-                .font: specFont,
-                .foregroundColor: theme.textColor,
-                .kern: NSNumber(value: Float(specFontSize * 0.04))
-            ]
-            let specString = "\(specs.focalLength)  \(specs.aperture)  \(specs.shutterSpeed)  \(specs.iso)"
-            let specAttrString = NSAttributedString(string: specString, attributes: specAttrs)
-            let specSize = specAttrString.size()
-
-            if logoStyle == .none {
-                // Chỉ hiển thị thông số EXIF, không vẽ Logo và đường phân cách
-                let specX = imgW - hPadding - specSize.width
-                let specY = imgH + (barHeight - specSize.height) / 2.0
-                specAttrString.draw(at: CGPoint(x: specX, y: specY))
-            } else {
-                let dividerHeight = round(barHeight * 0.42)
-                let dividerWidth = max(1.5, round(barHeight * 0.015))
-                let dividerSpacing = round(barHeight * 0.16)
-                let logoDiameter = round(barHeight * 0.46)
-
-                let rightClusterWidth = logoDiameter + dividerSpacing + dividerWidth + dividerSpacing + specSize.width
-                let rightClusterStartX = imgW - hPadding - rightClusterWidth
-
-                // 4a. Vẽ Logo Badge
-                let logoX = rightClusterStartX
-                let logoY = imgH + (barHeight - logoDiameter) / 2.0
-                let logoRect = CGRect(x: logoX, y: logoY, width: logoDiameter, height: logoDiameter)
-                Self.drawLogoBadge(in: logoRect, context: cgContext, style: logoStyle, theme: theme, customImage: customLogo)
-
-                // 4b. Vẽ Đường Phân Cách Dọc
-                let dividerX = logoX + logoDiameter + dividerSpacing
-                let dividerY = imgH + (barHeight - dividerHeight) / 2.0
-                theme.dividerColor.setFill()
-                cgContext.fill(CGRect(x: dividerX, y: dividerY, width: dividerWidth, height: dividerHeight))
-
-                // 4c. Vẽ Thông Số EXIF
-                let specX = dividerX + dividerWidth + dividerSpacing
-                let specY = imgH + (barHeight - specSize.height) / 2.0
-                specAttrString.draw(at: CGPoint(x: specX, y: specY))
-            }
+            Self.drawFooterBar(
+                in: barRect,
+                context: cgContext,
+                deviceName: deviceName,
+                theme: theme,
+                logoStyle: logoStyle,
+                customLogo: customLogo,
+                specs: specs,
+                videoTag: nil
+            )
         }
 
         return renderedImage.cgImage
+    }
+
+    /// Chiều cao chuẩn (số chẵn 2px để tương thích tuyệt đối VideoToolbox HEVC/H.264)
+    public static func recommendedFooterHeight(width: CGFloat, height: CGFloat) -> CGFloat {
+        let raw = max(64.0, round(max(width, height) * 0.088))
+        let even = CGFloat(Int(raw) & ~1)
+        return max(64.0, even)
+    }
+
+    /// Render sẵn 1 ảnh Footer Bar tách biệt cho Video (chỉ render 1 lần rồi ghép GPU lên mọi frame 0% cắt xén)
+    public func renderFooterBarImage(
+        width: CGFloat,
+        barHeight: CGFloat,
+        deviceName: String = "ALIGN STUDIO ULTRA",
+        theme: WatermarkTheme = .white,
+        logoStyle: WatermarkLogoStyle = .alignStudio,
+        customLogo: UIImage? = nil,
+        specs: PhotoWatermarkSpecs,
+        videoTag: String? = nil
+    ) -> CGImage? {
+        let w = max(2.0, CGFloat(Int(round(width)) & ~1))
+        let h = max(2.0, CGFloat(Int(round(barHeight)) & ~1))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format)
+        let img = renderer.image { ctx in
+            Self.drawFooterBar(
+                in: CGRect(x: 0, y: 0, width: w, height: h),
+                context: ctx.cgContext,
+                deviceName: deviceName,
+                theme: theme,
+                logoStyle: logoStyle,
+                customLogo: customLogo,
+                specs: specs,
+                videoTag: videoTag
+            )
+        }
+        return img.cgImage
+    }
+
+    private static func drawFooterBar(
+        in barRect: CGRect,
+        context cgContext: CGContext,
+        deviceName: String,
+        theme: WatermarkTheme,
+        logoStyle: WatermarkLogoStyle,
+        customLogo: UIImage?,
+        specs: PhotoWatermarkSpecs,
+        videoTag: String?
+    ) {
+        let imgW = barRect.width
+        let barHeight = barRect.height
+        let originY = barRect.minY
+
+        theme.backgroundColor.setFill()
+        cgContext.fill(barRect)
+
+        // Đường hairline mảnh ngăn cách phần hình và dải Master trên nền đen Studio
+        if theme == .black {
+            cgContext.setFillColor(UIColor(white: 1.0, alpha: 0.08).cgColor)
+            cgContext.fill(CGRect(x: 0, y: originY, width: imgW, height: max(1.0, round(barHeight * 0.01))))
+        }
+
+        let hPadding = imgW * 0.055
+
+        // Bên Trái: Tên Thiết Bị / Thương Hiệu (tự co cỡ chữ nếu khung dọc 9:16 hẹp)
+        let aspectScale = min(1.0, max(0.68, imgW / max(1.0, barHeight * 8.2)))
+        let deviceFontSize = round(barHeight * 0.24 * aspectScale)
+        let deviceFont = UIFont.systemFont(ofSize: deviceFontSize, weight: .bold)
+        let deviceAttrs: [NSAttributedString.Key: Any] = [
+            .font: deviceFont,
+            .foregroundColor: theme.textColor,
+            .kern: NSNumber(value: Float(deviceFontSize * 0.07))
+        ]
+        let displayName = deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "ALIGN STUDIO ULTRA"
+            : deviceName.uppercased()
+        let deviceAttrString = NSAttributedString(string: displayName, attributes: deviceAttrs)
+        let deviceSize = deviceAttrString.size()
+        let deviceY = originY + (barHeight - deviceSize.height) / 2.0
+        deviceAttrString.draw(at: CGPoint(x: hPadding, y: deviceY))
+
+        // Cụm Bên Phải: [Logo Badge] | [Thông số quang học (+ 4K·60fps cho Video)]
+        let specFontSize = round(barHeight * 0.195 * aspectScale)
+        let specFont = UIFont.monospacedDigitSystemFont(ofSize: specFontSize, weight: .semibold)
+        let specAttrs: [NSAttributedString.Key: Any] = [
+            .font: specFont,
+            .foregroundColor: theme.textColor,
+            .kern: NSNumber(value: Float(specFontSize * 0.03))
+        ]
+        let specString: String
+        if let vTag = videoTag, !vTag.isEmpty {
+            specString = "\(specs.focalLength)  \(specs.aperture)  \(vTag)  \(specs.iso)"
+        } else {
+            specString = "\(specs.focalLength)  \(specs.aperture)  \(specs.shutterSpeed)  \(specs.iso)"
+        }
+        let specAttrString = NSAttributedString(string: specString, attributes: specAttrs)
+        let specSize = specAttrString.size()
+
+        if logoStyle == .none {
+            let specX = imgW - hPadding - specSize.width
+            let specY = originY + (barHeight - specSize.height) / 2.0
+            specAttrString.draw(at: CGPoint(x: specX, y: specY))
+        } else {
+            let dividerHeight = round(barHeight * 0.42 * aspectScale)
+            let dividerWidth = max(1.5, round(barHeight * 0.014))
+            let dividerSpacing = round(barHeight * 0.13 * aspectScale)
+            let logoDiameter = round(barHeight * 0.44 * aspectScale)
+
+            let rightClusterWidth = logoDiameter + dividerSpacing + dividerWidth + dividerSpacing + specSize.width
+            let rightClusterStartX = imgW - hPadding - rightClusterWidth
+
+            let logoX = rightClusterStartX
+            let logoY = originY + (barHeight - logoDiameter) / 2.0
+            let logoRect = CGRect(x: logoX, y: logoY, width: logoDiameter, height: logoDiameter)
+            Self.drawLogoBadge(in: logoRect, context: cgContext, style: logoStyle, theme: theme, customImage: customLogo)
+
+            let dividerX = logoX + logoDiameter + dividerSpacing
+            let dividerY = originY + (barHeight - dividerHeight) / 2.0
+            theme.dividerColor.setFill()
+            cgContext.fill(CGRect(x: dividerX, y: dividerY, width: dividerWidth, height: dividerHeight))
+
+            let specX = dividerX + dividerWidth + dividerSpacing
+            let specY = originY + (barHeight - specSize.height) / 2.0
+            specAttrString.draw(at: CGPoint(x: specX, y: specY))
+        }
     }
 
     private static func drawLogoBadge(in rect: CGRect, context: CGContext, style: WatermarkLogoStyle, theme: WatermarkTheme, customImage: UIImage?) {

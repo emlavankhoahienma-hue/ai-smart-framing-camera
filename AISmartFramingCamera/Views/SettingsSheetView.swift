@@ -520,42 +520,6 @@ public struct SettingsActionRow: View {
     }
 }
 
-// MARK: - Film Preset Pill Component
-struct FilmPresetPill: View {
-    let preset: FilmPreset
-    let isSelected: Bool
-    let onSelect: () -> Void
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 6) {
-                if preset.isAIFullAuto {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 11, weight: .semibold))
-                } else if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                }
-
-                Text(preset.displayName)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .rounded))
-            }
-            .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7.5)
-            .background(
-                Capsule()
-                    .fill(isSelected ? AnyShapeStyle(AlignTheme.studioAccentSoft) : AnyShapeStyle(Color.white.opacity(0.055)))
-            )
-            .overlay(
-                Capsule()
-                    .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 // MARK: - Focus Peaking Color Circle Button
 struct PeakingColorCircleButton: View {
     let color: FocusPeakingColor
@@ -662,7 +626,7 @@ struct SensitivityPill: View {
     }
 }
 
-// MARK: - SECTION 1: PHOTO & VIDEO CAPTURE (TAB 1)
+// MARK: - SECTION 1: PHOTO & VIDEO DEEP SETTINGS (TAB 1)
 struct PhotoCaptureSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
     @Binding var toastMessage: String?
@@ -673,223 +637,71 @@ struct PhotoCaptureSettingsSection: View {
     var body: some View {
         VStack(spacing: 16) {
             photoStillCard
-            videoCaptureCard
-            filmColorCard
             viewfinderHUDCard
             masterWatermarkCard
         }
     }
 
-    // Card 1: Ảnh tĩnh & Định dạng
+    // Card 1: Ảnh tĩnh & Cấu hình sâu Ultra Sharp (Định dạng ảnh, bật/tắt Ultra Sharp, Chất lượng & Mã hóa Video nằm ở Bảng 6 chấm)
     private var photoStillCard: some View {
-        SettingsSectionCard(title: "Ảnh tĩnh", icon: "camera.fill") {
+        SettingsSectionCard(title: "Ảnh & Độ nét Ultra Sharp", icon: "camera.fill") {
             VStack(spacing: 0) {
-                // Định dạng chụp: JPEG / HEIF / RAW (Full-width equal pills, zero wrapping)
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 12) {
-                        SettingsRowIcon("photo.fill", isActive: true)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Định dạng chụp")
-                                .font(.system(size: 14.5, weight: .medium))
-                                .foregroundColor(AlignTheme.studioInkPrimary)
-                            Text("Chuẩn lưu trữ hình ảnh cảm biến")
-                                .font(.system(size: 11.5, weight: .regular))
-                                .foregroundColor(AlignTheme.studioInkSecondary)
-                        }
-
-                        Spacer(minLength: 8)
-                    }
-
-                    HStack(spacing: 8) {
-                        ForEach(PhotoSaveFormat.allCases) { format in
-                            let label = (format == .dng ? "RAW" : format.rawValue)
-                            let isSelected = viewModel.selectedPhotoFormat == format
-                            Button(action: {
-                                UISelectionFeedbackGenerator().selectionChanged()
-                                viewModel.selectedPhotoFormat = format
-                            }) {
-                                Text(label)
-                                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .rounded))
-                                    .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
-                                    .lineLimit(1)
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 34)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                            .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.055))
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                            .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 0.9 : 0.6)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .padding(.vertical, 8)
-
-                dividerLine
-
                 SettingsToggleRow(
                     title: "Lưu kèm bản gốc",
-                    subtitle: "Giữ ảnh nguyên bản cảm biến không áp bộ lọc màu film",
+                    subtitle: "Giữ ảnh nguyên bản cảm biến khi áp màu AI hoặc bộ lọc phim",
                     icon: "photo.on.rectangle.angled",
                     isOn: $viewModel.isSaveOriginalPhotoEnabled
                 )
 
                 dividerLine
 
-                SettingsToggleRow(
-                    title: "Chụp Ultra Sharp (Độ nét cao)",
-                    subtitle: "Gộp đa khung hình HDR, giảm nhiễu và giữ chi tiết sắc nét",
-                    icon: "square.stack.3d.up",
-                    isOn: $viewModel.isUltraSharpEnabled
-                )
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Số khung hình gộp Ultra Sharp")
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                        Spacer()
+                        Text("\(viewModel.ultraSharpBurstCount) frames")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundColor(AlignTheme.studioAccent)
+                    }
 
-                if viewModel.isUltraSharpEnabled {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Số frame gộp:")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(AlignTheme.studioInkSecondary)
-                            Spacer()
-                            Text("\(viewModel.ultraSharpBurstCount) frames")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundColor(AlignTheme.studioAccent)
-                        }
-                        HStack(spacing: 6) {
-                            ForEach([5, 6, 8, 10, 12], id: \.self) { count in
-                                pillSelectButton("\(count)", isSelected: viewModel.ultraSharpBurstCount == count) {
-                                    UISelectionFeedbackGenerator().selectionChanged()
-                                    viewModel.ultraSharpBurstCount = count
-                                }
+                    Text("Áp dụng khi bật Ultra Sharp trong Bảng điều khiển (6 chấm)")
+                        .font(.system(size: 11))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+
+                    HStack(spacing: 6) {
+                        ForEach([5, 6, 8, 10, 12], id: \.self) { count in
+                            pillSelectButton("\(count)", isSelected: viewModel.ultraSharpBurstCount == count) {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                viewModel.ultraSharpBurstCount = count
                             }
                         }
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 4)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-        }
-    }
-
-    // Card 2: Quay Video & Codec
-    private var videoCaptureCard: some View {
-        SettingsSectionCard(title: "Quay Video", icon: "video.fill") {
-            VStack(spacing: 0) {
-                SettingsPickerRow(
-                    title: "Độ phân giải & FPS",
-                    subtitle: "Chuẩn video ghi hình cảm biến camera",
-                    icon: "video.badge.waveform.fill",
-                    selectedValueString: videoFormatCleanTitle(viewModel.selectedVideoFormatOption)
-                ) {
-                    Menu {
-                        Picker("", selection: $viewModel.selectedVideoFormatOption) {
-                            ForEach(viewModel.supportedVideoFormatOptions) { opt in
-                                Text(videoFormatCleanTitle(opt)).tag(opt)
-                            }
-                        }
-                    } label: {
-                        studioMenuValuePill(videoFormatCleanTitle(viewModel.selectedVideoFormatOption))
-                    }
-                }
-
-                dividerLine
-
-                SettingsPickerRow(
-                    title: "Chuẩn nén video",
-                    subtitle: "Chuẩn mã hóa tối ưu phần cứng Apple",
-                    icon: "cylinder.split.1x2.fill",
-                    selectedValueString: viewModel.selectedVideoCodec.rawValue
-                ) {
-                    Menu {
-                        Picker("", selection: $viewModel.selectedVideoCodec) {
-                            ForEach(VideoCodec.allCases) { codec in
-                                Text(codec.rawValue).tag(codec)
-                            }
-                        }
-                    } label: {
-                        studioMenuValuePill(viewModel.selectedVideoCodec.rawValue)
-                    }
-                }
-            }
-        }
-    }
-
-    // Card 4: Màu sắc & Preset Film
-    private var filmColorCard: some View {
-        SettingsSectionCard(title: "Màu sắc & Giả lập phim", icon: "camera.filters") {
-            VStack(alignment: .leading, spacing: 12) {
-                SettingsToggleRow(
-                    title: "Tự động cân màu bối cảnh",
-                    subtitle: "Nhận diện bối cảnh để cân chỉnh độ tương phản và nhiệt độ màu",
-                    icon: "slider.horizontal.3",
-                    isOn: $viewModel.isAIFullColorEnabled
-                )
-
-                dividerLine
-
-                SettingsPickerRow(
-                    title: "Preset mặc định",
-                    subtitle: "Áp dụng phong cách màu cho ảnh và video",
-                    icon: "camera.filters",
-                    selectedValueString: viewModel.selectedFilmPreset.displayName
-                ) {
-                    Menu {
-                        Picker("", selection: $viewModel.selectedFilmPreset) {
-                            ForEach(FilmPreset.selectablePresets) { preset in
-                                Text(preset.displayName).tag(preset)
-                            }
-                        }
-                    } label: {
-                        studioMenuValuePill(viewModel.selectedFilmPreset.displayName)
-                    }
-                    .onChangeCompatible(of: viewModel.selectedFilmPreset) { newPreset in
-                        viewModel.selectPreset(newPreset)
-                    }
-                }
-
-                dividerLine
-
-                Text("DANH SÁCH MẪU FILM NHANH:")
-                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.45))
                     .padding(.top, 2)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(FilmPreset.selectablePresets) { preset in
-                            FilmPresetPill(
-                                preset: preset,
-                                isSelected: viewModel.selectedFilmPreset == preset,
-                                onSelect: {
-                                    UISelectionFeedbackGenerator().selectionChanged()
-                                    viewModel.selectPreset(preset)
-                                }
-                            )
-                        }
-                    }
-                    .padding(.vertical, 4)
                 }
+                .padding(.vertical, 10)
             }
         }
     }
 
-    // Card 5: Khung ngắm & Báo nét HUD
+    // Card 2: Khung ngắm, Báo nét & Kiểm màu (Bật/tắt Biểu đồ nằm ở Bảng 6 chấm)
     private var viewfinderHUDCard: some View {
-        SettingsSectionCard(title: "Khung ngắm & Báo nét", icon: "viewfinder") {
+        let peakingAvail = viewModel.featureAvailability(.focusPeaking)
+        return SettingsSectionCard(title: "Khung ngắm & Hỗ trợ", icon: "viewfinder") {
             VStack(spacing: 0) {
                 SettingsToggleRow(
                     title: "Focus peaking (Báo nét)",
-                    subtitle: "Tô sáng viền tương phản của các điểm đang nằm trong vùng nét",
+                    subtitle: peakingAvail.isAvailable
+                        ? "Tô sáng viền tương phản của các điểm đang nằm trong vùng nét"
+                        : (peakingAvail.detailReason ?? "Không khả dụng ở chế độ hiện tại"),
                     icon: "scope",
                     isOn: $viewModel.isFocusPeakingEnabled
                 )
+                .disabled(!peakingAvail.isAvailable)
+                .opacity(peakingAvail.isAvailable ? 1.0 : 0.45)
 
-                if viewModel.isFocusPeakingEnabled {
+                if viewModel.isFocusPeakingEnabled && peakingAvail.isAvailable {
                     peakingColorPickerRow
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 }
@@ -906,29 +718,17 @@ struct PhotoCaptureSettingsSection: View {
                 dividerLine
 
                 SettingsToggleRow(
-                    title: "Thanh thông số & Biểu đồ HUD",
-                    subtitle: "Hiển thị Shutter, ISO, Định dạng và Histogram trên màn hình chính",
-                    icon: "chart.bar.fill",
-                    isOn: $viewModel.showHistogramInViewfinder
+                    title: "Biểu đồ Pro RGB & báo cháy sáng",
+                    subtitle: "Mở hộp quang phổ RGB + Luma chi tiết kèm chỉ số SH / AVG / HI và EV",
+                    icon: "waveform.path.ecg",
+                    isOn: $viewModel.isHistogramBarExpanded
                 )
-
-                if viewModel.showHistogramInViewfinder {
-                    dividerLine
-
-                    SettingsToggleRow(
-                        title: "Mở rộng 32 cột màu báo cháy sáng",
-                        subtitle: "Hiển thị dải quang phổ RGB và cảnh báo clipping ở vùng sáng",
-                        icon: "waveform.path.ecg",
-                        isOn: $viewModel.isHistogramBarExpanded
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
 
                 dividerLine
 
                 SettingsToggleRow(
                     title: "Thước đo âm thanh (Audio VU Meter)",
-                    subtitle: "Hiển thị 2 thanh đo mức tín hiệu âm thanh trực tiếp trong khung ngắm",
+                    subtitle: "Hiển thị thanh đo mức tín hiệu stereo kèm biểu tượng mic khi quay video",
                     icon: "waveform",
                     isOn: $viewModel.showAudioLevelMeter
                 )
@@ -936,64 +736,80 @@ struct PhotoCaptureSettingsSection: View {
         }
     }
 
-    // Card 6: Khung Chữ Ký Master (Watermark)
+    // Card 3: Tùy biến Khung Chữ Ký Master (Bật/tắt nhanh nằm ở nút Master trong Bảng 6 chấm)
     private var masterWatermarkCard: some View {
         let hasCustomLogo = viewModel.masterWatermarkCustomLogoImage != nil
         let isCustomStyle = viewModel.masterWatermarkLogoStyle == .customImage
 
-        return SettingsSectionCard(title: "Khung Chữ Ký Master", icon: "viewfinder.circle") {
+        return SettingsSectionCard(title: "Tùy biến Khung Master (Ảnh & Video)", icon: "seal") {
             VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundColor(AlignTheme.studioAccent)
+                    Text("Bật hoặc tắt nhanh Khung Master tại nút Master trong Bảng điều khiển (6 chấm).")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 8)
+
+                dividerLine
+
                 SettingsToggleRow(
-                    title: "Đóng khung Master",
-                    subtitle: "Tự động thêm chữ ký Leica quang học vào ảnh",
-                    icon: "viewfinder",
-                    isOn: $viewModel.isMasterWatermarkEnabled
+                    title: "Áp dụng Khung Master cho Video",
+                    subtitle: "Ghép khung dưới đáy giữ nguyên độ phân giải, FPS và âm thanh gốc",
+                    icon: "video.badge.checkmark",
+                    isOn: $viewModel.isVideoMasterFrameEnabled
                 )
 
-                if viewModel.isMasterWatermarkEnabled {
-                    dividerLine
+                dividerLine
 
-                    // Tên thiết bị / Chữ ký
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("TÊN THIẾT BỊ / CHỮ KÝ")
-                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.45))
+                // Tên thiết bị / Chữ ký
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("TÊN THIẾT BỊ / CHỮ KÝ")
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioInkTertiary)
 
-                        TextField("Nhập chữ ký...", text: $viewModel.masterWatermarkDeviceName)
-                            .font(.system(size: 14, weight: .semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(AlignTheme.studioElevated)
-                            .cornerRadius(8)
-                            .foregroundColor(.white)
+                    TextField("Nhập chữ ký...", text: $viewModel.masterWatermarkDeviceName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(AlignTheme.studioElevated)
+                        .cornerRadius(8)
+                        .foregroundColor(AlignTheme.studioInkPrimary)
 
+                    ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             ForEach(presetDevices, id: \.self) { name in
                                 Button(action: {
                                     viewModel.masterWatermarkDeviceName = name
                                 }) {
                                     Text(name)
-                                        .font(.system(size: 10, weight: .medium))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(viewModel.masterWatermarkDeviceName == name ? AlignTheme.studioAccent.opacity(0.20) : Color.white.opacity(0.06))
-                                        .foregroundColor(viewModel.masterWatermarkDeviceName == name ? AlignTheme.studioAccent : Color.white.opacity(0.70))
-                                        .cornerRadius(5)
+                                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                                        .padding(.horizontal, 9)
+                                        .padding(.vertical, 5)
+                                        .background(viewModel.masterWatermarkDeviceName == name ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
+                                        .foregroundColor(viewModel.masterWatermarkDeviceName == name ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
+                                        .cornerRadius(6)
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
                     }
-                    .padding(.vertical, 8)
+                }
+                .padding(.vertical, 10)
 
-                    dividerLine
+                dividerLine
 
-                    // Biểu tượng Logo
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("BIỂU TƯỢNG LOGO")
-                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.45))
+                // Biểu tượng Logo
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("BIỂU TƯỢNG LOGO")
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioInkTertiary)
 
+                    ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             logoOptionButton("Logo App", style: .alignStudio, icon: "viewfinder")
                             logoOptionButton("Apple", style: .appleIcon, icon: "apple.logo")
@@ -1005,13 +821,13 @@ struct PhotoCaptureSettingsSection: View {
                                     Text(hasCustomLogo ? "Đã chọn" : "Tự chọn")
                                         .font(.system(size: 11, weight: isCustomStyle ? .bold : .medium, design: .rounded))
                                 }
-                                .padding(.horizontal, 8)
+                                .padding(.horizontal, 9)
                                 .padding(.vertical, 6)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(isCustomStyle ? AlignTheme.studioAccent.opacity(0.18) : Color.white.opacity(0.06))
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .fill(isCustomStyle ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
                                 )
-                                .foregroundColor(isCustomStyle ? AlignTheme.studioAccent : Color.white.opacity(0.70))
+                                .foregroundColor(isCustomStyle ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
                             }
                             .onChangeCompatible(of: selectedPhotoItem) { item in
                                 guard let item else { return }
@@ -1025,52 +841,63 @@ struct PhotoCaptureSettingsSection: View {
                             logoOptionButton("Ẩn", style: .none, icon: "slash.circle")
                         }
                     }
-                    .padding(.vertical, 8)
-
-                    dividerLine
-
-                    // Giao diện Khung
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("GIAO DIỆN KHUNG")
-                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.45))
-
-                        HStack(spacing: 8) {
-                            Button(action: {
-                                viewModel.masterWatermarkTheme = .white
-                            }) {
-                                HStack(spacing: 6) {
-                                    Circle().fill(Color.white).frame(width: 12, height: 12)
-                                    Text("Cổ điển (Trắng)")
-                                        .font(.system(size: 12, weight: viewModel.masterWatermarkTheme == .white ? .bold : .medium))
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .background(viewModel.masterWatermarkTheme == .white ? AlignTheme.studioAccent.opacity(0.20) : Color.white.opacity(0.06))
-                                .foregroundColor(viewModel.masterWatermarkTheme == .white ? AlignTheme.studioAccent : Color.white)
-                                .cornerRadius(8)
-                            }
-                            .buttonStyle(.plain)
-
-                            Button(action: {
-                                viewModel.masterWatermarkTheme = .black
-                            }) {
-                                HStack(spacing: 6) {
-                                    Circle().fill(Color(white: 0.15)).frame(width: 12, height: 12)
-                                    Text("Đen nhám (Dark)")
-                                        .font(.system(size: 12, weight: viewModel.masterWatermarkTheme == .black ? .bold : .medium))
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .background(viewModel.masterWatermarkTheme == .black ? AlignTheme.studioAccent.opacity(0.20) : Color.white.opacity(0.06))
-                                .foregroundColor(viewModel.masterWatermarkTheme == .black ? AlignTheme.studioAccent : Color.white)
-                                .cornerRadius(8)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 8)
                 }
+                .padding(.vertical, 10)
+
+                dividerLine
+
+                // Giao diện Khung
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("GIAO DIỆN KHUNG")
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioInkTertiary)
+
+                    HStack(spacing: 8) {
+                        Button(action: {
+                            viewModel.masterWatermarkTheme = .white
+                        }) {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color.white).frame(width: 12, height: 12)
+                                Text("Trắng Leica")
+                                    .font(.system(size: 12, weight: viewModel.masterWatermarkTheme == .white ? .semibold : .medium))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(viewModel.masterWatermarkTheme == .white ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
+                            .foregroundColor(viewModel.masterWatermarkTheme == .white ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .stroke(viewModel.masterWatermarkTheme == .white ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
+                            )
+                            .cornerRadius(9)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: {
+                            viewModel.masterWatermarkTheme = .black
+                        }) {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(Color(white: 0.14))
+                                    .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 0.6))
+                                    .frame(width: 12, height: 12)
+                                Text("Đen Studio")
+                                    .font(.system(size: 12, weight: viewModel.masterWatermarkTheme == .black ? .semibold : .medium))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(viewModel.masterWatermarkTheme == .black ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
+                            .foregroundColor(viewModel.masterWatermarkTheme == .black ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .stroke(viewModel.masterWatermarkTheme == .black ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
+                            )
+                            .cornerRadius(9)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 10)
             }
         }
     }
@@ -1082,7 +909,7 @@ struct PhotoCaptureSettingsSection: View {
             HStack {
                 Text("Màu viền báo nét:")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.75))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
                 Spacer()
                 Text(viewModel.focusPeakingColor.rawValue)
                     .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -1108,7 +935,7 @@ struct PhotoCaptureSettingsSection: View {
                 HStack {
                     Text("Độ nhạy báo nét:")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255).opacity(0.75))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
                     Spacer()
                     Text("\(Int(viewModel.focusPeakingSensitivity * 100))%")
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
@@ -1162,55 +989,19 @@ struct PhotoCaptureSettingsSection: View {
                 Text(title)
                     .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 9)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? AlignTheme.studioAccent.opacity(0.18) : Color.white.opacity(0.06))
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(isSelected ? AlignTheme.studioAccent.opacity(0.60) : Color.clear, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
             )
-            .foregroundColor(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.70))
+            .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
         }
         .buttonStyle(.plain)
-    }
-
-    // Helper: Clean Studio Menu Value Pill (Compact, Single-Line, Zero Wrapping)
-    private func studioMenuValuePill(_ value: String) -> some View {
-        HStack(spacing: 5) {
-            Text(value)
-                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                .foregroundColor(AlignTheme.studioAccent)
-                .lineLimit(1)
-
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundColor(AlignTheme.studioAccent.opacity(0.75))
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(AlignTheme.studioAccentSoft)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(AlignTheme.studioAccentBorder.opacity(0.7), lineWidth: 0.6)
-                )
-        )
-    }
-
-    // Helper: Clean title for video format option
-    private func videoFormatCleanTitle(_ opt: VideoFormatOption) -> String {
-        switch opt {
-        case .uhd60: return "4K · 60 fps"
-        case .uhd30: return "4K · 30 fps"
-        case .hd60:  return "1080p · 60 fps"
-        case .hd30:  return "1080p · 30 fps"
-        @unknown default:
-            return opt.rawValue
-        }
     }
 }
 

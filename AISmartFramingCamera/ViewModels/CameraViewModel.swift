@@ -19,7 +19,6 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var isRecordingVideo = false
     var showHistogramInViewfinder = true
     var isVideo = false
-    var isAIVideoDirectorActive = false
     var isDualCameraActive = false
 }
 
@@ -87,9 +86,9 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         // Khi đang quay video: Bỏ qua toàn bộ AI tracking và Vision nặng nề để đảm bảo hiệu năng
         guard !snapshot.isRecordingVideo else { return }
 
-        // Zero-Cost Gate 2: Trong chế độ Video chuẩn (không bật AI Video Director và không ghim bám đối tượng),
+        // Zero-Cost Gate 2: Trong chế độ Video chuẩn (không ghim bám đối tượng),
         // TUYỆT ĐỐI KHÔNG nạp VisionFramingEngine, YOLOv12 hay tracking để đạt 60 FPS cứng, hoàn toàn không giật lag!
-        if snapshot.isVideo && !snapshot.isAIVideoDirectorActive && !SpatialTrackingEngine.shared.isTrackingActive {
+        if snapshot.isVideo && !SpatialTrackingEngine.shared.isTrackingActive {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
             stateLock.lock()
             latestPixelBuffer = pixelBuffer
@@ -97,18 +96,15 @@ private final class CameraFrameProcessor: @unchecked Sendable {
 
             guard !snapshot.isSettingsVisible else { return }
             let now = CACurrentMediaTime()
-
-
-
-            if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.24 {
+            let thermal = ProcessInfo.processInfo.thermalState
+            let histInterval: CFTimeInterval = (thermal == .serious || thermal == .critical) ? 0.20 : 0.09
+            if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= histInterval {
                 lastHistogramComputeTime = now
-                let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
+                let telemetry = RealtimeHistogramEngine.shared.computeTelemetry(from: pixelBuffer)
                 DispatchQueue.main.async { [weak self] in
                     guard let owner = self?.owner else { return }
-                    let old = owner.histogramBars
-                    let changed = old.count != bars.count || zip(old, bars).contains { abs($0.height - $1.height) >= 0.025 }
-                    if changed {
-                        owner.histogramBars = bars
+                    if !owner.histogramTelemetry.isVisuallySimilar(to: telemetry) {
+                        owner.histogramTelemetry = telemetry
                     }
                 }
             }
@@ -159,15 +155,15 @@ private final class CameraFrameProcessor: @unchecked Sendable {
                 self?.owner?.refreshSuggestionProjection(frame: frame)
             }
         }
-        if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= 0.24 {
+        let histThermal = ProcessInfo.processInfo.thermalState
+        let histInterval: CFTimeInterval = (histThermal == .serious || histThermal == .critical) ? 0.20 : 0.09
+        if snapshot.showHistogramInViewfinder, now - lastHistogramComputeTime >= histInterval {
             lastHistogramComputeTime = now
-            let bars = RealtimeHistogramEngine.shared.computeHistogram(from: pixelBuffer)
+            let telemetry = RealtimeHistogramEngine.shared.computeTelemetry(from: pixelBuffer)
             DispatchQueue.main.async { [weak self] in
                 guard let owner = self?.owner else { return }
-                let old = owner.histogramBars
-                let changed = old.count != bars.count || zip(old, bars).contains { abs($0.height - $1.height) >= 0.025 }
-                if changed {
-                    owner.histogramBars = bars
+                if !owner.histogramTelemetry.isVisuallySimilar(to: telemetry) {
+                    owner.histogramTelemetry = telemetry
                 }
             }
         }
@@ -265,11 +261,33 @@ public final class CameraViewModel: ObservableObject {
     @Published public var activeCompositionRule: CompositionRule = .goldenRatio {
         didSet { UserDefaults.standard.set(activeCompositionRule.rawValue, forKey: "activeCompositionRule") }
     }
+    // Mặc định luôn là màu tự nhiên của máy — không lưu Preset mặc định qua các lần mở app
     @Published public var isFilmSimulationActive: Bool = false {
-        didSet { UserDefaults.standard.set(isFilmSimulationActive, forKey: "isFilmSimulationActive") }
+        didSet {
+            if !isFilmSimulationActive {
+                isColorAppliedByAI = false
+                if selectedFilmPreset != .standard {
+                    selectedFilmPreset = .standard
+                }
+                currentAIColorParams = nil
+                geminiColorRecipe = nil
+            }
+        }
     }
-    @Published public var selectedFilmPreset: FilmPreset = .fujiPro400H {
-        didSet { UserDefaults.standard.set(selectedFilmPreset.rawValue, forKey: "selectedFilmPreset") }
+    @Published public var selectedFilmPreset: FilmPreset = .standard
+    private var isColorAppliedByAI: Bool = false
+
+    /// Reset sạch về màu tự nhiên của cảm biến (không áp bất kỳ bộ lọc phim/AI nào)
+    public func resetToNaturalColor() {
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
+            isColorAppliedByAI = false
+            isFilmSimulationActive = false
+            selectedFilmPreset = .standard
+            isAIFullColorEnabled = false
+            currentAIColorParams = nil
+            geminiColorRecipe = nil
+        }
     }
     @Published public var selectedFilmCategory: FilmPresetCategory = .trending {
         didSet { UserDefaults.standard.set(selectedFilmCategory.rawValue, forKey: "selectedFilmCategory") }
@@ -278,7 +296,16 @@ public final class CameraViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(filmSimulationIntensity, forKey: "filmSimulationIntensity") }
     }
     @Published public var isAIFullColorEnabled: Bool = false {
-        didSet { UserDefaults.standard.set(isAIFullColorEnabled, forKey: "isAIFullColorEnabled") }
+        didSet {
+            UserDefaults.standard.set(isAIFullColorEnabled, forKey: "isAIFullColorEnabled")
+            if !isAIFullColorEnabled && isColorAppliedByAI {
+                isColorAppliedByAI = false
+                isFilmSimulationActive = false
+                selectedFilmPreset = .standard
+                currentAIColorParams = nil
+                geminiColorRecipe = nil
+            }
+        }
     }
     @Published public var aiRecommendedPreset: FilmPreset? = nil
     // MARK: - Doka Unified AI Scan Specification (ScanResp & Plan 2)
@@ -312,7 +339,13 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     @Published public var selectedPhotoFormat: PhotoSaveFormat = .jpeg {
-        didSet { UserDefaults.standard.set(selectedPhotoFormat.rawValue, forKey: "selectedPhotoFormat") }
+        didSet {
+            UserDefaults.standard.set(selectedPhotoFormat.rawValue, forKey: "selectedPhotoFormat")
+            if selectedPhotoFormat == .dng {
+                if isUltraSharpEnabled { isUltraSharpEnabled = false }
+                if isLivePhotoEnabled { isLivePhotoEnabled = false }
+            }
+        }
     }
     @Published public var isSuperResolutionRAWEnabled: Bool = UserDefaults.standard.bool(forKey: "isSuperResolutionRAWEnabled") {
         didSet { UserDefaults.standard.set(isSuperResolutionRAWEnabled, forKey: "isSuperResolutionRAWEnabled") }
@@ -326,13 +359,32 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var liveISO: String = "ISO 32"
     @Published public var liveShutterSpeed: String = "1/400 s"
+    @Published public var histogramTelemetry: HistogramTelemetry = .neutral
     @Published public var histogramBars: [HistogramBarData] = (0..<32).map {
-        let t = Double($0) / 31.0
-        let col = t < 0.28 ? Color(red: 0.15, green: 0.45, blue: 0.95) : (t < 0.72 ? Color(red: 0.40, green: 0.90, blue: 0.60) : Color(red: 0.95, green: 0.45, blue: 0.20))
-        return HistogramBarData(id: $0, height: 0.10, color: col)
+        HistogramBarData(id: $0, height: 0.10, color: .white)
     }
     @Published public private(set) var isRecordingVideo: Bool = false {
-        didSet { updateFrameProcessingConfiguration() }
+        didSet {
+            updateFrameProcessingConfiguration()
+            if isRecordingVideo && !oldValue {
+                snapshotLiveVideoMasterSpecs()
+            }
+        }
+    }
+
+    /// Chụp thông số quang học thực tế khi bắt đầu quay video để hiển thị đúng trên Khung Master Video
+    public func snapshotLiveVideoMasterSpecs() {
+        let focalMM: Double = isWindowedZoomActive
+            ? windowedZoomFocalLength
+            : (displayZoom >= 1.9 ? 52.0 : (displayZoom <= 0.6 ? 13.0 : 24.0))
+        let apVal: Float = proVideoService.hardwareLensAperture > 0 ? proVideoService.hardwareLensAperture : 1.8
+        let shutterSec: Double = currentLiveExposureDuration > 0 ? currentLiveExposureDuration : (1.0 / max(30.0, selectedVideoFormatOption.fps * 2.0))
+        lastRecordedVideoSpecs = PhotoWatermarkSpecs.from(
+            iso: currentLiveISO > 0 ? currentLiveISO : 100,
+            shutterSpeed: shutterSec,
+            focalLength: focalMM,
+            aperture: apVal
+        )
     }
     @Published public private(set) var recordingState: CameraRecordingState = .idle
     private var wantsVideoRecording = false
@@ -628,10 +680,14 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isShowingSunSlider: Bool = false
     @Published public var activeSunExposureBias: Float = 0.0
 
-    // MARK: - Khung Chữ Ký Master (Master Watermark Frame - Xiaomi 15 Ultra Leica)
+    // MARK: - Khung Chữ Ký Master (Master Watermark Frame cho Ảnh & Video)
     @Published public var isMasterWatermarkEnabled: Bool = false {
         didSet { UserDefaults.standard.set(isMasterWatermarkEnabled, forKey: "isMasterWatermarkEnabled") }
     }
+    @Published public var isVideoMasterFrameEnabled: Bool = true {
+        didSet { UserDefaults.standard.set(isVideoMasterFrameEnabled, forKey: "isVideoMasterFrameEnabled") }
+    }
+    @Published public var lastRecordedVideoSpecs: PhotoWatermarkSpecs = PhotoWatermarkSpecs()
     @Published public var masterWatermarkDeviceName: String = "ALIGN STUDIO ULTRA" {
         didSet { UserDefaults.standard.set(masterWatermarkDeviceName, forKey: "masterWatermarkDeviceName") }
     }
@@ -989,8 +1045,65 @@ public final class CameraViewModel: ObservableObject {
 
     // MARK: - Kho Chức Năng (Feature Drawer & Quick Tools)
     @Published public var isFunctionDrawerOpen: Bool = false
+    @Published public var viewfinderGridStyle: ViewfinderGridStyle = .off {
+        didSet {
+            UserDefaults.standard.set(viewfinderGridStyle.rawValue, forKey: "viewfinderGridStyle")
+            let visible = viewfinderGridStyle.isVisible
+            if isManualGridVisible != visible {
+                isManualGridVisible = visible
+            }
+        }
+    }
     @Published public var isManualGridVisible: Bool = false {
-        didSet { UserDefaults.standard.set(isManualGridVisible, forKey: "isManualGridVisible") }
+        didSet {
+            UserDefaults.standard.set(isManualGridVisible, forKey: "isManualGridVisible")
+            if isManualGridVisible && viewfinderGridStyle == .off {
+                viewfinderGridStyle = .ruleOfThirds
+            } else if !isManualGridVisible && viewfinderGridStyle != .off {
+                viewfinderGridStyle = .off
+            }
+        }
+    }
+
+    /// Xoay vòng các kiểu lưới: Tắt → 1/3 → Tỷ lệ vàng → Đường chéo → Vuông 4×4 → Tâm ngắm → Tắt
+    public func cycleViewfinderGridStyle() {
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.76)) {
+            viewfinderGridStyle = viewfinderGridStyle.next
+        }
+        showHUDNotice(viewfinderGridStyle == .off ? "Lưới: Tắt" : "Lưới: \(viewfinderGridStyle.shortLabel)")
+    }
+
+    // MARK: - Hệ thống Kiểm soát Điều kiện Khả dụng (Capability Gating)
+    public var featureContext: CameraFeatureContext {
+        CameraFeatureContext(
+            isVideo: captureMode.isVideo,
+            isRecordingVideo: isRecordingVideo,
+            isFrontCamera: isFrontCamera,
+            isDualCameraActive: isDualCameraActive,
+            isDualCameraSupported: isDualCameraSupported,
+            isUltraSharpEnabled: isUltraSharpEnabled,
+            isWindowedZoomActive: isWindowedZoomActive,
+            isHorizonLockEnabled: isHorizonLockEnabled,
+            isAISessionActive: aiSessionState.isSessionActive,
+            selectedPhotoFormat: selectedPhotoFormat,
+            canSwitchCamera: canSwitchCamera
+        )
+    }
+
+    public func featureAvailability(_ feature: CameraFeature) -> FeatureAvailability {
+        CameraFeatureGate.availability(for: feature, in: featureContext)
+    }
+
+    /// Thực thi hành động nếu thỏa điều kiện; nếu bị khóa sẽ rung cảnh báo nhẹ và hiển thị rõ điều kiện mở khóa trên HUD
+    public func attemptFeature(_ feature: CameraFeature, perform action: () -> Void) {
+        switch featureAvailability(feature) {
+        case .available:
+            action()
+        case .disabled(_, let detailReason):
+            haptics.triggerError()
+            showHUDNotice(detailReason)
+        }
     }
     @Published public var captureTimerSeconds: Int = 0 // 0s, 3s, 10s
     @Published public var countdownSecondsRemaining: Int = 0
@@ -1193,10 +1306,9 @@ public final class CameraViewModel: ObservableObject {
     @Published public var geminiLatencyMs: Int = 0
     @Published public var aiSuggestedZoom: CGFloat? = nil
 
-    // MARK: - AI Video Cinematography Director State (Cloud OpenRouter)
-    @Published public var isAIVideoDirectorActive: Bool = false {
-        didSet { updateFrameProcessingConfiguration() }
-    }
+    // Legacy unreachable compile-compatibility state required strictly by SHA-256-locked trailing slice in TrackingBoundary.json.
+    // All AI Video Director UI, overlays, and triggers are completely removed.
+    @Published public var isAIVideoDirectorActive: Bool = false
     @Published public var isAIVideoDirectorAnalyzing: Bool = false
     @Published public var activeVideoGuidance: AIVideoDirectorGuidance? = nil
     private var videoDirectorGeneration: UInt64 = 0
@@ -1207,11 +1319,8 @@ public final class CameraViewModel: ObservableObject {
     @Published public var hasCompletedAllWaypoints: Bool = false
     @Published public var waypointElapsedSeconds: Double = 0.0
 
-    // MARK: - Chỉ Báo Nháy Màu AI (Local: Đỏ, Cloud: Vàng)
+    // MARK: - Chỉ Báo Nguồn AI (Local / Cloud)
     public var activeAIIndicatorType: ActiveAIIndicatorType {
-        if isAIVideoDirectorActive {
-            return .cloud
-        }
         guard aiSessionState != .idle else { return .none }
         if let source = activeEngineSource {
             return source.isCloud ? .cloud : .local
@@ -1368,7 +1477,6 @@ public final class CameraViewModel: ObservableObject {
                 wantsVideoRecording = false
                 cameraService.stopRecordingVideo()
             }
-            if isAIVideoDirectorActive { dismissAIVideoDirector() }
             suspendSpatialTracking()
             cameraService.stop()
         } else if phase == .active {
@@ -1502,10 +1610,9 @@ public final class CameraViewModel: ObservableObject {
         if let ruleRaw = defaults.string(forKey: "activeCompositionRule"), let rule = CompositionRule(rawValue: ruleRaw) {
             self.activeCompositionRule = rule
         }
-        if let presetRaw = defaults.string(forKey: "selectedFilmPreset"), let preset = FilmPreset(rawValue: presetRaw) {
-            self.selectedFilmPreset = preset
-            self.selectedFilmCategory = preset.category
-        }
+        // Luôn khởi động ở màu tự nhiên của cảm biến (không nạp Preset mặc định cũ)
+        self.selectedFilmPreset = .standard
+        self.isFilmSimulationActive = false
         if let categoryRaw = defaults.string(forKey: "selectedFilmCategory"), let cat = FilmPresetCategory(rawValue: categoryRaw) {
             self.selectedFilmCategory = cat
         }
@@ -1525,11 +1632,16 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "isGuidanceRayEnabled") != nil {
             self.isGuidanceRayEnabled = defaults.bool(forKey: "isGuidanceRayEnabled")
         }
-        if defaults.object(forKey: "isFilmSimulationActive") != nil {
-            self.isFilmSimulationActive = defaults.bool(forKey: "isFilmSimulationActive")
-        }
         if defaults.object(forKey: "isAIFullColorEnabled") != nil {
             self.isAIFullColorEnabled = defaults.bool(forKey: "isAIFullColorEnabled")
+        }
+        if let gridRaw = defaults.string(forKey: "viewfinderGridStyle"), let style = ViewfinderGridStyle(rawValue: gridRaw) {
+            self.viewfinderGridStyle = style
+        } else if defaults.bool(forKey: "isManualGridVisible") {
+            self.viewfinderGridStyle = .ruleOfThirds
+        }
+        if defaults.object(forKey: "isVideoMasterFrameEnabled") != nil {
+            self.isVideoMasterFrameEnabled = defaults.bool(forKey: "isVideoMasterFrameEnabled")
         }
         if defaults.object(forKey: "isAutoZoomEnabled") != nil {
             self.isAutoZoomEnabled = defaults.bool(forKey: "isAutoZoomEnabled")
@@ -1690,7 +1802,6 @@ public final class CameraViewModel: ObservableObject {
                 isRecordingVideo: isRecordingVideo,
                 showHistogramInViewfinder: showHistogramInViewfinder,
                 isVideo: captureMode.isVideo,
-                isAIVideoDirectorActive: isAIVideoDirectorActive,
                 isDualCameraActive: isDualCameraActive
             )
         )
@@ -1802,19 +1913,52 @@ public final class CameraViewModel: ObservableObject {
         isFunctionDrawerOpen = false
         isShowingFilmDrawer = false
         isFilmSimulationActive = false
+        selectedFilmPreset = .standard
         isWindowedZoomActive = false
         isShowingSettings = false
         isUltraSharpEnabled = true
+        isHistogramBarExpanded = false
+        viewfinderGridStyle = .off
         captureMode = .photo
         selectedZoomPreset = 1.0
         displayZoom = 1.0
         audioLevels = (left: 0.44, right: 0.36)
 
-        // Tạo sóng biểu đồ sáng thực tế và ảnh thu nhỏ album từ ảnh mẫu snapshot nếu có
+        // Tạo dữ liệu quang phổ RGB + Luma chân thực cho ảnh chụp kiểm thử giao diện
+        let count = HistogramTelemetry.binCount
+        let lumaBins = (0..<count).map { i -> Float in
+            let t = Float(i) / Float(count - 1)
+            let v = 0.10 + 0.64 * expf(-powf((t - 0.54) / 0.22, 2.0)) + 0.22 * expf(-powf((t - 0.22) / 0.11, 2.0))
+            return min(0.95, v)
+        }
+        let redBins = (0..<count).map { i -> Float in
+            let t = Float(i) / Float(count - 1)
+            let v = 0.08 + 0.62 * expf(-powf((t - 0.60) / 0.21, 2.0)) + 0.16 * expf(-powf((t - 0.26) / 0.12, 2.0))
+            return min(0.94, v)
+        }
+        let greenBins = (0..<count).map { i -> Float in
+            let t = Float(i) / Float(count - 1)
+            let v = 0.09 + 0.60 * expf(-powf((t - 0.52) / 0.22, 2.0)) + 0.19 * expf(-powf((t - 0.23) / 0.11, 2.0))
+            return min(0.92, v)
+        }
+        let blueBins = (0..<count).map { i -> Float in
+            let t = Float(i) / Float(count - 1)
+            let v = 0.08 + 0.55 * expf(-powf((t - 0.44) / 0.22, 2.0)) + 0.26 * expf(-powf((t - 0.18) / 0.11, 2.0))
+            return min(0.90, v)
+        }
+        histogramTelemetry = HistogramTelemetry(
+            luma: lumaBins,
+            red: redBins,
+            green: greenBins,
+            blue: blueBins,
+            shadowClipRatio: 0.008,
+            highlightClipRatio: 0.024,
+            averageLuminance: 0.48,
+            evOffset: 0.3
+        )
         histogramBars = (0..<32).map { i in
-            let t = Double(i) / 31.0
-            let h = 0.14 + 0.62 * exp(-pow((t - 0.52) / 0.24, 2.0)) + 0.18 * exp(-pow((t - 0.22) / 0.12, 2.0))
-            return HistogramBarData(id: i, height: CGFloat(min(0.95, h)), color: .white)
+            let idx = min(count - 1, Int(Float(i) * Float(count - 1) / 31.0))
+            return HistogramBarData(id: i, height: CGFloat(lumaBins[idx]), color: .white)
         }
         let args = ProcessInfo.processInfo.arguments
         if let idx = args.firstIndex(of: "-UI_SNAPSHOT_BG"), idx + 1 < args.count,
@@ -1824,8 +1968,19 @@ public final class CameraViewModel: ObservableObject {
 
         switch screen {
         case "main_drawer":
+            viewfinderGridStyle = .goldenRatio
             isFunctionDrawerOpen = true
+        case "main_drawer_video":
+            captureMode = .video
+            isUltraSharpEnabled = false
+            isMasterWatermarkEnabled = true
+            viewfinderGridStyle = .diagonal
+            isFunctionDrawerOpen = true
+        case "main_histogram_pro":
+            viewfinderGridStyle = .ruleOfThirds
+            isHistogramBarExpanded = true
         case "main_film":
+            selectedFilmPreset = .fujiPro400H
             isFilmSimulationActive = true
             isShowingFilmDrawer = true
         case "main_windowed":
@@ -2201,9 +2356,17 @@ public final class CameraViewModel: ObservableObject {
         haptics.triggerSelectionChange()
         withAnimation(.easeInOut(duration: 0.2)) {
             switch selectedPhotoFormat {
-            case .jpeg: selectedPhotoFormat = .heif
-            case .heif, .heic: selectedPhotoFormat = .dng
-            case .dng: selectedPhotoFormat = .jpeg
+            case .jpeg:
+                selectedPhotoFormat = .heif
+            case .heif, .heic:
+                if isFrontCamera || isDualCameraActive {
+                    selectedPhotoFormat = .jpeg
+                    showHUDNotice("RAW DNG chỉ hỗ trợ Camera sau đơn")
+                } else {
+                    selectedPhotoFormat = .dng
+                }
+            case .dng:
+                selectedPhotoFormat = .jpeg
             }
         }
     }
@@ -2227,8 +2390,8 @@ public final class CameraViewModel: ObservableObject {
         if aiSessionState != .idle {
             cancelAISession()
         }
-        if isAIVideoDirectorActive {
-            dismissAIVideoDirector()
+        if mode.isVideo && countdownSecondsRemaining > 0 {
+            cancelCountdownTimer()
         }
         isModeTransitionInFlight = true
         cameraService.updateCaptureMode(mode) { [weak self] success in
@@ -2518,6 +2681,14 @@ public final class CameraViewModel: ObservableObject {
         isGeminiAnalyzing = false
         trackingQuality = .locked
 
+        if isColorAppliedByAI {
+            isColorAppliedByAI = false
+            isFilmSimulationActive = false
+            selectedFilmPreset = .standard
+            currentAIColorParams = nil
+            geminiColorRecipe = nil
+        }
+
         withAnimation(.easeInOut(duration: 0.3)) {
             aiSessionState = .idle
             initialTargetPoint = nil
@@ -2718,11 +2889,16 @@ public final class CameraViewModel: ObservableObject {
         let scan = response.toScanResp(isPlan2: false)
         self.latestScanResp = scan
 
-        // AI Cloud: Tự động phân tích bối cảnh và áp dụng Tone màu/Film Preset tối ưu cùng công thức màu AI
-        self.selectedFilmPreset = response.recommendedPreset
-        self.currentAIColorParams = response.colorRecipe.asAIColorParameters
-        self.isAIFullColorEnabled = true
-        self.isFilmSimulationActive = true
+        // AI Cloud chỉ áp màu/preset khi người dùng chủ động bật "Tự động cân chỉnh màu AI"; mặc định giữ nguyên màu tự nhiên của máy
+        if self.isAIFullColorEnabled {
+            self.selectedFilmPreset = response.recommendedPreset
+            self.currentAIColorParams = response.colorRecipe.asAIColorParameters
+            self.isFilmSimulationActive = (response.recommendedPreset != .standard)
+            self.isColorAppliedByAI = true
+        } else {
+            self.currentAIColorParams = nil
+            self.geminiColorRecipe = nil
+        }
 
         // Ưu tiên tuyệt đối bounding box 2D do Gemini trả về (subject_box_2d / estimatedSubjectSize)
         let effectiveRect: CGRect
@@ -3037,8 +3213,12 @@ public final class CameraViewModel: ObservableObject {
         let localPreset = output.detectedScene.recommendedFilter
         aiRecommendedPreset = localPreset
         aiPresetMatchReason = "\(localPreset.displayName) — Gợi ý theo bối cảnh \(output.detectedScene.localizedName)"
-        if selectedFilmPreset.isAIFullAuto { selectedFilmPreset = localPreset }
-        if isAIFullColorEnabled { currentAIColorParams = output.detectedScene.aiFullColorParameters }
+        if isAIFullColorEnabled {
+            selectedFilmPreset = localPreset
+            isFilmSimulationActive = (localPreset != .standard)
+            isColorAppliedByAI = true
+            currentAIColorParams = output.detectedScene.aiFullColorParameters
+        }
         localCompositionChoices = analysis.choices
         localEvidenceCandidates = !analysis.choices.isEmpty ? analysis.choices.map(\.candidate) :
             (!analysis.fallbackCandidates.isEmpty ? analysis.fallbackCandidates : analysis.detection.allCandidates)

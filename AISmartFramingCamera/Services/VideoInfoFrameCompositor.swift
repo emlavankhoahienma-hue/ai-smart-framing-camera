@@ -121,7 +121,7 @@ public final class VideoInfoFrameCompositor: @unchecked Sendable {
             let cg = context.cgContext
 
             switch style {
-            case .off:
+            case .off, .masterFrame:
                 break
 
             case .cinemaBottomBar:
@@ -144,12 +144,12 @@ public final class VideoInfoFrameCompositor: @unchecked Sendable {
         let barHeight = max(54.0, size.height * 0.075)
         let barRect = CGRect(x: 0, y: size.height - barHeight, width: size.width, height: barHeight)
 
-        // Nền đen mờ điện ảnh 88%
+        // Nền đen mờ điện ảnh 90%
         cg.setFillColor(UIColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 0.90).cgColor)
         cg.fill(barRect)
 
-        // Viền chỉ trên mảnh 1px màu Cyan mờ
-        cg.setStrokeColor(UIColor(red: 56/255, green: 189/255, blue: 248/255, alpha: 0.35).cgColor)
+        // Viền chỉ trên mảnh 1px màu Warm Titanium
+        cg.setStrokeColor(UIColor(red: 216/255, green: 199/255, blue: 168/255, alpha: 0.38).cgColor)
         cg.setLineWidth(1.0)
         cg.move(to: CGPoint(x: 0, y: size.height - barHeight))
         cg.addLine(to: CGPoint(x: size.width, y: size.height - barHeight))
@@ -234,8 +234,8 @@ public final class VideoInfoFrameCompositor: @unchecked Sendable {
         let insetY = max(36.0, size.height * 0.05)
         let cornerLen: CGFloat = 20.0
 
-        // 4 góc khung ngắm điện ảnh màu Cyan mờ
-        cg.setStrokeColor(UIColor(red: 56/255, green: 189/255, blue: 248/255, alpha: 0.85).cgColor)
+        // 4 góc khung ngắm điện ảnh màu Warm Titanium
+        cg.setStrokeColor(UIColor(red: 216/255, green: 199/255, blue: 168/255, alpha: 0.86).cgColor)
         cg.setLineWidth(2.0)
 
         // Top-Left
@@ -270,7 +270,7 @@ public final class VideoInfoFrameCompositor: @unchecked Sendable {
         let specString = "\(metadata.focalLengthMM)mm • \(metadata.resolutionTag) • \(metadata.lutName)"
         let specAttrs: [NSAttributedString.Key: Any] = [
             .font: UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold),
-            .foregroundColor: UIColor(red: 56/255, green: 189/255, blue: 248/255, alpha: 0.95)
+            .foregroundColor: UIColor(red: 216/255, green: 199/255, blue: 168/255, alpha: 0.95)
         ]
         let specSize = specString.size(withAttributes: specAttrs)
         specString.draw(at: CGPoint(x: size.width - insetX - specSize.width - 6.0, y: size.height - insetY - specSize.height - 4.0), withAttributes: specAttrs)

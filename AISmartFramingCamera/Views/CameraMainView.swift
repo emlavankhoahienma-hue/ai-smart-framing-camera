@@ -258,6 +258,15 @@ public struct CameraMainView: View {
                                     .transition(.opacity)
                             }
                         }
+                        // Expanded Pro RGB + Luma Scope HUD (Top Trailing khi chạm vào Histogram hoặc bật trong Cài đặt)
+                        .overlay(alignment: .topTrailing) {
+                            if viewModel.showHistogramInViewfinder && viewModel.isHistogramBarExpanded && !viewModel.isCameraHibernating {
+                                ProHistogramExpandedHUDView(viewModel: viewModel)
+                                    .padding(.top, viewModel.isHorizonLockEnabled ? layout.viewfinderTopInset + 34 : layout.viewfinderTopInset)
+                                    .padding(.trailing, 10)
+                                    .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
+                            }
+                        }
                         // Top Viewfinder Overlays (Video Timer / AI Status)
                         .overlay(alignment: .top) {
                             VStack(spacing: 6) {
@@ -509,14 +518,21 @@ struct TopCameraBar: View {
 
             // Left & Right Symmetric Smoked Glass Capsules
             HStack(alignment: .center, spacing: 0) {
-                // Left Capsule: Flash + Quiet Monochrome Histogram (or Format Label)
+                let flashAvail = viewModel.featureAvailability(.flash)
+                // Left Capsule: Flash + Real Rec.709 RGB/Luma Histogram (or Format Label)
                 HStack(spacing: 6) {
                     Button(action: {
-                        viewModel.toggleFlash()
+                        viewModel.attemptFeature(.flash) {
+                            viewModel.toggleFlash()
+                        }
                     }) {
                         Image(systemName: flashIconName)
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(viewModel.activeFlashMode == .off ? AlignTheme.studioInkPrimary.opacity(0.82) : AlignTheme.studioAccent)
+                            .foregroundColor(
+                                !flashAvail.isAvailable
+                                    ? AlignTheme.studioInkPrimary.opacity(0.30)
+                                    : (viewModel.activeFlashMode == .off ? AlignTheme.studioInkPrimary.opacity(0.82) : AlignTheme.studioAccent)
+                            )
                             .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
@@ -534,9 +550,13 @@ struct TopCameraBar: View {
                     } else {
                         Button(action: {
                             if viewModel.captureMode.isVideo {
-                                viewModel.toggleVideoFormat()
+                                viewModel.attemptFeature(.videoQualityAndCodec) {
+                                    viewModel.toggleVideoFormat()
+                                }
                             } else {
-                                viewModel.togglePhotoFormat()
+                                viewModel.attemptFeature(.photoFormat) {
+                                    viewModel.togglePhotoFormat()
+                                }
                             }
                         }) {
                             Text(currentFormatLabel)
@@ -560,38 +580,51 @@ struct TopCameraBar: View {
 
                 Spacer()
 
-                // Right Capsule: Live Photo, Windowed Zoom, 6-Dot Control Sheet
+                // Right Capsule: Live Photo, Windowed Zoom, 6-Dot Control Sheet (Capability Gated)
+                let liveAvail = viewModel.featureAvailability(.livePhoto)
+                let windowedAvail = viewModel.featureAvailability(.windowedZoom)
                 HStack(spacing: 6) {
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.prepare()
-                        generator.impactOccurred()
-                        viewModel.isLivePhotoEnabled.toggle()
+                        viewModel.attemptFeature(.livePhoto) {
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.prepare()
+                            generator.impactOccurred()
+                            viewModel.isLivePhotoEnabled.toggle()
+                        }
                     }) {
-                        Image(systemName: viewModel.isLivePhotoEnabled ? "livephoto" : "livephoto.slash")
+                        Image(systemName: (liveAvail.isAvailable && viewModel.isLivePhotoEnabled) ? "livephoto" : "livephoto.slash")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(viewModel.isLivePhotoEnabled ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(viewModel.captureMode.isVideo ? 0.32 : 0.80))
+                            .foregroundColor(
+                                !liveAvail.isAvailable
+                                    ? AlignTheme.studioInkPrimary.opacity(0.28)
+                                    : (viewModel.isLivePhotoEnabled ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
+                            )
                             .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .disabled(viewModel.captureMode.isVideo)
                     .accessibilityLabel("Chế độ Live Photo")
 
                     Button(action: {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.prepare()
-                        generator.impactOccurred()
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                            viewModel.isWindowedZoomActive.toggle()
-                            if viewModel.isWindowedZoomActive && viewModel.windowedZoomFocalLength <= 24.5 {
-                                viewModel.windowedZoomFocalLength = 50.0
+                        viewModel.attemptFeature(.windowedZoom) {
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.prepare()
+                            generator.impactOccurred()
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                                viewModel.isWindowedZoomActive.toggle()
+                                if viewModel.isWindowedZoomActive && viewModel.windowedZoomFocalLength <= 24.5 {
+                                    viewModel.windowedZoomFocalLength = 50.0
+                                }
                             }
                         }
                     }) {
                         Image(systemName: viewModel.isWindowedZoomActive ? "viewfinder.circle.fill" : "viewfinder")
                             .font(.system(size: 14.5, weight: .medium))
-                            .foregroundColor(viewModel.isWindowedZoomActive ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.82))
+                            .foregroundColor(
+                                !windowedAvail.isAvailable
+                                    ? AlignTheme.studioInkPrimary.opacity(0.28)
+                                    : (viewModel.isWindowedZoomActive ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.82))
+                            )
                             .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
@@ -1085,48 +1118,173 @@ struct CameraHibernationStandbyView: View {
 }
 
 
-// MARK: - Drawer Function Item Button (Minimalist Obsidian Squircle Tile)
+// MARK: - Animated Multi-Mode Grid Mini Icon (Hiệu ứng chuyển đổi hình học từng loại lưới ngay trong nút)
+struct AnimatedGridStyleIcon: View {
+    let style: ViewfinderGridStyle
+    let accentColor: Color
+
+    var body: some View {
+        VStack(spacing: 3) {
+            ZStack {
+                gridVectorCanvas(for: style)
+                    .id(style)
+                    .transition(
+                        .asymmetric(
+                            insertion: .scale(scale: 0.70).combined(with: .opacity),
+                            removal: .scale(scale: 1.18).combined(with: .opacity)
+                        )
+                    )
+            }
+            .frame(width: 19, height: 19)
+            .animation(.spring(response: 0.28, dampingFraction: 0.76), value: style)
+
+            // 5 chấm mini chỉ tiến trình chuyển đổi giữa các kiểu lưới
+            HStack(spacing: 2.2) {
+                ForEach(1...ViewfinderGridStyle.activeStylesCount, id: \.self) { step in
+                    Circle()
+                        .fill(step == style.activeStepIndex ? accentColor : Color.white.opacity(style.isVisible ? 0.20 : 0.10))
+                        .frame(width: step == style.activeStepIndex ? 3.2 : 2.2, height: step == style.activeStepIndex ? 3.2 : 2.2)
+                }
+            }
+            .animation(.spring(response: 0.24, dampingFraction: 0.8), value: style)
+        }
+    }
+
+    private func gridVectorCanvas(for gridStyle: ViewfinderGridStyle) -> some View {
+        Canvas { context, size in
+            let r = CGRect(origin: .zero, size: size).insetBy(dx: 1.2, dy: 1.2)
+            let isOn = gridStyle.isVisible
+            let lineCol = isOn ? accentColor : Color.white.opacity(0.55)
+            let frameCol = isOn ? accentColor.opacity(0.65) : Color.white.opacity(0.32)
+
+            // Khung vuông bo góc nhẹ bên ngoài
+            let border = Path(roundedRect: r, cornerRadius: 3.0)
+            context.stroke(border, with: .color(frameCol), lineWidth: 1.0)
+
+            var inner = Path()
+            switch gridStyle {
+            case .off:
+                for frac in [CGFloat(1) / 3, CGFloat(2) / 3] {
+                    inner.move(to: CGPoint(x: r.minX + r.width * frac, y: r.minY + 1))
+                    inner.addLine(to: CGPoint(x: r.minX + r.width * frac, y: r.maxY - 1))
+                    inner.move(to: CGPoint(x: r.minX + 1, y: r.minY + r.height * frac))
+                    inner.addLine(to: CGPoint(x: r.maxX - 1, y: r.minY + r.height * frac))
+                }
+                context.stroke(inner, with: .color(Color.white.opacity(0.28)), lineWidth: 0.7)
+                // Gạch chéo báo tắt
+                var slash = Path()
+                slash.move(to: CGPoint(x: r.minX - 0.5, y: r.maxY + 0.5))
+                slash.addLine(to: CGPoint(x: r.maxX + 0.5, y: r.minY - 0.5))
+                context.stroke(slash, with: .color(Color.white.opacity(0.75)), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+
+            case .ruleOfThirds:
+                for frac in [CGFloat(1) / 3, CGFloat(2) / 3] {
+                    inner.move(to: CGPoint(x: r.minX + r.width * frac, y: r.minY))
+                    inner.addLine(to: CGPoint(x: r.minX + r.width * frac, y: r.maxY))
+                    inner.move(to: CGPoint(x: r.minX, y: r.minY + r.height * frac))
+                    inner.addLine(to: CGPoint(x: r.maxX, y: r.minY + r.height * frac))
+                }
+                context.stroke(inner, with: .color(lineCol), lineWidth: 1.05)
+
+            case .goldenRatio:
+                for frac in [CGFloat(0.382), CGFloat(0.618)] {
+                    inner.move(to: CGPoint(x: r.minX + r.width * frac, y: r.minY))
+                    inner.addLine(to: CGPoint(x: r.minX + r.width * frac, y: r.maxY))
+                    inner.move(to: CGPoint(x: r.minX, y: r.minY + r.height * frac))
+                    inner.addLine(to: CGPoint(x: r.maxX, y: r.minY + r.height * frac))
+                }
+                context.stroke(inner, with: .color(lineCol), lineWidth: 1.05)
+
+            case .diagonal:
+                inner.move(to: CGPoint(x: r.minX, y: r.minY))
+                inner.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+                inner.move(to: CGPoint(x: r.maxX, y: r.minY))
+                inner.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+                context.stroke(inner, with: .color(lineCol), lineWidth: 1.1)
+
+            case .square4x4:
+                for i in 1...3 {
+                    let frac = CGFloat(i) / 4.0
+                    inner.move(to: CGPoint(x: r.minX + r.width * frac, y: r.minY))
+                    inner.addLine(to: CGPoint(x: r.minX + r.width * frac, y: r.maxY))
+                    inner.move(to: CGPoint(x: r.minX, y: r.minY + r.height * frac))
+                    inner.addLine(to: CGPoint(x: r.maxX, y: r.minY + r.height * frac))
+                }
+                context.stroke(inner, with: .color(lineCol), lineWidth: 0.85)
+
+            case .centerCrosshair:
+                let cx = r.midX
+                let cy = r.midY
+                let arm = r.width * 0.24
+                inner.move(to: CGPoint(x: cx - arm, y: cy))
+                inner.addLine(to: CGPoint(x: cx + arm, y: cy))
+                inner.move(to: CGPoint(x: cx, y: cy - arm))
+                inner.addLine(to: CGPoint(x: cx, y: cy + arm))
+                let centerBox = r.insetBy(dx: r.width * 0.24, dy: r.height * 0.24)
+                inner.addRect(centerBox)
+                context.stroke(inner, with: .color(lineCol), lineWidth: 1.05)
+            }
+        }
+    }
+}
+
+// MARK: - Drawer Function Item Button (Minimalist Obsidian Squircle Tile + Capability Gating)
 struct DrawerFunctionButton: View {
     let icon: String
     var customIcon: AnyView? = nil
     let title: String
     let subtitle: String?
     let isActive: Bool
+    var availability: FeatureAvailability = .available
+    var onBlocked: ((String) -> Void)? = nil
     let action: () -> Void
 
     private let accentGold = AlignTheme.studioAccent
 
     var body: some View {
+        let isEnabled = availability.isAvailable
+        let effectiveActive = isEnabled && isActive
+        let displayedSubtitle = isEnabled ? subtitle : (availability.shortHint ?? "Không khả dụng")
+
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .light)
-            generator.prepare()
-            generator.impactOccurred()
-            action()
+            if isEnabled {
+                let generator = UIImpactFeedbackGenerator(style: .light)
+                generator.prepare()
+                generator.impactOccurred()
+                action()
+            } else if let reason = availability.detailReason {
+                onBlocked?(reason)
+            }
         }) {
-            VStack(spacing: 6) {
+            VStack(spacing: 5) {
                 if let custom = customIcon {
                     custom
-                        .frame(width: 22, height: 22)
+                        .frame(height: 24)
                 } else {
                     Image(systemName: icon)
-                        .font(.system(size: 18, weight: isActive ? .semibold : .medium))
-                        .foregroundColor(isActive ? accentGold : Color.white.opacity(0.84))
+                        .font(.system(size: 18, weight: effectiveActive ? .semibold : .medium))
+                        .foregroundColor(effectiveActive ? accentGold : Color.white.opacity(0.84))
                         .frame(height: 22)
                 }
 
                 VStack(spacing: 1.5) {
                     Text(title)
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundColor(isActive ? .white : .white.opacity(0.78))
+                        .foregroundColor(effectiveActive ? .white : .white.opacity(0.78))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
 
-                    if let sub = subtitle {
+                    if let sub = displayedSubtitle {
                         Text(sub)
-                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                            .foregroundColor(isActive ? accentGold : .white.opacity(0.42))
+                            .font(.system(size: 9.2, weight: isEnabled ? .bold : .medium, design: .rounded))
+                            .foregroundColor(
+                                !isEnabled
+                                    ? .white.opacity(0.50)
+                                    : (effectiveActive ? accentGold : .white.opacity(0.42))
+                            )
                             .lineLimit(1)
-                            .minimumScaleFactor(0.80)
+                            .minimumScaleFactor(0.74)
+                            .contentTransition(.numericText())
                     }
                 }
             }
@@ -1135,65 +1293,82 @@ struct DrawerFunctionButton: View {
             .padding(.horizontal, 4)
             .background(
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .fill(isActive ? accentGold.opacity(0.14) : Color.white.opacity(0.055))
+                    .fill(effectiveActive ? accentGold.opacity(0.14) : Color.white.opacity(0.055))
                     .overlay(
                         RoundedRectangle(cornerRadius: 15, style: .continuous)
-                            .stroke(isActive ? accentGold.opacity(0.42) : Color.white.opacity(0.075), lineWidth: isActive ? 1.0 : 0.6)
+                            .stroke(effectiveActive ? accentGold.opacity(0.42) : Color.white.opacity(0.075), lineWidth: effectiveActive ? 1.0 : 0.6)
                     )
             )
+            .opacity(isEnabled ? 1.0 : 0.40)
             .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         }
         .buttonStyle(PlainButtonStyle())
     }
 }
 
-// MARK: - Drawer Hero Quick-Mode Card (Top Featured Strip)
+// MARK: - Drawer Hero Quick-Mode Card (Top Featured Strip + Capability Gating)
 private struct DrawerHeroCard: View {
     let icon: String
     let title: String
     let valueText: String
     let isActive: Bool
+    var availability: FeatureAvailability = .available
+    var onBlocked: ((String) -> Void)? = nil
     let action: () -> Void
 
     private let accentGold = AlignTheme.studioAccent
 
     var body: some View {
+        let isEnabled = availability.isAvailable
+        let effectiveActive = isEnabled && isActive
+        let shownValue = isEnabled ? valueText : (availability.shortHint ?? "Khóa")
+
         Button(action: {
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.prepare()
-            generator.impactOccurred()
-            action()
+            if isEnabled {
+                let generator = UIImpactFeedbackGenerator(style: .medium)
+                generator.prepare()
+                generator.impactOccurred()
+                action()
+            } else if let reason = availability.detailReason {
+                onBlocked?(reason)
+            }
         }) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 0) {
                     Image(systemName: icon)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(isActive ? Color.black : accentGold)
+                        .foregroundColor(effectiveActive ? Color.black : (isEnabled ? accentGold : AlignTheme.studioInkSecondary))
                         .frame(width: 26, height: 26)
                         .background(
                             Circle()
-                                .fill(isActive ? accentGold : Color.white.opacity(0.09))
+                                .fill(effectiveActive ? accentGold : Color.white.opacity(0.09))
                         )
 
                     Spacer()
 
-                    Circle()
-                        .fill(isActive ? accentGold : Color.white.opacity(0.16))
-                        .frame(width: 6, height: 6)
+                    if isEnabled {
+                        Circle()
+                            .fill(effectiveActive ? accentGold : Color.white.opacity(0.16))
+                            .frame(width: 6, height: 6)
+                    } else {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(AlignTheme.studioInkTertiary)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                        .foregroundColor(isActive ? .white : .white.opacity(0.84))
+                        .foregroundColor(effectiveActive ? .white : .white.opacity(0.84))
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
 
-                    Text(valueText)
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundColor(isActive ? accentGold : .white.opacity(0.48))
+                    Text(shownValue)
+                        .font(.system(size: 10, weight: isEnabled ? .bold : .medium, design: .rounded))
+                        .foregroundColor(effectiveActive ? accentGold : .white.opacity(0.48))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.78)
+                        .minimumScaleFactor(0.75)
                 }
             }
             .padding(.horizontal, 11)
@@ -1202,7 +1377,7 @@ private struct DrawerHeroCard: View {
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(
-                        isActive
+                        effectiveActive
                             ? LinearGradient(
                                 colors: [accentGold.opacity(0.20), accentGold.opacity(0.09)],
                                 startPoint: .topLeading,
@@ -1216,9 +1391,10 @@ private struct DrawerHeroCard: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(isActive ? accentGold.opacity(0.48) : Color.white.opacity(0.09), lineWidth: isActive ? 1.0 : 0.7)
+                            .stroke(effectiveActive ? accentGold.opacity(0.48) : Color.white.opacity(0.09), lineWidth: effectiveActive ? 1.0 : 0.7)
                     )
             )
+            .opacity(isEnabled ? 1.0 : 0.42)
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(PlainButtonStyle())
@@ -1331,7 +1507,7 @@ struct CameraFunctionDrawerView: View {
                     .padding(.horizontal, 18)
                 }
 
-                // 2. Hero Featured Strip (3 Balanced Quick-Mode Cards)
+                // 2. Hero Featured Strip (3 Balanced Quick-Mode Cards + Capability Gating)
                 HStack(spacing: 9) {
                     if viewModel.captureMode.isVideo {
                         DrawerHeroCard(
@@ -1339,6 +1515,11 @@ struct CameraFunctionDrawerView: View {
                             title: "Chất lượng",
                             valueText: videoQualityBadge,
                             isActive: viewModel.selectedVideoFormatOption.width >= 3840,
+                            availability: viewModel.featureAvailability(.videoQualityAndCodec),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.toggleVideoFormat() }
                         )
                     } else {
@@ -1347,6 +1528,11 @@ struct CameraFunctionDrawerView: View {
                             title: "Ultra Sharp",
                             valueText: viewModel.isUltraSharpEnabled ? "Bật · 12MP" : "Tắt",
                             isActive: viewModel.isUltraSharpEnabled,
+                            availability: viewModel.featureAvailability(.ultraSharp),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.isUltraSharpEnabled.toggle() }
                         )
                     }
@@ -1354,9 +1540,23 @@ struct CameraFunctionDrawerView: View {
                     DrawerHeroCard(
                         icon: "camera.filters",
                         title: "Màu phim",
-                        valueText: viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.displayName : "Nguyên bản",
+                        valueText: viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.displayName : "Tự nhiên",
                         isActive: viewModel.isFilmSimulationActive,
-                        action: { viewModel.toggleFilmSimulation() }
+                        availability: viewModel.featureAvailability(.filmColor),
+                        onBlocked: { reason in
+                            viewModel.haptics.triggerError()
+                            viewModel.showHUDNotice(reason)
+                        },
+                        action: {
+                            if viewModel.isFilmSimulationActive {
+                                viewModel.disableFilmSimulation()
+                            } else {
+                                withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                                    viewModel.isFunctionDrawerOpen = false
+                                    viewModel.isShowingFilmDrawer = true
+                                }
+                            }
+                        }
                     )
 
                     if viewModel.captureMode.isVideo {
@@ -1365,6 +1565,11 @@ struct CameraFunctionDrawerView: View {
                             title: "Mã hóa",
                             valueText: viewModel.selectedVideoCodec == .hevc ? "HEVC" : "H.264",
                             isActive: viewModel.selectedVideoCodec == .hevc,
+                            availability: viewModel.featureAvailability(.videoQualityAndCodec),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.toggleVideoCodec() }
                         )
                     } else {
@@ -1373,6 +1578,11 @@ struct CameraFunctionDrawerView: View {
                             title: "Định dạng",
                             valueText: photoFormatBadge,
                             isActive: viewModel.selectedPhotoFormat == .dng,
+                            availability: viewModel.featureAvailability(.photoFormat),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.togglePhotoFormat() }
                         )
                     }
@@ -1384,7 +1594,7 @@ struct CameraFunctionDrawerView: View {
                     .frame(height: 0.7)
                     .padding(.horizontal, 18)
 
-                // 3. Section 1: Khung Ngắm & Hỗ Trợ (4 Balanced Squircle Tiles)
+                // 3. Section 1: Khung Ngắm & Hỗ Trợ (4 Balanced Squircle Tiles + Multi-Grid Animated Cycle)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("KHUNG NGẮM & BỐ CỤC")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -1398,6 +1608,11 @@ struct CameraFunctionDrawerView: View {
                             title: "Tỷ lệ",
                             subtitle: viewModel.windowedZoomAspectRatio.rawValue,
                             isActive: viewModel.isWindowedZoomActive,
+                            availability: viewModel.featureAvailability(.aspectRatio),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.cycleAspectRatio() }
                         )
 
@@ -1406,15 +1621,21 @@ struct CameraFunctionDrawerView: View {
                             title: "Hẹn giờ",
                             subtitle: viewModel.captureTimerSeconds == 0 ? "Tắt" : "\(viewModel.captureTimerSeconds)s",
                             isActive: viewModel.captureTimerSeconds > 0,
+                            availability: viewModel.featureAvailability(.captureTimer),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.cycleCaptureTimer() }
                         )
 
                         DrawerFunctionButton(
                             icon: "grid",
+                            customIcon: AnyView(AnimatedGridStyleIcon(style: viewModel.viewfinderGridStyle, accentColor: accentGold)),
                             title: "Lưới",
-                            subtitle: viewModel.isManualGridVisible ? "Bật" : "Tắt",
-                            isActive: viewModel.isManualGridVisible,
-                            action: { viewModel.isManualGridVisible.toggle() }
+                            subtitle: viewModel.viewfinderGridStyle.shortLabel,
+                            isActive: viewModel.viewfinderGridStyle.isVisible,
+                            action: { viewModel.cycleViewfinderGridStyle() }
                         )
 
                         DrawerFunctionButton(
@@ -1422,13 +1643,18 @@ struct CameraFunctionDrawerView: View {
                             title: "Cân bằng",
                             subtitle: viewModel.isHorizonLevelerEnabled ? "Bật" : "Tắt",
                             isActive: viewModel.isHorizonLevelerEnabled,
+                            availability: viewModel.featureAvailability(.horizonLeveler),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.isHorizonLevelerEnabled.toggle() }
                         )
                     }
                 }
                 .padding(.horizontal, 16)
 
-                // 4. Section 2: Công Cụ Nâng Cao (4 Balanced Squircle Tiles)
+                // 4. Section 2: Công Cụ Nâng Cao (4 Balanced Squircle Tiles + Capability Gating)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("CÔNG CỤ NÂNG CAO")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -1442,14 +1668,24 @@ struct CameraFunctionDrawerView: View {
                             title: "Chân trời",
                             subtitle: viewModel.isHorizonLockEnabled ? "360° Khóa" : "Tắt",
                             isActive: viewModel.isHorizonLockEnabled,
+                            availability: viewModel.featureAvailability(.horizonLock),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.toggleHorizonLock() }
                         )
 
                         DrawerFunctionButton(
                             icon: viewModel.isMasterWatermarkEnabled ? "seal.fill" : "seal",
                             title: "Master",
-                            subtitle: viewModel.isMasterWatermarkEnabled ? "Bật" : "Tắt",
+                            subtitle: viewModel.isMasterWatermarkEnabled ? (viewModel.captureMode.isVideo ? "Ảnh & Video" : "Bật") : "Tắt",
                             isActive: viewModel.isMasterWatermarkEnabled,
+                            availability: viewModel.featureAvailability(.masterWatermark),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.isMasterWatermarkEnabled.toggle() }
                         )
 
@@ -1458,13 +1694,18 @@ struct CameraFunctionDrawerView: View {
                             title: "Dual Cam",
                             subtitle: viewModel.isDualCameraActive ? "Bật" : "Tắt",
                             isActive: viewModel.isDualCameraActive,
+                            availability: viewModel.featureAvailability(.dualCamera),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
                             action: { viewModel.toggleDualCamera() }
                         )
 
                         DrawerFunctionButton(
                             icon: "chart.bar.xaxis",
                             title: "Biểu đồ",
-                            subtitle: viewModel.showHistogramInViewfinder ? "Bật" : "Tắt",
+                            subtitle: viewModel.showHistogramInViewfinder ? (viewModel.isHistogramBarExpanded ? "Pro RGB" : "Bật") : "Tắt",
                             isActive: viewModel.showHistogramInViewfinder,
                             action: { viewModel.showHistogramInViewfinder.toggle() }
                         )

@@ -18,6 +18,7 @@
 		C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000062 /* CharmPhotographicModel.swift */; };
 		B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* AISmartFramingCameraApp.swift */; };
 		B20000000000000000000002 /* FramingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* FramingModels.swift */; };
+		C2000000000000000000007B /* CameraFeatureGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007B /* CameraFeatureGate.swift */; };
 		B20000000000000000000003 /* CameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* CameraService.swift */; };
 		B20000000000000000000004 /* VisionFramingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* VisionFramingEngine.swift */; };
 		B20000000000000000000005 /* CompositionCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* CompositionCalculator.swift */; };
@@ -47,6 +48,7 @@
 		B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000027 /* FocusPeakingEngine.swift */; };
 		C20000000000000000000073 /* FocusPeakingMetalProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000073 /* FocusPeakingMetalProcessor.swift */; };
 		C20000000000000000000074 /* VideoInfoFrameCompositor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000074 /* VideoInfoFrameCompositor.swift */; };
+		C2000000000000000000007C /* HighFidelityVideoExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007C /* HighFidelityVideoExporter.swift */; };
 		C20000000000000000000071 /* MasterWatermarkRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000071 /* MasterWatermarkRenderer.swift */; };
 		C20000000000000000000072 /* MasterWatermarkConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000072 /* MasterWatermarkConfigSheet.swift */; };
 		B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000028 /* ProVideoManualControlsService.swift */; };
@@ -115,6 +117,7 @@
 		C10000000000000000000062 /* CharmPhotographicModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharmPhotographicModel.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* AISmartFramingCameraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISmartFramingCameraApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* FramingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FramingModels.swift; sourceTree = "<group>"; };
+		C1000000000000000000007B /* CameraFeatureGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraFeatureGate.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* CameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraService.swift; sourceTree = "<group>"; };
 		B10000000000000000000004 /* VisionFramingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionFramingEngine.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* CompositionCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionCalculator.swift; sourceTree = "<group>"; };
@@ -147,6 +150,7 @@
 		B100000000000000000000027 /* FocusPeakingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPeakingEngine.swift; sourceTree = "<group>"; };
 		C10000000000000000000073 /* FocusPeakingMetalProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPeakingMetalProcessor.swift; sourceTree = "<group>"; };
 		C10000000000000000000074 /* VideoInfoFrameCompositor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoInfoFrameCompositor.swift; sourceTree = "<group>"; };
+		C1000000000000000000007C /* HighFidelityVideoExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HighFidelityVideoExporter.swift; sourceTree = "<group>"; };
 		C10000000000000000000071 /* MasterWatermarkRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterWatermarkRenderer.swift; sourceTree = "<group>"; };
 		C10000000000000000000072 /* MasterWatermarkConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterWatermarkConfigSheet.swift; sourceTree = "<group>"; };
 		B100000000000000000000028 /* ProVideoManualControlsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProVideoManualControlsService.swift; sourceTree = "<group>"; };
@@ -250,6 +254,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000002 /* FramingModels.swift */,
+				C1000000000000000000007B /* CameraFeatureGate.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -283,6 +288,7 @@
 				B100000000000000000000027 /* FocusPeakingEngine.swift */,
 				C10000000000000000000073 /* FocusPeakingMetalProcessor.swift */,
 				C10000000000000000000074 /* VideoInfoFrameCompositor.swift */,
+				C1000000000000000000007C /* HighFidelityVideoExporter.swift */,
 				C10000000000000000000071 /* MasterWatermarkRenderer.swift */,
 				B100000000000000000000028 /* ProVideoManualControlsService.swift */,
 				B100000000000000000000045 /* UltraWideWarpEngine.swift */,
@@ -470,6 +476,7 @@
 			files = (
 				B20000000000000000000001 /* AISmartFramingCameraApp.swift in Sources */,
 				B20000000000000000000002 /* FramingModels.swift in Sources */,
+				C2000000000000000000007B /* CameraFeatureGate.swift in Sources */,
 				B20000000000000000000003 /* CameraService.swift in Sources */,
 				B20000000000000000000004 /* VisionFramingEngine.swift in Sources */,
 				B20000000000000000000005 /* CompositionCalculator.swift in Sources */,
@@ -505,6 +512,7 @@
 				B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */,
 				C20000000000000000000073 /* FocusPeakingMetalProcessor.swift in Sources */,
 				C20000000000000000000074 /* VideoInfoFrameCompositor.swift in Sources */,
+				C2000000000000000000007C /* HighFidelityVideoExporter.swift in Sources */,
 				C20000000000000000000071 /* MasterWatermarkRenderer.swift in Sources */,
 				C20000000000000000000072 /* MasterWatermarkConfigSheet.swift in Sources */,
 				B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */,

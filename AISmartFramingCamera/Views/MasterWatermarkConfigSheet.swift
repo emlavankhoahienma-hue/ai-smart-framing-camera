@@ -9,11 +9,11 @@ public struct MasterWatermarkConfigSheet: View {
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     private let presetDevices = ["ALIGN STUDIO", "LEICA M11-P", "XIAOMI 15 ULTRA", "IPHONE 16 PRO"]
 
-    // Design Tokens
-    private let canvasColor = Color(red: 12/255, green: 12/255, blue: 14/255)
-    private let cardColor = Color(red: 24/255, green: 24/255, blue: 27/255)
-    private let borderColor = Color(red: 39/255, green: 39/255, blue: 42/255)
-    private let accentColor = Color(red: 56/255, green: 189/255, blue: 248/255)
+    // Unified Monochrome Matte Carbon + Warm Titanium Tokens
+    private let canvasColor = AlignTheme.studioCanvas
+    private let cardColor = AlignTheme.studioSurface
+    private let borderColor = AlignTheme.studioHairline
+    private let accentColor = AlignTheme.studioAccent
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -47,29 +47,48 @@ public struct MasterWatermarkConfigSheet: View {
         }
     }
 
-    // MARK: - 1. Bật tắt Khung Master
+    // MARK: - 1. Bật tắt Khung Master (Ảnh & Video)
     @ViewBuilder
     private var watermarkToggleSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Đóng Khung Master")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                Text("Tự động đính kèm chữ ký viền ảnh Leica")
-                    .font(.system(size: 12))
-                    .foregroundColor(Color(red: 161/255, green: 161/255, blue: 170/255))
+        VStack(spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Đóng Khung Master")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(AlignTheme.studioInkPrimary)
+                    Text("Tự động đính kèm chữ ký viền Leica cho ảnh")
+                        .font(.system(size: 12))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                }
+                Spacer()
+                Toggle("", isOn: $viewModel.isMasterWatermarkEnabled)
+                    .labelsHidden()
+                    .tint(accentColor)
             }
-            Spacer()
-            Toggle("", isOn: $viewModel.isMasterWatermarkEnabled)
-                .labelsHidden()
-                .tint(accentColor)
+
+            Divider().background(AlignTheme.studioHairlineSubtle)
+
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Áp dụng cho Video")
+                        .font(.system(size: 14.5, weight: .medium))
+                        .foregroundColor(AlignTheme.studioInkPrimary)
+                    Text("Ghép khung dưới đáy giữ nguyên độ phân giải & âm thanh gốc")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                }
+                Spacer()
+                Toggle("", isOn: $viewModel.isVideoMasterFrameEnabled)
+                    .labelsHidden()
+                    .tint(accentColor)
+            }
         }
         .padding(16)
         .background(cardColor)
         .cornerRadius(16)
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(borderColor, lineWidth: 1)
+                .stroke(borderColor, lineWidth: 0.7)
         )
     }
 

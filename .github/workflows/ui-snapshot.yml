@@ -182,6 +182,8 @@ jobs:
             "06_settings_capture:settings_capture"
             "07_settings_ai:settings_ai"
             "08_settings_advanced:settings_advanced"
+            "09_main_drawer_video:main_drawer_video"
+            "10_main_histogram_pro:main_histogram_pro"
           )
 
           for entry in "${SCREENS[@]}"; do

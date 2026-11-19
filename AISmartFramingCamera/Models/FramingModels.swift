@@ -328,51 +328,32 @@ public enum ActiveAIIndicatorType: Equatable {
     case cloud
 }
 
-// MARK: - AI Video Cinematography Director Models
+// Legacy unreachable model types retained solely so the SHA-256-locked trailing slice
+// in CameraViewModel.swift (TrackingBoundary.json) compiles without altering test manifests.
+// All AI Video Director UI, overlays, and triggers have been completely removed.
 public struct CinematicWaypoint: Identifiable, Equatable {
-    public let id: Int                   // 1, 2, 3...
-    public var point: CGPoint            // Normalized coordinates (0.05...0.95) in UI space
-    public var label: String             // e.g. "1. Bắt đầu: Khóa chủ thể"
-    public var actionTip: String         // e.g. "Giữ máy ổn định 1.5s"
-    public var recommendedDuration: Double // Thời gian lia khuyến nghị (giây)
-
+    public let id: Int
+    public var point: CGPoint
+    public var label: String
+    public var actionTip: String
+    public var recommendedDuration: Double
     public init(id: Int, point: CGPoint, label: String, actionTip: String, recommendedDuration: Double = 2.0) {
-        self.id = id
-        self.point = point
-        self.label = label
-        self.actionTip = actionTip
-        self.recommendedDuration = recommendedDuration
+        self.id = id; self.point = point; self.label = label; self.actionTip = actionTip; self.recommendedDuration = recommendedDuration
     }
 }
 
 public struct AIVideoDirectorGuidance: Equatable {
-    public let shotStyleTitle: String               // e.g. "Lia ngang bắt trọn bối cảnh (Cinematic Pan)"
-    public let movementDirectionDescription: String // e.g. "Lia máy chậm từ trái sang phải, chuyển tiếp mượt mà qua các tâm"
-    public let suggestedPacingSeconds: Double       // e.g. 5.0s
-    public let waypoints: [CinematicWaypoint]        // Các tâm đánh dấu trên màn hình (2 - 4 điểm)
-    public let suggestedZoom: CGFloat               // 1.0x - 2.0x
-    public let directorTip: String                  // Lời khuyên của đạo diễn
-    public let modelUsed: String                    // Model AI OpenRouter đã phân tích
-
-    public init(
-        shotStyleTitle: String,
-        movementDirectionDescription: String,
-        suggestedPacingSeconds: Double,
-        waypoints: [CinematicWaypoint],
-        suggestedZoom: CGFloat = 1.0,
-        directorTip: String,
-        modelUsed: String = "OpenRouter AI"
-    ) {
-        self.shotStyleTitle = shotStyleTitle
-        self.movementDirectionDescription = movementDirectionDescription
-        self.suggestedPacingSeconds = suggestedPacingSeconds
-        self.waypoints = waypoints
-        self.suggestedZoom = suggestedZoom
-        self.directorTip = directorTip
-        self.modelUsed = modelUsed
+    public let shotStyleTitle: String
+    public let movementDirectionDescription: String
+    public let suggestedPacingSeconds: Double
+    public let waypoints: [CinematicWaypoint]
+    public let suggestedZoom: CGFloat
+    public let directorTip: String
+    public let modelUsed: String
+    public init(shotStyleTitle: String, movementDirectionDescription: String, suggestedPacingSeconds: Double, waypoints: [CinematicWaypoint], suggestedZoom: CGFloat = 1.0, directorTip: String, modelUsed: String = "") {
+        self.shotStyleTitle = shotStyleTitle; self.movementDirectionDescription = movementDirectionDescription; self.suggestedPacingSeconds = suggestedPacingSeconds; self.waypoints = waypoints; self.suggestedZoom = suggestedZoom; self.directorTip = directorTip; self.modelUsed = modelUsed
     }
 }
-
 
 // MARK: - Smart Autofocus Target Type
 public enum SmartFocusType: Equatable {
@@ -1841,6 +1822,127 @@ public struct HistogramBarData: Identifiable, Equatable, @unchecked Sendable {
     }
 }
 
+/// Dữ liệu quang phổ thực tế Rec.709 (Luma + RGB 48 bins + tỷ lệ cháy sáng/bết tối + lệch EV)
+public struct HistogramTelemetry: Equatable, Sendable {
+    public static let binCount = 48
+
+    public var luma: [Float]
+    public var red: [Float]
+    public var green: [Float]
+    public var blue: [Float]
+    public var shadowClipRatio: Float
+    public var highlightClipRatio: Float
+    public var averageLuminance: Float
+    public var evOffset: Float
+
+    public init(
+        luma: [Float],
+        red: [Float],
+        green: [Float],
+        blue: [Float],
+        shadowClipRatio: Float = 0,
+        highlightClipRatio: Float = 0,
+        averageLuminance: Float = 0.5,
+        evOffset: Float = 0
+    ) {
+        self.luma = luma
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.shadowClipRatio = shadowClipRatio
+        self.highlightClipRatio = highlightClipRatio
+        self.averageLuminance = averageLuminance
+        self.evOffset = evOffset
+    }
+
+    public static let neutral: HistogramTelemetry = {
+        let bins = (0..<binCount).map { i -> Float in
+            let t = Float(i) / Float(binCount - 1)
+            let bell = expf(-powf((t - 0.50) / 0.24, 2.0)) * 0.45 + 0.04
+            return min(1.0, max(0.02, bell))
+        }
+        return HistogramTelemetry(
+            luma: bins,
+            red: bins,
+            green: bins,
+            blue: bins,
+            shadowClipRatio: 0,
+            highlightClipRatio: 0,
+            averageLuminance: 0.45,
+            evOffset: 0
+        )
+    }()
+
+    public var isHighlightClipping: Bool { highlightClipRatio >= 0.015 }
+    public var isShadowClipping: Bool { shadowClipRatio >= 0.020 }
+
+    public func isVisuallySimilar(to other: HistogramTelemetry) -> Bool {
+        guard luma.count == other.luma.count,
+              red.count == other.red.count,
+              green.count == other.green.count,
+              blue.count == other.blue.count else { return false }
+        if abs(shadowClipRatio - other.shadowClipRatio) >= 0.004 ||
+           abs(highlightClipRatio - other.highlightClipRatio) >= 0.004 ||
+           abs(evOffset - other.evOffset) >= 0.08 {
+            return false
+        }
+        for i in 0..<luma.count {
+            if abs(luma[i] - other.luma[i]) >= 0.018 ||
+               abs(red[i] - other.red[i]) >= 0.022 ||
+               abs(green[i] - other.green[i]) >= 0.022 ||
+               abs(blue[i] - other.blue[i]) >= 0.022 {
+                return false
+            }
+        }
+        return true
+    }
+}
+
+// MARK: - Multi-Mode Viewfinder Grid Style (Cycle: Tắt → 1/3 → Tỷ lệ vàng → Đường chéo → 4×4 → Tâm ngắm → Tắt)
+public enum ViewfinderGridStyle: String, CaseIterable, Identifiable, Sendable {
+    case off = "off"
+    case ruleOfThirds = "ruleOfThirds"
+    case goldenRatio = "goldenRatio"
+    case diagonal = "diagonal"
+    case square4x4 = "square4x4"
+    case centerCrosshair = "centerCrosshair"
+
+    public var id: String { rawValue }
+
+    public var isVisible: Bool { self != .off }
+
+    public var shortLabel: String {
+        switch self {
+        case .off: return "Tắt"
+        case .ruleOfThirds: return "1/3"
+        case .goldenRatio: return "Tỷ lệ vàng"
+        case .diagonal: return "Đường chéo"
+        case .square4x4: return "Vuông 4×4"
+        case .centerCrosshair: return "Tâm ngắm"
+        }
+    }
+
+    /// Thứ tự 1...5 của lưới đang bật (0 nếu đang tắt) để vẽ chấm bước mini trên nút
+    public var activeStepIndex: Int {
+        switch self {
+        case .off: return 0
+        case .ruleOfThirds: return 1
+        case .goldenRatio: return 2
+        case .diagonal: return 3
+        case .square4x4: return 4
+        case .centerCrosshair: return 5
+        }
+    }
+
+    public static let activeStylesCount: Int = 5
+
+    public var next: ViewfinderGridStyle {
+        let all = Self.allCases
+        guard let idx = all.firstIndex(of: self) else { return .ruleOfThirds }
+        return all[(idx + 1) % all.count]
+    }
+}
+
 // MARK: - Windowed Zoom Models
 public enum WindowedZoomAspectRatio: String, CaseIterable, Identifiable, Sendable {
     case ratio3_4 = "3:4"
@@ -1951,9 +2053,10 @@ public struct WindowedZoomKeyframe: Sendable, Equatable {
     }
 }
 
-// MARK: - Kieu Khung Thong Tin Dien Anh Cho Video (Cinema EXIF Frame)
+// MARK: - Kieu Khung Thong Tin Dien Anh Cho Video (Master & Cinema EXIF Frame)
 public enum VideoInfoFrameStyle: String, CaseIterable, Identifiable, Sendable {
     case off = "Tắt"
+    case masterFrame = "Khung Master"
     case cinemaBottomBar = "Thanh Điện Ảnh"
     case galleryMatteFrame = "Viền Triển Lãm"
     case hudTelemetry = "Viewfinder HUD"
@@ -1963,6 +2066,7 @@ public enum VideoInfoFrameStyle: String, CaseIterable, Identifiable, Sendable {
     public var icon: String {
         switch self {
         case .off: return "rectangle.slash"
+        case .masterFrame: return "seal.fill"
         case .cinemaBottomBar: return "rectangle.bottomthird.inset.filled"
         case .galleryMatteFrame: return "rectangle.inset.filled"
         case .hudTelemetry: return "viewfinder"
