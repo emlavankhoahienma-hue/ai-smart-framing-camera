@@ -2053,8 +2053,27 @@ public struct WindowedZoomKeyframe: Sendable, Equatable {
     }
 }
 
-// MARK: - Kieu Khung Thong Tin Dien Anh Cho Video (Master & Cinema EXIF Frame)
+// MARK: - Kieu Khung Thong Tin Dien Anh Cho Video (Cinema EXIF Frame)
 public enum VideoInfoFrameStyle: String, CaseIterable, Identifiable, Sendable {
+    case off = "Tắt"
+    case cinemaBottomBar = "Thanh Điện Ảnh"
+    case galleryMatteFrame = "Viền Triển Lãm"
+    case hudTelemetry = "Viewfinder HUD"
+
+    public var id: String { rawValue }
+
+    public var icon: String {
+        switch self {
+        case .off: return "rectangle.slash"
+        case .cinemaBottomBar: return "rectangle.bottomthird.inset.filled"
+        case .galleryMatteFrame: return "rectangle.inset.filled"
+        case .hudTelemetry: return "viewfinder"
+        }
+    }
+}
+
+// MARK: - Kieu Khung Xuat Video Chat Luong Goc (Khung Master + Cinema EXIF)
+public enum VideoExportFrameStyle: String, CaseIterable, Identifiable, Sendable {
     case off = "Tắt"
     case masterFrame = "Khung Master"
     case cinemaBottomBar = "Thanh Điện Ảnh"
@@ -2070,6 +2089,24 @@ public enum VideoInfoFrameStyle: String, CaseIterable, Identifiable, Sendable {
         case .cinemaBottomBar: return "rectangle.bottomthird.inset.filled"
         case .galleryMatteFrame: return "rectangle.inset.filled"
         case .hudTelemetry: return "viewfinder"
+        }
+    }
+
+    public var cinemaInfoStyle: VideoInfoFrameStyle {
+        switch self {
+        case .off, .masterFrame: return .off
+        case .cinemaBottomBar: return .cinemaBottomBar
+        case .galleryMatteFrame: return .galleryMatteFrame
+        case .hudTelemetry: return .hudTelemetry
+        }
+    }
+
+    public init(from infoStyle: VideoInfoFrameStyle) {
+        switch infoStyle {
+        case .off: self = .off
+        case .cinemaBottomBar: self = .cinemaBottomBar
+        case .galleryMatteFrame: self = .galleryMatteFrame
+        case .hudTelemetry: self = .hudTelemetry
         }
     }
 }

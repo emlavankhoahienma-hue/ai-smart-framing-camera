@@ -121,7 +121,7 @@ public final class VideoInfoFrameCompositor: @unchecked Sendable {
             let cg = context.cgContext
 
             switch style {
-            case .off, .masterFrame:
+            case .off:
                 break
 
             case .cinemaBottomBar:

@@ -18,7 +18,7 @@ public struct VideoPreviewSheetView: View {
     @State private var hasSavedToPhotos: Bool = false
     @State private var processedVideoURL: URL? = nil
     @State private var isWindowedZoomAlreadyCropped: Bool = false
-    @State private var activeFrameStyle: VideoInfoFrameStyle = .off
+    @State private var activeFrameStyle: VideoExportFrameStyle = .off
 
     private let accent = AlignTheme.studioAccent
     private let darkBg = AlignTheme.studioCanvas
@@ -129,12 +129,12 @@ public struct VideoPreviewSheetView: View {
 
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
-                                ForEach(VideoInfoFrameStyle.allCases) { style in
+                                ForEach(VideoExportFrameStyle.allCases) { style in
                                     let isSelected = (activeFrameStyle == style)
                                     Button(action: {
                                         viewModel.haptics.triggerSelectionChange()
                                         activeFrameStyle = style
-                                        viewModel.videoInfoFrameStyle = style
+                                        viewModel.videoInfoFrameStyle = style.cinemaInfoStyle
                                         if style == .off && !hasWindowedParams {
                                             processedVideoURL = nil
                                             gradingSuccessNote = "Đang phát video gốc nguyên bản"
@@ -278,7 +278,9 @@ public struct VideoPreviewSheetView: View {
                 .foregroundColor(accent)
             )
             .onAppear {
-                let initialStyle: VideoInfoFrameStyle = shouldAutoApplyMasterFrame ? .masterFrame : viewModel.videoInfoFrameStyle
+                let initialStyle: VideoExportFrameStyle = shouldAutoApplyMasterFrame
+                    ? .masterFrame
+                    : VideoExportFrameStyle(from: viewModel.videoInfoFrameStyle)
                 activeFrameStyle = initialStyle
                 if hasWindowedParams {
                     applyWindowedZoomCrop()
@@ -315,7 +317,7 @@ public struct VideoPreviewSheetView: View {
     private func processVideoExport(
         applyColorGrading: Bool,
         applyWindowCrop: Bool,
-        frameStyle: VideoInfoFrameStyle,
+        frameStyle: VideoExportFrameStyle,
         autoSave: Bool
     ) {
         guard !isProcessingVideo else { return }

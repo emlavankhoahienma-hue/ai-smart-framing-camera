@@ -45,7 +45,7 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
         public let applyColorGrading: Bool
         public let filterPreset: FilmPreset
         public let aiColorParams: AIColorParameters?
-        public let infoFrameStyle: VideoInfoFrameStyle
+        public let infoFrameStyle: VideoExportFrameStyle
         public let masterFrameConfig: MasterFrameConfig
         public let liveAperture: String
         public let liveShutterText: String
@@ -62,7 +62,7 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
             applyColorGrading: Bool,
             filterPreset: FilmPreset,
             aiColorParams: AIColorParameters?,
-            infoFrameStyle: VideoInfoFrameStyle,
+            infoFrameStyle: VideoExportFrameStyle,
             masterFrameConfig: MasterFrameConfig,
             liveAperture: String,
             liveShutterText: String,
@@ -98,6 +98,65 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
             case .cannotCreateReaderWriter(let detail): return "Không khởi tạo được bộ ghi chất lượng cao: \(detail)"
             case .writerFailed(let detail): return "Xuất video thất bại: \(detail)"
             }
+        }
+    }
+
+    private final class ReaderWriterPipelineBox: @unchecked Sendable {
+        let reader: AVAssetReader
+        let writer: AVAssetWriter
+        let videoOutput: AVAssetReaderTrackOutput
+        let videoInput: AVAssetWriterInput
+        let adaptor: AVAssetWriterInputPixelBufferAdaptor
+        let audioOutput: AVAssetReaderTrackOutput?
+        let audioInput: AVAssetWriterInput?
+        let ciContext: CIContext
+        let colorSpace: CGColorSpace
+        let cachedMasterFooterCI: CIImage?
+
+        // Chỉ truy cập trên serial queue riêng biệt của từng track (videoQueue / audioQueue)
+        var videoFinished: Bool = false
+        var audioFinished: Bool = false
+
+        private let errorLock = NSLock()
+        private var capturedError: Error? = nil
+
+        init(
+            reader: AVAssetReader,
+            writer: AVAssetWriter,
+            videoOutput: AVAssetReaderTrackOutput,
+            videoInput: AVAssetWriterInput,
+            adaptor: AVAssetWriterInputPixelBufferAdaptor,
+            audioOutput: AVAssetReaderTrackOutput?,
+            audioInput: AVAssetWriterInput?,
+            ciContext: CIContext,
+            colorSpace: CGColorSpace,
+            cachedMasterFooterCI: CIImage?
+        ) {
+            self.reader = reader
+            self.writer = writer
+            self.videoOutput = videoOutput
+            self.videoInput = videoInput
+            self.adaptor = adaptor
+            self.audioOutput = audioOutput
+            self.audioInput = audioInput
+            self.ciContext = ciContext
+            self.colorSpace = colorSpace
+            self.cachedMasterFooterCI = cachedMasterFooterCI
+        }
+
+        func recordErrorIfNeeded(_ error: Error) {
+            errorLock.lock()
+            if capturedError == nil {
+                capturedError = error
+            }
+            errorLock.unlock()
+        }
+
+        func getCapturedError() -> Error? {
+            errorLock.lock()
+            let err = capturedError
+            errorLock.unlock()
+            return err
         }
     }
 
@@ -367,19 +426,31 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
         // Chạy đồng thời 2 luồng video & audio trên serial queue riêng (không chặn MainActor)
         let videoQueue = DispatchQueue(label: "com.aismartframing.exporter.video", qos: .userInitiated)
         let audioQueue = DispatchQueue(label: "com.aismartframing.exporter.audio", qos: .userInitiated)
+        let box = ReaderWriterPipelineBox(
+            reader: reader,
+            writer: writer,
+            videoOutput: videoOutput,
+            videoInput: videoInput,
+            adaptor: adaptor,
+            audioOutput: audioOutput,
+            audioInput: audioInput,
+            ciContext: ciContext,
+            colorSpace: colorSpace,
+            cachedMasterFooterCI: cachedMasterFooterCI
+        )
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let group = DispatchGroup()
-            let errorLock = NSLock()
-            var capturedError: Error? = nil
 
             group.enter()
-            videoInput.requestMediaDataWhenReady(on: videoQueue) {
-                while videoInput.isReadyForMoreMediaData {
+            box.videoInput.requestMediaDataWhenReady(on: videoQueue) {
+                guard !box.videoFinished else { return }
+                while box.videoInput.isReadyForMoreMediaData {
                     var shouldBreak = false
                     autoreleasepool {
-                        guard let sampleBuffer = videoOutput.copyNextSampleBuffer() else {
-                            videoInput.markAsFinished()
+                        guard let sampleBuffer = box.videoOutput.copyNextSampleBuffer() else {
+                            box.videoFinished = true
+                            box.videoInput.markAsFinished()
                             shouldBreak = true
                             group.leave()
                             return
@@ -387,7 +458,7 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
 
                         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                         guard let srcPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
-                              let pool = adaptor.pixelBufferPool else {
+                              let pool = box.adaptor.pixelBufferPool else {
                             return
                         }
 
@@ -405,25 +476,24 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
                             videoContentSize: videoContentSize,
                             finalOutputSize: finalOutputSize,
                             masterBarHeight: masterBarHeight,
-                            cachedMasterFooterCI: cachedMasterFooterCI,
+                            cachedMasterFooterCI: box.cachedMasterFooterCI,
                             exportFPS: exportFPS,
                             options: options
                         )
 
-                        ciContext.render(
+                        box.ciContext.render(
                             composedCI,
                             to: outBuffer,
                             bounds: renderBounds,
-                            colorSpace: colorSpace
+                            colorSpace: box.colorSpace
                         )
 
-                        if !adaptor.append(outBuffer, withPresentationTime: pts) {
-                            errorLock.lock()
-                            if capturedError == nil {
-                                capturedError = writer.error ?? ExportError.writerFailed("Không ghi được frame video")
-                            }
-                            errorLock.unlock()
-                            videoInput.markAsFinished()
+                        if !box.adaptor.append(outBuffer, withPresentationTime: pts) {
+                            box.recordErrorIfNeeded(
+                                box.writer.error ?? ExportError.writerFailed("Không ghi được frame video")
+                            )
+                            box.videoFinished = true
+                            box.videoInput.markAsFinished()
                             shouldBreak = true
                             group.leave()
                             return
@@ -436,16 +506,21 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
                 }
             }
 
-            if let aOut = audioOutput, let aIn = audioInput {
+            if box.audioOutput != nil && box.audioInput != nil {
                 group.enter()
-                aIn.requestMediaDataWhenReady(on: audioQueue) {
+                box.audioInput?.requestMediaDataWhenReady(on: audioQueue) {
+                    guard !box.audioFinished,
+                          let aIn = box.audioInput,
+                          let aOut = box.audioOutput else { return }
                     while aIn.isReadyForMoreMediaData {
                         guard let audioSample = aOut.copyNextSampleBuffer() else {
+                            box.audioFinished = true
                             aIn.markAsFinished()
                             group.leave()
                             return
                         }
                         if !aIn.append(audioSample) {
+                            box.audioFinished = true
                             aIn.markAsFinished()
                             group.leave()
                             return
@@ -455,29 +530,25 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
             }
 
             group.notify(queue: DispatchQueue.global(qos: .userInitiated)) {
-                errorLock.lock()
-                let err = capturedError
-                errorLock.unlock()
-
-                if let err = err {
-                    reader.cancelReading()
-                    writer.cancelWriting()
+                if let err = box.getCapturedError() {
+                    box.reader.cancelReading()
+                    box.writer.cancelWriting()
                     continuation.resume(throwing: err)
                     return
                 }
 
-                if reader.status == .failed {
-                    writer.cancelWriting()
-                    continuation.resume(throwing: ExportError.writerFailed(reader.error?.localizedDescription ?? "Lỗi đọc video"))
+                if box.reader.status == .failed {
+                    box.writer.cancelWriting()
+                    continuation.resume(throwing: ExportError.writerFailed(box.reader.error?.localizedDescription ?? "Lỗi đọc video"))
                     return
                 }
 
-                writer.finishWriting {
-                    if writer.status == .completed {
+                box.writer.finishWriting {
+                    if box.writer.status == .completed {
                         progressHandler(1.0)
                         continuation.resume()
                     } else {
-                        continuation.resume(throwing: ExportError.writerFailed(writer.error?.localizedDescription ?? "Lỗi hoàn tất file video"))
+                        continuation.resume(throwing: ExportError.writerFailed(box.writer.error?.localizedDescription ?? "Lỗi hoàn tất file video"))
                     }
                 }
             }
@@ -603,7 +674,7 @@ public final class HighFidelityVideoExporter: @unchecked Sendable {
             return VideoInfoFrameCompositor.shared.composite(
                 frame: contentImage,
                 metadata: metadata,
-                style: options.infoFrameStyle
+                style: options.infoFrameStyle.cinemaInfoStyle
             ).cropped(to: CGRect(origin: .zero, size: finalOutputSize))
         }
 
