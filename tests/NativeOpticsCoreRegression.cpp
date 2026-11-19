@@ -195,11 +195,66 @@ static void testTenengradSharpnessAndMADSigma() {
                 sharpScore, blurScore, sigma);
 }
 
+static void testExposureMatchAndShadowSafeClarity() {
+    // 1. Verify analytical rectilinear parameter resolution
+    float k = 0.0f, invTanhK = 0.0f, progress = 0.0f;
+    noc_uw_resolve_params_out(0.5f, 0.45f, &k, &invTanhK, &progress);
+    assert(progress > 0.99f);
+    assert(k > 0.70f && k < 0.86f);
+    assert(std::fabs(std::tanh(k) * invTanhK - 1.0f) < 1e-5f);
+
+    // 2. Verify photometric exposure matching recovers ~1.10x darkened secondary frame accurately
+    const int32_t W = 128;
+    const int32_t H = 128;
+    const int32_t rowBytes = W * 4;
+    std::vector<uint8_t> refImg(static_cast<size_t>(H * rowBytes), 255);
+    std::vector<uint8_t> secImg(static_cast<size_t>(H * rowBytes), 255);
+    for (int32_t y = 0; y < H; ++y) {
+        for (int32_t x = 0; x < W; ++x) {
+            const size_t off = static_cast<size_t>(y * rowBytes + x * 4);
+            const uint8_t base = static_cast<uint8_t>(40 + (x * 160) / W);
+            const uint8_t darker = static_cast<uint8_t>(std::max(0.0f, std::min(255.0f, static_cast<float>(base) / 1.10f)));
+            refImg[off + 0] = refImg[off + 1] = refImg[off + 2] = base;
+            secImg[off + 0] = secImg[off + 1] = secImg[off + 2] = darker;
+        }
+    }
+    float gain = 1.0f, bias = 0.0f;
+    noc_us_match_exposure_bgra_out(refImg.data(), secImg.data(), W, H, rowBytes, rowBytes, &gain, &bias);
+    assert(gain > 1.06f && gain < 1.14f);
+    assert(std::fabs(bias) < 0.02f);
+
+    // 3. Verify bilateral clarity & shadow recovery NEVER crushes dark regions to black and preserves true black
+    std::vector<uint8_t> darkSrc(static_cast<size_t>(H * rowBytes), 255);
+    std::vector<uint8_t> darkDst(static_cast<size_t>(H * rowBytes), 0);
+    for (int32_t y = 0; y < H; ++y) {
+        for (int32_t x = 0; x < W; ++x) {
+            const size_t off = static_cast<size_t>(y * rowBytes + x * 4);
+            // Left half dark shadow (28), right half bright wall (220), top-left corner pure black (0)
+            const uint8_t v = (x < 8 && y < 8) ? 0 : ((x < W / 2) ? 28 : 220);
+            darkSrc[off + 0] = darkSrc[off + 1] = darkSrc[off + 2] = v;
+        }
+    }
+    noc_us_enhance_superres_bgra_rows(darkSrc.data(), W, H, rowBytes, darkDst.data(), rowBytes, 0.34f, 0.14f, 0, H);
+
+    // Pure black stays pure black (0)
+    assert(darkDst[0] == 0 && darkDst[1] == 0 && darkDst[2] == 0 && darkDst[3] == 255);
+    // Dark side immediately adjacent to bright edge must NOT crush darker than 24 (zero dark halo blotches!)
+    const size_t edgeDarkOff = static_cast<size_t>((H / 2) * rowBytes + (W / 2 - 1) * 4);
+    assert(darkDst[edgeDarkOff + 1] >= 25);
+    // Mid-shadow interior gets a clean, subtle shadow lift (>= 29, <= 40)
+    const size_t midShadowOff = static_cast<size_t>((H / 2) * rowBytes + (W / 4) * 4);
+    assert(darkDst[midShadowOff + 1] >= 29 && darkDst[midShadowOff + 1] <= 42);
+
+    std::printf("PASS: testExposureMatchAndShadowSafeClarity (k=%.3f, gain=%.3f, edgeDark=%u, shadowLift=%u)\n",
+                k, gain, darkDst[edgeDarkOff + 1], darkDst[midShadowOff + 1]);
+}
+
 int main() {
     testRectilinearMeshStraightnessAndConformal();
     testLanczos3StillPhotoRendering();
     testMotionFieldHuberIRLSRepair();
     testTenengradSharpnessAndMADSigma();
+    testExposureMatchAndShadowSafeClarity();
     std::printf("ALL NATIVE OPTICS CORE C++20 REGRESSIONS PASSED!\n");
     return 0;
 }

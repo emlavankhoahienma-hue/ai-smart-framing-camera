@@ -149,6 +149,41 @@ public func noc_us_estimate_mad_sigma(
     _ isoValue: Float
 ) -> Float
 
+@_silgen_name("noc_uw_resolve_params_out")
+private func _noc_uw_resolve_params_out(
+    _ zoomFactor: Float,
+    _ architecturalRigidity: Float,
+    _ outK: UnsafeMutablePointer<Float>,
+    _ outInvTanhK: UnsafeMutablePointer<Float>,
+    _ outProgress: UnsafeMutablePointer<Float>
+)
+
+@_silgen_name("noc_us_match_exposure_bgra_out")
+private func _noc_us_match_exposure_bgra_out(
+    _ refBGRA: UnsafePointer<UInt8>,
+    _ secBGRA: UnsafePointer<UInt8>,
+    _ width: Int32,
+    _ height: Int32,
+    _ refRowBytes: Int32,
+    _ secRowBytes: Int32,
+    _ outGain: UnsafeMutablePointer<Float>,
+    _ outBias: UnsafeMutablePointer<Float>
+)
+
+@_silgen_name("noc_us_enhance_superres_bgra_rows")
+public func noc_us_enhance_superres_bgra_rows(
+    _ srcBGRA: UnsafePointer<UInt8>,
+    _ width: Int32,
+    _ height: Int32,
+    _ srcRowBytes: Int32,
+    _ dstBGRA: UnsafeMutablePointer<UInt8>,
+    _ dstRowBytes: Int32,
+    _ clarityStrength: Float,
+    _ shadowRecovery: Float,
+    _ rowStart: Int32,
+    _ rowEnd: Int32
+)
+
 // MARK: - Ergonomic Swift Wrappers
 
 @inline(__always)
@@ -216,4 +251,31 @@ public func noc_us_regularize_motion_field(
         globalShiftY: shiftY,
         isReliable: ok
     )
+}
+
+@inline(__always)
+public func noc_uw_resolve_params(
+    zoomFactor: Float,
+    architecturalRigidity: Float
+) -> (k: Float, invTanhK: Float, progress: Float) {
+    var k: Float = 0.0
+    var invTanhK: Float = 1.0
+    var progress: Float = 0.0
+    _noc_uw_resolve_params_out(zoomFactor, architecturalRigidity, &k, &invTanhK, &progress)
+    return (k, invTanhK, progress)
+}
+
+@inline(__always)
+public func noc_us_match_exposure_bgra(
+    refBGRA: UnsafePointer<UInt8>,
+    secBGRA: UnsafePointer<UInt8>,
+    width: Int32,
+    height: Int32,
+    refRowBytes: Int32,
+    secRowBytes: Int32
+) -> (gain: Float, bias: Float) {
+    var gain: Float = 1.0
+    var bias: Float = 0.0
+    _noc_us_match_exposure_bgra_out(refBGRA, secBGRA, width, height, refRowBytes, secRowBytes, &gain, &bias)
+    return (gain, bias)
 }

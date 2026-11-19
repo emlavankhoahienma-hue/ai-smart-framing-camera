@@ -88,6 +88,8 @@ public struct CameraPreviewView: UIViewRepresentable {
         }
 
         @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+            // Khi Windowed Zoom đang bật: nhường toàn bộ cử chỉ chụm/mở 2 ngón cho khung cửa sổ (không zoom ống kính vật lý!)
+            guard !parent.viewModel.isWindowedZoomActive else { return }
             if gesture.state == .began {
                 initialZoom = parent.viewModel.displayZoom
                 parent.viewModel.beginVideoAwareManualZoomGesture()
@@ -113,7 +115,17 @@ public struct CameraPreviewView: UIViewRepresentable {
             view.showFocusRing(at: location, persist: true)
         }
 
+        public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            if gestureRecognizer is UIPinchGestureRecognizer {
+                return !parent.viewModel.isWindowedZoomActive
+            }
+            return true
+        }
+
         public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            if gestureRecognizer is UIPinchGestureRecognizer && parent.viewModel.isWindowedZoomActive {
+                return false
+            }
             return true
         }
     }

@@ -31,24 +31,35 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
     private var pongOutTex: MTLTexture?
     private var usePingSlot = true
 
-    // Lưới quang học 33x33 tính từ C++20 (cached theo factor & rigidity)
-    private let meshSize: Int = 33
-    private var opticalMeshTexture: MTLTexture?
-    private var cachedMeshFactor: Float = -1.0
-    private var cachedMeshRigidity: Float = -1.0
-    private var cachedMeshAspect: Float = -1.0
-
+    // Tham số quang học Rectilinear giải tích chuẩn C++20 truyền trực tiếp xuống GPU float32 (0% vỡ khối/pixelate)
     public struct SuperViewParams {
+        public var k: Float
+        public var inv_tanh_k: Float
+        public var progress: Float
         public var edge_clarity: Float
         public var vignette_mix: Float
         public var chroma_guard: Float
-        public var reserved: Float
+        public var reserved0: Float
+        public var reserved1: Float
 
-        public init(edge_clarity: Float, vignette_mix: Float, chroma_guard: Float, reserved: Float = 0.0) {
+        public init(
+            k: Float,
+            inv_tanh_k: Float,
+            progress: Float,
+            edge_clarity: Float,
+            vignette_mix: Float,
+            chroma_guard: Float,
+            reserved0: Float = 0.0,
+            reserved1: Float = 0.0
+        ) {
+            self.k = k
+            self.inv_tanh_k = inv_tanh_k
+            self.progress = progress
             self.edge_clarity = edge_clarity
             self.vignette_mix = vignette_mix
             self.chroma_guard = chroma_guard
-            self.reserved = reserved
+            self.reserved0 = reserved0
+            self.reserved1 = reserved1
         }
     }
 
@@ -121,17 +132,9 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         textureLock.lock()
         defer { textureLock.unlock() }
 
-        let aspect = Float(width) / Float(max(1, height))
         let fZoom = Float(factor)
         let defaultRigidity: Float = 0.45
-        guard let meshTex = ensureOpticalMeshTexture(
-            device: dev,
-            zoomFactor: fZoom,
-            aspect: aspect,
-            rigidity: defaultRigidity
-        ) else {
-            return workingImage
-        }
+        let resolved = noc_uw_resolve_params(zoomFactor: fZoom, architecturalRigidity: defaultRigidity)
 
         let inTex: MTLTexture
         let outTex: MTLTexture
@@ -185,14 +188,14 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         encoder.setComputePipelineState(pState)
         encoder.setTexture(inTex, index: 0)
         encoder.setTexture(outTex, index: 1)
-        encoder.setTexture(meshTex, index: 2)
 
-        let progress = Float(min(max((1.0 - factor) / 0.5, 0.0), 1.0))
         var params = SuperViewParams(
-            edge_clarity: 0.72 * progress,
-            vignette_mix: 0.75 * progress,
-            chroma_guard: 0.006,
-            reserved: 0.0
+            k: resolved.k,
+            inv_tanh_k: resolved.invTanhK,
+            progress: resolved.progress,
+            edge_clarity: 0.65 * resolved.progress,
+            vignette_mix: 0.70 * resolved.progress,
+            chroma_guard: 0.006
         )
         encoder.setBytes(&params, length: MemoryLayout<SuperViewParams>.stride, index: 0)
 
@@ -231,7 +234,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
                          abs(horizonShakeX) > 1e-5 || abs(horizonShakeY) > 1e-5
         guard factor < 0.999 || hasHorizon else { return cgImage }
 
-        let colorSpace = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let colorSpace = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.displayP3) ?? CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         let rowBytes = width * 4
         let totalBytes = height * rowBytes
         let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
@@ -349,56 +352,6 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
     }
 
     // MARK: - Helper Methods
-    private func ensureOpticalMeshTexture(
-        device: MTLDevice,
-        zoomFactor: Float,
-        aspect: Float,
-        rigidity: Float
-    ) -> MTLTexture? {
-        if let existing = opticalMeshTexture,
-           abs(cachedMeshFactor - zoomFactor) < 0.002,
-           abs(cachedMeshRigidity - rigidity) < 0.02,
-           abs(cachedMeshAspect - aspect) < 0.02 {
-            return existing
-        }
-
-        let w = meshSize
-        let h = meshSize
-        var meshFloats = [Float](repeating: 0.0, count: w * h * 4)
-        meshFloats.withUnsafeMutableBufferPointer { buf in
-            guard let ptr = buf.baseAddress else { return }
-            noc_uw_build_rectilinear_mesh(zoomFactor, aspect, rigidity, Int32(w), Int32(h), ptr)
-        }
-
-        let tex: MTLTexture
-        if let existing = opticalMeshTexture, existing.width == w, existing.height == h {
-            tex = existing
-        } else {
-            let desc = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: .rgba32Float,
-                width: w,
-                height: h,
-                mipmapped: false
-            )
-            desc.usage = [.shaderRead]
-            desc.storageMode = .shared
-            guard let created = device.makeTexture(descriptor: desc) else { return nil }
-            opticalMeshTexture = created
-            tex = created
-        }
-
-        let region = MTLRegionMake2D(0, 0, w, h)
-        meshFloats.withUnsafeBytes { raw in
-            if let base = raw.baseAddress {
-                tex.replace(region: region, mipmapLevel: 0, withBytes: base, bytesPerRow: w * 4 * MemoryLayout<Float>.stride)
-            }
-        }
-        cachedMeshFactor = zoomFactor
-        cachedMeshRigidity = rigidity
-        cachedMeshAspect = aspect
-        return tex
-    }
-
     private func makeTexturePair(device: MTLDevice, width: Int, height: Int) -> (MTLTexture, MTLTexture)? {
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm,

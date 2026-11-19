@@ -948,3 +948,213 @@ bool noc_us_regularize_motion_field_out(
     if (outGlobalShiftY) *outGlobalShiftY = s.globalShiftY;
     return s.isReliable;
 }
+
+void noc_uw_resolve_params_out(
+    float zoomFactor,
+    float architecturalRigidity,
+    float* outK,
+    float* outInvTanhK,
+    float* outProgress
+) {
+    const float progress = clampf((1.0f - zoomFactor) / 0.5f, 0.0f, 1.0f);
+    const float k = resolveRectilinearK(zoomFactor, architecturalRigidity);
+    const float invTanhK = (k > 1e-4f) ? (1.0f / std::tanh(k)) : 1.0f;
+    if (outK) *outK = k;
+    if (outInvTanhK) *outInvTanhK = invTanhK;
+    if (outProgress) *outProgress = progress;
+}
+
+void noc_us_match_exposure_bgra_out(
+    const uint8_t* refBGRA,
+    const uint8_t* secBGRA,
+    int32_t width,
+    int32_t height,
+    int32_t refRowBytes,
+    int32_t secRowBytes,
+    float* outGain,
+    float* outBias
+) {
+    if (outGain) *outGain = 1.0f;
+    if (outBias) *outBias = 0.0f;
+    if (!refBGRA || !secBGRA || width < 16 || height < 16 ||
+        refRowBytes < width * 4 || secRowBytes < width * 4) {
+        return;
+    }
+
+    const int32_t stepX = std::max<int32_t>(1, width / 56);
+    const int32_t stepY = std::max<int32_t>(1, height / 42);
+
+    std::vector<float> ratios;
+    ratios.reserve(2500);
+    std::vector<float> shadowDiffs;
+    shadowDiffs.reserve(1000);
+
+    for (int32_t y = stepY; y < height - stepY; y += stepY) {
+        const uint8_t* rRow = refBGRA + static_cast<size_t>(y) * static_cast<size_t>(refRowBytes);
+        const uint8_t* sRow = secBGRA + static_cast<size_t>(y) * static_cast<size_t>(secRowBytes);
+        for (int32_t x = stepX; x < width - stepX; x += stepX) {
+            const size_t off = static_cast<size_t>(x) * 4;
+            const float rLuma = (0.0722f * static_cast<float>(rRow[off + 0]) +
+                                 0.7152f * static_cast<float>(rRow[off + 1]) +
+                                 0.2126f * static_cast<float>(rRow[off + 2])) * (1.0f / 255.0f);
+            const float sLuma = (0.0722f * static_cast<float>(sRow[off + 0]) +
+                                 0.7152f * static_cast<float>(sRow[off + 1]) +
+                                 0.2126f * static_cast<float>(sRow[off + 2])) * (1.0f / 255.0f);
+
+            // Use unsaturated midtones for multiplicative gain matching
+            if (rLuma >= 0.14f && rLuma <= 0.86f && sLuma >= 0.12f && sLuma <= 0.88f) {
+                const float ratio = rLuma / sLuma;
+                if (ratio >= 0.72f && ratio <= 1.38f) {
+                    ratios.push_back(ratio);
+                }
+            } else if (rLuma >= 0.02f && rLuma < 0.18f && sLuma >= 0.02f && sLuma < 0.22f) {
+                const float diff = rLuma - sLuma;
+                if (std::fabs(diff) <= 0.08f) {
+                    shadowDiffs.push_back(diff);
+                }
+            }
+        }
+    }
+
+    float gain = 1.0f;
+    if (ratios.size() >= 32) {
+        std::sort(ratios.begin(), ratios.end());
+        const size_t lo = ratios.size() / 4;
+        const size_t hi = (ratios.size() * 3) / 4;
+        double sum = 0.0;
+        for (size_t i = lo; i < hi; ++i) {
+            sum += static_cast<double>(ratios[i]);
+        }
+        gain = clampf(static_cast<float>(sum / static_cast<double>(std::max<size_t>(1, hi - lo))), 0.88f, 1.15f);
+    }
+
+    float bias = 0.0f;
+    if (shadowDiffs.size() >= 24) {
+        std::sort(shadowDiffs.begin(), shadowDiffs.end());
+        const float medDiff = shadowDiffs[shadowDiffs.size() / 2];
+        // Residual black-level bias after multiplicative gain
+        bias = clampf(medDiff - (gain - 1.0f) * 0.10f, -0.025f, 0.025f);
+    }
+
+    if (outGain) *outGain = gain;
+    if (outBias) *outBias = bias;
+}
+
+void noc_us_enhance_superres_bgra_rows(
+    const uint8_t* srcBGRA,
+    int32_t width,
+    int32_t height,
+    int32_t srcRowBytes,
+    uint8_t* dstBGRA,
+    int32_t dstRowBytes,
+    float clarityStrength,
+    float shadowRecovery,
+    int32_t rowStart,
+    int32_t rowEnd
+) {
+    if (!srcBGRA || !dstBGRA || width < 8 || height < 8 ||
+        srcRowBytes < width * 4 || dstRowBytes < width * 4) {
+        return;
+    }
+
+    const int32_t y0 = clampi(rowStart, 0, height);
+    const int32_t y1 = clampi(rowEnd, y0, height);
+    if (y0 >= y1) {
+        return;
+    }
+
+    const float clarity = clampf(clarityStrength, 0.0f, 0.85f);
+    const float lift = clampf(shadowRecovery, 0.0f, 0.35f);
+    const float inv255 = 1.0f / 255.0f;
+    // Edge-preserving bilateral range sigma (~0.085 luma -> prevents halos across hard boundaries)
+    const float invTwoSigmaR2 = 1.0f / (2.0f * 0.085f * 0.085f);
+
+    constexpr int32_t kOffX[8] = {-1, 1, 0, 0, -2, 2, 0, 0};
+    constexpr int32_t kOffY[8] = {0, 0, -1, 1, 0, 0, -2, 2};
+    constexpr float kSpatialW[8] = {1.0f, 1.0f, 1.0f, 1.0f, 0.45f, 0.45f, 0.45f, 0.45f};
+
+    for (int32_t y = y0; y < y1; ++y) {
+        const uint8_t* srcRowC = srcBGRA + static_cast<size_t>(y) * static_cast<size_t>(srcRowBytes);
+        uint8_t* dstRow = dstBGRA + static_cast<size_t>(y) * static_cast<size_t>(dstRowBytes);
+
+        const uint8_t* rowY[5] = {
+            srcBGRA + static_cast<size_t>(clampi(y - 2, 0, height - 1)) * static_cast<size_t>(srcRowBytes),
+            srcBGRA + static_cast<size_t>(clampi(y - 1, 0, height - 1)) * static_cast<size_t>(srcRowBytes),
+            srcRowC,
+            srcBGRA + static_cast<size_t>(clampi(y + 1, 0, height - 1)) * static_cast<size_t>(srcRowBytes),
+            srcBGRA + static_cast<size_t>(clampi(y + 2, 0, height - 1)) * static_cast<size_t>(srcRowBytes)
+        };
+
+        for (int32_t x = 0; x < width; ++x) {
+            const size_t cOff = static_cast<size_t>(x) * 4;
+            const float b = static_cast<float>(srcRowC[cOff + 0]) * inv255;
+            const float g = static_cast<float>(srcRowC[cOff + 1]) * inv255;
+            const float r = static_cast<float>(srcRowC[cOff + 2]) * inv255;
+
+            const float lumaC = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+
+            // 1. Edge-preserving bilateral local mean (no cross-boundary dark halo bleeding!)
+            float wSum = 1.0f;
+            float lumaSum = lumaC;
+            for (int k = 0; k < 8; ++k) {
+                const int32_t nx = clampi(x + kOffX[k], 0, width - 1);
+                const uint8_t* nRow = rowY[kOffY[k] + 2];
+                const size_t nOff = static_cast<size_t>(nx) * 4;
+                const float nLuma = (0.0722f * static_cast<float>(nRow[nOff + 0]) +
+                                     0.7152f * static_cast<float>(nRow[nOff + 1]) +
+                                     0.2126f * static_cast<float>(nRow[nOff + 2])) * inv255;
+                const float dl = nLuma - lumaC;
+                const float rw = std::exp(-(dl * dl) * invTwoSigmaR2);
+                const float w = kSpatialW[k] * rw;
+                lumaSum += nLuma * w;
+                wSum += w;
+            }
+            const float bilateralMean = lumaSum / wSum;
+            const float detail = lumaC - bilateralMean;
+
+            // 2. Noise-gated & asymmetric shadow-safe micro-clarity delta
+            const float absD = std::fabs(detail);
+            float delta = 0.0f;
+            if (clarity > 1e-4f && absD > 0.0045f) {
+                const float gate = clampf((absD - 0.0045f) / 0.014f, 0.0f, 1.0f);
+                const float smoothGate = gate * gate * (3.0f - 2.0f * gate);
+                // Protect shadows from darkening on the negative edge side ("tối mấy chỗ" prevention!)
+                const float shadowT = clampf((lumaC - 0.06f) / 0.36f, 0.0f, 1.0f);
+                const float negGuard = 0.24f + 0.56f * shadowT;
+                const float signedScale = (detail < 0.0f) ? negGuard : 1.0f;
+                delta = clampf(detail * clarity * smoothGate * signedScale, -0.028f, 0.052f);
+            }
+
+            // 3. Natural shadow toe lift (zero at black=0 and zero in highlights -> crisp, bright, deep blacks)
+            float shadowBoost = 0.0f;
+            if (lift > 1e-4f && lumaC > 0.008f && lumaC < 0.55f) {
+                const float oneMinus = 1.0f - lumaC;
+                shadowBoost = lift * lumaC * oneMinus * oneMinus * oneMinus;
+            }
+
+            const float targetLuma = clampf(lumaC + delta + shadowBoost, 0.0f, 1.0f);
+
+            // Hue-preserving luminance ratio scaling blended gently with additive luma to avoid clipping neon chroma
+            float outR = r;
+            float outG = g;
+            float outB = b;
+            if (lumaC > 0.015f) {
+                const float scale = clampf(targetLuma / lumaC, 0.84f, 1.24f);
+                const float addD = targetLuma - lumaC;
+                outR = 0.65f * (r * scale) + 0.35f * (r + addD);
+                outG = 0.65f * (g * scale) + 0.35f * (g + addD);
+                outB = 0.65f * (b * scale) + 0.35f * (b + addD);
+            } else {
+                const float addD = targetLuma - lumaC;
+                outR = r + addD;
+                outG = g + addD;
+                outB = b + addD;
+            }
+
+            dstRow[cOff + 0] = floatToU8(outB * 255.0f);
+            dstRow[cOff + 1] = floatToU8(outG * 255.0f);
+            dstRow[cOff + 2] = floatToU8(outR * 255.0f);
+            dstRow[cOff + 3] = 255;
+        }
+    }
+}

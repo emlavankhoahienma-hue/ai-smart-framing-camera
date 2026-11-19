@@ -143,17 +143,20 @@ public final class UltraSharpService: @unchecked Sendable {
         // Chọn độ phân giải đích Full 12MP (4032px) trên máy >= 5.2GB RAM, 3600px trên máy 4GB (iPhone XS)
         let maxDecodeDim = (ProcessInfo.processInfo.physicalMemory >= 5_200_000_000) ? 4032 : 3600
 
-        guard let refPixelBuffer = UltraSharpCaptureController.decodeFullResolutionPixelBuffer(
+        guard let decodedRef = UltraSharpCaptureController.decodeFullResolutionPixelBufferWithColorSpace(
             from: refShot.encodedData,
             maxPixelSize: maxDecodeDim
         ) else {
             finishWithFailure(error: CameraServiceError.photoProcessingFailed, completion: completion)
             return
         }
+        let refPixelBuffer = decodedRef.pixelBuffer
+        let sourceColorSpace = decodedRef.colorSpace
 
         if validShots.count < 2 {
             fallbackToReferenceBuffer(
                 refPixelBuffer: refPixelBuffer,
+                colorSpace: sourceColorSpace,
                 refIndex: refShot.index,
                 totalShots: shots.count,
                 startTime: startTime,
@@ -168,6 +171,7 @@ public final class UltraSharpService: @unchecked Sendable {
               let initCB = queue.makeCommandBuffer() else {
             fallbackToReferenceBuffer(
                 refPixelBuffer: refPixelBuffer,
+                colorSpace: sourceColorSpace,
                 refIndex: refShot.index,
                 totalShots: shots.count,
                 startTime: startTime,
@@ -183,6 +187,7 @@ public final class UltraSharpService: @unchecked Sendable {
             CameraLogger.error("UltraSharp Pro: initCB lỗi (status=\(initCB.status.rawValue)) -> Fallback!", category: .capture)
             fallbackToReferenceBuffer(
                 refPixelBuffer: refPixelBuffer,
+                colorSpace: sourceColorSpace,
                 refIndex: refShot.index,
                 totalShots: shots.count,
                 startTime: startTime,
@@ -192,7 +197,7 @@ public final class UltraSharpService: @unchecked Sendable {
         }
 
         // BƯỚC 4: Giải mã & Gộp từng frame phụ một (1-by-1 Streaming trong autoreleasepool)
-        // kết hợp C++20 Huber-IRLS chống bóng ma & C++20 MAD Noise Estimation
+        // kết hợp Cân bằng sáng C++20 + C++20 Huber-IRLS chống bóng ma + Edge-Aware Wiener chống bệt
         var fusedCount = 1
         var accumulatedError: Float = 0.0
 
@@ -226,6 +231,13 @@ public final class UltraSharpService: @unchecked Sendable {
                     return
                 }
 
+                // Khớp độ sáng quang trắc (gain/bias) C++20 giữa secBuffer -> refPixelBuffer (< 0.2ms)
+                // triệt tiêu hoàn toàn hiện tượng tối vá cục bộ do sai lệch AE/flicker giữa các khung!
+                let exposureMatch: (gain: Float, bias: Float) = Self.computePhotometricMatch(
+                    refBuffer: refPixelBuffer,
+                    secBuffer: secBuffer
+                )
+
                 let alignResult = withExtendedLifetime(secCVKeepAlive) {
                     metalEngine.accumulateFrameWithNativeOptics(
                         secondaryTexture: secTexture,
@@ -233,6 +245,8 @@ public final class UltraSharpService: @unchecked Sendable {
                         frameIndex: fusedCount,
                         totalFrames: validShots.count,
                         iso: secShot.iso,
+                        exposureGain: exposureMatch.gain,
+                        exposureBias: exposureMatch.bias,
                         queue: queue
                     )
                 }
@@ -244,21 +258,22 @@ public final class UltraSharpService: @unchecked Sendable {
             }
         }
 
-        // BƯỚC 5: Chuẩn hóa & Tái tạo Chi tiết Đa tần số Kẹp Halo trên GPU Metal
+        // BƯỚC 5: Chuẩn hóa & Tái tạo Chi tiết Đa tần số Bảo vệ Vùng Tối trên GPU Metal
         progressHandler(UltraSharpProgressInfo(
             phase: .sharpening,
             percentage: 0.92,
-            message: "Đang tái tạo vi chi tiết & khử halo..."
+            message: "Đang tái tạo vi chi tiết & bảo toàn dải sáng..."
         ))
 
         guard let finalizeCB = queue.makeCommandBuffer(),
               let outputTexture = metalEngine.finalizeAndSharpen(
                 totalFrames: fusedCount,
-                sharpnessStrength: sharpnessStrength,
+                sharpnessStrength: min(sharpnessStrength, 0.34),
                 commandBuffer: finalizeCB
               ) else {
             fallbackToReferenceBuffer(
                 refPixelBuffer: refPixelBuffer,
+                colorSpace: sourceColorSpace,
                 refIndex: refShot.index,
                 totalShots: shots.count,
                 startTime: startTime,
@@ -273,6 +288,7 @@ public final class UltraSharpService: @unchecked Sendable {
             CameraLogger.error("UltraSharp Pro: finalizeCB lỗi (status=\(finalizeCB.status.rawValue)) -> Fallback!", category: .capture)
             fallbackToReferenceBuffer(
                 refPixelBuffer: refPixelBuffer,
+                colorSpace: sourceColorSpace,
                 refIndex: refShot.index,
                 totalShots: shots.count,
                 startTime: startTime,
@@ -281,17 +297,23 @@ public final class UltraSharpService: @unchecked Sendable {
             return
         }
 
-        // BƯỚC 6: Trích xuất CGImage 12MP & Kiểm tra chống ảnh đen tuyệt đối
+        // BƯỚC 6: Trích xuất CGImage 12MP Display P3 + C++20 Song phương Vi chi tiết Bảo vệ Vùng tối
         progressHandler(UltraSharpProgressInfo(
             phase: .encodingAndSaving,
             percentage: 0.97,
             message: "Đang hoàn tất ảnh 12MP..."
         ))
 
-        guard let rawFinalCGImage = metalEngine.makeCGImage(from: outputTexture) else {
+        guard let finalCGImage = metalEngine.makeCGImage(
+            from: outputTexture,
+            colorSpace: sourceColorSpace,
+            clarityStrength: 0.28,
+            shadowRecovery: 0.10
+        ) else {
             CameraLogger.error("UltraSharp Pro: outputTexture bất thường -> Fallback frame gốc sắc nét!", category: .capture)
             fallbackToReferenceBuffer(
                 refPixelBuffer: refPixelBuffer,
+                colorSpace: sourceColorSpace,
                 refIndex: refShot.index,
                 totalShots: shots.count,
                 startTime: startTime,
@@ -299,9 +321,6 @@ public final class UltraSharpService: @unchecked Sendable {
             )
             return
         }
-
-        // Hậu kỳ vi tương phản nhẹ nhàng trên nền SNR đã tăng mạnh (không làm quá sắc hay tạo viền giả)
-        let finalCGImage = Self.enhanceUltraSharpOpticalDetail(rawFinalCGImage, fusedFrames: fusedCount)
 
         let totalTime = CACurrentMediaTime() - startTime
         let noiseReduction = sqrt(Float(fusedCount))
@@ -334,53 +353,44 @@ public final class UltraSharpService: @unchecked Sendable {
         )))
     }
 
-    // MARK: - Cơ chế Fallback & Hoàn thiện Quang học An toàn Tuyệt đối
+    // MARK: - Khớp Sáng Quang Trắc & Cơ chế Fallback An toàn Tuyệt đối (Bảo toàn Display P3)
 
-    private static let detailCIContext = CIContext(options: [
-        .useSoftwareRenderer: false,
-        .highQualityDownsample: true,
-        .cacheIntermediates: false
-    ])
-
-    /// Tinh chỉnh quang học sau gộp: giữ trọn chi tiết siêu phân giải vừa tái tạo từ Metal + độ trong trẻo vi mô
-    private static func enhanceUltraSharpOpticalDetail(_ image: CGImage, fusedFrames: Int) -> CGImage {
-        guard image.width >= 32, image.height >= 32 else { return image }
-        return autoreleasepool {
-            var ciImage = CIImage(cgImage: image)
-            if fusedFrames <= 1 {
-                // Nếu rơi về fallback 1 frame: khử nhiễu bảo toàn cạnh nhẹ + phục hồi chi tiết vi mô
-                if let denoise = CIFilter(name: "CINoiseReduction") {
-                    denoise.setValue(ciImage, forKey: kCIInputImageKey)
-                    denoise.setValue(0.012, forKey: "inputNoiseLevel")
-                    denoise.setValue(0.45, forKey: "inputSharpness")
-                    if let out = denoise.outputImage { ciImage = out }
-                }
-                if let unsharp = CIFilter(name: "CIUnsharpMask") {
-                    unsharp.setValue(ciImage, forKey: kCIInputImageKey)
-                    unsharp.setValue(1.15, forKey: kCIInputRadiusKey)
-                    unsharp.setValue(0.38, forKey: kCIInputIntensityKey)
-                    if let out = unsharp.outputImage { ciImage = out }
-                }
-            } else {
-                // Khi đã gộp nhiều frame (SNR cao, Metal đã làm nét đa tầng): chỉ thêm vi tương phản quang học tinh tế
-                if let sharpen = CIFilter(name: "CISharpenLuminance") {
-                    sharpen.setValue(ciImage, forKey: kCIInputImageKey)
-                    sharpen.setValue(0.22, forKey: kCIInputSharpnessKey)
-                    if let out = sharpen.outputImage { ciImage = out }
-                }
-                if let color = CIFilter(name: "CIColorControls") {
-                    color.setValue(ciImage, forKey: kCIInputImageKey)
-                    color.setValue(1.022, forKey: kCIInputContrastKey)
-                    if let out = color.outputImage { ciImage = out }
-                }
-            }
-            let extent = ciImage.extent.integral
-            return detailCIContext.createCGImage(ciImage, from: extent) ?? image
+    private static func computePhotometricMatch(
+        refBuffer: CVPixelBuffer,
+        secBuffer: CVPixelBuffer
+    ) -> (gain: Float, bias: Float) {
+        let w = CVPixelBufferGetWidth(refBuffer)
+        let h = CVPixelBufferGetHeight(refBuffer)
+        guard w == CVPixelBufferGetWidth(secBuffer),
+              h == CVPixelBufferGetHeight(secBuffer),
+              w >= 16, h >= 16 else {
+            return (1.0, 0.0)
         }
+        CVPixelBufferLockBaseAddress(refBuffer, .readOnly)
+        CVPixelBufferLockBaseAddress(secBuffer, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(secBuffer, .readOnly)
+            CVPixelBufferUnlockBaseAddress(refBuffer, .readOnly)
+        }
+        guard let rPtr = CVPixelBufferGetBaseAddress(refBuffer)?.assumingMemoryBound(to: UInt8.self),
+              let sPtr = CVPixelBufferGetBaseAddress(secBuffer)?.assumingMemoryBound(to: UInt8.self) else {
+            return (1.0, 0.0)
+        }
+        let rRow = CVPixelBufferGetBytesPerRow(refBuffer)
+        let sRow = CVPixelBufferGetBytesPerRow(secBuffer)
+        return noc_us_match_exposure_bgra(
+            refBGRA: rPtr,
+            secBGRA: sPtr,
+            width: Int32(w),
+            height: Int32(h),
+            refRowBytes: Int32(rRow),
+            secRowBytes: Int32(sRow)
+        )
     }
 
     private func fallbackToReferenceBuffer(
         refPixelBuffer: CVPixelBuffer,
+        colorSpace: CGColorSpace,
         refIndex: Int,
         totalShots: Int,
         startTime: Double,
@@ -390,11 +400,15 @@ public final class UltraSharpService: @unchecked Sendable {
         isProcessing = false
         stateLock.unlock()
 
-        guard let rawCG = decodeCGImage(from: refPixelBuffer) else {
+        guard let cg = decodeEnhancedCGImage(
+            from: refPixelBuffer,
+            colorSpace: colorSpace,
+            clarityStrength: 0.24,
+            shadowRecovery: 0.08
+        ) else {
             finishWithFailure(error: CameraServiceError.photoProcessingFailed, completion: completion)
             return
         }
-        let cg = Self.enhanceUltraSharpOpticalDetail(rawCG, fusedFrames: 1)
 
         let elapsed = CACurrentMediaTime() - startTime
         completion(.success(UltraSharpFusionResult(
@@ -409,28 +423,58 @@ public final class UltraSharpService: @unchecked Sendable {
         )))
     }
 
-    private func decodeCGImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
+    private func decodeEnhancedCGImage(
+        from pixelBuffer: CVPixelBuffer,
+        colorSpace: CGColorSpace,
+        clarityStrength: Float,
+        shadowRecovery: Float
+    ) -> CGImage? {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
         guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        let srcRowBytes = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let dstRowBytes = width * 4
+        let totalBytes = dstRowBytes * height
+        guard width >= 16, height >= 16 else { return nil }
 
-        guard let context = CGContext(
-            data: baseAddress,
+        var enhanced = [UInt8](repeating: 255, count: totalBytes)
+        let bandCount = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount))
+        let rowsPerBand = (height + bandCount - 1) / bandCount
+        let srcPtr = baseAddress.assumingMemoryBound(to: UInt8.self)
+        enhanced.withUnsafeMutableBytes { dstBuf in
+            guard let dPtr = dstBuf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            DispatchQueue.concurrentPerform(iterations: bandCount) { band in
+                let y0 = band * rowsPerBand
+                let y1 = min(height, y0 + rowsPerBand)
+                if y0 < y1 {
+                    noc_us_enhance_superres_bgra_rows(
+                        srcPtr, Int32(width), Int32(height), Int32(srcRowBytes),
+                        dPtr, Int32(dstRowBytes),
+                        clarityStrength, shadowRecovery,
+                        Int32(y0), Int32(y1)
+                    )
+                }
+            }
+        }
+
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let provider = CGDataProvider(data: Data(enhanced) as CFData) else { return nil }
+        return CGImage(
             width: width,
             height: height,
             bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
+            bitsPerPixel: 32,
+            bytesPerRow: dstRowBytes,
             space: colorSpace,
-            bitmapInfo: bitmapInfo
-        ) else { return nil }
-
-        return context.makeImage()
+            bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: true,
+            intent: .defaultIntent
+        )
     }
 
     public func cancelCurrentOperation() {

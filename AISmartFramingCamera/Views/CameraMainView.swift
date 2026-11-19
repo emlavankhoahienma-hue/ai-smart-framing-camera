@@ -93,10 +93,16 @@ public struct CameraMainView: View {
                             // AR AI Framing Lines & Reticle
                             ARFramingOverlayView(viewModel: viewModel)
 
-                            // Rangefinder Windowed Zoom Overlay
+                            // Rangefinder Windowed Zoom Overlay (Khớp đúng vùng khung hình 9:16 thực tế trong chế độ Video!)
                             if viewModel.isWindowedZoomActive {
                                 GeometryReader { proxy in
-                                    WindowedZoomOverlayView(viewModel: viewModel, containerSize: proxy.size)
+                                    let isAspectFitVideo = viewModel.captureMode.isVideo && !viewModel.isDualCameraActive && !viewModel.isSimulatedUltraWideActive
+                                    let activeSize = isAspectFitVideo
+                                        ? CGSize(width: min(proxy.size.width, proxy.size.height * (9.0 / 16.0)), height: proxy.size.height)
+                                        : proxy.size
+                                    WindowedZoomOverlayView(viewModel: viewModel, containerSize: activeSize)
+                                        .frame(width: activeSize.width, height: activeSize.height)
+                                        .position(x: proxy.size.width / 2.0, y: proxy.size.height / 2.0)
                                 }
                                 .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                             }
@@ -1001,7 +1007,7 @@ struct CameraHibernationStandbyView: View {
 }
 
 
-// MARK: - Drawer Function Item Button
+// MARK: - Drawer Function Item Button (Minimalist Obsidian Squircle Tile)
 struct DrawerFunctionButton: View {
     let icon: String
     var customIcon: AnyView? = nil
@@ -1009,6 +1015,8 @@ struct DrawerFunctionButton: View {
     let subtitle: String?
     let isActive: Bool
     let action: () -> Void
+
+    private let accentGold = Color(red: 0.93, green: 0.83, blue: 0.64)
 
     var body: some View {
         Button(action: {
@@ -1018,174 +1026,390 @@ struct DrawerFunctionButton: View {
             action()
         }) {
             VStack(spacing: 6) {
-                ZStack {
-                    Circle()
-                        .fill(isActive ? Color.white.opacity(0.24) : Color(white: 0.18))
-                        .frame(width: 48, height: 48)
-                        .overlay(
-                            Circle()
-                                .stroke(isActive ? AlignTheme.electricCyan : Color.white.opacity(0.12), lineWidth: isActive ? 1.5 : 0.6)
-                        )
-
-                    if let custom = customIcon {
-                        custom
-                    } else {
-                        Image(systemName: icon)
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundColor(isActive ? AlignTheme.electricCyan : Color.white.opacity(0.88))
-                    }
+                if let custom = customIcon {
+                    custom
+                        .frame(width: 22, height: 22)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 18, weight: isActive ? .semibold : .medium))
+                        .foregroundColor(isActive ? accentGold : Color.white.opacity(0.84))
+                        .frame(height: 22)
                 }
 
-                VStack(spacing: 2) {
+                VStack(spacing: 1.5) {
                     Text(title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(isActive ? .white : .white.opacity(0.70))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(isActive ? .white : .white.opacity(0.78))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+
                     if let sub = subtitle {
                         Text(sub)
                             .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                            .foregroundColor(isActive ? AlignTheme.electricCyan : .white.opacity(0.45))
+                            .foregroundColor(isActive ? accentGold : .white.opacity(0.42))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.80)
                     }
                 }
             }
             .frame(maxWidth: .infinity)
+            .frame(height: 68)
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(isActive ? accentGold.opacity(0.14) : Color.white.opacity(0.055))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .stroke(isActive ? accentGold.opacity(0.42) : Color.white.opacity(0.075), lineWidth: isActive ? 1.0 : 0.6)
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         }
         .buttonStyle(PlainButtonStyle())
     }
 }
 
-// MARK: - Camera Function Drawer (Kho Chức Năng Nửa Dưới Màn Hình Chuẩn Video)
+// MARK: - Drawer Hero Quick-Mode Card (Top Featured Strip)
+private struct DrawerHeroCard: View {
+    let icon: String
+    let title: String
+    let valueText: String
+    let isActive: Bool
+    let action: () -> Void
+
+    private let accentGold = Color(red: 0.93, green: 0.83, blue: 0.64)
+
+    var body: some View {
+        Button(action: {
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.prepare()
+            generator.impactOccurred()
+            action()
+        }) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 0) {
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(isActive ? Color.black : accentGold)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(isActive ? accentGold : Color.white.opacity(0.09))
+                        )
+
+                    Spacer()
+
+                    Circle()
+                        .fill(isActive ? accentGold : Color.white.opacity(0.16))
+                        .frame(width: 6, height: 6)
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(isActive ? .white : .white.opacity(0.84))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+
+                    Text(valueText)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundColor(isActive ? accentGold : .white.opacity(0.48))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(
+                        isActive
+                            ? LinearGradient(
+                                colors: [accentGold.opacity(0.20), accentGold.opacity(0.09)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                            : LinearGradient(
+                                colors: [Color.white.opacity(0.08), Color.white.opacity(0.045)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(isActive ? accentGold.opacity(0.48) : Color.white.opacity(0.09), lineWidth: isActive ? 1.0 : 0.7)
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Camera Function Drawer (Bảng Điều Khiển Obsidian Pro - Menu 6 Chấm)
 struct CameraFunctionDrawerView: View {
     @ObservedObject var viewModel: CameraViewModel
+
+    private let accentGold = Color(red: 0.93, green: 0.83, blue: 0.64)
+
+    private var videoQualityBadge: String {
+        let w = viewModel.selectedVideoFormatOption.width
+        let fps = Int(round(viewModel.selectedVideoFormatOption.fps))
+        return w >= 3840 ? "4K · \(fps)fps" : "1080P · \(fps)fps"
+    }
+
+    private var photoFormatBadge: String {
+        switch viewModel.selectedPhotoFormat {
+        case .dng: return "RAW DNG"
+        case .heif, .heic: return "HEIF 10-bit"
+        case .jpeg: return "JPEG"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
 
-            VStack(spacing: 18) {
-                // Drag handle bar
-                Capsule()
-                    .fill(Color.white.opacity(0.24))
-                    .frame(width: 36, height: 4)
-                    .padding(.top, 10)
+            VStack(spacing: 14) {
+                // 1. Drag Handle + Header Bar
+                VStack(spacing: 10) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.22))
+                        .frame(width: 38, height: 4)
+                        .padding(.top, 10)
 
-                // 4-Column Grid of Functional Circular Buttons
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 16) {
-                    // Row 1:
-                    // 1. Ratio
-                    DrawerFunctionButton(
-                        icon: "aspectratio",
-                        title: "Tỷ lệ",
-                        subtitle: viewModel.windowedZoomAspectRatio.rawValue,
-                        isActive: viewModel.isWindowedZoomActive,
-                        action: { viewModel.cycleAspectRatio() }
-                    )
+                    HStack(spacing: 8) {
+                        HStack(spacing: 7) {
+                            Text("Bảng điều khiển")
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
 
-                    // 2. Timer
-                    DrawerFunctionButton(
-                        icon: "timer",
-                        title: "Hẹn giờ",
-                        subtitle: viewModel.captureTimerSeconds == 0 ? "Tắt" : "\(viewModel.captureTimerSeconds)s",
-                        isActive: viewModel.captureTimerSeconds > 0,
-                        action: { viewModel.cycleCaptureTimer() }
-                    )
+                            Text(viewModel.captureMode.isVideo ? "VIDEO" : "ẢNH")
+                                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                .foregroundColor(accentGold)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule()
+                                        .fill(accentGold.opacity(0.14))
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(accentGold.opacity(0.32), lineWidth: 0.6)
+                                        )
+                                )
+                        }
 
-                    // 3. Grid
-                    DrawerFunctionButton(
-                        icon: "grid",
-                        title: "Lưới",
-                        subtitle: viewModel.isManualGridVisible ? "Bật" : "Tắt",
-                        isActive: viewModel.isManualGridVisible,
-                        action: { viewModel.isManualGridVisible.toggle() }
-                    )
+                        Spacer()
 
-                    // 4. Level
-                    DrawerFunctionButton(
-                        icon: viewModel.isHorizonLevelerEnabled ? "scope" : "circle.dashed",
-                        title: "Cân bằng",
-                        subtitle: viewModel.isHorizonLevelerEnabled ? "Bật" : "Tắt",
-                        isActive: viewModel.isHorizonLevelerEnabled,
-                        action: { viewModel.isHorizonLevelerEnabled.toggle() }
-                    )
+                        // Quick Settings Pill
+                        Button(action: {
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.prepare()
+                            generator.impactOccurred()
+                            withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                                viewModel.isFunctionDrawerOpen = false
+                            }
+                            viewModel.isShowingSettings = true
+                        }) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "gearshape.fill")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                Text("Cài đặt")
+                                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundColor(.white.opacity(0.88))
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.09))
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                                    )
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
 
-                    // 5. 360° Horizon Lock (Khóa Đường Chân Trời 360°)
-                    DrawerFunctionButton(
-                        icon: viewModel.isHorizonLockEnabled ? "level.fill" : "level",
-                        title: "Chân trời",
-                        subtitle: viewModel.isHorizonLockEnabled ? "360° Khóa" : "Tắt",
-                        isActive: viewModel.isHorizonLockEnabled,
-                        action: { viewModel.toggleHorizonLock() }
-                    )
+                        // Close Button
+                        Button(action: {
+                            withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                                viewModel.isFunctionDrawerOpen = false
+                            }
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11.5, weight: .bold))
+                                .foregroundColor(.white.opacity(0.75))
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    Circle()
+                                        .fill(Color.white.opacity(0.08))
+                                )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .accessibilityLabel("Đóng bảng điều khiển")
+                    }
+                    .padding(.horizontal, 18)
+                }
 
-                    // 6. Khung Chữ Ký Master (Xiaomi 15 Ultra Leica Master Watermark)
-                    DrawerFunctionButton(
-                        icon: viewModel.isMasterWatermarkEnabled ? "seal.fill" : "seal",
-                        title: "Khung Master",
-                        subtitle: viewModel.isMasterWatermarkEnabled ? "Bật" : "Tắt",
-                        isActive: viewModel.isMasterWatermarkEnabled,
-                        action: { viewModel.isMasterWatermarkEnabled.toggle() }
-                    )
+                // 2. Hero Featured Strip (3 Balanced Quick-Mode Cards)
+                HStack(spacing: 9) {
+                    if viewModel.captureMode.isVideo {
+                        DrawerHeroCard(
+                            icon: "video.fill",
+                            title: "Chất lượng",
+                            valueText: videoQualityBadge,
+                            isActive: viewModel.selectedVideoFormatOption.width >= 3840,
+                            action: { viewModel.toggleVideoFormat() }
+                        )
+                    } else {
+                        DrawerHeroCard(
+                            icon: "sparkles",
+                            title: "Ultra Sharp",
+                            valueText: viewModel.isUltraSharpEnabled ? "Bật · 12MP" : "Tắt",
+                            isActive: viewModel.isUltraSharpEnabled,
+                            action: { viewModel.isUltraSharpEnabled.toggle() }
+                        )
+                    }
 
-                    // Row 2:
-                    // 5. Dual Camera PIP
-                    DrawerFunctionButton(
-                        icon: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle",
-                        title: "Dual Cam",
-                        subtitle: viewModel.isDualCameraActive ? "Bật" : "Tắt",
-                        isActive: viewModel.isDualCameraActive,
-                        action: { viewModel.toggleDualCamera() }
-                    )
-
-                    // 6. Color Histogram
-                    DrawerFunctionButton(
-                        icon: "chart.bar.xaxis",
-                        title: "Biểu đồ",
-                        subtitle: viewModel.showHistogramInViewfinder ? "Bật" : "Tắt",
-                        isActive: viewModel.showHistogramInViewfinder,
-                        action: { viewModel.showHistogramInViewfinder.toggle() }
-                    )
-
-                    // 7. Format Codec
-                    DrawerFunctionButton(
-                        icon: "doc.badge.gearshape",
-                        title: "Định dạng",
-                        subtitle: viewModel.selectedPhotoFormat.rawValue.uppercased(),
-                        isActive: viewModel.selectedPhotoFormat == .dng,
-                        action: { viewModel.togglePhotoFormat() }
-                    )
-
-                    // 8. Film Simulation
-                    DrawerFunctionButton(
+                    DrawerHeroCard(
                         icon: "camera.filters",
                         title: "Màu phim",
-                        subtitle: viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.displayName : "Tắt",
+                        valueText: viewModel.isFilmSimulationActive ? viewModel.selectedFilmPreset.displayName : "Nguyên bản",
                         isActive: viewModel.isFilmSimulationActive,
                         action: { viewModel.toggleFilmSimulation() }
                     )
 
-                    // Row 3:
-                    // 9. Deep Settings
-                    DrawerFunctionButton(
-                        icon: "gearshape.fill",
-                        title: "Cài đặt",
-                        subtitle: "Hệ thống",
-                        isActive: false,
-                        action: {
-                            viewModel.isFunctionDrawerOpen = false
-                            viewModel.isShowingSettings = true
-                        }
-                    )
+                    if viewModel.captureMode.isVideo {
+                        DrawerHeroCard(
+                            icon: "film",
+                            title: "Mã hóa",
+                            valueText: viewModel.selectedVideoCodec == .hevc ? "HEVC" : "H.264",
+                            isActive: viewModel.selectedVideoCodec == .hevc,
+                            action: { viewModel.toggleVideoCodec() }
+                        )
+                    } else {
+                        DrawerHeroCard(
+                            icon: "doc.plaintext",
+                            title: "Định dạng",
+                            valueText: photoFormatBadge,
+                            isActive: viewModel.selectedPhotoFormat == .dng,
+                            action: { viewModel.togglePhotoFormat() }
+                        )
+                    }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 28)
+                .padding(.horizontal, 16)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.065))
+                    .frame(height: 0.7)
+                    .padding(.horizontal, 18)
+
+                // 3. Section 1: Khung Ngắm & Hỗ Trợ (4 Balanced Squircle Tiles)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("KHUNG NGẮM & BỐ CỤC")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .tracking(0.8)
+                        .foregroundColor(.white.opacity(0.42))
+                        .padding(.horizontal, 2)
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 4), spacing: 9) {
+                        DrawerFunctionButton(
+                            icon: "aspectratio",
+                            title: "Tỷ lệ",
+                            subtitle: viewModel.windowedZoomAspectRatio.rawValue,
+                            isActive: viewModel.isWindowedZoomActive,
+                            action: { viewModel.cycleAspectRatio() }
+                        )
+
+                        DrawerFunctionButton(
+                            icon: "timer",
+                            title: "Hẹn giờ",
+                            subtitle: viewModel.captureTimerSeconds == 0 ? "Tắt" : "\(viewModel.captureTimerSeconds)s",
+                            isActive: viewModel.captureTimerSeconds > 0,
+                            action: { viewModel.cycleCaptureTimer() }
+                        )
+
+                        DrawerFunctionButton(
+                            icon: "grid",
+                            title: "Lưới",
+                            subtitle: viewModel.isManualGridVisible ? "Bật" : "Tắt",
+                            isActive: viewModel.isManualGridVisible,
+                            action: { viewModel.isManualGridVisible.toggle() }
+                        )
+
+                        DrawerFunctionButton(
+                            icon: viewModel.isHorizonLevelerEnabled ? "scope" : "circle.dashed",
+                            title: "Cân bằng",
+                            subtitle: viewModel.isHorizonLevelerEnabled ? "Bật" : "Tắt",
+                            isActive: viewModel.isHorizonLevelerEnabled,
+                            action: { viewModel.isHorizonLevelerEnabled.toggle() }
+                        )
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                // 4. Section 2: Công Cụ Nâng Cao (4 Balanced Squircle Tiles)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("CÔNG CỤ NÂNG CAO")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .tracking(0.8)
+                        .foregroundColor(.white.opacity(0.42))
+                        .padding(.horizontal, 2)
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 4), spacing: 9) {
+                        DrawerFunctionButton(
+                            icon: viewModel.isHorizonLockEnabled ? "level.fill" : "level",
+                            title: "Chân trời",
+                            subtitle: viewModel.isHorizonLockEnabled ? "360° Khóa" : "Tắt",
+                            isActive: viewModel.isHorizonLockEnabled,
+                            action: { viewModel.toggleHorizonLock() }
+                        )
+
+                        DrawerFunctionButton(
+                            icon: viewModel.isMasterWatermarkEnabled ? "seal.fill" : "seal",
+                            title: "Master",
+                            subtitle: viewModel.isMasterWatermarkEnabled ? "Bật" : "Tắt",
+                            isActive: viewModel.isMasterWatermarkEnabled,
+                            action: { viewModel.isMasterWatermarkEnabled.toggle() }
+                        )
+
+                        DrawerFunctionButton(
+                            icon: viewModel.isDualCameraActive ? "rectangle.inset.filled.and.person.filled" : "rectangle.on.rectangle",
+                            title: "Dual Cam",
+                            subtitle: viewModel.isDualCameraActive ? "Bật" : "Tắt",
+                            isActive: viewModel.isDualCameraActive,
+                            action: { viewModel.toggleDualCamera() }
+                        )
+
+                        DrawerFunctionButton(
+                            icon: "chart.bar.xaxis",
+                            title: "Biểu đồ",
+                            subtitle: viewModel.showHistogramInViewfinder ? "Bật" : "Tắt",
+                            isActive: viewModel.showHistogramInViewfinder,
+                            action: { viewModel.showHistogramInViewfinder.toggle() }
+                        )
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 30)
             }
             .background(
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Color(red: 0.09, green: 0.094, blue: 0.106).opacity(0.96))
+                    .fill(Color(red: 0.078, green: 0.082, blue: 0.098).opacity(0.97))
                     .overlay(
                         RoundedRectangle(cornerRadius: 28, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.18), Color.white.opacity(0.05)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 0.9
+                            )
                     )
-                    .shadow(color: Color.black.opacity(0.70), radius: 24, y: -6)
+                    .shadow(color: Color.black.opacity(0.75), radius: 28, y: -8)
             )
             .gesture(
                 DragGesture(minimumDistance: 15)

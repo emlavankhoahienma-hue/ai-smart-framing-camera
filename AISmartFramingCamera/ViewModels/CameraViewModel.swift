@@ -1247,8 +1247,14 @@ public final class CameraViewModel: ObservableObject {
                     cancelAISession()
                 }
                 updateWindowedCameraHardwareZoom()
+                if isRecordingVideo {
+                    let elapsed = videoRecordingStartTime.map { Date().timeIntervalSince($0) } ?? videoRecordedDurationSeconds
+                    recordWindowedKeyframeIfNeeded(timestamp: max(0.0, elapsed))
+                }
             } else {
-                requestManualZoom(selectedZoomPreset, smooth: true)
+                if !isRecordingVideo {
+                    requestManualZoom(selectedZoomPreset, smooth: true)
+                }
             }
         }
     }
@@ -1260,7 +1266,14 @@ public final class CameraViewModel: ObservableObject {
             }
         }
     }
-    @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4
+    @Published public var windowedZoomAspectRatio: WindowedZoomAspectRatio = .ratio3_4 {
+        didSet {
+            if isRecordingVideo, let start = videoRecordingStartTime, isWindowedZoomActive {
+                let elapsed = Date().timeIntervalSince(start)
+                recordWindowedKeyframeIfNeeded(timestamp: elapsed)
+            }
+        }
+    }
     @Published public var windowedZoomNormalizedCenter: CGPoint = CGPoint(x: 0.5, y: 0.5) {
         didSet {
             if isRecordingVideo, let start = videoRecordingStartTime, isWindowedZoomActive {

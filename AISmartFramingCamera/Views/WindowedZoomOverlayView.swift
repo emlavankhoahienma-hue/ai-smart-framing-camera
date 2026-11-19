@@ -38,10 +38,15 @@ public struct WindowedZoomOverlayView: View {
         liveNormalizedCenter ?? viewModel.windowedZoomNormalizedCenter
     }
 
-    /// Chỉ ẩn hoàn toàn Mask khi tiêu cự <= 24.5mm VÀ tỷ lệ khớp khung gốc 3:4.
-    /// Nếu ở 24mm mà chọn 1:1 hoặc 16:9, vẫn hiển thị Mask và viền khung để cắt đúng tỷ lệ.
+    /// Tỷ lệ khung hình gốc của chế độ hiện tại (3:4 cho Ảnh, 16:9 / 9:16 cho Video)
+    private var nativeAspectRatio: WindowedZoomAspectRatio {
+        viewModel.captureMode.isVideo ? .ratio16_9 : .ratio3_4
+    }
+
+    /// Chỉ ẩn hoàn toàn Mask khi tiêu cự <= 24.5mm VÀ tỷ lệ khớp khung gốc (3:4 ảnh / 16:9 video).
+    /// Nếu ở 24mm mà chọn tỷ lệ khác, vẫn hiển thị Mask và viền khung để cắt đúng tỷ lệ.
     private var isUnmodifiedFullView: Bool {
-        effectiveFocalLength <= 24.5 && viewModel.windowedZoomAspectRatio == .ratio3_4
+        effectiveFocalLength <= 24.5 && viewModel.windowedZoomAspectRatio == nativeAspectRatio
     }
 
     /// Trạng thái hiển thị khung ngắm cửa sổ: hiển thị khi không ở Full và không bị ẩn tạm thời.
@@ -343,7 +348,7 @@ public struct WindowedZoomOverlayView: View {
     }
 
     private var focalPresetBar: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 3) {
             ForEach(presets) { preset in
                 FocalPresetButton(
                     preset: preset,
@@ -363,7 +368,7 @@ public struct WindowedZoomOverlayView: View {
                     liveFocalLength = nil
                     liveNormalizedCenter = nil
                     viewModel.cycleAspectRatio()
-                    if viewModel.windowedZoomFocalLength <= 24.5 && viewModel.windowedZoomAspectRatio != .ratio3_4 {
+                    if viewModel.windowedZoomFocalLength <= 24.5 && viewModel.windowedZoomAspectRatio != nativeAspectRatio {
                         viewModel.windowedZoomFocalLength = 28.0
                     }
                     clampNormalizedCenter()
@@ -372,20 +377,25 @@ public struct WindowedZoomOverlayView: View {
                 viewModel.haptics.triggerSelectionChange()
             }) {
                 Text(viewModel.windowedZoomAspectRatio.rawValue)
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(viewModel.windowedZoomAspectRatio != .ratio3_4 ? AlignTheme.electricCyan : Color.white.opacity(0.88))
-                    .padding(.horizontal, 8)
+                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    .foregroundColor(viewModel.windowedZoomAspectRatio != nativeAspectRatio ? AlignTheme.electricCyan : Color.white.opacity(0.88))
+                    .padding(.horizontal, 6)
                     .padding(.vertical, 5)
-                    .frame(height: 32)
+                    .frame(height: 30)
             }
             .buttonStyle(PlainButtonStyle())
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(Color.black.opacity(0.45))
+                .fill(Color.black.opacity(0.55))
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                )
         )
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -452,13 +462,13 @@ private struct FocalPresetButton: View {
                 }
 
                 Text(preset.label)
-                    .font(.system(size: 11, weight: isSelected ? .bold : .medium, design: .rounded))
+                    .font(.system(size: 10.5, weight: isSelected ? .bold : .medium, design: .rounded))
                     .foregroundColor(isSelected ? AlignTheme.electricCyan : Color.white.opacity(0.82))
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 6)
                     .padding(.vertical, 5)
             }
-            .frame(minWidth: 40)
-            .frame(height: 32)
+            .frame(minWidth: 34)
+            .frame(height: 30)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())

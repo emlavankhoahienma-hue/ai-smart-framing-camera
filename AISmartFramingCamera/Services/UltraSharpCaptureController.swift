@@ -100,18 +100,18 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         return max(4, safeCount)
     }
 
-    /// Số frame thực tế tối ưu cho chế độ chụp chùm Streaming Full-12MP (cân bằng giữa độ mượt liveview và mức giảm nhiễu căn(N))
+    /// Số frame thực tế tối ưu cho chế độ chụp chùm Streaming Full-12MP chuẩn .balanced (giữ trọn Apple Smart HDR & Deep Fusion)
     public func recommendedStreamingShotCount(requestedCount: Int) -> Int {
         let ramBytes = ProcessInfo.processInfo.physicalMemory
         let thermal = ProcessInfo.processInfo.thermalState
         let optimal = calculateOptimalBurstCount(requestedCount: requestedCount)
         if thermal == .serious || thermal == .critical {
-            return 3
+            return 2
         }
         if ramBytes < 5_200_000_000 {
-            return min(4, optimal)
+            return min(3, optimal)
         }
-        return min(5, optimal)
+        return min(4, optimal)
     }
 
     // MARK: - Chế độ Streaming Nén 12MP (Ưu tiên cho UltraSharpService)
@@ -234,12 +234,10 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
             settings.maxPhotoDimensions = maxOutDim
         }
 
-        let selectedPixels = Int64(settings.maxPhotoDimensions.width) * Int64(settings.maxPhotoDimensions.height)
-        if selectedPixels > 15_000_000 {
-            settings.photoQualityPrioritization = (photoOutput.maxPhotoQualityPrioritization == .speed) ? .speed : .balanced
-        } else {
-            settings.photoQualityPrioritization = .speed
-        }
+        // QUAN TRỌNG: Luôn ưu tiên .balanced thay vì .speed để giữ trọn Apple Deep Fusion & Smart HDR
+        // trên từng frame (tránh ảnh bệt, nhiễu màu và bết vùng tối kiểu máy giá rẻ khi ép .speed!)
+        let maxPrioritization = photoOutput.maxPhotoQualityPrioritization
+        settings.photoQualityPrioritization = (maxPrioritization == .speed) ? .speed : .balanced
         if photoOutput.supportedFlashModes.contains(.off) {
             settings.flashMode = .off
         }
@@ -356,8 +354,15 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
     }
 
     /// Giải mã ảnh nén HEIC/JPEG thành CVPixelBuffer 32BGRA tương thích IOSurface Metal,
-    /// luôn áp dụng EXIF orientation đúng chiều và kiểm tra chống ảnh đen.
+    /// luôn bảo toàn dải màu rộng Display P3 / ColorSpace gốc, áp dụng EXIF orientation đúng chiều và chống ảnh đen.
     public static func decodeFullResolutionPixelBuffer(from data: Data, maxPixelSize: Int = 4032) -> CVPixelBuffer? {
+        decodeFullResolutionPixelBufferWithColorSpace(from: data, maxPixelSize: maxPixelSize)?.pixelBuffer
+    }
+
+    public static func decodeFullResolutionPixelBufferWithColorSpace(
+        from data: Data,
+        maxPixelSize: Int = 4032
+    ) -> (pixelBuffer: CVPixelBuffer, colorSpace: CGColorSpace)? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
         }
@@ -400,21 +405,47 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
 
         guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return nil }
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let preferredColorSpace: CGColorSpace = {
+            if let srcSpace = cgImage.colorSpace, srcSpace.model == .rgb {
+                return srcSpace
+            }
+            return CGColorSpace(name: CGColorSpace.displayP3)
+                ?? CGColorSpace(name: CGColorSpace.sRGB)
+                ?? CGColorSpaceCreateDeviceRGB()
+        }()
+        let fallbackColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
         let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
 
-        guard let context = CGContext(
+        let activeColorSpace: CGColorSpace
+        let context: CGContext
+        if let ctx = CGContext(
             data: baseAddress,
             width: width,
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: bytesPerRow,
-            space: colorSpace,
+            space: preferredColorSpace,
             bitmapInfo: bitmapInfo
-        ) else {
+        ) {
+            activeColorSpace = preferredColorSpace
+            context = ctx
+        } else if let ctx = CGContext(
+            data: baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: fallbackColorSpace,
+            bitmapInfo: bitmapInfo
+        ) {
+            activeColorSpace = fallbackColorSpace
+            context = ctx
+        } else {
             return nil
         }
+
+        context.interpolationQuality = .high
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         // Kiểm tra chống ảnh đen ngay sau giải mã
@@ -432,7 +463,7 @@ public final class UltraSharpCaptureController: NSObject, AVCapturePhotoCaptureD
         }
         guard maxSample >= 2 else { return nil }
 
-        return buffer
+        return (buffer, activeColorSpace)
     }
 
     public func cancelBurst() {

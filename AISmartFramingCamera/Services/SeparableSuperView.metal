@@ -1,12 +1,17 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// MARK: - C++20 Rectilinear-Conformal 0.5x Ultra-Wide Optical Params
+// MARK: - C++20 Analytical Rectilinear-Conformal 0.5x Ultra-Wide Optical Params
+// Exact 32-byte layout matching UltraWideWarpEngine.SuperViewParams (zero rgba32Float mesh filtering issues!)
 struct SuperViewParams {
-    float edge_clarity; // Master optical clarity gain (modulated by C++20 Jacobian boost in mesh.z)
-    float vignette_mix; // Subtle 13mm optical vignette blend [0..1]
-    float chroma_guard; // Anti-aliasing & chroma-noise suppression threshold
-    float reserved;
+    float k;            // Hyperbolic rectilinear parameter k resolved by C++20 NativeOpticsCore
+    float inv_tanh_k;   // Precomputed 1.0 / tanh(k) (1.0 when k <= 1e-4)
+    float progress;     // [0..1] ultra-wide blend (1.0 at 0.5x, 0.0 at 1.0x)
+    float edge_clarity; // Master optical clarity gain modulated by analytical Jacobian
+    float vignette_mix; // Subtle 13mm optical micro-vignette blend [0..1]
+    float chroma_guard; // Anti-aliasing & micro-noise gate threshold
+    float reserved0;
+    float reserved1;
 };
 
 inline float4 uwCatmullRomWeights(float t) {
@@ -60,7 +65,6 @@ inline float4 sampleCatmullRomAntiRinging(
 kernel void separableSuperViewKernel(
     texture2d<float, access::sample> inTexture [[texture(0)]],
     texture2d<float, access::write> outTexture [[texture(1)]],
-    texture2d<float, access::sample> opticalMeshTexture [[texture(2)]],
     constant SuperViewParams &params [[buffer(0)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
@@ -68,21 +72,36 @@ kernel void separableSuperViewKernel(
     uint height = outTexture.get_height();
     if (gid.x >= width || gid.y >= height) { return; }
 
-    constexpr sampler meshSampler(coord::normalized, address::clamp_to_edge, filter::linear);
     constexpr sampler linearSampler(coord::normalized, address::clamp_to_edge, filter::linear);
 
     float w = float(width);
     float h = float(height);
     float2 dstUV = float2((float(gid.x) + 0.5f) / w, (float(gid.y) + 0.5f) / h);
 
-    // 1. Sample C++20-solved Rectilinear-Conformal Optical Mesh:
-    //    .xy = exact straight-line-preserving source UV in [0, 1]
-    //    .z  = analytical Jacobian peripheral sharpness boost
-    //    .w  = subtle natural 13mm optical micro-vignette
-    float4 meshSample = opticalMeshTexture.sample(meshSampler, dstUV);
-    float2 srcUV = clamp(meshSample.xy, 0.0f, 1.0f);
-    float jacobianBoost = clamp(meshSample.z, 0.0f, 1.0f);
-    float vignetteGain = mix(1.0f, clamp(meshSample.w, 0.88f, 1.0f), params.vignette_mix);
+    // 1. Exact per-pixel analytical C-infinity Hyperbolic-Rectilinear projection in float32:
+    //    - Vertical & horizontal straight lines stay 100% straight (zero fisheye barrel bend)
+    //    - Exact 1:1 isotropic center aspect ratio (zero face distortion)
+    //    - Zero 33x33 rgba32Float mesh quantization / nearest-neighbor mosaic on Apple GPU < A17!
+    float2 p = dstUV * 2.0f - 1.0f;
+    float2 srcNorm;
+    float2 deriv;
+    if (params.k > 1e-4f) {
+        float2 th = tanh(params.k * p);
+        srcNorm = th * params.inv_tanh_k;
+        deriv = (params.k * (1.0f - th * th)) * params.inv_tanh_k;
+    } else {
+        srcNorm = p;
+        deriv = float2(1.0f, 1.0f);
+    }
+    float2 srcUV = clamp(srcNorm * 0.5f + 0.5f, 0.0f, 1.0f);
+
+    float localScale = sqrt(max(1e-4f, deriv.x * deriv.y));
+    float expansionExcess = max(0.0f, (1.0f / localScale) - 1.0f);
+    float jacobianBoost = clamp(expansionExcess * 1.45f + 0.12f * params.progress, 0.0f, 0.85f);
+
+    float r2 = min(2.0f, dot(p, p));
+    float rawVignette = 1.0f - (0.024f * params.progress * r2);
+    float vignetteGain = mix(1.0f, clamp(rawVignette, 0.90f, 1.0f), params.vignette_mix);
 
     // 2. High-Order 16-Tap Catmull-Rom Bicubic Anti-Ringing Resampling
     float4 centerColor = sampleCatmullRomAntiRinging(inTexture, srcUV, float(inTexture.get_width()), float(inTexture.get_height()));

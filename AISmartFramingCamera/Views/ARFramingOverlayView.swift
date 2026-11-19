@@ -299,6 +299,7 @@ public struct ARFramingOverlayView: View {
             .simultaneousGesture(
                 MagnificationGesture()
                     .onChanged { scale in
+                        guard !viewModel.isWindowedZoomActive else { return }
                         if !isPinching {
                             isPinching = true
                             pinchBaseZoom = viewModel.displayZoom
@@ -310,6 +311,10 @@ public struct ARFramingOverlayView: View {
                         viewModel.setVideoAwareZoomContinuous(targetZoom)
                     }
                     .onEnded { scale in
+                        guard !viewModel.isWindowedZoomActive else {
+                            isPinching = false
+                            return
+                        }
                         let minZ = viewModel.minAvailableDisplayZoom
                         let maxZ = viewModel.maxAvailableDisplayZoom
                         let targetZoom = max(minZ, min(pinchBaseZoom * scale, maxZ))

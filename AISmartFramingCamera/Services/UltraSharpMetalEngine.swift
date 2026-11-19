@@ -39,6 +39,8 @@ public struct UltraSharpTileUniforms {
     public var numTilesY: UInt32
     public var searchRadius: Int32
     public var scaleFactor: Float
+    public var exposureGain: Float
+    public var exposureBias: Float
 
     public init(
         imageWidth: UInt32,
@@ -48,7 +50,9 @@ public struct UltraSharpTileUniforms {
         numTilesX: UInt32,
         numTilesY: UInt32,
         searchRadius: Int32 = 4,
-        scaleFactor: Float = 2.0
+        scaleFactor: Float = 2.0,
+        exposureGain: Float = 1.0,
+        exposureBias: Float = 0.0
     ) {
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
@@ -58,6 +62,8 @@ public struct UltraSharpTileUniforms {
         self.numTilesY = numTilesY
         self.searchRadius = searchRadius
         self.scaleFactor = scaleFactor
+        self.exposureGain = exposureGain
+        self.exposureBias = exposureBias
     }
 }
 
@@ -642,6 +648,8 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         frameIndex: Int,
         totalFrames: Int,
         iso: Float,
+        exposureGain: Float = 1.0,
+        exposureBias: Float = 0.0,
         queue: MTLCommandQueue
     ) -> (success: Bool, qualityError: Float, validRatio: Float) {
         stateLock.lock()
@@ -712,7 +720,9 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             tileWidth: 16,
             tileHeight: 16,
             numTilesX: UInt32(numTilesX),
-            numTilesY: UInt32(numTilesY)
+            numTilesY: UInt32(numTilesY),
+            exposureGain: exposureGain,
+            exposureBias: exposureBias
         )
 
         warpEnc.label = "UltraSharpWarpAndMAD"
@@ -762,7 +772,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             width: UInt32(w),
             height: UInt32(h),
             baseNoiseSigma: adaptiveSigma,
-            noiseScaleK: 1.78,
+            noiseScaleK: 1.62,
             frameIndex: UInt32(frameIndex),
             totalFrames: UInt32(totalFrames)
         )
@@ -816,7 +826,7 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             width: UInt32(w),
             height: UInt32(h),
             sharpnessAlpha: sharpnessStrength,
-            haloClampLimit: 0.065,
+            haloClampLimit: 0.048,
             totalFrames: UInt32(totalFrames)
         )
 
@@ -832,9 +842,14 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
         return outTex
     }
 
-    // MARK: - Chuyển MTLTexture thành CGImage
+    // MARK: - Chuyển MTLTexture thành CGImage (Kèm Hậu kỳ C++20 Song phương Bảo vệ Vùng Tối & Bảo toàn Display P3)
 
-    public func makeCGImage(from texture: MTLTexture) -> CGImage? {
+    public func makeCGImage(
+        from texture: MTLTexture,
+        colorSpace: CGColorSpace? = nil,
+        clarityStrength: Float = 0.0,
+        shadowRecovery: Float = 0.0
+    ) -> CGImage? {
         let width = texture.width
         let height = texture.height
         let rowBytes = width * 4
@@ -862,7 +877,6 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
                         maxSampledLuma = peak
                         if maxSampledLuma >= 6 { break outerCheck }
                     }
-                    // Đảm bảo kênh Alpha = 255 cho premultipliedFirst
                     rawBytes[pxOffset + 3] = 255
                 }
             }
@@ -871,22 +885,52 @@ public final class UltraSharpMetalEngine: @unchecked Sendable {
             return nil
         }
 
-        // Chuẩn hóa kênh Alpha = 255 trên toàn bộ buffer để không bao giờ bị tối/đen do premultiplied alpha
-        for idx in stride(from: 3, to: totalBytes, by: 4) {
-            rawBytes[idx] = 255
+        // Hậu kỳ vi chi tiết song phương C++20 đa luồng bảo vệ vùng tối (triệt tiêu ảnh bệt & vá tối)
+        let finalBytes: [UInt8]
+        if clarityStrength > 0.001 || shadowRecovery > 0.001 {
+            var enhanced = [UInt8](repeating: 255, count: totalBytes)
+            let bandCount = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount))
+            let rowsPerBand = (height + bandCount - 1) / bandCount
+            rawBytes.withUnsafeBytes { srcBuf in
+                enhanced.withUnsafeMutableBytes { dstBuf in
+                    guard let sPtr = srcBuf.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                          let dPtr = dstBuf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                    DispatchQueue.concurrentPerform(iterations: bandCount) { band in
+                        let y0 = band * rowsPerBand
+                        let y1 = min(height, y0 + rowsPerBand)
+                        if y0 < y1 {
+                            noc_us_enhance_superres_bgra_rows(
+                                sPtr, Int32(width), Int32(height), Int32(rowBytes),
+                                dPtr, Int32(rowBytes),
+                                clarityStrength, shadowRecovery,
+                                Int32(y0), Int32(y1)
+                            )
+                        }
+                    }
+                }
+            }
+            finalBytes = enhanced
+        } else {
+            for idx in stride(from: 3, to: totalBytes, by: 4) {
+                rawBytes[idx] = 255
+            }
+            finalBytes = rawBytes
         }
 
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let resolvedColorSpace = colorSpace
+            ?? CGColorSpace(name: CGColorSpace.displayP3)
+            ?? CGColorSpace(name: CGColorSpace.sRGB)
+            ?? CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue // Chuẩn BGRA
 
-        guard let provider = CGDataProvider(data: Data(rawBytes) as CFData),
+        guard let provider = CGDataProvider(data: Data(finalBytes) as CFData),
               let cgImage = CGImage(
                 width: width,
                 height: height,
                 bitsPerComponent: 8,
                 bitsPerPixel: 32,
                 bytesPerRow: rowBytes,
-                space: colorSpace,
+                space: resolvedColorSpace,
                 bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo),
                 provider: provider,
                 decode: nil,

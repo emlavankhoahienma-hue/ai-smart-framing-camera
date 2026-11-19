@@ -177,6 +177,41 @@ bool noc_us_regularize_motion_field_out(
     float* outGlobalShiftY
 );
 
+// Resolve analytical C-infinity rectilinear parameters (k, 1/tanh(k), progress) for GPU shader
+void noc_uw_resolve_params_out(
+    float zoomFactor,
+    float architecturalRigidity,
+    float* outK,
+    float* outInvTanhK,
+    float* outProgress
+);
+
+// Compute robust photometric exposure matching (gain, bias) mapping secBGRA brightness -> refBGRA
+void noc_us_match_exposure_bgra_out(
+    const uint8_t* refBGRA,
+    const uint8_t* secBGRA,
+    int32_t width,
+    int32_t height,
+    int32_t refRowBytes,
+    int32_t secRowBytes,
+    float* outGain,
+    float* outBias
+);
+
+// Multi-core C++20 edge-preserving bilateral optical clarity & shadow-safe tone preservation (BGRA8)
+void noc_us_enhance_superres_bgra_rows(
+    const uint8_t* srcBGRA,
+    int32_t width,
+    int32_t height,
+    int32_t srcRowBytes,
+    uint8_t* dstBGRA,
+    int32_t dstRowBytes,
+    float clarityStrength,
+    float shadowRecovery,
+    int32_t rowStart,
+    int32_t rowEnd
+);
+
 #ifdef __cplusplus
 }
 #endif

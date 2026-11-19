@@ -33,6 +33,8 @@ struct UltraSharpTileUniforms {
     uint numTilesY;
     int searchRadius;      // +-4 px
     float scaleFactor;     // Tỷ lệ so với tầng trước (e.g. 2.0)
+    float exposureGain;    // Hệ số cân bằng sáng quang trắc sec -> ref (mặc định 1.0)
+    float exposureBias;    // Bù mức đen quang trắc sec -> ref (mặc định 0.0)
 };
 
 struct TileMotionVector {
@@ -371,8 +373,12 @@ kernel void ultrasharpDenseFlowWarpKernel(
         bicubicSum += rowSum * wy[j + 1];
     }
 
-    // Kẹp chống rung viền (anti-ringing) theo vùng 2x2 trung tâm để giữ độ nét sub-pixel tối đa mà không tạo nhiễu giả
-    float4 warpedColor = clamp(bicubicSum, minCenter, maxCenter);
+    // Kẹp chống rung viền (anti-ringing) theo vùng 2x2 trung tâm + cân bằng sáng quang trắc (exposureGain/Bias)
+    // để triệt tiêu hoàn toàn hiện tượng vá tối cục bộ khi AE dao động nhẹ giữa các frame burst!
+    float4 warpedRaw = clamp(bicubicSum, minCenter, maxCenter);
+    float safeGain = (uniforms.exposureGain > 0.5f && uniforms.exposureGain < 1.5f) ? uniforms.exposureGain : 1.0f;
+    float safeBias = clamp(uniforms.exposureBias, -0.05f, 0.05f);
+    float4 warpedColor = float4(clamp(warpedRaw.rgb * safeGain + float3(safeBias), 0.0f, 1.0f), 1.0f);
     float4 refColor = refTexture.read(gid);
 
     // Tính sai số thặng dư kết hợp cả Luma + Chroma để chống bóng ma màu (color ghosting)
@@ -458,18 +464,30 @@ kernel void ultrasharpRobustAccumulateKernel(
     }
     float effectiveResidual = max(centerRes.r * 0.65f + neighborhoodResidual * 0.35f, neighborhoodResidual);
 
-    // Mô hình nhiễu theo mức sáng: sensor noise tăng căn bậc hai ở vùng sáng (shot noise)
-    float localSigma = uniforms.baseNoiseSigma * (1.0f + 0.8f * sqrt(max(0.0f, refLuma)));
-    localSigma = max(localSigma, 0.004f);
+    // Đo độ sắc biên (Local Edge Structure) từ refLuma trong residualTexture.g:
+    // - Vùng phẳng/vùng tối nhiều hạt (edgeMag thấp): cho phép gộp Wiener đầy đủ -> khử nhiễu sạch mịn.
+    // - Vùng vi chi tiết/cạnh sắc (tóc, chữ, vải, lá cây): siết chặt ngưỡng kSigma để KHÔNG BAO GIỜ
+    //   bị nhòe/bệt chi tiết khi có sai lệch sub-pixel nhỏ!
+    float refLumaL = residualTexture.read(uint2(clamp(gx - 1, 0, w - 1), gy)).g;
+    float refLumaR = residualTexture.read(uint2(clamp(gx + 1, 0, w - 1), gy)).g;
+    float refLumaU = residualTexture.read(uint2(gx, clamp(gy - 1, 0, h - 1))).g;
+    float refLumaD = residualTexture.read(uint2(gx, clamp(gy + 1, 0, h - 1))).g;
+    float edgeMag = length(float2(refLumaR - refLumaL, refLumaD - refLumaU));
+    float textureStrictness = smoothstep(0.018f, 0.085f, edgeMag);
 
-    float kSigma = uniforms.noiseScaleK * localSigma;
+    // Mô hình nhiễu theo mức sáng: vùng tối dùng ngưỡng hợp lý để khử noise, vùng cạnh sắc siết cực chặt chống bệt
+    float localSigma = uniforms.baseNoiseSigma * (1.0f + 0.65f * sqrt(max(0.0f, refLuma)));
+    localSigma = max(localSigma, 0.0035f);
 
-    // Trọng số Wiener-style Shrinkage:
-    // w = exp(-0.5 * (d / kSigma)^2)
-    // Khi d vượt 3*sigma (vật thể chuyển động hoặc sai lệch khớp), w -> 0 lập tức!
+    float edgeTighten = mix(1.0f, 0.42f, textureStrictness);
+    float kSigma = max(0.0038f, uniforms.noiseScaleK * localSigma * edgeTighten);
+
+    // Trọng số Edge-Aware Wiener Shrinkage:
+    // w = exp(-0.5 * (d / kSigma)^2), cắt hẳn ở 2.4*kSigma trên cạnh sắc để bảo toàn 100% độ sắc khung gốc!
     float ratio = effectiveResidual / kSigma;
+    float cutoff = mix(2.9f, 2.15f, textureStrictness);
     float weight = 0.0f;
-    if (ratio < 3.0f) {
+    if (ratio < cutoff) {
         weight = exp(-0.5f * ratio * ratio);
     }
 
@@ -570,17 +588,22 @@ kernel void ultrasharpNormalizeAndSharpenKernel(
     float midLuma  = dot(midDetail,  float3(0.2126f, 0.7152f, 0.0722f));
 
     // Lọc ngưỡng nhiễu vùng phẳng (trời, da mặt mịn) dựa trên SNR thực tế
-    float snrFactor = clamp(sqrt(centerW / max(1.0f, float(uniforms.totalFrames))), 0.65f, 1.45f);
-    float noiseFloor = mix(0.010f, 0.004f, clamp((centerW - 1.0f) / 3.0f, 0.0f, 1.0f));
-    float edgeMask = smoothstep(noiseFloor, noiseFloor * 3.5f, abs(fineLuma) + 0.5f * abs(midLuma));
+    float snrFactor = clamp(sqrt(centerW / max(1.0f, float(uniforms.totalFrames))), 0.72f, 1.35f);
+    float noiseFloor = mix(0.011f, 0.0045f, clamp((centerW - 1.0f) / 2.5f, 0.0f, 1.0f));
+    float edgeMask = smoothstep(noiseFloor, noiseFloor * 3.2f, abs(fineLuma) + 0.45f * abs(midLuma));
 
-    float fineAlpha = uniforms.sharpnessAlpha * 1.15f * snrFactor * edgeMask;
-    float midAlpha  = uniforms.sharpnessAlpha * 0.38f * snrFactor * edgeMask;
+    float fineAlpha = uniforms.sharpnessAlpha * 0.92f * snrFactor * edgeMask;
+    float midAlpha  = uniforms.sharpnessAlpha * 0.28f * snrFactor * edgeMask;
 
-    // 4. Kẹp biên độ Halo (Halo Clamping) & Bảo toàn kênh Alpha = 1.0 tuyệt đối
-    float lumaBoost = fineAlpha * fineLuma + midAlpha * midLuma;
+    // 4. Kẹp biên độ Halo Bất đối xứng Bảo vệ Vùng Tối (Shadow-Safe Asymmetric Halo Clamping):
+    // Không bao giờ đẩy viền tối xuống đen bết ("tối mấy chỗ"), vẫn giữ vi chi tiết sáng sắc nét tự nhiên!
+    float centerLuma = dot(centerNorm.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+    float shadowDarkDamp = mix(0.22f, 0.72f, smoothstep(0.05f, 0.42f, centerLuma));
+    float rawBoost = fineAlpha * fineLuma + midAlpha * midLuma;
+    float lumaBoost = (rawBoost < 0.0f) ? (rawBoost * shadowDarkDamp) : rawBoost;
+
     float3 unclampedSharp = centerNorm.rgb + float3(lumaBoost);
-    float3 lowBound = max(float3(0.0f), minVal - uniforms.haloClampLimit);
+    float3 lowBound = max(float3(0.0f), minVal - uniforms.haloClampLimit * shadowDarkDamp);
     float3 highBound = min(float3(1.0f), maxVal + uniforms.haloClampLimit);
     float3 clampedSharp = clamp(unclampedSharp, lowBound, highBound);
 
