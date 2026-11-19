@@ -1896,11 +1896,11 @@ enum CompositionPlanner {
         let avoid = sceneHints.avoid
         var dirTrimReward = 0.0
         var dirWeightSum = 0.0
-        if avoid.left > 0.20 { dirTrimReward += avoid.left * min(1.0, vx0 / 0.16); dirWeightSum += avoid.left }
-        if avoid.right > 0.20 { dirTrimReward += avoid.right * min(1.0, (1.0 - vx1) / 0.16); dirWeightSum += avoid.right }
-        if avoid.top > 0.20 { dirTrimReward += avoid.top * min(1.0, vy0 / 0.14); dirWeightSum += avoid.top }
-        if avoid.bottom > 0.20 { dirTrimReward += avoid.bottom * min(1.0, (1.0 - vy1) / 0.16); dirWeightSum += avoid.bottom }
-        let dirTrimScore = dirWeightSum > 0.22 ? (dirTrimReward / max(0.35, dirWeightSum)) : 0.0
+        if avoid.left > 0.35 { dirTrimReward += avoid.left * min(1.0, vx0 / 0.16); dirWeightSum += avoid.left }
+        if avoid.right > 0.35 { dirTrimReward += avoid.right * min(1.0, (1.0 - vx1) / 0.16); dirWeightSum += avoid.right }
+        if avoid.top > 0.35 { dirTrimReward += avoid.top * min(1.0, vy0 / 0.14); dirWeightSum += avoid.top }
+        if avoid.bottom > 0.35 { dirTrimReward += avoid.bottom * min(1.0, (1.0 - vy1) / 0.16); dirWeightSum += avoid.bottom }
+        let dirTrimScore = dirWeightSum > 0.35 ? (dirTrimReward / max(0.35, dirWeightSum)) : 0.0
 
         let exclScore = min(1.0, 0.50 * dirTrimScore + 0.30 * exclClutFrac + 0.20 * exclBlankFrac)
         let clutterCleanliness = max(0.0, 1.0 - 1.65 * inClutDensity - 0.65 * max(0.0, inBlankDensity - 0.12))
@@ -1985,17 +1985,17 @@ enum CompositionPlanner {
         let origArea = max(0.01, Double(subject.bounds.width * subject.bounds.height))
         let targetArea: Double = {
             switch role {
-            case .portrait: return 0.26
-            case .animal: return 0.25
-            case .deskWorkspace: return 0.34
-            case .tabletopEnsemble: return 0.36
-            case .indoorRoom: return 0.44
-            case .architecture: return 0.38
-            case .streetLeading: return 0.34
-            case .landscapeSky: return 0.34
-            case .apertureView: return 0.42
-            case .foliageGarden: return 0.42
-            default: return 0.28
+            case .portrait: return 0.18
+            case .animal: return 0.17
+            case .deskWorkspace: return 0.20
+            case .tabletopEnsemble: return 0.21
+            case .indoorRoom: return 0.28
+            case .architecture: return 0.26
+            case .streetLeading: return 0.24
+            case .landscapeSky: return 0.24
+            case .apertureView: return 0.28
+            case .foliageGarden: return 0.28
+            default: return 0.18
             }
         }()
         let scaleFit: Double
@@ -2079,7 +2079,10 @@ enum CompositionPlanner {
         if ratio < 1.03 && maxAvoid >= 0.58 && areaIn < targetArea * 0.65 {
             necPen += 0.05 * (maxAvoid - 0.45)
         } else if ratio > 1.02 {
-            if ratio > 1.20 && cleanGain < 0.035 && exclScore < 0.38 && areaIn > 0.30 {
+            if origArea >= targetArea * 0.80 && ratio > 1.15 && maxAvoid < 0.48 {
+                necPen += 0.22 * (ratio - 1.12)
+            }
+            if ratio > 1.20 && cleanGain < 0.035 && exclScore < 0.38 && areaIn > 0.22 {
                 necPen += 0.16 * (ratio - 1.20)
             }
             if role == .indoorRoom && ratio > 1.38 {
@@ -2095,7 +2098,7 @@ enum CompositionPlanner {
             }
         }
 
-        let wExcl = avoid.directionalWeightSum > 0.25 ? 0.30 : 0.15
+        let wExcl = avoid.directionalWeightSum > 0.35 ? 0.28 : 0.14
         let wArch = role == .architecture ? 0.14 : 0.03
         let wHor = (role == .landscapeSky || role == .architecture || role == .streetLeading) ? 0.14 : 0.04
         let wVP = (role == .streetLeading && sceneHints.refinedVanishingPoint != nil) ? 0.15 : 0.04
@@ -2114,7 +2117,7 @@ enum CompositionPlanner {
             wVP * vpScore +
             wAcc * accentScore -
             necPen - 0.22 * oobFraction - anatomicalPenaltyValue +
-            (unchanged ? 0.0 : 0.35 * intentPrior)
+            0.35 * intentPrior
 
         let fieldNorm = min(1.0, max(0.0, v5Field))
         let gaicScore = min(1.0, max(0.0,
