@@ -28,9 +28,10 @@ jobs:
           xcodebuild build \
             -project AISmartFramingCamera.xcodeproj \
             -scheme AISmartFramingCamera \
+            -destination 'generic/platform=iOS Simulator' \
             -sdk iphonesimulator \
             -arch arm64 \
-            -configuration Debug \
+            -configuration Release \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -85,7 +86,7 @@ jobs:
             --batteryLevel 100 || true
 
           # Install built simulator app
-          APP_PATH="${{ github.workspace }}/simbuild/Debug-iphonesimulator/AISmartFramingCamera.app"
+          APP_PATH="${{ github.workspace }}/simbuild/Release-iphonesimulator/AISmartFramingCamera.app"
           xcrun simctl install "$SIM_UDID" "$APP_PATH"
 
           # Stage a rich photorealistic interior/architectural scene inside the app's Documents dir
