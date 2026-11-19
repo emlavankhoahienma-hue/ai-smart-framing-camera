@@ -453,8 +453,8 @@ public struct VideoPreviewSheetView: View {
                 mutable.renderSize = targetRenderSize
                 mutable.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, exportFPS)))
                 mutable.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
-                mutable.colorTransferFunction = AVVideoColorTransferFunction_ITU_R_709_2
-                mutable.colorYCbCrMatrix = AVVideoColorYCbCrMatrix_ITU_R_709_2
+                mutable.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+                mutable.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
                 finalComposition = mutable
             } else {
                 finalComposition = baseComposition
