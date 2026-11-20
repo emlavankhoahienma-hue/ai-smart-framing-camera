@@ -458,6 +458,7 @@ public enum FilmTuningAxis: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    @MainActor
     public func applyNormalized(_ norm: Double, to viewModel: CameraViewModel) {
         let t = max(0.0, min(1.0, norm))
         switch self {
